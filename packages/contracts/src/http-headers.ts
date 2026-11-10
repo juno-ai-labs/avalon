@@ -62,16 +62,34 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  * `11` reads human reply Activity, its preview and unread message count.
  * `12` reads pending access requests and their email delivery state in previews.
  * `13` reads a denied access request's `decidedAt` in the Canvas access read.
+ * `14` reads an Activity row of kind `source_request`, `source_approved` or `source_declined`.
  */
-export const CLIENT_CONTRACT_VERSION = 13;
+export const CLIENT_CONTRACT_VERSION = 14;
 /**
  * First client contract that opens a guest relationship. A desktop before it
  * asks member-only routes for every stored workspace, so it is not offered one.
  * Read by platform discovery, which is not behind the socket ticket's gate
- * and so still answers an outdated desktop; every other feature contract is at or below
+ * and so still answers an outdated desktop; every other feature contract but
+ * {@link SOURCE_ACTIVITY_CLIENT_CONTRACT} is at or below
  * {@link MINIMUM_SERVED_CLIENT_CONTRACT} and so needs no gate of its own.
  */
 export const GUEST_WORKSPACES_CLIENT_CONTRACT = 4;
+
+/**
+ * First client contract that reads the Activity kinds a Sidekick source
+ * request writes (`source_request`, `source_approved`, `source_declined`).
+ *
+ * `ActivityKindSchema` is a closed enum inside the workspace socket's strict
+ * sync event, so one row of a kind a build has never heard of fails that
+ * build's parse of the whole subscribe answer: no Canvases, no Sidekicks and
+ * no Activity, on every reconnect, for as long as the row is in the person's
+ * newest page. A served build older than this is therefore sent its Activity
+ * without those rows and without counting them. The workspace socket's ticket
+ * carries the contract its request declared, and the Organization object
+ * reads it per socket (`SOCKET_CLIENT_CONTRACT`). Delete this gate, and the
+ * filter it feeds, when {@link MINIMUM_SERVED_CLIENT_CONTRACT} reaches it.
+ */
+export const SOURCE_ACTIVITY_CLIENT_CONTRACT = 14;
 
 /**
  * The oldest client contract a Worker still answers.
@@ -139,6 +157,14 @@ export const RALLY_HEADERS = Object.freeze({
   SOCKET_ADMISSION_MEMBERSHIP_VERSION: "x-rally-socket-admission-membership-version",
   SOCKET_ANALYTICS_WORKSPACE_ID: "x-rally-socket-analytics-workspace-id",
   SOCKET_AFTER_SEQUENCE: "x-rally-socket-after-sequence",
+  /**
+   * The client contract the workspace socket's ticket request declared
+   * ({@link CLIENT_CONTRACT_VERSION}), signed into the ticket and forwarded to
+   * the Organization object on upgrade, so a payload a served build cannot
+   * parse is left out for that socket alone. Internal only; the edge strips
+   * every inbound spelling first, and a browser cannot set a handshake header.
+   */
+  SOCKET_CLIENT_CONTRACT: "x-rally-socket-client-contract",
   /**
    * The Rally staff member behind a support session (`docs/impersonation.md`),
    * signed into the socket ticket and forwarded to the object on upgrade so

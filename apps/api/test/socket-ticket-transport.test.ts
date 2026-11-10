@@ -346,6 +346,35 @@ describe("socket ticket transport", () => {
     });
   });
 
+  it("carries the client contract the ticket was issued for to WorkspaceDO, and nothing a handshake claims", async () => {
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000723");
+    const seen: Array<string | null> = [];
+    const workspaceNamespace = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: () => createTestDurableObjectId("workspace-do-id"),
+      get: () => ({ fetch: async (request: Request) => {
+        seen.push(request.headers.get("x-rally-socket-client-contract"));
+        return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
+      } }),
+    });
+    const env = createTestEnv({
+      APP_ENV: "test", AVALON_REGION: "global", ALLOWED_ORIGINS: "app://avalon",
+      SESSION_SIGNING_KEY: "socket-ticket-test-signing-key", WORKSPACE_DOS: workspaceNamespace,
+    });
+    const auth = { sessionId: "00000000-0000-7000-8000-000000000721", userId: asUserId("00000000-0000-7000-8000-000000000722"),
+      workspaceId, region: "global", role: "member" } as const;
+    const upgrade = async (ticket: string) => new WorkspaceSocketService(env).upgrade(workspaceId, undefined,
+      new Request(`https://api.avalon.test/workspaces/${workspaceId}`, { headers: {
+        Origin: "app://avalon", Upgrade: "websocket", "Sec-WebSocket-Protocol": socketTicketProtocols(ticket).join(", "),
+        // Not the ticket's: both spellings of a claim the client makes for itself are dropped.
+        "x-rally-socket-client-contract": "99", "x-avalon-socket-client-contract": "99",
+      } }));
+    await upgrade(await issueWorkspaceSocketTicket(env, auth, 14));
+    await upgrade(await issueWorkspaceSocketTicket(env, auth, 13));
+    // A client that declares no contract: the object reads it as older than every gated payload.
+    await upgrade(await issueWorkspaceSocketTicket(env, auth, null));
+    expect(seen).toEqual(["14", "13", null]);
+  });
+
   it("reads the ticket from the handshake header a browser can actually set", () => {
     expect(socketTicketFromRequest(upgradeRequest(socketTicketProtocols(TICKET)), undefined)).toBe(TICKET);
   });

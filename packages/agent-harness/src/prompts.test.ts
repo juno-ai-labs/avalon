@@ -572,6 +572,22 @@ describe("prompt renderers", () => {
     expect(prompt).toContain('"executionAuthority": "workspace"');
   });
 
+  it("tells a Sidekick run with no delegate that it acts as the Sidekick itself, and says nothing about Slack", () => {
+    const prompt = renderWorkstreamSystemPrompt({
+      title: "t", objective: "o", sidekick: workstreamAutomation, executionAuthority: "workspace",
+    });
+
+    expect(prompt).toContain("# Acting as the Sidekick itself");
+    expect(prompt).toContain("It uses the organization's shared connections, the Sidekick's own conversation and memory, and the Canvases the Sidekick is attached to.");
+    expect(prompt).toContain("It has no person's personal connections.");
+    expect(prompt).toContain("ask with request_elicitation for someone to allow this Sidekick to act as them");
+    expect(prompt).not.toContain("# Organization execution authority");
+    expect(prompt).not.toContain("Slack member");
+    // A run that acts as a person is told neither.
+    expect(renderWorkstreamSystemPrompt({ title: "t", objective: "o", sidekick: workstreamAutomation }))
+      .not.toContain("Acting as the Sidekick itself");
+  });
+
   it("adds Slack provenance to system context while keeping nearby content untrusted", () => {
     const slackOrigin = {
       teamId: "TACME",

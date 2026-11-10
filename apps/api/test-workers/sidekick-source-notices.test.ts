@@ -59,13 +59,18 @@ function workspace(): DurableObjectStub<WorkspaceDO> {
 type ActivityFrame = { unseenCount: number; items: Array<Record<string, unknown>> };
 type Opened = { activity: ActivityFrame; sidekickIds: string[] };
 
-/** A subscribed workspace socket for this person, keeping every Activity it is sent. */
-async function connect(userId: string): Promise<{ opened: Opened; pushes: ActivityFrame[]; close: () => void }> {
+/**
+ * A subscribed workspace socket for this person, keeping every Activity it is
+ * sent. `clientContract` is what the socket's signed ticket says its build
+ * declared: 14 reads the source kinds, and null is a ticket that names none.
+ */
+async function connect(userId: string, clientContract: number | null = 14): Promise<{ opened: Opened; pushes: ActivityFrame[]; close: () => void }> {
   const response = await workspace().fetch("https://workspace.test/socket", {
     headers: {
       Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-placement-affinity": "wnam",
       "x-rally-user-id": userId, "x-rally-session-id": `session-${userId}`, "x-rally-socket-ticket-id": crypto.randomUUID(),
       "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      ...(clientContract === null ? {} : { "x-rally-socket-client-contract": String(clientContract) }),
     },
   });
   if (response.status !== 101 || !response.webSocket) throw new Error(`workspace socket rejected: ${response.status}`);
@@ -85,8 +90,8 @@ async function connect(userId: string): Promise<{ opened: Opened; pushes: Activi
   return { opened, pushes, close: () => socket.close(1000, "done") };
 }
 
-async function opened(userId: string): Promise<Opened> {
-  const socket = await connect(userId);
+async function opened(userId: string, clientContract: number | null = 14): Promise<Opened> {
+  const socket = await connect(userId, clientContract);
   socket.close();
   return socket.opened;
 }
@@ -323,6 +328,28 @@ describe("what a Sidekick source request tells people", () => {
     // The other button, opened after the answer, changes nothing and says how the request stands.
     expect(await decideSourceRequestByLink(env, decline)).toEqual({ ...approved, applied: false });
     expect(await requestStates()).toMatchObject([{ state: "approved" }]);
+  });
+
+  it("sends a build older than the source kinds its Activity without them, row and count alike", async () => {
+    // A mention the older build does read, beside the request it does not.
+    await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `INSERT INTO workspace_activity_items (item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id,
+         actor_kind, actor_id, preview, attention_ordinal, created_at)
+       VALUES ('mention:one', ?, ?, 'mention', 'automation', ?, '0', 'person', ?, 'Look at this', NULL, 1)`,
+      WORKSPACE_ID, MANAGER, SIDEKICK_ID, PERSON));
+    const [request] = (await ask([PERSON])).requests;
+    await decide(request!.requestId, "approve");
+    const older = await connect(MANAGER, 13);
+    expect(older.opened.activity).toMatchObject({ unseenCount: 1, items: [{ kind: "mention" }] });
+    expect((await opened(MANAGER, null)).activity).toMatchObject({ unseenCount: 1, items: [{ kind: "mention" }] });
+    expect((await opened(MANAGER)).activity).toMatchObject({ unseenCount: 2, items: [{ kind: "source_approved" }, { kind: "mention" }] });
+    // A push for a row the older build cannot read carries the list without it too.
+    const [again] = (await ask([PERSON], "it is about a seed round")).requests;
+    await decide(again!.requestId, "decline");
+    await expect.poll(() => older.pushes.at(-1)).toMatchObject({ unseenCount: 1, items: [{ kind: "mention" }] });
+    expect(older.pushes.flatMap((push) => push.items.map((item) => item.kind))).not.toContain("source_declined");
+    older.close();
+    expect((await opened(PERSON, 13)).activity).toEqual({ waterline: expect.any(Number), unseenCount: 0, items: [] });
   });
 
   it("answers a link for a request a newer ask replaced by saying so, and leaves the newer one waiting", async () => {
