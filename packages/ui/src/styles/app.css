@@ -5423,12 +5423,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   line-height: 1.62;
 }
 
-/* This is the declaration that decides which side a turn lands on. The
-   reader's own turn sits on the right in its bubble; a colleague's, like
-   Rally's, sits on the left as plain text under its avatar (design.html §2,
-   which replaced "every person on the right": a reader could not tell their own
-   turn from a colleague's by place). The same transcript therefore reads from
-   each person's own side, as a messaging app's does. */
+/* Every human turn sits on the right in its bubble. */
 .human-message {
   /* The bubble's corner, named once and read three times: the bubble draws it,
      and the identity line above and the action row below both stop where it
@@ -5640,14 +5635,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .human-message .message-actions .message-start-substream {
   padding-inline-end: 0;
 }
-
-/* A colleague's turn: leading edge, no fill (design.html §2). */
-.human-message.coworker-message { margin-left: 0; }
-.human-message.coworker-message > header { justify-content: flex-start; padding-inline-end: 0; }
-.human-message.coworker-message .human-message-content { align-items: flex-start; }
-.human-message.coworker-message .message-actions { padding-inline-end: 0; }
-.human-message.coworker-message .message-attachments { justify-content: start; margin-left: 0; }
-.workstream-screen .coworker-message .human-message-bubble { background: transparent; color: var(--av-sys-color-text-default); padding: 0; }
 
 .human-message .message-author-dot {
   background: var(--person-dot, var(--person-accent));
