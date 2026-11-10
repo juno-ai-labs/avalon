@@ -875,7 +875,7 @@ that built the page.
 | `describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount }] }`. Discovery first: the schema is a model-designed one this run may never have seen. |
 | `query_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` | `{ resource, columns, rows, rowCount, truncated }`; at most 200 rows, with `truncated` rather than a silent cut. A stored blob is replaced by `<n bytes>`. |
 | `read_artifact_table` | `{ resource: string, table: string, offset?: number }` | `{ resource, table, rows, nextOffset?, rowsShown? }`; one page of at most 200 rows, with `nextOffset` when a full page came back. `table_refused` names a table the site does not have. |
-| `write_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` — one INSERT, UPDATE, DELETE or REPLACE | `{ resource, rowsWritten }`, plus `{ columns, rows, rowCount, truncated }` for a `RETURNING` statement, at most 200 rows. `rowsWritten` is the engine's physical counter, not a count of rows changed. Offered only to a Canvas's Chat and a Sidekick run. |
+| `write_artifact_data` | `{ resource: string, sql: string, params?: (string \| number)[] }` — one INSERT, UPDATE, DELETE or REPLACE | `{ resource, rowsWritten }`, plus `{ columns, rows, rowCount, truncated }` for a `RETURNING` statement, at most 200 rows. `rowsWritten` is the engine's physical counter, not a count of rows changed. Offered only to a Canvas's Chat and a Sidekick run. |
 
 A member who did not publish the site reads only their own rows of a table
 with a `private_to_viewer` column, and `describe_artifact_data` and
