@@ -11,14 +11,8 @@ import {
 export const INFERENCE_LAKEHOUSE_QUEUE_NAMES = new Set(configuredRegions.map((region) => `avalon-${region}-inference-lakehouse`));
 
 /**
- * The size above which one Pipeline record is refused.
- *
- * The published limit is 5 MB per ingestion request, but the binding refuses
- * any single record above 1 MB with `CF_PIPELINE_MESSAGE_TOO_LARGE:
- * Individual message must not exceed 1 MB`. Every row is sent alone, so the
- * per-record limit is the one that applies. The decimal reading is the
- * conservative one: should the platform mean 1 MiB, a record in between takes
- * the lossless pointer path rather than the dead-letter queue.
+ * The Pipeline binding refuses any single record above 1 MB
+ * (`CF_PIPELINE_MESSAGE_TOO_LARGE`); every row is sent alone, so this binds.
  */
 export const PIPELINE_MESSAGE_BYTES = 1_000_000;
 
@@ -90,9 +84,8 @@ export async function deliverInferenceLakehousePointer(
     throw new RetiredMeetingInference();
   }
 
-  // A record over the per-record limit fails identically on every retry and
-  // dead-letters. The fallback row keeps queryable metadata in Iceberg and the
-  // exact oversized record in Global R2 under its hash.
+  // The fallback row keeps queryable metadata in Iceberg and the exact
+  // oversized record in Global R2 under its hash.
   const overflow = pointer.payloadBytes > PIPELINE_MESSAGE_BYTES;
   const delivered = overflow ? overflowRecord(record, pointer) : record;
   await env.INFERENCE_LAKEHOUSE.send([delivered]);
