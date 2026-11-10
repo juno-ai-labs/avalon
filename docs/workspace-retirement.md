@@ -313,9 +313,10 @@ Two permitted doors write, both the operator's
 Access-gated operator SQL surface, is the repair door and the one way to
 inspect or correct what a retired object holds, the tombstone included.
 `WorkspaceDO.sidekickRemove` archives one Sidekick for `archive_sidekick`: it
-sets that Sidekick's rows and nothing else, because the alarm mutators it
-reaches are inert, the sockets it would publish to are closed, and no session
-into an abandoned Organization authenticates to call it.
+writes only this object's own storage (the Sidekick's rows, the Sidekick
+list's waterline and the Sidekick's external bindings), because the alarm
+mutators it reaches are inert, the sockets it would publish to are closed, and
+no session into an abandoned Organization authenticates to call it.
 
 ## Failure modes and limits
 
@@ -509,10 +510,9 @@ been removed; connector-maintenance credentials do not authorize retirement.
 `archive_sidekick` can archive a Sidekick after the Organization is retired.
 
 **Why:** Retirement stops a Sidekick but leaves its row as it stood, so a
-retired Organization still lists paused and draft Sidekicks. On 2026-11-10 an
-operator archiving every such Sidekick on the platform was refused five in two
-retired Organizations, and the only remaining route was a hand-written update
-through `runInspectionSql`. The owner asked for the archive to work there.
+retired Organization still lists paused and draft Sidekicks that only
+hand-written SQL could reach. The incident is in
+[`engineering-mcp.md`](engineering-mcp.md#changelog), under the same date.
 
 **Considered and rejected:** Having retirement archive every Sidekick itself.
 It would make the row say what the tombstone already enforces, but it rewrites
