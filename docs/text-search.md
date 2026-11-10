@@ -27,6 +27,7 @@ before a search needs it.
 - `apps/api/src/services/search-audience.ts`: the groups a row's `audience` names and the one place a group becomes its stored UUID.
 - `apps/api/src/services/search-embedding.ts`: pinned Qwen tokenizer and embedding integration.
 - `apps/api/src/services/semantic-chunks.ts`: recursive and sliding-window semantic chunks.
+- `apps/api/src/services/token-span-counter.ts`: exact span token counts from a tokenizer's additive cut positions.
 - `apps/api/test/semantic-chunks.test.ts`: coverage, Unicode, overlap, and token budgets.
 - `apps/api/src/env.ts`: server-only development and production credentials.
 - `apps/api/src/services/workspace-search-service.ts` and `routes/search.ts`: member
@@ -235,6 +236,19 @@ and framing. Token counting uses `tokenize` with `add_special_tokens: true`,
 matching `encode` without allocating token-ID and attention-mask arrays. This
 lifecycle depends on the locked library implementation and must be rechecked
 when upgrading it; differential tests compare against an unmodified tokenizer.
+
+Planning measures hundreds of overlapping spans of the same text per window,
+and re-tokenizing each one cost about 26 times the document's length. The policy
+therefore also offers `spanCounter`: `qwenAdditiveCuts` in `search-embedding.ts`
+lists the positions where the pinned pipeline is provably additive (a single
+space with visible ASCII on both sides, and a line feed before visible ASCII,
+kept at least 16 characters apart), and `additiveSpanCounter` answers a span from
+segment counts taken once per text plus its two edges. The counts are exactly
+`countTokens` of the slice, so chunk plans, chunk ids and
+`SEARCH_CHUNK_ALGORITHM` do not change; `search-embedding-policy.test.ts`
+compares both counts and plans against the direct path. Text with no such
+positions, such as one long unbroken token run, falls back to direct counts and
+costs what it always did.
 
 Each group of chunk ranges is a separate `search_embedding_batch_v1` message on
 the same regional Queue. It carries the source reference, document identity and
@@ -717,6 +731,40 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-11-10 — Count span tokens from additive cuts during chunk planning
+
+**What changed:** `SemanticChunkPolicy` gained an optional `spanCounter`, and the
+search policy supplies one built from `additiveSpanCounter` and
+`qwenAdditiveCuts`. `semanticChunks` uses it for every budget and overlap
+measurement when there is no prefix. Planned chunks are identical.
+
+**Why:** Production source deliveries on `avalon-global-activities` reached the
+30-second CPU limit (`exceededCpu`; 26 deliveries on 2026-11-10 and 10 on
+2026-11-09), each after its lexical upsert of a turn of about a million
+characters and before any semantic job was published. Planning re-tokenized
+about 26 times the document's length; the sliding-window search alone was about
+70% of that. Measured locally in Node, 320,000 characters planned in about
+3.2 s as prose and 20 s as pretty-printed JSON before this change (linear, so
+about 13 s and 75 s at 1.2 million), and 1.2 million characters plan in about
+2 s and 6 s after it. The 2026-09-06 entry below anticipated this:
+one message per invocation never guaranteed that one large source fits.
+
+**Considered and rejected:** Raising the Worker CPU limit, rejected on 2026-09-06
+because it also covers API requests, and is a number for the team. Changing the
+search strategy (seeding the window search with an estimate) would move chunk
+boundaries wherever BPE counts are not monotonic, which requires a new
+`SEARCH_CHUNK_ALGORITHM` and a full semantic backfill. Keeping the BPE cache for
+a whole planning pass saved only about a quarter and widens what survives a
+token count.
+
+**Consequences:** The additivity argument is specific to the pinned Qwen3
+pipeline (its NFC normalizer, Split pattern, added tokens and one-token
+template). Upgrading the tokenizer, the model revision or `@huggingface/tokenizers`
+must keep the differential tests passing or drop `spanCounter`. Planning cost is
+still linear in document length and is not bounded: a large enough source, or a
+large one without cut positions, can still exceed the CPU limit and dead-letter
+after its retries.
 
 ### 2026-11-09 — Withdraw archived Canvas artifacts from resource search
 
