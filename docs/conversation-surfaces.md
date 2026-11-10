@@ -511,6 +511,9 @@ with the answered state, and until that turn lands the question's row draws
 the answer under the prompt. A cancelled question is a muted, collapsed
 disclosure, not a person's message bubble. Expanding it shows the original
 prompt and “No answer was recorded”; it offers no answer or retry controls.
+Its open state lives in the feed's `RowDisclosure`, keyed by elicitation ID,
+so leaving and re-entering the virtual window preserves the row's height.
+Callers without feed-owned disclosure state keep a local toggle.
 An automation's page keeps its lifecycle controls (apply,
 pause, resume, delete, run now, the run-history dialog) outside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
