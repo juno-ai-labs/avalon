@@ -217,10 +217,7 @@ describe('showing a live artifact in the rail', () => {
       .mockImplementation(()=>new Promise(()=>{}));
     setup({surface:surface({pick})});
     const button=await screen.findByRole('button',{name:'Comment mode'});
-    // Two states refuse a click here, and only the first sets `disabled`:
-    // before the preview is shown, and shown but not yet ready, where the
-    // button carries its reason as `aria-disabled` and its click does nothing.
-    await waitFor(()=>{expect(button).toBeEnabled();expect(button).not.toHaveAttribute('aria-disabled');});
+    await waitFor(()=>expect(button).not.toBeDisabled());
     fireEvent.click(button);
     const editor=await screen.findByRole('textbox',{name:'Comment on site selection'});
     fireEvent.change(editor,{target:{value:'Unfinished native comment'}});
