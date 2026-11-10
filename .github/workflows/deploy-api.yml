@@ -547,6 +547,7 @@ jobs:
         if: env.DEPLOY_GLOBAL == 'true'
         env:
           ENGINEERING_MCP_BASIN_SQL_API_TOKEN: ${{ secrets.ENGINEERING_MCP_BASIN_SQL_API_TOKEN }}
+          ENGINEERING_MCP_QUEUES_API_TOKEN: ${{ secrets.ENGINEERING_MCP_QUEUES_API_TOKEN }}
           ENGINEERING_MCP_WORKERS_OBSERVABILITY_API_TOKEN: ${{ secrets.ENGINEERING_MCP_WORKERS_OBSERVABILITY_API_TOKEN }}
         run: pnpm --filter @rally/engineering-mcp run deploy
 
@@ -554,7 +555,7 @@ jobs:
         if: env.DEPLOY_GLOBAL == 'true'
         run: |
           set -euo pipefail
-          # Reuse the existing Access propagation window from deploy-ace.yml;
+          # Allow the Access configuration to propagate before probing;
           # this is the same custom-domain and Access control-plane operation.
           for attempt in 1 2 3 4 5 6; do
             headers="${RUNNER_TEMP}/engineering-mcp-headers-${attempt}.txt"

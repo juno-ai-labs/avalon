@@ -117,7 +117,7 @@ and activating the source through runtime bootstrap arms the ordinary
 projection lane, which drains them through the delivery-confirmed path above.
 
 After deploying, force the WorkspaceDO fleet through the
-[migration tracker](durable-object-migration-tracking.md), as for other
+[forced migration CLI](forced-migrations.md), as for other
 workspace backfills. This wakes Organizations that have no current users; their
 conversations then wait for their own next activation. These code migrations
 do not themselves deploy a release or force a production fleet.
