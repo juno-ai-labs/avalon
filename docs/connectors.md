@@ -1630,6 +1630,20 @@ surface that tells somebody about connector activity reads
 
 ## Changelog
 
+### 2026-11-10 — Polling stops for a connection awaiting reconnection
+
+**What changed:** the workspace scheduler no longer starts a `ConnectorPollWorkflow`
+for a connection whose status is `needs_reconnect`, on either a poll schedule or
+a resource watch. The schedule still advances.
+
+**Why:** a Google grant was revoked and its connections were marked
+`needs_reconnect`, but their schedules stayed enabled. Each connection then ran
+a doomed workflow and logged a `connector_poll_failed` error every five minutes
+for four days, which buried real errors in the logs. Disabling the schedule was
+rejected because reconnecting would then have to re-arm it; skipping at launch
+resumes polling on its own once the status returns to `healthy`. A future change
+must keep a refused grant from polling without making reconnection do extra work.
+
 ### 2026-11-09 — Provider webhooks run only on WorkspaceDO authority
 
 **What changed:** `ProviderWebhookService` lost its regional-authority path

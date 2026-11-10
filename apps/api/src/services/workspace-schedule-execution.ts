@@ -665,12 +665,33 @@ async function runSchedule(
 
 }
 
+/**
+ * A connection the provider has refused (`needs_reconnect`) cannot poll: every
+ * run re-presents the dead grant, fails, and logs an error. A Google
+ * connection sat in that state for four days, one failed workflow and one
+ * error log per connection every five minutes, because the schedule stayed
+ * enabled. The schedule still advances; reconnecting returns the row to
+ * `healthy` and the next tick polls again, so nothing needs re-arming.
+ */
+async function connectionNeedsReconnect(
+  database: D1Database,
+  workspaceId: string,
+  connectionId: string,
+): Promise<boolean> {
+  const row = await database.prepare(
+    `SELECT 1 AS blocked FROM connector_connections
+      WHERE id = ?1 AND workspace_id = ?2 AND status = 'needs_reconnect'`,
+  ).bind(connectionId, workspaceId).first();
+  return row !== null;
+}
+
 async function startConnectorPoll(
   ctx: WorkspaceScheduleContext,
   schedule: ScheduleRow,
 ): Promise<void> {
   const connectionId = schedule.connector_connection_id;
   if (!connectionId) throw new Error("missing_connector_connection");
+  if (await connectionNeedsReconnect(ctx.workspaceEnv.DB, schedule.workspace_id, connectionId)) return;
 
   const input: ConnectorPollWorkflowInput = ConnectorPollWorkflowInputSchema.parse({
     region: RegionSchema.parse(ctx.env.AVALON_REGION),
@@ -694,13 +715,13 @@ async function runResourceWatch(
 ): Promise<void> {
   const workspaceDatabase = ctx.workspaceEnv.DB;
   const connection = await workspaceDatabase.prepare(
-    `SELECT config_json
+    `SELECT config_json, status
        FROM connector_connections
       WHERE id = ?1 AND workspace_id = ?2 AND status <> 'disabled'
       LIMIT 1`
   )
     .bind(watch.connection_id, watch.workspace_id)
-    .first<{ config_json: string }>();
+    .first<{ config_json: string; status: string }>();
   if (!connection) throw new Error("resource_watch_connection_unavailable");
 
   const input: ConnectorPollWorkflowInput = ConnectorPollWorkflowInputSchema.parse({
@@ -710,10 +731,14 @@ async function runResourceWatch(
     pollScheduleId: watch.id
   });
   const workflowId = `watch-${watch.id}-${Date.parse(watch.next_poll_at)}`;
-  try {
-    await ctx.env.CONNECTOR_POLL_WORKFLOW.create({ id: workflowId, params: input });
-  } catch (error) {
-    if (!workflowAlreadyExists(error)) throw error;
+  // See `connectionNeedsReconnect`: the watch keeps its cadence, it just stops
+  // launching polls a refused grant cannot complete.
+  if (connection.status !== "needs_reconnect") {
+    try {
+      await ctx.env.CONNECTOR_POLL_WORKFLOW.create({ id: workflowId, params: input });
+    } catch (error) {
+      if (!workflowAlreadyExists(error)) throw error;
+    }
   }
 
   let intervalSeconds = 900;

@@ -309,3 +309,48 @@ describe("what a maintenance pass tells the stall check", () => {
     expect(terminalReconcileOutcome("none")).toBeUndefined();
   });
 });
+
+describe("a schedule that polls a connection", () => {
+  const CONNECTION_ID = "00000000-0000-7000-8000-0000000000c1";
+  const SCHEDULE_ID = "00000000-0000-7000-8000-0000000000c2";
+
+  function seedPollSchedule(database: DatabaseSync, status: string): void {
+    database.prepare(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, display_name, model_plugin_id, scope, status, created_at, updated_at)
+       VALUES (?, ?, 'google', 'Google', 'google', 'workspace', ?, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run(CONNECTION_ID, WORKSPACE_ID, status);
+    database.prepare(
+      `INSERT INTO schedules (id, workspace_id, connector_connection_id, schedule_type,
+         interval_seconds, timezone, next_run_at, enabled, version, created_at, updated_at)
+       VALUES (?, ?, ?, 'interval', 300, 'UTC', '2026-01-01T00:00:00.000Z', 1, 1,
+         '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run(SCHEDULE_ID, WORKSPACE_ID, CONNECTION_ID);
+  }
+
+  async function runPoll(database: DatabaseSync): Promise<unknown[]> {
+    const started: unknown[] = [];
+    const context = scheduleContext(database);
+    const env = { ...context.env, CONNECTOR_POLL_WORKFLOW: { create: async (value: unknown) => { started.push(value); } } };
+    await runWorkspaceScheduleTarget(
+      { ...context, env: env as never, workspaceEnv: { ...context.workspaceEnv, DB: context.workspaceEnv.DB } },
+      { kind: "schedule", id: SCHEDULE_ID, dueAt: "2026-01-01T00:00:00.000Z" },
+      new Date("2026-01-01T00:00:01.000Z"),
+    );
+    return started;
+  }
+
+  it("starts a poll for a healthy connection", async () => {
+    const database = workspaceObjectDatabase();
+    seedPollSchedule(database, "healthy");
+    expect(await runPoll(database)).toHaveLength(1);
+  });
+
+  it("starts no poll for a connection awaiting reconnection, and still advances the schedule", async () => {
+    const database = workspaceObjectDatabase();
+    seedPollSchedule(database, "needs_reconnect");
+    expect(await runPoll(database)).toEqual([]);
+    expect(database.prepare("SELECT next_run_at FROM schedules WHERE id = ?").get(SCHEDULE_ID))
+      .toEqual({ next_run_at: "2026-01-01T00:05:00.000Z" });
+  });
+});
