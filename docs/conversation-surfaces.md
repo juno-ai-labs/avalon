@@ -877,6 +877,8 @@ layout as Rally's replies. The bubble now identifies a human turn at a glance.
 The byline identifies the sender. Alignment follows the kind of turn across
 Canvas Chats and Sidekick conversations, regardless of who is viewing it.
 
+PR [#1516](https://github.com/juno-ai-labs/avalon/pull/1516).
+
 ### 2026-11-09 — The surface's two hosts are a Canvas's Chat and a Sidekick's conversation; Breakouts, merge-back and suggestions leave it
 
 **What changed:** `ConversationSurface` hosts a Canvas's Chat (`parentKind:
