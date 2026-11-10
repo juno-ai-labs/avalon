@@ -593,7 +593,7 @@ Each is more attractive than it deserves to be.
   so that two remote providers being down cannot decide whether Rally retains a
   member's message, and every new JEV stage needs to ask the same question about
   its own terminal floor.
-- **Compaction, wake-ups, inbound mail admission.** Token arithmetic, clocks,
+- **Compaction, wake-ups, connector admission.** Token arithmetic, clocks,
   and sender authorization. Nothing semantic is being decided.
 
 ## Adding another classifier

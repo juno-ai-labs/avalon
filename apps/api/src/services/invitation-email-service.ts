@@ -1,7 +1,7 @@
 import type { Region } from "@rally/contracts/regions";
 import { addWorkspaceTarget } from "@rally/contracts";
 import type { Env } from "../env";
-import { escapeHtml, sendResendEmail, singleLine } from "./resend";
+import { escapeHtml, sendEmail, singleLine } from "./email";
 
 const EMAIL_ERRORS = {
   unavailable: { code: "invitation_email_unavailable", message: "Invitation email is temporarily unavailable" },
@@ -17,8 +17,6 @@ export interface WorkspaceInvitationEmail {
   region: Region;
   expiresAt: string;
   inviteUrl: string;
-  /** A Rally download link, repeatable until the invitation expires, when one was issued. */
-  downloadUrl?: string;
 }
 
 export interface WorkspaceInvitationResolutionEmail {
@@ -38,7 +36,7 @@ export type InvitationEmailDelivery = "sent" | "skipped";
 export async function sendWorkspaceInvitationEmail(
   env: Env,
   invitation: WorkspaceInvitationEmail,
-  request: typeof fetch = fetch,
+  send?: (message: EmailMessageBuilder) => Promise<EmailSendResult>,
 ): Promise<InvitationEmailDelivery> {
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
   const expiration = new Intl.DateTimeFormat("en-US", {
@@ -55,7 +53,6 @@ export async function sendWorkspaceInvitationEmail(
     `${invitation.inviterName} invited you to join ${invitation.workspaceName} as ${roleLabel}.`,
     "",
     `Accept the invitation: ${invitation.inviteUrl}`,
-    ...(invitation.downloadUrl ? ["", `Don't have Rally yet? Download it for macOS: ${invitation.downloadUrl}`] : []),
     "",
     `This one-time invitation expires ${expiration}.`,
     "",
@@ -67,7 +64,7 @@ export async function sendWorkspaceInvitationEmail(
     expiration,
   });
 
-  return sendResendEmail(env, {
+  return sendEmail(env, {
     recipientEmail: invitation.recipientEmail,
     subject,
     html,
@@ -77,13 +74,13 @@ export async function sendWorkspaceInvitationEmail(
     region: invitation.region,
     sender: "transactional",
     errors: EMAIL_ERRORS,
-  }, request);
+  }, send);
 }
 
 export async function sendWorkspaceInvitationResolutionEmail(
   env: Env,
   invitation: WorkspaceInvitationResolutionEmail,
-  request: typeof fetch = fetch,
+  send?: (message: EmailMessageBuilder) => Promise<EmailSendResult>,
 ): Promise<InvitationEmailDelivery> {
   const actor = singleLine(invitation.inviteeName?.trim() || invitation.inviteeEmail);
   const workspaceName = singleLine(invitation.workspaceName);
@@ -114,7 +111,7 @@ export async function sendWorkspaceInvitationResolutionEmail(
     desktopUrl: desktopUrl.toString(),
   });
 
-  return sendResendEmail(env, {
+  return sendEmail(env, {
     recipientEmail: invitation.recipientEmail,
     subject,
     html,
@@ -124,7 +121,7 @@ export async function sendWorkspaceInvitationResolutionEmail(
     region: invitation.region,
     sender: "transactional",
     errors: EMAIL_ERRORS,
-  }, request);
+  }, send);
 }
 
 
@@ -137,9 +134,6 @@ function invitationEmailHtml(input: WorkspaceInvitationEmail & {
   const inviteUrl = escapeHtml(input.inviteUrl);
   const roleLabel = escapeHtml(input.roleLabel);
   const expiration = escapeHtml(input.expiration);
-  const downloadRow = input.downloadUrl
-    ? `<tr><td style="font-size:14px;line-height:1.6;color:#3d3d3d;padding-bottom:20px">Don't have Rally yet? <a href="${escapeHtml(input.downloadUrl)}" style="color:#141414;text-decoration:underline">Download it for macOS</a>.</td></tr>`
-    : "";
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -155,7 +149,6 @@ function invitationEmailHtml(input: WorkspaceInvitationEmail & {
           <tr><td><h1 style="margin:18px 0 12px;font-size:28px;line-height:1.2;color:#141414">Join ${workspaceName}</h1></td></tr>
           <tr><td style="font-size:16px;line-height:1.6;color:#3d3d3d">${inviterName} invited you to join <strong style="color:#141414">${workspaceName}</strong> as ${roleLabel}.</td></tr>
           <tr><td style="padding:28px 0"><a href="${inviteUrl}" style="display:inline-block;background:#070707;color:#fcfcfc;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:8px">Accept invitation</a></td></tr>
-          ${downloadRow}
           <tr><td style="font-size:13px;line-height:1.6;color:#696969">This one-time invitation expires ${expiration}.</td></tr>
           <tr><td style="padding-top:24px;font-size:12px;line-height:1.5;color:#696969;border-top:1px solid #e5e5e5">If you were not expecting this invitation, you can ignore this email.</td></tr>
         </table>

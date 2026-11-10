@@ -18,8 +18,9 @@
  * Both objects address the same `ctx.storage` — the same database — so the host
  * answers supervisor RPCs the model's code never defined, over the same rows the
  * page reads and writes. That is what makes a poll's tally answerable in chat:
- * one read path, three consumers (the two agent tools, the rail's Data view,
- * and the CSV export), so they can never disagree.
+ * one read path, three consumers (the agent read tools, the rail's Data view,
+ * and the CSV export), so they can never disagree. `rallyWrite` is the one
+ * write RPC, behind `write_artifact_data`.
  *
  * The source below is a **string** because it is not compiled with this Worker:
  * Rally assembles the dynamic worker's `modules` map, and this module is loaded
@@ -186,6 +187,41 @@ export class ${FACET_HOST_CLASS} extends DurableObject {
       if (!(error instanceof RallyRollback)) throw error;
     }
     return result;
+  }
+
+  /**
+   * Run one already-admitted row write, and commit it.
+   *
+   * The statement reached here only after the supervisor admitted it as a
+   * single INSERT, UPDATE, DELETE or REPLACE. One transaction, so a statement
+   * that fails part-way (a constraint on its third row) leaves nothing
+   * behind, and the cursor is drained before the count is read, so the
+   * statement has run to its end. A SQLite refusal is returned, not thrown:
+   * it names the site's own schema, the model repairs from it, and nothing
+   * was written. \`rowsWritten\` is the engine's physical counter (index rows
+   * count), not the number of logical rows changed.
+   */
+  rallyWrite(sql, params, maxRows) {
+    try {
+      return this.ctx.storage.transactionSync(() => {
+        const cursor = this.ctx.storage.sql.exec(sql, ...(params ?? []));
+        const rows = [];
+        let truncated = false;
+        for (const row of cursor) {
+          if (rows.length < maxRows) rows.push(row);
+          else truncated = true;
+        }
+        return {
+          ok: true,
+          rowsWritten: cursor.rowsWritten,
+          columns: cursor.columnNames ?? Object.keys(rows[0] ?? {}),
+          rows,
+          truncated,
+        };
+      });
+    } catch (error) {
+      return { ok: false, detail: String(error && error.message ? error.message : error) };
+    }
   }
 
   /** One page of one table, for the rail's Data view and the CSV export. */

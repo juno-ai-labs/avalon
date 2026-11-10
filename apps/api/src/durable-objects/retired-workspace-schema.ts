@@ -422,7 +422,7 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
  * Migration 94: every private Space becomes Organization-wide.
  *
  * Spaces can only be Organization-wide, and a Space grants no reader to its
- * Channels (`docs/spaces.md`), so widening a Space here changes who
+ * Channels (`docs/architecture.md#spaces-space-access-sources-and-projects`), so widening a Space here changes who
  * sees the Space and nothing about who reads any Channel in it: a private
  * Channel stays private with the participants it has. Archived Spaces are
  * widened too, so a restore cannot bring a private one back. The waterline
@@ -439,7 +439,7 @@ export const WORKSPACE_PINNED_ORDER_MIGRATION: readonly string[] = [
  * (`assertRecommendableSidekick`) and stays.
  *
  * The four tables that recorded which Space supplied which Channel readers
- * are dropped with the code that wrote them (`docs/space-access-sources.md`).
+ * are dropped with the code that wrote them (`docs/architecture.md#spaces-space-access-sources-and-projects`).
  * Their receipts stored plans under the old rule, so keeping them would let a
  * retried operation replay a widening or a narrowing nothing decides any more.
  * Readers first: it references the sources table. The readers a Space seated
@@ -484,7 +484,7 @@ export const SPACE_PUBLIC_ONLY_MIGRATION: readonly string[] = [
 
 /**
  * WorkspaceDO migration 102: `spaces.scope` admits `individual`, the Personal
- * Channel each member is given (`docs/spaces.md#the-personal-channel`).
+ * Channel each member is given (`docs/architecture.md#spaces-space-access-sources-and-projects`).
  *
  * SQLite cannot change a `CHECK`, so the table is rebuilt: held, dropped,
  * created with the wider check, refilled, and the hold dropped. No rename, so
@@ -554,7 +554,7 @@ export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
 
 /**
  * WorkspaceDO migration 134: `space_viewers.joined_at`, when each person last
- * became a Channel participant (`docs/digests.md#who-is-told-about-channel-news`).
+ * became a Channel participant (`docs/architecture.md#retired-documents`).
  *
  * `NOT NULL` with no default, which SQLite adds only by a rebuild; the rebuild
  * restores the user index under its v70 name and the memory digest's
@@ -611,7 +611,7 @@ export const SPACE_VIEWER_JOINED_AT_MIGRATION: readonly string[] = [
 
 /**
  * WorkspaceDO migration 104: messages in a Channel itself, outside any
- * thread (`docs/spaces.md#channel-messages`). A building block beside a
+ * thread (`docs/architecture.md#spaces-space-access-sources-and-projects`). A building block beside a
  * Channel's placements: who said it (Rally, or a member), what, and when.
  *
  * `message_id` is derived from the Channel and `message_key` when the poster
@@ -635,7 +635,7 @@ export const SPACE_MESSAGES_MIGRATION: readonly string[] = [
 
 /**
  * WorkspaceDO migration 109: a Channel message can be a thread's merged
- * result, and any Channel message can be Channel news (`docs/conversation-merge.md`).
+ * result, and any Channel message can be Channel news (`docs/architecture.md#retired-documents`).
  *
  * `source_workstream_id` is the thread a message is about; the feed shows such
  * a message only to who can open that thread. `attention_ordinal` is the
@@ -982,7 +982,7 @@ export const WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS: readonly string[] = [
 
 /**
  * Requests by a member to join a Channel or Breakout, each addressed to one
- * approver (`docs/channel-access-requests.md`). At most one pending request
+ * approver (`docs/architecture.md#retired-documents`). At most one pending request
  * per person per conversation: asking again while one is pending reuses it,
  * so a second press sends no second email.
  *
@@ -1212,4 +1212,68 @@ export const THREAD_ERA_TABLES_DROP_MIGRATION: readonly string[] = [
   `DELETE FROM memory_digest_holders WHERE parent_kind IN ('workstream', 'space')`,
   `DELETE FROM workspace_pins WHERE item_kind IN ('thread', 'channel', 'breakout', 'artifact')`,
   `DELETE FROM external_conversation_bindings WHERE target_kind = 'space' OR parent_kind = 'workstream'`,
+];
+
+// --- The Thread parents' drop (after the operator's run) -------------------
+
+/**
+ * WorkspaceDO migration 141: the tables migration 139 kept for the Thread
+ * operations, dropped once the operator had run `dump_thread_transcripts`,
+ * `convert_threads_to_canvases` and `retire_threads` in every Organization
+ * and the operations were removed (docs/workspace-retirement.md).
+ *
+ * Dropped, every one with nothing left that reads or writes it:
+ * - the Thread, Breakout and Channel directories and their viewers
+ *   (`channels`, `channel_viewers`, `breakouts`, `breakout_viewers`,
+ *   `spaces`, `space_viewers`), with their memory digest and search
+ *   authorization triggers;
+ * - the `parent_*` tables only a Thread or a Channel used: its metadata, child
+ *   projections and receipts, state clock and changes, outbox, Breakout
+ *   preparations and members, participant migrations, connector admissions and
+ *   recommended Sidekicks, with the Breakout member freeze triggers;
+ * - a Thread's artifact links (`workspace_workstream_resource_links`), which
+ *   only the conversion read, and a Sidekick's attachments to a Thread
+ *   (`sidekick_conversation_attachments` rows of kind `workstream`), which
+ *   every reader already skipped;
+ * - the Slack agent sessions and feedback, the retired projection RPC's
+ *   registration fence and a Thread's effect receipts, which nothing has read
+ *   since phase C.
+ *
+ * Kept, deliberately:
+ * - the `parent_*` tables a Canvas's share primitive writes under the
+ *   Canvas's own id (`ScopeInvitationStorage`, `ScopeGrantStorage`):
+ *   `parent_invitations`, `parent_invitation_operations`, `parent_grants`,
+ *   `parent_grant_operations`, `parent_grant_imports`,
+ *   `parent_grant_revision`, `parent_participant_targets` and
+ *   `parent_participant_deliveries`;
+ * - `parent_children`, which `ScopeGrantStorage` joins to the participant
+ *   targets on every grant it writes, so a share claimed on a Canvas still
+ *   reads it, though no Canvas has a row in it;
+ * - a Thread's `authorization_locations` and `conversation_view_*` rows, as
+ *   plan section 9 decided.
+ *
+ * `schedules` and the empty `digest_schedules` it names stay. The first
+ * version of this migration rebuilt `schedules` without `digest_schedule_id`
+ * from the shape `workspace-domain-schema.ts` declares, and production objects
+ * refused it (`no such column: automation_subscription_id`): their
+ * `schedules` does not have that shape. Rebuilding it waits until its real
+ * columns are known.
+ *
+ * Every table goes `IF EXISTS`, children before the tables they reference, so
+ * an object that never had one, or a retired one, upgrades cleanly; each
+ * table's triggers go with it.
+ */
+export const THREAD_ERA_PARENTS_DROP_MIGRATION: readonly string[] = [
+  ...[
+    "workspace_workstream_resource_links", "channel_viewers", "channels",
+    "breakout_viewers", "breakouts", "space_viewers", "spaces",
+    "parent_breakout_member_effects", "parent_breakout_members", "parent_breakout_preparations",
+    "parent_participant_migrations", "parent_metadata", "parent_child_projections",
+    "parent_child_viewer_projections", "parent_child_receipts", "parent_projection_keys",
+    "parent_state_clock", "parent_state_changes", "parent_outbox", "parent_connector_admissions",
+    "parent_sidekicks",
+    "slack_agent_sessions", "slack_agent_feedback",
+    "external_registration_generations", "workspace_workstream_effect_receipts",
+  ].map((table) => `DROP TABLE IF EXISTS ${table}`),
+  `DELETE FROM sidekick_conversation_attachments WHERE parent_kind = 'workstream'`,
 ];

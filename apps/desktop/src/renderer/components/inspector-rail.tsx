@@ -239,29 +239,6 @@ function ContextContent({
 
       <Section title="Details">
         <dl className="detail-list">
-          {workstream.emailAddress && (
-            <div>
-              <dt>Email</dt>
-              {/* The address is a value people copy rather than read, so it
-                  stays on one line and leaves the rail through the control
-                  beside it; the title carries the rest. */}
-              <dd className="copy-detail">
-                <span title={workstream.emailAddress}>{workstream.emailAddress}</span>
-                {/* Keyed on the stream: a check earned by one stream's address
-                    must not still be showing over the next stream's. */}
-                <CopyButton
-                  key={workstream.id}
-                  label="Copy email address"
-                  onCopied={() => reportTelemetryProductIntent({
-                    kind: 'content_copied', contentType: 'workstream_email', resourceType: 'workstream',
-                    resourceId: workstream.id,
-                  })}
-                  size={12}
-                  value={workstream.emailAddress}
-                />
-              </dd>
-            </div>
-          )}
           <div><dt>Created by</dt><dd>{workstream.createdBy?.name ?? 'Sidekick'}</dd></div>
           <div><dt>Created</dt><dd>{formatDateTime(workstream.createdAt)}</dd></div>
           <div><dt>Last activity</dt><dd><RelativeTime value={workstream.lastActivityAt} /></dd></div>

@@ -91,6 +91,29 @@ export const CanvasArtifactSchema = z.object({
 });
 export type CanvasArtifact = z.infer<typeof CanvasArtifactSchema>;
 
+/**
+ * A Sidekick attached to a Canvas: its runs read and post in the Canvas's
+ * Chat, publish into the Canvas and write its artifacts' data. Every reader
+ * of the Canvas sees the name and state; `madeHere` marks one the Canvas's
+ * own Chat made, which everyone in the Canvas manages and which is archived
+ * with the Canvas.
+ */
+export const CanvasSidekickSchema = z.object({
+  id: IdSchema,
+  name: z.string(),
+  status: z.enum(["draft", "active", "paused"]),
+  appearance: WorkstreamAppearanceSchema.optional(),
+  madeHere: z.boolean(),
+  /**
+   * Whether the reader may open the Sidekick's own page: its audience, which
+   * the Canvas does not decide. Present on a read made for a viewer (the
+   * detail and the list row); absent where nobody is reading, and from an
+   * older Worker.
+   */
+  canOpen: z.boolean().optional(),
+});
+export type CanvasSidekick = z.infer<typeof CanvasSidekickSchema>;
+
 /** A Canvas as the person opening it sees it: its row, who it is shared with, and its artifacts newest first. */
 export const CanvasDetailSchema = CanvasSummarySchema.extend({
   /** Everyone on the participant list besides the creator, guests among them. */
@@ -98,6 +121,8 @@ export const CanvasDetailSchema = CanvasSummarySchema.extend({
   artifacts: z.array(CanvasArtifactSchema),
   /** This viewer may change who can open it (`canvasManages`). */
   canManage: z.boolean(),
+  /** The Sidekicks attached to it, by name. Absent from a server that predates attaching. */
+  sidekicks: z.array(CanvasSidekickSchema).optional(),
   /**
    * The requests to open it that wait on a decision, oldest first. Present
    * only for a viewer who decides them (`canManage`); absent for everyone
@@ -117,13 +142,15 @@ export type CanvasDetail = z.infer<typeof CanvasDetailSchema>;
  * artifact is, whether it holds something this viewer has not read (its
  * Chat's read state, or an artifact version made since they last read it),
  * who is in it now, where the viewer pinned it, and whether it is in their
- * list only because someone shared it with them. The home page's groups are
- * these fields: live now (`presentUserIds`), from Sidekicks
+ * list only because someone shared it with them. The home page filters by
+ * these fields: Data (`hasStoredData`), from Sidekicks
  * (`writerSidekickId`), shared with me (`sharedWithMe`), made by me
  * (`createdByUserId`).
  */
 export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
   artifactKind: CanvasArtifactKindSchema.nullable(),
+  /** Holds a listed artifact with its own database. Absent from an older Worker. */
+  hasStoredData: z.boolean().optional(),
   /**
    * The Sidekick run whose publish made the Canvas's newest version, so the
    * home card names it ("Weekly digest · run #3") and opens the run; null
@@ -136,6 +163,14 @@ export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
     runNumber: z.number().int().positive(),
     sidekickName: z.string(),
   }).nullable().optional(),
+  /**
+   * The Sidekicks attached to it, in the order they were attached, exactly as
+   * its detail lists them. The row is what the socket keeps current, so the
+   * home card's Sidekick facepile and an open Canvas's menu both read it
+   * here: a Sidekick made, renamed, paused or archived while the Canvas is
+   * open arrives with the next list frame. Absent from an older Worker.
+   */
+  sidekicks: z.array(CanvasSidekickSchema).optional(),
   unread: z.boolean(),
   presentUserIds: z.array(UserIdSchema),
   /** Its place in the viewer's Pinned group; null when it is not pinned. */
@@ -143,6 +178,9 @@ export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
   sharedWithMe: z.boolean(),
 });
 export type CanvasSidebarRow = z.infer<typeof CanvasSidebarRowSchema>;
+
+/** `GET /canvases`: the list one viewer's sidebar holds, most recently active first. */
+export const CanvasListSchema = z.strictObject({ items: z.array(CanvasSidebarRowSchema) });
 
 /** The Canvas list as one viewer sees it, at the list's waterline, most recently active first. */
 export const CanvasSidebarListSchema = z.strictObject({
@@ -167,6 +205,32 @@ export const WorkspaceCanvasListEventSchema = z.strictObject({
 export type WorkspaceCanvasListEvent = z.infer<typeof WorkspaceCanvasListEventSchema>;
 
 /**
+ * `POST /canvases/:id/sidekicks`: make a Sidekick for a Canvas and tell its
+ * wizard what it is for. The Sidekick is attached to the Canvas as it is made,
+ * as one the Canvas's own Chat makes is, so its runs can update the Canvas and
+ * everyone in the Canvas may change or archive it. `instructions` is sent to
+ * the Sidekick's conversation as the person's message to the wizard, which
+ * chooses the trigger and saves the definition; making one is not a saved
+ * Sidekick. A caller-minted `sidekickId` makes a retry answer with the first
+ * attempt's Sidekick, and `clientMessageId` sends the instructions once.
+ */
+export const AddCanvasSidekickRequestSchema = z.strictObject({
+  sidekickId: IdSchema.optional(),
+  instructions: z.strictObject({
+    text: z.string().trim().min(1),
+    clientMessageId: z.string().min(1).max(120),
+  }),
+});
+export type AddCanvasSidekickRequest = z.infer<typeof AddCanvasSidekickRequestSchema>;
+
+export const AddedCanvasSidekickSchema = z.object({
+  sidekickId: IdSchema,
+  /** The instructions' turn in the Sidekick's conversation. */
+  turnId: z.string().nullable(),
+});
+export type AddedCanvasSidekick = z.infer<typeof AddedCanvasSidekickSchema>;
+
+/**
  * `POST /canvases`: a new Canvas with no artifacts. `canvasId` is an id the
  * caller minted: a retried create that names it again answers the Canvas the
  * first made, for its creator only (`canvas_id_unavailable` otherwise, or when
@@ -182,6 +246,8 @@ export const CreateCanvasRequestSchema = z.strictObject({
     text: z.string().trim().min(1),
     clientMessageId: z.string().min(1).max(120),
   }).optional(),
+  /** A Sidekick to make for the new Canvas in the same request; see `AddCanvasSidekickRequestSchema`. */
+  sidekick: AddCanvasSidekickRequestSchema.optional(),
 });
 export type CreateCanvasRequest = z.infer<typeof CreateCanvasRequestSchema>;
 
@@ -189,6 +255,8 @@ export const CreatedCanvasSchema = z.object({
   canvasId: CanvasIdSchema,
   /** The prompt's turn in the Chat, when one was sent. */
   turnId: z.string().nullable(),
+  /** The Sidekick made with it, when one was asked for. Absent otherwise and from an older Worker. */
+  sidekick: AddedCanvasSidekickSchema.optional(),
 });
 export type CreatedCanvas = z.infer<typeof CreatedCanvasSchema>;
 
@@ -196,9 +264,9 @@ export type CreatedCanvas = z.infer<typeof CreatedCanvasSchema>;
 export const SidebarPinRequestSchema = z.strictObject({ pinned: z.boolean() });
 
 /**
- * `PUT /workspace/pinned-order`: one viewer's order for one list's Pinned
- * group, first to last. Ids not pinned in that list are ignored, and pins the
- * request leaves out keep their order after the ones it names.
+ * Workspace pin RPC input, first to last. `PUT /canvases/pinned-order` takes
+ * only `itemIds` and supplies the Canvas kind on the server. Ids not pinned
+ * in that list are ignored; omitted pins retain their relative order.
  */
 export const SidebarPinOrderRequestSchema = z.strictObject({
   kind: z.enum(["canvas", "sidekick"]),
@@ -265,3 +333,75 @@ export const CanvasAccessDecisionSchema = z.strictObject({
   state: z.enum(["approved", "denied"]),
 });
 export type CanvasAccessDecision = z.infer<typeof CanvasAccessDecisionSchema>;
+
+/**
+ * A relative path a person publishes under: `/`-separated segments, none
+ * empty, `.` or `..`, with no backslash or control character, so it names
+ * the same file wherever it is stored or served. It is the artifact's
+ * identity in its Canvas: publishing the same name again makes a new version.
+ */
+export const CanvasPublishPathSchema = z.string().min(1).max(1024).refine((path) =>
+  !path.startsWith("/") && ![...path].some((character) => character === "\\" || character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f)
+    && path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".."),
+{ message: "must be a relative path of named segments" });
+
+/** Content as text, or as base64 for bytes that are not text. */
+export const CanvasPublishContentSchema = z.strictObject({
+  encoding: z.enum(["text", "base64"]),
+  data: z.string(),
+});
+export type CanvasPublishContent = z.infer<typeof CanvasPublishContentSchema>;
+
+/**
+ * `POST /canvases/:id/artifacts`: publish something made elsewhere (in
+ * Claude, ChatGPT, OpenCode) into a Canvas as the person's own artifact. A
+ * `file` is one document; a `site` is files ready to serve (an `index.html`),
+ * a React component, or a project with a build script, which Rally builds in
+ * the Canvas's sandbox and checks renders before publishing. A site with a
+ * server module (`index.js`) is Rally's to publish from its sandbox, not a
+ * person's to upload. `docs/rally-mcp.md#publishing`.
+ */
+export const CanvasPublishRequestSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("file"),
+    name: CanvasPublishPathSchema,
+    title: z.string().trim().min(1).max(300).optional(),
+    description: z.string().trim().min(1).max(2000).optional(),
+    /** What the publisher says it is; the bytes decide when they are recognizable. */
+    mimeType: z.string().max(160).optional(),
+    content: CanvasPublishContentSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("site"),
+    name: CanvasPublishPathSchema,
+    title: z.string().trim().min(1).max(300).optional(),
+    description: z.string().trim().min(1).max(2000).optional(),
+    // What the files are (ready to serve, a component, a project) is decided
+    // by `detectSiteSource` once they are decoded; here only their shape.
+    files: z.array(z.strictObject({ path: CanvasPublishPathSchema, content: CanvasPublishContentSchema })).min(1)
+      .superRefine((files, context) => {
+        const paths = files.map((file) => file.path);
+        if (paths.some((path) => path === ".rally" || path.startsWith(".rally/"))) context.addIssue({ code: "custom", message: "cannot use the reserved .rally directory" });
+        if (new Set(paths).size !== paths.length) context.addIssue({ code: "custom", message: "names a path twice" });
+      }),
+  }),
+]);
+export type CanvasPublishRequest = z.infer<typeof CanvasPublishRequestSchema>;
+
+/** What a publish did: the artifact, its version now, and whether this call changed it. */
+export const CanvasPublishedArtifactSchema = z.strictObject({
+  resourceId: IdSchema,
+  title: z.string(),
+  kind: z.enum(["file", "site"]),
+  version: z.number().int().positive(),
+  outcome: z.enum(["created", "updated", "unchanged"]),
+  /** The Canvas opened on this artifact, when the deployment has a link host. */
+  url: z.string().nullable(),
+  /** For a site Rally built from a component or a project: what it built, and what the check saw rendered. */
+  build: z.strictObject({
+    source: z.enum(["component", "project"]),
+    files: z.number().int().nonnegative(),
+    renderedTextLength: z.number().int().nonnegative(),
+  }).optional(),
+});
+export type CanvasPublishedArtifact = z.infer<typeof CanvasPublishedArtifactSchema>;

@@ -105,7 +105,6 @@ export interface AutomationSummary {
   id: string;
   name: string;
   description: string;
-  emailAddress?: string;
   scope: AutomationScope;
   status: AutomationStatus;
   nextRunAt?: string;
@@ -118,6 +117,10 @@ export interface AutomationSummary {
   pinnedPosition?: number | null;
   /** Who it is shared with; absent from a server that predates it. */
   audience?: SidekickAudience;
+  /** The named recipients, excluding the author. Absent from reads that do not include the list. */
+  sharedWithUserIds?: string[];
+  /** The Canvases it was attached to that the viewer may open; see the wire schema. */
+  attachedCanvases?: { id: string; title: string }[];
   /** Its newest run's live state, when one is live; absent from a server that predates it. */
   runState?: 'working' | 'needs_input' | null;
   /** Any of its runs is working now, whichever is newest; absent from a server that predates it. */
@@ -125,7 +128,7 @@ export interface AutomationSummary {
   /** The question a run waiting on input asked; absent when none waits. */
   pendingQuestion?: string | null;
   /** What wakes it, each kind once in definition order; absent from a server that predates it. */
-  triggerKinds?: Array<'manual' | 'schedule' | 'external_event' | 'inbound_email'>;
+  triggerKinds?: Array<'manual' | 'schedule' | 'external_event'>;
   /** The IANA zone `nextRunAt` is read in (its schedule's); absent for an interval, no schedule, or an older server. */
   scheduleTimeZone?: string;
 }
@@ -140,7 +143,6 @@ export interface WorkstreamSummary {
   /** `naming` while Rally is choosing the title; the title is a placeholder. */
   titleStatus: 'naming' | 'automatic' | 'settled';
   objective?: string;
-  emailAddress?: string;
   createdByUserId?: string;
   harnessStatus: HarnessStatus;
   latestAttentionSequenceNumber: number;
@@ -792,10 +794,10 @@ export interface AutomationDetail extends AutomationSummary {
   /** One line per trigger of the current definition, or empty before one exists. */
   triggerSummaries: string[];
   recentRuns: AutomationRun[];
-  /** The people a `people` Sidekick is shared with besides its author; empty otherwise. */
-  sharedWithUserIds?: string[];
   /** The Canvases it writes that this reader may open, most recently active first. */
   canvases?: CanvasSummary[];
+  /** The Canvas whose Chat made it, when one did; it is among `canvases` only for a reader who may open it. */
+  madeInCanvasId?: string;
 }
 
 export interface SocketTicket {

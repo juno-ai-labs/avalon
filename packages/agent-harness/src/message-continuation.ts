@@ -1,3 +1,4 @@
+import { MESSAGE_CONTINUATION_FALLBACK_MODEL } from "@rally/contracts/runtime-config";
 import { z } from "zod";
 import { askJev, jevChoiceQuestion, jevChoiceAnswerSchema, runConfidenceCascade, JEV_LATEST_MODEL } from "./jev";
 import { messageContinuationState, renderMessageContinuationMessages, type MessageContinuationInput } from "./prompts/message-continuation";
@@ -9,7 +10,7 @@ import { classifyAddressing, OpenRouterClient, ADDRESSING_FALLBACK_TIMEOUT_MS } 
 // one second, about three times the measured 346 ms p95, and strict > 0.5.
 export const MESSAGE_CONTINUATION_TIMEOUT_MS = 1_000;
 export const MESSAGE_CONTINUATION_CONFIDENCE_THRESHOLD = 0.5;
-export const MESSAGE_CONTINUATION_FALLBACK_MODEL = "openai/gpt-6.1-sol";
+export { MESSAGE_CONTINUATION_FALLBACK_MODEL };
 export const MESSAGE_CONTINUATION_FALLBACK_PROVIDER = "openai";
 
 const CHOICES = ["resume_requested_work", "followup_without_rally_action", "use_addressing"] as const;

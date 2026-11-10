@@ -1,3 +1,4 @@
+import type { FeatureFlagEnvironment } from "@rally/contracts/runtime-config";
 import { configuredRegions } from "@rally/contracts/regions";
 import { RegionSchema } from "@rally/contracts/regions";
 import { isConfiguredRegion } from "@rally/contracts/regions";
@@ -13,8 +14,6 @@ import type { Region, UserId, WorkspaceId } from "@rally/contracts";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboarding-service";
 import type { GitHubRegionalBridgeRpcBinding, GlobalGitHubRouterRpcBinding } from "./services/github-routing-service";
-import type { GlobalWorkstreamEmailRouterRpcBinding } from "./services/workstream-email-routing-service";
-import type { InboundEmailRegionalRpcBinding } from "./services/resend-inbound-email-service";
 import type {
   GlobalLinearRouterRpcBinding,
   LinearRegionalBridgeRpcBinding,
@@ -33,13 +32,12 @@ import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container"
 import type { ArtifactHostDO } from "./durable-objects/artifact-host-do";
 import type { AgentLoopDO } from "./durable-objects/agent-loop-do";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
-import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 import type { DocumentProcessingRpcBinding } from './services/document-processing-contract';
 import type { TerminalProviderRpcBinding } from './services/terminal/provider-rpc-contract';
 import type { TelemetryDeliveryRpcBinding } from './telemetry/telemetry-delivery-contract';
 
-export interface Env {
+export interface Env extends FeatureFlagEnvironment {
   DB: D1Database;
   TELEMETRY_DB: D1Database;
   AUDIT_DB: D1Database;
@@ -49,8 +47,6 @@ export interface Env {
   /** Shared, content-free routing authority available to both product regions. */
   PLATFORM_DB: D1Database;
   PAYLOADS: R2Bucket;
-  /** Global-only installer stream for private download grants. */
-  DESKTOP_RELEASES?: R2Bucket;
   TELEMETRY_PAYLOADS: R2Bucket;
   /** One globally replicated cache shared by the configured Workers. */
   INFERENCE_PRICING_CACHE: KVNamespace;
@@ -69,11 +65,6 @@ export interface Env {
   TERMINAL_PROVIDER: TerminalProviderRpcBinding;
   /** Private destination adapter for the configured deployment. */
   TELEMETRY_DELIVERY?: TelemetryDeliveryRpcBinding;
-  // Optional because a Worker may run without the binding. Note that
-  // `wrangler dev --local` still provides the object — it is every *call* that
-  // throws `Binding FLAGS needs to be run remotely`, so readers must handle
-  // both. Either way they fall back to the model variables below.
-  FLAGS?: Flagship;
   SUBSTREAM_AGENTS: DurableObjectNamespace<AgentLoopDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
@@ -123,26 +114,16 @@ export interface Env {
   CONNECTOR_EVENT_WORKFLOW: Workflow;
   [binding: `REGION_${string}_IDENTITY_BRIDGE`]: RegionalIdentityBridgeRpcBinding | undefined;
   [binding: `REGION_${string}_GITHUB_BRIDGE`]: GitHubRegionalBridgeRpcBinding | undefined;
-  [binding: `REGION_${string}_INBOUND_EMAIL_BRIDGE`]: InboundEmailRegionalRpcBinding | undefined;
   [binding: `REGION_${string}_LINEAR_BRIDGE`]: LinearRegionalBridgeRpcBinding | undefined;
   GLOBAL_ASHBY_ROUTER?: GlobalAshbyRouterRpcBinding;
   [binding: `REGION_${string}_NOTION_BRIDGE`]: NotionRegionalBridgeRpcBinding | undefined;
   [binding: `REGION_${string}_SLACK_BRIDGE`]: SlackRegionalBridgeRpcBinding | undefined;
   [binding: `REGION_${string}_TELEMETRY_BRIDGE`]: RegionalTelemetryBridgeRpcBinding | undefined;
-  GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
   GLOBAL_GITHUB_ROUTER?: GlobalGitHubRouterRpcBinding;
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
   GLOBAL_NOTION_ROUTER?: GlobalNotionRouterRpcBinding;
   GLOBAL_SLACK_ROUTER?: GlobalSlackRouterRpcBinding;
   GLOBAL_TELEMETRY_CONTROL?: GlobalTelemetryControlRpcBinding;
-  /**
-   * The regional queue that carries Durable Object migration reports to the
-   * account-wide tracker. Optional deliberately: local development and every
-   * partial test `Env` run without it, and an object's schema must never depend
-   * on the observer that watches it. See
-   * `docs/durable-object-migration-tracking.md`.
-   */
-  MIGRATION_REPORT_QUEUE?: Queue<DurableObjectMigrationReport>;
   /** Materialized into production Wrangler configs after the stream is ensured. */
   INFERENCE_LAKEHOUSE?: Pipeline;
   /** Materialized into Global production after the analytics stream is ensured. */
@@ -188,10 +169,11 @@ export interface Env {
 
   OPENROUTER_API_KEY: string;
   TYPESAFE_API_KEY?: string;
-  OPENROUTER_PRIMARY_MODEL: string;
-  OPENROUTER_FALLBACK_MODELS: string;
-  OPENROUTER_CLASSIFIER_MODEL: string;
-  OPENROUTER_STRUCTURED_MODEL: string;
+  AGENT_MODEL_ROUTING_JSON?: unknown;
+  OPENROUTER_PRIMARY_MODEL?: unknown;
+  OPENROUTER_SMARTER_MODEL?: unknown;
+  OPENROUTER_FALLBACK_MODEL?: unknown;
+  OPENROUTER_FASTER_MODEL?: unknown;
   AZURE_OPENAI_ENDPOINT?: string;
   AZURE_OPENAI_API_KEY?: string;
   AZURE_OPENAI_REALTIME_DEPLOYMENT?: string;
@@ -199,20 +181,20 @@ export interface Env {
   AZURE_INFERENCE_ENDPOINT?: string;
   AZURE_INFERENCE_API_KEY?: string;
   FIRECRAWL_API_KEY?: string;
-  /** Acquisition-only controls; missing production bindings fail closed. */
-  ACCESS_EDGE_RATE_LIMITER?: RateLimit;
-  TURNSTILE_SECRET_KEY?: string;
-  RESEND_API_KEY?: string;
-  RESEND_FROM_EMAIL?: string;
+  /** Native Cloudflare Email Service send binding. */
+  EMAIL?: { send(message: EmailMessageBuilder): Promise<EmailSendResult> };
+  EMAIL_FROM?: string;
   /** Explicit email sign-in policy; unset keeps the new entrypoint unavailable. */
   EMAIL_LOGIN_POLICY_JSON?: string;
   BROWSER_APP_ORIGIN?: string;
-  RESEND_NOTIFICATION_FROM_EMAIL?: string;
-  RESEND_RECEIVING_API_KEY?: string;
-  RESEND_WEBHOOK_SIGNING_SECRET?: string;
-  RESEND_WEBHOOK_SECRET?: string;
-  WORKSTREAM_EMAIL_ADDRESS_KEY?: string;
-  WORKSTREAM_EMAIL_DOMAIN?: string;
+  /**
+   * The MCP server's resource URL (RFC 8707), as its protected-resource
+   * metadata names it: the one resource Rally's authorization server issues
+   * tokens for (`docs/rally-mcp.md`). Unset, a request that names any resource
+   * is refused.
+   */
+  MCP_RESOURCE?: string;
+  EMAIL_NOTIFICATION_FROM?: string;
 
   /** Global only. `productionOnlySecrets` enforces them there; regional never carries them. */
   GOOGLE_OAUTH_CLIENT_ID?: string;
@@ -255,7 +237,7 @@ export interface Env {
   /** Per-region operator credentials for the restricted telemetry operations
    * surface. Stored as a JSON map from opaque bearer token to fixed principal. */
   TELEMETRY_OPERATORS_JSON?: string;
-  /** Per-region operator credentials for the surfaces Ace calls — workspace
+  /** Per-region operator credentials for the operator API surfaces — workspace
    * retirement, access, and connector maintenance — in the `demos` role. Both
    * names are stored ones kept from the retired demo feature
    * (`docs/rally-rebrand-inventory.md`). The same map
@@ -292,7 +274,6 @@ export interface Env {
   MAX_ATTACHMENT_BYTES: string;
   WEBHOOK_REPLAY_WINDOW_SECONDS: string;
   PROVIDER_WEBHOOK_MAX_BYTES?: string;
-  INBOUND_EMAIL_MAX_BYTES?: string;
   LOG_LEVEL: "debug" | "info" | "warn" | "error";
 }
 
@@ -313,16 +294,6 @@ export interface IdentityAuthContext {
    * correlation value only, not a row anywhere. The objects verify a connector
    * principal against current workspace membership instead of `sessions`;
    * see `AgentLoopDO.connectorPrincipalAuth`.
-   *
-   * The Space cutover's driver is the third construction of `"connector"`, and
-   * for the same reason: it runs with nobody signed in, so its `sessionId` is a
-   * correlation value and the objects verify the member it acts as against
-   * current membership (`docs/spaces.md`).
-   *
-   * A Channel access request's approver has no login session either: their
-   * one-click email approval, and the check that they can still open what
-   * they are asked about, act as them after the Worker re-reads their active
-   * membership (`conversation-access-request-service.ts`).
    *
    * A consumed resource-authorization callback also has no login session. The
    * Worker verifies its sealed provider state, connection, and membership,
@@ -385,6 +356,12 @@ export interface AppVariables {
   /** Set only by request middleware after current workspace membership is proven. */
   requestMembership: RequestMembershipObservation | undefined;
   operator: TelemetryOperatorPrincipal | undefined;
+  /**
+   * `"mcp"` when the bearer is an MCP client's (`rally-mcp` audience), set by
+   * `authenticate`; absent for the app's own sessions. Routes that admit more
+   * than a Canvas narrow to one for it (`docs/rally-mcp.md`).
+   */
+  tokenAudience: "mcp" | undefined;
   /**
    * How long authentication took, in milliseconds.
    *
@@ -490,10 +467,11 @@ const EnvContractSchema = z.object({
   DAYTONA_TERMINAL_SNAPSHOT: z.string().optional(),
 
   // `OPENROUTER_API_KEY` is deliberately not here; see `productionOnlySecrets`.
-  OPENROUTER_PRIMARY_MODEL: z.string().min(1),
-  OPENROUTER_FALLBACK_MODELS: z.string(),
-  OPENROUTER_CLASSIFIER_MODEL: z.string().min(1),
-  OPENROUTER_STRUCTURED_MODEL: z.string().min(1),
+  AGENT_MODEL_ROUTING_JSON: z.unknown().optional(),
+  OPENROUTER_PRIMARY_MODEL: z.unknown().optional(),
+  OPENROUTER_SMARTER_MODEL: z.unknown().optional(),
+  OPENROUTER_FALLBACK_MODEL: z.unknown().optional(),
+  OPENROUTER_FASTER_MODEL: z.unknown().optional(),
   AZURE_INFERENCE_ENDPOINT: AzureInferenceEndpointSchema.optional(),
   // Deliberately optional: Azure model routing degrades to OpenRouter when absent.
   AZURE_INFERENCE_API_KEY: z.string().min(1).optional(),
@@ -526,7 +504,6 @@ const EnvContractSchema = z.object({
   HARNESS_CHILD_MAX_DEPTH: numericString.optional(),
   CONNECTOR_POLL_TIMEOUT_MS: numericString.optional(),
   PROVIDER_WEBHOOK_MAX_BYTES: numericString.optional(),
-  INBOUND_EMAIL_MAX_BYTES: numericString.optional(),
 
 
   GITHUB_INGRESS_BASE_URL: HttpUrlSchema.optional(),
@@ -717,8 +694,7 @@ export function numericEnv(
     | "WEB_FETCH_MAX_BYTES"
     | "MAX_ATTACHMENT_BYTES"
     | "WEBHOOK_REPLAY_WINDOW_SECONDS"
-    | "PROVIDER_WEBHOOK_MAX_BYTES"
-    | "INBOUND_EMAIL_MAX_BYTES",
+    | "PROVIDER_WEBHOOK_MAX_BYTES",
   fallback: number,
 ): number {
   const parsed = Number.parseInt(env[key] ?? "", 10);

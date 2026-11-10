@@ -128,7 +128,20 @@ function secretKey(env: Env): Uint8Array {
   throw new ApiError(503, "auth_not_configured", "Authentication is not configured");
 }
 
-export async function issueAccessToken(env: Env, context: Omit<IdentityAuthContext, "role">): Promise<string> {
+/**
+ * Who an access token is for. A desktop or browser session's token reaches
+ * the whole product API; an MCP client's (`docs/rally-mcp.md`) carries its
+ * own audience, which the request middleware confines to the routes the MCP
+ * server calls, and which every other verifier here refuses.
+ */
+export type AccessTokenAudience = "desktop" | "mcp";
+const TOKEN_AUDIENCES: Record<AccessTokenAudience, string> = { desktop: "avalon-desktop", mcp: "rally-mcp" };
+
+/** How long one access token lives; a token response reports it as `expires_in`. */
+export const ACCESS_TOKEN_TTL_SECONDS = ACCESS_TTL_SECONDS;
+
+export async function issueAccessToken(env: Env, context: Omit<IdentityAuthContext, "role">,
+  audience: AccessTokenAudience = "desktop"): Promise<string> {
   const now = Math.floor(Date.now() / 1_000);
   return new SignJWT({
     sid: context.sessionId,
@@ -138,18 +151,29 @@ export async function issueAccessToken(env: Env, context: Omit<IdentityAuthConte
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(context.userId)
     .setIssuer("avalon-api")
-    .setAudience("avalon-desktop")
+    .setAudience(TOKEN_AUDIENCES[audience])
     .setIssuedAt(now)
     .setExpirationTime(now + ACCESS_TTL_SECONDS)
     .sign(secretKey(env));
 }
 
+/** A desktop or browser access token's claims; an MCP client's token is refused. */
 export async function verifyAccessToken(env: Env, token: string): Promise<Omit<IdentityAuthContext, "role">> {
+  return (await verifyAudiencedAccessToken(env, token, ["desktop"])).claims;
+}
+
+/**
+ * An access token of any audience in `accepted`, and which one it carries.
+ * Only the request middleware accepts more than the desktop's.
+ */
+export async function verifyAudiencedAccessToken(env: Env, token: string, accepted: readonly AccessTokenAudience[]): Promise<{
+  claims: Omit<IdentityAuthContext, "role">; audience: AccessTokenAudience;
+}> {
   try {
     const { payload } = await jwtVerify(token, secretKey(env), {
       algorithms: ["HS256"],
       issuer: "avalon-api",
-      audience: "avalon-desktop",
+      audience: accepted.map((audience) => TOKEN_AUDIENCES[audience]),
     });
     if (
       typeof payload.sub !== "string" ||
@@ -159,11 +183,15 @@ export async function verifyAccessToken(env: Env, token: string): Promise<Omit<I
     ) {
       throw new Error("Incomplete session claims");
     }
+    const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
     return {
-      sessionId: payload.sid,
-      userId: asUserId(payload.sub),
-      workspaceId: typeof payload.wid === "string" ? asWorkspaceId(payload.wid) : null,
-      region: payload.region,
+      claims: {
+        sessionId: payload.sid,
+        userId: asUserId(payload.sub),
+        workspaceId: typeof payload.wid === "string" ? asWorkspaceId(payload.wid) : null,
+        region: payload.region,
+      },
+      audience: aud.includes(TOKEN_AUDIENCES.mcp) ? "mcp" : "desktop",
     };
   } catch {
     throw new ApiError(401, "invalid_session", "The session is invalid or expired");
@@ -560,7 +588,13 @@ export class AuthService {
     return session;
   }
 
-  async refresh(refreshToken: string): Promise<Session> {
+  /**
+   * Rotate a refresh token. A desktop or browser refresh never renews a
+   * session an MCP client holds, and an MCP client's refresh (`mcpClientId`)
+   * renews only a session that client holds, so neither token can be traded
+   * for the other's audience.
+   */
+  async refresh(refreshToken: string, grant?: { mcpClientId: string }): Promise<Session> {
     const oldHash = await sha256(refreshToken);
     const newRefreshToken = randomToken(48);
     const newHash = await sha256(newRefreshToken);
@@ -580,6 +614,7 @@ export class AuthService {
            expires_at = ${renewal.expirySql}
        WHERE (refresh_token_hash = ? OR previous_refresh_token_hash = ?)
          AND ${renewal.eligibilitySql}
+         AND id ${grant ? "IN (SELECT session_id FROM mcp_oauth_grants WHERE client_id = ?)" : "NOT IN (SELECT session_id FROM mcp_oauth_grants)"}
        RETURNING id, user_id, workspace_id, impersonator_user_id`,
     )
       .bind(
@@ -590,6 +625,7 @@ export class AuthService {
         oldHash,
         oldHash,
         ...renewal.eligibilityValues,
+        ...(grant ? [grant.mcpClientId] : []),
       )
       .first<{ id: string; user_id: string; workspace_id: string | null; impersonator_user_id: string | null }>();
     if (!row) throw new ApiError(401, "invalid_refresh_token", "The refresh token is invalid or expired");
@@ -602,7 +638,7 @@ export class AuthService {
       userId: asUserId(row.user_id),
       workspaceId: row.workspace_id === null ? null : asWorkspaceId(row.workspace_id),
       region: this.env.AVALON_REGION,
-    });
+    }, grant ? "mcp" : "desktop");
     return this.formatSession(identity, accessToken, newRefreshToken);
   }
 
@@ -814,6 +850,16 @@ export class AuthService {
   }
 
   /**
+   * Issues an ordinary workspace session for an MCP client the person just
+   * authorized (`docs/rally-mcp.md`): the session and the grant row that
+   * marks it as that client's are written in one batch, and its access token
+   * carries the MCP audience.
+   */
+  async createMcpSession(userId: string, workspaceId: string, clientId: string): Promise<Session> {
+    return this.createSession(await this.loadIdentity(userId, workspaceId), undefined, { mcpClientId: clientId });
+  }
+
+  /**
    * Issues a support session: an ordinary session of `representedUserId` in
    * `workspaceId`, carrying the staff member who is acting. The one statement
    * that writes it admits nothing unless the grant is live, the operator is an
@@ -886,6 +932,11 @@ export class AuthService {
     return this.createSession(await this.loadIdentity(userId, null));
   }
 
+  /** A password proof remains valid only while its credential generation exists. */
+  async createPasswordIdentitySession(userId: string, credentialId: string): Promise<Session> {
+    return this.createSession(await this.loadIdentity(userId, null), undefined, undefined, credentialId);
+  }
+
   /** Only a successfully consumed mailbox challenge can resume this session. */
   async resumeEmailLogin(receipt: { challengeId:string;redemptionId:string }, clientPlatform: SignupPlatform): Promise<Session> {
     const row = await this.env.DB.prepare(`SELECT user_id,session_id,session_secret_encrypted,redeemed_at,telemetry_flow_id,telemetry_client_platform,signup_created
@@ -902,14 +953,25 @@ export class AuthService {
     return session;
   }
 
-  private async createSession(identity: IdentityRow, prepared?: { sessionId:string;refreshToken:string;createdAt:string }): Promise<Session> {
+  private async createSession(identity: IdentityRow, prepared?: { sessionId:string;refreshToken:string;createdAt:string },
+    grant?: { mcpClientId: string }, passwordCredentialId?: string): Promise<Session> {
     const sessionId = prepared?.sessionId ?? newId();
     const refreshToken = prepared?.refreshToken ?? randomToken(48);
     const at = prepared?.createdAt ?? nowIso();
-    await this.env.DB.prepare(
-      `INSERT INTO sessions
-       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+    const insert = this.env.DB.prepare(
+      passwordCredentialId
+        ? `INSERT INTO sessions
+           (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (
+             SELECT 1 FROM user_password_credentials c
+             JOIN users u ON u.id = c.user_id
+             JOIN user_verified_emails v ON v.user_id = u.id AND v.email = u.email COLLATE NOCASE
+             WHERE c.user_id = ? AND c.credential_id = ?
+           ) ON CONFLICT(id) DO NOTHING RETURNING id`
+        : `INSERT INTO sessions
+           (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
     )
       .bind(
         sessionId,
@@ -919,8 +981,17 @@ export class AuthService {
         await sha256(refreshToken),
         new Date(Date.parse(at) + SESSION_RENEWAL_WINDOW_SECONDS * 1_000).toISOString(),
         at,
-      )
-      .run();
+        ...(passwordCredentialId ? [identity.user_id, passwordCredentialId] : []),
+      );
+    if (passwordCredentialId) {
+      if (!await insert.first()) throw new ApiError(401, "password_login_invalid", "The email or password is incorrect.");
+    } else if (grant) {
+      await this.env.DB.batch([insert, this.env.DB.prepare(
+        "INSERT INTO mcp_oauth_grants(session_id,client_id,created_at) VALUES (?,?,?)",
+      ).bind(sessionId, grant.mcpClientId, at)]);
+    } else {
+      await insert.run();
+    }
     if (prepared) {
       const session = await this.env.DB.prepare(`SELECT 1 AS present FROM sessions
         WHERE id=? AND user_id=? AND workspace_id IS NULL AND refresh_token_hash=?
@@ -933,7 +1004,7 @@ export class AuthService {
       userId: asUserId(identity.user_id),
       workspaceId: identity.workspace_id === null ? null : asWorkspaceId(identity.workspace_id),
       region: this.env.AVALON_REGION,
-    });
+    }, grant ? "mcp" : "desktop");
     return this.formatSession(identity, accessToken, refreshToken);
   }
 

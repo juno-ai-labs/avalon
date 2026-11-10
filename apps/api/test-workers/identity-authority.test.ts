@@ -76,8 +76,6 @@ function provisionInput(overrides: Record<string, unknown> = {}): Record<string,
     createdByUserId: TAYLOR,
     participantUserIds: [TAYLOR],
     harnessStatus: "scheduled",
-    emailAddress: "brief@automation.with-avalon.com",
-    emailRouteStatus: "reserved",
     systemKind: null,
     automationSubscriptionId: "00000000-0000-7000-8000-0000000000b1",
     automationRunId: "00000000-0000-7000-8000-0000000000b2",
@@ -100,7 +98,7 @@ describe("identity authority on real workerd", () => {
     expect(result.value).toEqual({ outcome: "provisioned" });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
-        `SELECT title, scope, exact_state, state_reason_code, created_by_user_id, email_address
+        `SELECT title, scope, exact_state, state_reason_code, created_by_user_id
            FROM workstream WHERE id = 1`,
       ).one()).toMatchObject({
         title: "Daily brief",
@@ -108,7 +106,6 @@ describe("identity authority on real workerd", () => {
         exact_state: "scheduled",
         state_reason_code: "run_scheduled",
         created_by_user_id: TAYLOR,
-        email_address: "brief@automation.with-avalon.com",
       });
       expect(state.storage.sql.exec(
         `SELECT user_id, participation_reason FROM participants`,
@@ -144,7 +141,7 @@ describe("identity authority on real workerd", () => {
     });
   });
 
-  it.each([false, true])("stores the Channel colour and preserves an existing appearance (existing=%s)", async (existing) => {
+  it.each([false, true])("stores the conversation colour and preserves an existing appearance (existing=%s)", async (existing) => {
     const stub = agent();
     await boot(stub);
     await runInDurableObject(stub, (_instance, state) => {
@@ -164,43 +161,13 @@ describe("identity authority on real workerd", () => {
 
     const result = await identity(stub, "identity");
 
-    // Reads are most of this port's traffic — an archive gate on every inbound
-    // email, a model pin on every run. Committing a projection for each would
+    // Reads are most of this port's traffic — a model pin on every run.
+    // Committing a projection for each would
     // republish the sidebar on all of them.
     expect(result.value).toMatchObject({ workstream_key: WORKSTREAM_ID });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM projection_keys`).one().count)
         .toBe(0);
-    });
-  });
-
-  it("takes an address once, and tells the second reservation it lost", async () => {
-    const stub = agent();
-    await boot(stub);
-    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
-
-    const first = await identity(stub, "adoptEmailAddress", {
-      emailAddress: "first@automation.with-avalon.com",
-      now: 3,
-    });
-    const second = await identity(stub, "adoptEmailAddress", {
-      emailAddress: "second@automation.with-avalon.com",
-      now: 4,
-    });
-
-    // `WHERE email_address IS NULL` was the routed statement's guard against
-    // two reservations racing for one work stream. The caller compares what
-    // came back against what it reserved either way, and an address it did not
-    // reserve is a conflict rather than a success.
-    expect(first.value).toEqual({ outcome: "adopted" });
-    expect(second.value).toEqual({ outcome: "already_addressed" });
-    await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(
-        `SELECT email_address, email_route_status FROM workstream WHERE id = 1`,
-      ).one()).toEqual({
-        email_address: "first@automation.with-avalon.com",
-        email_route_status: "reserved",
-      });
     });
   });
 

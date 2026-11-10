@@ -22,7 +22,6 @@ import {
 import type { FetchLike } from "./provider-utils";
 import {
   type AuthorizedConnectorConnection,
-  acknowledgeConnectorAgentActivation,
   authorizedConnection,
   connectorCapabilitySupportsScope,
   type ConnectorError,
@@ -1457,14 +1456,12 @@ describe("Slack connector", () => {
       signal: neverAborts(),
     };
 
-    await expect(acknowledgeConnectorAgentActivation(
-      adapter.messagingAgent!,
-      invocation,
+    await expect(adapter.messagingAgent!.execute(
+      adapter.messagingAgent!.activationAcknowledgement!(invocation)!,
       context,
     )).resolves.toEqual({ success: true, reaction: "eyes", removed: false, alreadyPresent: false });
-    await expect(acknowledgeConnectorAgentActivation(
-      adapter.messagingAgent!,
-      invocation,
+    await expect(adapter.messagingAgent!.execute(
+      adapter.messagingAgent!.activationAcknowledgement!(invocation)!,
       context,
     )).resolves.toEqual({ success: true, reaction: "eyes", removed: false, alreadyPresent: true });
 
@@ -1481,16 +1478,11 @@ describe("Slack connector", () => {
       },
     });
     expect(slackAgentActivationAcknowledgement(commandInvocation)).toBeNull();
-    await expect(acknowledgeConnectorAgentActivation(
-      adapter.messagingAgent!,
-      commandInvocation,
-      context,
-    )).resolves.toBeNull();
+    expect(adapter.messagingAgent!.activationAcknowledgement!(commandInvocation)).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(2);
 
-    await expect(acknowledgeConnectorAgentActivation(
-      adapter.messagingAgent!,
-      invocation,
+    await expect(adapter.messagingAgent!.execute(
+      adapter.messagingAgent!.activationAcknowledgement!(invocation)!,
       {
         ...context,
         connection: { ...context.connection, grantedScopes: [] },

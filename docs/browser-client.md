@@ -1,6 +1,6 @@
 # Browser client
 
-The browser client provides email and Google sign-in, then mounts the desktop
+The browser client provides email, Google and operator-provisioned password sign-in, then mounts the desktop
 shell for everyone: Organization members and guests shared into some of its
 conversations, as described in [The shell](#the-shell). A guest gets no setup or
 onboarding. Sign-in, which also claims anything shared with the person's
@@ -14,7 +14,8 @@ artifact serving remain release checks.
 | Path | Responsibility |
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
-| `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google sign-in, session restore and workspace list. |
+| `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google and password sign-in, session restore and workspace list. |
+| `apps/browser/src/mcp-consent.tsx` | The MCP consent page at `/app/oauth/authorize`: sign-in, then allow or deny an MCP client for one Organization ([`rally-mcp.md`](rally-mcp.md#consent)). |
 | `apps/browser/src/site-open.tsx` | The site-opening page a protected site sends a signed-out visitor to: finds the site's organization, opens it, opens the site and returns to the visitor's path. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
@@ -126,6 +127,16 @@ Canvases shared with them and the Sidekicks they may open. A guest has no New
 Canvas or New Sidekick, and the Canvases home's empty state says a shared
 Canvas appears there. The server re-authorizes every conversation a guest
 opens.
+
+### Password sign-in
+
+The initial card offers **Sign in with password**, using the same form as the
+Mac app. Email and password go to Global's `/browser/password`; the ordinary
+cookie session is adopted through the same return-destination and Organization
+picker flow as email redemption. Password writes share the browser cookie lock
+with renewal and logout. Operators provision credentials through engineering MCP;
+there is no public signup or reset form. [Password sign-in](password-login.md)
+owns the credential lifecycle.
 
 ### Google sign-in
 
@@ -529,7 +540,7 @@ Chrome that a real invitation arrives, email sign-in opens the conversation, and
 shared conversation can send messages and receive realtime updates. The workflow's
 public route checks compare the served shell with the built HTML, including its
 hashed assets; they do not prove mailbox delivery or authenticated collaboration.
-The workflow reuses the site deployment budget and Ace's domain propagation retries.
+The workflow reuses the site deployment budget and the shared domain propagation retries.
 If API deployment finishes first, invitation links can temporarily point to a
 host that is not ready. Disable new sharing/sign-in by removing the API browser
 origin; removing the browser route from config alone does not detach an existing

@@ -1,6 +1,16 @@
 # Agent harness
 
-Rally's production loop is an adapter over `@juno-ai/bind` 16.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. The owning `AgentLoopDO` Durable Object hosts every conversation loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite; there is no pre-cutover drain or Workflow fallback for this surface. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-conversation products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Separate non-workstream loops may still use Cloudflare Workflows.
+Rally's production loop uses the local `@juno-ai/bind` workspace package in
+`packages/bind`. Bind owns turn and tool iteration, plugin activation, skill
+registration and activation, transcript healing, completion-defect detection,
+streaming resets, and route execution. The owning `AgentLoopDO` Durable Object
+hosts each conversation loop and stores admission, leases, transcript, receipts,
+streaming checkpoints, and terminal state in SQLite. Conversation recovery also
+runs in `AgentLoopDO`, and the pre-cutover drain has ended. `WorkspaceDO` owns
+Organization connector, resource, memory, and policy state and cross-conversation
+products. Regional D1 retains identity, membership, routing, migration, and
+operational records. R2 stores large outputs. Separate non-workstream loops may
+still use Cloudflare Workflows.
 
 Each substream owns one persistent server-side, tool-using loop. A run is a
 subordinate execution receipt for one activation of that loop; it never creates
@@ -46,7 +56,7 @@ owned deadline permits fallback. The OpenRouter leg has a 15-second owned
 deadline, above the measured 10.0-11.6 second p99 range. If both providers fail
 or stall, the conservative deterministic classifier is the terminal availability
 floor so addressing cannot prevent the user's message from being persisted. The cascade has no
-Flagship role or Worker model variable: changing
+configurable agent role or Worker model variable: changing
 its model, provider, prompt, or threshold requires a new evaluation and deploy.
 The OpenRouter fallback model list is deliberately not used on this path.
 Production and staging require `TYPESAFE_API_KEY`; development without it
@@ -128,6 +138,7 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 
 | Path | Responsibility |
 | --- | --- |
+| `packages/bind/src/` | The portable loop kernel, checkpoints, routing, completion processing, transcript healing, and tool, plugin, and skill primitives. |
 | `packages/agent-harness/src/bind-runtime.ts` | The Bind adapter itself — registry construction, the tool loop's hooks, streaming. |
 | `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization, blanked-optional-argument stripping, and bounded model-visible argument errors. |
 | `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
@@ -414,7 +425,7 @@ hash, the opening message as its user-role message: two to four words, thirty
 characters or less, sentence case and never every word capitalized, the rules
 the Thread naming prompt measured. The Thread naming pass is
 deleted ([its retirement record](canvases.md#retired-documents) is in `canvases.md`). The
-`workstream_naming` model role serves that call and one other, the title a
+`resource_naming` model role serves that call and one other, the title a
 long pasted text is given (`pasted-text-service.ts`).
 
 ### Activation, admission, and immutable run scope
@@ -482,7 +493,7 @@ provenance; the persistent loop keeps the conversation itself and is resumed
 rather than reconstructed from that trigger on every activation.
 
 System producers that already own a canonical trigger—such as an
-automation opening input, activity, or inbound email—may prepare an unlinked
+automation opening input, activity,—may prepare an unlinked
 execution receipt and wake the same loop. `transcriptFenceMessageId` separates
 the trigger's identity from the newest canonical turn that activation may see.
 A retry can therefore preserve what caused the failed activation while moving
@@ -494,7 +505,7 @@ After admission Rally validates the execution principal and records the run scop
 
 ### Context and stable prompts
 
-Context is assembled for the execution principal from the conversation title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. An automation run also receives, from `AutomationDO.readRunDefinition` by its pinned revision, the existing Sidekick ID, definition revision, name, instructions, expected outputs, and default behavior, and `homeConversationId`, which is always null now: no conversation is a Sidekick's home, and the run delivers its result itself. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
+Context is assembled for the execution principal from the conversation title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. An automation run also receives, from `AutomationDO.readRunDefinition` by its pinned revision, the existing Sidekick ID, definition revision, name, instructions, expected outputs, and default behavior, and `homeConversationId`, which is always null now: no conversation is a Sidekick's home, and the run delivers its result itself. A triggering activity is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
 
 Sidekick execution policy identifies this as one activation of an existing
 Sidekick, rather than a request to configure it again. Rally owns future
@@ -531,7 +542,7 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Substantial interactive work starts with a brief approach; updates then focus on changes to participants' expectations or decisions they need to make. Headless runs skip progress narration. Final responses lead with the result and omit padding while retaining requested detail and material caveats. The prompt owns the writing rules; its preference for natural language applies to style only and does not relax platform policy. Private reasoning is never emitted.
 
-The standing prompt names the product as it is: an Organization holds Canvases and Sidekicks, a Canvas's Chat is where its people ask Rally for work, and a Sidekick's shared conversation is where the people it is shared with read its runs and ask for more, each run in a conversation of its own. It names no Channel, Thread, Breakout or Space, and the task context's key for the title and objective is `conversation`. Every Sidekick run that an inbound email did not start runs on the `self_delivery` surface, whose section says what the people in the Sidekick's shared conversation see (the final message is the reply on the run's row there, and nothing sends it anywhere else), that any send to a reader outside Rally is the run's own work, done with its tools, and that it sends nothing when the instructions ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. The `rally:conversations` plugin's run instruction says the same about the row and tells the run not to post that reply into the shared conversation again; a post is for another conversation. It says nothing about missing access: the activation section's ask-and-wait rule is the only statement of it, because the plugin's message renders later and an older report-and-finish wording there was the one a model followed. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the run rows.
+The standing prompt names the product as it is: an Organization holds Canvases and Sidekicks, a Canvas's Chat is where its people ask Rally for work, and a Sidekick's shared conversation is where the people it is shared with read its runs and ask for more, each run in a conversation of its own. It names no Channel, Thread, Breakout or Space, and the task context's key for the title and objective is `conversation`. Every Sidekick run runs on the `self_delivery` surface, whose section says what the people in the Sidekick's shared conversation see (the final message is the reply on the run's row there, and nothing sends it anywhere else), that any send to a reader outside Rally is the run's own work, done with its tools, and that it sends nothing when the instructions ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. The `rally:conversations` plugin's run instruction says the same about the row and tells the run not to post that reply into the shared conversation again; a post is for another conversation. It says nothing about missing access: the activation section's ask-and-wait rule is the only statement of it, because the plugin's message renders later and an older report-and-finish wording there was the one a model followed. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the run rows.
 
 A document-shaped request is written as a Markdown file in the conversation's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the run has no Terminal plugin or the workspace cannot be reached, which outranks a request for a document. A Sidekick run a non-delegate asked for gets no Terminal (`terminal-workspaces.md`), so the standing prompt's calculation rule and the Sites section carry the same no-Terminal alternative beside the rule each excepts. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every conversation run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal conversation rule steers into.
 
@@ -552,10 +563,6 @@ test in `index.test.ts` covers deferred activation and direct execution for
 true, false, and omitted hints.
 
 Every connector adapter supplies a static agent-plugin descriptor whose provider type and code-authored tool order must match its manifest. At run start Rally creates one Bind plugin per eligible installed connection, identified as `connection:<uuid>` with a stable hashed wire prefix. Its tools are narrowed to the connection's frozen grants and run policy:
-
-- Ad-hoc runs may include workspace connections and the initiating user's personal connections that a person has not disabled. A stored `needs_reconnect` no longer removes a connection from a run — see [Stored status is a belief, not a gate](connectors.md#stored-status-is-a-belief-not-a-gate).
-- Sidekick runs include the connections the Sidekick's definition bound at apply time (`readRunDefinition().defaultPluginIds` and `connectorBindings`) and eligible connections attached through the run's resources. Attached connections remain limited to the immutable grants frozen for the run.
-- Inbound-email runs remove external connector writes.
 
 Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. An explicit load may run a convergent host-owned `onActivate` preparation hook after reauthorization and dynamic tool loading. Successful preparation is single-flighted for the run, then activation is durably recorded before the plugin's tools or trusted guidance become visible. Failed preparation remains retryable only when the host returns model-safe retry guidance; provider details are not exposed.
 
@@ -748,7 +755,7 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships thirteen skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Seven are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, `using-external-structured-data`, and the two task skills described below. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships ten skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Seven are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, `using-external-structured-data`, and the two task skills described below. The other three each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, and `building-live-sites` above. The three AI-chat readers that the browser plugin owned went with it in the dead-code pass. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
 **Task skills** live in `packages/agent-harness/src/task-skills/`, one folder per skill holding its `skill.ts`, collected as `TASK_SKILLS` and spread into `BUILT_IN_SKILLS`. A task skill is named for an outcome a person asks for rather than a capability: it reads the request, settles what has to be decided before work starts, and names the procedure skills that do the work. `reporting-on-data` finds every connected source that holds part of an answer, names the keys that join them, and slices the joined records the way the person asked, deferring row-level reading to `using-external-structured-data`; it reads a zero, an unmatched filter value or a late source as a finding to caveat rather than a failure, and only a source that did not answer as a failure of that one section; its body carries a section for a Sidekick wizard, which maps the shape of all accessible data and shows the person a plan for combining and slicing it before saving that plan as the run procedure. `creating-an-app` reads "an app" as a live web site, turns a clear iOS or Android request toward a site because Rally builds no native apps, and builds an open site without asking when the app saves nothing people add (a character counter, a converter, a calculator). An app that saves what people add needs Rally sign-in, by default so the site knows who added what (a visitor signs in from the site and comes back), so the one question it may ask, before the first file, is whether those entries are shared or private (`private_to_viewer`). An anonymous poll, survey or feedback box stores answers without who sent them; anyone on the internet can submit to any site, so a public poll just accepts requests without a viewer id. It then hands off to `building-live-sites`. Neither sets an `ownerPlugin`, so a run without Terminal can still route an app request and say what it needs instead of the skill vanishing from the catalog.
 
@@ -839,7 +846,7 @@ and only bounded resource paths travel through the structured failure allowlist.
    on a person. Status cleanup and suppressed-delivery receipts may run without
    one; reply or comment content may not.
 
-Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY`; an inbound-email run holds them like any other, per [`security.md`](security.md).
+Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY`; all supported run triggers use the same capability checks.
 
 ### Elicitation
 
@@ -1031,9 +1038,19 @@ leaves the completed receipt and its original output untouched.
 
 ### Model routing and inference ledger
 
-Each agent's default model and its fallback stages are one Cloudflare Flagship flag, resolved once per run and evaluated against the region, the environment, and the run's subject — the workspace, conversation, and user, each carrying the attributes a targeting rule matches on; the regional Worker variables remain the checked-in default that an absent flag, an unbound binding, and a failed evaluation all resolve to. [`feature-flags.md`](feature-flags.md) owns the flag keys, the value shape, and how a model change is rolled out.
+Each agent's default model and fallback stages resolve locally from its role in
+`@rally/contracts/runtime-config`, with optional deployment-wide environment
+overrides and conversation pins. There are no remote evaluations or targeting
+lookups. [`feature-flags.md`](feature-flags.md) owns the roles, complete-route
+shape, and deployment procedure.
 
-Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks. The harness package has a separate portability boundary: production sources cannot import database, connector, API, or Node-only implementations and cannot read `process`; host capabilities arrive through explicit ports.
+Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's configured route, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks.
+
+Bind and its Rally adapter both run on workerd and receive host capabilities
+through explicit ports. ESLint bars imports of database, connector, API, and
+Node-only implementations and reads of `process`. It requires direct Zod object
+constructors for strict and loose schemas to avoid allocating intermediate
+schemas at Worker startup.
 
 Provider routing is deterministic and versioned by Bind. Rally contributes a
 checked-in canonical-model binding and one planner transport per provider; Bind
@@ -1049,6 +1066,11 @@ root at `toModelToolDefinitions` for that reason, and
 [`agent-tools.md`](agent-tools.md) carries the rule an author has to follow. Other canonical models remain OpenRouter-only. A file-parser request, audio input, or another
 capability an Azure binding has not proved skips that candidate before any
 network request rather than sending a body the deployment may reject.
+
+Bind also exposes an opt-in configuration fallback helper. It checks endpoint
+viability before deduplication. When two canonical models name the same viable
+deployment, the later stage keeps its policy and the earlier stage owns the
+single attempt. The Rally adapter builds its routes with the plain planner.
 
 Inference defaults that belong to a model rather than to one task live in the
 harness's canonical-model defaults registry. Models absent from that registry
@@ -1230,7 +1252,7 @@ A conversation provisioned with an `agent_profile` (a column on its
 `runWorkstreamHarness` reads it from the conversation's identity and, for a
 profiled run, replaces three things wholesale: the system prompt (the
 profile's, not the conversation prompt), the model route (the profile's
-Flagship role, `resolveAgentModelRouting`), and the tool surface — exactly the
+configured role, `resolveAgentModelRouting`), and the tool surface — exactly the
 profile's plugins as always-active core plugins, through `profileHarnessTools`,
 with no built-in or connector plugin and no plugin discovery. Its skill
 catalog is exactly the skills the profile names, with no inherited built-in,
@@ -1397,6 +1419,9 @@ participants remain deferred product work.
 
 ## Invariants
 
+- **The Rally adapter resolves Bind through `workspace:*`.** A change to the
+  local kernel reaches the adapter, tests, and Worker bundle from the same
+  checkout. A registry version would let those paths use different code.
 - **One predicate decides both the transport retry and the failure code**, so the
   failures Rally retries are exactly the ones it names as the provider's.
   Splitting them lets a member be told Rally broke for an outage Rally had just
@@ -1480,12 +1505,12 @@ participants remain deferred product work.
   run was already authorized to read, and a skill naming an owner plugin makes the
   model load it separately rather than activating it — an auto-activation would let
   a document issue a capability grant.
-- **A triggering activity or inbound email is user-role content**, never promoted
+- **A triggering activity is user-role content**, never promoted
   into the system prompt. It carries no trust label of its own. The same holds for
   a naming request and a skill body, which is wrapped in `<skill_content name=…>`
   so the model can tell it from platform policy.
 - **The trigger's two jobs stay separate on a retry.** As *identity* it admits a
-  brief or an inbound email to the model at all; as *bound*
+  brief to the model at all; as *bound*
   (`transcriptFenceMessageId`) it is the newest *turn* the run may see — a turn,
   because the newest one is usually the agent's and an assistant turn's id is
   `<loopId>:turn:<ordinal>` rather than a UUID. The fence
@@ -1523,7 +1548,7 @@ participants remain deferred product work.
   instructions exist only as a transcript `system` row reaches the model with
   nothing but its conversation's objective, because the protocol projector drops
   those rows as UI state; the exceptions are the rows it admits by their
-  structured content's kind (an inbound email, an external event, a Sidekick's
+  structured content's kind (an external event, a Sidekick's
   self-review notice), each through its own renderer.
 - **A cancellation is a durable request, observed by the lease owner**, which alone
   commits the fenced `stopped` transition. Stopping never kills an in-flight
@@ -1653,6 +1678,12 @@ than counted as root outcomes. Prompt/message text, error JSON, arguments,
 outputs, summaries, token content, and provider responses remain excluded.
 
 ## Testing
+
+`pnpm --filter @juno-ai/bind test` exercises the kernel with Vitest on Node.
+It covers tool-loop iteration, routing, checkpoint resume and forks, and
+streaming, along with the tool, transcript, plugin, and skill primitives.
+`pnpm --filter @rally/agent-harness test` exercises Rally's adapter against that
+same local source. Both suites run in the recursive test lane in CI.
 
 `pnpm --filter @rally/agent-harness exec vitest run src/index.test.ts`
 checks completed replay refusals reach the model without executor calls, new
@@ -1814,6 +1845,28 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-09 — Rally builds Bind from its own workspace
+
+**What changed:** `packages/bind` contains the MIT-licensed runtime source from
+Monad commit `f15a110a33a194bdc577f2353c699945d6be5f6e`, the source revision
+recorded for `@juno-ai/bind` 16.0.0. The adapter links to that source through pnpm,
+and Bind's tests run with Rally's Vitest and TypeScript toolchain.
+Bind's optional configuration fallback preserves the provider fence for stages
+whose viable endpoints were already scheduled in an earlier stage.
+
+**Why:** Rally needs to change, verify, and ship the kernel and its host adapter
+from a single checkout. The registry pin made a kernel fix depend on a separate
+Monad change and release.
+
+**Considered and rejected:** Retaining the registry pin would preserve that
+release dependency. Importing the source revision already in use isolates the
+move from runtime upgrades.
+
+**Consequences:** Fixes for Rally's kernel go in `packages/bind` and can ship with
+adapter changes in the same revision. Monad maintains its own copy for its
+callers and publication pipeline. Its fixes reach Rally when they are ported
+into Avalon.
 
 ### 2026-11-09 — The prompts speak of Canvases and Sidekicks, a run's report is its final message, a blocked run asks, and seeded runs are gone
 
@@ -3191,7 +3244,7 @@ majors along.
 ### 2026-09-11 — Trigger content carries a source label again
 
 **What changed:** The three paths that lost all framing when the trust labels
-came out get a plain source line: `INBOUND EMAIL:`, `SLACK CONTEXT:` and
+came out get a plain source line: `SLACK CONTEXT:` and
 `SIDEKICK TRIGGER:`. The external-event path already kept
 `EVENT THAT STARTED THIS RUN:`, and a Sidekick result already carried its name
 and delivery time.
@@ -3210,7 +3263,7 @@ instruction about how far to believe it.
 
 **What changed:** The five `renderUntrusted*` / `renderTriggerActivityMessage`
 helpers are deleted from `prompts/workstream.ts`. Slack surrounding context, a
-trigger email, an external event, a Sidekick result and a trigger activity are
+an external event, a Sidekick result and a trigger activity are
 projected as plain user-role messages. The prompt-authority invariant above is
 rewritten: the layering by role survives, the trust labelling does not.
 
@@ -3480,27 +3533,6 @@ retired memory rule about "a work stream an automation created" has no subject
 left: a run is a substream under the automation, never a work stream.
 
 ### 2026-09-03 — A run delivers its own result, and no trigger narrows its tools
-
-**What changed:** The `# Result delivery` section of the work-stream system
-prompt has two arms: one names the owning room as the only destination Rally
-posts to and tells the run not to post there itself, the other tells a run with
-an empty `resultDelivery` that nothing sends for it and that any sending its
-instructions ask for is its own work. The list's channel type is `workstream`
-alone. `requestedDelivery` is gone from the submit-draft tool schema and its
-normalizer, and the drafting tool's submission pre-check now applies the same
-`automationDraftAcceptanceBlocker` the object does, phrasing both of its
-refusals for the model. In `apps/api/src/services/integrations.ts` the three
-`inbound_email` tool guards are gone, so a mail-started run holds write-mode
-connector tools and the Firecrawl web tools like any other run.
-
-**Why:** Delivery destinations chosen at creation and sent by a loop after the
-run could not express what instructions can, and their existence let a run read
-silence as "Rally has it covered"; the empty arm is what stops that. The
-inbound-email guards named one trigger of several that carry untrusted content
-and so described a boundary that did not exist. Both decisions and their
-alternatives are recorded in [`automation-lifecycle.md`](automation-lifecycle.md)
-and [`security.md`](security.md); this entry records that the harness body above
-now describes them.
 
 Two corrections landed on review before this merged. `outputSurface` gained a
 fourth value, `self_delivery`, for an automation run no room owns: the
@@ -3976,14 +4008,6 @@ maintenance drain independently from `external_settled_at`, with an eager
 `waitUntil` attempt and alarm recovery. The lane preserves terminal-run order;
 its retry deadline is no longer an executable-loop deadline.
 
-Opening and follow-up composer messages, elicitation answers, non-automation
-inbound email, and Slack opening, follow-up, and elicitation messages no longer
-call `freezeRunMemoryContext` before the first model request. Their immutable
-run scope records a null memory-context hash. The `rally_memory` plugin and
-explicit `memory_search` tool are unchanged. Non-message runs and automation
-executions retain automatic frozen admission recall even when an automation's
-trigger reason is also `inbound_email`.
-
 **Why:** The previous drain awaited every external and cosmetic continuation
 before it promoted the next queued message. A slow connector, classification,
 name generation, or description refresh therefore became time-to-inference even
@@ -4195,7 +4219,7 @@ registry rather than in request code.
 **What changed:** `DOCUMENT_GENERATION_POLICY` moves into the work-stream
 `SYSTEM_PROMPT` alongside the other standing sections. `documentPublishing` and
 `runPublishesDocuments` are gone — every work-stream run sees `# Documents`,
-including automations, digests, inbound email, Slack-origin, HyperSight blocks,
+including automations, digests, Slack-origin, HyperSight blocks,
 and regions without Terminal. The host-side gate tests go with them. A typed
 output surface now follows the standing rule: external deliveries require the
 complete usable body in the final message, and HyperSight blocks require
@@ -4717,7 +4741,7 @@ footnotes into chips and pills, and none of it happens unless a model writes the
 syntax. Two placements were rejected. A skill would pay a load round trip for a
 rule that applies to any run with an attachment. Keeping the *announcement*
 bullet here — where the first draft put it — charged every automation, scheduled
-digest, inbound-email and Slack-origin run to announce documents they were
+digest and Slack-origin run to announce documents they were
 deliberately never told to make; it also left two rules for one act with no
 tie-break, since the document policy already owned announcing.
 
@@ -4738,7 +4762,7 @@ Superseded by the 2026-08-30 standing-policy and output-surface entry above.
 **What changed:** `DOCUMENT_GENERATION_POLICY` joined the work-stream system
 prompt as a `# Documents` section, rendered only when `loadRunPromptContext`
 resolves `documentPublishing` — the region reports Terminal supported, and the
-run is not an automation, a scheduled digest, an inbound email, or
+run is not an automation, a scheduled digest, or
 Slack-originated. It carries the trigger, the write-then-publish procedure, the
 narration discipline, the same-path revision rule, the override, and the inline
 fallback.

@@ -2,22 +2,20 @@
 
 /**
  * A workspace socket's subscribe answer, on real workerd: a write that lands
- * while the subscribe is still answering reaches the new socket, either in the
+ * alongside the subscribe reaches the new socket, either in the
  * answer's sidebar or as the push after it. A reconnecting desktop resubscribes
  * through exactly this path, so a write it misses here stays missing until the
  * next one. `docs/websocket-architecture.md` owns the handshake order.
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import type { Env } from "../src/env";
-import { createTestEnv } from "../test/helpers/cloudflare-test";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { startWaitBudget, waitBudget } from "./helpers/wait-budget";
 
@@ -31,34 +29,6 @@ function workspace(): DurableObjectStub<WorkspaceDO> {
 
 type Frame = Record<string, unknown> & { type?: string };
 type CanvasList = { waterline: number; items: Array<{ id: string }> };
-
-/**
- * Flagship cannot run here, and its answer is the subscribe's one wait. The
- * double holds every evaluation until released, and says when the first one
- * has started, so a write can be made to land inside that wait every time.
- * The test releases it in a `finally`: a hold left in place spins inside the
- * Organization object after a failed test and holds its subscribe open into
- * the next one.
- */
-async function holdFlagship(): Promise<{ entered: () => Promise<void>; release: () => void }> {
-  // Flags, not promises: a promise settled in one Durable Object's context and
-  // awaited in another's carries that context with it, and workerd refuses
-  // the I/O the test then does.
-  const gate = { entered: false, released: false };
-  await runInDurableObject(workspace(), (instance: WorkspaceDO) => {
-    (instance as unknown as { env: { FLAGS: Env["FLAGS"] | undefined } }).env.FLAGS = createTestEnv({ FLAGS: {
-      getBooleanDetails: async () => {
-        gate.entered = true;
-        while (!gate.released) await new Promise((resolve) => setTimeout(resolve, 5));
-        return { value: false, reason: "DEFAULT" };
-      },
-    } }).FLAGS;
-  });
-  return {
-    entered: async () => { await expect.poll(() => gate.entered, { timeout: waitBudget() }).toBe(true); },
-    release: () => { gate.released = true; },
-  };
-}
 
 async function openSocket(): Promise<{ socket: WebSocket; frames: Frame[]; drained: () => Promise<void> }> {
   const response = await workspace().fetch("https://workspace.test/socket", {
@@ -109,26 +79,22 @@ beforeEach(async () => {
 });
 
 describe("a workspace socket's subscribe", () => {
-  it("delivers a Canvas created while it is still answering", async () => {
+  it("delivers a Canvas created alongside subscription", async () => {
     await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
-    const flagship = await holdFlagship();
     let opened: Awaited<ReturnType<typeof openSocket>> | undefined;
     try {
       opened = await openSocket();
       const { socket, frames, drained } = opened;
       socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
-      await flagship.entered();
 
-      // Lands inside the subscribe, before its answer is sent.
+      // The list arrives in the subscribe answer or a later push.
       await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: CANVAS, title: "Launch",
         createdByUserId: USER, authorityGeneration: 1 });
-      flagship.release();
       await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: waitBudget() }).toBe(true);
       await drained();
 
       expect(newestCanvasList(frames)?.items.map((item) => item.id)).toEqual([CANVAS]);
     } finally {
-      flagship.release();
       opened?.socket.close(1000, "test complete");
     }
   });

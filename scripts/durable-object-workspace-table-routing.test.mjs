@@ -54,8 +54,8 @@ test("reads interpolated templates, concatenations, exec, and wrapped bindings",
   assert.deepEqual(misroutedTables(`this.env.DB.prepare("SELECT * FROM " + "memory_facts" + " WHERE id = ?")`), ["memory_facts"]);
   assert.deepEqual(misroutedTables("this.env.DB.exec(`DELETE FROM schedules`)"), ["schedules"]);
   assert.deepEqual(misroutedTables("this.env!.DB?.prepare(`SELECT 1 FROM Slack_User_Links`)"), ["slack_user_links"]);
-  assert.deepEqual(misroutedTables("this.env.DB.batch([this.env.DB.prepare(`DELETE FROM digest_schedules`)])"),
-    ["digest_schedules"]);
+  assert.deepEqual(misroutedTables("this.env.DB.batch([this.env.DB.prepare(`DELETE FROM automation_directory`)])"),
+    ["automation_directory"]);
 });
 
 test("matches table names as whole identifiers, not substrings", () => {

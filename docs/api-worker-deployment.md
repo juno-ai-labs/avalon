@@ -30,6 +30,14 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 | Contracts | `src/services/document-processing-contract.ts`, `src/services/terminal/provider-rpc-contract.ts`, `src/telemetry/telemetry-delivery-contract.ts` | Typed RPC inputs and outputs imported by caller and callee. |
 | Rollout | `.github/workflows/deploy-api.yml` | Profiles, version upload, migration ordering, promotion, health, and retained evidence. |
 
+### Email Service
+
+Global uses the Wrangler `send_email` binding `EMAIL` for outgoing mail.
+Migration `0127_email_delivery_receipts.sql` applies before the Worker and stores
+opaque delivery claims and completion receipts. Sending-domain verification is
+configured in Cloudflare; [email delivery](email-delivery.md) owns the receipt
+policy and [the runbook](runbook.md) owns deployment setup.
+
 ### Dedicated Ashby ingress
 
 `ashby.rallywith.ai` belongs to `avalon-connector-ashby-global`, a separate static
@@ -245,7 +253,7 @@ mode-specific constructors. `z.object(shape).strict()` and
 derive another schema at module scope; `z.strictObject(shape)` and
 `z.looseObject(shape)` preserve the validation modes without that intermediate
 startup allocation. A lint rule covers the API and its statically linked
-contracts, agent-harness, and connector packages.
+contracts, Bind, agent-harness, and connector packages.
 
 Six alternating local Wrangler 4.126.0 samples against unchanged baseline
 `87b1a0c` and the direct-constructor working tree measured mean active startup
@@ -305,6 +313,16 @@ for Azure-bound models in its route plan; each
 resident Channel agent reads the window snapshot once.
 
 ## Changelog
+
+### 2026-11-09 — Keep native outbound mail
+
+**What changed:** Global binds `EMAIL` for Cloudflare sending. Migration 0127
+provides opaque delivery receipts before promotion. Sender-domain verification
+is configured outside Wrangler.
+
+**Why:** Login, invitations and notifications require outbound delivery even as
+receiving is removed from the product. A build proves the binding compiles;
+provider verification and delivery receipts prove different parts of delivery.
 
 ### 2026-10-06 — Retry the Pipeline binding form of error 10021 once
 
@@ -378,7 +396,7 @@ PR #737. Design: [connector installation lifecycle](PRDs/2026-09-12_connector-in
 
 **Why:** Public acquisition needs predictable failure and recoverable operator actions before launch, without imposing account approval or building a campaign system.
 
-**Consequences:** [Private access](private-access.md) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
+**Consequences:** Private access (private-access management was removed) owns configuration, undecided numerical limits, and recovery procedures. PR #637.
 
 ### 2026-09-09 — Deploy the access API before its public form
 
@@ -458,7 +476,7 @@ rather than through `toISOString()`, so a plausible `…T14:00Z` for "this
 afternoon" is now a hard reject where it used to parse. The stricter `pattern` does
 travel to the model in the tool's JSON Schema, which is the mitigation, but it is
 a pattern a model can ignore. Inbound third-party timestamps — `created_at` on the
-Resend webhook — are the smaller exposure: RFC 3339 has always required seconds,
+provider webhook — are the smaller exposure: RFC 3339 has always required seconds,
 so a conforming producer was never sending the form that now fails.
 
 **A green suite does not clear this**, which is the part worth remembering. Every

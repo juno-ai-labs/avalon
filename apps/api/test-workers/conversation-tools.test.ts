@@ -16,6 +16,7 @@
  */
 
 import type { HarnessToolContext } from "@rally/agent-harness";
+import { __integrationTesting } from "../src/services/integrations";
 import { createCanvas } from "../src/services/canvas-service";
 import { conversationToolPorts, createConversationsPlugin } from "../src/services/conversation-tools";
 import { substreamLoopId } from "../src/durable-objects/names";
@@ -42,6 +43,7 @@ import {
   asWorkstreamId,
   type AutomationDraft,
   WorkstreamWorkflowInputSchema,
+  AutomationRunDefinitionV1Schema,
   type SubstreamId,
 } from "@rally/contracts";
 
@@ -54,6 +56,7 @@ import { AgentCommunicationService } from "../src/services/agent-communication-s
 import { projectAuthorization } from "../src/services/authorization-projection-service";
 import { validateAttachmentToolReceiptReplay } from "../src/services/attachment-tool-receipts";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
+import { createWorkstreamArtifactDataTools } from "../src/services/workstream-artifact-data-tools";
 import { resolveSiteForViewer } from "../src/services/artifact-site-resolution";
 import { artifactHostDOName } from "../src/durable-objects/names";
 import { createAutomation } from "../src/services/automation-service";
@@ -134,15 +137,6 @@ async function seedRegionalDatabase(): Promise<void> {
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
     )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    )`),
-    env.DB.prepare(`INSERT OR REPLACE INTO workstream_email_routes
-        (local_part, region, workspace_id, workstream_id, automation_subscription_id, created_at, updated_at)
-      VALUES (?, 'global', ?, NULL, ?, ?, ?)`)
-      .bind(`prep-${ordinal}`, WORKSPACE_ID, AUTOMATION_ID, NOW, NOW),
   ]);
 }
 
@@ -182,7 +176,7 @@ async function seedSidekick(_home: "0", automationId = AUTOMATION_ID): Promise<v
 async function projectResourceAccess() {
   await workspace().beginAuthorizationBackfill({ workspaceId: WORKSPACE_ID });
   const parents = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ parent_id: string }>(
-    "SELECT workstream_id AS parent_id FROM channels UNION SELECT automation_id AS parent_id FROM automation_directory",
+    "SELECT automation_id AS parent_id FROM automation_directory",
   ).toArray());
   for (const { parent_id: parentId } of parents) {
     const job = { type: "authorization_projection_v1" as const, region: "global" as const, workspaceId: WORKSPACE_ID, parentId };
@@ -208,6 +202,67 @@ beforeEach(async () => {
     incarnation: "existing-member", revision: 1,
   } });
   await seedRoom(ROOM_ID, "Investors", [AUTHOR_ID, COLLEAGUE_ID]);
+});
+
+describe("configured failure destinations", () => {
+  it("validates the default execution principal even when an administrator applies the definition", async () => {
+    const destinationId = asWorkstreamId(crypto.randomUUID());
+    await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: COLLEAGUE_ID,
+      canvasId: destinationId, title: "Administrator's private notices" });
+    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
+      workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID, accessClass: "member", role: "admin", status: "active",
+      incarnation: "existing-member", revision: 2,
+    } });
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+      scope: "workspace", automationId: AUTOMATION_ID });
+    const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
+    const actor = { userId: COLLEAGUE_ID, actorRole: "admin" as const, participantOfOwningWorkstream: false };
+    expect(await workspace().attachSidekickConversation({ ...addressed, userId: COLLEAGUE_ID, reference: destinationId }))
+      .toMatchObject({ ok: true });
+    await workspace().sidekickSubmitDefinition({ ...addressed,
+      draft: { ...DEFINITION, failureNotificationConversationId: destinationId }, evaluatorRules: null, submittedByRunId: null });
+    await expect(applySidekick(TEST_ENV, { ...addressed, actor })).rejects.toThrow("failureNotificationConversationId");
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: destinationId,
+      actor: { userId: actor.userId, actorRole: actor.actorRole },
+      update: { visibility: "participants", userIds: [AUTHOR_ID] } });
+    expect(await applySidekick(TEST_ENV, { ...addressed, actor })).toMatchObject({ lifecycle: "active" });
+  });
+
+  it("requires an authorized attachment for an Organization Sidekick's configured failure destination", async () => {
+    const destinationId = asWorkstreamId(crypto.randomUUID());
+    await seedRoom(destinationId, "Dashboard notices");
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+      scope: "workspace", automationId: AUTOMATION_ID });
+    const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
+    const actor = { userId: AUTHOR_ID, actorRole: "member" as const, participantOfOwningWorkstream: false };
+    await workspace().sidekickSubmitDefinition({ ...addressed,
+      draft: { ...DEFINITION, suggestedScope: "workspace", failureNotificationConversationId: destinationId },
+      evaluatorRules: null, submittedByRunId: null });
+    await expect(applySidekick(TEST_ENV, { ...addressed, actor }))
+      .rejects.toThrow("failureNotificationConversationId");
+    expect(await workspace().attachSidekickConversation({ ...addressed, userId: AUTHOR_ID, reference: destinationId }))
+      .toMatchObject({ ok: true });
+    expect(await applySidekick(TEST_ENV, { ...addressed, actor })).toMatchObject({ lifecycle: "active",
+      currentDefinition: { failureNotificationConversationId: destinationId } });
+    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID,
+      userId: AUTHOR_ID, scope: { kind: "sidekick", automationId: AUTOMATION_ID }, reference: destinationId }))
+      .toMatchObject({ ok: true, conversation: { conversationId: destinationId } });
+    const { runId } = await workspace().sidekickRunNow({ ...addressed, actor, idempotencyKey: "configured-destination-context" });
+    const definition = AutomationRunDefinitionV1Schema.parse(await workspace().sidekickReadRunDefinition({ ...addressed, runId }));
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "automation", parentId: AUTOMATION_ID, substreamId: runId, loopId: "destination-context",
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "manual",
+      automationRun: { schemaVersion: 1, automationId: AUTOMATION_ID, runId,
+        definitionRevision: definition.definitionRevision, trigger: definition.trigger } });
+    const context = await __integrationTesting.loadRunPromptContext(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID), input,
+      { title: "Dashboard notices", objective: "Refresh the dashboard" });
+    expect(context.systemPrompt).toContain(`"failureNotificationConversationId": "${destinationId}"`);
+    await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId: destinationId, actor: { userId: AUTHOR_ID, actorRole: "member" } });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(destinationId));
+    await expect(applySidekick(TEST_ENV, { ...addressed, actor })).rejects.toThrow("failureNotificationConversationId");
+  });
+
 });
 
 describe("sidekick_attach_resource", () => {
@@ -414,6 +469,117 @@ describe("Sidekick resource reads by ID", () => {
     expect(await scopeFor(null)).toEqual({ rows: "all" });
   });
 
+  /** A stateful site as a model writes one: an inbox the page lists and a run fills. */
+  const INBOX_MODULE = `
+import { DurableObject } from "cloudflare:workers";
+export class SiteData extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS emails (message_id TEXT PRIMARY KEY, subject TEXT NOT NULL)");
+  }
+  async fetch() {
+    return Response.json(this.ctx.storage.sql.exec("SELECT message_id, subject FROM emails ORDER BY message_id").toArray());
+  }
+}
+`;
+
+  /** Publish a stateful site owned by `canvasId`, registered the way a directory publish registers one. */
+  async function statefulSite(slug: string, canvasId: string) {
+    const resourceId = await source();
+    const artifactId = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET resource_type = 'generated_site', slug = ? WHERE id = ?", slug, resourceId);
+      state.storage.sql.exec(`INSERT INTO artifact_registry
+        (artifact_id, workspace_id, resource_id, workstream_id, mode, stateful, current_version, manifest_ref, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'active', 1, 1, 'test-manifest', ?, ?)`,
+      artifactId, WORKSPACE_ID, resourceId, canvasId, Date.parse(NOW), Date.parse(NOW));
+    });
+    await TEST_ENV.PAYLOADS.put(artifactAssetKey(artifactId, 1, "index.js"), INBOX_MODULE);
+    const host = TEST_ENV.ARTIFACT_HOSTS.get(TEST_ENV.ARTIFACT_HOSTS.idFromName(
+      artifactHostDOName(TEST_ENV.AVALON_REGION, asArtifactId(artifactId))));
+    await host.recordPublish({
+      artifactId, workspaceId: WORKSPACE_ID, workstreamId: canvasId, resourceId, region: TEST_ENV.AVALON_REGION,
+      manifest: {
+        version: 1, artifactId: asArtifactId(artifactId), artifactVersion: 1, mode: "active", stateful: true,
+        serverModuleSha256: "a".repeat(64), totalBytes: 0, publishedAt: NOW, assets: [],
+      },
+    });
+    /** What the site's own page lists, read through its handler. */
+    const page = async () => (await host.fetchThroughFacet(new Request("https://artifact.test/"))).json();
+    return { resourceId, page };
+  }
+
+  function writeTool(wiring: Parameters<typeof createArtifactDataToolContext>[1]) {
+    const tool = createWorkstreamArtifactDataTools(
+      createArtifactDataToolContext(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID), wiring),
+    ).find((candidate) => candidate.definition.name === "write_artifact_data")!;
+    return (resource: string, messageId: string) => tool.execute({
+      resource, sql: "INSERT INTO emails (message_id, subject) VALUES (?, ?) ON CONFLICT(message_id) DO NOTHING",
+      params: [messageId, `Subject ${messageId}`],
+    }, {} as HarnessToolContext);
+  }
+
+  it("lets a Sidekick run change a site's rows only while the site's Canvas is attached to that Sidekick and open", async () => {
+    await seedSidekick("0");
+    const site = await statefulSite("inbox", ROOM_ID);
+    const write = writeTool({
+      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal: { type: "user", userId: AUTHOR_ID }, reader: null,
+      write: { kind: "sidekick_run", sidekickId: AUTOMATION_ID },
+    });
+    // The run-as person can read the site, and that is not enough to write it.
+    await expect(write(site.resourceId, "m1")).rejects.toMatchObject({ code: "artifact_canvas_not_attached" });
+    expect(await site.page()).toEqual([]);
+    // Another Sidekick's attachment to the same Canvas is not this one's.
+    const other = asAutomationId(crypto.randomUUID());
+    await seedSidekick("0", other);
+    expect(await workspace().attachSidekickConversation({
+      workspaceId: WORKSPACE_ID, automationId: other, userId: AUTHOR_ID, reference: ROOM_ID,
+    })).toMatchObject({ ok: true });
+    await expect(write("inbox", "m1")).rejects.toMatchObject({ code: "artifact_canvas_not_attached" });
+    expect(await site.page()).toEqual([]);
+
+    expect(await workspace().attachSidekickConversation({
+      workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, userId: AUTHOR_ID, reference: ROOM_ID,
+    })).toMatchObject({ ok: true });
+    await expect(write(site.resourceId, "m1")).resolves.toMatchObject({ output: { resource: site.resourceId } });
+    await expect(write("inbox", "m2")).resolves.toMatchObject({ output: { resource: "inbox" } });
+    expect(await site.page()).toEqual([
+      { message_id: "m1", subject: "Subject m1" }, { message_id: "m2", subject: "Subject m2" },
+    ]);
+
+    await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId: ROOM_ID, actor: { userId: AUTHOR_ID, actorRole: "member" } });
+    await expect(write(site.resourceId, "m3")).rejects.toMatchObject({ code: "canvas_archived" });
+    expect(await site.page()).toHaveLength(2);
+  });
+
+  it("lets a Canvas's Chat change the rows of a site linked to that Canvas, and of no other site", async () => {
+    const linked = await statefulSite("linked-inbox", ROOM_ID);
+    // The same author's site in another Canvas: readable by them, not linked here.
+    const elsewhere = asWorkstreamId(crypto.randomUUID());
+    await seedRoom(elsewhere, "Elsewhere");
+    const foreign = await statefulSite("foreign-inbox", elsewhere);
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId: linked.resourceId, attachedByUserId: AUTHOR_ID });
+    const write = writeTool({
+      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, principal: { type: "user", userId: AUTHOR_ID }, reader: AUTHOR_ID,
+      write: { kind: "canvas_chat" },
+    });
+    await expect(write(linked.resourceId, "m1")).resolves.toMatchObject({ output: { resource: linked.resourceId } });
+    expect(await linked.page()).toEqual([{ message_id: "m1", subject: "Subject m1" }]);
+    for (const reference of [foreign.resourceId, "foreign-inbox"]) {
+      await expect(write(reference, "m1")).rejects.toMatchObject({ code: "resource_not_found" });
+    }
+    expect(await foreign.page()).toEqual([]);
+    // Attached here as context, the other Canvas's site is readable in this
+    // Chat and still not this Canvas's to change.
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId: foreign.resourceId, attachedByUserId: AUTHOR_ID });
+    for (const reference of [foreign.resourceId, "foreign-inbox"]) {
+      await expect(write(reference, "m1")).rejects.toMatchObject({ code: "artifact_in_another_canvas" });
+    }
+    expect(await foreign.page()).toEqual([]);
+  });
+
   it("finds a site's organization from its hostname only for someone who can read it", async () => {
     // A protected site sends a signed-out visitor to sign in; the browser then
     // knows only the hostname. The answer names the organization and resource
@@ -606,8 +772,9 @@ describe("a Breakout's access to its Channel", () => {
     const now = Date.now();
     // Keep lifecycle alarms outside this fixture's read/revocation assertions.
     const deadlines = { idleExpiresAt: now + 600_000, archiveDueAt: now + 1_200_000, expireDueAt: now + 1_800_000 };
+    // A Canvas's one shared sandbox, whoever is acting in it.
     await terminal.reserveFirstGeneration({ stableName: "imported-calendar", authorityFingerprint: await sha256(JSON.stringify({
-      principal: `user:${AUTHOR_ID}`, repository: "scratch",
+      principal: `canvas:${AUTOMATION_ID}`, repository: "scratch",
     })), networkRevision: 1, runId: context.harnessRunId, operationLeaseExpiresAt: now + 60_000, ...deadlines, now });
     await terminal.attachProviderSandbox({ generation: 1, sandboxId: "sandbox", lifecycleState: "running", ...deadlines, now });
     await terminal.releaseOperation({ runId: context.harnessRunId, now });
@@ -679,6 +846,8 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
       `SELECT parent_kind, parent_id, substream_id FROM sidekick_conversation_attachments
         WHERE automation_id = ? ORDER BY attached_at, parent_id`, AUTOMATION_ID,
     ).toArray())).toEqual([
+      // The run's own Canvas was attached as it was made.
+      { parent_kind: "canvas", parent_id: WRITTEN(), substream_id: "0" },
       { parent_kind: "canvas", parent_id: ROOM_ID, substream_id: "0" },
       { parent_kind: "canvas", parent_id: SIDE_ROOM(), substream_id: "0" },
     ]);
@@ -706,7 +875,7 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
     expect(createConversationsPlugin(input, conversationToolPorts(TEST_ENV, input), (tool) => [tool])).toBeNull();
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       `SELECT parent_id FROM sidekick_conversation_attachments WHERE automation_id = ?`, AUTOMATION_ID,
-    ).toArray())).toEqual([]);
+    ).toArray())).toEqual([{ parent_id: WRITTEN() }]);
   });
 
   it("refuses to attach a Canvas the person cannot open, and never names one by a title they cannot see", async () => {
@@ -716,7 +885,7 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
     await expect(colleague.run("attach", { conversation: SIDE_ROOM() })).rejects.toMatchObject({ code: "conversation_access_denied" });
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       `SELECT parent_id FROM sidekick_conversation_attachments WHERE automation_id = ?`, AUTOMATION_ID,
-    ).toArray())).toEqual([]);
+    ).toArray())).toEqual([{ parent_id: WRITTEN() }]);
   });
 
   it("posts into a Canvas's Chat the Sidekick writes, once per receipt, and reads it back", async () => {

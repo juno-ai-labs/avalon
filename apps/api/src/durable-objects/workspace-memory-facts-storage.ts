@@ -1,7 +1,8 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 
-import { canvasReaderAllows, type CanvasRow } from "./hosted-canvas";
+import { canvasReaderAllows } from "./canvas-sidekick-admission";
+import type { CanvasRow } from "./hosted-canvas";
 import { admitsOrganizationWide, sidekickAdmits, type AccessClass } from "../services/authorization-policy";
 import {
   currentMemoryRevision,
@@ -449,7 +450,7 @@ function openableByEveryMember(sql: SqlStorage, sources: ReadonlySet<string>): S
     if (row.scope === "workspace") open.add(`sidekick:${row.automation_id}`);
   }
   for (const row of canvasRows(sql, canvases)) {
-    if (row.visibility === "workspace") open.add(`canvas:${row.canvas_id}`);
+    if (row.archived_at === null && row.visibility === "workspace") open.add(`canvas:${row.canvas_id}`);
   }
   return open;
 }
@@ -492,7 +493,7 @@ function conversationAudience(sql: SqlStorage, conversation: MemoryConversation)
         : null;
     case "canvas": {
       const row = canvasRows(sql, [conversation.parentId])[0];
-      if (!row) return null;
+      if (!row || row.archived_at !== null) return null;
       if (row.visibility === "workspace") return { kind: "members" };
       const writer = row.writer_sidekick_id ? sidekickRows(sql, [row.writer_sidekick_id])[0] : undefined;
       if (writer?.scope === "workspace") return { kind: "members" };

@@ -10,7 +10,7 @@ const example = [
   "OPENROUTER_PRIMARY_MODEL=x-ai/grok-4.3",
   "FIRECRAWL_API_KEY=",
   "GITHUB_APP_PRIVATE_KEY=",
-  "RESEND_API_KEY=",
+  "DAYTONA_API_KEY=",
 ].join("\n");
 
 test("a blank assignment takes the value the environment supplies", () => {
@@ -38,10 +38,10 @@ test("every written value reads back as itself through the reader in sync-dev-en
   const environment = {
     OPENROUTER_API_KEY: "openrouter-placeholder-value",
     FIRECRAWL_API_KEY: "firecrawl-placeholder-value",
-    RESEND_API_KEY: "resend-placeholder-value",
+    DAYTONA_API_KEY: "daytona-placeholder-value",
   };
   const { text, filled } = buildEnvLocal(example, environment);
-  assert.deepEqual(filled.sort(), ["FIRECRAWL_API_KEY", "OPENROUTER_API_KEY", "RESEND_API_KEY"]);
+  assert.deepEqual(filled.sort(), ["DAYTONA_API_KEY", "FIRECRAWL_API_KEY", "OPENROUTER_API_KEY"]);
   for (const line of text.split("\n")) {
     const parsed = readValueFromLine(line);
     if (!parsed || !(parsed.key in environment)) continue;
@@ -63,13 +63,13 @@ test("values carrying a quote or a backslash are skipped, because the reader can
   const { filled, skipped } = buildEnvLocal(example, {
     OPENROUTER_API_KEY: '"quoted"',
     FIRECRAWL_API_KEY: "back\\slash",
-    RESEND_API_KEY: " padded ",
+    DAYTONA_API_KEY: " padded ",
   });
   assert.deepEqual(filled, ["FIRECRAWL_API_KEY"]);
-  assert.deepEqual(skipped.sort(), ["OPENROUTER_API_KEY", "RESEND_API_KEY"]);
+  assert.deepEqual(skipped.sort(), ["DAYTONA_API_KEY", "OPENROUTER_API_KEY"]);
   // A backslash is inert to the reader, which does no unescaping — so it is kept.
   assert.equal(survivesRoundTrip("FIRECRAWL_API_KEY", "back\\slash"), true);
   // A wrapping quote pair would be stripped; surrounding whitespace would be trimmed.
   assert.equal(survivesRoundTrip("OPENROUTER_API_KEY", '"quoted"'), false);
-  assert.equal(survivesRoundTrip("RESEND_API_KEY", " padded "), false);
+  assert.equal(survivesRoundTrip("DAYTONA_API_KEY", " padded "), false);
 });

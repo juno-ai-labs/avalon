@@ -172,8 +172,11 @@ review**, shared with Samantha, and **Launch plan**, open to the Organization �
 through `createCanvas`, restores their Chats' turns from the fixture, notes the
 fixture resource as Launch plan's artifact (its body, the fixture's `payloads`
 entry, stored in R2 where the resource's `content_ref` points, so the
-artifact renders), and publishes the **Weekly
-changelog** Sidekick through `createAutomation` and its definition. `seed.sql`
+artifact renders), and publishes two Sidekicks through `createAutomation`
+and their definitions: **Weekly changelog**, and **Launch tracker**, which is
+made in Launch plan (`madeInCanvasId`) and so is attached to that Canvas the way
+one its Chat made is. Canvases are seeded first, because a Sidekick cannot be
+made in a Canvas that does not exist yet. `seed.sql`
 anchors no conversation: the creation paths anchor and route what they make,
 as in production. The Workers must be running for the product import. The command is
 idempotent and repairs partial imports; rerun it after starting a missing Worker.
@@ -276,12 +279,8 @@ The affected Worker exits when that proxy cannot be established.
 `wrangler dev --local` disables remote bindings and avoids the proxy session.
 
 What that costs: `env.AI` is unavailable, so Cloudflare-backed PDF OCR cannot
-run. `env.FLAGS` (Flagship) is also
-reported `not supported`, because Flagship bindings are always remote — but
-unlike the others the binding object is still present, and it is each *call*
-that rejects with `Binding FLAGS needs to be run remotely`. Every agent then
-uses the model ids in its `OPENROUTER_*` Worker variables, which is the designed
-fallback rather than a degradation — see
+run. Feature flags and models resolve locally from checked-in constants and
+optional environment overrides; see
 [the feature-flag document](feature-flags.md#local-development).
 
 Verify configured deployments:
@@ -426,7 +425,7 @@ Capture the screens you touched and read the images.
 
 Development sign-in works end to end in this setup: **Use local development
 account** authenticates against the local Global Worker and opens the seeded
-workspace with its Canvases, its Sidekick, and onboarding checklist.
+workspace with its Canvases, its two Sidekicks, and onboarding checklist.
 
 **Settings is a second page that has to be opened before it can be captured.**
 Once a session has an Organization, the main process builds the
@@ -453,9 +452,8 @@ message before capturing or clicking the row.
 
 ## What cannot be verified in a sandbox
 
-- **Workers AI PDF OCR** (`env.AI`) and **Flagship**
-  (`env.FLAGS`), per above. Served flag values cannot be exercised locally; the
-  Worker-variable fallback they resolve to can.
+- **Workers AI PDF OCR** (`env.AI`), per above. Feature flag and model
+  configuration can be exercised locally in full.
 - **Real OAuth callbacks.** Providers require a public HTTPS redirect; a local
   Worker has none unless a tunnel is configured.
 - **Dictation past the button press.** The capture half works — Electron takes
@@ -646,17 +644,6 @@ threads on four cores, and `pnpm --filter @rally/api test` is itself a Node run
 followed by a workerd run. The configs' comments record that this costs nothing
 in total runtime, and that measurement stands: capping every run at two workers
 came out at 233s against 234s uncapped.
-
-**It was measured for one session on an otherwise idle machine, which is the
-axis that matters least here.** What a timeout is measured against is the
-maximum stall a single thread sees between schedules, and that grows with the
-oversubscription: two sessions on this box is ~32 worker threads on four cores,
-three is ~48. Every fixed budget in the suites — the 15s in
-`packages/db`, `apps/api`, `apps/desktop`, `packages/agent-harness`,
-`packages/connectors`, `apps/ace` and `apps/site`, and the 30s in
-`apps/api/vitest.workers.config.ts` and `apps/browser/vitest.config.ts` (the
-same workerd pool) — is a floor sized for contention from sibling suites, not a
-ceiling.
 
 The lever is `VITEST_MAX_WORKERS`, which Vitest applies *after* the config
 resolves and therefore overrides an explicit `maxWorkers`:

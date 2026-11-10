@@ -239,7 +239,7 @@ table assignment):
   `oauth_states`, `desktop_login_tickets`, `workspaces`, `workspace_members`,
   `workspace_invitations`, plus the Global-only directories
   (`platform_workspace_bindings`, `regional_onboarding_operations`, the four
-  provider route tables, `workstream_email_routes`).
+  provider route tables).
 - **Workspace database (one per workspace):** every table whose rows carry
   `workspace_id` today — work streams and everything attached to them,
   automations and runs, memory, schedules, activities and the activity-event
@@ -294,9 +294,9 @@ each class gets its own stated rule for what authorizes the handle:
   itself minted, and the consumer re-resolves the ID against the control-plane
   registry at the hop before constructing a handle — the same
   parse-at-the-boundary rule the RPC bridges already enforce.
-- **Provider webhooks and inbound email** never name a workspace directly: a
+- **Provider webhooks** never name a workspace directly: a
   delivery is signature-verified first, resolved through the verified routing
-  directories (`github_installation_routes`, `workstream_email_routes`, and
+  directories (`github_installation_routes`, and
   peers) second, and only the directory's answer — a control-plane row —
   becomes a handle. Untrusted input selects a directory key; it never selects
   a database.

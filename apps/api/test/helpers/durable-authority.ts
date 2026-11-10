@@ -307,8 +307,6 @@ export interface WorkstreamObjectRootFields {
   automationRunId?: string | null;
   createdFromOpportunityId?: string | null;
   plannedFor?: number | null;
-  emailAddress?: string | null;
-  emailRouteStatus?: string;
   modelOverride?: string | null;
   /** The shared icon and colour, stated as the object stores it. */
   appearance?: WorkstreamAppearance | null;
@@ -389,8 +387,6 @@ const ROOT_FIELD_COLUMNS: ReadonlyArray<[keyof WorkstreamObjectRootFields, strin
   ["automationRunId", "automation_run_id"],
   ["createdFromOpportunityId", "created_from_opportunity_id"],
   ["plannedFor", "planned_for"],
-  ["emailAddress", "email_address"],
-  ["emailRouteStatus", "email_route_status"],
   ["modelOverride", "model_override"],
   ["appearance", "appearance_json"],
   ["archivedAt", "archived_at"],
@@ -776,7 +772,6 @@ export function testWorkstreamContract(
     title: "Test work stream",
     titleStatus: "settled",
     objective: "",
-    emailAddress: null,
     originType: "ad_hoc",
     originLabel: null,
     createdByUserId: null,

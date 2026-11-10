@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { asArtifactId, asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { EngineeringInspectionRpcBinding } from "@rally/contracts/engineering-inspection";
 
-import { MANAGED_FLAGS, type FlagAdministrationRpc } from "../../ace/src/protocol";
 import type { AccessPrincipal } from "../src/access";
 import type { Env } from "../src/env";
 import { createEngineeringMcpHandler } from "../src/index";
@@ -18,12 +17,13 @@ const principal: AccessPrincipal = {
 
 function regionalBinding(region: string): EngineeringInspectionRpcBinding {
   return {
+    provisionUserPassword: vi.fn<EngineeringInspectionRpcBinding["provisionUserPassword"]>(),
+    revokeUserPassword: vi.fn<EngineeringInspectionRpcBinding["revokeUserPassword"]>(),
     createOrg: vi.fn<EngineeringInspectionRpcBinding["createOrg"]>(),
+    inspectOrganizationUsage: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationUsage"]>(),
+    changeOrganizationPlan: vi.fn<EngineeringInspectionRpcBinding["changeOrganizationPlan"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
-    dumpThreadTranscripts: vi.fn<EngineeringInspectionRpcBinding["dumpThreadTranscripts"]>(),
-    retireThreads: vi.fn<EngineeringInspectionRpcBinding["retireThreads"]>(),
-    convertThreadsToCanvases: vi.fn<EngineeringInspectionRpcBinding["convertThreadsToCanvases"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
     listWorkspaces: vi.fn<EngineeringInspectionRpcBinding["listWorkspaces"]>(
@@ -68,20 +68,17 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
   };
 }
 
-function flagAdministration(): FlagAdministrationRpc {
-  return {
-    listProductFlags: vi.fn<FlagAdministrationRpc["listProductFlags"]>(async () => ({ ok: true, value: [] })),
-    updateProductFlag: vi.fn<FlagAdministrationRpc["updateProductFlag"]>(async () => ({ ok: true, value: null })),
-    listModelFlags: vi.fn<FlagAdministrationRpc["listModelFlags"]>(async () => ({ ok: true, value: [] })),
-    updateModelRouting: vi.fn<FlagAdministrationRpc["updateModelRouting"]>(async () => ({ ok: true, value: null })),
-  };
-}
 
 function testEnv(bindings: Partial<Env> = {}): Env {
   return {
+    // These transport tests cover synchronous calls; real task bindings live
+    // in test-workers/engineering-mcp-tasks.test.ts.
+    ENGINEERING_TASKS: new Proxy({} as Env["ENGINEERING_TASKS"], {
+      get() { throw new Error("Task execution must run in workerd"); },
+    }),
     GLOBAL_INSPECTION: regionalBinding("global"),
+    QUEUES_API_TOKEN: "queues-test-token",
     ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
-    FLAG_ADMINISTRATION: flagAdministration(),
     CLOUDFLARE_ACCOUNT_ID: "account-1",
     BASIN_SQL_API_TOKEN: "basin-token",
     WORKERS_OBSERVABILITY_API_TOKEN: "observability-token",
@@ -95,7 +92,7 @@ async function rpc(
   params: unknown = {},
   origin?: string,
 ): Promise<Record<string, unknown>> {
-  const handler = createEngineeringMcpHandler(env, principal, "json");
+  const handler = createEngineeringMcpHandler(env, principal);
   const response = await handler.fetch(new Request("https://mcp.internal.rallywith.ai/mcp", {
     method: "POST",
     headers: {
@@ -113,13 +110,33 @@ async function rpc(
 }
 
 describe("Rally engineering MCP tools", () => {
+  it("routes password administration only to Global and excludes returned secrets from logs", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const userId = asUserId("00000000-0000-7000-8000-000000000ef2");
+    vi.mocked(global.provisionUserPassword).mockResolvedValue({ userId, email: "reviewer@example.test", password: "test-secret-returned-once" });
+    vi.mocked(global.revokeUserPassword).mockResolvedValue({ userId, passwordEnabled: false });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+      const provision = await rpc(env, "tools/call", { name: "provision_user_password", arguments: { userId } });
+      expect(provision.result).not.toHaveProperty("isError", true);
+      expect(global.provisionUserPassword).toHaveBeenCalledExactlyOnceWith({ userId }, principal);
+      expect(enterprise.provisionUserPassword).not.toHaveBeenCalled();
+      const revoke = await rpc(env, "tools/call", { name: "revoke_user_password", arguments: { userId } });
+      expect(revoke.result).not.toHaveProperty("isError", true);
+      expect(global.revokeUserPassword).toHaveBeenCalledExactlyOnceWith({ userId }, principal);
+      expect(JSON.stringify(log.mock.calls)).not.toContain("test-secret-returned-once");
+    } finally { log.mockRestore(); }
+  });
+
   it("advertises its purpose and usage instructions in initialization", async () => {
     const response = await rpc(testEnv({ GLOBAL_INSPECTION: regionalBinding("global") }), "initialize", {
       protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Rally", version: "1" },
     });
     expect(response.result).toMatchObject({ serverInfo: {
       name: "Rally engineering",
-      description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
+      description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; create organizations and send messages as a selected Rally user.",
     } });
     const instructions = (response.result as { instructions: string }).instructions;
     expect(instructions).toContain("a Sidekick is an automation");
@@ -177,86 +194,6 @@ describe("Rally engineering MCP tools", () => {
     expect(response.result).toMatchObject({ content: [{ type: "text", text: expect.stringContaining(`"lifecycle": "${paused ? "paused" : "active"}"`) }] });
     expect(enterprise.setSidekickPaused).toHaveBeenCalledExactlyOnceWith({ ...request, paused }, principal);
     expect(global.setSidekickPaused).not.toHaveBeenCalled();
-  });
-
-  it("routes dump_thread_transcripts to the Organization's region only when confirm names it", async () => {
-    const global = regionalBinding("global");
-    const enterprise = regionalBinding("enterprise");
-    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
-    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.dumpThreadTranscripts).mockResolvedValue({ region: "enterprise", orgId, conversations: 3, dumped: 2, skipped: 1,
-      failed: [{ parentKind: "workstream", parentId: "thread-1", substreamId: "0", error: "thread_transcript_identity_mismatch" }] });
-    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
-
-    const refused = await rpc(env, "tools/call", { name: "dump_thread_transcripts", arguments: { orgId, confirm: "00000000-0000-7000-8000-000000000ef9" } });
-    expect(refused.result).toMatchObject({ isError: true, content: [{ type: "text", text: "confirm must equal orgId; nothing was changed" }] });
-    expect(enterprise.resolveWorkspace).not.toHaveBeenCalled();
-
-    const response = await rpc(env, "tools/call", { name: "dump_thread_transcripts", arguments: { orgId, confirm: orgId } });
-    expect(response.result).not.toHaveProperty("isError", true);
-    expect(JSON.parse((response.result as { content: Array<{ text: string }> }).content[0]!.text)).toEqual({
-      region: "enterprise", orgId, conversations: 3, dumped: 2, skipped: 1,
-      failed: [{ parentKind: "workstream", parentId: "thread-1", substreamId: "0", error: "thread_transcript_identity_mismatch" }],
-    });
-    expect(enterprise.dumpThreadTranscripts).toHaveBeenCalledExactlyOnceWith({ orgId, confirm: orgId }, principal);
-    expect(global.dumpThreadTranscripts).not.toHaveBeenCalled();
-  });
-
-  it("publishes the dump as an idempotent write and the retirement as a destructive one, each taking a confirmation", async () => {
-    const response = await rpc(testEnv(), "tools/list");
-    const tools = (response.result as { tools: Array<{ name: string; inputSchema: { required?: string[] }; annotations?: Record<string, boolean> }> }).tools;
-    const dump = tools.find((item) => item.name === "dump_thread_transcripts");
-    const retire = tools.find((item) => item.name === "retire_threads");
-    expect(dump?.inputSchema.required).toEqual(["orgId", "confirm"]);
-    expect(dump?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
-    expect(retire?.inputSchema.required).toEqual(["orgId", "confirm"]);
-    expect(retire?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
-  });
-
-  it("routes retire_threads to the Organization's region only when confirm names it", async () => {
-    const global = regionalBinding("global");
-    const enterprise = regionalBinding("enterprise");
-    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
-    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.retireThreads).mockResolvedValue({ region: "enterprise", orgId, parents: 2, conversations: 3,
-      retiredParents: 2, retiredConversations: 3, retainedOutbox: 0, failed: [] });
-    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
-
-    const refused = await rpc(env, "tools/call", { name: "retire_threads", arguments: { orgId, confirm: "Acme" } });
-    expect(refused.result).toMatchObject({ isError: true, content: [{ type: "text", text: "confirm must equal orgId; nothing was changed" }] });
-    expect(enterprise.retireThreads).not.toHaveBeenCalled();
-
-    const response = await rpc(env, "tools/call", { name: "retire_threads", arguments: { orgId, confirm: orgId } });
-    expect(JSON.parse((response.result as { content: Array<{ text: string }> }).content[0]!.text)).toEqual({
-      region: "enterprise", orgId, parents: 2, conversations: 3, retiredParents: 2, retiredConversations: 3, retainedOutbox: 0, failed: [],
-    });
-    expect(enterprise.retireThreads).toHaveBeenCalledExactlyOnceWith({ orgId, confirm: orgId }, principal);
-    expect(global.retireThreads).not.toHaveBeenCalled();
-  });
-
-  it("routes convert_threads_to_canvases to the Organization's region, a dry run by default and an apply only when confirm names it", async () => {
-    const global = regionalBinding("global");
-    const enterprise = regionalBinding("enterprise");
-    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
-    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.convertThreadsToCanvases).mockResolvedValue({ region: "enterprise", orgId, dryRun: true,
-      candidates: [{ threadId: "thread-1", title: "Launch plan", artifactCount: 2, linkedArtifactCount: 1, participantCount: 3, conversations: 2, undumped: 0 }],
-      converted: 0, alreadyConverted: 0, failed: [], artifactsWithoutThread: 1 });
-    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
-
-    const listed = await rpc(env, "tools/call", { name: "convert_threads_to_canvases", arguments: { orgId } });
-    expect(listed.result).not.toHaveProperty("isError", true);
-    expect(JSON.parse((listed.result as { content: Array<{ text: string }> }).content[0]!.text)).toMatchObject({
-      dryRun: true, candidates: [{ threadId: "thread-1", artifactCount: 2 }], artifactsWithoutThread: 1 });
-    expect(enterprise.convertThreadsToCanvases).toHaveBeenCalledExactlyOnceWith({ orgId, dryRun: true }, principal);
-
-    const refused = await rpc(env, "tools/call", { name: "convert_threads_to_canvases", arguments: { orgId, dryRun: false } });
-    expect(refused.result).toMatchObject({ isError: true, content: [{ type: "text", text: "confirm must equal orgId; nothing was changed" }] });
-    expect(enterprise.convertThreadsToCanvases).toHaveBeenCalledOnce();
-
-    await rpc(env, "tools/call", { name: "convert_threads_to_canvases", arguments: { orgId, dryRun: false, confirm: orgId } });
-    expect(enterprise.convertThreadsToCanvases).toHaveBeenLastCalledWith({ orgId, dryRun: false, confirm: orgId }, principal);
-    expect(global.convertThreadsToCanvases).not.toHaveBeenCalled();
   });
 
   it("retires an Organization only in the region that owns it, as the trusted operator", async () => {
@@ -322,14 +259,13 @@ describe("Rally engineering MCP tools", () => {
     const response = await rpc(env, "tools/list");
     const result = response.result as { tools: Array<{ name: string; annotations?: Record<string, boolean> }> };
     expect(result.tools.map((tool) => tool.name)).toEqual([
+      "provision_user_password",
+      "revoke_user_password",
       "create_org",
       "send_message",
       "pause_sidekick",
       "resume_sidekick",
       "retire_org",
-      "dump_thread_transcripts",
-      "retire_threads",
-      "convert_threads_to_canvases",
       "read_canvas_chat",
       "read_sidekick_conversation",
       "list_workspaces",
@@ -344,12 +280,13 @@ describe("Rally engineering MCP tools", () => {
       "run_canvas_sql",
       "run_artifact_sql",
       "run_d1_sql",
-      "list_feature_flags",
-      "update_feature_flag",
-      "list_model_flags",
-      "update_model_flag",
       "query_data_lake",
       "query_worker_observability",
+      "inspect_queues",
+      "inspect_dead_letters",
+      "inspect_usage_plan",
+      "change_usage_plan",
+      "inspect_migration_progress",
     ]);
     for (const tool of result.tools.filter((item) => /^(run|update)_/.test(item.name))) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
@@ -698,99 +635,6 @@ describe("Rally engineering MCP tools", () => {
     expect(enterprise.runConversationSql).not.toHaveBeenCalled();
   });
 
-  it("lists managed flags through Ace", async () => {
-    const flags = flagAdministration();
-    vi.mocked(flags.listProductFlags).mockResolvedValue({
-      ok: true,
-      value: [{
-        ...MANAGED_FLAGS.find((flag) => flag.key === "push-notifications-enabled")!,
-        flag: { key: "push-notifications-enabled", enabled: true, default_variation: "on", rules: [] },
-      }],
-    });
-    const env = testEnv({ FLAG_ADMINISTRATION: flags });
-
-    const response = await rpc(env, "tools/call", { name: "list_feature_flags", arguments: {} });
-    const result = response.result as { content: Array<{ text: string }> };
-    expect(JSON.parse(result.content[0]!.text)).toEqual([expect.objectContaining({
-      key: "push-notifications-enabled",
-      label: "Push Notifications Enabled",
-      defaultVariation: "on",
-      flag: { key: "push-notifications-enabled", enabled: true, default_variation: "on", rules: [] },
-    })]);
-  });
-
-  it("hands a flag definition to Ace with the engineer it acts for", async () => {
-    const flags = flagAdministration();
-    vi.mocked(flags.updateProductFlag).mockResolvedValue({
-      ok: true,
-      value: { key: "multiple-workspaces-enabled", default_variation: "on" },
-    });
-    const env = testEnv({ FLAG_ADMINISTRATION: flags });
-    const update = {
-      key: "multiple-workspaces-enabled",
-      description: "Multiple workspaces.",
-      enabled: true,
-      default_variation: "off",
-      rules: [{
-        priority: 1,
-        conditions: [{ attribute: "userEmailDomain", operator: "equals", value: "rallywith.ai" }],
-        serve_variation: "on",
-      }],
-    };
-
-    const response = await rpc(env, "tools/call", { name: "update_feature_flag", arguments: update });
-    const result = response.result as { isError?: boolean; content: Array<{ text: string }> };
-    expect(result.isError).toBeUndefined();
-    expect(JSON.parse(result.content[0]!.text)).toEqual({ key: "multiple-workspaces-enabled", default_variation: "on" });
-    expect(flags.updateProductFlag).toHaveBeenCalledWith({
-      actor: { subject: "engineer-1" },
-      update,
-    });
-  });
-
-  it("rejects a flag the catalog does not manage before reaching Ace", async () => {
-    const flags = flagAdministration();
-    const env = testEnv({ FLAG_ADMINISTRATION: flags });
-
-    const response = await rpc(env, "tools/call", {
-      name: "update_feature_flag",
-      arguments: { key: "unmanaged-enabled", description: "", enabled: true, default_variation: "on", rules: [] },
-    });
-    const result = response.result as { isError: boolean };
-    expect(result.isError).toBe(true);
-    expect(flags.updateProductFlag).not.toHaveBeenCalled();
-  });
-
-  it("returns Ace's refusal to the engineer and logs it by Ace's code", async () => {
-    const flags = flagAdministration();
-    vi.mocked(flags.updateModelRouting).mockResolvedValue({
-      ok: false,
-      code: "invalid_openrouter_models",
-      message: "OpenRouter does not recognize or currently route: example/missing",
-    });
-    const env = testEnv({ FLAG_ADMINISTRATION: flags });
-    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    const response = await rpc(env, "tools/call", {
-      name: "update_model_flag",
-      arguments: { role: "workstream", routing: { model: "example/missing", fallbackModels: [], reasoningEffort: "low" } },
-    });
-    const result = response.result as { isError: boolean; content: Array<{ text: string }> };
-    expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toBe("OpenRouter does not recognize or currently route: example/missing");
-    const rows = logged.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
-    expect(rows).toEqual([expect.objectContaining({
-      event: "engineering_mcp_tool_failed",
-      tool: "update_model_flag",
-      agent_role: "workstream",
-      error_code: "invalid_openrouter_models",
-    })]);
-    expect(flags.updateModelRouting).toHaveBeenCalledWith({
-      actor: { subject: "engineer-1" },
-      update: { role: "workstream", routing: { model: "example/missing", fallbackModels: [], reasoningEffort: "low" } },
-    });
-  });
-
   it("sends a lakehouse query to the table's own catalog bucket and returns Basin SQL's result", async () => {
     const result = {
       schema: [{ name: "event_id" }],
@@ -1123,5 +967,51 @@ describe("Rally engineering MCP tools", () => {
         [{}],
       ]);
     }
+  });
+});
+
+describe("operations tools", () => {
+  it("inspects queues and peeks only active dead letters without consuming messages", async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input); calls.push({ url, method: init?.method ?? "GET" });
+      const result = url.includes("/messages/peek") ? { messages: [{ id: "failed-1", body: "payload" }] }
+        : url.includes("/metrics") ? { backlog_count: 3 }
+        : [{ queue_id: "source", queue_name: "jobs", consumers: [{ dead_letter_queue: "failed" }] }, { queue_id: "dead", queue_name: "failed" }];
+      return Response.json({ success: true, result, result_info: { total_pages: 1 } });
+    });
+    const env = testEnv();
+    expect(JSON.stringify(await rpc(env, "tools/call", { name: "inspect_queues", arguments: { deadLettersOnly: true } }))).toContain("backlog_count");
+    expect(JSON.stringify(await rpc(env, "tools/call", { name: "inspect_dead_letters", arguments: { queueId: "dead" } }))).toContain("failed-1");
+    expect((await rpc(env, "tools/call", { name: "inspect_dead_letters", arguments: { queueId: "source" } })).result).toMatchObject({ isError: true });
+    expect(calls.filter((c) => c.method === "POST")).toEqual([{ url: "https://api.cloudflare.com/client/v4/accounts/account-1/queues/dead/messages/peek", method: "POST" }]);
+  });
+
+  it("routes usage and plan changes to the owning region with the Access actor", async () => {
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ac1");
+    const global = regionalBinding("global"); const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "global", authorityGeneration: 1 } });
+    const usage = { plan: "growth" as const, quotaRemainingPercent: 80, weekResetsAt: "2026-11-12T00:00:00Z", overage: { amountMicrousd: 0, periodStart: "2026-11-01T00:00:00Z", periodEndsAt: "2026-12-01T00:00:00Z", billed: false as const } };
+    vi.mocked(global.inspectOrganizationUsage).mockResolvedValue({ orgId, region: "global", usage });
+    vi.mocked(global.changeOrganizationPlan).mockResolvedValue({ orgId, region: "global", usage });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+    expect((await rpc(env, "tools/call", { name: "inspect_usage_plan", arguments: { orgId } })).result).not.toHaveProperty("isError", true);
+    expect((await rpc(env, "tools/call", { name: "change_usage_plan", arguments: { orgId, plan: "growth" } })).result).not.toHaveProperty("isError", true);
+    expect(global.changeOrganizationPlan).toHaveBeenCalledWith({ orgId, plan: "growth" }, principal);
+    expect(enterprise.changeOrganizationPlan).not.toHaveBeenCalled();
+  });
+
+  it("queries regional migration outcomes with run filtering and pagination", async () => {
+    let body: Record<string, unknown> | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({ success: true, result: { events: [{ event: "migration_command_applied", schema_version: 7, expected_version: 8 }] } });
+    });
+    const runId = "00000000-0000-4000-8000-000000000ac1";
+    expect(JSON.stringify(await rpc(testEnv(), "tools/call", { name: "inspect_migration_progress", arguments: { region: "global", from: "2026-11-10T00:00:00Z", runId, offset: "page-two" } }))).toContain("schema_version");
+    expect(body).toMatchObject({ offset: "page-two", parameters: { filterCombination: "and", filters: expect.arrayContaining([
+      { key: "$metadata.service", operation: "eq", type: "string", value: "avalon-api-global" },
+      { key: "run_id", operation: "eq", type: "string", value: runId },
+    ]) } });
   });
 });

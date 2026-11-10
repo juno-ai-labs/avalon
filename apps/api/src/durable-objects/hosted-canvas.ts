@@ -13,7 +13,9 @@ import {
   CanvasDetailSchema,
   CanvasEditorSchema,
   CanvasSidebarRowSchema,
+  CanvasSidekickSchema,
   CanvasSummarySchema,
+  type CanvasSidekick,
   type CanvasSidebarRow,
   type CanvasAccess,
   type CanvasAccessDecision,
@@ -42,9 +44,9 @@ import type { ConversationParentAuthorizeViewerRequest } from "@rally/contracts/
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
 import type { DirectoryCommonEffect } from "./conversation-parent-object";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationHost, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
-import { sidekickManagerAllows, sidekickReaderAllows } from "./hosted-sidekick";
+import { canvasParticipant, canvasReaderAllows, sidekickManagerAllows, sidekickReaderAllows, writerSidekick, writerSidekickAdmits } from "./canvas-sidekick-admission";
 import { ScopeInvitationService } from "./scope-invitation-service";
-import { artifactNewsSql } from "./workspace-pin-storage";
+import { artifactNewsCauseSql, artifactNewsSql } from "./workspace-pin-storage";
 import { tellCanvasPinners } from "./canvas-artifact-notices";
 import {
   accessRefusals,
@@ -55,7 +57,8 @@ import {
   settleCanvasAccessRequest,
   type CanvasAccessSubject,
 } from "./canvas-access-requests";
-import { CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
+import { attachSidekickConversation } from "./workspace-sidekick-conversation-storage";
+import { CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
 import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { canvasTitleFromOpening } from "../services/canvas-naming";
@@ -88,24 +91,6 @@ export const CanvasCreateRequestSchema = z.strictObject({
   anchored: z.boolean().optional(),
 });
 export type CanvasCreateRequest = z.infer<typeof CanvasCreateRequestSchema>;
-
-/**
- * A Canvas made in place from a Thread that has artifacts, keeping the
- * Thread's id (`services/thread-conversion-service.ts`): the directory row
- * the Thread's own rows decide, who was in it, and the artifacts it made or
- * linked. `WorkspaceDO.convertThreadToCanvas` reads them; this writes them.
- */
-export const CanvasFromThreadRequestSchema = z.strictObject({
-  ...Addressed,
-  title: z.string().max(300),
-  createdByUserId: UserIdSchema,
-  createdAt: z.number().int().nonnegative(),
-  updatedAt: z.number().int().nonnegative(),
-  visibility: z.enum(["participants", "workspace"]),
-  authorityGeneration: z.number().int().positive(),
-  participants: z.array(z.strictObject({ userId: UserIdSchema, addedAt: z.number().int().nonnegative() })),
-  artifacts: z.array(z.strictObject({ resourceId: IdSchema, addedAt: z.number().int().nonnegative() })),
-});
 
 export const CanvasActorRequestSchema = z.strictObject({ ...Addressed, actor: CanvasActorSchema });
 
@@ -162,6 +147,7 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
   title_status: "naming" | "settled";
   /** The chosen icon and colour, `WorkstreamAppearanceSchema` JSON; null until someone chooses (migration 137). */
   appearance_json: string | null;
+  archived_at: number | null;
 }
 
 /** What a hosted Canvas needs from the Organization object that holds it. */
@@ -173,6 +159,14 @@ export interface HostedCanvasHost extends HostedConversationHost {
   noteRelationship(relationship: WorkspaceRelationship): void;
   /** Inside the transaction that changed a Canvas's row or its participants: the sidebar list's waterline. */
   noteCanvasDirectoryChanged(canvasId: string): void;
+  /**
+   * Inside the transaction that changed a Canvas's title or who it admits: a
+   * Sidekick attached to it names it on its card, to the people who can open
+   * it, so the Sidekick list moved too.
+   */
+  noteAttachedCanvasChanged(canvasId: string): void;
+  /** Inside the archive's transaction: archive every Sidekick this Canvas's Chat made. */
+  archiveMadeSidekicks(canvasId: string, now: number): void;
 }
 
 function forbidden(): ApiError {
@@ -223,41 +217,6 @@ export function canvasSummary(row: CanvasRow, report: InvalidCanvasAppearanceRep
   });
 }
 
-/** Whether this person is on a Canvas's participant list. */
-export function canvasParticipant(sql: SqlStorage, canvasId: string, userId: string): boolean {
-  return sql.exec(`SELECT 1 FROM canvas_participants WHERE canvas_id = ? AND user_id = ? LIMIT 1`, canvasId, userId)
-    .toArray().length > 0;
-}
-
-/**
- * The read rule over a directory row: `canvasAdmits` over its visibility, its
- * creator, its participant list, its writer Sidekick's audience as it stands
- * now, and the actor's role (an owner or administrator manages, so opens,
- * every Canvas). A guest has no `actorRole`, so Organization visibility never
- * admits one.
- */
-export function canvasReaderAllows(row: CanvasRow, actor: { userId: string; actorRole: CanvasActor["actorRole"] }, sql: SqlStorage): boolean {
-  return canvasAdmits({
-    visibility: row.visibility,
-    creator: row.created_by_user_id === actor.userId,
-    participant: canvasParticipant(sql, row.canvas_id, actor.userId),
-    writerAudience: row.writer_sidekick_id !== null && writerSidekickAdmits(sql, row.writer_sidekick_id, actor),
-  }, actor.actorRole !== null, actor.actorRole === "owner" || actor.actorRole === "admin");
-}
-
-function writerSidekick(sql: SqlStorage, sidekickId: string) {
-  return sql.exec<{
-    automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null; lifecycle: string;
-  }>(
-    `SELECT automation_id, scope, author_user_id, run_as_user_id, lifecycle FROM automation_directory WHERE automation_id = ?`,
-    sidekickId,
-  ).toArray()[0] ?? null;
-}
-
-export function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor: { userId: string; actorRole: CanvasActor["actorRole"] }): boolean {
-  const sidekick = writerSidekick(sql, sidekickId);
-  return sidekick !== null && sidekickReaderAllows(sidekick, actor, sql);
-}
 
 /**
  * One Canvas's parent state, scoped to a `canvas_id` inside `WorkspaceDO`'s
@@ -277,12 +236,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
 
   protected identity(): HostedConversationIdentity | null {
     const row = this.row();
-    return row ? { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: false } : null;
+    return row ? { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: row.archived_at !== null } : null;
   }
 
   protected assertParent(workspaceId: string, parentId: string): HostedConversationIdentity {
-    const row = this.assertCanvas(workspaceId, parentId);
-    return { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: false };
+    const row = this.assertCanvas(workspaceId, parentId, true);
+    return { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: row.archived_at !== null };
   }
 
   /**
@@ -305,8 +264,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }
 
   /**
-   * A new message in the Chat is activity: the Canvas moves up the recency
-   * list, and its row's unread state moves for anyone who has read it.
+   * Saved Chat messages advance recency independently of the unread cursor.
    */
   protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
     prior: PriorChildProjection | null, now: number): void {
@@ -316,33 +274,35 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     // does not move the Canvas up the recency list.
     const before = prior?.latestAttentionOrdinal ?? 0;
     const latest = effect.latestAttentionOrdinal ?? 0;
-    if (before === latest) return;
+    // Older senders carried only the attention cursor and conversation activity time.
+    const legacyMessageAt = latest > before ? effect.lastActivityAt : null;
+    const messageAt = effect.lastMessageAt === undefined ? legacyMessageAt : effect.lastMessageAt;
     // The Chat's first message, in a Canvas a person made with no title that
     // nobody has retitled since: it starts naming now, in this write, so an
     // empty Canvas reads as its title rather than as a naming skeleton that
     // waits for a message that may never come.
-    this.sql.exec(
+    const changed = this.sql.exec<{ title_status: string }>(
       `UPDATE canvas_directory
           SET updated_at = MAX(updated_at, ?1),
               title_status = CASE WHEN ?3 = 0 AND ?4 >= 1 AND title_status = 'settled' AND title = ?5
                                        AND writer_sidekick_id IS NULL THEN 'naming' ELSE title_status END
-        WHERE canvas_id = ?2`,
-      now, this.canvasId, before, latest, UNTITLED_CANVAS,
-    );
+        WHERE canvas_id = ?2 AND archived_at IS NULL AND (?1 > updated_at OR ?3 <> ?4) RETURNING title_status`,
+      messageAt === null ? 0 : Date.parse(messageAt), this.canvasId, before, latest, UNTITLED_CANVAS,
+    ).toArray()[0];
+    if (!changed) return;
     this.host.noteCanvasDirectoryChanged(this.canvasId);
     // A Canvas waiting for a title: the naming pass reads its first message.
     // Armed again by a later message before it runs, which is the same entry.
-    if (latest >= 1 && this.row()?.title_status === "naming") {
+    if (latest >= 1 && changed.title_status === "naming") {
       this.host.alarms.schedule({ kind: CANVAS_NAMING_ALARM_KIND, key: this.canvasId, dueAt: now }, now);
     }
   }
 
   /**
    * Title a Canvas made with no title from the message that opened its Chat
-   * (`canvasTitleFromOpening`), through the write a retitle makes, so the
-   * list and the detail move together. Only while it is still `naming`: a
-   * person who retitled it first settled it, and their title stands. A model
-   * that answers nothing settles it as it is, rather than leaving it waiting.
+   * (`canvasTitleFromOpening`) without changing the date already recorded for
+   * the message. The write requires `naming`, so a person's manual title
+   * stands. An empty model response settles the existing title.
    */
   async nameFromOpening(): Promise<void> {
     const row = this.row();
@@ -357,11 +317,14 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     });
     this.host.storage.transactionSync(() => {
       const settled = this.sql.exec(
-        `UPDATE canvas_directory SET title = COALESCE(?, title), title_status = 'settled', updated_at = ?
+        `UPDATE canvas_directory SET title = COALESCE(?, title), title_status = 'settled'
           WHERE canvas_id = ? AND title_status = 'naming' RETURNING canvas_id`,
-        title, Date.now(), this.canvasId,
+        title, this.canvasId,
       ).toArray().length === 1;
-      if (settled) this.host.noteCanvasDirectoryChanged(this.canvasId);
+      if (settled) {
+        this.host.noteCanvasDirectoryChanged(this.canvasId);
+        this.host.noteAttachedCanvasChanged(this.canvasId);
+      }
     });
   }
 
@@ -369,16 +332,16 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   async readAuthorizationFacts(input: ConversationAuthorizationRequest) {
     const request = parseRpcInput(ConversationAuthorizationRequestSchema, input, "canvas_read_authorization_facts");
     const initial = this.row();
-    if (!initial) return { exists: false as const, validatedAt: Date.now() };
+    if (!initial || initial.archived_at !== null) return { exists: false as const, validatedAt: Date.now() };
     this.assertCanvas(request.workspaceId, request.parentId);
     const relationship = request.relationship ?? await this.host.readRelationship(initial.workspace_id, request.userId);
     // Read again after the await: the row is what the facts describe.
     const row = this.row() ?? initial;
+    if (row.archived_at !== null) return { exists: false as const, validatedAt: Date.now() };
     // A Sidekick's Organization scope admits a member and no guest, so the
     // writer's audience is decided for the relationship in hand.
     const member = relationship?.status === "active" && relationship.accessClass === "member";
-    return {
-      exists: true as const,
+    const facts = {
       visibility: row.visibility,
       creator: row.created_by_user_id === request.userId,
       participant: canvasParticipant(this.sql, this.canvasId, request.userId),
@@ -386,7 +349,11 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         { userId: request.userId, actorRole: member ? "member" : null }),
       administrator: member && (relationship.role === "owner" || relationship.role === "admin"),
       children: this.childRegistry().map((child) => child.substreamId),
-      revision: JSON.stringify([row.authority_generation, row.updated_at]),
+    };
+    return {
+      exists: true as const,
+      ...facts,
+      revision: JSON.stringify([row.authority_generation, facts]),
       validatedAt: Date.now(),
     };
   }
@@ -395,17 +362,61 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     return this.sql.exec<CanvasRow>(
       `SELECT canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, last_editor_kind,
               last_editor_id, writer_sidekick_id, writer_run_id, last_writer_run_id, visibility, authority_generation,
-              title_status, appearance_json
+              title_status, appearance_json, archived_at
          FROM canvas_directory WHERE canvas_id = ?`,
       this.canvasId,
     ).toArray()[0] ?? null;
   }
 
   /** The row, refused as not found for another Organization's id. */
-  assertCanvas(workspaceId: string, canvasId: string): CanvasRow {
+  assertCanvas(workspaceId: string, canvasId: string, includeArchived = false): CanvasRow {
     const row = this.row();
-    if (!row || row.workspace_id !== workspaceId || canvasId !== this.canvasId) throw notFound();
+    if (!row || row.workspace_id !== workspaceId || canvasId !== this.canvasId || (!includeArchived && row.archived_at !== null)) throw notFound();
     return row;
+  }
+
+  /** A manager archives for everyone; content stays stored and a retry converges. */
+  archive(input: CanvasActorRequest): void {
+    const request = parseRpcInput(CanvasActorRequestSchema, input, "canvas_archive");
+    this.storage.transactionSync(() => {
+      const row = this.assertCanvas(request.workspaceId, request.canvasId, true);
+      if (!this.manages(row, request.actor)) {
+        if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
+        throw new ApiError(403, "canvas_archive_forbidden", "Only a Canvas manager can archive it");
+      }
+      if (row.archived_at !== null) return;
+      const now = Date.now();
+      this.sql.exec(`UPDATE canvas_directory SET archived_at = ?, title_status = 'settled' WHERE canvas_id = ?`,
+        now, this.canvasId);
+      this.sql.exec(`INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
+        SELECT id, 1, 1, 0 FROM resources WHERE provider = 'avalon_generated'
+          AND (publication_parent_id = ? OR id IN (SELECT resource_id FROM canvas_artifacts WHERE canvas_id = ?))
+        ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0`, this.canvasId, this.canvasId);
+      this.host.alarms.cancel(CANVAS_NAMING_ALARM_KIND, this.canvasId);
+      // A Sidekick made in this Canvas exists to work on it, so it goes with
+      // it: left running, each trigger would start a run with nowhere to write.
+      this.host.archiveMadeSidekicks(this.canvasId, now);
+      // Save the audience before any delivery. Retrying an archive cannot
+      // reconstruct it from admission: the tombstone now admits nobody.
+      const users = this.sql.exec<{ user_id: string }>(
+        `SELECT user_id FROM workspace_member_status WHERE active = 1`,
+      ).toArray().map((member) => member.user_id);
+      for (const child of this.childRegistry()) this.host.alarms.schedule({
+        kind: CANVAS_ARCHIVE_CONVERSATION_ALARM, key: `${this.canvasId}:${child.substreamId}`, dueAt: now,
+        payload: JSON.stringify({ canvasId: this.canvasId, substreamId: child.substreamId, users }),
+      });
+      for (const artifact of this.sql.exec<{ artifact_id: string }>(
+        `SELECT artifact_id FROM artifact_registry WHERE workstream_id = ?`, this.canvasId,
+      ).toArray()) this.host.alarms.schedule({
+        kind: CANVAS_ARCHIVE_ARTIFACT_ALARM, key: artifact.artifact_id, dueAt: now,
+        payload: JSON.stringify({ canvasId: this.canvasId }),
+      });
+      this.host.noteCanvasDirectoryChanged(this.canvasId);
+      for (const recipient of this.sql.exec<{ recipient_user_id: string }>(
+        `SELECT DISTINCT recipient_user_id FROM workspace_activity_items WHERE parent_kind = 'canvas' AND parent_id = ?`,
+        this.canvasId,
+      ).toArray()) this.host.noteActivityChanged(recipient.recipient_user_id);
+    });
   }
 
   /**
@@ -424,15 +435,17 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         if (existing.workspace_id !== request.workspaceId) throw notFound();
         // A replay is its creator's: anybody else naming the id is refused.
         if (existing.created_by_user_id !== request.createdByUserId) throw idUnavailable();
+        if (existing.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
         return { created: false, canvasId: this.canvasId };
       }
       if (request.anchored) throw idUnavailable();
       // A run makes one Canvas: a second create for the same run, under any
       // id, answers with the Canvas its first made.
-      const made = request.writer ? this.sql.exec<{ canvas_id: string }>(
-        `SELECT canvas_id FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`,
+      const made = request.writer ? this.sql.exec<{ canvas_id: string; archived_at: number | null }>(
+        `SELECT canvas_id, archived_at FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`,
         request.writer.sidekickId, request.writer.runId,
       ).toArray()[0] : undefined;
+      if (made?.archived_at != null) throw new ApiError(409, "canvas_archived", "This Canvas was archived");
       if (made) return { created: false, canvasId: made.canvas_id };
       if (request.writer && !writerSidekick(this.sql, request.writer.sidekickId)) {
         throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
@@ -442,45 +455,15 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         createdAt: now, updatedAt: now, writer: request.writer ?? null, visibility: "creator",
         authorityGeneration: request.authorityGeneration, titleStatus: request.titleStatus ?? "settled",
       });
+      // A run's Canvas is attached to its Sidekick as it is made: the
+      // attachment is what lets later runs publish into it.
+      if (request.writer) attachSidekickConversation(this.sql, { automationId: request.writer.sidekickId,
+        address: { parentKind: "canvas", parentId: this.canvasId, substreamId: "0" }, userId: request.createdByUserId, now });
       return { created: true, canvasId: this.canvasId };
     });
   }
 
-  /**
-   * Make this Canvas from the Thread of the same id, with the rows the
-   * Thread's directory decided, in one transaction. An existing row is the
-   * resume marker of an earlier pass and answers `created: false` with
-   * nothing written; one in another Organization is not found.
-   */
-  createFromThread(input: z.input<typeof CanvasFromThreadRequestSchema>): { created: boolean } {
-    const request = parseRpcInput(CanvasFromThreadRequestSchema, input, "canvas_create_from_thread");
-    if (request.canvasId !== this.canvasId) throw new Error("canvas_identity_mismatch");
-    return this.host.storage.transactionSync(() => {
-      const existing = this.row();
-      if (existing) {
-        if (existing.workspace_id !== request.workspaceId) throw notFound();
-        return { created: false };
-      }
-      this.insertRow({ ...request, writer: null, titleStatus: "settled" });
-      for (const participant of request.participants) {
-        if (participant.userId === request.createdByUserId) continue;
-        this.sql.exec(
-          `INSERT INTO canvas_participants (canvas_id, user_id, source, added_by_user_id, added_at)
-           VALUES (?, ?, 'added', NULL, ?) ON CONFLICT(canvas_id, user_id) DO NOTHING`,
-          this.canvasId, participant.userId, participant.addedAt,
-        );
-      }
-      for (const artifact of request.artifacts) {
-        this.sql.exec(
-          `INSERT INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, ?)
-           ON CONFLICT(canvas_id, resource_id) DO NOTHING`, this.canvasId, artifact.resourceId, artifact.addedAt,
-        );
-      }
-      return { created: true };
-    });
-  }
-
-  /** The directory row both creates write, inside their transaction. */
+  /** The directory row `create` writes, inside its transaction. */
   private insertRow(row: {
     workspaceId: string; title: string; createdByUserId: string; createdAt: number; updatedAt: number;
     writer: { sidekickId: string; runId: string } | null; visibility: CanvasRow["visibility"]; authorityGeneration: number;
@@ -539,7 +522,60 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }
 
   /**
-   * A publish from the Canvas's Chat, or from a run of its writer Sidekick,
+   * The artifacts as an agent working on the Canvas is told of them: each
+   * with the `filePath` a publish names to make a new version of it, and
+   * whether it keeps its own database. The path is read back out of the
+   * publish identity (`terminal:<canvasId>:<path>`); an artifact a person
+   * published, or one whose path was long enough to be stored as a digest,
+   * has none an agent can republish.
+   */
+  agentArtifacts(): (CanvasArtifact & { filePath: string | null; storesData: boolean })[] {
+    const prefix = `terminal:${this.canvasId}:`;
+    const identities = new Map(this.sql.exec<{ id: string; provider_resource_id: string | null; stateful: number }>(
+      `SELECT resource.id, resource.provider_resource_id,
+              EXISTS (SELECT 1 FROM artifact_registry registry
+                       WHERE registry.resource_id = resource.id AND registry.stateful = 1) AS stateful
+         FROM canvas_artifacts artifact JOIN resources resource ON resource.id = artifact.resource_id
+        WHERE artifact.canvas_id = ?`,
+      this.canvasId,
+    ).toArray().map((row) => [row.id, row]));
+    return this.artifacts().map((artifact) => {
+      const identity = identities.get(artifact.resourceId);
+      const path = identity?.provider_resource_id?.startsWith(prefix) ? identity.provider_resource_id.slice(prefix.length) : null;
+      return { ...artifact, filePath: path !== null && !path.startsWith("sha256:") ? path : null, storesData: identity?.stateful === 1 };
+    });
+  }
+
+  /**
+   * The Sidekicks attached to this Canvas, by name. Read without a viewer:
+   * attaching one is the consent to show its name and state to the Canvas.
+   */
+  sidekicks(viewer?: CanvasActor): CanvasSidekick[] {
+    return this.sql.exec<{
+      automation_id: string; title: string; lifecycle: "draft" | "active" | "paused"; appearance_json: string | null; made_here: number;
+      scope: string; author_user_id: string; run_as_user_id: string | null;
+    }>(
+      `SELECT directory.automation_id, directory.title, directory.lifecycle, directory.appearance_json, attachment.made_here,
+              directory.scope, directory.author_user_id, directory.run_as_user_id
+         FROM sidekick_conversation_attachments attachment
+         JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
+        WHERE attachment.parent_kind = 'canvas' AND attachment.parent_id = ? AND attachment.substream_id = '0'
+          AND directory.lifecycle <> 'deleted'
+        ORDER BY attachment.attached_at, attachment.automation_id`,
+      this.canvasId,
+    ).toArray().map((row) => {
+      const appearance = parsedAppearance(row.appearance_json, "automation_appearance", (code) =>
+        logWarn(this.host.env, "automation_directory_appearance_invalid", { automation_id: row.automation_id, code }));
+      return CanvasSidekickSchema.parse({
+        id: row.automation_id, name: row.title || "New Sidekick", status: row.lifecycle,
+        ...(appearance ? { appearance } : {}), madeHere: row.made_here === 1,
+        ...(viewer ? { canOpen: sidekickReaderAllows(row, viewer, this.sql) } : {}),
+      });
+    });
+  }
+
+  /**
+   * A publish from the Canvas's Chat, or from a run of a Sidekick attached to it,
    * attached this resource to the Canvas's conversation: record it among the
    * Canvas's artifacts and move the row's recency, its last editor and the
    * run that wrote it (`lastWrittenBy`, cleared by any publish not a run's). The first
@@ -552,9 +588,17 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   async noteArtifact(input: z.input<typeof CanvasNoteArtifactRequestSchema>): Promise<{ noted: boolean }> {
     const request = parseRpcInput(CanvasNoteArtifactRequestSchema, input, "canvas_note_artifact");
     const row = this.row();
-    if (!row || row.workspace_id !== request.workspaceId) return { noted: false };
+    if (!row || row.workspace_id !== request.workspaceId || row.archived_at !== null) return { noted: false };
     const now = Date.now();
     this.host.storage.transactionSync(() => {
+      const publication = this.sql.exec<{ published_at: string | null }>(
+        `SELECT COALESCE((SELECT version.captured_at FROM resource_versions version
+                           WHERE version.resource_id = resource.id AND (version.version = 1 OR ${artifactNewsCauseSql("version")})
+                           ORDER BY version.version DESC LIMIT 1),
+                         CASE WHEN resource.current_version <= 1 THEN resource.updated_at END) AS published_at
+           FROM resources resource
+          WHERE resource.id = ? AND ${listedResourceVisibilitySql("resource")}`, request.resourceId,
+      ).toArray()[0];
       this.sql.exec(
         `INSERT INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, ?)
          ON CONFLICT(canvas_id, resource_id) DO NOTHING`, this.canvasId, request.resourceId, now,
@@ -562,7 +606,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       this.sql.exec(
         `UPDATE canvas_directory SET updated_at = MAX(updated_at, ?), last_editor_kind = ?, last_editor_id = ?,
                 last_writer_run_id = ? WHERE canvas_id = ?`,
-        now, request.editor.kind, request.editor.id, request.runId ?? null, this.canvasId,
+        publication?.published_at ? Date.parse(publication.published_at) : 0,
+        request.editor.kind, request.editor.id, request.runId ?? null, this.canvasId,
       );
       this.host.noteCanvasDirectoryChanged(this.canvasId);
     });
@@ -583,6 +628,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       ...canvasSummary(row, canvasAppearanceReporter(this.host.env)),
       participantUserIds: this.participantUserIds(),
       artifacts: this.artifacts(),
+      sidekicks: this.sidekicks(request.actor),
       canManage,
       // Whoever decides on the people sees the requests waiting on them.
       ...(canManage ? { pendingAccessRequests: pendingAccessRequests(this.sql, this.canvasId) } : {}),
@@ -648,8 +694,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    * may, as anyone it admits may change its artifacts from its Chat; anyone
    * else is told it does not exist. An appearance is merged field by field
    * into what is stored, as a Sidekick's is, so two people picking at once
-   * each keep their field. Choosing an appearance is not activity, so it does
-   * not move `updated_at` and the Canvas keeps its place in the recency list.
+   * each keep their field. Titles and appearance leave the Canvas's recency alone.
    */
   update(input: CanvasUpdateRequest): CanvasDetail {
     const request = parseRpcInput(CanvasUpdateRequestSchema, input, "canvas_update");
@@ -664,8 +709,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     this.host.storage.transactionSync(() => {
       // A person's title settles it, so a naming pass still in flight leaves it alone.
       if (request.title !== undefined) {
-        this.sql.exec(`UPDATE canvas_directory SET title = ?, title_status = 'settled', updated_at = ? WHERE canvas_id = ?`,
-          request.title, Date.now(), this.canvasId);
+        this.sql.exec(`UPDATE canvas_directory SET title = ?, title_status = 'settled' WHERE canvas_id = ?`,
+          request.title, this.canvasId);
+        this.host.noteAttachedCanvasChanged(this.canvasId);
       }
       if (appearance !== null) {
         this.sql.exec(`UPDATE canvas_directory SET appearance_json = ? WHERE canvas_id = ?`, JSON.stringify(appearance), this.canvasId);
@@ -706,9 +752,10 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
           this.canvasId, userId, request.actor.userId, now,
         );
       }
-      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, updated_at = ? WHERE canvas_id = ?`,
-        request.update.visibility, now, this.canvasId);
+      this.sql.exec(`UPDATE canvas_directory SET visibility = ? WHERE canvas_id = ?`,
+        request.update.visibility, this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
+      this.host.noteAttachedCanvasChanged(this.canvasId);
     });
     // A request from someone this audience now admits is settled: whoever
     // changed the audience let them in. Only a member asks, and an
@@ -762,6 +809,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         this.canvasId, grant.userId);
     }
     this.host.noteCanvasDirectoryChanged(this.canvasId);
+    this.host.noteAttachedCanvasChanged(this.canvasId);
   }
 
   async createInvitations(input: z.input<typeof CreateScopeInvitationsSchema>): Promise<ScopeInvitationResult> {
@@ -811,9 +859,12 @@ export function canvasSidebarRows(
   present: ReadonlyMap<string, readonly string[]>,
   limit: number,
   report: InvalidCanvasAppearanceReport,
+  /** Only Canvases whose title contains this, ignoring case, across every Canvas rather than the first page. */
+  titleQuery: string | null = null,
 ): CanvasSidebarRow[] {
   const rows = sql.exec<CanvasRow & {
     participant: number; unread: number; pinned_position: number | null; artifact_type: string | null; artifact_mime: string | null;
+    has_stored_data: number;
     written_run_id: string | null; written_run_number: number | null; written_sidekick_name: string | null;
   }>(
     `SELECT canvas.*, (participant.user_id IS NOT NULL) AS participant,
@@ -830,6 +881,11 @@ export function canvasSidebarRows(
               ELSE 0 END AS unread,
             pin.position AS pinned_position,
             newest.resource_type AS artifact_type, newest.mime_type AS artifact_mime,
+            EXISTS (SELECT 1 FROM canvas_artifacts artifact
+                JOIN artifact_registry registry ON registry.resource_id = artifact.resource_id
+                JOIN resources resource ON resource.id = artifact.resource_id
+               WHERE artifact.canvas_id = canvas.canvas_id AND registry.stateful = 1
+                 AND ${listedResourceVisibilitySql("resource")}) AS has_stored_data,
             -- The run that wrote the newest version, by its primary key; its
             -- number counted as the run's own row counts it (projectRunRow).
             written.run_id AS written_run_id, written_by.title AS written_sidekick_name,
@@ -849,31 +905,63 @@ export function canvasSidebarRows(
              AND written.sidekick_id = canvas.last_editor_id AND written.run_id = canvas.last_writer_run_id
        LEFT JOIN automation_directory written_by ON written_by.automation_id = written.sidekick_id
              AND written_by.lifecycle <> 'deleted'
-      WHERE canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
-         OR (?2 = 1 AND canvas.visibility = 'workspace') OR canvas.writer_sidekick_id IS NOT NULL
+      WHERE canvas.archived_at IS NULL AND (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
+         OR (?2 = 1 AND canvas.visibility = 'workspace') OR canvas.writer_sidekick_id IS NOT NULL)
+        AND (?3 IS NULL OR instr(lower(canvas.title), lower(?3)) > 0)
       ORDER BY canvas.updated_at DESC, canvas.canvas_id`,
-    viewer.userId, viewer.member ? 1 : 0,
+    viewer.userId, viewer.member ? 1 : 0, titleQuery,
   ).toArray();
-  const listed: CanvasSidebarRow[] = [];
+  // A writer Sidekick's audience is the one rule not expressed above; the
+  // row is admitted by the whole rule, without the administrator's reach.
+  const admittedRows: typeof rows = [];
   for (const row of rows) {
-    if (listed.length >= limit) break;
-    // A writer Sidekick's audience is the one rule not expressed above; the
-    // row is admitted by the whole rule, without the administrator's reach.
-    if (!canvasAdmits({
+    if (admittedRows.length >= limit) break;
+    if (canvasAdmits({
       visibility: row.visibility,
       creator: row.created_by_user_id === viewer.userId,
       participant: row.participant === 1,
       writerAudience: row.writer_sidekick_id !== null
         && writerSidekickAdmits(sql, row.writer_sidekick_id, { userId: viewer.userId, actorRole: viewer.member ? "member" : null }),
-    }, viewer.member)) continue;
+    }, viewer.member)) admittedRows.push(row);
+  }
+  // The listed Canvases' attached Sidekicks in one read, as each Canvas's
+  // detail lists them (`HostedCanvas.sidekicks`): only the listed ids, by
+  // the Canvas index (migration 144), so a run-made Canvas past the list's
+  // limit or archived costs nothing here.
+  const attached = new Map<string, CanvasSidekick[]>();
+  const reader = { userId: viewer.userId, actorRole: viewer.member ? "member" as const : null };
+  for (const sidekick of sql.exec<{
+    canvas_id: string; automation_id: string; title: string; lifecycle: string; appearance_json: string | null; made_here: number;
+    scope: string; author_user_id: string; run_as_user_id: string | null;
+  }>(
+    `SELECT attachment.parent_id AS canvas_id, directory.automation_id, directory.title, directory.lifecycle,
+            directory.appearance_json, attachment.made_here, directory.scope, directory.author_user_id, directory.run_as_user_id
+       FROM sidekick_conversation_attachments attachment
+       JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
+      WHERE attachment.parent_kind = 'canvas' AND attachment.parent_id IN (SELECT value FROM json_each(?))
+        AND attachment.substream_id = '0' AND directory.lifecycle <> 'deleted'
+      ORDER BY attachment.attached_at, attachment.automation_id`,
+    JSON.stringify(admittedRows.map((row) => row.canvas_id)),
+  ).toArray()) {
+    const appearance = parsedAppearance(sidekick.appearance_json, "automation_appearance", () => undefined);
+    const held = attached.get(sidekick.canvas_id) ?? [];
+    held.push(CanvasSidekickSchema.parse({ id: sidekick.automation_id, name: sidekick.title || "New Sidekick", status: sidekick.lifecycle,
+      ...(appearance ? { appearance } : {}), madeHere: sidekick.made_here === 1,
+      canOpen: sidekickReaderAllows(sidekick, reader, sql) }));
+    attached.set(sidekick.canvas_id, held);
+  }
+  const listed: CanvasSidebarRow[] = [];
+  for (const row of admittedRows) {
     listed.push(CanvasSidebarRowSchema.parse({
       ...canvasSummary(row, report),
       artifactKind: row.artifact_type === null ? null : canvasArtifactKind(row.artifact_type, row.artifact_mime),
+      hasStoredData: row.has_stored_data === 1,
       // A deleted Sidekick's run is no run to open.
       lastWrittenBy: row.written_run_id !== null && row.written_sidekick_name !== null && row.last_editor_id !== null
         ? { sidekickId: row.last_editor_id, runId: row.written_run_id, runNumber: row.written_run_number,
           sidekickName: row.written_sidekick_name || "New Sidekick" }
         : null,
+      sidekicks: attached.get(row.canvas_id) ?? [],
       unread: row.unread === 1,
       presentUserIds: [...(present.get(row.canvas_id) ?? [])].filter((userId) => userId !== viewer.userId),
       pinnedPosition: row.pinned_position,
@@ -883,7 +971,12 @@ export function canvasSidebarRows(
   return listed;
 }
 
-/** The Canvases a Sidekick writes that this viewer may open, most recently active first: "the Canvases it writes to". */
+/**
+ * The Canvases a Sidekick is attached to that this viewer may open, most
+ * recently active first: "the Canvases it writes to". Each run's own Canvas
+ * is attached as it is made, so this is those and every Canvas it was
+ * attached to since.
+ */
 export function canvasesWrittenBy(
   sql: SqlStorage,
   sidekickId: string,
@@ -891,6 +984,39 @@ export function canvasesWrittenBy(
   report: InvalidCanvasAppearanceReport,
 ): CanvasSummary[] {
   return sql.exec<CanvasRow>(
-    `SELECT * FROM canvas_directory WHERE writer_sidekick_id = ? ORDER BY updated_at DESC, canvas_id`, sidekickId,
+    `SELECT canvas.* FROM sidekick_conversation_attachments attachment
+       JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
+      WHERE attachment.automation_id = ? AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0'
+      ORDER BY canvas.updated_at DESC, canvas.canvas_id`, sidekickId,
   ).toArray().filter((row) => canvasReaderAllows(row, actor, sql)).map((row) => canvasSummary(row, report));
+}
+
+/**
+ * For each Sidekick, the Canvases somebody attached it to that this viewer
+ * may open, in the order they were attached: the dashboard card's links. A
+ * Canvas one of the Sidekick's own runs made is its output, listed on its
+ * detail, and is left out here, where it would add one link per run.
+ */
+export function canvasesAttachedTo(
+  sql: SqlStorage,
+  actor: { userId: string; actorRole: CanvasActor["actorRole"] },
+  sidekickIds: readonly string[],
+): Map<string, { id: string; title: string }[]> {
+  const attached = new Map<string, { id: string; title: string }[]>();
+  for (const row of sql.exec<CanvasRow & { automation_id: string }>(
+    `SELECT canvas.*, attachment.automation_id
+       FROM sidekick_conversation_attachments attachment
+       JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
+      WHERE attachment.automation_id IN (SELECT value FROM json_each(?))
+        AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0' AND canvas.archived_at IS NULL
+        AND (canvas.writer_sidekick_id IS NULL OR canvas.writer_sidekick_id <> attachment.automation_id)
+      ORDER BY attachment.attached_at, attachment.parent_id`,
+    JSON.stringify(sidekickIds),
+  ).toArray()) {
+    if (!canvasReaderAllows(row, actor, sql)) continue;
+    const held = attached.get(row.automation_id) ?? [];
+    held.push({ id: row.canvas_id, title: row.title });
+    attached.set(row.automation_id, held);
+  }
+  return attached;
 }

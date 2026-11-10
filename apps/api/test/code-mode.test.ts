@@ -297,6 +297,8 @@ describe("GatewaySession", () => {
   });
 
   it("runs writes side by side, each with its own receipt", async () => {
+    let releaseFirstAuthorization: (() => void) | undefined;
+    const firstAuthorizationHeld = new Promise<void>((resolve) => { releaseFirstAuthorization = resolve; });
     let inFlight = 0;
     let most = 0;
     let releaseWrites: (() => void) | undefined;
@@ -310,15 +312,30 @@ describe("GatewaySession", () => {
       return { output: {}, summary: "written" };
     };
     const writes = plugin("rally:core", "rally_core", [
-      tool({ name: "first", mode: "write", execute: held, definition: { ...tool({ name: "first", mode: "write" }).definition, timeoutMs: 2_000 } }),
-      tool({ name: "second", mode: "write", execute: held, definition: { ...tool({ name: "second", mode: "write" }).definition, timeoutMs: 2_000 } }),
+      tool({ name: "first", mode: "write", execute: held }),
+      tool({ name: "second", mode: "write", execute: (input, context) => {
+        releaseFirstAuthorization?.();
+        return held(input, context);
+      } }),
     ]);
-    const { host, rows } = await hostOver();
+    // Let the second call claim its receipt before the first is authorized.
+    // Call identity follows invocation order; receipt positions follow claim order.
+    const { host, rows } = await hostOver({
+      authorize: async ({ toolName }) => {
+        if (toolName === "first") await firstAuthorizationHeld;
+        return { allowed: true };
+      },
+    });
     const session = new GatewaySession({ host, view: view([writes]), context: context(), input: { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId: RUN_ID }, allowedPluginIds: null });
     const answers = await Promise.all([session.gateway.call("rally_core", "first", {}), session.gateway.call("rally_core", "second", {})]);
     expect(answers).toEqual([{ ok: true, output: {} }, { ok: true, output: {} }]);
     expect(most).toBe(2);
-    expect(rows().map((row) => row.tool_call_id)).toEqual(["program-call:call:0", "program-call:call:1"]);
+    const receipts = rows();
+    expect(receipts).toHaveLength(2);
+    expect(receipts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tool_call_id: "program-call:call:0", tool_name: "first", mode: "write" }),
+      expect.objectContaining({ tool_call_id: "program-call:call:1", tool_name: "second", mode: "write" }),
+    ]));
   });
 
   it("claims no write after another call stopped the program, though both were started together", async () => {

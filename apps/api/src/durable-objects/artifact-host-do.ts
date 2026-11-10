@@ -45,6 +45,7 @@ import type { Env } from "../env";
 import {
   assertDurableObjectJurisdiction,
 } from "../lib/durable-object-namespace";
+import { parseRpcInput } from "../lib/rpc-input";
 import { sha256Hex } from "../lib/crypto";
 import {
   FACET_HOST_CLASS,
@@ -55,6 +56,7 @@ import {
 } from "../artifacts/facet-host";
 import { ARTIFACT_COMPATIBILITY_DATE, ASSET_SHIM_MODULE, ASSET_SHIM_SOURCE } from "../artifacts/asset-shim";
 import {
+  admitDataWriteStatement,
   admitReadOnlyStatement,
   admitTableName,
   quoteIdentifier,
@@ -147,6 +149,10 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   "DROP TABLE \"_region_copy_artifact_state\"",
   "PRAGMA defer_foreign_keys = OFF"
 ]
+}, { version: 3, description: "retain Canvas archive authority at the artifact serving boundary", statements: [
+  `CREATE TABLE archived_canvases (workspace_id TEXT NOT NULL, canvas_id TEXT NOT NULL,
+     PRIMARY KEY (workspace_id, canvas_id)) STRICT`,
+]
 }];
 
 /**
@@ -212,6 +218,10 @@ interface ArtifactFacetHost extends Rpc.DurableObjectBranded {
   rallyPage(quotedTable: string, offset: number, limit: number): Promise<{
     rows: ArtifactRow[];
   }>;
+  rallyWrite(sql: string, params: (string | number | null)[], maxRows: number): Promise<
+    | { ok: true; rowsWritten: number; columns: string[]; rows: ArtifactRow[]; truncated: boolean }
+    | { ok: false; detail: string }
+  >;
 }
 
 /**
@@ -281,6 +291,18 @@ export type ArtifactQueryResult =
   | { ok: true; columns: string[]; rows: ArtifactRow[]; rowCount: number; truncated: boolean }
   | { ok: false; reason: "no_artifact_data" }
   | { ok: false; reason: "sql_refused" | "private_rows"; detail: string };
+
+/**
+ * A row write's outcome, refusals included, discriminated for the reason a
+ * read's is. `sql_failed` is the site's own database refusing the statement
+ * (a missing table, a constraint), in SQLite's words; nothing was written.
+ * `rowsWritten` is the engine's physical counter, not a count of logical rows.
+ */
+export type ArtifactWriteResult =
+  | { ok: true; rowsWritten: number; columns: string[]; rows: ArtifactRow[]; truncated: boolean }
+  | { ok: false; reason: "no_artifact_data" }
+  | { ok: false; reason: "canvas_archived" }
+  | { ok: false; reason: "sql_refused" | "private_rows" | "sql_failed"; detail: string };
 
 export type ArtifactPageResult =
   | { ok: true; rows: ArtifactRow[] }
@@ -356,12 +378,41 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    * facet is *not* restarted here: it is aborted lazily on the next request
    * that observes a version it cannot confirm, which is the reference
    * platform's own update lifecycle and avoids waking a facet nobody is using.
+   *
+   * Never backwards: a publish older than the version already served (one
+   * that stalled past a later publish, or a retry reconciling from a stale
+   * read) changes nothing. The same version again is admitted, so a retry
+   * converges. `advanced` says whether this call moved what is served.
    */
-  async recordPublish(publish: ArtifactPublish): Promise<void> {
+  /** WorkspaceDO's durable archive fan-out; a late first publish cannot erase it. */
+  async archiveCanvas(input: { workspaceId: string; canvasId: string }): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: z.string().uuid(), canvasId: z.string().uuid() }), input, "canvas_archive_artifact");
+    this.state.storage.transactionSync(() => {
+      const state = this.stateRow();
+      if (state && (state.workspace_id !== request.workspaceId || state.workstream_id !== request.canvasId)) {
+        throw new Error("canvas_archive_artifact_identity_mismatch");
+      }
+      this.state.storage.sql.exec(`INSERT OR IGNORE INTO archived_canvases VALUES (?, ?)`, request.workspaceId, request.canvasId);
+      this.state.storage.sql.exec(`DELETE FROM viewer_sessions`);
+    });
+  }
+
+  private canvasArchived(): boolean {
+    return this.state.storage.sql.exec(`SELECT 1 FROM archived_canvases LIMIT 1`).toArray().length > 0;
+  }
+
+  async recordPublish(publish: ArtifactPublish): Promise<{ advanced: boolean }> {
     await this.initialized;
     const input = ArtifactPublishSchema.parse(publish);
+    if (this.canvasArchived()) throw new Error("canvas_archived");
     const now = Date.now();
-    this.state.storage.sql.exec(
+    // One synchronous event: nothing interleaves between this read and the
+    // fenced upsert below.
+    const before = this.state.storage.sql.exec<{ current_version: number }>(
+      "SELECT current_version FROM artifact_state WHERE id = 1",
+    ).toArray()[0]?.current_version ?? null;
+    const written = this.state.storage.sql.exec<{ current_version: number }>(
       `INSERT INTO artifact_state (
          id, artifact_id, workspace_id, workstream_id, resource_id, region,
          current_version, mode, stateful, manifest_json, updated_at
@@ -372,7 +423,9 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
          stateful = excluded.stateful,
          manifest_json = excluded.manifest_json,
          resource_id = excluded.resource_id,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at
+       WHERE excluded.current_version >= artifact_state.current_version
+       RETURNING current_version`,
       input.artifactId,
       input.workspaceId,
       input.workstreamId,
@@ -383,11 +436,13 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       input.manifest.stateful ? 1 : 0,
       JSON.stringify(input.manifest),
       now,
-    );
+    ).toArray()[0];
+    if (!written) return { advanced: false };
     // In-memory only, and deliberately pessimistic: the next request aborts
     // and reloads rather than trusting that this process is the one that will
     // serve it.
     this.facetVersion = null;
+    return { advanced: before === null || before < written.current_version };
   }
 
   /**
@@ -403,6 +458,9 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     const code = randomSecret();
     const now = Date.now();
     this.pruneExpired(now);
+    const pendingDigest = await sha256Hex(new TextEncoder().encode(`pending:${code}`));
+    const codeDigest = await sha256Hex(new TextEncoder().encode(code));
+    if (this.canvasArchived()) throw new Error("canvas_archived");
     this.state.storage.sql.exec(
       `INSERT INTO viewer_sessions (
          session_sha256, user_id, app_session_id, display_name,
@@ -411,13 +469,13 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       // The session digest is a placeholder until redemption swaps in the
       // cookie's own digest; the primary key needs a value now and this row is
       // unreachable without the code.
-      await sha256Hex(new TextEncoder().encode(`pending:${code}`)),
+      pendingDigest,
       input.userId,
       input.appSessionId,
       input.displayName,
       now,
       now + VIEWER_SESSION_LIFETIME_MS,
-      await sha256Hex(new TextEncoder().encode(code)),
+      codeDigest,
       now + ARTIFACT_OPEN_CODE_LIFETIME_MS,
       now,
     );
@@ -700,6 +758,45 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     }
     const read = await host.rallyQuery(statement, params, maxRows);
     return { ok: true, columns: read.columns, rows: read.rows, rowCount: read.rowCount, truncated: read.truncated };
+  }
+
+  /**
+   * Run one row write against the artifact's database, for
+   * `write_artifact_data`.
+   *
+   * **Who may call this is decided before it is reached**, by the tool's
+   * wiring (`workstream-artifact-data-wiring.ts`): this object knows the
+   * artifact, not the run. What it owns is what holds for every caller. The
+   * statement is admitted here as one INSERT, UPDATE, DELETE or REPLACE, so
+   * the site's schema stays its own code's. A viewer-scoped writer is refused
+   * on a site that keeps private rows, for the reason `queryData` refuses that
+   * reader: free SQL cannot be limited to one viewer's rows. And an archived
+   * Canvas's artifact takes no write, from the same tombstone that refuses a
+   * late publish.
+   */
+  async writeData(
+    sql: string,
+    params: (string | number | null)[],
+    maxRows: number,
+    scope: ArtifactRowScope,
+  ): Promise<ArtifactWriteResult> {
+    await this.initialized;
+    const state = this.stateRow();
+    if (!state || state.stateful !== 1) return { ok: false, reason: "no_artifact_data" };
+    if (this.canvasArchived()) return { ok: false, reason: "canvas_archived" };
+    const admission = admitDataWriteStatement(sql);
+    if (!admission.admitted) return { ok: false, reason: "sql_refused", detail: admission.reason };
+    const host = await this.facetFor(state);
+    if (viewerOf(scope) !== null && viewerTables(await host.rallySchema()).filtered.length > 0) {
+      return {
+        ok: false,
+        reason: "private_rows",
+        detail: "This site keeps private rows, so only the person who published it can change its data from a Chat. Ask them, or use the site itself.",
+      };
+    }
+    const written = await host.rallyWrite(admission.sql, params, maxRows);
+    if (!written.ok) return { ok: false, reason: "sql_failed", detail: written.detail };
+    return { ok: true, rowsWritten: written.rowsWritten, columns: written.columns, rows: written.rows, truncated: written.truncated };
   }
 
   /** One page of one table, for the Data view and the CSV export. */

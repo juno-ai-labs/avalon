@@ -8,7 +8,6 @@ import {
   AnswerElicitationRequestSchema,
   AutomationDraftSchema,
   SidekickCustomToolSchema,
-  AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_OVERRIDES,
   AgentModelOverrideSchema,
   AGENT_MODEL_ROLES,
@@ -174,8 +173,7 @@ describe("boundary contracts", () => {
     };
     // Compared against the last id seen *for that vendor*, not the globally
     // preceding one. A vendor's entries are not required to be contiguous —
-    // `AGENT_MODEL_GROUPS` merges a vendor mentioned in two places into one
-    // section on purpose — so an adjacent-pair walk would skip the comparison
+    // a vendor may be mentioned in two places — so an adjacent-pair walk would skip the comparison
     // for exactly the mistake this exists to catch: `x-ai/grok-9` appended
     // after the DeepSeek block displays under xAI as 4.6 / 4.5 / 4.3 / 9,
     // while its only out-of-order pair never sits adjacent in this list.
@@ -194,26 +192,17 @@ describe("boundary contracts", () => {
 
   it("accepts a model override only from the closed list of selectable models", () => {
     expect(AgentModelOverrideSchema.parse("deepseek/deepseek-v4-pro")).toBe("deepseek/deepseek-v4-pro");
-    // An override bypasses the rollout, so the reachable set is reviewed here
-    // rather than being whatever string a client sends.
     expect(AgentModelOverrideSchema.safeParse("x-ai/grok-9").success).toBe(false);
     expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
   });
 
-  it("owns the complete model-role, Flagship-key, and route-value contract", () => {
+  it("owns the complete model-role and route-value contract", () => {
     expect(AGENT_MODEL_ROLES).toEqual([
-      "workstream",
-      "inline_child",
-      "workstream_naming",
+      "canvas",
+      "resource_naming",
       "memory_sweep",
-      "sidekick_authoring",
-    ]);
-    expect(AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role])).toEqual([
-      "agent-model-workstream",
-      "agent-model-inline-child",
-      "agent-model-workstream-naming",
-      "agent-model-memory-sweep",
-      "agent-model-sidekick-authoring",
+      "sidekick_wizard",
+      "sidekick_run",
     ]);
     expect(AgentModelRoutingSchema.parse({ model: "openai/gpt-6.1-sol", reasoningEffort: "low" })).toEqual({
       model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "low",

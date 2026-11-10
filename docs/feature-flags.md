@@ -1,1059 +1,281 @@
 # Feature flags
 
-Rally evaluates feature flags with [Cloudflare Flagship](https://developers.cloudflare.com/flagship/)
-through the `FLAGS` binding on configured regional Workers. The binding owns two
-things: which OpenRouter model each agent runs on, and which client-visible
-features the desktop is allowed to offer. Read this document before adding a
-flag, changing an agent's models, or changing what happens when a flag cannot be
-evaluated. One thing overrides a flag rather than being one — a conversation
-pinned to a single model, which today means a Sidekick's pin copied onto each
-of its runs — and it has [its own section](#a-conversations-own-model) below.
+Rally resolves product features and agent model routes from centralized constants
+in `packages/contracts/src/runtime-config.ts`, with optional Worker environment
+variable overrides. Resolution is local and deployment-wide: there is no
+Cloudflare Flagship binding, targeting database lookup, or remote flag service.
 
 ## Where the code lives
 
-Two modules read the binding, one per kind, and **nothing else calls
-`env.FLAGS` directly**:
-
-| Module | Owns | Fails |
-| --- | --- | --- |
-| `apps/api/src/services/agent-model-flags.ts` | One flag per model-using agent, and the pin that overrides one | **Open** — to the Worker variables, because an agent still has to run |
-| `apps/api/src/services/client-feature-flags.ts` | The features the desktop polls | **Closed** — to off, because a client feature has nothing it must do |
-
-Failure direction is the reason these are separate modules rather than one
-resolver with a parameter. A client feature that fell back the way a model flag
-does would ship an unreleased feature on the first Flagship outage. Because the pin lives with the model flags, every answer to "which model
-does this run use" still comes from one file.
-
-`apps/api/src/services/flag-targeting-attributes.ts` is the companion all of them
-evaluate through: it turns the ids a caller happens to hold into the attributes a
-targeting rule matches on, and it is where the line between a fact and a person's
-data is drawn.
-
-The rest:
-
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/services/flag-targeting-attributes.ts` | Loads the facts, caches them, and holds the line on what may leave the Worker. |
-| `apps/api/src/routes/feature-flags.ts` | `GET /feature-flags`, answered under identity auth. |
-| `apps/ace` | Access-protected editor and write authority for the managed user-facing product flags, also reachable from the engineering MCP's flag tools. See [`ace.md`](ace.md) and [`engineering-mcp.md`](engineering-mcp.md#feature-and-model-flags). |
-| `apps/api/src/queues/product-feature-flag-consumer.ts`, `WorkspaceDO.notifyProductFeatureFlagChanged` | Regional key-only fan-out and private per-user socket refresh. |
-| `packages/contracts` — `AGENT_MODEL_OVERRIDES` | The closed set of pinnable models. |
-| `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
-| `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the conversation's read-only pill applies to an id the closed set does not admit. |
-| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the choosable menu that would pin a conversation being started (offered by no composer today), and the locked pill inside one that already exists. |
-| `packages/db/src/index.ts`, `apps/api/src/durable-objects/workstream-object-product.ts` | Where compatibility reads and authoritative object reads re-validate a stored model pin before it reaches routing. |
+| `packages/contracts/src/runtime-config.ts` | Product defaults, runtime model choices, model-pin and provider catalogs, reasoning defaults, and environment names |
+| `apps/api/src/services/client-feature-flags.ts` | Boolean environment parsing for HTTP, workspace subscription, and push delivery |
+| `apps/api/src/services/agent-model-flags.ts` | Model environment overrides and conversation pin precedence |
+| `apps/api/src/routes/feature-flags.ts` | Identity-authenticated `GET /feature-flags` |
+| `packages/contracts/src/index.ts` | Client flag shape, agent roles, complete route schema, and the re-exported model-pin contract |
+| `scripts/sync-dev-env.mjs`, `.env.example` | Optional local overrides forwarded to the Worker |
 
-### Why a flag rather than a Worker variable
-
-Model selection used to live entirely in `OPENROUTER_*` Worker variables, so
-moving one agent to a new model meant editing both regional Wrangler files and
-redeploying. Flags decouple the two: a model swap is an audited flag change that
-takes effect on the next evaluation, can be staged per region, and can be rolled
-out to a percentage of workspaces before it reaches all of them.
-
-The Worker variables stay. They are the checked-in default that every agent
-falls back to, so the deployed configuration remains readable in the repository
-and Rally keeps running unchanged when Flagship is unreachable.
-
-### One flag per agent
-
-Each adjustable model-using agent type uses a flag keyed
-`agent-model-<agent>`. Background agents use the conversation agent type and
-inherit the source conversation's model override:
-
-| Agent | Flag key | Default model | Fallback models |
-| --- | --- | --- | --- |
-| Conversation agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Pasted-text naming (role `workstream_naming`) | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Memory sweep | `agent-model-memory-sweep` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Sidekick wizard | `agent-model-sidekick-authoring` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-
-The checked-in primary model is `openai/gpt-6.1-sol`, with low reasoning
-from the harness model-default registry. Flagship variations still override
-the primary model.
-
-Message addressing is deliberately absent from this table and from Ace. Its
-evaluated cascade fixes JEV as primary and
-`deepseek/deepseek-v4-flash-0731` through `wafer/fast` as the low-reasoning
-fallback, with no model or provider fallbacks. Changing either side requires a
-new evaluation and deploy; leaving an editable Flagship value in front of the
-measured route would let production silently diverge from its evidence. The
-conversation entry matches the `AgentInferenceSource` value written to the
-inference ledger, so a ledger row and its flag key name the same agent; an
-automation activation and its delegation workers remain `workstream` runs on
-the conversation agent's flag. The Sidekick's authoring Main (`automation` parent,
-substream `0`) and the background agents it starts use `sidekick_authoring`,
-independently defaulting to Sol even when the conversation flag serves Terra. An explicit conversation model pin still
-wins. The rest
-are the standalone structured-output agents: message addressing uses the
-agent-harness JEV/fallback cascade; the pasted-text title (the
-`workstream_naming` role) uses the bounded structured-inference gateway.
-The memory sweep ([`agent-memory.md`](agent-memory.md)) is a role on the
-primary model. Text search's document embeddings use the same gateway's native
-OpenRouter embeddings path but deliberately have no Flagship role: their fixed
-`qwen/qwen3-embedding-8b` model is hashed into the Turbopuffer namespace, so
-changing it is a code change and a reindex, not a flag.
-Substream context summaries are another deliberate non-flagged route. Their
-model is platform policy recorded in the durable context recipe before
-inference starts. The structured-inference gateway accepts that explicit route
-with an empty fallback list, so a retry cannot pick up a later flag evaluation
-or Worker fallback change and produce a different seed under the same receipt.
-The `workstream_description` and `suggestion_draft` roles are retired: their
-callers (the description loop, the conversation suggestions) were deleted in
-plan step C-2, and the Ace deploy retires `agent-model-workstream-description`
-and `agent-model-suggestion-draft` through `retireFlag`, as it does the
-`session_import`, `work_opportunity_admission` and `work_opportunity_ranking`
-keys, whose callers (session import, suggested work) were deleted too.
-`session_import`, `suggestion_draft` and `turn_disposition_classifier` stay in
-the usage contract's metered activities, so a usage event queued before the
-deploy still parses rather than going unbilled, and `OPENROUTER_STRUCTURED_MODEL`
-has no reader left; removing that Worker variable is a deploy-affecting change
-of its own. `workstream_naming`
-keeps its Thread-era name because it is a Flagship key, and now titles pasted
-text (`pasted-text-service.ts`); a rename would be a flag migration for no
-change in behaviour. The loop read a window of up to 600 messages to judge whether
-a Thread's purpose had moved, which is why it once wanted a stronger default
-than the classifiers it shared one with; its retirement record is in
-[`canvases.md`](canvases.md#retired-documents).
-
-Naming sits at the cheap end: it relabels one request in a single turn, runs
-while somebody watches for the result, and asks for no reasoning at all, so the
-smallest classifier model is the right default and latency is the thing a
-retarget would spend.
-
-**Adding an agent means adding a flag.** The set above is the whole of what
-`agent-model-flags.ts` knows about; an agent that reads `OPENROUTER_*` directly
-is invisible to every rollout. ESLint forbids those reads outside the resolver
-(with the health endpoint as the narrow availability-check exception) and also
-forbids API feature modules from constructing an OpenRouter client outside the
-structured-inference gateway. The exhaustiveness checks on
-`AGENT_MODEL_FLAG_KEYS` and `defaultAgentModelRouting` catch a *role* that was
-declared and not wired, but nothing catches a new service that never declared
-one.
-
-### Flag value
-
-Each flag is a **JSON** flag whose variations carry one agent's whole route
-plan, using OpenRouter model ids exactly as OpenRouter publishes them:
-
-```json
-{
-  "model": "openai/gpt-6.1-sol",
-  "reasoningEffort": "low",
-  "fallbackModels": ["google/gemini-3.8-flash"]
-}
-```
-
-- `model` — the OpenRouter model id the agent asks for first. Required, non-empty.
-- `fallbackModels` — OpenRouter model ids the route plan traverses, in order,
-  under Bind's classified failure policy. Optional; omitted means no fallbacks.
-
-`reasoningEffort` is optional: `low`, `medium`, or `high`. Omission uses each
-selected model's configured default. An explicit flag effort applies to the
-primary and every fallback; a task's explicit reasoning setting wins over it.
-Ace exposes the same choice, and MCP `update_model_flag` accepts it inside
-`routing`. Older flag values continue to work unchanged.
-
-The default model and its fallbacks live in **one** flag value rather than two
-flags on purpose. A route plan is only meaningful as a whole, so a variation
-change is atomic: an agent can never end up serving a new default model against
-the previous generation's fallbacks.
-
-### A conversation's own model
-
-One thing sits above the flags: a conversation may be pinned to a single model,
-recorded in its own `model_override`. The pin wins, and the flag is not
-consulted at all.
-
-The two answer different questions. A flag is a fleet-wide default, rolled out
-per workspace, identical for every conversation in it. A pin is somebody asking
-what *this* piece of work looks like on some other model — decided once, when
-the conversation is created, and not something to stage a rollout for. Precedence
-follows from that: a rollout reaching the workspace must not quietly take the
-pinned conversation with it.
-
-**The row a run reads is its own, not its parent's.** Each conversation is a
-separate object with a separate `model_override`, and routing resolves the one
-the run is executing in. Nothing copies a pin from a parent to a child
-implicitly: that would move conversations onto a model nobody chose, and make
-the selector's **Default** entry — which says it follows the flag — untrue in
-exactly the case somebody is looking at it.
-
-A Canvas is created unpinned (`createCanvas` writes `modelOverride: null`); the
-Thread and Breakout composers that used to carry a pin from the developer model
-selector are retired with them. An automation's pin is the
-`model_override` column on its `automation_directory` row; there is exactly one path
-that creates a run, `provisionSidekickRun`, which serves manual,
-scheduled, connector-event, and inbound-email triggers alike, and it copies
-`model_override` onto the run's child conversation, so a run resolves its model
-from its own row like every other conversation.
-
-That used to be three paths, two of which built the conversation row inline, so
-a pin that reached only one looked correct under **Run now** and was silently
-ignored by every scheduled run. That is how this shipped in review, and it is
-the concrete reason [`automation-lifecycle.md`](automation-lifecycle.md) has
-one producer. A field a run needs comes from `readRunDefinition`; a field added
-to the conversation row without going through the definition is a field an
-automation run does not get.
-
-Nothing else writes the column, so an ordinary conversation is unpinned and
-reads exactly as this document describes above. The control's choosable shape,
-which no composer offers today, says so plainly: unpinned is its own menu entry,
-labelled **Default** and described as following this flag, rather than named
-after a model the renderer cannot know is being served.
-
-The pin carries **no fallbacks**. It is a request to observe one specific model,
-and routing onward would answer a question nobody asked. An explicit pin stays
-fixed rather than routed.
-
-That leaves a pinned run's route plan with nowhere to traverse when the provider
-faults, so recovery has to come from somewhere else: the harness re-executes the
-plan against **the same pinned model** after a retriable transport failure, which
-keeps the pin's promise while stopping one stalled request from discarding a
-whole run. [`agent-harness.md`](agent-harness.md#failure-modes-and-limits) owns
-the budget and the failure code. Do not answer a pinned run's provider outage by
-adding fallbacks here.
-
-It reaches the conversation agent, which also authors Sidekicks, runs their
-occurrences, and executes background work. A background agent inherits its
-source conversation's override. The retired inline-child flag does not control
-these agents.
-
-The set of ids a pin may name is closed — `AGENT_MODEL_OVERRIDES` in
-`@rally/contracts` — because a pin bypasses the rollout, so what it can reach
-is a reviewed product decision rather than whatever string a client sends. The
-Google family is ordered newest first, with 3.8 Flash above 3.7 Flash; the
-OpenAI family is ordered by capability, with Sol above Terra and Luna. The
-API validates it on write and again on read, which is what lets a model be
-retired from the list without a migration: the conversations still naming it log
-`workstream_model_override_unknown` and return to the flag. `resolveWorkstreamModelRouting`
-is the resolver that applies all of this; `resolveAgentModelRouting` stays purely
-about flags.
-
-An automation's pin follows the same rule from a different place. The
-automation row's `model_override` is a plain nullable string, a record of what
-was authorized rather than a second validator, and `readRunDefinition` hands it
-to the run as `modelOverride`. `provisionSidekickRun` re-validates it
-through `automationModelOverride` on the way onto each run, so a model retired
-from `AGENT_MODEL_OVERRIDES` since it was set drops back to the flag's choice
-and logs `workstream_model_override_unknown` rather than being handed to the
-provider as though it still existed. Retiring a model therefore still needs no
-migration.
-
-#### Reading it back inside the conversation
-
-The composer of a conversation that already exists — Main's and a
-substream's — shows the same control in the same place, behind the same **Debug
-enabled** preference: the identical dropdown, trigger and pill and chevron, with
-the trigger `disabled`. That is what
-stops it opening, and its menu is left unrendered because a disabled trigger can
-never reach one. Disabled rather than merely quiet is the honest shape here: the
-pin is written once, when the conversation is created, and nothing afterwards
-edits it, so a menu would offer a change the next run would not honour.
-
-**Same place** is load-bearing and was not always true. The single-row message
-capsule the launchers and conversations wear has no room for a pill beside its
-attachment button, so the choice was moved into that button's menu while the
-pill stayed in the toolbar layout — which gave one control two homes, and moved
-the answer to "which model is this?" out of the composer at exactly the moment
-it stopped being a question. The capsule's leading column now sizes to its
-contents (a row holding the attachment button alone still measures the 42px it
-was fixed at) and the pill sits beside it in every layout and both shapes.
-
-The accessible name and the tooltip carry the full model id and say what may
-truthfully be said about it, **which is not the same sentence for every
-conversation**. A pin is fixed: `resolveWorkstreamModelRouting` finds it on the row and
-never reads the flag, so every run uses it. An unpinned conversation re-evaluates
-`agent-model-workstream` on *every* launch, so the id shown is what the latest
-run happened to resolve and a later run may differ. What is immutable there is
-the setting, not the model — an earlier draft of this control said a conversation
-keeps the model it started on, which is a stability guarantee the server does
-not make for the unpinned majority. The renderer therefore takes `pinned`
-alongside the id and picks the claim from it. It says "conversation" rather than
-"Canvas" or "Sidekick" for the same reason the column is read per row: in a substream,
-naming the parent's kind would describe a row this pill is not showing.
-
-The tooltip survives the disable — checked in a real window rather than assumed,
-because the reverse is the intuitive guess: a disabled button swallows the click
-that would open the menu, but Radix's tooltip is driven by pointer movement that
-still reaches it. What the disable does cost is keyboard focus, since Tab skips a
-disabled button, which is why the id has to be in the accessible name and not
-only in the tooltip.
-
-What it names is **`latestHarnessRun.model` first, and the pin only as a
-fallback**. The pin alone would answer for almost nobody: an unpinned
-conversation is nearly all of them, and the flag's served variation is not visible to
-a client at all — but every parent run records a model, which is the pin where
-there is one and the flag's answer where there is not. That column is the only
-place a client can see which model a given conversation is actually running. It
-follows that the id shown need not be one `AGENT_MODEL_OVERRIDES` admits; the
-pill shortens an unknown id to its model segment and the tooltip carries it
-whole.
-
-The pin sits behind it because of one case the run cannot cover. The column is
-written twice: `launchWorkstreamHarness` records the model it resolved at
-schedule time, and the run host may overwrite it at settle — while its lease is
-live and before terminalization — with the model that actually streamed. A run
-that failed before its first token streams nothing, so that second write puts
-**null** there. On a pinned conversation that is exactly where a run-only pill
-would fall back to **Default** and describe it as following a flag it never
-consults. `WorkstreamDetail` therefore carries `modelOverride`, projected by the
-object's own summary and re-validated against the closed set on the way out
-exactly as `resolveWorkstreamModelRouting`
-re-validates it, and the pill reads it when the run has nothing to say. Only a
-conversation that is both unpinned and has no recorded model reads **Default**,
-for the same reason an untouched composer does.
-
-What the pill still cannot show is a run whose attempts did not agree: the
-column holds one id, and the inference ledger is what records the model behind
-every attempt. See the `harness_runs.model` entry under [Failure modes and
-limits](#failure-modes-and-limits).
-
-### Evaluation
-
-`resolveAgentModelRouting(env, role, context)` evaluates the agent's flag with
-`getObjectDetails`, passing the Worker-variable default as the evaluation
-default. The context it sends is the run's identity, plus the attributes
-`flag-targeting-attributes.ts` loads for that subject.
-
-#### Identity
-
-A caller supplies only these, and only what it knows:
-
-| Attribute | Value |
-| --- | --- |
-| `agent` | The role key, e.g. `workstream` |
-| `appEnv` | `APP_ENV` |
-| `workspaceId` | Present wherever the caller knows it; the right key for percentage rollouts |
-| `workstreamId` | Present on conversation, subagent, and classifier evaluations |
-| `userId` | Present on conversation naming evaluations |
-
-Identity wins over attributes: the loaded facts are spread underneath these, so
-nothing read from D1 can redefine the id a percentage rollout buckets on.
-
-#### Attributes
-
-Ids alone cannot express a rule anybody would want to write. Nobody targets a
-uuid; they target the dogfooding workspace, the teams rather than the solo
-accounts, the conversations a person started rather than the ones an automation
-did. Each id the caller passes brings its facts with it:
-
-| Attribute | Type | Value | Needs |
-| --- | --- | --- | --- |
-| `workspaceSlug` | string | The workspace's slug — how a rule names one workspace without pasting a uuid. **User-authored**; see the carve-out below | `workspaceId` |
-| `workspaceMemberCount` | number | Members whose membership is `active`; invited and suspended do not count | `workspaceId` |
-| `workspaceAgeDays` | number | Whole days since the workspace was created | `workspaceId` |
-| `workspaceOwnerEmailDomain` | string | Email domain of the user who created the workspace | `workspaceId` |
-| `userEmailDomain` | string | Email domain of the user the evaluation is for | `userId` |
-| `userRole` | string | `owner`, `admin`, or `member` **in the workspace being evaluated** | `userId` + `workspaceId` |
-| `userPlatformId` | string | The person, stable across regions. **Bucket a per-person rollout by this, not by `userId`** | `userId` |
-| `workstreamOrigin` | string | `ad_hoc`; the `automation` value has had no writer since runs became conversations under their automation | `workstreamId` |
-| `workstreamScope` | string | `personal` or `workspace` — who may read it | `workstreamId` |
-| `workstreamCreatedByUserId` | string | Who created it | `workstreamId` |
-| `workstreamCreatorEmailDomain` | string | That person's email domain | `workstreamId` |
-| `workstreamFromOpportunity` | boolean | Whether it was started from a suggested work item | `workstreamId` |
-| `workstreamIsSystem` | boolean | Whether it is machinery (`system_kind`), such as a conversation an older digest created | `workstreamId` |
-
-An attribute whose fact is unknown is **omitted rather than sent empty**, so a
-rule can never match a placeholder. The consequence worth knowing: a rule on an
-attribute that was not sent silently never matches, which is why
-`agent_model_flag_resolved` and `client_flag_resolved` log the attribute *names*
-that were sent.
-
-`userPlatformId` is the one to reach for when a rollout is per *person* rather
-than per workspace. `userId` names a regional `users` row, and one person with
-workspaces in configured deployments has one in each — bucketing on it would place them in
-a different bucket per region and hand them a half-rolled-out feature on one of
-them. The platform id is established once by the Global control plane and is
-immutable in configured deployments ([`regionalization.md`](regionalization.md)). It is
-absent only for an account predating that control plane, and an absent attribute
-does not match, so such an account sits out the rollout rather than landing in
-the wrong half of it.
-
-`workspaceOwnerEmailDomain` exists because it is the only domain most
-evaluations can have. A conversation run, a subagent, and the
-classifiers carry no `userId` — nobody is asking, the workspace is — so without
-the owner's domain no rule could reach a customer's tenancy or the dogfooding
-workspaces on the paths that do the most inference.
-
-#### What may become an attribute
-
-An attribute leaves the Worker on every evaluation and lands in a flag-targeting
-system that is not a place for anyone's data. The line is therefore drawn at the
-loader, not at the rule author's discretion:
-
-- **Yes** — ids, counts, ages, the enums the schema itself declares
-  (`origin_type`, `scope`, `role`), and the **domain** half of an email address.
-- **No** — a person's name, a full email address or its local part, a
-  conversation's title or objective, a note, a message, a prompt, or anything else a
-  person wrote.
-- **One carve-out: `workspaceSlug`.** It is user-authored text — the workspace
-  name typed at onboarding, slugified, with eight characters of the workspace id
-  appended (`workspace-service.ts`) — so it can name a company, a team, or, on a
-  solo account, a person, and it crosses from configured deployments. It is sent anyway,
-  because the alternative is rules written against uuids, and a rule nobody can
-  read six weeks later is a rollout nobody can safely revert. This is the one
-  exception; a second one is a decision, not a precedent.
-
-A domain is a cohort — a customer, a team, the people dogfooding — and that is
-what makes a rule expressible. The local part is the individual, and it never
-leaves the Worker; `flag-targeting-attributes.ts` keeps a test on exactly that,
-scoped to the fields the rule covers rather than passing by accident on the
-carve-out.
-
-#### Freshness and cost
-
-- Facts are cached in the isolate for five minutes, keyed by subject. A
-  membership or a slug moves on a human timescale, so the staleness is free and
-  a hot agent path does not pay for a read per run.
-- **Evaluations that describe the same subject at the same moment share one
-  read.** The cache is written when a read resolves, so concurrent resolvers
-  would otherwise all miss and all read — and a single request now resolves
-  several flags at once. The pending read is dropped as soon as it settles, so
-  it de-duplicates rather than adding a second cache with its own staleness.
-- A **miss is not cached.** A scheduled-creation path resolves a model for a
-  conversation id whose product facts are not populated yet, so remembering "no such
-  conversation" would leave those conversations unattributed through their first
-  runs. They are unattributed for that first evaluation either way — a fact the
-  rows do not yet hold cannot be sent.
-- A brand-new Durable Object keeps its conversation id in the first model
-  evaluation for identity and bucketing, but loads only workspace attributes
-  until the atomic authoritative root, opening message, and first run commit.
-  Querying conversation facts while the root is still `preparing` is not a miss:
-  it crosses the authority fence, logs an operational error, and suppresses the
-  now-readable row for ten seconds. Later runs load the complete conversation
-  attributes normally.
-- Scheduled creation uses the same resolver. `provisionSidekickRun`
-  calls `scheduledWorkstreamModel` after the run's child conversation is
-  provisioned but before its harness run is admitted, when the authoritative
-  shell still carries placeholder facts, which is not a valid targeting
-  subject, so that resolver deliberately loads workspace attributes only. A pinned automation skips the
-  call, but only after `automationModelOverride` has accepted the pin; a pin it
-  drops falls through to the flag like an unpinned run.
-- A **failed read is held down for ten seconds**, keyed by entity and subject.
-  That is the one case where retrying immediately helps nobody: while D1 is
-  unhealthy, every agent path would otherwise re-issue its reads and warn again
-  on every run, so an outage would arrive with a log flood on top of it. Ten
-  seconds is short enough that recovery is prompt and a row written moments
-  later is still picked up. "No row" and "no read" are therefore different
-  outcomes internally, even though both send no attributes.
-- At most three reads, issued concurrently, and each failure degrades to "no
-  attributes from that entity" and logs `flag_targeting_attributes_unavailable`.
-  A D1 error warns in every environment: unlike the Flagship binding, D1 works
-  locally, so a failed read there is a real defect rather than the expected
-  local state.
-- Attributes are an enrichment, never a precondition. Loading them cannot fail
-  an agent run, and a run with no attributes still resolves its flag on identity.
-
-Four failures resolve to the same place — the Worker variables:
-
-- **No binding.** `env.FLAGS` is undefined because the Worker does not declare it.
-- **A call that throws.** Logged as `agent_model_flag_unavailable`, at `debug`
-  rather than `warn` in development and test, because an unreachable binding is
-  the normal local state (see below) and would otherwise warn once per agent run.
-- **A flag that does not resolve** — missing, mistyped, disabled, or
-  type-mismatched. Flagship reports these by returning the default with an
-  `errorCode` rather than throwing, so they are caught by reading
-  `getObjectDetails().errorCode` and logged as `agent_model_flag_unresolved`.
-  Without that check a typo in `AGENT_MODEL_FLAG_KEYS` would be indistinguishable
-  from a correctly provisioned flag.
-- **Malformed value.** The served variation fails the zod schema. Rejected
-  whole — never merged field by field — and logged as `agent_model_flag_invalid`.
-
-A successful resolution logs `agent_model_flag_resolved` at `debug` with the
-served `variant` and `reason`, which is how a staged rollout is confirmed from
-the Worker side; the inference ledger records only the model that resulted.
-
-`resolveAgentModelRouting` never throws, so a Flagship outage can never fail an
-agent run.
-
-Deployment does not depend on Flagship either: `wrangler deploy` writes the
-binding into the Worker's script metadata without calling the Flagship API, so
-the deployment token needs no Flagship permission — only the provisioning
-commands above do. `GET /health` reports the binding as `featureFlags`, and
-counts it as required in production, so a Worker deployed without a working
-`FLAGS` binding fails the release health gate rather than quietly running every
-agent on the Worker variables.
-
-Evaluation is per run, not per model turn. A flag change reaches an in-flight
-run only at its next admission; runs already streaming keep the plan they
-started with. `harness_runs.model` records the model a scheduled run is expected
-to use, resolved from the same flag at schedule time — a flag changed between
-scheduling and execution makes that column an expectation rather than a
-guarantee. The inference ledger records what each attempt actually used.
+## How it works
 
 ### Client-visible flags
 
-A client flag decides what the desktop is allowed to *offer*, or how it should
-behave:
+The checked-in product defaults are:
 
-| Flag key | Type | Default | Decides |
-| --- | --- | --- | --- |
-| `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
-| `suggested-work-enabled` | boolean | `false` | Still served; it gated the Suggested Work surfaces, which are deleted, so no client reads it |
-| `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
+| Constant field | Default | Optional environment variable |
+| --- | --- | --- |
+| `developerSettings` | false | `FEATURE_FLAG_DEVELOPER_SETTINGS` |
+| `multipleWorkspacesEnabled` | true | `FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED` |
+| `pushNotificationsEnabled` | true | `FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED` |
 
-`GET /feature-flags` serves them all as one object — `{ "developerSettings":
-false,
-"suggestedWorkEnabled": false, "multipleWorkspacesEnabled": false }` — resolved for the
-signed-in person. It answers under *identity* auth rather than workspace auth:
-eligibility belongs to the account, and a device that has not chosen an
-workspace yet still has to be told the feature is off rather than read a
-403 as an outage.
+Overrides accept native JSON booleans and numbers `1`/`0`, or their string forms,
+ignoring surrounding whitespace and case for strings. Unset or empty values use the constant. Values apply to every user in the
+deployment. Product authorization still lives in its ordinary access checks;
+presentation flags do not grant access to data or disable API authorization.
 
-The managed product Boolean names deliberately end in **Enabled**, as do their
-camel-case response fields. `true` therefore always means the surface may be
-shown and `false` means it is hidden; no caller has to infer whether a bare name
-means disabled, hidden, or selected.
+Desktop and browser clients keep their existing HTTP and workspace subscription
+contracts. A reconnect or subsequent HTTP read picks up deployed configuration.
+The client schema also defaults organization switching on, so startup or a failed
+flag read does not hide the selector. An explicit server answer of `false` still
+disables it. Developer settings and push controls wait for server enablement.
+The old per-user targeting and key-only Queue fan-out are retired. The legacy
+`workspace_feature_flags` event remains parseable by clients during rolling
+deployments, but the new server does not publish it. Remove that event schema
+and desktop handler once all API versions that publish it have been retired;
+current clients already refresh through HTTP and subscription snapshots.
 
-The managed product Booleans are presentation-only. Only
-Electron consumes them to show or hide product surfaces; the API routes and
-underlying product capabilities do not evaluate them. They are rollout
-controls for discovery and visibility, not authorization, entitlements, or
-server-side kill switches. The same rule applies to workspace-template
-and multiple-workspace operations. Turning the
-multiple-workspaces flag off hides the account-menu affordances; it does not
-collapse memberships or discard stored workspace credentials.
+### Agent model routing
 
-The Developer section is for Juno staff, and **that is a Flagship targeting
-rule, not a condition in the Worker** — see [the rule the flag is provisioned
-with](#provisioning). `client-feature-flags.ts` contains no cohort of its own:
-it describes the person, evaluates the flag, and serves the answer. Changing who
-gets the section is a flag change with a changelog entry, not a deploy, and the
-console shows the whole truth about who is in.
+`AGENT_MODEL_DEFAULTS` holds the common models and ordered fallback list.
+`AGENT_MODEL_ENV_KEYS` exhaustively maps each role to its model group:
 
-#### What a client flag's rules match on
+| Roles | Default model | Shared override |
+| --- | --- | --- |
+| `canvas`, `sidekick_run` | `openai/gpt-6.1-terra` | `OPENROUTER_PRIMARY_MODEL` |
+| `sidekick_wizard`, `memory_sweep` | `openai/gpt-6.1-sol` | `OPENROUTER_SMARTER_MODEL` |
+| `resource_naming` | `openai/gpt-6.1-terra` | `OPENROUTER_FASTER_MODEL` |
 
-The same [identity](#identity) and [attributes](#attributes) an agent
-evaluation sends, from the same loader, with identity spread over the top so
-nothing read from D1 can redefine an id a rollout buckets on. There is no second
-vocabulary: a rule written for a client flag reads like every other rule, and
-the boundary in [what may become an attribute](#what-may-become-an-attribute)
-applies unchanged — the staff scope is `userEmailDomain`, never an address.
+`OPENROUTER_FALLBACK_MODEL` overrides the default `google/gemini-3.8-flash`
+fallback. It is a comma-separated ordered list; an explicitly empty string
+selects no fallbacks. Unset variables use the checked-in defaults. An explicitly
+empty primary, smarter, or faster model disables that model group and fails
+before provider I/O (`agent_model_disabled:<variable>`). The workerd suite uses
+this to require an explicit provider double before reaching inference.
 
-The one difference is which attributes are *reachable at all*. A client flag
-always knows a `userId`, because there is a person asking rather than a
-workspace running something, so the `user*` attributes are the ones to write a
-rule against here — where most agent evaluations cannot use them. That is a
-statement about which rules are worth writing, not a guarantee that a given
-attribute was sent: the usual omissions still apply below, so a rule on
-`userEmailDomain` is a rule the client flags can express, not one that always
-matches. `workstreamId` is never known here, so no `workstream*` attribute ever
-appears. `workspaceId` is present only once a workspace has been chosen.
+For one role, set `AGENT_MODEL_ROUTING_JSON` to a native JSON object or a JSON
+string keyed by role. A
+role's value replaces its complete route, including ordered fallbacks and
+optional `reasoningEffort` (`low`, `medium`, or `high`):
 
-Everything that is not an explicit `true` resolves to off: no binding, a binding
-that throws, a flag that does not resolve, a non-boolean value.
-`resolveClientFeatureFlags` never throws, so a Flagship outage cannot fail the
-poll; it just leaves the answer off. Attribute loading fails the same way — an
-unreadable account yields no `user*` attributes rather than an error, so a
-cohort rule stops matching instead of the request failing.
+```dotenv
+AGENT_MODEL_ROUTING_JSON='{"canvas":{"model":"openai/gpt-6.1-terra","fallbackModels":[],"reasoningEffort":"low"}}'
+```
 
-A resolution logs `client_flag_resolved` at `debug` with the served `variant`,
-the `reason`, and the attribute *names* that were sent. The variant and reason
-tell a rule that excluded someone from one that never fired; the names tell you
-whether the fact the rule is written against was even available. Neither carries
-a value.
+Omitting `fallbackModels` in a role override means no fallbacks. Roles omitted
+from the object continue to use their model group. Azure-only GPT-5.6 Sol is
+rejected for direct OpenRouter roles (`resource_naming`, `memory_sweep`) in both
+primary and fallback slots. Direct Canvas structured calls enforce that same
+restriction at their gateway; ordinary Canvas/Sidekick harness calls can use
+Azure-only models. Unsupported routes fall back as a whole. Persisted routes
+that violate provider policy fail before I/O rather than silently changing models.
+Other model IDs remain free-form overrides; the pin catalog is not a provider
+availability whitelist. A task's explicit reasoning
+setting retains precedence over route-level reasoning. Fixed embedding models keep their existing semantic contracts.
 
-#### The desktop half
+### Other runtime models
 
-The three managed product Booleans arrive on the private
-WorkspaceDO subscribe response and on `workspace_feature_flags` events. They
-replace the renderer's one `['feature-flags']` cache as a complete object; a
-partial event cannot leave a mixed generation behind. Reconnect always
-re-evaluates them even if a live notification was missed.
+The same `@rally/contracts/runtime-config` module owns the model-ID catalog and
+fixed choices for search embeddings, JEV classifiers and
+completion verification, addressing/continuation fallbacks, image and speech
+generation. It also owns Azure deployment names,
+pricing catalogs, pin choices, and per-model reasoning defaults. API and harness
+modules import these constants; older public imports re-export the same values.
+Sol has no forced reasoning default; a caller may still request an explicit effort.
+Dictation continues to select its deployment through
+`AZURE_OPENAI_REALTIME_DEPLOYMENT`.
 
-Ace delays fan-out for 30 seconds because Cloudflare documents that Flagship
-configuration changes can take
-[up to 30 seconds to propagate](https://developers.cloudflare.com/flagship/concepts/).
-The regional object evaluates after that delay; it does not trust a value from
-the administrative write response.
+Centralizing a value preserves its existing contract: a changed embedding model
+requires a reindex. These fixed paths do not inherit the ordinary agent JSON overrides.
 
-`DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` in
-`apps/desktop/src/main/developer-settings-flag.ts` — one minute — is how long a
-flag change takes to reach a running app. The poll lives in the **main
-process**, not a renderer, because that is where `application-settings.json` and
-the session are, and because both windows then read one answer instead of each
-deciding for itself. It is a poll rather than a socket: the only realtime
-channel Rally has is the per-conversation room, which a device without a
-conversation open is not connected to, and a flag change is not worth a second
-channel. A sign-in re-asks immediately rather than waiting out the interval; a
-sign-out closes the section on the way past.
+### A conversation's own model
 
-Each renderer treats a live application-settings event as newer than every
-snapshot read or mutation reply that was already in flight. The listener is
-installed before the initial read to make that lifetime explicit, but the
-generation check carries the ordering: `ipcRenderer.invoke` replies and
-`webContents.send` events are independent asynchronous channels. The main
-process broadcasts transitions rather than repeating the same value on every
-poll, so accepting an older reply after the transition would leave that
-renderer stale with no later identical poll to repair it.
+A conversation's stored `model_override` takes precedence over deployment
+configuration. The closed `AGENT_MODEL_OVERRIDES` list validates pins on write
+and read. A pin has no fallbacks: it requests that specific model. An absent
+pin uses the conversation role's configured route; an unknown stored pin logs
+`workstream_model_override_unknown` and returns to that route.
 
-The effective preference the renderer sees is the stored **Debug enabled**
-choice *and* the flag, computed once in `desktopApplicationSettings()`:
-
-- A `application-settings.json` that says `debugEnabled: true` grants nothing
-  while the flag is off. The stored bit is left alone rather than rewritten, so
-  the choice is still there when the flag comes back.
-- The Settings pane hides the whole section rather than disabling its toggle. A
-  section the account is not in the cohort for is not a control that happens to
-  be unavailable.
-- A poll that cannot reach the service leaves the last answer standing.
-  Revoking the section on a dropped connection would flicker it, and it crosses
-  no trust boundary — it reveals debugging affordances the renderer already
-  holds, per [`security.md`](security.md). Only an answer, a sign-out, or a
-  shutdown turns it off.
+Pins belong to the conversation that was created with them. A Sidekick run
+copies its definition's pin through
+`provisionSidekickRun`; its authoring Main and background authoring agents use
+`sidekick_wizard`, while occurrences and delegation workers use `sidekick_run`.
+Canvas conversations use `canvas`. Scheduled Sidekick admission selects
+`sidekick_run` before the run child exists, so its recorded model agrees with
+the role the execution resolves. The former `sidekick_authoring` JSON key is
+renamed to `sidekick_wizard`; deployments using that override must rename it.
+The shared naming-model override is now `OPENROUTER_FASTER_MODEL`; rename any
+existing `OPENROUTER_CLASSIFIER_MODEL` deployment variable to the new name.
+The fallback override is now `OPENROUTER_FALLBACK_MODEL`; rename any existing
+`OPENROUTER_FALLBACK_MODELS` deployment variable as well.
+The conversation's served-model pill retains its existing behavior. See
+[`automation-lifecycle.md`](automation-lifecycle.md).
 
 ## Invariants
 
-- **Nothing calls `env.FLAGS` outside the two resolvers.** They exist as
-  separate modules because they fail in opposite directions; a shared resolver
-  with a parameter is one place for that direction to be chosen wrongly.
-- **Model flags fail open, client feature flags fail closed.**
-  A client feature that failed open would ship an unreleased feature on the
-  first Flagship outage.
-- **A route plan is one flag value, never two flags.** A variation change is
-  atomic, so an agent can never serve a new default model against the previous
-  generation's fallbacks.
-- **A malformed variation is rejected whole, never merged field by field.**
-- **A conversation's pin wins and the flag is not consulted at all.** A rollout
-  reaching the workspace must not quietly take a pinned conversation with it.
-- **A run resolves the pin on the row of the conversation it is executing in.**
-  A conversation's main conversation and each substream is a separate object with
-  a separate column, so nothing inherits: a substream is pinned by being created
-  pinned. Copying a parent's pin downward would move work nobody chose for it.
-- **The one path that creates a run copies `model_override` onto that run's
-  conversation.** `provisionSidekickRun` reads it from the Sidekick's row.
-  The invariant used to read "every path", because there were three and two of
-  them built the row inline; a pin that reached only one looked correct under
-  **Run now** and was silently ignored by every scheduled run. A second producer
-  brings that failure straight back.
-- **A pin carries no fallbacks.** It is a request to observe one specific model,
-  and routing onward would answer a question nobody asked. A provider fault on a
-  pinned run is recovered by retrying that same model, never by widening the
-  route — see [`agent-harness.md`](agent-harness.md#failure-modes-and-limits).
-- **The set of pinnable ids is closed** (`AGENT_MODEL_OVERRIDES`), validated on
-  write *and* on read, which is what lets a model be retired without a migration.
-  A conversation's pin is re-validated by `resolveWorkstreamModelRouting`; an
-  automation's frozen pin by `automationModelOverride` as each run is
-  provisioned. A run path that reads the automation's `model_override`
-  without that call reintroduces the gap — the context's type is deliberately
-  wide.
-- **Identity is spread over the loaded attributes, never under them**, so nothing
-  read from D1 can redefine the id a percentage rollout buckets on.
-- **An attribute whose fact is unknown is omitted rather than sent empty**, so a
-  rule can never match a placeholder. The consequence is that a rule on an
-  attribute that was not sent silently never matches — which is why
-  `agent_model_flag_resolved` and `client_flag_resolved` log the attribute *names*
-  that were sent.
-- **Bucket a per-person rollout on `userPlatformId`, never `userId`.** `userId`
-  names a regional row, and one person with workspaces in configured deployments has one in
-  each; bucketing on it hands them a half-rolled-out feature on one region.
-- **What may leave the Worker is decided at the loader, not by the rule author.**
-  Ids, counts, ages, schema enums, and the *domain* half of an email address —
-  never a name, a full address or its local part, a title, an objective, a note, a
-  message, a prompt, or anything else a person wrote. `workspaceSlug` is the one
-  carve-out, and a second one is a decision, not a precedent.
-- **Attributes are an enrichment, never a precondition.** Loading them cannot fail
-  an agent run, and a run with no attributes still resolves its flag on identity.
-- **Nothing that protects data is scoped by a flag.** Flag targeting is a product
-  scope; a poll that cannot reach the service keeps its last answer, which is the
-  wrong failure mode for a confidentiality boundary — see
-  [`security.md`](security.md).
-- **A cohort is a Flagship targeting rule, not a condition in the Worker.**
-  `client-feature-flags.ts` describes the person, evaluates the flag, and serves
-  the answer; changing who is in is a flag change with a changelog entry, not a
-  deploy.
-- **Product Boolean flag names explain true.** `suggested-work-enabled` maps
-  to `suggestedWorkEnabled`; a bare or negatively named Boolean invites one
-  layer to invert another.
-- **A product-flag notification carries a key, never a value.** Two people in
-  one workspace may match different rules, so WorkspaceDO evaluates each user
-  before sending a private event. The subscribe response is the repair path.
-- **Ace is the managed product-flag write path.** Flagship has no documented
-  webhook or Queue notification surface; a dashboard edit changes evaluation
-  but cannot wake connected Avalon clients.
-- **Evaluation is per run, not per model turn.** A flag change reaches an
-  in-flight run only at its next admission.
+- Constants are the default authority; all environment overrides are optional.
+- A feature read and an ordinary model resolution perform no external I/O.
+- HTTP, workspace subscription, and push delivery use the same Boolean resolver.
+- A model route is accepted as a whole, and a conversation pin wins over it.
+- Feature configuration contains no per-user or per-workspace targeting rules.
+- `AGENT_MODEL_ENV_KEYS` is exhaustive over `AgentModelRole`, checked by TypeScript.
 
 ## Boundary
 
-This document owns the `FLAGS` binding, the three resolvers, the attribute loader,
-and the one thing that overrides a flag. It does not own the agents themselves or
-what they do with the model they are handed:
-
-| For | Read |
-| --- | --- |
-| The run loop, the route plan's failure policy, the inference ledger | [`agent-harness.md`](agent-harness.md) |
-| The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
-| Why **Debug enabled** crosses no trust boundary | [`security.md`](security.md) |
-| Why `userPlatformId` is the stable per-person id | [`regionalization.md`](regionalization.md) |
-| The retired description loop's retirement record | [`canvases.md`](canvases.md#retired-documents) |
-| Provisioning credentials and the release health gate | [`runbook.md`](runbook.md) |
-
-A subsystem that wants a rollout adds a flag here and reads it through the
-resolver for its kind. It does not read `env.FLAGS`, and it does not read
-`OPENROUTER_*` — ESLint forbids both outside the resolver.
+Configuration owns deployment-wide defaults. Authentication and product access
+remain with their existing services. Reading a stored conversation pin still
+uses its authoritative object. Ace and the engineering MCP no longer offer
+remote flag or model-route editing; change constants or deployment variables.
 
 ## Failure modes and limits
 
-Four failures resolve a model flag to the Worker variables, and every one of them
-is logged distinctly rather than collapsed:
-
-| Failure | Log event |
-| --- | --- |
-| No binding — `env.FLAGS` undefined because the Worker does not declare it | *(none; the normal local state)* |
-| A call that throws | `agent_model_flag_unavailable`, at `debug` in development and test |
-| A flag that does not resolve — missing, mistyped, disabled, type-mismatched | `agent_model_flag_unresolved` |
-| A served variation that fails the zod schema | `agent_model_flag_invalid` |
-
-Flagship reports the third by returning the default with an `errorCode` rather
-than throwing, so it is caught by reading `getObjectDetails().errorCode`. Without
-that check a typo in `AGENT_MODEL_FLAG_KEYS` would be indistinguishable from a
-correctly provisioned flag.
-
-- **`resolveAgentModelRouting` and `resolveClientFeatureFlags` never throw.** A
-  Flagship outage cannot fail an agent run or the client poll.
-- **Everything that is not an explicit `true` resolves a client flag to off** — no
-  binding, a binding that throws, an unresolved flag, a non-boolean value.
-- **Facts are cached in the isolate for five minutes, keyed by subject**, and
-  concurrent evaluations of the same subject share one read. A **miss is not
-  cached**: the automation paths resolve a model for a conversation id one statement
-  before they insert the row, so remembering "no such conversation" would leave those
-  conversations unattributed through their first runs.
-- **A failed read is held down for ten seconds**, keyed by entity and subject.
-  While D1 is unhealthy every agent path would otherwise re-issue its reads and
-  warn again on every run, so an outage would arrive with a log flood on top of it.
-  "No row" and "no read" are therefore different outcomes internally, even though
-  both send no attributes.
-- **At most three reads, issued concurrently**, each degrading to "no attributes
-  from that entity" and logging `flag_targeting_attributes_unavailable`. A D1 error
-  warns in *every* environment — unlike the Flagship binding, D1 works locally, so a
-  failed read there is a real defect rather than the expected local state.
-- **A pin naming a retired model logs `workstream_model_override_unknown` and
-  returns to the flag**, rather than failing the run.
-- **`harness_runs.model` is an expectation, not a guarantee.** It records the model
-  a scheduled run was expected to use, resolved at schedule time; a flag changed
-  between scheduling and execution makes it wrong. The run host overwrites it at
-  settle with the model that actually streamed, but only while its lease is live
-  and the run is not yet terminalized — and a run that never streamed overwrites
-  it with **null**. The inference ledger records what each attempt actually used.
-- **A desktop poll that cannot reach the service leaves the last answer standing.**
-  Only an answer, a sign-out, or a shutdown turns the Developer section off; a flag
-  change takes up to `DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` (one minute) to
-  arrive, and a sign-in re-asks immediately.
-- **Product features do not use that open last-answer behavior.** Their shared
-  schema defaults false, sign-out resets it, reconnect receives a fresh answer,
-  and recording requires exactly true again inside main.
-- **`GET /health` counts `featureFlags` as required in production**, so a Worker
-  deployed without a working binding fails the release health gate rather than
-  quietly running every agent on the Worker variables. Deployment itself does not
-  depend on Flagship: `wrangler deploy` writes the binding into script metadata
-  without calling the Flagship API, so the deployment token needs no Flagship
-  permission — only the provisioning commands do.
-- **Nothing catches a new service that never declared a flag.** The exhaustiveness
-  checks on `AGENT_MODEL_FLAG_KEYS` and `defaultAgentModelRouting` catch a *role*
-  declared and not wired; an agent that reads `OPENROUTER_*` directly is invisible
-  to every rollout, and only the ESLint rule stands between the two.
+An invalid Boolean override logs `feature_flag_override_invalid` with the variable
+name and uses the constant. A malformed JSON document or invalid selected model
+route logs `agent_model_override_invalid` with a field-level diagnostic and uses
+the model group's route. No partial model override is applied. Override values
+are not included in these diagnostics. There is no propagation delay or remote
+flag-service availability requirement.
 
 ## Testing
 
-| Suite | Covers |
-| --- | --- |
-| `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, unresolved cases, and zod rejection. |
-| `apps/api/test/agent-model-override.test.ts` | Pin precedence, the closed id set validated on write and read, and the three run-creation paths that must copy the column. |
-| `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | Initial private values and per-user live re-evaluation over a real hibernating WebSocket. |
-| `apps/ace/test` | Safe rule vocabulary and Flagship limits, signed-site failure behavior, key-only notification, and cross-region Queue fan-out. |
-| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | Initial and live full-contract replacement in the feature-flag cache. |
-| Desktop menu, sidebar, conversation, and meeting suites | Every visible entry point remains hidden until explicitly enabled while product actions remain otherwise unchanged. |
-| `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
-| `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
-| `apps/desktop/src/renderer/screens/workspace-settings.test.tsx`, `apps/desktop/src/renderer/lib/use-debug-enabled.test.tsx` | Live application-setting broadcasts win over older reads, read failures, and mutation replies, so a poll can reveal or withdraw Developer without a relaunch. |
-
-| `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a conversation: the same gate, the exact id and the claim each of `pinned`'s two states may make, and that it opens no menu. |
-
-Run one with
-`pnpm --filter @rally/api exec vitest run test/agent-model-flags.test.ts` — the
-path is package-relative.
-
-Two traps. Flagship is unreachable in local development and test, which is the
-*expected* state, so a suite that asserts a flag resolved is really asserting the
-fallback; stub the binding rather than relying on the environment. And the
-attribute test is deliberately scoped to the fields its rule covers rather than
-asserting over the whole payload — a broad assertion passes by accident on the
-`workspaceSlug` carve-out.
-
-### Provisioning
-
-Both regional Workers bind the **one** `avalon-api` Flagship app
-(`bec01d3a-d6b6-4d8c-b89a-37440ed63b8c`), already provisioned:
-
-```jsonc
-"flagship": [
-  { "binding": "FLAGS", "app_id": "bec01d3a-d6b6-4d8c-b89a-37440ed63b8c", "remote": true }
-]
-```
-
-One app rather than one per region. Unlike D1, R2, and the Durable Object
-namespaces, a flag *holds* no workspace data — only model ids — so the regional
-isolation those resources need does not apply to what is stored, and splitting
-would mean maintaining two copies of every flag that are meant to stay
-identical. Staging a rollout per region does not need a second app either:
-`region` is in the evaluation context, so a targeting rule reaches one region.
-
-Ace automatically ensures all eight `agent-model-*` JSON flags plus
-`meeting-recording-enabled`, `suggested-work-enabled`,
-`multiple-workspaces-enabled`, and `push-notifications-enabled` exist on every
-merge-to-main deployment. It seeds model flags from the checked-in Worker
-defaults and does not overwrite an existing definition. Every product flag
-defaults off except `push-notifications-enabled`, which defaults **on** for
-everyone from launch. Once created,
-edit product flags and each model flag's current default route through Ace
-rather than the Flagship dashboard: Flagship's
-documented API has no outbound change webhook, so only Ace performs the Queue
-fan-out that wakes connected clients. [`ace.md`](ace.md) owns that release and recovery path.
-
-To provision the app in a fresh account:
-
-```bash
-pnpm exec wrangler flagship apps create "avalon-api" --json
-```
-
-Add the returned id as `app_id` to both regional Wrangler files by hand.
-`--binding FLAGS --update-config` writes it for you but reformats the whole
-configuration file — retabbing it and expanding every inline object — so it is
-not worth the diff.
-
-**`app_id` is not optional in practice.** `wrangler deploy` refuses a flagship
-binding without one (`FLAGS bindings must have an "app_id" field`), and neither
-CI gate catches its absence: a dry-run build substitutes an inherit placeholder
-for the missing id and passes. Wrangler can provision an app during deploy, but
-that path prompts interactively, which a CI runner cannot answer. The failure
-would therefore land mid-release, in the deploy job that runs *after* the remote
-D1 migrations have applied. `agent-model-flags.test.ts` asserts both regional
-files carry an `app_id` so the gap fails on the pull request instead.
-
-Both paths need a Cloudflare API token carrying **Flagship write** access. A
-read-only Flagship grant is enough to list apps and flags but returns
-`Authentication error [code: 10000]` on any create, so a token that passes
-`wrangler whoami` and `wrangler flagship apps list` can still fail to provision.
-[The runbook](runbook.md#required-hosted-resources) lists the full token
-permission set.
-
-Ace's deployment normally creates one JSON flag per agent, seeded from the
-checked-in route catalog. Those values match the Wrangler defaults in both
-regional configurations; a deployment does not read a locally overridden
-Wrangler value when it provisions an absent flag. If a fresh account is being
-assembled outside that release path, the equivalent manual command is:
-
-```bash
-pnpm exec wrangler flagship flags create <APP_ID> agent-model-workstream --type json \
-  -V current='{"model":"openai/gpt-5.6-terra","fallbackModels":["google/gemini-3.8-flash"]}' \
-  --default current \
-  -d "Work-stream agent OpenRouter models"
-```
-
-Repeat for every key in the table above, or deploy Ace and let its idempotent
-provisioner create only the missing keys. An agent whose flag does not exist
-keeps running on its Worker variables, so the flags may be created one at a
-time.
-
-Then the client flags, seeded **off**, which is what an absent flag already
-resolves to:
-
-```bash
-pnpm exec wrangler flagship flags create <APP_ID> developer-settings --type boolean \
-  -V off=false -V on=true \
-  --default off \
-  -d "Application → Developer in the desktop client. Staff-scoped by the rule below" \
-  --rule "serve=on; when=userEmailDomain equals juno-labs.com"
-```
-
-**The staff scope is that `--rule`, and it is the only thing holding it.**
-Nothing in the Worker narrows the flag, so a `developer-settings` served with no
-rule reaches every account it is evaluated for. `create` takes rules, so give it
-one there rather than adding it afterwards with `update --add-rule`: a flag that
-exists for even a minute without its rule is a flag that is live and unscoped
-for that minute.
-
-Leave the default variation at `off` rather than promoting `on` with the rule
-attached: the default is what an account the rule does not match falls through
-to, so `set … -V on` would hand the section to everyone regardless of the rule.
-
-To stage it among staff, roll out within that rule and bucket by
-`userPlatformId` — not `userId`, which would bucket a person with workspaces in
-configured deployments twice. There is no workspace worth keeping consistent here, because
-the section describes one person's device:
-
-```bash
-pnpm exec wrangler flagship flags rollout <APP_ID> developer-settings \
-  --to on --from off --percentage 50 --by userPlatformId
-```
-
-To hand it to one person outside a cohort — a contractor, a support session —
-target them by their platform id rather than by address, which is not an
-attribute and never will be ([what may become an
-attribute](#what-may-become-an-attribute)):
-
-```bash
-pnpm exec wrangler flagship flags update <APP_ID> developer-settings \
-  --add-rule "serve=on; when=userPlatformId equals <platform-user-id>"
-```
-
-Withdrawing the section from everyone is `set … -V off`, which overrides every
-rule, and `wrangler flagship flags changelog <APP_ID> developer-settings` is the
-audit trail for who had it when.
-
-### Changing an agent's models
-
-For a fleet-wide default change, use Ace → **Models**. Choose one of the known
-model ids or enter any OpenRouter id, edit the ordered fallback array, and save.
-Ace validates every id against OpenRouter's live endpoints while it is edited
-and repeats the check immediately before the Flagship write. An unknown id, an
-id without a current route, or an unavailable validation service leaves the
-existing flag unchanged. Each provider lookup is aborted after the
-product-owner-selected five-second deadline; a timeout is treated as validation
-unavailable and returns `502` without reading or mutating Flagship.
-Ace replaces only the current default variation's atomic `{ model,
-fallbackModels }` plan after reading the live flag; it preserves the flag's
-status, targeting rules, rollout percentages, and every staged variation.
-Cloudflare's API exposes no conditional-update token: like Wrangler, Ace must
-read and then replace the complete definition. Concurrent edits to the same
-flag are therefore last-writer-wins. Avoid changing one model flag in two
-operator surfaces at once, and use
-`wrangler flagship flags changelog <APP_ID> <FLAG_KEY>` to audit or reconstruct
-an overlapping change.
-
-For a targeted rollout, add the new plan as a second variation with Wrangler,
-roll it out, then promote it. Ace deliberately does not flatten these advanced
-variations into its default-route editor:
-
-```bash
-pnpm exec wrangler flagship flags update <APP_ID> agent-model-workstream --type json \
-  --set-variation next='{"model":"x-ai/grok-5","fallbackModels":["x-ai/grok-4.3"]}'
-pnpm exec wrangler flagship flags rollout <APP_ID> agent-model-workstream \
-  --to next --from current --percentage 10 --by workspaceId
-pnpm exec wrangler flagship flags set <APP_ID> agent-model-workstream -V next
-```
-
-Bucket the rollout by `workspaceId` rather than `workstreamId` or `userId`: it
-keeps every agent in a workspace on one generation, so a conversation run and the
-subagents and classifiers around it stay consistent.
-
-Because configured deployments share the app, a rollout reaches both unless you scope it.
-To stage one region first, target `region` instead:
-
-The same shape reaches any attribute in the table above — the dogfooding
-workspaces before anyone else, then the teams, then everybody:
-
-```bash
-pnpm exec wrangler flagship flags update <APP_ID> agent-model-workstream \
-  --add-rule "serve=next; when=workspaceOwnerEmailDomain equals with-avalon.com"
-pnpm exec wrangler flagship flags update <APP_ID> agent-model-workstream \
-  --add-rule "serve=next; when=workspaceMemberCount greater_than 1"
-```
-
-Prefer a rule whose attribute is present on the evaluations it is meant to
-reach. `userRole` and `userEmailDomain` only exist where a caller knows a user —
-the automation compiler and meeting notes — so a rule written on them leaves the
-conversation agent on the old variation, which is rarely what a rollout means to
-say. `workspaceOwnerEmailDomain` reaches every evaluation that knows a
-workspace, which is all of them.
-
-To revert, `set` the flag back to the previous variation. Flagship keeps a
-changelog per flag (`wrangler flagship flags changelog <APP_ID> <key>`), which is
-the audit trail for a model change; the Wrangler variables are the audit trail
-for a default change.
-
-Keep the Worker variables in step with the variation a flag serves by default.
-They are what a fresh region falls back to, and letting them drift means an
-outage silently moves every agent to an older model.
+`apps/api/test/client-feature-flags.test.ts` covers defaults, Boolean overrides,
+invalid inputs, identical HTTP/socket answers, and the push gate.
+`apps/api/test/agent-model-flags.test.ts` covers all role defaults, shared and
+per-role overrides, malformed routes, scheduling before object creation, and
+stored pin precedence through real SQLite-backed object fixtures. Push delivery
+and workspace subscriptions also run through the real workerd suite.
+Harness suites exercise classifier/fallback model requests, Azure routing, and
+reasoning defaults. API suites cover embedding
+identities, image/audio requests, transcription configuration, and pricing.
 
 ### Local development
 
-Flagship bindings are always remote. `wrangler dev --local` — which is what
-`pnpm dev:api:local` runs, and what a sandbox must use — prints the binding as
-`not supported`, but it does **not** omit it: `env.FLAGS` is present and its
-methods exist, and every call rejects with `Error: Binding FLAGS needs to be run
-remotely`. Local runs therefore reach the Worker variables through the
-throw-catching path rather than the missing-binding one, which is why both are
-handled and why the throw is logged at `debug` in development.
-
-The practical consequence is that `typeof env.FLAGS` proves nothing about
-whether flags actually work — including in `GET /health`, whose `featureFlags`
-check reports the binding as available locally.
-
-Attributes are loaded before that throw, so a local run does read the subject's
-rows and then discard the evaluation. That is deliberate rather than wasteful:
-the attribute reads are the half of the path that *does* work locally, so a
-loader that returns nothing, or a query that fails, is visible in development
-instead of only after a deploy.
-
-To exercise a real flag locally you need Cloudflare credentials and
-`pnpm dev:api`, which opens a remote proxy session for the remote bindings.
+Put optional overrides in `.env.local`, run `pnpm env:sync`, and restart the
+Worker. No override or Cloudflare account is needed to use the constants.
+Generated `.dev.vars.*` files do not retain superseded model defaults; explicit
+empty model and fallback variables are preserved.
 
 ### Adding a flag
 
-1. Add the key and its typed value to `agent-model-flags.ts` if it is about
-   model routing, to `client-feature-flags.ts` if a client reads it, or to a new
-   module alongside them otherwise. Keep `env.FLAGS` out of call sites. Declare
-   a product Boolean's key constant as `ProductFeatureFlagKey` rather than a
-   bare string: that annotation is what turns step 5 from something to remember
-   into a typecheck error naming the keys that do exist.
-2. Give it a default that reproduces today's behavior, and hand that same
-   default to Flagship so an absent flag and an unreachable Flagship agree. For
-   a client *feature* that means `false`: a feature nobody has been given yet is
-   the behavior an outage has to reproduce. For a value with no off — a cadence,
-   a limit, a window — it means the number already in the code, defined once and
-   read by every end, so a flag nobody can reach leaves every reader agreeing.
-   Such a value does not belong in `client-feature-flags.ts`, whose whole
-   contract is failing closed; give it a module beside it.
-3. Parse the served value with zod and reject it whole on failure. A boolean
-   flag is the degenerate case — anything that is not `true` is off.
-4. **Write who gets it as a targeting rule, never as a condition in the
-   resolver.** A cohort in code is invisible from the console, needs a deploy to
-   change, and overrides the flag it is supposed to implement. If a rule cannot
-   express the cohort, add the missing *attribute* below — that is the fix, not
-   an `if`.
-5. **Register it in Ace, in all three places, or the flag does not exist.** A
-   key the Worker resolves is not a flag: nothing creates it in Flagship,
-   nothing lists it for an operator, and nothing accepts a change to it, so it
-   resolves off for everyone permanently and warns on every poll. A product
-   Boolean — any key ending `-enabled` — needs that key added to
-   `ProductFeatureFlagKeySchema` in `@rally/contracts`, to `MANAGED_FLAGS` in
-   `apps/ace/src/protocol.ts`, and to an `ensureFlag` call in
-   `apps/ace/scripts/deploy.mjs` carrying the identical description and
-   default. Merging those three redeploys Ace, and that deployment is what
-   creates the flag. With the annotation from step 1 in place, `pnpm typecheck`
-   fails until the first of those three is done. `apps/ace/test/protocol.test.ts`
-   then fails when a product Boolean the Worker serves is missing from the
-   catalog. No test checks that `deploy.mjs` provisions a catalogued flag with
-   the same description and default, so match those by hand. A flag
-   deliberately kept *outside* Ace keeps a key that does not end in `-enabled`,
-   the way `developer-settings` does — the suffix is the rule, not a list.
-6. Add the flag to the table above and create the rules that scope it. There is
-   one app for configured deployments, so it is created once — and a flag created without
-   its rule is live and unscoped until the rule lands. Ace provisions with no
-   rules at the default variation, so for a feature that is off for everyone
-   until the rule lands, which is the safe order.
-
-### Adding an attribute
-
-A rule that needs a fact the table above does not carry gets it from
-`flag-targeting-attributes.ts`, never from a call site: callers pass ids, and
-one module decides what those ids mean. Add the fact to the loader for its
-entity, emit it only when it is known, keep it inside the boundary above, and
-add it to the attribute table here. If it needs a read of its own, it needs a
-cache entry of its own — three reads is the standing budget for an evaluation.
-
-## Apple push
-
-`push-notifications-enabled` defaults on for everyone and is provisioned by Ace. The client
-contract exposes `pushNotificationsEnabled`; the same boolean evaluator gates
-both intent enqueue and delivery. Turning it off stops queued sends as well as
-hiding the Notifications section.
+Add its field to `ClientFeatureFlagsSchema`, its constant and environment name
+to `runtime-config.ts`, and its read to the Boolean resolver. Forward the
+optional variable in `scripts/sync-dev-env.mjs`, document it in `.env.example`,
+and add a behavioral test for its gate. A new agent role must be mapped in
+`AGENT_MODEL_ENV_KEYS`; no service provisioning or admin editor is required.
 
 ## Changelog
+
+### 2026-11-10 — Restore organization switching by default
+
+**What changed:** `multipleWorkspacesEnabled` defaults to `true`, restoring the
+account menu's Organizations, invitations and creation controls on desktop and
+web, together with background organization attention.
+The client schema uses the same on default before the server answers or when the
+read fails; an explicit off answer still wins.
+
+**Why:** Replacing Flagship with local configuration carried forward the original
+rollout's off default, hiding the existing organization selector unless a
+deployment explicitly enabled it.
+
+**Considered and rejected:** Forcing the menu visible in the client would leave
+directory discovery and attention disabled by the same flag. The shared default
+keeps the existing consumers consistent; an explicit environment override can
+still disable the presentation without changing membership or authorization.
+
+Entries below the 2026-11-09 local-configuration change describe the retired
+Flagship design, including the earlier entries from that same date.
+
+### 2026-11-09 — Advance primary and naming defaults to GPT-6.1 Terra
+
+**What changed:** Primary and faster defaults now use `openai/gpt-6.1-terra`.
+Canvas and Sidekick runs, plus resource naming, inherit this choice. An unpinned
+conversation with no deployment override switches on its next run.
+
+**Why:** The team selected GPT-6.1 Terra for both groups. The comparative quality,
+latency, and cost rationale for replacing GPT-5.6 Terra was not recorded here;
+this entry does not establish a benchmark advantage.
+
+**Alternatives:** GPT-5.6 Terra remains available through explicit routes and
+existing pins. The tradeoff between retaining it as the default and adopting
+GPT-6.1 Terra was not recorded.
+
+**What future changes must respect:** Explicit environment routes and
+conversation pins retain precedence. The selected model must support naming
+with reasoning disabled, sanitized tool calls, and image input without a fallback
+masking an unsupported request shape.
+
+**Validation:** Live OpenRouter calls with fallbacks disabled returned a Canvas
+title with `reasoningEffort: "none"` and completed a Bind run that identified a
+synthetic red image, invoked its sanitized tool, and returned the expected final
+answer. The tool fixture included a root union, a nullable field, and a Boolean
+enum; this is a compatibility check, not a comparative model benchmark.
+
+### 2026-11-09 — Resolve flags locally from constants and environment overrides
+
+**What changed:** Product flags and model routing use one checked-in configuration
+module in the shared contracts package and optional Worker variables. Runtime
+model choices, pin/provider catalogs, and reasoning defaults share that module
+so both the API and agent harness read one source. Cloudflare evaluation,
+targeting lookups, remote administration, provisioning, and Queue-based flag
+updates are removed.
+Conversation pins and client response contracts are preserved. Primary runs use
+Terra, while the smarter model group keeps the Sidekick wizard on Sol. Wizard
+and run roles are independently configurable as `sidekick_wizard` and
+`sidekick_run`, including scheduling and delegation. The faster model group also
+defaults to `openai/gpt-5.6-terra`; explicit deployment and
+per-role overrides retain precedence. The unused structured-model constant was
+removed with its retired roles. The unused `inline_child` model role and its
+logging-source type were also removed because no production caller selects it.
+The conversation roles are named `canvas` and `resource_naming`; memory sweeps
+share the smarter Sol model with the wizard. Existing JSON overrides must
+rename `workstream` to `canvas` and `workstream_naming` to `resource_naming`.
+
+**Why:** Feature configuration should be straightforward to review and run locally,
+without depending on Cloudflare's feature flag service. Shared placement lets
+the API and harness use the same catalog without importing an application
+implementation into a library.
+
+**Considered and rejected:** Keeping remote evaluation as a fallback would retain
+the external dependency and two competing sources of configuration. Retaining
+staff or workspace targeting would require identity reads on the local flag path;
+the selected configuration deliberately applies to everyone in a deployment.
+Developer settings and multi-workspace controls therefore no longer have a staff
+cohort, and push delivery is controlled through a deployment variable rather than
+a live Ace kill switch. The model defaults are the requested new choices, not a
+snapshot of live Flagship variations.
+
+**What future changes must respect:** Preserve complete-route validation and pin
+precedence and embedding identities. User-specific
+authorization belongs to product access services.
+
+### 2026-11-09 — `suggested-work-enabled` and the structured model variable leave
+
+**What changed:** `suggested-work-enabled` left `ProductFeatureFlagKeySchema`,
+the served flags object and the API's resolver. The Worker's environment schema
+stopped requiring `OPENROUTER_STRUCTURED_MODEL`. The composer's unbuilt `choice`
+model control and its menu were deleted, leaving the read-only pill.
+
+**Why:** each had no reader since the pivot (the dead-code PRD, phases 2, 4
+and 7).
+
+**Considered and rejected:** removing the variable from Wrangler in the same
+deploy; a Worker built before this change requires it at start-up.
+
+**Consequences:** the variable leaves `wrangler.global.jsonc`,
+`scripts/sync-dev-env.mjs` and the inference-boundaries lint rule in the next
+deploy, followed by `pnpm lint:fresh`. Older desktops parse the flags object
+loosely with a false default, so the dropped field reads as off.
+
+Shipped in juno-ai-labs/avalon#1500.
 
 ### 2026-10-21 — Route the Sidekick wizard independently on Sol
 

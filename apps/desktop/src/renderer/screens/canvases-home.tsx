@@ -1,9 +1,11 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
+import { IconDatabase } from '@tabler/icons-react';
+import { SidekickStack } from '@rally/ui/components/sidekick-stack';
 import { Plus, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { CanvasMark } from '../components/canvas-mark';
+import { canvasMark } from '../components/canvas-mark';
 import { AvatarStack, Button, EmptyState, ErrorNotice, TitleSkeleton } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
@@ -13,10 +15,11 @@ import { useCollaborationSession, useShellCapabilities } from '../lib/collaborat
 import { useDocumentTitle } from '../lib/document-title';
 import { formatSidebarActivityTime } from '../lib/format';
 
-type CanvasFilter = 'all' | 'mine' | 'shared' | 'sidekicks';
+type CanvasFilter = 'all' | 'data' | 'mine' | 'shared' | 'sidekicks';
 
 const FILTERS: ReadonlyArray<readonly [CanvasFilter, string]> = [
-  ['all', 'Everyone'],
+  ['all', 'All'],
+  ['data', 'Data'],
   ['mine', 'Made by me'],
   ['shared', 'Shared with me'],
   ['sidekicks', 'From Sidekicks'],
@@ -25,6 +28,7 @@ const FILTERS: ReadonlyArray<readonly [CanvasFilter, string]> = [
 function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserId: string | undefined): boolean {
   switch (filter) {
     case 'all': return true;
+    case 'data': return row.hasStoredData === true;
     case 'mine': return row.createdByUserId === currentUserId;
     case 'shared': return row.sharedWithMe;
     case 'sidekicks': return row.writerSidekickId !== null;
@@ -34,8 +38,8 @@ function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserI
 /**
  * `/canvases`: every Canvas this person can open, the list the workspace
  * socket keeps (`workspace_canvas_list`), laid out as the Sidekicks library is.
- * The people in a Canvas now lift it into Live now; the rest are Recent, most
- * recently active first. With none at all, the page is only how to make one.
+ * Canvases stay in activity order; Data filters to database-backed artifacts.
+ * With none at all, the page is only how to make one.
  */
 export function CanvasesHomeScreen(): React.JSX.Element {
   const { api, session } = useCollaborationSession();
@@ -58,21 +62,28 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const needle = search.trim().toLocaleLowerCase();
   const shown = (rows ?? []).filter((row) => matchesFilter(row, filter, currentUserId)
     && (needle === '' || row.title.toLocaleLowerCase().includes(needle)));
-  const live = shown.filter((row) => othersPresent(row, currentUserId).length > 0);
-  const recent = shown.filter((row) => othersPresent(row, currentUserId).length === 0);
   const row = (canvas: CanvasSidebarRow): React.JSX.Element => {
     const present = othersPresent(canvas, currentUserId).flatMap((userId) => {
       const member = membersById.get(userId);
       return member ? [member] : [];
     });
     const run = canvasWrittenByRun(canvas, sidekicksById, currentUserId);
-    return <li className="canvas-card" key={canvas.id}>
-      <div aria-hidden="true" className="canvas-card-shot">
-        <CanvasShot appearance={canvas.appearance} id={canvas.id} kind={canvas.artifactKind} />
-        {present.length > 0 && <span className="canvas-card-live"><AvatarStack members={present} nameTooltip={false} showTooltip={false} />Live</span>}
+    // A server older than attaching sends none.
+    const attachedSidekicks = canvas.sidekicks ?? [];
+    const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.artifactKind, canvas.appearance);
+    return <li className="dashboard-card" key={canvas.id}>
+      <div aria-hidden="true" className="dashboard-card-preview" style={{ background: tint }}>
+        <Icon aria-hidden="true" color={ink} size={44} />
+        {present.length > 0 && <span className="canvas-card-presence"><AvatarStack currentUserId={currentUserId} members={present} nameTooltip={false} presentUserIds={canvas.presentUserIds} showTooltip={false} /></span>}
+        {canvas.hasStoredData && <span className="canvas-card-data" id={`canvas-data-${canvas.id}`}><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data</span>}
+        {/* The Sidekicks attached to it, on the right under the Data badge, or in its place when there is none. */}
+        {attachedSidekicks.length > 0 && <span className={canvas.hasStoredData ? 'canvas-card-sidekicks is-below-data' : 'canvas-card-sidekicks'}>
+          <SidekickStack id={`canvas-sidekicks-${canvas.id}`} sidekicks={attachedSidekicks} />
+        </span>}
       </div>
       <div className="canvas-card-body">
-        <h3><CanvasMark appearance={canvas.appearance} id={canvas.id} kind={canvas.artifactKind} size={20} /><Link className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
+        <h3><Link aria-describedby={[canvas.hasStoredData ? `canvas-data-${canvas.id}` : null,
+          attachedSidekicks.length > 0 ? `canvas-sidekicks-${canvas.id}` : null].filter(Boolean).join(' ') || undefined} className="dashboard-card-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
         <small><span>{run
           // Above the card's stretched title link, so it opens the run and not the Canvas.
           ? <Link className="canvas-card-run" state={{ runNumber: run.runNumber }} to={run.to}>{run.label}</Link>
@@ -84,7 +95,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const newCanvas = guest ? null : <Button className="button-primary" disabled={creating} onClick={() => start()}>
     <Plus aria-hidden="true" size={16} />New Canvas
   </Button>;
-  return <main className="sidekicks-library canvases-home">
+  return <main className="sidekicks-library dashboard-home">
     <header className="sidekicks-library-heading window-drag">
       <div><h1>Canvases</h1><p>Live pages your team and Rally build together.</p></div>
       <div className="sidekicks-library-actions window-no-drag">{newCanvas}</div>
@@ -99,42 +110,14 @@ export function CanvasesHomeScreen(): React.JSX.Element {
           <div aria-label="Canvas filter" className="sidekick-filters" role="group">
             {FILTERS.map(([value, label]) => <button aria-pressed={filter === value} key={value} onClick={() => setFilter(value)} type="button">{label}</button>)}
           </div>
-          {live.length > 0 && <section aria-labelledby="canvases-live-title" className="canvases-home-group">
-            <div className="sidekick-results-heading"><h2 id="canvases-live-title">Live now</h2><span>{`${live.length} ${live.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
-            <ul className="canvases-home-grid">{live.map(row)}</ul>
-          </section>}
           <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
-            <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${recent.length} ${recent.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
-            {recent.length === 0
-              ? <EmptyState description="Try a different search or filter." title={live.length > 0 ? 'Nothing else here' : 'No matching Canvases'} />
-              : <ul className="canvases-home-grid">{recent.map(row)}</ul>}
+            <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${shown.length} ${shown.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
+            {shown.length === 0
+              ? <EmptyState description="Try a different search or filter." title="No matching Canvases" />
+              : <ul className="dashboard-grid">{shown.map(row)}</ul>}
           </section>
         </>}
   </main>;
-}
-
-/**
- * A card's shot: design.html §1's paper, sketched for what the Canvas holds,
- * since the row carries no picture of its artifact. A document is lines under
- * a heading, a site a page in a browser frame, an archive the board's
- * columns, and a Canvas that is only its Chat its mark on the paper. The
- * title beside it carries the same mark, in the icon and colour chosen for it.
- */
-function CanvasShot({ appearance, id, kind }: {
-  appearance: CanvasSidebarRow['appearance'];
-  id: string;
-  kind: CanvasSidebarRow['artifactKind'];
-}): React.JSX.Element {
-  if (kind === 'file') {
-    return <div className="canvas-card-paper is-document"><i className="is-heading" /><i /><i className="is-short" /><i /><i className="is-shorter" /></div>;
-  }
-  if (kind === 'site') {
-    return <div className="canvas-card-paper is-site"><i className="is-bar" /><i className="is-hero" /><i className="is-short" /></div>;
-  }
-  if (kind === 'archive') {
-    return <div className="canvas-card-paper is-board">{[3, 2, 1].map((cards, column) => <span key={column}>{Array.from({ length: cards }, (_, card) => <i key={card} />)}</span>)}</div>;
-  }
-  return <div className="canvas-card-paper is-mark"><CanvasMark appearance={appearance} id={id} kind={null} size={44} /></div>;
 }
 
 /**

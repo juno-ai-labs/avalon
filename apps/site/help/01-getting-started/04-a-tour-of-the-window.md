@@ -17,10 +17,10 @@ This page walks through each part. Each one has a chapter of its own later; here
 
 ## The rail
 
-Three buttons run down the top of the rail, each an icon with its name under it. Click one and the sidebar beside it changes. Switching sections changes only the list; whatever you have open stays open.
+Three buttons run down the top of the rail, each an icon with its name under it. Click one and the sidebar beside it changes.
 
-- **Canvases** lists the Canvases you can open. A red number on the button counts the ones with something new for you: a reply, a new version, or a mention.
-- **Sidekicks** lists the Sidekicks shared with you. Its red number counts the ones waiting for you: those under **Needs input**, and those with something new in their conversation.
+- **Canvases** opens the Canvas dashboard, even when you already have a Canvas open, and lists the Canvases you can open. A red number on the button counts the ones with something new for you: a reply, a new version, or a mention.
+- **Sidekicks** lists the Sidekicks shared with you, keeping whatever you have open in place. Its red number counts the ones waiting for you: those under **Needs input**, and those with something new in their conversation.
 - **Activity** lists what happened to you: mentions, replies, being added to a Canvas, Sidekick runs that need you or finished, and requests to open a Canvas. Its number counts the rows you have not seen yet.
 
 At the bottom of the rail sits your avatar, labelled **Settings**. It opens the account menu described [below](#the-account-menu). <kbd>⌘</kbd> <kbd>,</kbd> opens the Settings window from anywhere.
@@ -29,7 +29,7 @@ The Mac menu bar adds up the **Canvases** and **Sidekicks** numbers. The Dock ic
 
 ## The sidebar
 
-The top of the sidebar names the section, with a **+** for **New Canvas** or **New Sidekick**, and a magnifying glass for **Search organization** ([Search and links](../02-canvases/11-search-and-links.md)). In Activity, the **+** is replaced by **Mark all seen**.
+The top of the sidebar names the section, with a **+** for **New Canvas** or **New Sidekick**, and a magnifying glass for **Search organization** ([Search and links](../02-canvases/11-search-and-links.md)). In Canvases, the home icon to the left of **+** returns to the Canvas dashboard. In Activity, the **+** is replaced by **Mark all seen**.
 
 ### Canvases
 
@@ -64,7 +64,7 @@ To make the sidebar narrower or wider, drag its right edge.
 
 The Canvases and Sidekicks sections each have a home page, which shows the whole section at once and fills the window when nothing in the section is open.
 
-The **Canvases** home page has a **New Canvas** button, a search box and filter chips: **Everyone**, **Made by me**, **Shared with me** and **From Sidekicks**. Below them, **Live now** lists the Canvases people have open at this moment, and **Recent** lists the rest. In a new Organization the page shows only **New Canvas** and a **Start from a prompt** card, which is the quickest way in, as you will see on [the next page](05-your-first-canvas.md).
+The **Canvases** home page has a **New Canvas** button, a search box and filter chips: **All**, **Data**, **Made by me**, **Shared with me** and **From Sidekicks**. **Recent** lists matching Canvases by their latest activity. Faces at a card's top left show who has it open; a **Data** badge at the top right means it contains an artifact with its own database. In a new Organization the page shows only **New Canvas** and a **Start from a prompt** card, which is the quickest way in, as you will see on [the next page](05-your-first-canvas.md).
 
 The **Sidekicks** home page has **New Sidekick**, a search box and the filter chips **Everyone**, **Only you**, **Organization** and **Paused**. Each row shows what the Sidekick does, its status, who it is shared with and when it next wakes up.
 
@@ -72,8 +72,9 @@ The **Sidekicks** home page has **New Sidekick**, a search box and the filter ch
 
 Open a Canvas and it fills the window.
 
-- At the top left floats the Canvas's header pill, with its mark and name. Click it for the Canvas's menu: **Pin**, **Rename…**, **Share…**, **Copy link**, **Copy Canvas ID**, and **Open artifact** once Rally has made something.
-- At the top right are the faces of the people who have the Canvas open right now, then **Share**, then a **…** button with the same menu as the pill.
+- At the top center floats the Canvas's header pill, with its mark and name. Click it for four shortcuts: **Share**, **Open artifact**, **Copy link**, and **Pin** (or **Unpin**). **Open artifact** becomes available once Rally has made something and the artifact panel is closed. **Rename…** and **Change appearance** sit below the shortcuts.
+- At the top right are the faces of the people who have the Canvas open right now, then **Share**.
+- If you manage the Canvas, **Archive canvas** appears in red at the bottom of its menu. It asks you to confirm, then removes the Canvas for everyone. The conversation and artifacts remain stored but are no longer viewable in Rally; there is no unarchive option yet.
 - The conversation fills the middle: your messages, your teammates' messages and Rally's, with the message box at the bottom. It says **Ask Rally or the people here…**.
 - Once Rally has made something, it opens in a panel on the right, with its version. Drag the panel's edge to make it wider or narrower.
 

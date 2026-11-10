@@ -461,11 +461,8 @@ identifiers are configured for isolation, independently of provider geography.
   deployments need provisioned resources and configured bindings, not new
   region-specific application branches. Secrets remain deployed with Wrangler.
 - Cross-region traffic goes only through the named RPC service bindings. Read the
-  current set off `Env` in `apps/api/src/env.ts` rather than from a list that ages —
-  today it is the identity, GitHub, Linear, Notion, Slack, and inbound-email bridges
-  going between configured deployments and the Global routers, including `GLOBAL_EMAIL_ROUTER`
-  (`WorkstreamEmailRoutingBridge`), which is how a deployment reserves a globally unique
-  Sidekick email address in the Global registry (`docs/regionalization.md`). Flag a new
+  current set off `Env` in `apps/api/src/env.ts` rather than from a list that ages
+  (`docs/regionalization.md`). Flag a new
   public internal route, a direct fetch to the other region, or a read of another
   region's data.
 - Identity is Global-only; workspace region is immutable; a session belongs to its
@@ -479,7 +476,7 @@ entrypoint (`assertEnvContract` in `apps/api/src/env.ts`) and answers a CORS-car
 503 through `misconfiguredResponse` when the contract fails. Everything outside that
 contract is optional and must degrade locally rather than break the deployment.
 
-- Optional integrations — Firecrawl web search, Resend invitations and inbound email,
+- Optional integrations — Firecrawl web search, Cloudflare outbound email,
   Azure realtime dictation, the provider apps, and the `FLAGS` Flagship binding — must
   disable, hide, no-op, or return a clear "not configured" answer. Note the Flagship
   case specifically, because it is optional in two different senses: at **runtime** the
@@ -628,8 +625,8 @@ configures from.
   finding.** Non-secret Worker configuration belongs in `vars` in the configured
   deployment’s Wrangler file. A Worker **secret** never appears in
   the file — it is set per region with Wrangler per `docs/runbook.md`, which also
-  records the few that are deliberately one-region (the `GOOGLE_OAUTH_*` login pair,
-  `RESEND_WEBHOOK_SIGNING_SECRET`, and `WORKSTREAM_EMAIL_ADDRESS_KEY` are Global-only).
+  records the few that are deliberately one-region (the `GOOGLE_OAUTH_*` login pair
+  is Global-only).
   And a value that is not the Worker's at all — a renderer `VITE_*` variable, or the
   local-only `CLOUDFLARE_*` administration credentials — must never become Worker
   configuration in any form (`CLAUDE.md`, Security). Flag a rename or removal that

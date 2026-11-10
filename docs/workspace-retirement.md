@@ -7,7 +7,7 @@ alarm or a Queue redelivers an effect. This document covers the machinery that
 makes that true: the D1 fence the door writes, the tombstone every gated
 Durable Object consults, the object graph recorded before the workspace closes,
 the resumable walk that closes children before parents, what a background
-caller does when it meets a retired object, and the operator door in Ace behind
+caller does when it meets a retired object, and the operator door behind
 which all of it sits.
 
 Read it before changing retirement, adding a method to either of the two gated
@@ -28,17 +28,11 @@ the demo feature that first needed it, which was removed on 2026-11-08.
 | `apps/api/src/durable-objects/scheduled-alarms.ts` | `retireObject` and `objectRetirementState` on the base every gated class extends, plus the alarm clearing retirement performs. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `beginWorkspaceRetirement`, `recordRetiredNode`, `recordRetiredChild`, `workspaceRetirementProgress`, and the `workspace_retirement_graph` and `workspace_retirement_children` tables behind them. |
 | `apps/api/src/services/workspace-retirement-service.ts` | The pass that walks the recorded graph, closing children before parents, and the operator door in front of it. |
-| `apps/api/src/routes/workspace-operations.ts` | `/internal/workspaces/:id/retire`, behind Ace's operator credential (`requireAceOperator`, role `ACE_OPERATOR_ROLE`, stored as `demos`). |
 | `apps/api/src/middleware/errors.ts` | Maps a refusal that reaches an HTTP route to `409 workspace_retired`. |
-| `apps/api/src/queues/access-revocation-consumer.ts`, `product-feature-flag-consumer.ts`, `activity-consumer.ts`, `apps/api/src/workflows/connector-event.ts` | The background callers that can meet a retired object; each acknowledges a refusal as terminal. |
-| `apps/api/src/telemetry/operator-auth.ts` | The operator credentials: `requireOperatorFrom` verifies a bearer token against one of two same-shaped secrets — `DEMO_OPERATORS_JSON` for the `demos` role Ace holds, `TELEMETRY_OPERATORS_JSON` for the telemetry roles — and `requireOperatorRole`, which every operator router narrows with. |
+| `apps/api/src/queues/access-revocation-consumer.ts`, `activity-consumer.ts`, `apps/api/src/workflows/connector-event.ts` | The background callers that can meet a retired object; each acknowledges a refusal as terminal. |
 | `packages/contracts/src/workspace-retirement.ts` | The receipt a retirement answers with. |
 | `packages/contracts/src/conversation-parent.ts` | `childrenForRetirement`'s three-way answer. |
-| `apps/ace/src/regional-api.ts`, `apps/ace/src/client/workspaces.tsx` | Ace's relay to the regional route and the workspaces tab that calls it ([`ace.md`](ace.md)). |
 | `apps/api/src/engineering-inspection-bridge.ts` | `retireOrg`, the engineering MCP's `retire_org`, which calls the same door ([`engineering-mcp.md`](engineering-mcp.md#retiring-an-organization)). |
-| `apps/api/src/services/thread-retirement-service.ts` | Retiring one Organization's Threads, Breakouts and Channels while the Organization stays open: the transcript dump to R2 and the retirement it unlocks (see [Retiring Threads, Breakouts and Channels](#retiring-threads-breakouts-and-channels)). |
-| `WorkspaceDO.threadRetirementInventory`, `WorkspaceDO.deleteRetiredThreadParent`, `AgentLoopDO.conversationTranscriptText` | What that walk visits, the rows it deletes once a parent's conversations are retired, and the whole transcript of one conversation as room-visible text. |
-| `apps/api/src/services/thread-conversion-service.ts`, `WorkspaceDO.threadConversionInventory`, `WorkspaceDO.convertThreadToCanvas`, `HostedCanvas.createFromThread`, `AgentLoopDO.convertParentKind` | Converting a Thread that has artifacts into a Canvas in place, before the retirement (see [Converting Threads that have artifacts](#converting-threads-that-have-artifacts)). |
 
 ### The gate
 
@@ -95,16 +89,14 @@ Retirement runs in this order, and the order is the design:
    (`401 session_revoked` on its next request) and the workspace leaves every
    member's discovery.
 2. **Enumerate, then close, in one call.** `beginWorkspaceRetirement` reads the
-   Canvas, Sidekick, work-stream and Space directories while they still
-   answer, writes each parent into `workspace_retirement_graph` under its kind
-   (`canvas` from migration 137; a Canvas's Chat is its child `0`),
-   and writes the tombstone. The kinds are `RetirementParentKindSchema` in
-   `@rally/contracts`, wider than the hosted `ConversationParentKindSchema`
-   because the walk still closes Thread and Space objects. Doing this in one call is what leaves no window in
-   which a caller writes into a half-closed workspace. Archived Spaces are
-   enumerated too: what is being closed is an object, not a product surface, and
-   a Space created before 2026-09-26 still has a hidden main conversation to
-   close.
+   Canvas and Sidekick directories while they still answer, writes each parent
+   into `workspace_retirement_graph` under its kind (`canvas` from migration
+   137; a Canvas's Chat is its child `0`), and writes the tombstone. The kinds
+   are `RetirementParentKindSchema` in `@rally/contracts`, wider than the
+   hosted `ConversationParentKindSchema` because a graph a pass recorded
+   before the Threads were retired can still hold a Thread's or a Space's
+   node, which the walk closes as before. Doing this in one call is what
+   leaves no window in which a caller writes into a half-closed workspace.
 3. **Clear every wake reason, and close every socket.** The same transaction
    deletes `_internal_durable_alarms`, the platform alarm is deleted immediately
    after, and every socket the object holds is closed with `1008`, the code the
@@ -151,9 +143,7 @@ acknowledges the message and the connector Workflow ends its instance. Each of t
 is not available, and the predicate matches the `code` the runtime preserves.
 A consumer that retried instead dead-lettered one message per retired object
 forever, which spends the one signal this repository treats as monitoring on a
-state somebody designed. Two enumerators skip a closed workspace at the source
-as well: Ace's flag fan-out reads `workspaces` with `abandoned_at IS NULL`, and
-the access-revocation walk finds nothing beneath an object whose sockets
+state somebody designed. The access-revocation walk finds nothing beneath an object whose sockets
 retirement already closed.
 
 The effect receiver a Queue redelivers to, `receiveChildEffects`, is the
@@ -165,30 +155,12 @@ answering in the form its caller reads.
 
 ### The operator door
 
-The walk infers nothing from an id, which is right for the walk and wrong for a
-door: an id no workspace in this region owns would be "retired" as a set of
-brand-new empty objects holding tombstones, and the operator told it succeeded
-while the real workspace, in the other region, stayed open. So
-`retireWorkspaceForOperator` checks the region's `workspaces` row first and
-answers `workspace_not_found` otherwise, then writes `abandoned_at`. The route
-in front of it takes the confirmation the page collected — the operator typed
-or pasted the id they are closing — and refuses
-`workspace_retirement_unconfirmed` unless it names the workspace in the path.
-That is a consistency check on the request, made in Ace and again here, not a
-second confirmation: a caller that fills in both fields with the same id passes
-it, and the typed ceremony itself is the page's. The route also carries the
-operator's id from the credential into the pass, so the region's own log names
-who closed the workspace.
-
-The route sits behind the operator credential in a role of its own, stored as
-`demos` (`ACE_OPERATOR_ROLE`; the name is the retired demo feature's, kept
-because renaming it is a secret rotation), which Ace holds one token per region for, read from a secret of its own,
-`DEMO_OPERATORS_JSON` — the same map shape as the telemetry surface's
-`TELEMETRY_OPERATORS_JSON`, set and rotated independently of it, so adding or
-rotating Ace's token never touches the telemetry tokens. Every operator router
-names the roles it admits as well: the telemetry router refuses `demos`, and
-this router refuses the telemetry roles, so a token filed in the wrong secret
-is refused by role even when it verifies.
+`retireWorkspaceForOperator` checks the regional workspace row before writing
+`abandoned_at` and walking the object graph. The engineering MCP's `retire_org`
+resolves exactly one region and passes the authenticated Access subject through
+its private service binding. Independent audit attempt/result rows record the
+operator. A cross-region ID is refused rather than used to create new tombstones.
+The retired bearer-token HTTP route is no longer mounted.
 
 - **Unclassified is refused.** A method nobody classified refuses on a retired
   object. A new RPC is fenced the day it is written, not the day somebody
@@ -230,13 +202,10 @@ is refused by role even when it verifies.
   user; the `workspace_retirement_pass` log line carries `operator_id`, and is
   the region's record of who asked (see **Operations**).
 
-- **Retirement takes any workspace id, and infers nothing.** It is an operator
-  action behind one of two Access policies, Ace's or the engineering MCP's, and
-  the only protection between an operator and an irreversible close is that
-  policy plus, in Ace, the confirmation the page asks for. A gate on a
-  register of demo workspaces was built and then dropped, deliberately: the
-  bookkeeping bought a second mechanism for a surface one Access policy already
-  admits. The walk does not check a name, a register, or anything else.
+- **Retirement takes any workspace id, and infers nothing.** The engineering
+  MCP Access policy authorizes the operator; region resolution and audit
+  attribution are handled by the bridge. The graph walk does not use a demo
+  register or infer eligibility from the workspace name.
 
 - **Every operator router names the roles it admits.** A role added to the
   credential map reaches no surface until a router names it.
@@ -245,275 +214,75 @@ is refused by role even when it verifies.
 
 The pivot to Canvases and Sidekicks
 ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md), plan steps B-7a and B-7)
-deletes every Thread, Breakout and Channel of every Organization, while the
-Organization, its Canvases, its Sidekicks and its resources stay. That is the
-walk above with a narrower graph and without the Organization's own tombstone,
-so it does not reuse `workspace_retirement_graph`: that table's completeness is
-defined by the Organization being retired, which here it never is. Each
-operation is an operator call per Organization, through the engineering MCP
-([`engineering-mcp.md`](engineering-mcp.md#retiring-threads)); nothing runs it
-on a schedule or at deploy. The operations exist only in the Worker that
-removes Threads, so they run after it deploys; the order is
-[the deploy order](#the-deploy-order) below.
+deleted every Thread, Breakout and Channel of every Organization, while the
+Organization, its Canvases, its Sidekicks and its resources stayed. Three
+operator operations in the engineering MCP did it, per Organization, in the
+order dump, convert, retire: `dump_thread_transcripts` wrote each
+conversation's room-visible transcript to `PAYLOADS`, under
+`retired-conversations/<workspaceId>/<parentId>/<substreamId>.txt`;
+`convert_threads_to_canvases` made every Thread that had an artifact a Canvas
+in place, keeping its id; and `retire_threads` tombstoned every remaining
+conversation object through `retireObject` (reason `thread_retirement`) and
+deleted its parent's rows. The operator ran all three in all 41 live
+Organizations on 2026-11-09 and retired the 9 abandoned ones; `channels` and
+`spaces` were then empty everywhere. The operations, their services
+(`thread-retirement-service.ts`, `thread-conversion-service.ts`) and the
+object methods only they called were removed afterwards, and WorkspaceDO
+migration 141 dropped the tables they read ([the deploy order](#the-deploy-order)).
 
-**What it visits.** `WorkspaceDO.threadRetirementInventory` names every Thread
-(`channels`, plus any `workstream` parent state left without its row) and every
-Channel (`spaces`, plus any `space` parent state), Threads first, and under each
-Main `0` and every child the parent registry, its projections or the Breakout
-directory knows. Main is always named, as `childrenForRetirement` names it,
-because a Space created before 2026-09-26 has a hidden one. A Canvas is a
-`canvas_directory` row and a Sidekick an `automation_directory` row; neither is
-read, and an id that has a `canvas_directory` row is left out even while its
-`channels` row stands: that is a Thread the conversion below made a Canvas of
-and stopped before deleting its rows, and its Main is the Canvas's Chat.
+What is left:
 
-**The dump comes first.** `dump_thread_transcripts` writes each conversation's
-committed transcript to `PAYLOADS` as text, under
-`retired-conversations/<workspaceId>/<parentId>/<substreamId>.txt`, through
-`AgentLoopDO.conversationTranscriptText`: the same `conversationAsText` the
-operator conversation reads format with, over every committed turn, so tool
-payloads, thinking and internal agent messages are left out. It is the only
-copy once the retirement runs, and it is for operators, not a product surface.
-It is the one read that sees a retired parent kind: the object's product reads
-refuse a stored `workstream` or `space` with `conversation_parent_kind_retired`,
-and this one reads it through `identityForRetirement`.
-
-- **The R2 object is the receipt.** A pass skips any key that is already
-  there, so a rerun writes nothing new and an interrupted pass resumes where it
-  stopped. A conversation that moved after its dump keeps the earlier dump; the
-  dump, the conversion and the retirement run back to back right after the
-  deploy, when no client can post to a Thread any more. To dump one again,
-  delete its object first.
-- **An object that never held a conversation is written empty**, with
-  `materialized: "false"` in its metadata, so the retirement's coverage check
-  finds a receipt for it too. The read brings that object into existence, as
-  the retirement would.
-- **A refused conversation is left unwritten** and reported by code:
-  `thread_transcript_identity_mismatch` when the object holds another identity
-  than the name it was reached by, `thread_transcript_parent_kind_refused` when
-  it is a Canvas's or Sidekick's conversation, and otherwise the object's own
-  code or `thread_transcript_dump_failed`. Unwritten means the retirement stays
-  refused until an operator looks.
-- **One invocation holds the whole Organization**, as the workspace walk does:
-  a subrequest ceiling is the failure on a very large one, and the receipts
-  written so far survive it.
-
-**Then the retirement.** `retire_threads` is refused, before anything is
-touched, with `thread_retirement_conversion_pending` while
-`threadConversionInventory` below still names a Thread with an artifact, and
-with `thread_retirement_dump_incomplete` unless every conversation in the
-inventory has its dump. The first guard is what makes the order **dump,
-convert, retire** a rule rather than advice: retired first, a Thread with
-artifacts would lose the Chat its Canvas keeps, and its artifacts the
-conversation their readers open them through. A Thread the conversion refuses
-(`thread_conversion_no_creator`) keeps the retirement refused until an
-operator repairs its rows with `run_workspace_sql` (a `channels.created_by_user_id`,
-or a viewer row) and converts again; nothing meant to survive is retired by
-default.
-Then, parent by parent, children
-before parents: each conversation object is tombstoned through `retireObject`
-(reason `thread_retirement`, no user), which clears its alarms and closes its
-sockets with `1008` exactly as the workspace walk does, and only once all of
-them confirm does `WorkspaceDO.deleteRetiredThreadParent` delete the parent's
-rows in one transaction:
-
-- every `parent_*` table keyed by `parent_id`, from the code-owned list
-  `HOSTED_PARENT_STATE_TABLES` (`hosted-parent-schema.ts`) intersected with the
-  schema, so a table phase C drops first is skipped rather than failed on, and
-  a new `parent_*` table has to join the list or it is left behind;
-  `parent_participant_migrations` goes first, because while it stands a
-  Breakout's member rows refuse deletion, and foreign keys are deferred to the
-  commit so the order among the rest does not matter. That deferral is load
-  bearing: `parent_invitations` references `parent_invitation_operations` with
-  no ON DELETE, and the list deletes the operations first. Inside
-  `transactionSync` a deferred violation is raised at the commit of the whole
-  event, after the method returns, so it would fail the RPC rather than reach
-  the service's per-parent catch;
-- a Thread's `channels`, `channel_viewers`, `breakouts` and `breakout_viewers`
-  rows, its `workspace_workstream_resource_links` rows and a Sidekick's
-  attachment to any of its conversations, or a Channel's `spaces` and
-  `space_viewers` rows. Nothing else references them since migration 139
-  dropped the pin and access tables.
-
-What it leaves: the Organization object, untombstoned,
-Canvases, Sidekicks, resources, and memory. The other Thread- and
-Channel-keyed tables are gone already: WorkspaceDO migration 139
-(`THREAD_ERA_TABLES_DROP_MIGRATION` in `retired-workspace-schema.ts`) drops
-every Thread-era table nothing reads, and the Thread rows of the shared tables
-(memory digest holders, Thread and artifact pins, room bindings). It
-deliberately keeps the tables this inventory reads — `channels`,
-`channel_viewers`, `breakouts`, `breakout_viewers`, `spaces`, `space_viewers`
-and the `parent_*` tables — so an Organization where these operations have not
-run yet still names every conversation object to dump and close, and the two
-the conversion below reads: `workspace_workstream_resource_links` and a
-Sidekick's attachment to a Thread. Those go in a
-later migration, once the operator has run both operations everywhere. Nothing is
-published to the workspace socket: stopping its Thread topics is the other half
-of plan step B-7 and is not done here.
-
-- **Resumable without a receipt table.** A parent whose rows are gone is not in
-  the next inventory; one interrupted between its conversations and its rows
-  is, and its conversations keep their first tombstone. A finished
-  Organization reruns as a pass over nothing.
-- **A failed parent is left whole** and reported with the conversation it
-  stopped at and its code (the object's own, or
-  `thread_retirement_node_failed`); the rest of the pass goes on.
-- **A retired conversation answers as a retired workspace's does**: a caller
-  that still names one (a Sidekick's conversation attachment to a Thread, a
-  queued effect) meets `workspace_retired`, which every background caller
-  already treats as terminal.
+- **The dumps are the only copy** of a retired Thread's transcript, for
+  operators, not a product surface. An object that never held a conversation
+  was written empty, with `materialized: "false"` in its metadata.
+- **A retired Thread conversation answers as a retired workspace's does**: a
+  caller that still names one (a queued effect, an old link) meets
+  `workspace_retired`, which every background caller already treats as
+  terminal. Its object keeps its tombstone and its rows; nothing reads them.
+- **A converted Thread is a Canvas** whose Main is the Canvas's Chat and whose
+  artifacts are the Canvas's; [`canvases.md`](canvases.md#a-canvas-that-was-a-thread)
+  owns what it kept. A Thread invitation still unclaimed at conversion was
+  deleted, so its emailed link stopped working; guests who had claimed one
+  kept the Canvas.
+- **Rows that stay by decision**: a Thread's `authorization_locations` rows
+  and its `conversation_view_*` rows, as plan section 9 decided, and a graph
+  node of kind `workstream` or `space` that a workspace retirement recorded
+  before.
 
 ### Converting Threads that have artifacts
 
-A Thread whose conversations made or linked an artifact is not deleted: it
-becomes a Canvas in place, keeping its id, so its Main becomes the Canvas's
-Chat and its artifacts the Canvas's artifacts. The user decided this on
-2026-11-08, after the pivot landed. `convert_threads_to_canvases` is the
-operator call, per Organization, through the engineering MCP
-([`engineering-mcp.md`](engineering-mcp.md#retiring-threads)); the order is
-**dump, convert, retire**, so the retirement that follows finds only the
-Threads with nothing to keep.
-
-**Candidates.** `WorkspaceDO.threadConversionInventory` names every `channels`
-row whose id appears in `artifact_registry.workstream_id`, or which links a
-resource that is an artifact through `workspace_workstream_resource_links`.
-A Channel (`spaces`) is never one. Each comes with its artifact, linked
-artifact and viewer counts and its conversations, the same ones the
-retirement inventory names. An artifact whose `workstream_id` names no
-Thread, Canvas or Sidekick, and that no Canvas holds, is left alone and
-counted (`artifactsWithoutThread`). A dry run, the default, answers that and writes
-nothing; it also reports, per Thread, how many conversations have no dump.
-
-**The guard** is the retirement's: an apply is refused with
-`thread_retirement_dump_incomplete`, before anything is touched, unless every
-conversation under every candidate (Main included) has its dump.
-
-**Per Thread, in an order a crash resumes from:**
-
-1. **The Canvas's rows** (`WorkspaceDO.convertThreadToCanvas`, through
-   `canvasWrite`, so the Canvas list's waterline moves and every socket learns
-   the Canvas). `HostedCanvas.createFromThread`, beside `create` and sharing
-   its row insert, writes `canvas_directory` (`canvas_id` = the Thread's id;
-   the title cut to 300; the creator from `channels`, else the earliest
-   viewer, else the Thread fails with `thread_conversion_no_creator`;
-   `created_at` = `source_created_at`; `updated_at` = `last_activity_at`;
-   Organization visibility for a Workspace-scoped Thread and participants for
-   a personal one; the Thread's authority generation, which its directory row
-   projected from the conversation, so the two agree), as `added`
-   participants every viewer but the creator of a personal Thread and only the
-   viewers marked participants of a Workspace-scoped one, and both artifact
-   sources in
-   `canvas_artifacts`. An existing Canvas row is the resume marker and is left
-   as it is. In the same call, idempotently on every pass, what other tables
-   key on the Thread's Main is carried to the Canvas's names: memory facts
-   learned there (source `<id>`, which opens to nobody) become `canvas:<id>`,
-   with the sweep receipt the object's next sweep continues from, and every
-   digest copy is marked; the Main's `authorization_locations` rows take kind
-   `canvas`, so each location is recognised as a hosted conversation's
-   rather than a retired Thread's; and a
-   Sidekick's attachment to the Main becomes one to the Canvas's Chat.
-2. **The Main's parent kind** (`AgentLoopDO.convertParentKind`): the stored
-   `workstream` becomes `canvas`, and so does the envelope of every effect
-   still in its outbox, which would otherwise be refused by kind until it
-   dead-letters, and every run's stored workflow input
-   (`runs.execution_context_json`), which `WorkstreamWorkflowInputSchema`
-   refuses as `workstream`: left, Retry on a Thread-era failed or cancelled
-   run would throw on the Canvas. The object then binds its loop as a hosted conversation does
-   on construction and arms its alarm, which the retired kind had cleared on
-   every firing. Already `canvas` is success; any other transition is refused
-   with `conversation_parent_kind_conversion_unsupported:<from>:<to>`.
-3. **Each Breakout's artifacts carried into the Chat, then each Breakout's
-   object retired.** Every Breakout not yet retired is read
-   (`AgentLoopDO.attachmentsForConversion`, through `identityForRetirement`),
-   its attachments of the Canvas's artifacts (`canvas_artifacts`, which step 1
-   answers) are attached to the Chat (`adoptAttachmentsForConversion`, which
-   takes them only on a `canvas` conversation of that parent, keeps one
-   already there, and moves the inventory revision when it adds one), and
-   the Chat's authorization is projected at once (`projectAuthorization`), so
-   `authorization_locations` places the artifact in the Chat before the
-   Breakout closes. Without it an artifact published only in a Breakout is
-   listed on the Canvas but opens for its uploader alone:
-   `AuthorizationService.resource` needs a conversation the reader can open
-   that holds the attachment. This widens access: a private Breakout's
-   members chose a smaller audience, and its artifacts' content, not only
-   their titles, opens to every reader of the Canvas, which for an
-   Organization-wide Thread is the whole Organization. It is the
-   implementer's reading, open to the owner, not the owner's call
-   ([`canvases.md`](canvases.md#a-canvas-that-was-a-thread) has the rule);
-   any other resource a Breakout attached stays with it. All are read before
-   any is retired, so a retired Breakout was carried by an earlier pass and a
-   resume skips it; the projection runs whenever anything was carried, so a
-   pass that stopped between the adoption and the projection is finished by
-   its resume. Then each Breakout is retired through
-   `retireObject`, as `retire_threads` retires it (reason `thread_conversion`).
-4. **The Thread's rows deleted** by `deleteRetiredThreadParent`.
-
-A Thread whose rows are gone is no longer a candidate, so a finished
-Organization reruns as a pass over nothing; one interrupted after its Canvas's
-rows is a candidate again and is reported `alreadyConverted` when the pass
-finishes it. A failed Thread is reported with the conversation it stopped at
-and its code, and the rest go on.
-
-**What needs nothing.** The D1 `workstreams` anchor and
-`workstream_authority_routes` row stay, and `artifact_registry.workstream_id`
-already names the Canvas. Search needs no reindex: a Thread's turns and links
-were indexed under `conversation:<id>/0`, the group a Canvas's Chat carries,
-which every person who can open the Canvas now holds; its Breakouts' groups
-stay unheld. The unread state of the Canvas list starts empty (the hosted
-parent has no reader rows until a reader's next read reports one), and its
-recency is the Thread's last activity. No pin survives migration 139, and the
-per-conversation `sidekick_attachments` table was dropped by the object's
-migration 84.
-
-**Shares are the one table set the Thread and its Canvas both key by the id.**
-A Canvas's email share writes `parent_invitations`, `parent_grants` and their
-operation, revision and participant tables (`CANVAS_SHARE_TABLES` in
-`hosted-parent-schema.ts`) under the Canvas's id, which is the Thread's. So
-step 1 deletes the Thread's rows from those tables in the transaction that
-makes the Canvas's row, and only when it makes it; step 4 passes
-`convertedToCanvas`, and `deleteRetiredThreadParent` then leaves those tables
-alone. An invitation or grant made on the live Canvas between an interrupted
-pass and its resume survives the resume. A Thread invitation still unclaimed
-at conversion is deleted, so its emailed link stops working; the Canvas's
-owner can share the Canvas again. Guests who had claimed one keep the Canvas:
-their `channel_viewers` rows become `canvas_participants`.
+A Thread whose conversations made or linked an artifact was not deleted: it
+became a Canvas in place, keeping its id, so `artifact_registry`, search, the
+D1 anchor and links needed no rewrite. The user decided this on 2026-11-08,
+after the pivot landed. The conversion wrote the Canvas's directory row,
+participants and artifacts from the Thread's rows; carried the memory facts,
+resource locations and Sidekick attachment keyed on the Thread's Main to the
+Canvas's names; rewrote the Main object's stored parent kind to `canvas`, with
+its outbox envelopes and stored workflow inputs; carried each Breakout's
+attachments of the Canvas's artifacts into the Chat and retired the Breakout;
+and then deleted the Thread's rows. Carrying a private Breakout's artifacts
+into the Chat widened who reads them to every reader of the Canvas, which is
+the implementer's reading, open to the owner. The code is gone; the pull
+request that added it (juno-ai-labs/avalon#1490) and this document's changelog
+hold the detail.
 
 ### The deploy order
 
-`dump_thread_transcripts`, `convert_threads_to_canvases` and `retire_threads`
-ship in the same release that removes Threads, so they cannot run before it.
-The order, which the Canvases and Sidekicks plan's follow-ups point to:
+The operator run is complete, so what is left of the order is:
 
-1. **On the old Worker, retire the demo Organizations** (every live demo and
-   the demo template) through the existing retire route, with no preparation
-   Workflow running.
-2. **Deploy the Worker, and publish the pivot desktop release with it.** From
-   this release the workspace socket refuses a pre-pivot desktop with `426`;
-   its only way out is the auto-updater reaching the new build, so the build
-   must be there when the Worker is. A web tab left open on the old app needs
-   a reload. The D1 migration 0125 that drops the demo tables applies after
-   the Worker is promoted, through the Worker-first list of
-   `classify-pending-d1-migrations.mjs`, so the Worker that no longer reads
-   those tables serves first.
-3. **Immediately, in every Organization: dump, convert, retire**, each until
-   it reports nothing failed. `retire_threads` refuses while a Thread with
-   artifacts is unconverted, so the order holds even if an operator slips.
-4. **Until step 3 has run in an Organization, expect its Threads to be
-   gone for users and its Thread traffic to fail by design.** The client has
-   no Thread surface; a Thread's conversation refuses every product read with
-   `conversation_parent_kind_retired`, and its `AgentLoopDO.alarm` clears its
-   alarm on every firing without running a lane; `receiveChildEffects`
-   answers `409 conversation_parent_kind_retired:<kind>`, so the Queue
-   dead-letters Thread effects. Those dead-letter entries are expected until
-   the walk runs, and are not a defect to chase.
-5. **Forward-fix only; never `wrangler rollback`.** The release runs Durable
-   Object migrations that the previous Worker refuses
-   (`<component>_schema_ahead:<version>`), and renames the conversation class
-   (`SubstreamAgent` to `AgentLoopDO`, wrangler migration `v15`).
+1. **Deploy the Worker that removes the operations, with migration 141.**
+   The release has no D1 migration and no desktop change. WorkspaceDO
+   migration 141 applies on each Organization object's next construction.
+2. **Forward-fix only; never `wrangler rollback`.** The pivot release runs
+   Durable Object migrations that the previous Worker refuses
+   (`<component>_schema_ahead:<version>`), and renamed the conversation class
+   (`SubstreamAgent` to `AgentLoopDO`, wrangler migration `v15`); 141 adds
+   another.
 
-What the conversion drops on the way: a Thread invitation still unclaimed at
-conversion is deleted, so its emailed link stops working (the Canvas's owner
-can share the Canvas again); guests who had claimed one keep the Canvas.
+The run was checked complete before this change (`channels` and `spaces`
+empty). A Thread an Organization still held would lose its rows to 141 with no
+dump; its conversation objects, which 141 does not touch, would still hold the
+transcript.
 
 ## Boundary
 
@@ -605,13 +374,10 @@ included.
 | --- | --- | --- |
 | `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all three socket-holding object classes rebuild themselves after eviction and revoke access while retired, and that the gate's function is installed on every callable method. |
 | `apps/api/test-workers/workspace-retirement-graph.test.ts` | `pnpm --filter @rally/api test:workers` | The graph is captured before the tombstone, is idempotent and resumable — including over a parent retired but never receipted — an empty workspace reports closed, an identity mismatch leaves a node failed with a stable code, the walk closes children before parents, and a pass cut off inside a parent leaves the next pass only the children still open. |
-| `apps/api/test-workers/thread-retirement.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/thread-retirement.test.ts` | On real objects: the dump writes every Thread, Breakout and Channel conversation under its key with the room-visible text, never a Canvas's or Sidekick's, writes nothing on a rerun even after a conversation moved, refuses a confirmation that names another Organization, and reports a conversation holding another identity or parent kind by its code, unwritten, which keeps the retirement refused; the retirement is refused before the dump and touches nothing, then retires every Thread, Breakout and Channel conversation and deletes their rows, a pending invitation and its operation included, while the Canvas, the Sidekick and a resource survive, and reruns as a no-op. |
 | `apps/api/test/workspace-retirement-children-migration.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-retirement-children-migration.test.ts` | Against the real migrations: a retired v134 workspace with a partly receipted graph upgrades to 135 with its tombstone and receipts intact, and a replayed child receipt stays one row. |
-| `apps/api/test/workspace-operations.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-operations.test.ts` | Against the real migrations: the route admits only the `demos` role, refuses a confirmation naming another workspace, refuses an id this region does not own even when its row is present, writes `abandoned_at` before walking, and answers the contract's receipt. |
 | `apps/api/test/retirement-background-callers.test.ts` | `pnpm --filter @rally/api exec vitest run test/retirement-background-callers.test.ts` | Each background caller acknowledges a refusal: the flag fan-out, the revocation hop, and the digest pass, which also proves the pass finishes and writes its cursor. |
 | `apps/api/test/telemetry-operator-routes.test.ts` | `pnpm --filter @rally/api exec vitest run test/telemetry-operator-routes.test.ts` | The `demos` role is refused at the telemetry router, on every route. |
 | `apps/api/test/workspace-runtime-database.test.ts`, `apps/api/test/workstream-object-schema.test.ts` | `pnpm --filter @rally/api exec vitest run test/<file>` | Retirement's tables are declared to the schema guards. |
-| `apps/ace/test/workspaces.test.ts`, `apps/ace/test/workspaces-client.test.tsx`, `apps/ace/test/directory.test.ts` | `pnpm --filter @rally/ace test` | Ace's relay refuses an unconfirmed retirement before asking the region, carries the confirmation when it does, names a contract mismatch as such, and answers a directory outage with a sentence; the tab's typed confirmation, its receipt, an incomplete pass kept armed and scoped to its workspace, a failed search shown as a failure, and a partial outage named. |
 
 The coverage test in `object-retirement.test.ts` proves the gate is *installed*
 on every method; it cannot decide what retirement should do to a new one. An
@@ -638,15 +404,13 @@ closes, which is the case a construction-only fix does not reach.
 ## Operations
 
 - **Who closed it.** The regional log line `workspace_retirement_pass` carries
-  `workspace_id`, `operation_id` and `operator_id` — the operator UUID from the
-  credential map for an Ace retirement, the engineering MCP's Access subject for
-  `retire_org` — and is the region's record; Ace writes `ace_workspace_retired`
+  `workspace_id`, `operation_id` and `operator_id` — the operator UUID from the engineering MCP's Access subject for `retire_org` — and is the region's record; the MCP records its independent audit receipt
   with the Access subject in its own Worker's logs, and `retire_org` writes an
   `engineering.retire_org` audit pair in `AUDIT_DB`. The tombstone itself names
   an operator retirement and no person. `operation_id` is minted per pass, so a
   resumed retirement logs a second id; correlate by `workspace_id`.
 - **What is left.** `WorkspaceDO.workspaceRetirementProgress` is permitted after
-  retirement and lists every recorded parent with its receipt; the receipt Ace
+  retirement and lists every recorded parent with its receipt; the service receipt
   shows carries the same `remaining` and `failed` list, with a stable code per
   failed node. `objectRetirementState` on any gated object answers its
   tombstone and its retained outbox count.
@@ -660,7 +424,7 @@ closes, which is the case a construction-only fix does not reach.
   (`01a06d5d-4624-751e-8269-e7950b51a835`), which loses the discovery filter
   that hid it from its own members. Confirm no preparation is running
   (`status = 'running'`, or a running `avalon-global-demo-preparation`
-  Workflow instance). Retire each from Ace's Workspaces tab through this door,
+  Workflow instance). Retire each with the engineering MCP's `retire_org`,
   while the old Worker still revokes the `demo:<operation>` impersonation
   edges as it closes the Organization. Then deploy the Worker. D1 migration
   `0125_drop_demo_tables.sql`, which drops `demo_operations`,
@@ -696,37 +460,13 @@ than "closed" asks the object.
 
 ## Security and trust model
 
-Retirement is irreversible and takes any workspace id. Nothing in this module
-authorizes it. It has two callers, and each is admitted by its own Access
-policy:
-
-- **Ace**, whose page confirmation — one that makes the operator name the
-  workspace rather than click beside it — is the rest of the protection, and
-  which reaches the regional route with the `demos` credential described below.
-- **The engineering MCP's `retire_org`**, which reaches the door through the
-  regional `EngineeringInspectionBridge` over a private Service Binding. It
-  holds no `demos` credential and asks for no typed confirmation: Access
-  membership on the MCP is the whole of its authorization, and its audit pair in
-  `AUDIT_DB` names the operator
-  ([`engineering-mcp.md`](engineering-mcp.md#retiring-an-organization)).
-
-Ace's confirmation travels with the
-request, and Ace and the regional API each check that it names the workspace in
-the path; that is a consistency check that catches a page or a script naming
-one workspace and closing another, not a second confirmation, since a caller
-that fills in both fields passes it. The regional door adds one check the walk
-deliberately does not: the id must name a workspace this region's `workspaces`
-table holds, so an id the other region owns is refused rather than "retired" as
-a set of new empty objects. The region records the operator's id in its pass
-log.
-
-The operator credential's `demos` role, which only the Ace route uses, is one token per region, held by that
-region's `DEMO_OPERATORS_JSON` and by Ace as that region's secret, and by
-nobody else: an operator credential never crosses regions, so a leak of one is
-destructive authority in one jurisdiction rather than both. Every operator
-router names the roles it admits, which is the only thing that makes a role an
-isolation: the telemetry router refuses `demos`, and this router refuses the
-telemetry roles.
+Retirement is irreversible and takes any workspace ID. The engineering MCP's
+`retire_org` is admitted by its Cloudflare Access policy and reaches the regional
+bridge through a private service binding. It holds no `demos` bearer credential.
+Independent audit records identify the Access actor. The regional door checks
+ownership before closing objects, and the tombstone records operator retirement
+rather than attributing it to a product user. Connector-maintenance credentials
+cannot invoke retirement.
 
 ## Open questions
 
@@ -749,7 +489,48 @@ telemetry roles.
   a schedule behind it is a decision about what retirement is for beyond the
   workspaces it was built for.
 
+## Engineering MCP
+
+Use `retire_org` with the Organization ID. The tool resolves the owning region
+and calls the resumable retirement service with the Access actor, recording an
+independent audit attempt and result. A receipt with `complete: false` means the
+walk needs to resume. The former bearer-token workspace retirement route has
+been removed; connector-maintenance credentials do not authorize retirement.
+
 ## Changelog
+
+### 2026-11-09 — The Thread operations are removed once run, and the workspace walk stops reading Threads
+
+**What changed:** `dump_thread_transcripts`, `convert_threads_to_canvases` and
+`retire_threads` are removed with `thread-retirement-service.ts`,
+`thread-conversion-service.ts` and the object methods only they called
+(`WorkspaceDO.threadRetirementInventory`, `threadConversionInventory`,
+`convertThreadToCanvas`, `deleteRetiredThreadParent`,
+`HostedCanvas.createFromThread`, `AgentLoopDO.conversationTranscriptText`,
+`convertParentKind`, `attachmentsForConversion`,
+`adoptAttachmentsForConversion`). `beginWorkspaceRetirement` records only
+Canvases and Sidekicks. WorkspaceDO migration 141 drops the tables 139 kept for
+the operations. The body's Thread sections now say what happened and what is
+left, and the deploy order keeps only its forward-fix rule.
+
+**Why:** The operator ran the three in all 41 live Organizations on 2026-11-09
+and retired the 9 abandoned ones; `channels` and `spaces` read empty. Code kept
+for an operation that has nothing left to do is code the next change has to
+reason about, and the tables it read held nothing.
+
+**Considered and rejected:** Keeping the operations for a later Organization:
+none can gain a Thread, since nothing creates one. Keeping the conversion as a
+general way to change a conversation's parent kind: it only ever admitted
+`workstream` to `canvas`.
+
+**Consequences:** The R2 dumps are the only record of a retired Thread's
+transcript. A Thread's conversation objects keep their tombstones and rows, and
+a graph node of kind `workstream` or `space` recorded by an earlier pass is
+still walked; the retirement kinds stay in `RetirementParentKindSchema` for it.
+Forward-fix only, as before.
+
+Shipped in juno-ai-labs/avalon#1494. Design:
+`docs/PRDs/2026-11-06_canvases-and-sidekicks/plan.md`.
 
 ### 2026-11-09 — Dump, convert and retire an Organization's Threads, close its Canvases with it, and stop writing the demo register
 

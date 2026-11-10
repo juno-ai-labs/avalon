@@ -54,7 +54,7 @@ import { externalBindingReplyAdmission } from "../src/services/slack-agent-servi
 import { admitExternalWorkstreamMessage } from "../src/services/workstream-service";
 import { consumeEffectBodies, deliverChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { useOpenRouterDouble, type ProviderReply } from "./helpers/openrouter-double";
+import { useOpenRouterDouble, withSuccessfulSidekickOutcome, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
@@ -108,6 +108,7 @@ const DEFINITION: AutomationDraft = {
 
 /** Replies the next provider calls take, in order; `say` once they run out. */
 let script: ProviderReply[] = [];
+let autoReportOutcome = true;
 /**
  * Set by a test to hold the next provider call until it is released, so an
  * execution is running while the test sends input. Flags polled rather than
@@ -115,14 +116,16 @@ let script: ProviderReply[] = [];
  * a promise the test made.
  */
 const hold = { armed: false, arrived: false, released: false };
-const provider = useOpenRouterDouble(async () => {
+const scriptedReply = async (): Promise<ProviderReply> => {
   if (hold.armed) {
     hold.armed = false;
     hold.arrived = true;
     while (!hold.released) await new Promise((resolve) => setTimeout(resolve, 10));
   }
   return script.shift() ?? { say: "Done." };
-});
+};
+const successfulReply = withSuccessfulSidekickOutcome(scriptedReply);
+const provider = useOpenRouterDouble((call) => autoReportOutcome ? successfulReply(call) : scriptedReply());
 
 /** Hold the next provider call; `arrived` settles once it is held, `release` lets it go. */
 function holdNextCall(): { arrived: Promise<void>; release: () => void } {
@@ -185,11 +188,6 @@ async function seedRegionalDatabase(): Promise<void> {
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
     )`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    )`),
   ]);
 }
 
@@ -230,7 +228,7 @@ async function receipts(runId: string): Promise<ReceiptRow[]> {
   return runInDurableObject(childStub(runId), (_instance, state) => {
     try {
       return state.storage.sql.exec<ReceiptRow>(
-        `SELECT run_id, status, terminalized_at, execution_context_json FROM runs
+        `SELECT run_id, status, model, terminalized_at, execution_context_json FROM runs
           WHERE execution_context_json IS NOT NULL ORDER BY created_at, run_id`,
       ).toArray();
     } catch {
@@ -402,6 +400,7 @@ afterEach(() => { hold.released = true; });
 
 beforeEach(async () => {
   script = [];
+  autoReportOutcome = true;
   // Released, so a held call from a finished test never waits on the next one.
   Object.assign(hold, { armed: false, arrived: false, released: true });
   automationOrdinal += 1;
@@ -413,6 +412,43 @@ beforeEach(async () => {
 });
 
 describe("Sidekick run continuation", () => {
+  it.each([false, true])("settles a follow-up without requiring another success report (blocked: %s)", async (blocked) => {
+    await activeSidekick();
+    const runId = await completedRun();
+    autoReportOutcome = false;
+    const callsBefore = provider.calls.length;
+    if (blocked) script = [{ callTool: { name: "sidekick_report_outcome", arguments: {
+      outcome: "blocked", summary: "The follow-up requires destination access.",
+    } } }, { say: "Destination access is required." }];
+    const turnId = await sendToRun(runId, "Please clarify the result.", "plain-follow-up");
+    const execution = await settledExecutionFor(runId, turnId);
+    expect(JSON.parse(execution.execution_context_json)).toHaveProperty("automationContinuation");
+    expect(execution.status).toBe(blocked ? "failed" : "completed");
+    expect(provider.calls.length - callsBefore).toBe(blocked ? 2 : 1);
+    await deliverChildEffects(TEST_ENV, childStub(runId));
+    expect(await runState(runId)).toBe(blocked ? "failed" : "completed");
+  });
+
+  it("records and executes the Sidekick run route independently of wizard and Canvas routes", async () => {
+    const previous = TEST_ENV.AGENT_MODEL_ROUTING_JSON;
+    TEST_ENV.AGENT_MODEL_ROUTING_JSON = JSON.stringify({
+      canvas: { model: "double/canvas", fallbackModels: [] },
+      sidekick_wizard: { model: "double/wizard", fallbackModels: [] },
+      sidekick_run: { model: "double/run", fallbackModels: [] },
+    });
+    try {
+      await activeSidekick();
+      const { runId, status } = await startedRun();
+      expect(status).toBe("completed");
+      expect((await receipts(runId))[0]?.model).toBe("double/run");
+      // Reporting the outcome can take another turn; every turn must use the run route.
+      expect([...new Set(provider.calls.map((call) => call.model))]).toEqual(["double/run"]);
+    } finally {
+      if (previous === undefined) delete TEST_ENV.AGENT_MODEL_ROUTING_JSON;
+      else TEST_ENV.AGENT_MODEL_ROUTING_JSON = previous;
+    }
+  });
+
   it.each(["run", "worker"] as const)("continues a %s through another eligible delegate after coordinator withdrawal", async (target) => {
     await activeSidekick();
     const worker = target === "worker" ? await delegatedRunWorker() : null;
@@ -683,7 +719,8 @@ describe("Sidekick run continuation", () => {
 
     // Each run is a new conversation; the digest was copied into it when it
     // was provisioned, before the run's first and only activation here.
-    expect(provider.calls).toHaveLength(1);
+    // The first turn reports task success; the second returns its final reply.
+    expect(provider.calls).toHaveLength(2);
     expect(provider.completionCalls).toHaveLength(1);
     expect(provider.completionCalls[0]).toMatchObject({ state: {
       context_status: "resolved",

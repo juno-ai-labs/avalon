@@ -1,5 +1,12 @@
+import { inspectQueues, peekDeadLetters } from "./queues";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
+  InspectEngineeringUsageInputSchema,
+  ChangeEngineeringPlanInputSchema,
+  EngineeringUsageResultSchema,
+  EngineeringPasswordUserInputSchema,
+  EngineeringProvisionPasswordResultSchema,
+  EngineeringRevokePasswordResultSchema,
   EngineeringArtifactListLookupSchema,
   EngineeringArtifactTargetLookupSchema,
   EngineeringD1DatabaseSchema,
@@ -10,11 +17,6 @@ import {
   SendEngineeringMessageResultSchema,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
-  ThreadRetirementOperationInputSchema,
-  DumpThreadTranscriptsResultSchema,
-  RetireThreadsResultSchema,
-  ConvertThreadsToCanvasesInputSchema,
-  ConvertThreadsToCanvasesResultSchema,
   RetireEngineeringOrgInputSchema,
   RetireEngineeringOrgResultSchema,
   ReadEngineeringConversationInputSchema,
@@ -39,18 +41,14 @@ import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 import { isCodeShaped, isDiagnosticCode, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import {
-  ManagedFlagUpdateSchema,
-  ManagedModelUpdateSchema,
-  type FlagAdministrationResult,
-} from "../../ace/src/protocol";
-import type { AccessPrincipal } from "./access";
+import { hasStableAccessSubject, type AccessPrincipal } from "./access";
 import type { Env } from "./env";
 import { CloudflareQueryError } from "./cloudflare-api";
 import { LAKEHOUSE_TABLES, LAKEHOUSES, queryLakehouse } from "./lakehouse";
 import { observabilityQueryInputSchema, queryObservability } from "./observability";
 import { organizationPage, organizationPageInputSchema } from "./organizations";
 import { userPage, userPageInputSchema } from "./users";
+import { acceptsTasks, createTaskCarrier, registerTaskMethods, type EngineeringTaskInput } from "./tasks";
 
 type ToolResult = {
   content: [{ type: "text"; text: string }];
@@ -76,7 +74,7 @@ class InspectionRefusal extends Error {
  * engineer who ran the tool and stays off the log, since a SQL error can quote
  * what the statement touched.
  */
-function toolErrorCode(error: unknown, tool: string): string {
+export function toolErrorCode(error: unknown, tool: string): string {
   if (error instanceof InspectionRefusal || error instanceof CloudflareQueryError) return error.code;
   const schema = zodDiagnosticCode(error, tool);
   if (schema) return schema;
@@ -118,6 +116,26 @@ function inspectionBindings(env: Env) {
     return binding;
   });
 }
+
+async function organizationBinding(env: Env, orgId: string) {
+  const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveWorkspace({ workspaceId: WorkspaceIdSchema.parse(orgId) })));
+  return oneRegionalTarget(env, results.map((result) => EngineeringWorkspaceTargetLookupSchema.parse(result)), `Organization ${orgId}`).binding;
+}
+
+export async function executeEngineeringTask(env: Env, principal: AccessPrincipal, input: EngineeringTaskInput) {
+  if (input.name === "query_data_lake") {
+    return { result: await tool(principal, input.name, { lakehouse: input.arguments.lakehouse }, () =>
+      queryLakehouse({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.BASIN_SQL_API_TOKEN }, input.arguments.lakehouse, input.arguments.sql)) };
+  }
+  let incomplete: z.infer<typeof RetireEngineeringOrgResultSchema> | undefined;
+  const result = await tool(principal, input.name, { workspace_id: input.arguments.orgId }, async () => {
+    const receipt = RetireEngineeringOrgResultSchema.parse(
+      await (await organizationBinding(env, input.arguments.orgId)).retireOrg(input.arguments, principal));
+    if (!receipt.complete) incomplete = receipt;
+    return receipt;
+  });
+  return { result, incomplete };
+}
 function oneRegionalTarget<T>(
   env: Env,
   results: Lookup<T>[],
@@ -143,7 +161,7 @@ function executedSql(value: unknown, target: string) {
 async function tool(
   principal: AccessPrincipal,
   name: string,
-  target: Record<string, string | undefined>,
+  target: Record<string, string | boolean | undefined>,
   operation: () => Promise<unknown>,
 ): Promise<ToolResult> {
   try {
@@ -170,12 +188,6 @@ async function tool(
   }
 }
 
-/** Ace's answer, or the refusal it named, under Ace's code. */
-function administered<T>(result: FlagAdministrationResult<T>): T {
-  if (!result.ok) throw new InspectionRefusal(result.code, result.message);
-  return result.value;
-}
-
 const sqlInputSchema = {
   sql: z.string().min(1).describe(
     "SQLite statement or semicolon-separated statements. This may read or mutate the target database.",
@@ -185,11 +197,19 @@ const sqlInputSchema = {
   ),
 };
 
-export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal): McpServer {
+export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal, onTaskCreated?: () => void): McpServer {
+  // Access also admits service assertions without a subject. They may execute
+  // tools synchronously, but cannot share an "unknown" owner for stored data.
+  const hasTaskOwner = hasStableAccessSubject(principal);
+  async function createTask(input: EngineeringTaskInput) {
+    const carrier = await createTaskCarrier(env, principal, input);
+    onTaskCreated?.();
+    return carrier;
+  }
   const server = new McpServer({
     name: "Rally engineering",
     version: "1.0.0",
-    description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
+    description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; create organizations and send messages as a selected Rally user.",
   }, {
     instructions: [
       "Use these tools for Rally engineering investigations and requested administration.",
@@ -201,6 +221,20 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
       "Separate verified durable state, observed tool results and inference from hypotheses, and distinguish a local change from a merged or deployed fix.",
     ].join("\n\n"),
   });
+
+  server.registerTool("provision_user_password", {
+    description: "Provision or rotate a password for an existing Global identity user (resolve with search_users). Returns a generated password ONCE; deliver it only to the intended recipient through an appropriate private channel, never put it in logs or routine status updates. Each call replaces the previous password; if the response is lost, call again and use the latest result. Sign-in requires an independently verified primary email. Does not create an account, verify an email, grant Organization access, or end existing sessions.",
+    inputSchema: EngineeringPasswordUserInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, (request) => tool(principal, "provision_user_password", { user_id: request.userId }, async () =>
+    EngineeringProvisionPasswordResultSchema.parse(await env.GLOBAL_INSPECTION.provisionUserPassword(request, principal))));
+
+  server.registerTool("revoke_user_password", {
+    description: "Disable password sign-in for an existing Global identity user. Repeating is safe. Prevents new password sign-ins; existing sessions and other sign-in methods remain valid.",
+    inputSchema: EngineeringPasswordUserInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "revoke_user_password", { user_id: request.userId }, async () =>
+    EngineeringRevokePasswordResultSchema.parse(await env.GLOBAL_INSPECTION.revokeUserPassword(request, principal))));
 
   server.registerTool("create_org", {
     description: "Create a Rally Organization in the specified region, owned by creatorUserId, and directly add userIds as members. All users must already exist in that region (use search_users). No invitations or login credentials are created. Reuse operationId and the same arguments to resume an uncertain result; orgId is operationId.",
@@ -214,11 +248,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     return CreateEngineeringOrgResultSchema.parse(await binding.createOrg(request, principal));
   }));
 
-  async function organizationBinding(orgId: string) {
-    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveWorkspace({ workspaceId: WorkspaceIdSchema.parse(orgId) })));
-    return oneRegionalTarget(env, results.map((result) => EngineeringWorkspaceTargetLookupSchema.parse(result)), `Organization ${orgId}`).binding;
-  }
-
   server.registerTool("send_message", {
     description: "Send a message as userId to a Canvas's Chat or a Sidekick's shared conversation (conversationId is the Canvas or Sidekick ID), through the same composer admission as the app. The message is attributed to userId, as though that user sent it. Enforces that user's access, uses normal addressing, queue/steer behavior, notifications and agent execution; recordOnly posts it for readers without starting a run. Reuse operationId and the same arguments to retry an uncertain send.",
     inputSchema: SendEngineeringMessageInputSchema.unwrap().shape,
@@ -226,7 +255,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, (request) => tool(principal, "send_message", {
     workspace_id: request.orgId, workstream_id: request.conversationId,
     user_id: request.userId, operation_id: request.operationId,
-  }, async () => SendEngineeringMessageResultSchema.parse(await (await organizationBinding(request.orgId)).sendMessage(request, principal))));
+  }, async () => SendEngineeringMessageResultSchema.parse(await (await organizationBinding(env, request.orgId)).sendMessage(request, principal))));
 
   const sidekickPauseSchema = SetEngineeringSidekickPausedInputSchema.unwrap().omit({ paused: true });
   for (const [name, paused] of [["pause_sidekick", true], ["resume_sidekick", false]] as const) {
@@ -239,52 +268,17 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     }, (request) => tool(principal, name, {
       workspace_id: request.orgId, sidekick_id: request.sidekickId, user_id: request.userId,
     }, async () => SetEngineeringSidekickPausedResultSchema.parse(
-      await (await organizationBinding(request.orgId)).setSidekickPaused({ ...request, paused }, principal))));
-  }
-
-  /** The typed confirmation, checked here before any region is asked and again by the region. */
-  function confirmedOrg(request: { orgId: string; confirm: string }): string {
-    if (request.confirm !== request.orgId) {
-      throw new InspectionRefusal("thread_retirement_unconfirmed", "confirm must equal orgId; nothing was changed");
-    }
-    return request.orgId;
+      await (await organizationBinding(env, request.orgId)).setSidekickPaused({ ...request, paused }, principal))));
   }
 
   server.registerTool("retire_org", {
-    description: "Retire an Organization permanently, through the same door as Ace's Retire button: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Members simply lose it. The result reports complete: false while parts are still open; call again with the same orgId to resume the walk.",
+    description: "Retire an Organization permanently through the regional retirement service: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Task-capable clients receive a durable handle to poll while failed passes are retried. Synchronous results report complete: false while parts are still open; call again with the same orgId to resume the walk.",
     inputSchema: RetireEngineeringOrgInputSchema.unwrap().shape,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "retire_org", { workspace_id: request.orgId },
-    async () => RetireEngineeringOrgResultSchema.parse(
-      await (await organizationBinding(request.orgId)).retireOrg(request, principal))));
-
-  server.registerTool("dump_thread_transcripts", {
-    description: "Write every Thread, Breakout and Channel conversation of orgId to R2 as room-visible text, under retired-conversations/<orgId>/<parentId>/<substreamId>.txt, before retire_threads deletes them. Canvases and Sidekicks are never dumped. A conversation already in R2 is skipped, so repeat the call to resume. confirm must equal orgId. Returns counts: conversations, dumped, skipped, and failed with a code per conversation.",
-    inputSchema: ThreadRetirementOperationInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "dump_thread_transcripts", { workspace_id: request.orgId }, async () => {
-    const orgId = confirmedOrg(request);
-    return DumpThreadTranscriptsResultSchema.parse(await (await organizationBinding(orgId)).dumpThreadTranscripts(request, principal));
-  }));
-
-  server.registerTool("retire_threads", {
-    description: "Irreversibly delete every Thread, Breakout and Channel of orgId: each conversation object is retired and their rows deleted. Canvases, Sidekicks, resources and memory stay. Refused (thread_retirement_dump_incomplete) unless dump_thread_transcripts has written every conversation it would retire. Repeat the call to resume; once done it changes nothing. confirm must equal orgId. Returns counts and failed with a code per Thread or Channel.",
-    inputSchema: ThreadRetirementOperationInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "retire_threads", { workspace_id: request.orgId }, async () => {
-    const orgId = confirmedOrg(request);
-    return RetireThreadsResultSchema.parse(await (await organizationBinding(orgId)).retireThreads(request, principal));
-  }));
-
-  server.registerTool("convert_threads_to_canvases", {
-    description: "Make every Thread of orgId that has an artifact (made in it, or linked to it) a Canvas in place, keeping its id: the Thread's conversation becomes the Canvas's Chat, its viewers its participants and its artifacts the Canvas's. Its Breakouts are retired as retire_threads retires them. dryRun (the default) only lists the candidates with their artifact, participant and undumped-conversation counts. An apply (dryRun false) needs confirm equal to orgId, and is refused (thread_retirement_dump_incomplete) unless dump_thread_transcripts has written every conversation of every candidate. Run it before retire_threads. Repeat to resume; once done it lists no candidates. Returns the candidates and counts: converted, alreadyConverted, failed with a code per Thread, and artifactsWithoutThread.",
-    inputSchema: ConvertThreadsToCanvasesInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "convert_threads_to_canvases", { workspace_id: request.orgId }, async () => {
-    const orgId = request.dryRun === false ? confirmedOrg({ orgId: request.orgId, confirm: request.confirm ?? "" }) : request.orgId;
-    return ConvertThreadsToCanvasesResultSchema.parse(
-      await (await organizationBinding(orgId)).convertThreadsToCanvases(request, principal));
-  }));
+  }, async (request, ctx) => {
+    const input = { name: "retire_org" as const, arguments: request };
+    return hasTaskOwner && acceptsTasks(ctx) ? createTask(input) : (await executeEngineeringTask(env, principal, input)).result;
+  });
 
   const conversationReadSchema = ReadEngineeringConversationInputSchema.unwrap().omit({ kind: true, conversationId: true });
   for (const [name, kind, label] of [["read_canvas_chat", "canvas", "Canvas"], ["read_sidekick_conversation", "sidekick", "Sidekick"]] as const) {
@@ -301,7 +295,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
       delete rest[idKey];
       return tool(principal, name, {
         workspace_id: request.orgId, workstream_id: conversationId, user_id: request.userId,
-      }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(request.orgId))
+      }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(env, request.orgId))
         .readConversation(ReadEngineeringConversationInputSchema.parse({ ...rest, kind, conversationId }))).text);
     });
   }
@@ -482,40 +476,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     },
   ));
 
-  server.registerTool("list_feature_flags", {
-    description: "List every product feature flag Ace manages, with what it controls, its provisioned default, and its live Cloudflare Flagship definition (enabled state, default variation, and ordered targeting rules).",
-    inputSchema: {},
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  }, () => tool(principal, "list_feature_flags", {}, async () =>
-    administered(await env.FLAG_ADMINISTRATION.listProductFlags())));
-
-  server.registerTool("update_feature_flag", {
-    description: "Replace a managed product feature flag's whole Flagship definition: description, enabled state, default variation, and ordered targeting rules. Rules and fields left out are removed, so read the flag with list_feature_flags first and send it back with your change. Connected desktop clients are notified after Flagship's propagation window. Changes production for every user the rules reach.",
-    inputSchema: ManagedFlagUpdateSchema.shape,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  }, (update) => tool(principal, "update_feature_flag", { flag_key: update.key }, async () =>
-    administered(await env.FLAG_ADMINISTRATION.updateProductFlag({
-      actor: { subject: principal.subject },
-      update,
-    }))));
-
-  server.registerTool("list_model_flags", {
-    description: "List every agent model-routing flag Ace manages: the agent role, what it runs, its checked-in default route, and its live Flagship definition. A role's served route is the value of the flag's default variation unless a targeting rule picks another.",
-    inputSchema: {},
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  }, () => tool(principal, "list_model_flags", {}, async () =>
-    administered(await env.FLAG_ADMINISTRATION.listModelFlags())));
-
-  server.registerTool("update_model_flag", {
-    description: "Replace the route plan (primary OpenRouter model, ordered fallbacks, and optional reasoningEffort: low, medium, or high) in an agent role's model flag's default variation. Omit reasoningEffort to use each selected model's configured default; an explicit effort applies to the whole route. Every model id is checked against OpenRouter first; targeting rules and other variations are kept. New runs pick up the change on their next evaluation.",
-    inputSchema: ManagedModelUpdateSchema.shape,
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
-  }, (update) => tool(principal, "update_model_flag", { agent_role: update.role }, async () =>
-    administered(await env.FLAG_ADMINISTRATION.updateModelRouting({
-      actor: { subject: principal.subject },
-      update,
-    }))));
-
   server.registerTool("query_data_lake", {
     title: "Query Data Lake",
     description: `Run a read-only Basin SQL (formerly R2 SQL) query against one Global analytical lakehouse. Each lakehouse is a separate catalog, so a query reaches only its own table: ${Object.values(LAKEHOUSES).map(({ table }) => table).join(", ")}. Run DESCRIBE <table> for its columns. Billing is by bytes scanned, so filter on the table's timestamp column and add a LIMIT. Pipeline rolls files every 300 seconds, so a row can take about five minutes to appear, and delivery is at-least-once: rows sharing event_id are one event. llm_inference holds raw prompts and model output; select its request, response and error columns only for a specific inference_request_id.`,
@@ -524,8 +484,10 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
       sql: z.string().min(1).describe("Basin SQL SELECT statement naming the table as <namespace>.<table>."),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ lakehouse, sql }) => tool(principal, "query_data_lake", { lakehouse }, () =>
-    queryLakehouse({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.BASIN_SQL_API_TOKEN }, lakehouse, sql)));
+  }, async (request, ctx) => {
+    const input = { name: "query_data_lake" as const, arguments: request };
+    return hasTaskOwner && acceptsTasks(ctx) ? createTask(input) : (await executeEngineeringTask(env, principal, input)).result;
+  });
 
   server.registerTool("query_worker_observability", {
     title: "Query Worker Logs and Traces",
@@ -535,5 +497,52 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, (query) => tool(principal, "query_worker_observability", { view: query.view }, () =>
     queryObservability({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.WORKERS_OBSERVABILITY_API_TOKEN }, query)));
 
+  server.registerTool("inspect_queues", {
+    description: "Inspect Cloudflare queue backlog metrics and active dead-letter relationships. Does not consume or acknowledge messages. Metrics describe a point in time, not successful delivery.",
+    inputSchema: { deadLettersOnly: z.boolean().default(false) },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ deadLettersOnly }) => tool(principal, "inspect_queues", { dead_letters_only: deadLettersOnly }, () => inspectQueues(env, deadLettersOnly)));
+
+  server.registerTool("inspect_dead_letters", {
+    description: "Peek messages in an active dead-letter queue returned by inspect_queues. Returns the provider's sample without consuming, leasing, replaying or acknowledging messages. Message bodies may contain customer data; inspect only for the requested investigation.",
+    inputSchema: { queueId: z.string().min(1) },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ queueId }) => tool(principal, "inspect_dead_letters", { queue_id: queueId }, () => peekDeadLetters(env, queueId)));
+
+  server.registerTool("inspect_usage_plan", {
+    description: "Read an Organization's current plan, weekly quota remaining and reset, and current-period overage from its owning region's authoritative usage ledger.",
+    inputSchema: InspectEngineeringUsageInputSchema.shape,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "inspect_usage_plan", { workspace_id: request.orgId }, async () =>
+    EngineeringUsageResultSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOrganizationUsage(request))));
+
+  server.registerTool("change_usage_plan", {
+    description: "Change an Organization's plan. Applies its new quota to the current week, records the plan change, and notifies connected members. Past weekly quotas remain unchanged. Resolve an uncertain outcome with inspect_usage_plan before retrying.",
+    inputSchema: ChangeEngineeringPlanInputSchema.shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, (request) => tool(principal, "change_usage_plan", { workspace_id: request.orgId, plan: request.plan }, async () =>
+    EngineeringUsageResultSchema.parse(await (await organizationBinding(env, request.orgId)).changeOrganizationPlan(request, principal))));
+
+  server.registerTool("inspect_migration_progress", {
+    description: "Inspect forced-migration outcomes, failures, invalid or misrouted commands and schema version shortfalls in a region's Worker logs. Filters by run or object when supplied. Seven-day log retention applies; missing logs do not prove a fleet or object is current. Use inspect_queues for command backlog and dead letters. Ordinary constructor migrations are not a fleet registry.",
+    inputSchema: {
+      region: z.enum(configuredRegions as [string, ...string[]]),
+      from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }).optional(),
+      runId: z.uuid().optional(), objectId: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+      limit: z.number().int().positive().optional(), offset: z.string().optional(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, ({ region, from, to, runId, objectId, limit, offset }) => tool(principal, "inspect_migration_progress", { region, run_id: runId, object_id: objectId }, () =>
+    queryObservability({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.WORKERS_OBSERVABILITY_API_TOKEN }, {
+      view: "events", from, to, limit, offset,
+      filters: [
+        { key: "$metadata.service", operation: "eq", type: "string", value: `avalon-api-${region}` },
+        { kind: "group", filterCombination: "or", filters: ["migration_command_applied", "migration_command_failed", "migration_command_invalid", "migration_command_class_deleted", "migration_command_misrouted"].map((event) => ({ key: "event", operation: "eq" as const, type: "string" as const, value: event })) },
+        ...(runId ? [{ key: "run_id", operation: "eq" as const, type: "string" as const, value: runId }] : []),
+        ...(objectId ? [{ key: "object_id", operation: "eq" as const, type: "string" as const, value: objectId }] : []),
+      ], filterCombination: "and",
+    })));
+
+  registerTaskMethods(server, env, principal);
   return server;
 }

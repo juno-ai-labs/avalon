@@ -25,7 +25,6 @@ import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { AuthContext } from "../src/env";
 import { splitSqlStatements } from "../src/lib/sql-statements";
 import { deliverPush } from "../src/queues/push-delivery-consumer";
-import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { registerPushDevice } from "../src/services/push-device-service";
 import type { ApnsOutcome } from "../src/services/push/apns-transport";
 import type { PushPayloads } from "../src/services/push/push-payload";
@@ -40,10 +39,9 @@ const REPORT = "00000000-0000-7000-8000-0000000ed0a1";
 const RUN = "00000000-0000-7000-8000-0000000ed0f1";
 const NOW = "2026-11-08T10:00:00.000Z";
 
-const flags = createTestEnv({ FLAGS: { getBooleanDetails: async () => ({ value: true, reason: "TARGETING_MATCH" }) } }).FLAGS!;
 /** An environment that may send push, as `hosted-mention-notifications.test.ts` builds it. */
 const pushEnv = () => ({
-  ...env, FLAGS: flags, APP_ENV: "staging" as const, APNS_AUTH_KEY: "configured", APNS_KEY_ID: "configured",
+  ...env, FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED: "true", APP_ENV: "staging" as const, APNS_AUTH_KEY: "configured", APNS_KEY_ID: "configured",
   WORKSPACE_DOS: createTestEnv({ WORKSPACE_DOS: { jurisdiction: () => env.WORKSPACE_DOS } }).WORKSPACE_DOS,
 });
 
@@ -118,7 +116,7 @@ async function readChat(sourceVersion: number): Promise<void> {
 
 beforeEach(async () => {
   await reset();
-  clearFlagTargetingAttributeCache();
+
   WORKSPACE_ID = asWorkspaceId(crypto.randomUUID());
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: AUTHOR, sessionId: `session-${AUTHOR}` });
   await env.DB.batch([
@@ -151,6 +149,22 @@ beforeEach(async () => {
 });
 
 describe("a pinned Canvas's new version", () => {
+  it("advances Canvas recency to the artifact version's date once", async () => {
+    const editor = { kind: "person" as const, id: AUTHOR };
+    const detail = () => workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS,
+      actor: { userId: AUTHOR, actorRole: "member" } });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE canvas_directory SET updated_at = ? WHERE canvas_id = ?", Date.parse(NOW), CANVAS);
+    });
+    await publish(2, { kind: "member", userId: AUTHOR }, editor);
+    expect((await detail()).updatedAt).toBe("2026-11-08T10:00:02.000Z");
+
+    await workspace().renameResource({ workspaceId: WORKSPACE_ID, resourceId: REPORT, title: "Renamed report",
+      renamedByUserId: asUserId(AUTHOR), at: "2026-11-08T10:00:03.000Z" });
+    await workspace().canvasNoteArtifact({ workspaceId: WORKSPACE_ID, canvasId: CANVAS, resourceId: REPORT, editor });
+    expect((await detail()).updatedAt).toBe("2026-11-08T10:00:02.000Z");
+  });
+
   it("tells each pinner but its author, collapses while unseen, clears on a read of the Chat, and opens onto the artifact", async () => {
     // The first version is a new artifact, not news.
     expect(await intents()).toEqual([]);

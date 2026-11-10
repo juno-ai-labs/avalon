@@ -252,6 +252,29 @@ describe("the Workstream Durable Object relational schema", () => {
     } finally { database.close(); }
   });
 
+  it("retires mail address columns without discarding attached resources", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({ storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 85),
+        component: "substream_agent_do", workerVersionId: "before-retirement", now: 1_000 });
+      database.prepare(`INSERT INTO workstream_resource_links
+        (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+        VALUES (?, NULL, 0, 'inbound_email', ?, 1000, 1000)`)
+        .run(MESSAGE_ID, JSON.stringify({ id: MESSAGE_ID, title: "Retained evidence", relationshipType: "inbound_email" }));
+      applyWorkstreamObjectSchema(storage, "after-retirement", 2_000);
+      const row = database.prepare("SELECT resource_id, relationship_type, resource_json FROM workstream_resource_links").get() as
+        { resource_id: string; relationship_type: string; resource_json: string };
+      expect(row.resource_id).toBe(MESSAGE_ID);
+      expect(row.relationship_type).toBe("attachment");
+      expect(JSON.parse(row.resource_json)).toEqual({ id: MESSAGE_ID, title: "Retained evidence", relationshipType: "attachment" });
+      expect(() => database.prepare("SELECT email_address FROM workstream")).toThrow(/no such column/);
+      expect(() => database.prepare("SELECT email_route_status FROM workstream")).toThrow(/no such column/);
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally { database.close(); }
+  });
+
   it("creates the complete workstream-down table contract idempotently", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);

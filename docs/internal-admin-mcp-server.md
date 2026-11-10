@@ -18,12 +18,6 @@ for connecting an MCP client and making a first safe query.
 
 ## Access and authentication
 
-The endpoint is protected by its own Cloudflare Access application. Deployment
-copies the identity providers and admission policies from Ace, so sign in with
-the same company identity provider and account that you use for
-`ace.internal.rallywith.ai`. The MCP application has a separate Access audience:
-an Ace token cannot be reused directly.
-
 Cloudflare Access performs the OAuth authorization-code flow and Dynamic Client
 Registration. The installed clients below discover that flow from the endpoint,
 open a browser for company sign-in, and retain their own OAuth credentials. Do
@@ -149,12 +143,6 @@ The MCP transport also admits request `Origin` headers from those four provider
 hosts. An authorization success followed by “no MCP server was found” usually
 means a new hosted provider was added to OAuth but not to this shared registry.
 
-Add `https://mcp.internal.rallywith.ai/mcp` in the hosted client's connector
-settings and choose its normal sign-in action. Dynamic Client Registration
-creates the client automatically; do not enter a static OAuth Client ID. The
-Cloudflare Access login still requires an engineering identity admitted by the
-Ace-derived policy.
-
 Cloudflare supports a trailing `/*` for all paths on a specific HTTPS origin,
 but does not document an allow-any-HTTPS-origin setting. Supporting another
 hosted provider therefore requires adding its provider origin to the deployment
@@ -232,11 +220,8 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |
 | `pause_sidekick`, `resume_sidekick` | `orgId`, `userId`, `sidekickId` | Pauses or resumes the Sidekick as that user, through the app's own Pause and Resume path. The user must be allowed to manage it; its author always is. Returns the resulting lifecycle. |
 | `retire_org` | `orgId` | Retires the Organization permanently through Ace's retirement door. There is no undo. If the receipt says `complete: false`, call again to resume. |
-| `dump_thread_transcripts` | `orgId`, `confirm` (the `orgId` again) | **Destructive standing**, as `run_workspace_sql` (annotated a non-destructive write: it only adds to R2, but it opens every conversation object). Writes every Thread, Breakout and Channel conversation of the Organization to R2 as text under `retired-conversations/<orgId>/<parentId>/<substreamId>.txt`, skipping any already written; Canvases and Sidekicks are never dumped. Reports dumped, skipped and failed counts. Run it, and see nothing failed, before `retire_threads`. |
-| `retire_threads` | `orgId`, `confirm` (the `orgId` again) | **Destructive.** Irreversibly deletes every Thread, Breakout and Channel of the Organization: retires each conversation object and deletes their rows. Canvases, Sidekicks, resources and memory stay. Refused until `dump_thread_transcripts` has written every conversation. Repeat to resume; a finished Organization reports zeros. |
-| `convert_threads_to_canvases` | `orgId`; optional `dryRun` (default `true`) and `confirm` (the `orgId` again, required when `dryRun` is `false`) | **Destructive** when applied. Makes every Thread that made or linked an artifact a Canvas with the same id: its conversation becomes the Canvas's Chat, its viewers participants, its artifacts the Canvas's; its Breakouts are retired. A dry run lists the candidates and changes nothing. Refused until `dump_thread_transcripts` has written every conversation of every candidate. Run it before `retire_threads`. Repeat to resume. |
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
-| `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Canvas's parent state in `canvas_directory` and the `parent_*` tables. |
+| `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Canvas's parent state in `canvas_directory` and its shares in the `parent_*` tables. |
 | `run_canvas_sql` | `workspaceId`, `conversationId` (a Canvas or Sidekick ID), optional `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in the conversation object (AgentLoopDO), or in a registered child conversation. |
 | `run_artifact_sql` | `workspaceId`, `artifactId`, `sql`, optional `bindings` | Runs arbitrary SQLite in ArtifactHostDO — the artifact's supervisor, not its facet. |
 | `run_d1_sql` | `region`, `database` (`DB`, `TELEMETRY_DB`, `USAGE_DB`, `PLATFORM_DB` or `MESSAGE_ISSUES_DB`), `sql`, optional `bindings` | Runs arbitrary SQL in that region's D1 database. |
@@ -260,11 +245,6 @@ SQL results include `columns`, JSON-safe `rows`, `rowsRead`, and `rowsWritten`.
 BLOB values are returned as `{ "type": "blob", "base64": "..." }`.
 `rowsWritten` is Cloudflare's physical SQLite write count, including index
 maintenance; it is not a domain-level count of changed records.
-
-- Never give this server to an agent-driven caller with `dump_thread_transcripts`,
-  `convert_threads_to_canvases` and `retire_threads` enabled. Their only gate is `confirm` naming the
-  Organization, which is a consistency check, not an approval
-  ([`engineering-mcp.md`](engineering-mcp.md#retiring-threads)).
 
 - Prefer `SELECT`, `PRAGMA table_info(...)`, and explicit schema inspection
   until a repair is agreed.
@@ -294,14 +274,3 @@ maintenance; it is not a domain-level count of changed records.
   messages.
 
 ## Troubleshooting
-
-| Symptom | Check |
-| --- | --- |
-| Browser login never opens | Run the client's explicit login command or its MCP **Authenticate** action. Confirm the endpoint returns the OAuth `401` challenge above. |
-| Access denies the login | Confirm the same company identity is admitted to Ace. The MCP copies Ace's policy but has a separate application and token audience. |
-| Connector registration fails before login | Confirm the hosted client redirects through one of the documented provider origins. New hosted-provider origins must be added to the Access Managed OAuth allowlist and deployed. |
-| Client remains disconnected after login | Restart or reconnect the client, then inspect `codex mcp list`, Claude Code `/mcp`, or Cursor's **MCP Logs** output. |
-| No tools appear | Confirm the configured URL ends in `/mcp`, not merely the hostname. |
-| Target is not found | Re-run the list tools from the workspace downward and use the returned IDs. A missing routing record is refused rather than creating an empty object. |
-| Target exists in configured deployments | Stop. The server refuses ambiguous identity by design; repair regional routing before inspecting either object. |
-| SQL fails without useful server logs | Read the error returned to the authenticated client. Query text and SQLite errors are intentionally excluded from Worker logs. |

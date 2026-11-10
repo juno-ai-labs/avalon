@@ -209,6 +209,7 @@ describe('SessionGate identity-first ordering', () => {
   it.each([
     ['/canvases/00000000-0000-7000-8000-00000000a001', 'canvas screen'],
     ['/sidekicks/00000000-0000-7000-8000-000000000031', 'automation'],
+    ['/activity', 'Loading Activity…'],
   ])('preserves explicit route %s', async (route, destination) => {
     window.history.replaceState({}, '', `/#${route}`);
     sessionState.session = {
@@ -225,7 +226,6 @@ describe('SessionGate identity-first ordering', () => {
     '/spaces/00000000-0000-7000-8000-00000000a001',
     '/workstreams/00000000-0000-7000-8000-000000000031?substream=2',
     '/projects/launch',
-    '/activity',
     '/artifacts',
   ])('opens the Canvases home from the removed route %s', async (route) => {
     window.history.replaceState({}, '', `/#${route}`);

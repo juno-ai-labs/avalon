@@ -34,6 +34,13 @@ sandbox is allocated only when one of those tools executes.
 | `apps/api/src/durable-objects/workstream-terminal-storage.ts`, `workstream-terminal-protocol.ts` | The only reader and writer of those tables, and the operation contract derived from it. |
 | `apps/api/src/services/terminal/object-port.ts` | The Worker-side handle every Terminal service holds instead of a database. |
 
+Canvas publication retains its parent id on the resource row. WorkspaceDO
+migration 142 fences writes against that parent's archive tombstone inside the
+same SQLite statement, after byte preparation; a cached publication home is not
+a continuing write grant. Both explicit and implicit Sidekick-run lookups refuse
+an archived Canvas with `canvas_archived`. The run's original identity stays
+reserved: it must choose an active Canvas the Sidekick writes or start a new run.
+
 ### Loading and allocation
 
 `rally:terminal` is a built-in deferred plugin. Bind can discover it without
@@ -78,7 +85,10 @@ preserved legacy account identity (or creator for a new Sidekick) to keep
 existing sandbox fingerprints compatible. This identifier confers no execution
 authority. Completed imports remain shared Sidekick state after a delegate
 withdraws or loses source access; every new import still checks current access.
-Ordinary conversations retain their principal and import-visibility fences.
+A Canvas's sandbox identity is the Canvas and its selected repository, not the
+person acting, so every participant's runs share one sandbox and its files; a
+Canvas keeps only the import-visibility fence, checked against the acting
+person.
 A primary run may replace a changed repository; a background agent cannot
 destroy its owner's workspace and must wait for a primary run.
 Files may need recovery after a permission reset, provider loss or expiry, so
@@ -365,6 +375,34 @@ the mounted token before any model command runs. The typed
 `publish_branch_and_pr` operation remains available as an optional convergent
 publisher, but it is not a gate around standard Git and GitHub CLI use.
 
+#### Repository credentials follow the person acting
+
+A Canvas's sandbox is shared, but the credentials mounted in it are one
+principal's: the read token behind `GITHUB_READ_BASIC` and `GH_TOKEN`, the
+checkout's `http.<url>.extraheader` that names it, and the write token the
+typed publisher mounts and leaves in place. `terminal_workspace.credential_principal_key`
+records whose they are. Bootstrap and the publisher write it
+(`recordCredentialMount`) before they mount, so a mount that fails part-way
+still counts; every generation bump resets it, since a new sandbox has no
+secrets.
+
+When a Canvas operation's principal differs from the record, `acquire`
+clears both places under the operation lease, after the sandbox is running and
+before the caller's preparation or tool runs: `clearGitHubReadAccess`, then a
+fixed utility command (`repository.credentials.clear`) that unsets every
+`http.*.extraheader` in `/workspace/.git/config` and fails if one is left.
+`recordCredentialsCleared` then hands the record to the acting principal, fenced
+on the generation and the record it cleared, and drops the cached token expiry
+in the same transaction, so that principal's bootstrap mints and mounts their
+own grant under the rules that already decide one. A run that still holds a
+ready handle sees the change in `claimForOperation`, which answers `stale` and
+sends it back through readiness. Either clear failing refuses the operation
+with `repository_credentials_not_cleared` and leaves the record, so the next
+attempt clears again. The same principal acting again reads the record and
+does nothing more. A publication build acts as the publishing person and mounts
+nothing, so it clears another person's credentials and runs with none. A
+Sidekick keeps its own rule and is never cleared here.
+
 A Sidekick's shell retains its selected repository connection, without
 cross-account shell retry. Repository bootstrap and the typed publisher check
 that a personal connection's owner is in the inventory's eligible delegation
@@ -470,6 +508,29 @@ preserving the sandbox ID, generation, and filesystem.
 | Unexpected metadata 404 | Preserve the ID and generation; return unavailable and reconcile again. |
 | Transitional or unknown | Preserve the identity and retry after the transition. |
 
+Creation reconciliation uses this same state handler. If a create fails and a
+stable-name lookup finds a sandbox, Rally binds its provider ID to the reserved
+generation in `starting` before restoring it. An explicitly unrecoverable
+sandbox is deleted and replaced through the existing generation transition;
+a recoverable one is restored in place. Missing recovery metadata preserves
+its identity. Preparation and policy readback still precede `running`, including
+when an interrupted acquisition resumes by the persisted ID. Network-policy
+updates preserve `starting`, including across interruption after the policy
+commit, so the retry must still finish managed preparation. If provisioning
+the replacement itself returns an explicitly lost sandbox, Rally retains that
+new binding and reports a provider/snapshot repair action instead of recursively
+provisioning more generations in the same acquisition. The same rule applies
+when start or recovery reveals that the replacement is lost.
+
+Before deleting an unverified sandbox or a generation being replaced, Rally
+records a generation-fenced cleanup intent in `failure_code`. Acquisition
+reconciles that intent before the ordinary unexpected-metadata-404 guard. It
+clears an unverified binding, or advances a replacement generation and its
+provenance, only after deletion or a provider 404 confirms removal. Ambiguous
+deletion and interruption between the provider delete and the local commit
+therefore retry cleanup instead of reusing an unverified sandbox or becoming
+stuck behind an ID Rally already deleted.
+
 **How long a restore may take is the acquisition budget's to say.** Starting an
 archived sandbox restores its filesystem, and the Daytona call that asks for
 that also waits for it — but the two are separable, and only the request is
@@ -513,10 +574,12 @@ restore measurement.
 A start or recovery timeout does not establish loss. Acquisition reads metadata
 again and accepts a completed start, waits out a transition, or replaces only
 when the provider explicitly establishes loss. Failed deletion does not release
-the old generation while the sandbox still exists. Authority changes remain an
-independent reason to replace for ordinary conversations. Sidekick files and
-completed imports instead remain shared across eligible delegates, while a
-repository selection change still replaces its generation.
+the old generation while the sandbox still exists. A Canvas's files are shared
+by every participant: a different person acting is not a reason to replace,
+but a repository selection change, or an import the acting person can no longer
+read, is. Sidekick files and completed imports likewise remain shared across
+eligible delegates, while a repository selection change still replaces its
+generation.
 
 `observeTerminalSandbox`, `stopTerminalSandbox`, and `deleteTerminalSandbox`
 share the metadata boundary across acquisition and task cleanup. A runner,
@@ -656,15 +719,33 @@ personless; it is not duplicated into these product events.
   Durable Object never ends the context that would release it. Sessions left
   behind every status check ran that Worker out of memory.
 - **One regional sandbox generation belongs to one conversation and one frozen
-  authority fingerprint.** Ordinary conversations replace it after a principal
-  or imported-resource visibility change. Sidekick files and completed imports
-  stay shared across eligible coordinators, with delegation checked separately;
-  their stable file identity preserves existing generations. GitHub connection
-  and repository changes still require replacement. The
+  authority fingerprint.** A Canvas has one sandbox, whoever or whatever acts
+  in it: each person's runs, Rally's own, its background agents and a person's
+  publication build. Its fingerprint is the Canvas and its selected
+  repository, so a different person acting never replaces it; a revoked
+  imported resource and a GitHub connection or repository change still do.
+  A sandbox still under the identity of the person who last used it (from
+  before Canvas sandboxes were shared) is replaced once, as a different
+  person acting replaced it before. Sidekick files and completed imports stay
+  shared across eligible coordinators, with delegation checked separately;
+  their stable file identity preserves existing generations. The
   conversation is the one that owns the sandbox rows, which for a background
   agent is the conversation that started it, never the agent's own; two
   conversations under one parent (substreams of one `workstream` id) never
   share a generation, and a run never uses a sandbox under another parent.
+- **A Canvas operation never runs beside another principal's GitHub
+  credentials.** The sandbox row names whose credentials it may hold, written
+  before every mount; a different principal's acquire clears them, under the
+  lease, before anything of theirs runs, and a failed clear refuses the
+  operation. The record is never read to skip a clear it names.
+- **A publication build's lease is live until it expires.** A person's
+  publish that builds a component or project holds the operation lease as
+  `PUBLICATION_BUILD_HOLDER`, a holder with no run behind it
+  ([`rally-mcp.md`](rally-mcp.md#building)). The storage already keeps a
+  holder from elsewhere live while its lease is; the coordinator's takeover
+  check and the lifecycle sweep must not ask a conversation about its run,
+  since reading "no such run" as "yielded" would hand the sandbox to an agent
+  run, or stop it, mid-build.
 - **A lease held by a run in another conversation is judged by that
   conversation, never by this object's own run table.** The row records which
   conversation the holder ran in; the claim SQL reads liveness from `runs` only
@@ -699,13 +780,14 @@ personless; it is not duplicated into these product events.
   call, so two runs never mutate at once but do interleave between calls.
   Reads are outside it by design and may see a write in progress.
 - **A background agent inherits its starter's execution principal, and that
-  is checked at the same authorization boundaries.** Ordinary conversations
-  bind files to that principal; Sidekicks bind files to their stable original
-  identity and check current delegation separately. The repository authority
+  is checked at the same authorization boundaries.** A Canvas binds files to
+  the Canvas and its repository, not to any principal, so an agent acting for
+  someone else shares its Canvas's sandbox; Sidekicks bind files to their
+  stable original identity and check current delegation separately. The repository authority
   is shared by the agent and its owner. Bootstrap and publication check the
   selected connection owner against the inventory delegation snapshot in their
   existing connection-policy read. Should those fingerprints differ, or
-  should an ordinary conversation's imported resource become unreadable,
+  should a Canvas's imported resource become unreadable,
   the agent refuses with `sandbox_authority_mismatch` rather than replace a
   checkout that is not its own; only the owning conversation's run replaces
   its sandbox.
@@ -840,8 +922,8 @@ network proxy, or a general GitHub administration surface.
   calls. Anything left running inside, a development server say, does not
   survive the stop, and the run's next call starts the sandbox again. The
   run-long lease held the sandbox for the whole run.
-- A background agent whose fingerprint no longer matches its owner's sandbox,
-  or whose owner's sandbox holds a revoked import, is refused with
+- A background agent whose owner's sandbox changed repository authority,
+  or holds a revoked import, is refused with
   `sandbox_authority_mismatch` until the owning conversation's next Terminal
   call reprovisions the sandbox.
 - An `edit_file` whose target changed since it was read answers `file_changed`
@@ -957,7 +1039,7 @@ mapping of that field onto Daytona's create call is in
 by the sweep and left to the main conversation by the policy application is
 in the coordinator, lifecycle and settings suites; a run's write calls taking
 turns, an edit refused on a changed digest, a read joining this run's
-preparation, a read refused under another principal, and a background agent's
+preparation, another person reading the files of their Canvas's one sandbox, and a background agent's
 command recorded in its owner's object without the agent's run or receipt are
 in `terminal-runtime.test.ts`; an import judged by its own conversation and
 an agent refusing rather than replacing its owner's sandbox are in
@@ -1013,7 +1095,9 @@ workspace policy into WorkspaceDO:
 - `terminal_workspace` for generation, authority, provider, lease, lifecycle,
   retention, and final-diff state — including, since conversation schema 63,
   `operation_run_substream_id`: the conversation the lease holder's run
-  executes in when that is not this object's own, `NULL` otherwise;
+  executes in when that is not this object's own, `NULL` otherwise; and since
+  schema 85 `credential_principal_key`, whose GitHub credentials the
+  generation may hold;
 - `terminal_provider_observation` for generation-fenced provider readback, freshness,
   errors, and the next observation deadline (AgentLoopDO schema 57);
 - `terminal_tasks` for durable command submission and one final result; since
@@ -1059,7 +1143,15 @@ Daytona SDK is reachable only through the regional adapter.
 The Daytona project credential stays a Worker secret. GitHub installation tokens
 are minted just in time and narrowed to the selected repository and operation.
 Read credentials remain mounted through host-scoped Daytona placeholders and
-are rotated or removed on revocation/expiry. A full-access checkout establishes
+are rotated or removed on revocation/expiry. A Canvas's sandbox is shared by
+everyone in the Canvas, but its GitHub credentials are the acting person's:
+another person's are cleared before their operation runs, and an operation
+whose clear fails is refused
+([repository credentials follow the person acting](#repository-credentials-follow-the-person-acting)).
+A process an earlier person's command left running can still use the next
+person's credentials while they are mounted; that is the shared-code widening
+in [`security.md`](security.md#shared-canvas-sandbox), not a fence this
+provides. A full-access checkout establishes
 the same short-lived, single-repository write credential once in the conversation
 sandbox; ordinary Git and the typed publisher share that already-authorized
 credential until the existing refresh boundary rotates it. The typed publisher
@@ -1346,6 +1438,68 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-09 — Creation reconciliation uses ordinary sandbox recovery
+
+**What changed:** A sandbox found after an ambiguous create is durably bound
+before entering the same restore/replacement handler as a recorded sandbox.
+Only preparation and policy verification publish the generation as running.
+Policy updates retain unfinished preparation, replacement recovery cannot
+recursively create generations, and a durable cleanup intent bridges provider
+deletion and the generation-fenced binding commit.
+
+**Why:** Dashboard run 457 repeatedly received a creation conflict for an
+existing unrecoverable sandbox. The name-lookup branch returned retry guidance
+without reaching the replacement logic the ID-lookup branch already had.
+Retries alone could never change that state; one recovery path handles both
+ways of discovering the same provider-owned identity. Unknown recoverability
+and unconfirmed deletion must continue preserving the binding and generation.
+
+### 2026-11-09 — Fence publication against Canvas archive at the resource commit
+
+A resolved or cached publication home is no longer sufficient authority to
+change an archived Canvas. The resource retains its publication parent and
+WorkspaceDO fences mutation inside SQLite, after asynchronous byte preparation.
+Explicit and implicit Sidekick-run lookups both refuse archived destinations;
+a run's original Canvas identity stays reserved so omitting the target cannot
+silently recreate it. Host pointer delivery also observes archive authority.
+
+### 2026-11-09 — A Canvas has one shared sandbox, and a person's publish can build in it
+
+**What changed.** A Canvas's sandbox identity is the Canvas and its selected
+repository instead of the person acting, so every person's runs, Rally's own,
+background agents and a person's publication build share one sandbox and its
+files. An existing sandbox, still under one person's identity, is replaced
+once on its next acquire. A person's publish that needs a build
+holds the operation lease as `PUBLICATION_BUILD_HOLDER`, which the takeover
+check and the lifecycle sweep treat as live until it expires. GitHub
+credentials stay the acting person's: the sandbox row records whose are
+mounted (`credential_principal_key`, schema 85), and a different person's
+acquire clears the secrets and the checkout's auth header before their
+operation runs, or refuses it (`repository_credentials_not_cleared`).
+
+**Why.** The product decision (2026-11-09) is that a Canvas always has a single
+shared, consistent sandbox, whoever delegates and whether the activity is a
+person's or the platform's. The per-person identity replaced the sandbox, and
+deleted its files, every time someone else acted in a Canvas, which also made
+it unusable for building what a person publishes. Building in a fresh sandbox
+per publish was considered and rejected by the same decision. A future change
+must not reintroduce the acting person into a Canvas's fingerprint, and must
+not let anything read a missing run row as a publication build having ended.
+Moving an old sandbox to the new identity in place was built and then
+removed: it kept files the per-person model already deleted whenever someone
+else acted, so a one-time replacement loses nothing a person could rely on.
+A guest cannot publish a project build, which runs the publisher's own
+scripts beside the repository's checkout (also the team's decision).
+Sharing the sandbox also left the last person's credentials, the write token
+the publisher leaves mounted among them, usable by any participant's run, a
+guest's included. The team decided to clear them on a person change only: the
+same person acting again must not pay a remount, and the publisher's write
+token keeps its lifetime otherwise. Rotating or clearing on every operation was
+rejected for that latency. Clearing costs a remount on each person change, and
+the provider's remount of a freshly created secret restarts the sandbox. A
+future change that mounts a credential another way must record its principal
+before mounting, or the clear will not know it is there.
 
 ### 2026-10-23 — Retry observation without repeating a Terminal command
 

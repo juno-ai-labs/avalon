@@ -15,6 +15,7 @@ require explicit policy and browser-origin configuration before they are usable.
 | `apps/api/src/routes/auth.ts` | POST start/redeem endpoints and scanner-safe GET rejection. |
 | `apps/api/src/worker-events.ts` | Scheduled delivery recovery and expired-proof cleanup. |
 | `packages/db/migrations/0111_email_login_challenges.sql` | Challenge, delivery and redemption receipt storage. |
+| `packages/db/migrations/0127_email_delivery_receipts.sql` | Shared opaque send claims and completion receipts. |
 
 ## How it works
 
@@ -40,9 +41,14 @@ proof and redemption ID can recover the response, while another redemption ID
 cannot consume the challenge again. Expiry of the resumed session is anchored to
 the original redemption. Rotation or revocation makes the old receipt unusable.
 
-Email delivery uses the frozen encrypted body and a stable provider idempotency
-key. Provider acceptance marks delivery complete; a lost response leaves it
-pending for retry. Scheduled recovery continues past individual delivery failures.
+Email delivery uses the frozen encrypted body through Cloudflare Email Service.
+The shared sender atomically claims `email-login:<challenge>` in D1
+`email_delivery_receipts`. Overlapping requests and scheduled recovery cannot
+both send it. Provider acceptance records completion before the challenge is
+settled, so retrying a failed challenge settlement reuses that completion.
+Confirmed quota refusals remain retryable; unknown outcomes and interrupted
+claims remain parked for operator reconciliation. Scheduled recovery continues
+past individual delivery failures without resending parked attempts.
 Development delivery is skipped by the existing shared email sender.
 
 Authenticated GET `/auth/workspaces` lists active relationships in the current
@@ -81,7 +87,7 @@ Signup uses the opaque first-account flow and stage contract in [complete signup
   from enumerating a short OTP. Recoverable delivery and session secrets remain
   encrypted and are never logged.
 - Sender and message content are frozen at issuance so provider retries do not
-  change their body under the same idempotency key.
+  change their body under the same delivery reference.
 
 ## Boundary
 
@@ -102,9 +108,11 @@ development. Issuance freezes expiry and attempts policy on the challenge.
 Invalid, expired, exhausted or already consumed proofs return a generic 401.
 GET redemption returns 405. The routes reuse the existing auth body-size limit.
 
-Delivery errors leave the durable intent pending until expiry or redemption. A
-successful provider response can still be lost; the shared provider's idempotency
-semantics determine deduplication. Scheduled cleanup deletes expired unredeemed
+Delivery intents stay encrypted until expiry or redemption. Cloudflare has no
+send-idempotency parameter, so uncertain sends are not automatically retried.
+An operator must establish the outcome before marking the delivery receipt sent
+or resetting it to pending; a new challenge is also available to the person.
+Scheduled cleanup deletes expired unredeemed
 proofs and receipts whose sessions have expired or been revoked. A consumed receipt
 without a session is retained through the existing initial session lifetime so
 crash recovery remains possible. Live receipts remain encrypted for response-loss
@@ -132,6 +140,21 @@ identifier. Global is the currently configured identity deployment; email sign-i
 does not introduce cross-deployment membership or route grants.
 
 ## Changelog
+
+### 2026-11-09 — Claim Cloudflare delivery before sending a sign-in proof
+
+**What changed:** Sign-in sends use the shared D1 delivery receipt and an atomic
+claim with token-fenced settlement. Completed sends suppress subsequent attempts;
+uncertain or interrupted sends stay parked. Confirmed quota refusals retry.
+
+**Why:** Cloudflare does not deduplicate a delivery key. A read of an unsent
+challenge alone lets an HTTP request and scheduled recovery send simultaneously.
+
+**Considered and rejected:** Retrying every unsent challenge after a lost provider
+response can repeatedly send a proof Cloudflare already accepted.
+
+**Consequences:** Deploy migration 0127 before the Worker. Operators reconcile
+parked claims before reissuing; challenge payloads and credentials remain encrypted.
 
 ### 2026-10-07 — The emailed sign-in link returns to the shared link
 
@@ -165,7 +188,6 @@ during launch review; the team chose to launch without them.
 **Consequences:** Outbound email volume and aggregate attempts across fresh
 challenges remain unbounded by Rally. Do not describe issuance limiting as a
 fulfilled or pending launch gate. PR: [#843](https://github.com/juno-ai-labs/avalon/pull/843).
-
 
 ### 2026-09-16 — Persist proof consumption and resumable session identity
 

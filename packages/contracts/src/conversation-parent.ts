@@ -83,7 +83,6 @@ export const ConversationParentReserveChildRequestSchema = z.strictObject({
     description: z.string().max(4_000),
     scope: z.enum(["personal", "workspace"]),
     systemKind: z.enum(["digest"]).nullable(),
-    emailAddress: z.string().email().max(254).nullable(),
     titleStatus: z.enum(["naming", "automatic", "settled"]),
     createdAt: z.string().datetime({ offset: true }),
     /**

@@ -20,7 +20,7 @@ from one channel to another.
 - `apps/api/src/services/push/`: provider authentication and payload rendering; `apns-transport.ts` for Apple, `web-push-transport.ts` for browsers.
 - `apps/api/src/services/notification-notice.ts`: `renderNotice`, the one rendering of every kind into a channel-neutral `Notice`, with the access check.
 - `apps/api/src/queues/push-delivery-consumer.ts`: the queue consumer: render the notice, check the choice for its channel, hand it to the push sink (send by transport, receipt) or the email sink; a retired Activity row message is acknowledged.
-- `apps/api/src/services/notice-email.ts`: the email sink, one template for every kind, sent through `sendResendEmail`.
+- `apps/api/src/services/notice-email.ts`: the email sink, one template for every kind, sent through `sendEmail`.
 - `apps/api/src/services/push-delivery-service.ts`: `enqueueNotice`, which queues one message per sink a producer's recipient chose.
 - `packages/contracts/src/push-notifications.ts`: the registration contract and the Web Push service host allowlist (`isWebPushServiceUrl`).
 - `apps/desktop/src/renderer/lib/web-push.ts` and `apps/browser/public/sw.js`: browser subscription and the service worker that shows the notification.
@@ -315,8 +315,13 @@ A **sink** takes a notice and adds only its transport's form. There are two:
   request to open a Canvas"); its body greets the person, quotes the notice's
   text (cut at 320 characters, the mention email's number), has one Open in
   Rally button to the link, and names the Settings row that sent it. It goes
-  through `sendResendEmail` (production only), keyed on
-  `rally-notice/<organization>/<intent>`, so a retried message is one email.
+  through `sendEmail` and the native Cloudflare `EMAIL` binding (production
+  only). `rally-notice/<organization>/<intent>` is its correlation reference;
+  Cloudflare does not deduplicate it. D1 `email_delivery_receipts` records a
+  completed send so a later queue delivery skips the provider. Internal and
+  unknown failures retry; explicit permanent refusals are acknowledged. Retries
+  across the provider-acceptance and local-settlement gap, or concurrent queue
+  deliveries before settlement, can still send a duplicate.
 
 A producer that records an intent calls `enqueueNotice` with the channels its
 recipient chose for the kind (`chosenChannels`, read from the object's own
@@ -449,7 +454,7 @@ Push.
 
 ## Operations and release
 
-An email sink without its Resend key or sender answers
+An email sink without its Cloudflare `EMAIL` binding or sender answers
 `notification_email_unavailable` (retryable), so its queue messages retry
 until the dead-letter queue takes them: a non-empty dead-letter queue is the
 signal, as for every queue here. Outside production the sink sends nothing
@@ -553,7 +558,7 @@ approval's push to the requester and a denial's.
 for every offered kind, the email sink is handed one notice per kind (mention,
 add, reply, pinned version, request, grant, denial, run finished, needs input)
 with its title, body, actor and link; a kind left on push sends no email and a
-stored `slack_agent_dm` reads as no choice; and the real sink sends one Resend
+stored `slack_agent_dm` reads as no choice; and the real sink sends one Cloudflare
 request whose subject is the title and whose idempotency key is the intent,
 with the template's literal text.
 `test/workspace-notification-intent-kinds-migration.test.ts` covers migration
@@ -571,6 +576,23 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-09 — The generic email sink uses Cloudflare
+
+**What changed:** `sendNoticeEmail` uses the shared native Cloudflare sender;
+its recipient checks, notice text and notification intent reference stay the same.
+D1 delivery receipts suppress already-completed sends on queue redelivery;
+internal/unknown provider failures stay retryable and retain diagnostic codes.
+
+**Why:** The requested provider migration must cover the current generic sink,
+which replaced the retired per-kind email services. A single transport preserves
+one template and one notification policy across every kind.
+
+**Consequences:** Production needs the `EMAIL` binding and
+`EMAIL_NOTIFICATION_FROM` (or its transactional fallback), with migration 0127
+applied before the Worker. Correlation headers
+do not provide provider deduplication; the acceptance/settlement gap remains an
+explicit at-least-once delivery limitation.
 
 ### 2026-11-09 — Every kind renders once into a notice for the push and email sinks, checked against its Canvas or Sidekick, with an Activity row beside each intent
 

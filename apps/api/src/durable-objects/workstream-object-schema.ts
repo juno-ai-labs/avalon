@@ -12,7 +12,6 @@ import { CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_A
  * workspace authorization; WorkspaceDO owns cross-work-stream serving state.
  */
 
-import { RESOURCE_RELATIONSHIP_TYPES } from "@rally/contracts";
 import { SCHEDULED_ALARM_SCHEMA_STATEMENTS } from "./scheduled-alarms";
 import { ORDERED_TRANSCRIPT_SCHEMA_V1 } from "./ordered-transcript-sqlite/schema-v1";
 import { WORKSTREAM_RUNTIME_COMPAT_SCHEMA } from "./workstream-runtime-compat-schema";
@@ -61,7 +60,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 84;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 87;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -80,7 +79,10 @@ const LEGACY_RESOURCE_RELATIONSHIP_TYPES = [
 const RESOURCE_RELATIONSHIP_CHECK_VALUES = LEGACY_RESOURCE_RELATIONSHIP_TYPES
   .map((relationshipType) => `'${relationshipType}'`)
   .join(", ");
-const CURRENT_RESOURCE_RELATIONSHIP_CHECK_VALUES = RESOURCE_RELATIONSHIP_TYPES
+// Frozen for migration 35; later vocabulary removals must not change its hash.
+const CURRENT_RESOURCE_RELATIONSHIP_CHECK_VALUES = [
+  "attachment", "message_attachment", "origin", "generated", "inbound_email", "context",
+]
   .map((relationshipType) => `'${relationshipType}'`)
   .join(", ");
 
@@ -3497,7 +3499,8 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // it in place and nothing accumulates. `judged_turn_sequence` is kept
       // beside the id so the newest-three expiry and the merge marker's
       // resolution compare integers rather than looking the turn up again.
-      // `docs/conversation-suggestions.md` owns the lifecycle.
+      // The retired lifecycle's record is in
+      // `docs/workstream-durable-object.md#retired-documents`.
       `CREATE TABLE conversation_suggestions (
         suggestion_id TEXT PRIMARY KEY,
         kind TEXT NOT NULL CHECK (kind IN ('merge_up', 'start_breakout')),
@@ -3836,6 +3839,39 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `DROP TABLE private_child_membership_authority`,
       `DROP TABLE private_child_lifecycle_authority`,
       `DROP TABLE IF EXISTS sidekick_attachments`,
+    ],
+  },
+  {
+    version: 85,
+    description: "record whose GitHub credentials a Terminal sandbox generation may hold",
+    // A Canvas's sandbox is shared by everyone acting in it, and the GitHub
+    // credentials mounted in it are one person's. The coordinator clears them
+    // before a different person's operation runs (docs/terminal-workspaces.md,
+    // "Repository credentials follow the person acting"). NULL is a
+    // generation nobody has mounted credentials into: every generation bump
+    // resets it, and a row from before this version was replaced when the
+    // Canvas fingerprint stopped naming the person, so nothing is backfilled.
+    statements: [
+      `ALTER TABLE terminal_workspace ADD COLUMN credential_principal_key TEXT`,
+    ],
+  },
+  {
+    version: 86,
+    description: "retire conversation mail addresses and preserve received resources as attachments",
+    statements: [
+      `ALTER TABLE workstream DROP COLUMN email_address`,
+      `ALTER TABLE workstream DROP COLUMN email_route_status`,
+      `UPDATE workstream_resource_links SET relationship_type = 'attachment',
+         resource_json = json_set(resource_json, '$.relationshipType', 'attachment')
+       WHERE relationship_type = 'inbound_email'`,
+    ],
+  },
+  {
+    version: 87,
+    description: "read Canvas message recency in timestamp order",
+    statements: [
+      `CREATE INDEX participant_transcript_message_recency_idx ON participant_transcript_turns(created_at DESC)
+         WHERE entry_kind = 'conversation' AND message_type <> 'tool'`,
     ],
   },
 ];

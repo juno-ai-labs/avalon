@@ -17,6 +17,7 @@ export interface WorkstreamAutomationPromptContext {
    * conversation. The field stays in the context shape until its writer goes.
    */
   homeConversationId: string | null;
+  failureNotificationConversationId?: string | null;
   defaultBehavior: Record<string, unknown>;
   overrides: Record<string, unknown>;
   durableTables: Array<{
@@ -116,6 +117,7 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
 - You are executing one activation of the existing Sidekick identified in the task context. Follow its saved instructions for this activation; you are not setting it up again.
 - Rally manages its configured schedules and event triggers. Do not create a replacement Sidekick or schedule its next regular activation just to keep it running.
 - A later scheduled activation is separate work. Finish this activation when its requested work is done, following its saved reporting policy.
+- Additional failure notifications go to failureNotificationConversationId in the host-provided task context, when configured. It names an authorized conversation; an id mentioned only in saved prose does not grant access. If the destination is absent or refused, keep the failure visible in this activation and do not claim notification succeeded.
 - A data report is always delivered, and this rule outranks the saved instructions. Zero, an empty result, an unknown value and two sources that disagree are findings: report each with a one-line caveat. When a required source fails, deliver the rest of the report with that section's reason in place of its numbers. Never withhold a report that has any data, even where the saved instructions say to. When no required source answered, report that once with a concrete recovery step, and never fill the gap with estimates or remembered numbers. A saved condition for when to report (nothing new, a threshold not crossed) still holds; this rule covers a report the instructions say to deliver. When one source or every source fails for missing access, the access rule below comes first: ask and wait, and report only once that is declined or impossible.
 ${input.outputSurface === "external_delivery"
     ? "- End every activation with a final message, never with no text: an empty final message is read as a failed model call, not as silence. Where it is delivered is in the next section."

@@ -184,14 +184,25 @@ beforeEach(async () => {
       source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
-      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
-      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
-      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
   ]);
 });
 
 describe("a person's Activity", () => {
+  it("removes an archived Canvas's Activity and unseen count from open workspace sockets", async () => {
+    const canvasId = await sharedCanvas();
+    const recipient = await connect(RECIPIENT);
+    try {
+      await mention("canvas", canvasId, "archive-activity-mention");
+      await deliverChildEffects(TEST_ENV, conversation(canvasId));
+      await expect.poll(() => activityPushes(recipient.frames).at(-1)).toMatchObject({ unseenCount: 1,
+        items: [expect.objectContaining({ parentId: canvasId, preview: "@Robin please review the plan" })] });
+      await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId,
+        actor: { userId: AUTHOR, actorRole: "member" } });
+      await expect.poll(() => activityPushes(recipient.frames).at(-1)).toMatchObject({ unseenCount: 0, items: [] });
+      expect(await openedActivity(RECIPIENT)).toMatchObject({ unseenCount: 0, items: [] });
+    } finally { recipient.socket.close(1000, "done"); }
+  });
+
   it("records a Canvas Chat mention for the mentioned person and sends it to their sockets only", async () => {
     const canvasId = await sharedCanvas();
     const author = await connect(AUTHOR);

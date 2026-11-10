@@ -205,7 +205,6 @@ transport or granting the renderer provider authority.
 
 Shipped in the pull request for this change.
 
-
 ## Changelog
 
 ### 2026-09-14 — Fence retired meeting data before erasure

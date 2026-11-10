@@ -12,6 +12,7 @@ import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccoun
 
 import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
 import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
+import { ConnectedMcpAppsSchema, type ConnectedMcpApps } from "@rally/contracts/mcp-oauth";
 
 import {
   CanvasAccessDecisionSchema,
@@ -229,12 +230,6 @@ const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ com
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireInviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
-/**
- * A Channel feed page as an API from before 2026-10-13 may still send it, with
- * a `locked` row for a private thread the reader is not in. The client drops
- * those rather than refusing the page, so a client that updates before the API
- * still opens the Channel. Remove once every region serves thread rows only.
- */
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
 const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
 const wireConnectionPageSchema = z.object({ items: z.array(WireConnectionSchema) });
@@ -350,7 +345,6 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
     titleStatus: workstream.titleStatus,
     appearance: workstream.appearance,
     objective: workstream.objective,
-    ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
     ...(workstream.createdByUserId ? { createdByUserId: workstream.createdByUserId } : {}),
     harnessStatus: normalizeHarnessStatus(workstream.harnessStatus),
     latestAttentionSequenceNumber: workstream.latestAttentionSequenceNumber,
@@ -466,7 +460,6 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
   switch (trigger.type) {
     case 'manual': return 'On request';
-    case 'inbound_email': return 'When an email arrives';
     case 'calendar': return trigger.summary;
     case 'interval': return trigger.summary;
     case 'connector_activity': return `When there is matching activity in ${trigger.connectorType.replaceAll('_', ' ')}`;
@@ -506,7 +499,6 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.appearance ? { appearance: automation.appearance } : {}),
     name: automation.name,
     description: automation.description,
-    ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     scope: mapAutomationScope(automation.scope),
     status: automation.status,
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
@@ -516,6 +508,8 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.needsInput === undefined ? {} : { needsInput: automation.needsInput }),
     ...(automation.pinnedPosition === undefined ? {} : { pinnedPosition: automation.pinnedPosition }),
     ...(automation.audience === undefined ? {} : { audience: automation.audience }),
+    ...(automation.sharedWithUserIds === undefined ? {} : { sharedWithUserIds: automation.sharedWithUserIds }),
+    ...(automation.attachedCanvases === undefined ? {} : { attachedCanvases: automation.attachedCanvases }),
     ...(automation.runState === undefined ? {} : { runState: automation.runState }),
     ...(automation.running === undefined ? {} : { running: automation.running }),
     ...(automation.pendingQuestion ? { pendingQuestion: automation.pendingQuestion } : {}),
@@ -538,8 +532,8 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     connectorBindings: { ...detail.connectorBindings },
     triggerSummaries: (detail.currentDefinition?.triggers ?? []).map(triggerSummary),
     recentRuns: detail.recentRuns.map(mapAutomationRun),
-    ...(detail.sharedWithUserIds === undefined ? {} : { sharedWithUserIds: detail.sharedWithUserIds }),
     ...(detail.canvases === undefined ? {} : { canvases: detail.canvases }),
+    ...(detail.madeInCanvasId ? { madeInCanvasId: detail.madeInCanvasId } : {}),
   };
 }
 
@@ -881,6 +875,16 @@ export class RallyApi {
     return this.request(`/workspace/me/memory/${encodeURIComponent(factId)}`, { method: 'DELETE', schema: MemoryForgetResponseSchema });
   }
 
+  /** The MCP apps (Claude, ChatGPT and others) this person connected, in every Organization of this region (`docs/rally-mcp.md`). */
+  getConnectedApps(signal?: AbortSignal): Promise<ConnectedMcpApps> {
+    return this.request('/workspace/me/connected-apps', { schema: ConnectedMcpAppsSchema, signal });
+  }
+
+  /** Ends one connected app's access: the same as the app revoking its own grant. */
+  async disconnectConnectedApp(id: string): Promise<void> {
+    await this.requestVoid(`/workspace/me/connected-apps/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
   /** What Rally remembers about the Organization. */
   getOrganizationMemory(signal?: AbortSignal): Promise<MemoryReview> {
     return this.request('/workspace/memory', { schema: MemoryReviewSchema, signal });
@@ -1210,6 +1214,10 @@ export class RallyApi {
     return this.request(`/canvases/${encodeURIComponent(id)}`, { schema: CanvasDetailSchema, signal });
   }
 
+  async archiveCanvas(id: string): Promise<void> {
+    await this.requestVoid(`/canvases/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+  }
+
   /**
    * Asked only after `getCanvas` answered not found: whether the Canvas exists
    * in this person's Organization for them to ask into (`requestable`, never
@@ -1252,6 +1260,11 @@ export class RallyApi {
   /** Pin a Canvas in, or out of, the Canvas list's Pinned group. */
   async setCanvasPinned(id: string, pinned: boolean): Promise<void> {
     await this.requestVoid(`/canvases/${encodeURIComponent(id)}/pin`, { method: 'POST', body: { pinned } });
+  }
+
+  /** The Canvas list and navigation rail share this one pin order. */
+  async reorderCanvasPins(itemIds: string[]): Promise<void> {
+    await this.requestVoid('/canvases/pinned-order', { method: 'PUT', body: { itemIds } });
   }
 
   /** Pin a Sidekick in, or out of, the Sidekick list's Pinned group. */

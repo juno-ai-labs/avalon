@@ -1,7 +1,7 @@
 import type { PushNotificationData } from "@rally/contracts/push-notifications";
 
 import type { Env } from "../env";
-import { escapeHtml, sendResendEmail, singleLine, type ResendDelivery } from "./resend";
+import { escapeHtml, sendEmail, singleLine, type EmailDelivery } from "./email";
 import type { Notice } from "./notification-notice";
 import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
@@ -49,15 +49,14 @@ async function recipient(env: Env, notice: Notice): Promise<Recipient | null> {
   return row ? { email: row.email, name: row.name ?? "", workspaceName: row.workspace_name } : null;
 }
 
-export type NoticeEmailOutcome = { outcome: ResendDelivery } | { outcome: "skipped"; reason: string };
+export type NoticeEmailOutcome = { outcome: EmailDelivery } | { outcome: "skipped"; reason: string };
 
 /**
  * The email sink: one template for every kind, its subject the notice's own
  * title (which is per kind), its body the notice's text as a quote, and one
- * button to the notice's link. Sent through the one Resend caller, keyed on
- * the intent so a retried queue message is one email.
+ * button to the notice's link. Sent through the shared Cloudflare sender, with the intent as its delivery reference.
  */
-export async function sendNoticeEmail(env: Env, notice: Notice, request: typeof fetch = fetch): Promise<NoticeEmailOutcome> {
+export async function sendNoticeEmail(env: Env, notice: Notice, send?: (message: EmailMessageBuilder) => Promise<EmailSendResult>): Promise<NoticeEmailOutcome> {
   const to = await recipient(env, notice);
   if (!to) return { outcome: "skipped", reason: "recipient_inactive_or_identity_missing" };
   const title = singleLine(notice.title);
@@ -73,22 +72,21 @@ export async function sendNoticeEmail(env: Env, notice: Notice, request: typeof 
     ...(excerpt ? ["", `"${excerpt}"`] : []),
     "",
     `Open in Rally: ${notice.url}`,
-    ...(notice.replyTo ? ["", "Reply to this email to answer in Rally."] : []),
     "",
     footer,
   ].join("\n");
-  const outcome = await sendResendEmail(env, {
+  const outcome = await sendEmail(env, {
     recipientEmail: to.email,
     subject: title,
-    html: noticeHtml({ greeting: name ? `Hi ${name},` : "Hi,", title, excerpt, url: notice.url, replyTo: notice.replyTo, footer }),
+    html: noticeHtml({ greeting: name ? `Hi ${name},` : "Hi,", title, excerpt, url: notice.url, footer }),
     text,
     idempotencyKey: `rally-notice/${notice.workspaceId}/${notice.intentId}`,
     category: `notification_${notice.kind}`,
     region: env.AVALON_REGION,
-    ...(notice.replyTo ? { replyTo: notice.replyTo } : {}),
     sender: "notification",
+    durableDelivery: "retry",
     errors: EMAIL_ERRORS,
-  }, request);
+  }, send);
   return { outcome };
 }
 
@@ -98,12 +96,9 @@ function excerptOf(body: string): string {
   return `${normalized.slice(0, EXCERPT_CHARACTERS - 1).trimEnd()}…`;
 }
 
-function noticeHtml(input: { greeting: string; title: string; excerpt: string; url: string; replyTo: string | null; footer: string }): string {
+function noticeHtml(input: { greeting: string; title: string; excerpt: string; url: string; footer: string }): string {
   const quote = input.excerpt
     ? `<tr><td style="padding:18px 20px;background:#20241e;border-left:3px solid #CCFF00;border-radius:8px;font-size:15px;line-height:1.55;color:#e2e5dc">${escapeHtml(input.excerpt)}</td></tr>`
-    : "";
-  const reply = input.replyTo
-    ? `<tr><td style="padding-top:18px;font-size:13px;line-height:1.6;color:#8f948b">Reply to this email to answer in Rally.</td></tr>`
     : "";
   return `<!doctype html>
 <html lang="en">
@@ -127,7 +122,6 @@ function noticeHtml(input: { greeting: string; title: string; excerpt: string; u
           <tr><td><h1 style="margin:8px 0 18px;font-size:22px;line-height:1.3;color:#f2f3ec">${escapeHtml(input.title)}</h1></td></tr>
           ${quote}
           <tr><td style="padding-top:28px"><a href="${escapeHtml(input.url)}" style="display:inline-block;background:#CCFF00;color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Open in Rally</a></td></tr>
-          ${reply}
           <tr><td style="padding-top:28px;font-size:12px;line-height:1.6;color:#8f948b">${escapeHtml(input.footer)}</td></tr>
         </table>
       </td></tr>

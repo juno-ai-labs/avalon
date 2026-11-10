@@ -14,7 +14,6 @@ import { auditSupportWrites, refuseSupportSession, requireAuth, requireIdentityA
 import { errorHandler, notFoundHandler } from "./middleware/errors";
 import { requestContext, securityMiddleware } from "./middleware/request-context";
 import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
-import { accessOperatorRoutes } from './routes/access-operations';
 import { authRoutes } from "./routes/auth";
 import { automationRoutes, sidekickRoutes } from "./routes/automations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
@@ -28,7 +27,6 @@ import { onboardingRoutes } from "./routes/onboarding";
 import { navigationRoutes } from "./routes/navigation";
 import { pushDeviceRoutes } from "./routes/push-devices";
 import { realtimeRoutes } from "./routes/realtime";
-import { resendInboundRoutes } from "./routes/resend";
 import { resourceRoutes } from "./routes/resources";
 import { searchRoutes } from "./routes/search";
 import { slackIngressRoutes } from "./routes/slack";
@@ -37,9 +35,9 @@ import { speechRoutes } from "./routes/speech";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
 import { linkRoutes } from "./routes/links";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
-import { deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
+import { connectedAppRoutes, deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
-import { workspaceOperatorRoutes } from './routes/workspace-operations';
+import { mcpOAuthRoutes } from "./routes/mcp-oauth";
 import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
@@ -53,7 +51,6 @@ import {
   isSharedSlackIngress,
 } from "./services/slack-routing-service";
 
-import { privateAccessRoutes } from "./routes/private-access";
 
 export function createApp(): Hono<HonoAppEnv> {
   const app = new Hono<HonoAppEnv>();
@@ -125,8 +122,9 @@ export function createApp(): Hono<HonoAppEnv> {
 
   app.get("/", (c) => c.json({ service: "avalon-api", region: c.env.AVALON_REGION }));
   app.route("/health", healthRoutes);
-  app.route("/access", privateAccessRoutes);
   app.route("/auth", authRoutes);
+  // Rally's MCP authorization server; the MCP Worker forwards here (`docs/rally-mcp.md`).
+  app.route("/mcp-oauth", mcpOAuthRoutes);
   app.route("/browser",createBrowserRoutes((request,c) => {
     let executionContext;
     try { executionContext = c.executionCtx; } catch { /* Route tests have no Worker context. */ }
@@ -136,7 +134,6 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/dev", devRoutes);
   app.route("/connections", connectionCallbackRoutes);
   app.route("/ingest", webhookIngestionRoutes);
-  app.route("/ingest/resend", resendInboundRoutes);
   app.route("/ingest/daytona", daytonaWebhookRoutes);
   app.route("/socket", socketRoutes);
   app.route("/slack", slackIngressRoutes);
@@ -144,8 +141,6 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/links", linkRoutes);
   app.route('/internal/telemetry', telemetryOperatorRoutes);
   app.route('/internal/connector-maintenance', connectorMaintenanceOperatorRoutes);
-  app.route('/internal/access', accessOperatorRoutes);
-  app.route('/internal/workspaces', workspaceOperatorRoutes);
 
   const identityApi = new Hono<HonoAppEnv>();
   // Both sub-apps are root-mounted. Hono runs their wildcard middleware in
@@ -163,6 +158,11 @@ export function createApp(): Hono<HonoAppEnv> {
   // A support session's device is the impersonator's, not the person's.
   identityApi.use("/workspace/me/device-timezone", requireWorkspaceAuth, refuseSupportSession);
   identityApi.route("/workspace/me/device-timezone", deviceTimezoneRoutes);
+  // The person's connected MCP apps span their Organizations, which a
+  // support session in one of them must not see or end.
+  identityApi.use("/workspace/me/connected-apps", requireWorkspaceAuth, refuseSupportSession);
+  identityApi.use("/workspace/me/connected-apps/*", requireWorkspaceAuth, refuseSupportSession);
+  identityApi.route("/workspace/me/connected-apps", connectedAppRoutes);
   identityApi.route("/conversations", conversationRoutes);
   identityApi.route("/message-issues", messageIssueRoutes);
   identityApi.route("/sharing", sharingRoutes);

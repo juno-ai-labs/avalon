@@ -108,16 +108,16 @@ export default tseslint.config(
     },
   },
   {
-    // These four source trees contain the regional API Worker and its Zod-owning
-    // production dependencies. Avoid making a startup-reachable object schema
-    // allocate a second mode-specific schema.
+    // The regional API Worker and its Zod-owning production dependencies use
+    // direct object constructors to avoid redundant schema allocation at startup.
     files: [
       "apps/api/src/**/*.{ts,tsx}",
       "packages/agent-harness/src/**/*.{ts,tsx}",
+      "packages/bind/src/**/*.{ts,tsx}",
       "packages/connectors/src/**/*.{ts,tsx}",
       "packages/contracts/src/**/*.{ts,tsx}",
     ],
-    ignores: ["**/*.test.{ts,tsx}"],
+    ignores: ["**/*.test.{ts,tsx}", "packages/bind/src/**/__tests__/**"],
     rules: {
       "rally/prefer-zod-direct-object": "error",
     },
@@ -174,7 +174,7 @@ export default tseslint.config(
     files: [
       "apps/api/src/durable-objects/**/*.ts",
       "apps/api/src/crash-symbolicator-container.ts",
-      "apps/migration-tracker/src/registry.ts",
+      "apps/engineering-mcp/src/task-do.ts",
     ],
     rules: {
       "rally/durable-object-sql-storage": "error",
@@ -314,8 +314,6 @@ export default tseslint.config(
     ],
     ignores: [
       "apps/api/test/helpers/cloudflare-test.ts",
-      "apps/ace/test/helpers/cloudflare-test.ts",
-      "apps/migration-tracker/test/helpers/cloudflare-test.ts",
       "apps/release-retention/test/helpers/cloudflare-test.ts",
     ],
     rules: {
@@ -334,7 +332,6 @@ export default tseslint.config(
     // waiting for the first bare `console` call to need migrating.
     files: [
       "apps/api/src/**/*.ts",
-      "apps/migration-tracker/src/**/*.ts",
       "apps/release-retention/src/**/*.ts",
       "apps/site/src/**/*.ts",
     ],
@@ -362,14 +359,14 @@ export default tseslint.config(
     },
   },
   {
-    files: ["packages/agent-harness/src/**/*.ts"],
-    ignores: ["**/*.test.ts"],
+    files: ["packages/agent-harness/src/**/*.ts", "packages/bind/src/**/*.ts"],
+    ignores: ["**/*.test.ts", "packages/bind/src/**/__tests__/**"],
     rules: {
       "no-restricted-globals": [
         "error",
         {
           name: "process",
-          message: "@rally/agent-harness is workerd-portable; configuration must arrive through explicit inputs.",
+          message: "Harness code receives configuration through explicit inputs to run on workerd.",
         },
       ],
       "no-restricted-imports": [
@@ -378,11 +375,11 @@ export default tseslint.config(
           patterns: [
             {
               group: ["@rally/db", "@rally/connectors", "**/apps/api/**"],
-              message: "@rally/agent-harness must remain independent of database and API implementations; inject a port instead.",
+              message: "Inject a port to keep the harness independent of database, connector, and API implementations.",
             },
             {
               group: ["node:*", "fs", "fs/*", "path", "os", "child_process", "worker_threads"],
-              message: "@rally/agent-harness must remain portable to Cloudflare workerd; inject runtime-specific capabilities.",
+              message: "Inject runtime-specific capabilities so the harness can run on workerd.",
             },
           ],
         },

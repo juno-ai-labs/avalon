@@ -104,12 +104,6 @@ async function bindingRows() {
   ).toArray());
 }
 
-async function spaceIds(): Promise<string[]> {
-  return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ space_id: string }>(
-    "SELECT space_id FROM spaces WHERE system_role IS NULL ORDER BY space_id",
-  ).toArray().map((row) => row.space_id));
-}
-
 beforeEach(async () => {
   await reset();
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: USER_ID, sessionId: SESSION_ID });
@@ -131,12 +125,6 @@ beforeEach(async () => {
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT, verified_at TEXT,
       activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL,
       UNIQUE (workspace_id, object_name), UNIQUE (workstream_id, generation)
-    )`),
-    env.DB.prepare(`CREATE TABLE workstream_email_routes (
-      email_address TEXT PRIMARY KEY COLLATE NOCASE, address_source TEXT NOT NULL,
-      region TEXT NOT NULL, workspace_id TEXT NOT NULL, workstream_id TEXT,
-      automation_subscription_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-      UNIQUE (region, workspace_id, workstream_id)
     )`),
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, OTHER_USER_ID),
@@ -360,8 +348,7 @@ describe("a reply in a thread bound to a Sidekick run", () => {
     await provisionWorkstreamObject(env, {
       workspaceId: WORKSPACE_ID, workstreamId: SIDEKICK, substreamId: runId,
       title: "Weekly call prep", objective: "Ask the founders for updates", scope: "personal",
-      createdByUserId: USER_ID, participantUserIds: [USER_ID], harnessStatus: "idle", titleStatus: "settled",
-      emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
+      createdByUserId: USER_ID, participantUserIds: [USER_ID], harnessStatus: "idle", titleStatus: "settled", systemKind: null, modelOverride: null, now: Date.now(),
     });
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, SIDEKICK, runId),
@@ -525,9 +512,8 @@ describe("the connector side of a binding", () => {
       team_id: "T1",
       event: { type: "rally_sidekick_source_join", channel_ids: ["C8", "C9"] },
     });
-    // A join a Sidekick needs is not an invitation, and makes no room.
+    // A join a Sidekick needs is not an invitation, and binds nothing.
     expect(await bindingRows()).toEqual([]);
-    expect(await spaceIds()).toEqual([]);
   });
 
   it("joins again on every accepted revision of the same conversations, and once per revision", async () => {
