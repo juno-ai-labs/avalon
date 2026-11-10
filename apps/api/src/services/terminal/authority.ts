@@ -131,21 +131,21 @@ export async function resolveTerminalRunScope(
  * A run (substream other than `"0"`, whose id is the run's) publishes into a
  * Canvas, the Sidekick's output: the one it was asked to update (`canvas`,
  * which must be a Canvas this Sidekick writes), or the Canvas this run made,
- * which its first publish creates with the Sidekick as writer and the run's
- * principal as creator (`docs/canvases.md#from-a-sidekick-run`). The
+ * which its first publish creates with the Sidekick as writer and, as
+ * creator, the person the run acts as, or the Sidekick's author when it acts
+ * as the Sidekick itself (`docs/canvases.md#from-a-sidekick-run`). The
  * Sidekick's own conversation has no home to publish into.
  */
 export async function resolveTerminalPublicationHome(env: Env, input: Pick<WorkstreamWorkflowInput,
   "workspaceId" | "parentKind" | "parentId" | "substreamId" | "executionPrincipal">,
   request: { canvas?: string | undefined; title?: string | undefined } = {}): Promise<{ parentId: string; substreamId: string } | null> {
-  if (input.parentKind !== "automation" || input.executionPrincipal.type !== "user") return null;
+  if (input.parentKind !== "automation") return null;
   const runId = input.substreamId && input.substreamId !== "0" ? input.substreamId : null;
   if (runId !== null) {
     const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS,
       asWorkspaceId(input.workspaceId), workspaceDOName(env.AVALON_REGION, input.workspaceId));
     const found = await workspace.canvasForSidekickRun({
       workspaceId: input.workspaceId, sidekickId: input.parentId, runId, canvasId: request.canvas ?? null,
-      userId: input.executionPrincipal.userId,
     }).catch((error: unknown) => {
       if ((error as { code?: string }).code === "canvas_archived") {
         throw new TerminalToolError("canvas_archived", "That Canvas was archived. Publish into another active Canvas attached to this Sidekick, or start a new Sidekick run to create a new Canvas.");
@@ -162,8 +162,14 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
       }
       throw error;
     });
+    const creatorUserId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : found.authorUserId;
+    if (found.canvasId === null && creatorUserId === null) {
+      throw new TerminalToolError("canvas_creator_unavailable",
+        "This run has no Canvas of its own yet and nobody to create one as. Publish into a Canvas from ATTACHED CANVASES by naming it in canvas.",
+        { field: "canvas" });
+    }
     const canvasId = found.canvasId ?? (await createCanvas(env, {
-      workspaceId: input.workspaceId, creatorUserId: input.executionPrincipal.userId,
+      workspaceId: input.workspaceId, creatorUserId: creatorUserId!,
       ...(request.title ? { title: request.title } : {}),
       writer: { sidekickId: input.parentId, runId },
     })).canvasId;

@@ -51,10 +51,11 @@ export async function provisionSidekickRun(env: Env, message: SidekickRunProvisi
     title: definition.definition.name,
     objective: definition.definition.instructions,
     // A run is nested implementation detail, not a room: it admits only the
-    // person it runs as.
+    // person it runs as, and nobody when it runs as the Sidekick itself. Who
+    // reads it is the Sidekick's audience either way, decided by its parent.
     scope: "personal",
     createdByUserId: run.runAsUserId,
-    participantUserIds: [run.runAsUserId],
+    participantUserIds: run.runAsUserId ? [run.runAsUserId] : [],
     harnessStatus: "scheduled",
     systemKind: null,
     modelOverride: run.modelOverride,
@@ -94,7 +95,11 @@ export async function provisionSidekickRun(env: Env, message: SidekickRunProvisi
     workstreamId: run.automationId,
   }, "sidekick_run");
   const runs = createHarnessRunObjectPort(env, run.workspaceId, run.automationId, undefined, run.runId);
-  const executionPrincipal = { type: "user" as const, userId: asUserId(run.runAsUserId) };
+  // With no delegate behind it a run acts as the Sidekick itself, under the
+  // Organization's authority: its connections and the Sidekick's own reach.
+  const executionPrincipal = run.runAsUserId
+    ? { type: "user" as const, userId: asUserId(run.runAsUserId) }
+    : { type: "workspace" as const, workspaceId };
   if (!await runs.run({ runId: run.harnessRunId })) {
     await runs.admitRun({
       runId: run.harnessRunId,

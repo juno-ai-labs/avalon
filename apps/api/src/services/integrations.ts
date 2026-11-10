@@ -5233,9 +5233,13 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  * `docs/automation-lifecycle.md#attached-conversations`.
  */
 async function sidekickCanvasContextMessage(env: Env, input: WorkstreamWorkflowInput): Promise<ModelMessage | null> {
-  if (input.executionPrincipal.type !== "user") return null;
+  // A run is told its Sidekick's attachments whoever it acts as; the wizard is
+  // told what its person can open, and has one.
+  const userId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
+  if (userId === null && !input.automationRun) return null;
   const canvases = await (await hostedParentStub(env, input.workspaceId)).sidekickCanvasContext({
-    workspaceId: input.workspaceId, sidekickId: input.parentId, userId: input.executionPrincipal.userId,
+    workspaceId: input.workspaceId, sidekickId: input.parentId, userId,
+    ...(input.automationRun ? { runId: input.automationRun.runId } : {}),
   });
   if (canvases.length === 0) return null;
   return modelDerivative({
@@ -5788,7 +5792,12 @@ async function loadHarnessTools(
   const [[attachedLinks, connectionRows], runDefinition, delegation] = await Promise.all([
     inventoryPreparation.get(), runDefinitionPreparation.get(), readSidekickOperationDelegation(env, input),
   ]);
-  if (delegation && delegation.delegates.length === 0 && (input.automationRun || input.automationDelegation)) {
+  // A run somebody asked for under their own access has nobody to act as once
+  // they have left. Every other run with no delegate acts as the Sidekick
+  // itself: the Organization's connections and its own reach, and no
+  // person's accounts.
+  if (delegation && delegation.delegates.length === 0 && delegation.requesterUserId
+    && (input.automationRun || input.automationDelegation)) {
     throw new ConnectorError("unauthorized", "No eligible Sidekick delegate is available to continue this run.");
   }
   const delegatedUsers = new Set(delegation?.delegates.map((grant) => grant.userId));
@@ -7184,8 +7193,9 @@ async function readRunAuthority(
       runId: delegation.runId,
     });
     recordOptionalTiming(onTiming, "automation", startedAt);
-    if (!live || live.lifecycle !== "active" || live.stopGeneration !== delegation.stopGeneration
-      || input.executionPrincipal.type !== "user") {
+    // The worker inherits its run's principal, which is the Organization's
+    // when the run acts as the Sidekick itself; the run's live state is the fence.
+    if (!live || live.lifecycle !== "active" || live.stopGeneration !== delegation.stopGeneration) {
       throw new ConnectorError("unauthorized", "This Sidekick delegation is no longer authorized");
     }
   }
