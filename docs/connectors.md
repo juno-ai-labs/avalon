@@ -1630,6 +1630,22 @@ surface that tells somebody about connector activity reads
 
 ## Changelog
 
+### 2026-11-10 — A `needs_reconnect` connection is not polled
+
+**What changed:** `runSchedule` and `runResourceWatch` no longer start a
+`ConnectorPollWorkflow` for a connection whose status is `needs_reconnect`. The
+schedule or watch still advances, so there is no hot loop, and reconnecting
+sets the row `healthy`, which resumes polling from the stored cursor.
+
+**Why:** Cloudflare Logs showed about 600 `connector_poll_failed
+unauthorized:http_400` errors a day from five Google connections that had been
+`needs_reconnect` since Nov 6. Each poll redeemed the revoked refresh token,
+got `invalid_grant`, and logged an error; the status was already correct and
+nothing consulted it before launching. A poll cannot succeed until the member
+reconnects, so launching one only produced noise that hid real errors. Not
+done: also rejecting in the workflow's load step, which would only add a
+second, noisier failure for in-flight instances.
+
 ### 2026-11-09 — Provider webhooks run only on WorkspaceDO authority
 
 **What changed:** `ProviderWebhookService` lost its regional-authority path
