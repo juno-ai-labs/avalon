@@ -33,7 +33,9 @@ notice are.
 | `apps/api/src/durable-objects/sidekick-source-storage.ts` | WorkspaceDO migration 145 (`sidekick_sources`, `sidekick_source_requests`, the backfill from delegation) and the rows' reads and writes. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | Who may ask, answer, read and withdraw (`requestSources`, `decideSourceRequest`, `readSources`, `withdrawSource`); whether an event may enter (`eventSource`); the saver's own sources (`putOwnSources`); `admitExternalEvent`, which enforces both filters. |
 | `apps/api/src/durable-objects/sidekick-source-registrations.ts` | Which connections each configured rule is registered on. |
-| `apps/api/src/durable-objects/sidekick-source-notices.ts` | The Activity rows and notices a request writes. |
+| `apps/api/src/durable-objects/sidekick-source-notices.ts` | The Activity rows and notices a request writes, and migration 145's rebuild of the two tables whose CHECKs name the kinds. |
+| `apps/api/src/services/sidekick-source-decision-link.ts`, `apps/browser/src/source-decision.tsx` | The signed link in the email and the page that answers from it. |
+| `packages/contracts/src/sidekick-source-words.ts` | The one naming of a connector and its events for a person ("Gmail", "Email received"), shared by notices and clients. |
 | `apps/api/src/services/semantic-trigger-admission.ts` | The delivery: asks, judges the source's condition and the trigger's, admits with both verdicts. |
 | `apps/api/src/services/sidekick-source-service.ts`, `apps/api/src/routes/automations.ts` | The routes a signed-in person and an agent use. |
 | `apps/api/src/services/sidekick-source-tools.ts` | The agent's tools: list, ask, and try a filter. |
@@ -82,6 +84,43 @@ Only the person asked answers
 (`POST /automations/:id/source-requests/:requestId/decision`, or the signed
 link in the email). Approving writes their sources and adds them as a reader;
 declining writes nothing. An answer already given reads back as it stands.
+
+A request tells people through the one notice pipeline
+(`sidekick-source-notices.ts`). Asking writes one `source_request` intent and
+one Activity row for the person asked, in the request's transaction. The row's
+parent is the Sidekick. It lists although the person usually cannot open the
+Sidekick, and it is the request's actions while the request waits. An answer,
+or a newer ask replacing the request, makes that row read as seen, from the
+request's own state. An approval or a decline also writes one
+`source_approved` or `source_declined` intent and row for whoever asked,
+naming the person; `person_name` on the request keeps that name. A cancelled
+request tells nobody, and neither does a person answering their own ask. All
+three kinds read one notification choice of their own, **Source requests**,
+which defaults to push and email, because the request is answered from the
+email. The notice opens the Canvas the request was asked in, where its card
+is; the Sidekick itself is closed to the person until they approve.
+[`activity.md`](activity.md) and [`push-notifications.md`](push-notifications.md)
+own the rows and the notices.
+
+### The emailed link
+
+The `source_request` email carries an Approve and a Decline button. Each links
+to `/app/source-requests/decision` on the browser host. The fragment holds the
+region, the Organization, the Sidekick, the request, the person asked, the
+decision, and an HMAC-SHA256 over those five, keyed with `SESSION_SIGNING_KEY`
+under the label `sidekick-source-decision`
+(`sidekick-source-decision-link.ts`). Nothing is stored for a link. The page
+posts the fragment once as it loads, to
+`POST /browser/source-requests/decision`. That route has no session. It checks
+the signature before reading anything, reads the request as the person in the
+link, and calls `sidekickDecideSourceRequest` as that person only while the
+request is pending. A request already answered or replaced is not changed, and
+the answer says how it stands, so a link opened twice says the same thing. A
+`GET` answers 405, so a scanner that only loads the link decides nothing.
+[`browser-client.md`](browser-client.md#answering-a-source-request-from-email)
+owns the page.
+
+### Where the card is drawn
 
 A request names the conversation it was asked from (`place`), and its card is
 drawn there for everyone who can open that conversation: they see who was
@@ -235,6 +274,9 @@ wording to it.
   signed link, never from a tool argument.
 - **A source's condition changes only through a request the person approves.**
   `putOwnSources` keeps an existing condition; nothing else writes one.
+- **An emailed link decides one request, as one person, one way.** The
+  signature binds the Organization, the Sidekick, the request, the person and
+  the decision. The request's `pending` state makes the link single-use.
 - **Withdrawing needs no access.** A person ends their own source whatever
   they can still read.
 - **The host reads a person's content only while their source lets the event
@@ -261,6 +303,8 @@ source's condition.
 | The person approves with no connection of that connector | Refused `sidekick_source_connection_missing`; the request keeps waiting. |
 | The source's condition is not met, or cannot be judged | Refused `sidekick_source_condition_not_met`, `_not_judgeable`, `_confidence_below_threshold` or `_classifier_unavailable`. No run and no retry. |
 | The person leaves the Organization | Their sources stop being eligible; the next reconciliation removes their registrations. |
+| A link is opened after the request was answered the other way, or replaced by a newer ask | Nothing changes. The page says how the request stands. |
+| The person asked turned email off for Source requests | No email. They are pushed, and the Activity row and the card are where they answer. |
 
 - **The condition is judged on subject, sender and snippet**, not the body.
   A message whose topic appears only in its body is kept out.
@@ -268,6 +312,16 @@ source's condition.
   which a missed run is worse than a wasted one. For a permission the costly
   error is the opposite one. The number is the team's to set from a
   measurement; none has been made.
+- **A link does not expire.** It works while its request is pending; a newer
+  ask cancels it. An expiry would be a number for the team to set.
+- **Whoever opens the link answers.** There is no sign-in and no confirming
+  step: the owner chose one click on 2026-11-10. A forwarded email forwards
+  the decision, and a mail scanner that runs the page's JavaScript can answer
+  for the person; refusing `GET` stops one that only loads the link.
+- **A build older than client contract 14 is sent its Activity without the
+  source rows** ([`activity.md`](activity.md#failure-modes-and-limits)): an
+  unknown kind would fail its whole sidebar. That person is still pushed and
+  emailed. Its dock badge can count one more than its rail shows.
 - **A source names a Sidekick, not a Canvas.** A manager who attaches the
   Sidekick to another Canvas sends admitted events' results there too.
 
@@ -279,6 +333,10 @@ source's condition.
 | `apps/api/test/workspace-sidekick-sources-migration.test.ts` | Migration 145's backfill over the real migration chain: a delegate gets a source for each connection of theirs a rule is configured or registered on, every delegate gets one on a configured Organization connection, and a withdrawn grant, a grant with no membership and a person with no grant get none. |
 | `packages/connectors/src/index.test.ts` | Google's `readActivityContent`: one message for new mail, by one request, and nothing for a label change, a subject with no message, a missing message, or a connection that may not read mail. |
 | `apps/api/test/sidekick-event-content.test.ts` | The opening with content, cut content, no content, and unreadable content. |
+| `apps/api/test-workers/sidekick-source-notices.test.ts` | Real workerd. The asked person's row lists though the Sidekick is closed to them, and reads as seen once the request is answered or replaced; the asker is told on an approval and a decline and nobody on a cancel or an own ask; the email is queued after the commit; an edited link is refused and a replaced request's link says so; a build older than contract 14 gets neither the rows nor their count. |
+| `apps/api/test/sidekick-source-decision-link.test.ts`, `apps/api/test/sidekick-source-notice-migration.test.ts` | The link's shape and signature against an independent HMAC, `GET` 405, unsigned 401, wrong origin 403; and the two rebuilt tables keeping their rows, indexes and triggers. |
+| `apps/api/test/sidekick-source-tools.test.ts` | An ask leaves its request ids in the transcript and nothing else. |
+| `apps/desktop/src/renderer/components/sidekick-sources.test.tsx`, `apps/browser/test/source-decision.test.ts` | The card, the row and the panel's rendered states; the decision page's words. |
 
 The workerd file was proved against these breaks, one behavior each:
 registration without the source check, `eventSource` admitting everything, the

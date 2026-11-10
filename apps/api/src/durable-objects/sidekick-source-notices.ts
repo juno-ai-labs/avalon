@@ -25,14 +25,9 @@ import { recordParentNotice } from "./workspace-notification-intent-storage";
  * a foreign-key parent or child, and no view or trigger elsewhere names
  * either. Migrations 138 and 140 stay as shipped.
  *
- * `person_name` is the asked person's name as it stood when they answered, so
- * the requester's Activity row names them without a read of D1; null until
- * they answer, and for a request cancelled by a newer one.
- *
  * `docs/activity.md` and `docs/push-notifications.md` own the kinds.
  */
 export const SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS: readonly string[] = [
-  `ALTER TABLE sidekick_source_requests ADD COLUMN person_name TEXT`,
   `CREATE TABLE workstream_notification_intents_v145 (
     intent_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
@@ -196,10 +191,13 @@ function asked(env: Env, ask: SourceNoticeAsk, requestId: string) {
  * id. Taken before the transaction that makes the requests, because hashing
  * yields and a transaction may not.
  */
-export async function prepareSourceRequestNotices(env: Env, ask: SourceNoticeAsk & { requesterName: string; requestIds: readonly string[] }): Promise<Map<string, PreparedSourceNotice>> {
+export async function prepareSourceRequestNotices(env: Env, ask: SourceNoticeAsk & {
+  requesterName: string; requestIds: readonly string[]; placeCanvasId?: string | undefined;
+}): Promise<Map<string, PreparedSourceNotice>> {
   const requesterName = truncateUtf16Safe(ask.requesterName, NAME_SNAPSHOT_CHARACTERS);
   return new Map(await Promise.all(ask.requestIds.map(async (requestId) =>
-    [requestId, await prepare({ kind: "source_request", ...asked(env, ask, requestId), requesterName })] as const)));
+    [requestId, await prepare({ kind: "source_request", ...asked(env, ask, requestId), requesterName,
+      ...(ask.placeCanvasId ? { placeCanvasId: ask.placeCanvasId } : {}) })] as const)));
 }
 
 /**
