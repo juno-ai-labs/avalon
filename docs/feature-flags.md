@@ -25,7 +25,7 @@ The checked-in product defaults are:
 | Constant field | Default | Optional environment variable |
 | --- | --- | --- |
 | `developerSettings` | false | `FEATURE_FLAG_DEVELOPER_SETTINGS` |
-| `multipleWorkspacesEnabled` | false | `FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED` |
+| `multipleWorkspacesEnabled` | true | `FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED` |
 | `pushNotificationsEnabled` | true | `FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED` |
 
 Overrides accept native JSON booleans and numbers `1`/`0`, or their string forms,
@@ -35,6 +35,9 @@ presentation flags do not grant access to data or disable API authorization.
 
 Desktop and browser clients keep their existing HTTP and workspace subscription
 contracts. A reconnect or subsequent HTTP read picks up deployed configuration.
+The client schema also defaults organization switching on, so startup or a failed
+flag read does not hide the selector. An explicit server answer of `false` still
+disables it. Developer settings and push controls wait for server enablement.
 The old per-user targeting and key-only Queue fan-out are retired. The legacy
 `workspace_feature_flags` event remains parseable by clients during rolling
 deployments, but the new server does not publish it. Remove that event schema
@@ -170,6 +173,23 @@ and add a behavioral test for its gate. A new agent role must be mapped in
 `AGENT_MODEL_ENV_KEYS`; no service provisioning or admin editor is required.
 
 ## Changelog
+
+### 2026-11-10 — Restore organization switching by default
+
+**What changed:** `multipleWorkspacesEnabled` defaults to `true`, restoring the
+account menu's Organizations, invitations and creation controls on desktop and
+web, together with background organization attention.
+The client schema uses the same on default before the server answers or when the
+read fails; an explicit off answer still wins.
+
+**Why:** Replacing Flagship with local configuration carried forward the original
+rollout's off default, hiding the existing organization selector unless a
+deployment explicitly enabled it.
+
+**Considered and rejected:** Forcing the menu visible in the client would leave
+directory discovery and attention disabled by the same flag. The shared default
+keeps the existing consumers consistent; an explicit environment override can
+still disable the presentation without changing membership or authorization.
 
 Entries below the 2026-11-09 local-configuration change describe the retired
 Flagship design, including the earlier entries from that same date.

@@ -4,7 +4,7 @@ import type { AgentModelRole, ClientFeatureFlags } from "./index";
 /** Deployment-wide defaults. Environment overrides are optional. */
 export const FEATURE_FLAGS = {
   developerSettings: false,
-  multipleWorkspacesEnabled: false,
+  multipleWorkspacesEnabled: true,
   pushNotificationsEnabled: true,
 } as const satisfies ClientFeatureFlags;
 
