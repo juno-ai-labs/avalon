@@ -356,7 +356,6 @@ export const SITE_ACTION_LINKS = {
   'download-pricing-grow': { action: 'download', placement: 'pricing', plan: 'grow' },
   'contact-pricing-enterprise': { action: 'founder_contact', placement: 'pricing', plan: 'enterprise' },
   'demo-request': { action: 'demo_request', placement: 'sidekicks' },
-  'founder-contact': { action: 'founder_contact', placement: 'team' },
   'support-contact-footer': { action: 'support_contact', placement: 'footer' },
 } satisfies Record<string, SiteActionLink>;
 
