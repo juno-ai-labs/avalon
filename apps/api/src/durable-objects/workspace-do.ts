@@ -5688,6 +5688,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private hostedSidekickHost(): HostedSidekickHost {
     return {
+      resolveConversationToolTarget: (input) => this.resolveConversationToolTarget(input),
       env: this.env,
       storage: this.state.storage,
       alarms: this.scheduledAlarms,

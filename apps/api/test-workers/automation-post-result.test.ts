@@ -44,7 +44,7 @@ import { attachWorkstreamRuntimeResource } from "../src/services/workstream-obje
 
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { hostedParentStub } from "./helpers/hosted-parent";
-import { memberInputs, useOpenRouterDouble, type ProviderCall, type ProviderReply } from "./helpers/openrouter-double";
+import { memberInputs, useOpenRouterDouble, withSuccessfulSidekickOutcome, type ProviderCall, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
@@ -115,7 +115,7 @@ function explicitReply(call: ProviderCall, text: string): ProviderReply {
   if (!load) throw new Error("agent_plugin_loader_missing");
   return { callTool: { name: load, arguments: { pluginId: "rally_agents" } } };
 }
-const provider = useOpenRouterDouble(async (call) => {
+const provider = useOpenRouterDouble(withSuccessfulSidekickOutcome(async (call) => {
   const latestInput = memberInputs(call).at(-1);
   if (sidekickChangeRequest) {
     const latest = JSON.stringify(latestInput?.content ?? "");
@@ -179,7 +179,7 @@ const provider = useOpenRouterDouble(async (call) => {
   // Names the home: a post that names nothing lands in the Sidekick's own conversation.
   if (tool && !toolAnswered) return { callTool: { name: tool, arguments: { conversation: ROOM_ID, text: RESULT_TEXT } } };
   return { say: tool ? "Posted the count." : "Acknowledged." };
-});
+}));
 useSelectedModel();
 useHeldEffectQueue();
 
