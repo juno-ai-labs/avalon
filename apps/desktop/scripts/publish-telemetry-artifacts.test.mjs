@@ -398,6 +398,7 @@ test('validates authoritative inventory responses without trusting cached object
       );
       assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 1);
       assert.deepEqual(sleeps, []);
+      assert.equal(api.errorBodyCancelled, true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

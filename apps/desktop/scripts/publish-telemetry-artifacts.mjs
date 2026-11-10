@@ -23,10 +23,7 @@ const repositoryDirectory = resolve(desktopDirectory, '../..');
 const SAFE_PART = /^[0-9A-Za-z][0-9A-Za-z._-]{0,159}$/u;
 const REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INVENTORY_TIMESTAMP_TOLERANCE_MS = 1_000;
-// The same read-after-write verification policy publish-r2-release.mjs,
-// release-cache.mjs and promote-stable-release.mjs already apply to R2: seven
-// attempts, 500 ms doubling. One transient Cloudflare 5xx on the inventory read
-// of one of hundreds of objects otherwise aborts a signed, notarized release.
+// Attempt count and backoff of publish-r2-release.mjs's R2 verification loops.
 const INVENTORY_ATTEMPTS = 7;
 const INVENTORY_RETRY_BASE_MS = 500;
 // These must not exceed the matching limits enforced by the regional API
