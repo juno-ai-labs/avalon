@@ -99,8 +99,9 @@ Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor; Chromium
 then needs a root-owned setuid `chrome-sandbox`, or it aborts at launch. The
 release job lifts the restriction on its runner so the smokes stay sandboxed.
 Users of an AppImage on such a system hit the same restriction unless their
-distribution ships an AppArmor profile for it; the Debian package's helper is
-installed setuid.
+distribution ships an AppArmor profile for it; the Debian package's post-install
+loads electron-builder's AppArmor profile (and sets the helper setuid), so it
+starts under the restriction.
 AppImages need a user-writable location and FUSE support or extraction mode.
 Debian installation needs a desktop privilege agent and package manager.
 
