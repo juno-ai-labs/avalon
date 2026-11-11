@@ -97,7 +97,9 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   for (const connection of eligible) {
     context.signal.throwIfAborted();
     const delegate = connection.scope === "personal" ? connection.ownerUserId
-      : pinned?.delegatedUserId ?? (options.coordinatorUserId && grants.has(asUserId(options.coordinatorUserId))
+      // A pinned account keeps who it was served for, the Sidekick itself (null) included:
+      // recovery records the same account or is refused as a change of identity.
+      : pinned ? pinned.delegatedUserId : (options.coordinatorUserId && grants.has(asUserId(options.coordinatorUserId))
         ? options.coordinatorUserId : authority.delegates[0]?.userId ?? null);
     // No delegate: an Organization connection served as the Sidekick itself.
     const grant = delegate === null ? null : grants.get(asUserId(delegate))!;

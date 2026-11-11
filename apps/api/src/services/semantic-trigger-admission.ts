@@ -129,7 +129,7 @@ export async function admitExternalEventWithSemanticGate(
     ? await judge(plan.conditions, "semantic-trigger-gate") : null;
   const result = await input.sidekick.admitExternalEvent({
     ...input.admission,
-    ...(sourceDecision ? { sourceVerdict: verdictOf(sourceDecision) } : {}),
+    ...(sourceDecision ? { sourceVerdict: { ...verdictOf(sourceDecision), conditions: sourceConditions } } : {}),
     // A source that refused settles the delivery; the trigger's verdict is
     // sent as unavailable only so the object's two checks both have an answer.
     ...(plan.conditions.length > 0 ? { conditionVerdict: triggerDecision ? verdictOf(triggerDecision)

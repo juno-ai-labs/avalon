@@ -66,7 +66,9 @@ export async function sendNoticeEmail(env: Env, notice: Notice, send?: (message:
   const to = await recipient(env, notice);
   if (!to) return { outcome: "skipped", reason: "recipient_inactive_or_identity_missing" };
   const title = singleLine(notice.title);
-  const excerpt = excerptOf(notice.body);
+  // What a notice's own actions answer is quoted whole: a person agrees to all of a source's
+  // condition, and a cut would have them approve a clause they never saw.
+  const excerpt = notice.actions?.length ? singleLine(notice.body) : excerptOf(notice.body);
   const name = singleLine(to.name).split(" ")[0] ?? "";
   const workspaceName = singleLine(to.workspaceName);
   const setting = SETTING_LABEL[notice.kind] ?? "Notifications";
@@ -88,7 +90,7 @@ export async function sendNoticeEmail(env: Env, notice: Notice, send?: (message:
   const outcome = await sendEmail(env, {
     recipientEmail: to.email,
     subject: title,
-    html: noticeHtml({ greeting: name ? `Hi ${name},` : "Hi,", title, excerpt, buttons, note: actions ? ACTIONS_NOTE : "", footer }),
+    html: noticeHtml({ greeting: name ? `Hi ${name},` : "Hi,", title, excerpt, buttons, answers: actions !== null, note: actions ? ACTIONS_NOTE : "", footer }),
     text,
     idempotencyKey: `rally-notice/${notice.workspaceId}/${notice.intentId}`,
     category: `notification_${notice.kind}`,
@@ -109,15 +111,15 @@ function excerptOf(body: string): string {
   return `${normalized.slice(0, EXCERPT_CHARACTERS - 1).trimEnd()}…`;
 }
 
-/** The first button is the filled one; any after it are outlined, so two answers do not read as one. */
-function buttonHtml(button: { label: string; url: string }, index: number): string {
-  const style = index === 0
+/** A notice's one link is filled. Two answers are drawn alike, so neither reads as the one to press. */
+function buttonHtml(button: { label: string; url: string }, filled: boolean): string {
+  const style = filled
     ? "background:#CCFF00;color:#11140f;border:1px solid #CCFF00"
     : "background:#181b17;color:#f2f3ec;border:1px solid #5a6054";
   return `<a href="${escapeHtml(button.url)}" style="display:inline-block;${style};text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px;margin:0 10px 10px 0">${escapeHtml(button.label)}</a>`;
 }
 
-function noticeHtml(input: { greeting: string; title: string; excerpt: string; buttons: { label: string; url: string }[]; note: string; footer: string }): string {
+function noticeHtml(input: { greeting: string; title: string; excerpt: string; buttons: { label: string; url: string }[]; answers: boolean; note: string; footer: string }): string {
   const quote = input.excerpt
     ? `<tr><td style="padding:18px 20px;background:#20241e;border-left:3px solid #CCFF00;border-radius:8px;font-size:15px;line-height:1.55;color:#e2e5dc">${escapeHtml(input.excerpt)}</td></tr>`
     : "";
@@ -145,7 +147,7 @@ function noticeHtml(input: { greeting: string; title: string; excerpt: string; b
           <tr><td style="padding-top:18px;font-size:15px;line-height:1.6;color:#c9ccc4">${escapeHtml(input.greeting)}</td></tr>
           <tr><td><h1 style="margin:8px 0 18px;font-size:22px;line-height:1.3;color:#f2f3ec">${escapeHtml(input.title)}</h1></td></tr>
           ${quote}
-          <tr><td style="padding-top:28px">${input.buttons.map(buttonHtml).join("")}</td></tr>
+          <tr><td style="padding-top:28px">${input.buttons.map((button) => buttonHtml(button, !input.answers)).join("")}</td></tr>
           ${note}
           <tr><td style="padding-top:28px;font-size:12px;line-height:1.6;color:#8f948b">${escapeHtml(input.footer)}</td></tr>
         </table>

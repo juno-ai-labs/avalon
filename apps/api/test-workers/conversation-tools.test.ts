@@ -572,10 +572,13 @@ export class SiteData extends DurableObject {
     for (const runId of [own, asked]) await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "automation", AUTOMATION_ID, runId);
     await runInDurableObject(workspace(), (_instance, state) => {
       for (const [runId, requester] of [[own, null], [asked, COLLEAGUE_ID]] as const) {
+        const trigger = requester === null
+          ? { kind: "schedule", scheduleId: crypto.randomUUID(), scheduleKind: "interval", plannedFor: 1 }
+          : { kind: "manual", requestedByUserId: requester };
         state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
             harness_run_id, state, run_as_user_id, coordinator_user_id, requester_user_id, created_at, updated_at)
-          VALUES (?, ?, ?, '{"kind":"manual"}', 1, ?, 'running', ?, ?, ?, 1, 1)`,
-        AUTOMATION_ID, runId, `run:${runId}`, `${runId}-harness`, requester, requester, requester);
+          VALUES (?, ?, ?, ?, 1, ?, 'running', ?, ?, ?, 1, 1)`,
+        AUTOMATION_ID, runId, `run:${runId}`, JSON.stringify(trigger), `${runId}-harness`, requester, requester, requester);
       }
     });
     // The colleague's own access is read from the authorization projection, so it has to have run.
@@ -936,10 +939,13 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
     const [own, asked] = [crypto.randomUUID(), crypto.randomUUID()];
     await runInDurableObject(workspace(), (_instance, state) => {
       for (const [runId, requester] of [[own, null], [asked, COLLEAGUE_ID]] as const) {
+        const trigger = requester === null
+          ? { kind: "schedule", scheduleId: crypto.randomUUID(), scheduleKind: "interval", plannedFor: 1 }
+          : { kind: "manual", requestedByUserId: requester };
         state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
             harness_run_id, state, run_as_user_id, coordinator_user_id, requester_user_id, created_at, updated_at)
-          VALUES (?, ?, ?, '{"kind":"manual"}', 1, ?, 'running', ?, ?, ?, 1, 1)`,
-        AUTOMATION_ID, runId, `run:${runId}`, `${runId}-harness`, requester, requester, requester);
+          VALUES (?, ?, ?, ?, 1, ?, 'running', ?, ?, ?, 1, 1)`,
+        AUTOMATION_ID, runId, `run:${runId}`, JSON.stringify(trigger), `${runId}-harness`, requester, requester, requester);
       }
     });
     const scope = { kind: "sidekick" as const, automationId: AUTOMATION_ID };

@@ -792,12 +792,18 @@ in durable tables. Public help also feeds the rendered manual, Markdown, search
 index and full manual for model readers; those descriptions must agree.
 
 `setting-up-a-filtered-trigger`, also owned by the Sidekicks plugin, is the
-procedure for a Sidekick that starts on people's own events, each person's
-filtered by words they approve ([`sidekick-sources.md`](sidekick-sources.md#agent-tools)).
+procedure for when **another person's own account** should start a Sidekick,
+each person's events filtered by words they approve
+([`sidekick-sources.md`](sidekick-sources.md#agent-tools)). It is not for a
+topic filter on only the requester's own account or an Organization
+connection: nobody else's permission is involved there, so that is a
+`semantic_activity` trigger, which `polling-for-events` owns.
 It is written to give the model latitude: it states what one event carries,
 how a filter is judged and that the person reads and approves the same text,
 gives a way to try a draft on real events, and leaves the wording to the
 model. It names its owner plugin's three source tools, as an owned skill may.
+Those tools are offered only in a conversation a person is talking in, so a
+Sidekick run and a background agent never see them.
 
 `polling-for-events` owns trigger selection and source-resource lookup. Its
 catalog covers actions after external changes, including site refreshes. It

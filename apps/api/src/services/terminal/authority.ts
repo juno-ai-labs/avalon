@@ -146,6 +146,8 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
       asWorkspaceId(input.workspaceId), workspaceDOName(env.AVALON_REGION, input.workspaceId));
     const found = await workspace.canvasForSidekickRun({
       workspaceId: input.workspaceId, sidekickId: input.parentId, runId, canvasId: request.canvas ?? null,
+      // A background agent's conversation is no run: it is held to its own person.
+      userId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
     }).catch((error: unknown) => {
       if ((error as { code?: string }).code === "canvas_archived") {
         throw new TerminalToolError("canvas_archived", "That Canvas was archived. Publish into another active Canvas attached to this Sidekick, or start a new Sidekick run to create a new Canvas.");

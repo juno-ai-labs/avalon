@@ -420,8 +420,9 @@ deployment's organizations. The page says so.
 ### Answering a source request from email
 
 A person asked for a Sidekick source
-([`sidekick-sources.md`](sidekick-sources.md)) who chose email for Access
-requests gets an email with an **Approve** and a **Decline** button. Each
+([`sidekick-sources.md`](sidekick-sources.md)) gets an email with a
+**Decline** and an **Approve** button, unless they turned email off for
+**Source requests**, which defaults to push and email. Each
 links to `/app/source-requests/decision` (`SOURCE_DECISION_PATH`) on this
 host, with the decision in the fragment: `region`, `workspace`, `sidekick`,
 `request`, `person`, `decision` and `token`, the signature that binds them.
@@ -446,8 +447,12 @@ an email sign-in's fragment is not its to drop.
 The API route is `POST /browser/source-requests/decision`
 (`decideSourceRequestByLink`). It is unauthenticated: it checks the signature
 before reading anything, then answers as the person the link was signed for.
-A `GET` answers 405, so a mail scanner that loads the link decides nothing;
-like every non-GET browser route it requires this host's Origin.
+Like every non-GET browser route it requires this host's Origin, and a `GET`
+of the API path answers 405. That stops a direct `GET` of the route and
+nothing else: the page posts as it loads, so a mail scanner that opens the
+link and runs its JavaScript answers for the person. The link is bearer
+authority for that one decision
+([`security.md`](security.md#authentication-and-authorization)).
 
 ### Browser host lifecycle and content boundaries
 
@@ -685,33 +690,6 @@ must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
-
-### 2026-11-10 — An emailed link answers a Sidekick source request with no sign-in
-
-**What changed:** `/app/source-requests/decision` is a page of its own,
-outside the entry. It posts the signed decision its fragment carries as it
-loads, to the unauthenticated `POST /browser/source-requests/decision`, and
-shows how the request stands.
-
-**Why:** The owner decided on 2026-11-10 that the person asked approves or
-declines from the email in one click. A sign-in first would lose most of the
-people asked: they are answering a colleague's request, often on a phone, in
-a browser that has never held a Rally session.
-
-**Considered and rejected:** A Continue button, as an email sign-in link has:
-that is the second click the decision rules out. The scanner risk it guards
-against is met by the route refusing `GET`, which is what a scanner that only
-loads the link sends. A `GET` route that records the answer and redirects: a
-link preview would approve. Routing the page through the entry, which would
-ask a signed-out person to sign in before the page could draw.
-
-**Consequences:** This is the one page on the host that acts without a
-session, and the one fragment that acts when opened. A scanner that runs the
-page's JavaScript can answer for the person; the signature limits what it can
-answer to the one decision in that link. Nothing else may be added to this
-route's authority: it decides one named request as one named person. The
-page must keep reading its fragment from the component, not at module load.
-[`sidekick-sources.md`](sidekick-sources.md) owns the link and the request.
 
 ### 2026-11-03 — A protected site's link signs you in and brings you back
 

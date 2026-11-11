@@ -167,4 +167,24 @@ describe("Sidekick operation account selection over durable receipts", () => {
       .toMatchObject({ originalAccount: { delegatedUserId: creator, grantGeneration: 7 },
         account: { delegatedUserId: creator, grantGeneration: 11 } });
   });
+
+  it("serves a run with no delegate the Organization's connection and nobody's own, and recovers its uncertain write as the Sidekick itself after a delegate opts in", async () => {
+    const f = fixture(), call = f.context("write");
+    const organization: SidekickAccountConnection = { connectionId: id(9), scope: "workspace", ownerUserId: null, modelPluginId: "plugin_org" };
+    const itself = SidekickExecutionDelegationSchema.parse({ sidekickId: id(4), creatorUserId: creator, accountUserId: creator, delegates: [] });
+    // A person's own account is a delegate's to lend, and nobody lent one.
+    await expect(executeSidekickAccountOperation({ ...f.options(), authority: itself, coordinatorUserId: null, requested: a, candidates: [b] }))
+      .rejects.toThrow("No eligible delegated account is available");
+    const options = { ...f.options(call), authority: itself, coordinatorUserId: null, requested: organization, candidates: [] };
+    await expect(executeSidekickAccountOperation({ ...options, execute: async () => {
+      throw new TypeError("Response lost");
+    } })).rejects.toThrow("Response lost");
+    expect(await f.receipts.executionAccount({ runId: call.harnessRunId, effectIntentId: call.effectIntentId! }))
+      .toMatchObject({ account: { delegatedUserId: null, grantGeneration: 0, principal: { type: "workspace", workspaceId: id(1) } } });
+    // Someone opts in before the write is reconciled. The same account is recorded, not theirs.
+    await executeSidekickAccountOperation({ ...options, authority: authority(), coordinatorUserId: creator });
+    expect(f.calls).toEqual([id(9)]);
+    expect(await f.receipts.executionAccount({ runId: call.harnessRunId, effectIntentId: call.effectIntentId! }))
+      .toMatchObject({ originalAccount: { delegatedUserId: null }, account: { delegatedUserId: null, grantGeneration: 0 } });
+  });
 });
