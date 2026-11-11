@@ -37,5 +37,5 @@ it("counts an event once when two batches carrying it overlap", async () => {
   ]);
 
   const rows = await env.USAGE_DB.prepare("SELECT quota_microusd, organization_microusd FROM usage_rollups").all();
-  expect(rows.results).toEqual([{ quota_microusd: 50_000_000, organization_microusd: 3_000_000 }]);
+  expect(rows.results).toEqual([{ quota_microusd: 10_000_000, organization_microusd: 3_000_000 }]);
 });

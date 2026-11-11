@@ -23,13 +23,13 @@ If you already have both Claude Team and Slack, Claude Tag seems a perfect fit. 
 | Your tools | Google Workspace, Slack, Notion, GitHub, Linear, Granola, and more. Reads and writes back. | Connections, plugins, and skills an admin sets up per channel or workspace. |
 | Runs on its own | Sidekicks run on a schedule or when something happens. | Yes. Scheduled jobs, channel watching, and triggers. |
 | Models | One voice, with each job routed to the model family best at it. | Claude. |
-| Pricing | $100 or $250 per organization a month. No seat limit. | Needs a Team or Enterprise plan. Channel work is billed by usage, under a spend limit. |
+| Pricing | Free, $100, $250 or $1,000 per organization a month. No seat limit. | Needs a Team or Enterprise plan. Channel work is billed by usage, under a spend limit. |
 
 ## Where Rally wins
 
 ### A bill you can say out loud
 
-Rally is $100 or $250 a month for the whole organization, with one shared quota and no seat limit. Your finance person can put it in the budget once and move on.
+Rally has a free plan and $100, $250 or $1,000 monthly plans for the whole organization, with one shared quota and no seat limit. Your finance person can put it in the budget once and move on.
 
 ### The work has a home
 

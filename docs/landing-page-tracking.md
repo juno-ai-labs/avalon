@@ -68,8 +68,8 @@ Tagged links on the landing page, by `data-site-action` id:
 | `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai, with `pilotOfferFirstSeen`), which slides in two seconds after the page loads | primary_cta · offer |
 | `download-hero` | Hero Download the macOS app, before Linux, hidden on touch-only devices | download · hero |
 | `download-linux-hero` | Hero Download for Linux, below macOS, hidden on touch-only devices | download · hero |
-| `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
-| `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
+| `download-pricing-start` / `-grow` / `-max` / `-ultra` | Start for free and paid-plan Start free trial buttons | download · pricing · plan |
+| `contact-pricing-enterprise` | Pricing contact link (emails Katherine) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Katherine and Alex), in the home page's Sidekicks band and the `/sidekicks/` hero | demo_request · sidekicks |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
 
