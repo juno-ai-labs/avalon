@@ -17,6 +17,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { isEntryPoint } from '../../../scripts/entry-point.mjs';
+import { cloudflareErrorCodes } from './release-cloudflare.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
@@ -191,14 +192,21 @@ async function uploadAndVerify(
         ...jurisdictionHeaders,
       },
     });
-    // Only 5xx: a 429 here is the account API rate limit, whose five-minute
-    // block this backoff cannot outlast.
-    if (inventory.status < 500) break;
+    // 5xx and 403: the PUT just above succeeded with this same token, so a
+    // 403 on the read that follows it is the provider's, not a revoked or
+    // under-scoped token (v1.716.0 aborted on one). Never 429: the account
+    // API rate limit blocks for five minutes, which this backoff cannot outlast.
+    if (inventory.status < 500 && inventory.status !== 403) break;
     if (attempt < INVENTORY_ATTEMPTS - 1) await discardBody(inventory);
   }
   if (!inventory.ok) {
-    await discardBody(inventory);
-    throw new Error(`Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`);
+    // Name Cloudflare's error codes, as the PUT path does: a bare status was
+    // all v1.716.0's failure left to diagnose.
+    const failureBody = await inventory.json().catch(() => null);
+    throw new Error(
+      `Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`
+        + `; codes: ${cloudflareErrorCodes(failureBody)}`,
+    );
   }
   if (inventory.headers.get('cf-cache-status') !== 'DYNAMIC') {
     await inventory.body?.cancel();
