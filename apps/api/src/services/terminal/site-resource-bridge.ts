@@ -36,6 +36,7 @@ import type { Env } from "../../env";
 import { artifactHostDOName } from "../../durable-objects/names";
 import { sha256Hex } from "../../lib/crypto";
 import { durableObjectStubForArtifact, workspacePlacementAffinity } from "../../lib/durable-object-namespace";
+import { ensureArtifactHostname } from "../artifact-hostname";
 import { assetContentType } from "./site-publish";
 import { prepareSocialPreview } from "./site-social-preview";
 import { TerminalToolError } from "./tools";
@@ -350,4 +351,115 @@ export async function existingArtifactForResource(
       ? null
       : ArtifactHostnameStubSchema.parse(row.hostname_stub),
   };
+}
+
+/** The artifact a resource already serves, as {@link existingArtifactForResource} answers it. */
+export type ServedArtifact = NonNullable<Awaited<ReturnType<typeof existingArtifactForResource>>>;
+
+/**
+ * Publish one version of a site, in the one order that is safe.
+ *
+ * Every publisher of a site calls this: Rally's own publish
+ * (`resource-bridge.ts`), a person's (`canvas-publication-service.ts`) and a
+ * Canvas seed's (`canvas-seed-service.ts`). They differ in whose bytes these
+ * are, who the revision's author is, and what a lost race means to them, and
+ * all of that is in `recordResource`, the one step each writes for itself.
+ * The order around it is here once, so it cannot drift between them:
+ *
+ * 1. Claim the version, when the site already serves one.
+ * 2. Write the version's files and manifest.
+ * 3. Reserve the public hostname.
+ * 4. `recordResource`: the caller's insert or swap of the resource row.
+ * 5. Register the artifact and point the host at the version
+ *    ({@link activateSiteVersion}).
+ *
+ * `recordResource` answers `false` when another publish moved the row first.
+ * Nothing is registered or pointed then: the winner's manifest is the site's,
+ * and activating this one would serve a manifest the row does not hold.
+ */
+export async function publishSiteVersion(env: Env, workspace: D1Database, input: {
+  workspaceId: string;
+  workstreamId: string;
+  resourceId: string;
+  /** What the resource serves now, or `null` for its first version. */
+  previous: ServedArtifact | null;
+  /** The first version's artifact id, for a caller that names its own; minted when absent. */
+  artifactId?: string;
+  /** Who is taking the next version: the call's own id, so a retry of it is told from a rival. */
+  claimant: string;
+  mode: ArtifactMode;
+  stateful: boolean;
+  files: readonly SitePublishFile[];
+  fallbackTitle: string;
+  serverModuleSha256: string | null;
+  recordResource: (version: { written: SitePublishResult; version: number; hostnameStub: ArtifactHostnameStub }) => Promise<boolean>;
+}): Promise<{ landed: boolean; written: SitePublishResult; version: number; hostnameStub: ArtifactHostnameStub }> {
+  const { previous } = input;
+  // A republish takes its version before writing a byte of it, so two
+  // publishes of one site never write the same version's keys.
+  const version = previous
+    ? await claimArtifactVersion(env, { artifactId: previous.artifactId, from: previous.version + 1, claimant: input.claimant })
+    : 1;
+  const written = await writeArtifactVersion(env, {
+    workspaceId: input.workspaceId, workstreamId: input.workstreamId, region: env.AVALON_REGION,
+    artifactId: previous?.artifactId ?? input.artifactId ?? null, resourceId: input.resourceId, version,
+    mode: input.mode, stateful: input.stateful, files: input.files,
+    fallbackTitle: input.fallbackTitle, serverModuleSha256: input.serverModuleSha256,
+  });
+  // The public origin before the row. If D1 is unavailable after the row
+  // moves, a retry sees equal content, and would otherwise answer with the
+  // previous version without ever registering or pointing at these bytes.
+  const hostnameStub = previous?.hostnameStub ?? await ensureArtifactHostname(env, {
+    workspaceId: input.workspaceId, artifactId: written.artifactId,
+  });
+  const landed = await input.recordResource({ written, version, hostnameStub });
+  if (landed) {
+    await activateSiteVersion(env, workspace, {
+      workspaceId: input.workspaceId, workstreamId: input.workstreamId, resourceId: input.resourceId,
+      manifest: written.manifest, hostnameStub, registeredVersion: previous?.version ?? null,
+    });
+  }
+  return { landed, written, version, hostnameStub };
+}
+
+/**
+ * Make a version whose resource row has landed the one the site serves:
+ * register it beside the resource, then point the host at it.
+ *
+ * The last two steps of {@link publishSiteVersion}, and on their own the
+ * repair for a publish that stopped between the row and the pointer: a retry
+ * with unchanged content, or a resumed seed, calls this with the manifest the
+ * row holds. Both writes only move forward, so a stale caller changes
+ * nothing. Answers whether either moved.
+ */
+export async function activateSiteVersion(env: Env, workspace: D1Database, input: {
+  workspaceId: string;
+  workstreamId: string;
+  resourceId: string;
+  manifest: ArtifactManifest;
+  /** The reserved hostname when the caller holds it; reserved here otherwise, which is idempotent. */
+  hostnameStub?: ArtifactHostnameStub | null;
+  /** The version the registry holds now, or `null` when it holds none: registering is skipped when it is not behind. */
+  registeredVersion: number | null;
+}): Promise<{ registered: boolean; advanced: boolean }> {
+  const { manifest } = input;
+  let registered = false;
+  if (input.registeredVersion === null || input.registeredVersion < manifest.artifactVersion) {
+    const hostnameStub = input.hostnameStub ?? await ensureArtifactHostname(env, {
+      workspaceId: input.workspaceId, artifactId: manifest.artifactId,
+    });
+    registered = await registerArtifact(workspace, {
+      artifactId: manifest.artifactId, hostnameStub, workspaceId: input.workspaceId, workstreamId: input.workstreamId,
+      resourceId: input.resourceId, mode: manifest.mode, stateful: manifest.stateful, version: manifest.artifactVersion,
+      manifestRef: artifactManifestKey(manifest.artifactId, manifest.artifactVersion),
+    });
+  }
+  // Last, and only once every byte it names is durable. Until this returns
+  // the site serves its previous version; there is no window where the
+  // pointer names bytes a viewer cannot read.
+  const pointed = await pointArtifactAtVersion(env, {
+    artifactId: manifest.artifactId, workspaceId: input.workspaceId, workstreamId: input.workstreamId,
+    resourceId: input.resourceId, region: env.AVALON_REGION, manifest,
+  });
+  return { registered, advanced: pointed.advanced };
 }

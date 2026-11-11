@@ -1,0 +1,17 @@
+// Local preview only: `pnpm preview:canvas-guide`. Nothing deploys from here.
+// The compatibility date is the one Rally's artifact runtime loads a site
+// under (`ARTIFACT_COMPATIBILITY_DATE`), so the preview runs the same workerd.
+{
+  "name": "canvas-guide-preview",
+  "main": "worker.js",
+  "compatibility_date": "2026-08-01",
+  "assets": {
+    "directory": "../site",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "HOST", "class_name": "PreviewHost" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PreviewHost"] }]
+}

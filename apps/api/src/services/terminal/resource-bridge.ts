@@ -42,13 +42,7 @@ import {
   materializeTreeCommand,
   readArtifactVersionFiles,
 } from "./site-import";
-import {
-  claimArtifactVersion,
-  existingArtifactForResource,
-  pointArtifactAtVersion,
-  registerArtifact,
-  writeArtifactVersion,
-} from "./site-resource-bridge";
+import { existingArtifactForResource, publishSiteVersion } from "./site-resource-bridge";
 import {
   requireTerminalEffectIntent,
   TerminalToolError,
@@ -1123,129 +1117,97 @@ export function createTerminalResourceBridge(
       }
 
       const resourceId = settled?.id ?? newId();
-      // A republish claims its version before writing any byte of it, so two
-      // runs publishing the same path never write the same version's keys
-      // (`claimArtifactVersion`); a first publish's artifact id is new.
-      const version = previous
-        ? await claimArtifactVersion(env, { artifactId: previous.artifactId, from: previous.version + 1, claimant: effectIntentId })
-        : 1;
       const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
-      const written = await writeArtifactVersion(env, {
+      // A swap keeps the row, and with it the alias it already has.
+      let slug = settled?.slug ?? null;
+      let timestamp = "";
+      // The version, its bytes, the hostname, the registry and the pointer are
+      // `publishSiteVersion`'s, in its order. This publish's own part is the
+      // resource row: a swap onto the row the path already has, or its first
+      // insert, attached to the conversation that published it.
+      const { written, version, hostnameStub } = await publishSiteVersion(env, workspace, {
         workspaceId: context.workspaceId,
         workstreamId: target.parentId,
-        region: env.AVALON_REGION,
-        artifactId: previous?.artifactId ?? null,
         resourceId,
-        version,
+        previous,
+        claimant: effectIntentId,
         mode: site.mode,
         stateful: site.stateful,
         files: site.files,
         fallbackTitle: title,
         serverModuleSha256: site.serverModuleSha256,
-      });
-      // Reserve the stable public origin before mutating the reusable resource
-      // row. If D1 is unavailable after the swap, a retry sees equal content
-      // and would otherwise return the previous registry version without ever
-      // registering or pointing at the bytes just written.
-      const hostnameStub = previous?.hostnameStub ?? await ensureArtifactHostname(env, {
-        workspaceId: context.workspaceId,
-        artifactId: written.artifactId,
-      });
-      const timestamp = nowIso();
-      const metadata = JSON.stringify({
-        sourcePath: input.filePath,
-        size: written.manifest.totalBytes,
-        attachmentKind: "site",
-        contentMode: "unsupported",
-        publicationEffectIntentId: effectIntentId,
-        publicationEventType: settled ? "resource_updated" : "resource_attached",
-        artifactId: written.artifactId,
-        artifactVersion: version,
-        artifactMode: site.mode,
-        artifactStateful: site.stateful,
-        ...(input.description ? { description: input.description } : {}),
-      });
-
-      // A swap keeps the row, and with it the alias it already has.
-      let slug = settled?.slug ?? null;
-      if (settled) {
-        const swapped = await swapTerminalContent({
-          workspace,
-          env,
-          workspaceId: context.workspaceId,
-          existing: settled,
-          filePath: input.filePath,
-          displayName: input.displayName,
-          description: input.description,
-          bytes: written.manifestBytes,
-          digest: contentDigest,
-          mimeType: SITE_MANIFEST_MIME_TYPE,
-          attachmentKind: "site",
-          contentMode: "unsupported",
-          derivativeStatus: "unsupported",
-          harnessRunId: context.harnessRunId,
-          onBehalfOfUserId,
-          effectIntentId,
-          publicationEventType: "resource_updated",
-        });
-        // Another publish of this path moved the row first: its version is the
-        // one to serve, so this one registers and points at nothing. A retry
-        // finds equal content and answers as a settled publish, or replaces it.
-        if (swapped.superseded) {
-          throw new TerminalToolError(
-            "resource_publish_conflict",
-            "Another publish of this site landed first. Retry publish_resource to publish these files over it.",
-            { reason: "A concurrent publish of the same path won the update." },
-          );
-        }
-      } else {
-        await insertPublishedResource(workspace, {
-          publicationParentId: target.parentId,
-          resourceId,
-          workspaceId: context.workspaceId,
-          resourceType: "generated_site",
-          providerResourceId,
-          title,
-          mimeType: SITE_MANIFEST_MIME_TYPE,
-          contentRef: written.manifestRef,
-          contentSha256: contentDigest,
-          metadataJson: metadata,
-          uploadedByUserId: context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
-          modelContentStatus: "unsupported",
-          timestamp,
-          author: { kind: "agent", runId: context.harnessRunId, onBehalfOfUserId: null },
-        }).catch((error: unknown) => publishWriteFailure(error, "insert"));
-        await attachPublication(context, {
-          resourceId,
-          attachedByUserId: context.executionPrincipal.type === "user"
-            ? context.executionPrincipal.userId
-            : null,
-        }, target);
-        slug = await allocateResourceSlugBesideCreation(env, context.workspaceId, resourceId);
-      }
-
-      await registerArtifact(workspace, {
-        artifactId: written.artifactId,
-        hostnameStub,
-        workspaceId: context.workspaceId,
-        workstreamId: target.parentId,
-        resourceId,
-        mode: site.mode,
-        stateful: site.stateful,
-        version,
-        manifestRef: written.manifestRef,
-      });
-      // Last, and only once every byte it names is durable. Until this returns
-      // the artifact serves its previous version; after it returns the new one
-      // is what every open resolves to. There is no window where the pointer
-      // names bytes a viewer cannot read.
-      await pointArtifactAtVersion(env, {
-        artifactId: written.artifactId,
-        workspaceId: context.workspaceId,
-        workstreamId: target.parentId,
-        resourceId,
-        region: env.AVALON_REGION,
-        manifest: written.manifest,
+        recordResource: async ({ written: stored, version: claimed }) => {
+          timestamp = nowIso();
+          const metadata = JSON.stringify({
+            sourcePath: input.filePath,
+            size: stored.manifest.totalBytes,
+            attachmentKind: "site",
+            contentMode: "unsupported",
+            publicationEffectIntentId: effectIntentId,
+            publicationEventType: settled ? "resource_updated" : "resource_attached",
+            artifactId: stored.artifactId,
+            artifactVersion: claimed,
+            artifactMode: site.mode,
+            artifactStateful: site.stateful,
+            ...(input.description ? { description: input.description } : {}),
+          });
+          if (settled) {
+            const swapped = await swapTerminalContent({
+              workspace,
+              env,
+              workspaceId: context.workspaceId,
+              existing: settled,
+              filePath: input.filePath,
+              displayName: input.displayName,
+              description: input.description,
+              bytes: stored.manifestBytes,
+              digest: contentDigest,
+              mimeType: SITE_MANIFEST_MIME_TYPE,
+              attachmentKind: "site",
+              contentMode: "unsupported",
+              derivativeStatus: "unsupported",
+              harnessRunId: context.harnessRunId,
+              onBehalfOfUserId,
+              effectIntentId,
+              publicationEventType: "resource_updated",
+            });
+            // Another publish of this path moved the row first: its version is the
+            // one to serve, so this one registers and points at nothing. A retry
+            // finds equal content and answers as a settled publish, or replaces it.
+            if (swapped.superseded) {
+              throw new TerminalToolError(
+                "resource_publish_conflict",
+                "Another publish of this site landed first. Retry publish_resource to publish these files over it.",
+                { reason: "A concurrent publish of the same path won the update." },
+              );
+            }
+            return true;
+          }
+          await insertPublishedResource(workspace, {
+            publicationParentId: target.parentId,
+            resourceId,
+            workspaceId: context.workspaceId,
+            resourceType: "generated_site",
+            providerResourceId,
+            title,
+            mimeType: SITE_MANIFEST_MIME_TYPE,
+            contentRef: stored.manifestRef,
+            contentSha256: contentDigest,
+            metadataJson: metadata,
+            uploadedByUserId: context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
+            modelContentStatus: "unsupported",
+            timestamp,
+            author: { kind: "agent", runId: context.harnessRunId, onBehalfOfUserId: null },
+          }).catch((error: unknown) => publishWriteFailure(error, "insert"));
+          await attachPublication(context, {
+            resourceId,
+            attachedByUserId: context.executionPrincipal.type === "user"
+              ? context.executionPrincipal.userId
+              : null,
+          }, target);
+          slug = await allocateResourceSlugBesideCreation(env, context.workspaceId, resourceId);
+          return true;
+        },
       });
       // The resource row and the public artifact pointer are separate durable
       // authorities. Advertise a revision only after both name the new version,

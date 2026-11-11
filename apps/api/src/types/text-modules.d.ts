@@ -14,3 +14,34 @@ declare module "*.sandbox.mjs" {
   const text: string;
   export default text;
 }
+
+/**
+ * Every file of a Canvas seed's site (`canvas-seeds/<seed>/site/`) is text the
+ * Worker publishes, never code it runs: the same Text rule and the same
+ * plugin hand it back unchanged. Each name a seed imports is declared here,
+ * because a `.js` file would otherwise be read as a module.
+ */
+declare module "*/site/index.js" {
+  const text: string;
+  export default text;
+}
+
+declare module "*/site/app.js" {
+  const text: string;
+  export default text;
+}
+
+declare module "*/site/index.html" {
+  const text: string;
+  export default text;
+}
+
+declare module "*/site/styles.css" {
+  const text: string;
+  export default text;
+}
+
+declare module "*/site/README.md" {
+  const text: string;
+  export default text;
+}

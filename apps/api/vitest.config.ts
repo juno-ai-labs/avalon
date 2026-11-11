@@ -15,7 +15,10 @@ export default defineConfig({
       enforce: "pre",
       async load(id) {
         const path = id.split("?")[0]!;
-        if (!path.endsWith(".py") && !path.endsWith(".sandbox.mjs")) return null;
+        // A Canvas seed's site is carried the same way: every file of it is
+        // text the Worker publishes, never code the Worker runs.
+        const seedSiteFile = /\/canvas-seeds\/[^/]+\/site\/[^/]+$/u.test(path);
+        if (!path.endsWith(".py") && !path.endsWith(".sandbox.mjs") && !seedSiteFile) return null;
         return { code: `export default ${JSON.stringify(await readFile(id.split("?")[0]!, "utf8"))};`, map: null };
       },
     },
