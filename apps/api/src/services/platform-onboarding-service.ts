@@ -33,7 +33,9 @@ import {
   type WorkspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
+import { NEW_ORGANIZATION_CANVAS_SEEDS } from "../canvas-seeds";
 import { BrowserSessionService } from "./browser-session-service";
+import { enqueueCanvasSeed } from "./canvas-seed-service";
 import { AuthService } from "./auth-service";
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
 import { claimScopeInvitations } from "./scope-invitation-claims";
@@ -413,6 +415,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       await this.requireMembership(user.id, input.workspaceId);
       await this.requirePlacementAffinity(input.workspaceId, input.placementAffinity);
       await this.initializeWorkspaceObject(input.workspaceId, input.placementAffinity);
+      await this.seedNewOrganization(input.workspaceId, user.id);
       return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
     }
 
@@ -470,6 +473,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       await this.requirePlacementAffinity(input.workspaceId, placementAffinity);
       await this.initializeWorkspaceObject(input.workspaceId, placementAffinity);
       for (const id of members) await this.requireMembership(id, input.workspaceId);
+      await this.seedNewOrganization(input.workspaceId, user.id);
       return;
     }
     await this.createOwnedWorkspace(user.id, reference, members.map((id) => this.env.DB.prepare(
@@ -485,9 +489,10 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
    * last, after the owner, and their results are returned. The batch is all
    * or nothing and the workspace insert has no conflict clause, so a
    * committed batch is the proof of the rows: no read-back follows. One
-   * object call then initializes the Organization. A new member is seated
-   * nowhere: there is no General or Personal Channel (plan step C-2), and the
-   * client lands on the Canvases home.
+   * object call then initializes the Organization, and its starting Canvases
+   * are asked for (`seedNewOrganization`). A new member is seated nowhere:
+   * there is no General or Personal Channel (plan step C-2), and the client
+   * lands on the Canvases home.
    */
   private async createOwnedWorkspace(
     userId: string,
@@ -523,7 +528,20 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       ...trailing,
     ]);
     await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity);
+    await this.seedNewOrganization(input.workspaceId, userId);
     return trailing.length === 0 ? [] : results.slice(-trailing.length);
+  }
+
+  /**
+   * Ask for the Canvases a new Organization starts with: today the Getting
+   * Started guide (`docs/canvas-seeds.md`). A queued job each, so creation
+   * waits on a send and nothing else. Sent again on a replay of the
+   * creation, because the first attempt may have stopped before this line;
+   * a job that finds its Canvas already seeded does nothing.
+   */
+  private async seedNewOrganization(workspaceId: string, creatorUserId: string): Promise<void> {
+    await Promise.all(NEW_ORGANIZATION_CANVAS_SEEDS.map((seed) =>
+      enqueueCanvasSeed(this.env, { workspaceId, creatorUserId, seedKey: seed.key })));
   }
 
   async accept(rawInput: RegionalAcceptInput): Promise<Session> {
