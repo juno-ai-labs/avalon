@@ -1,7 +1,7 @@
 import { ShapeOutline } from '@rally/ui/components/identity-tile';
 import { IconChecks, IconDeviceDesktopDown, IconHome, IconMenu2, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { canvasNeedsAttention } from '../../common/sidebar-attention';
@@ -20,7 +20,8 @@ import { ActivitySection, activityRoute, useActivityList } from './activity-side
 import { CanvasPinDragProvider } from './canvas-pin-drag';
 import { CanvasPinRail } from './canvas-pin-rail';
 import { CanvasesSection } from './canvas-sidebar-section';
-import { ErrorNotice, IconButton } from './primitives';
+import { CanvasCreationNotices } from './canvas-creation-notices';
+import { IconButton } from './primitives';
 import { WorkspaceUpdateNotice } from './pushed-list-pending';
 import { RailItem } from './rail-item';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
@@ -199,7 +200,6 @@ export function NavigationSidebar({
   const barSection = phone && !sidebarOpen && homeSection ? homeSection : section;
   const title = barSection === 'sidekicks' ? 'Sidekicks' : SECTIONS.find((candidate) => candidate.id === barSection)?.label ?? 'Canvases';
   const createCanvas = useCreateCanvas();
-  const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
   const workspaceSocket = useOptionalWorkspaceSocket();
   const sidekickRows = useSidekickList();
@@ -316,7 +316,7 @@ export function NavigationSidebar({
             {barSection === 'canvases' && <IconButton label="Canvas dashboard" onClick={openCanvasDashboard}>
               <IconHome aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
-            {barSection === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
+            {barSection === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => createCanvas()}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             {barSection === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
@@ -332,7 +332,7 @@ export function NavigationSidebar({
         </header>
         <SidebarScroll className="navigation-panel-scroll" scrollRef={scroll}>
           <WorkspaceUpdateNotice />
-          {section === 'canvases' && createCanvasError && <ErrorNotice occurrence={createCanvasError}>The Canvas could not be made. Try again.</ErrorNotice>}
+          <CanvasCreationNotices />
           {section === 'canvases' && <CanvasesSection scroll={scroll} />}
           {section === 'activity' && <ActivitySection scroll={scroll} />}
         </SidebarScroll>

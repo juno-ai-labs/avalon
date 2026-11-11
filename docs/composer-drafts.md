@@ -51,6 +51,11 @@ written. The `new-workstream` builder and the `:substream:` suffix in
 stored under them expire on the ordinary schedule rather than being deleted on
 upgrade.
 
+A new Canvas mounts its composer before server creation finishes, using the
+client-minted final Canvas id from the start. Creation, retry and the first live
+snapshot keep the same mounted composer and `canvasDraftKey`; no draft handoff
+or recording restart is needed.
+
 ### What is stored, and where
 
 Drafts live in an IndexedDB database named `rally-composer-drafts` in the
