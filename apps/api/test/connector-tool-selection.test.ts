@@ -742,13 +742,13 @@ describe("connector tools selected for harness runs", () => {
       .toEqual(["runs_list", "runs_list_next", "runs_read", "runs_read_next", "my_delegations_list", "delegates_list", "set_delegation"]);
     expect(sidekicks?.preload).toBe(true);
     expect(worker.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")?.tools.map((tool) => tool.definition.name))
-      .toEqual(["my_delegations_list", "delegates_list", "set_delegation"]);
+      .toEqual(["my_delegations_list", "delegates_list"]);
     expect(authoring.plugins.map((plugin) => plugin.canonicalId)).toContain("rally:sidekicks");
     expect(room.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));
   });
 
-  it("offers the source tools to the wizard on a person's turn and to no run, agent's message or review, and no run the tool that changes delegation", async () => {
+  it("offers the source tools to the wizard on a person's turn and to no run, agent's message or review, and neither a run nor its worker the tool that changes delegation", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const sourceTools = async (input: WorkstreamWorkflowInput) =>
       (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
@@ -770,8 +770,8 @@ describe("connector tools selected for harness runs", () => {
     expect(await sourceTools({ ...workflowInput(),
       agentExchange: { teamId: wizard, senderAgentId: wizard, messageId: "00000000-0000-7000-8000-00000000e001" } })).toEqual([]);
 
-    // A run reads outside content too, so it inspects delegation and cannot change it. Its background worker
-    // and every loop a person is driving still can.
+    // A run reads outside content, and its background worker reads the same: both inspect delegation and neither
+    // changes it. A conversation's own background agent and every loop a person is driving still can.
     const delegationTools = async (input: WorkstreamWorkflowInput) =>
       (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
         .filter((plugin) => plugin.canonicalId === "rally:sidekicks")
@@ -780,7 +780,8 @@ describe("connector tools selected for harness runs", () => {
     expect(await delegationTools(automationRunInput())).toEqual([{ tools: ["my_delegations_list", "delegates_list"], toldToSet: false }]);
     expect(await delegationTools({ ...childWorkflowInput(automationConversationInput()),
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } }))
-      .toEqual([{ tools: ["my_delegations_list", "delegates_list", "set_delegation"], toldToSet: true }]);
+      .toEqual([{ tools: ["my_delegations_list", "delegates_list"], toldToSet: false }]);
+    expect(await delegationTools(childWorkflowInput())).toMatchObject([{ tools: ["my_delegations_list", "delegates_list", "set_delegation"] }]);
     expect(await delegationTools(workflowInput()))
       .toEqual([{ tools: ["my_delegations_list", "delegates_list", "set_delegation"], toldToSet: true }]);
 

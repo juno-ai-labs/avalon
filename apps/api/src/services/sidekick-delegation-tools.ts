@@ -10,14 +10,17 @@ import { ApiError } from "../lib/api-error";
 import { SidekickDelegationService } from "./sidekick-delegation-service";
 
 /**
- * Whether a loop may change who a Sidekick acts as. A Sidekick run may not:
- * it is handed the content of the event that started it, an outside email
- * among it, and enrolling a member's accounts is not something what it read
- * may bring about. The owner's decision of 2026-11-11, which kept the tool
- * for a background agent. Every other loop a person is behind may.
+ * Whether a loop may change who a Sidekick acts as. A Sidekick run may not,
+ * and neither may a background worker rooted in one (`automationDelegation`,
+ * which the host derives from the worker's root, so a worker's own worker
+ * carries it too). A run is handed the content of the event that started it,
+ * an outside email among it, its workers read the same content, and
+ * enrolling a member's accounts is not something that content may bring
+ * about. The owner's decisions of 2026-11-11. Every other loop a person is
+ * behind may, a background agent of a conversation among them.
  */
-export function setsDelegation(input: Pick<WorkstreamWorkflowInput, "automationRun">): boolean {
-  return !input.automationRun;
+export function setsDelegation(input: Pick<WorkstreamWorkflowInput, "automationRun" | "automationDelegation">): boolean {
+  return !input.automationRun && !input.automationDelegation;
 }
 
 export function sidekickDelegationGuidance(sets = true): string {
@@ -26,7 +29,7 @@ export function sidekickDelegationGuidance(sets = true): string {
   if (!sets) {
     return `${inspect} This run cannot change delegation. When it needs an account nobody lends, say which account and why in your reply, so a person who manages the Sidekick can add a delegate. The harness handles eligible-account fallback after definite access refusals.`;
   }
-  return `${inspect} Use ${name("set_delegation")} with a Sidekick ID and an Organization userId to add or withdraw that user's delegation. A background agent may use it too; a Sidekick run may not. For your own withdrawal after access loss, use ${name("my_delegations_list")} or a known Sidekick ID. Changing delegation starts no run. The harness handles eligible-account fallback after definite access refusals.`;
+  return `${inspect} Use ${name("set_delegation")} with a Sidekick ID and an Organization userId to add or withdraw that user's delegation. A background agent of this conversation may use it too; a Sidekick run and its workers may not. For your own withdrawal after access loss, use ${name("my_delegations_list")} or a known Sidekick ID. Changing delegation starts no run. The harness handles eligible-account fallback after definite access refusals.`;
 }
 
 /** The execution user supplies authority; the tool selects an Organization user. */

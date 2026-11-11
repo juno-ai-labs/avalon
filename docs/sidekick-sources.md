@@ -588,7 +588,7 @@ source's condition.
 | `apps/api/test-workers/sidekick-source-routes.test.ts` | Real workerd, through the HTTP routes: 401 with no session, an ask and its answer by the person asked and by nobody else, a body that smuggles a field refused 400, a request read by its asker, the person asked and a member who can open the Canvas it was asked in, and by no uninvolved member, withdrawing, each ask refusal by its status and code (an unknown connector or event, a person outside the Organization, the asker's own account with none connected, a Canvas the asker cannot open), an approval with no account connected, and the emailed link's malformed bodies and a person who has left. |
 | `apps/api/test-workers/canvas-sidekicks.test.ts`, `apps/api/test-workers/conversation-tools.test.ts` | Real workerd. A run nobody is behind lists, reads and is told about every attached Canvas that is not archived, and writes a site's rows there, with no person at all; a run somebody asked for is held to what that person can open; an id with no run row is never the Sidekick itself. |
 | `apps/api/test/semantic-trigger-admission.test.ts` | The delivery, with the object and the classifier stood in: the person's filter is judged first, the trigger's question is not asked of an event that filter kept out, both verdicts are sent, and neither is judged without a classifier credential. |
-| `apps/api/test/connector-tool-selection.test.ts` | Which turns are offered the three source tools: the wizard and a Canvas's Chat on a person's turn, and no run, delegation worker, background agent, agent's message or review; the filtered-trigger skill is listed on the same turns and no others; a run is offered the delegation lists and not `set_delegation`, which its background worker and a person's turn keep. |
+| `apps/api/test/connector-tool-selection.test.ts` | Which turns are offered the three source tools: the wizard and a Canvas's Chat on a person's turn, and no run, delegation worker, background agent, agent's message or review; the filtered-trigger skill is listed on the same turns and no others; a run and its background worker are offered the delegation lists and not `set_delegation`, which a person's turn and a conversation's own background agent keep. |
 | `apps/api/test/workspace-sidekick-sources-migration.test.ts` | Migration 146 over the real migration chain: a delegate gets a source for each connection of theirs a rule is configured or registered on, every delegate gets one on a configured Organization connection, and a withdrawn grant, a grant with no membership and a person with no grant get none; every active Sidekick with a trigger that nobody lends an account to is marked stopped, whatever it said before, and no other. |
 | `packages/connectors/src/index.test.ts` | Google's `readActivityContent`: one message for new mail, by one request, and nothing for a label change, a subject with no message, a missing message, or a connection that may not read mail. |
 | `apps/api/test/sidekick-event-content.test.ts` | The opening with content, cut content, no content, and unreadable content; content that tries to close its own fence, in any case or spacing. |
@@ -695,13 +695,16 @@ some Sidekicks stopped ([operations](#operations)).
   run, a background agent, a delegation worker, and a wizard or Chat turn
   that another agent's message or Rally's review notice started cannot ask
   for a source, so nothing they read can make them ask or approve.
-- **A Sidekick run cannot change delegation.** It is offered
-  `sidekick_delegates_list` and `sidekick_my_delegations_list` and not
-  `sidekick_set_delegation` (`setsDelegation` in
-  `sidekick-delegation-tools.ts`). A run may have just read a stranger's
-  email, approving a source makes the person a reader, and being a reader is
-  what lets an enrolment as a delegate take effect. A background agent keeps
-  the tool, a run's own background worker among them: the owner's decision
+- **A Sidekick run cannot change delegation, and neither can its background
+  workers.** Each is offered `sidekick_delegates_list` and
+  `sidekick_my_delegations_list` and not `sidekick_set_delegation`
+  (`setsDelegation` in `sidekick-delegation-tools.ts`). A run may have just
+  read a stranger's email and its workers read the same content, approving a
+  source makes the person a reader, and being a reader is what lets an
+  enrolment as a delegate take effect. A worker is known by
+  `automationDelegation`, which the host derives from the worker's root run,
+  so a worker's own worker is covered too. A background agent of a
+  conversation a person is talking in keeps the tool. The owner's decisions
   of 2026-11-11.
 - **An admitted email's full text is read by everybody who can read the
   run.** It is part of the run's opening message. The owner chose that on
@@ -776,10 +779,6 @@ one as it is resolved; the resolution becomes a changelog entry.
    another Canvas sends admitted events' results there too. Pinning would
    make the person's approval cover one Canvas, and would need a rule for a
    Sidekick asked about from its own conversation.
-3. **Should a Sidekick run's own background worker hold
-   `sidekick_set_delegation`?** The run lost it on 2026-11-11 and a
-   background agent kept it, so a run can still start a worker that enrolls
-   somebody. The worker reads the same event content the run does.
 
 ## Changelog
 
@@ -809,8 +808,9 @@ The owner settled five questions the reviews raised, on 2026-11-11:
 - An ask for the asker's own account stays pending until they press Approve.
   It was approved at once before. Every source a request makes is now a
   person's own press on words they could read.
-- A Sidekick run is not offered `sidekick_set_delegation`. A background
-  agent still is.
+- A Sidekick run is not offered `sidekick_set_delegation`, and neither is a
+  background worker rooted in one: the worker reads what the run read. A
+  background agent of a conversation a person is talking in still is.
 - An admitted email's full text stays in the run's opening, where every
   reader of the run reads it.
 - A run started by an event that belongs to somebody who is no delegate acts
