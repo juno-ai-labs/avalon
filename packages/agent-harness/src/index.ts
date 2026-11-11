@@ -118,7 +118,7 @@ export {
   undescribedParameters,
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
-export { READING_GOOGLE_MEETING_NOTES_SKILL } from "@rally/skills/task-skills";
+export { READING_GOOGLE_MEETING_NOTES_SKILL } from "@rally/skills";
 export { renderCodeApi, renderType, type CodeApiPlugin, type CodeApiTool } from "./code-api";
 export {
   BUILDING_LIVE_SITES_SKILL,
@@ -132,7 +132,7 @@ export {
   USING_THE_LOCAL_INAPP_BROWSER_SKILL,
   WRITING_AN_EMAIL_SKILL,
 } from "./built-in-skills";
-export { CREATING_AN_APP_SKILL, REPORTING_ON_DATA_SKILL, TASK_SKILLS } from "@rally/skills/task-skills";
+export { CREATING_AN_APP_SKILL, REPORTING_ON_DATA_SKILL, TASK_SKILLS } from "@rally/skills";
 export {
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILLS_SYSTEM_MESSAGE,

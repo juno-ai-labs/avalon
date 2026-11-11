@@ -18,17 +18,12 @@ export {
 };
 
 /**
- * Skills for completing requested work, one folder per skill with its `skill.ts`
- * and any resources. Rally's own mechanics stay in the harness's `platform-skills/`.
- * These tasks need no connection-specific binding; the host offers Google
- * meeting notes separately after binding it to an eligible connection.
- * `BUILT_IN_SKILLS` preserves the combined catalog's established order.
+ * Request-routing task skills, retained as the original two-entry group used
+ * by the harness's default catalog. Other task procedures are registered
+ * individually to preserve catalog order; Google meeting notes is bound by
+ * the host to an eligible connection.
  */
 export const TASK_SKILLS: readonly HarnessSkill[] = [
-  DEEP_RESEARCH_SKILL,
-  WRITING_AN_EMAIL_SKILL,
-  SCHEDULING_A_CALENDAR_EVENT_SKILL,
-  USING_EXTERNAL_STRUCTURED_DATA_SKILL,
   REPORTING_ON_DATA_SKILL,
   CREATING_AN_APP_SKILL,
 ];
