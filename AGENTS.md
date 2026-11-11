@@ -83,10 +83,11 @@ whether it works, or on whether the next person can follow it.
 
 ## Platform
 
-We have a macOS Electron app and a browser SPA, and nothing else. When designing
+We have a macOS and Linux Electron app and a browser SPA.
+Linux support and its native-feature limits are described in `docs/linux-desktop.md`. When designing
 or implementing a feature, first consider which platform or platforms it should support.
-Some features are native macOS only, and others are shared across both. When in doubt ask
-the (human) user before implementing the feature; if there is no answer, assume macOS and web.
+Some features are native macOS only, and others are shared across all supported platforms. When in doubt ask
+the (human) user before implementing the feature; if there is no answer, assume macOS, Linux, and web.
 
 ## Tool execution product policy
 

@@ -468,6 +468,16 @@ secrets untouched.
 
 Every new Rally release advances exactly one minor version and resets the patch to zero. The one stable-promotion exception permits a `0.x` release to advance to `1.0.0`; after that, releases continue by minor version (`1.0.0` → `1.1.0`). Do not create patch releases, prereleases, skip a minor, or make any other major-version jump. Do **not** move the package versions to the next minor immediately after publication, as earlier revisions of this policy directed: an unreleased version in `package.json` is now the instruction to release it, so the next merge to `main` would ship it. Bump in the change that is meant to go out. See "Releasing the desktop app by bumping the version" below. Leave `apps/site/release.config.json` on the currently published version until the immutable desktop artifacts and update feed for the next version have been uploaded and verified. The release tag and site-promotion tooling enforce this policy and allow the same published version only for an idempotent retry.
 
+### Linux desktop releases
+
+The desktop release workflow also builds Linux x64 AppImage and Debian packages
+from the frozen release commit. See [Linux desktop](linux-desktop.md) for commands,
+artifact layout, update channels and platform limitations. If Linux publication
+fails after Mac succeeds, rerun the failed publish job with the same uploaded
+GitHub artifact; do not rebuild an already committed Linux version. The seven-day
+Actions retention applies to those artifacts too. Keep the immutable R2 release
+receipt and exact published bytes for later recovery.
+
 ### Desktop release retention
 
 GitHub Actions keeps each workflow copy of the verified macOS release bundle

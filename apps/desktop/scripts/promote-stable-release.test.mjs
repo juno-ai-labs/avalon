@@ -143,11 +143,12 @@ test('equal channel versions cannot silently disagree about artifact bytes', asy
   );
 });
 
-test('the live adapter purges and verifies Stable before recording its promotion', async () => {
-  const prefix = 'stable/darwin/arm64';
+for (const platform of ['mac', 'linux']) test(`the ${platform} adapter purges and verifies Stable before recording its promotion`, async () => {
+  const prefix = platform === 'mac' ? 'stable/darwin/arm64' : 'stable/linux/x64';
+  const feed = (version) => platform === 'mac' ? manifest(version) : Buffer.from(`version: ${version}\nfiles:\n` + ['AppImage', 'deb'].map(extension => `  - url: Rally-${version}-linux-x64.${extension}\n    sha512: ${Buffer.alloc(64).toString('base64')}\n    size: 42\n`).join(''));
   const objects = new Map([
-    [`${prefix}/stable-mac.yml`, manifest('1.1.0')],
-    [`${prefix}/faster-mac.yml`, manifest('1.2.0')],
+    [`${prefix}/stable-${platform}.yml`, feed('1.1.0')],
+    [`${prefix}/faster-${platform}.yml`, feed('1.2.0')],
     [`${prefix}/stable-channel.json`, receipt('1.1.0', '2026-08-01T13:00:00.000Z')],
   ]);
   const events = [];
@@ -193,14 +194,14 @@ test('the live adapter purges and verifies Stable before recording its promotion
         return Response.json({ success: true, result: { id: 'purge-id' } });
       }
       events.push(['public-read']);
-      return new Response(objects.get(`${prefix}/stable-mac.yml`));
+      return new Response(objects.get(`${prefix}/stable-${platform}.yml`));
     },
     now: () => times.shift(),
   });
 
   assert.equal(result.reason, 'cooldown_elapsed');
   assert.deepEqual(events.slice(-5), [
-    ['put', `${prefix}/stable-mac.yml`],
+    ['put', `${prefix}/stable-${platform}.yml`],
     ['purge'],
     ['public-read'],
     ['put', `${prefix}/stable-channel.json`],

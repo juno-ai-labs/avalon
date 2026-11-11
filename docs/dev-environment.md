@@ -346,6 +346,9 @@ each code.
 JSON settings from older generated double-quoted `.dev.vars` files are decoded
 before `env:sync` rewrites them into single-quoted dotenv values.
 
+Linux package commands and the packaged microphone check are documented in
+[Linux desktop](linux-desktop.md).
+
 ## 4. Run the desktop client headlessly
 
 The Electron client runs under Xvfb. Two flags matter: the agent shell runs as

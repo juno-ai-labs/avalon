@@ -359,6 +359,16 @@ update check as the application menu. Its argument-free `update:check` handler
 checks the IPC sender and accepts no feed URL, version, or connector-supplied
 destination.
 
+### Linux distribution and keystore
+
+Linux x64 uses a separate pinned HTTPS update feed and SHA-512 payload checks,
+without the Apple signature verifier. AppImage updates replace the user-owned
+file; Debian updates use the system privilege agent on explicit restart.
+Linux Lockdown requires a libsecret or KWallet backend; `basic_text` and unknown
+backends are unavailable. The existing trusted-renderer audio-only permission
+policy also owns Linux microphone capture. See [Linux desktop](linux-desktop.md)
+for the complete release and trust boundaries.
+
 ### Authentication and authorization
 
 [Email sign-in](email-login.md) owns the configured passwordless challenge and

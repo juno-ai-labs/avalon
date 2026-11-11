@@ -1,0 +1,25 @@
+appId: ai.rallywith.desktop
+productName: Rally
+copyright: Copyright © 2026 Juno AI Labs Inc
+asar: true
+artifactName: Rally-${version}-${os}-${arch}.${ext}
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**/*
+  - "!out/**/*.map"
+  - package.json
+  - "!**/*.tsbuildinfo"
+# Both schemes are declared so a build that replaces an older install keeps
+# answering the `avalon://` links already circulating. `rallywithai` is the one
+# every surface mints; `avalon` is registered and never emitted. The list has to
+# match LEGACY_DESKTOP_DEEP_LINK_PROTOCOLS in `@rally/contracts`: the operating
+# system only routes a scheme a build declared here.
+protocols:
+  - name: Rally desktop authentication
+    schemes:
+      - rallywithai
+  - name: Avalon desktop authentication (legacy)
+    schemes:
+      - avalon
