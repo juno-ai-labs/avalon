@@ -279,7 +279,7 @@ import { createSidekickTaskOutcomePlugin, reportsSidekickTaskOutcome, sidekickTa
 import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { sidekickDelegationTools, sidekickDelegationGuidance } from "./sidekick-delegation-tools";
+import { setsDelegation, sidekickDelegationTools, sidekickDelegationGuidance } from "./sidekick-delegation-tools";
 import { sidekickSourceGuidance, sidekickSourceRequestCard, sidekickSourceTools } from "./sidekick-source-tools";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
@@ -5243,9 +5243,8 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  * Whether a loop may ask people for a source (`sidekick_request_source` and
  * its two companions): only a turn a person is driving, in a conversation
  * they are talking in. A Sidekick run is handed the content of the event that
- * started it, a stranger's email among it, and asking in its delegate's name,
- * or approving that delegate's own account on the spot, is not something what
- * it read may bring about. A background agent works from content the same
+ * started it, a stranger's email among it, and asking in its delegate's name
+ * is not something what it read may bring about. A background agent works from content the same
  * way, and so does a turn another agent's message or Rally's own review
  * notice started, the wizard's included: nobody typed it.
  */
@@ -5949,10 +5948,11 @@ async function loadHarnessTools(
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
       displayName: readsRuns ? "Sidekick runs and delegation" : "Sidekick delegation",
       description: `${readsRuns ? "Read this Sidekick's runs for its wizard; inspect and manage Sidekick delegation"
-        : "Inspect and manage Sidekick delegation for Organization users"}${asksForSources(input)
+        : setsDelegation(input) ? "Inspect and manage Sidekick delegation for Organization users"
+          : "Inspect Sidekick delegation for Organization users"}${asksForSources(input)
         ? ", and ask people to let their events start a Sidekick." : "."}`,
       preload: readsRuns, explicit: false,
-      systemMessage: `${readsRuns ? `${SIDEKICK_RUN_READING_GUIDANCE} ` : ""}${sidekickDelegationGuidance()}${asksForSources(input) ? ` ${sidekickSourceGuidance()}` : ""}`,
+      systemMessage: `${readsRuns ? `${SIDEKICK_RUN_READING_GUIDANCE} ` : ""}${sidekickDelegationGuidance(setsDelegation(input))}${asksForSources(input) ? ` ${sidekickSourceGuidance()}` : ""}`,
       tools: [...(readsRuns ? createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
         .flatMap((tool) => expandPages(tool, "sidekick", null)) : []),
       ...sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
@@ -7941,7 +7941,8 @@ export async function reenterInterruptedWriteForRecovery(
       // rebuilt (`rally_skill_recommendations`) went with Threads.
       plugin = { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks",
         shortWireName: "sidekick", description: "Sidekick delegation recovery", preload: false,
-        tools: [...sidekickDelegationTools(env, input, userId, false),
+        // Every tool, whatever the loop: a run's change recorded before runs lost the tool still has to reconcile.
+        tools: [...sidekickDelegationTools(env, input, userId, false, true),
           ...(asksForSources(input) ? sidekickSourceTools(env, input, userId, false) : [])] };
     }
   } catch (error) {

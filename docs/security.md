@@ -405,8 +405,8 @@ email forwards the decision. The page the link opens posts the answer as it
 loads. The API route refuses a `GET` with 405, which stops only a direct `GET`
 of that path; a mail scanner that opens the link and runs the page's
 JavaScript answers for the person. The owner chose one click with no sign-in
-on 2026-11-10, and whether the page should wait for a press before it answers
-is an [open question](sidekick-sources.md#open-questions). What the link
+on 2026-11-10, and on 2026-11-11 chose again, with the scanner case stated,
+that the page answers without a press. What the link
 can do is bounded by its signature: one decision on one request, and an
 approval lends events and no account. The region in the link is not signed;
 it only chooses which regional API the page posts to. A link cannot be
@@ -423,10 +423,12 @@ Three more rules keep a source the person's own act
   Sidekick run, a background agent, a run's delegation worker, and a wizard
   or Chat turn that another agent's message or Rally's review notice started
   are not offered them. Each of those works from content nobody typed, a
-  stranger's email among it, so none of them may ask in a person's name or
-  approve that person's own account. No tool answers a request at all.
-  Whether a Sidekick run should also lose `sidekick_set_delegation`, which it
-  still holds, is an [open question](sidekick-sources.md#open-questions).
+  stranger's email among it, so none of them may ask in a person's name. No
+  tool answers a request at all, and asking approves nobody: an ask for the
+  asker's own account waits for their press like any other. A Sidekick run
+  is not offered `sidekick_set_delegation` either. A background agent is, a
+  run's own worker among them, which is an
+  [open question](sidekick-sources.md#open-questions).
 - **A rule on a colleague's account.** A manager's new or changed rule on
   another person's own connection is refused
   (`sidekick_source_owner_must_approve`) until that person approves a request

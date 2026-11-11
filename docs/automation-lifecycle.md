@@ -51,7 +51,10 @@ to grants in other Organizations. The old D1 `sidekick_delegation_locations`
 table is unused; its migration remains immutable.
 
 The `rally:sidekicks` plugin exposes `my_delegations_list`, `delegates_list` and
-`set_delegation` during direct and autonomous work. Authoring and Sidekick
+`set_delegation` to a turn a person is driving and to a background agent. A
+Sidekick run gets the two lists and not `set_delegation` (`setsDelegation`):
+it is handed the content of the event that started it, and enrolling a
+member's accounts is not something that content may bring about. Authoring and Sidekick
 activations use the `sidekick` prefix; other conversations' presentations use full wire names.
 Both presentations teach the resulting `sidekick_` wire names. Configuration
 chats use the chatting person's accounts; only activations and delegated work
@@ -78,8 +81,12 @@ connection, then the creator and stable grant order. An event-started run
 acts as the delegate whose event it is, when they are an eligible delegate:
 the owner of the personal connection, or a delegate inside a restricted
 event's audience. So a reply to a person's mail goes through their mailbox
-and nobody else's. Otherwise it acts as any eligible delegate in the usual
-order, and with none as the Sidekick itself (`admitExternalEvent`).
+and nobody else's. When the event belongs to somebody and none of them is an
+eligible delegate, the run acts as the Sidekick itself: a person who let
+their events in lent no account, and their mail is not acted on with a third
+person's. An event the whole Organization can see acts as any eligible
+delegate in the usual order, and with none as the Sidekick itself
+(`admitExternalEvent`).
 
 An occurrence with no delegate that a schedule or an event started is not
 blocked. Its run is admitted `pending` with no coordinator and acts as the
@@ -2405,7 +2412,8 @@ principal with nobody seated, and uses the Organization's connections, the
 Sidekick's conversation, memory and Terminal files, and the Canvases it is
 attached to. Its managers continue it (`run_continuation_requires_manager`).
 An event-started run acts as the delegate whose event it is, when they are
-one. Whose reach a run has in an attached Canvas is decided in the
+one, and as the Sidekick itself when the event belongs to somebody who is
+not. Whose reach a run has in an attached Canvas is decided in the
 Organization object from the run's row (`sidekickReach`): a run a schedule or
 an event started reaches by the attachment alone, and a run a person asked
 for is held to what that person can open.
@@ -2451,8 +2459,9 @@ writes its Sidekick's memory and never the Organization's. The stored names
 `sidekick_delegation_sources` (the alarm kind) and `event_no_eligible_delegate`
 (the attention code) now describe sources; they are stored and on the wire, so
 they stay. `sidekick_set_delegation` still lets an agent enroll a member with
-no act of theirs, and a Sidekick run that acts as a person still holds it:
-unchanged here, and an
+no act of theirs. A Sidekick run no longer holds it, by the owner's decision
+of 2026-11-11, because a run now reads outside content; a background agent
+does, and whether a run's own worker should is an
 [open question](sidekick-sources.md#open-questions).
 
 Design: `docs/PRDs/2026-11-10_sidekick-sources/prd.md`.

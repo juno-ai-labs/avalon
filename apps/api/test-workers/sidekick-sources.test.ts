@@ -104,6 +104,13 @@ const ask = (userIds: string[], condition?: string) => stub().sidekickRequestSou
   ask: { userIds, connectorType: "google", eventTypes: [eventType], ...(condition ? { condition } : {}) },
 });
 
+/** The person asked presses Approve on each request an ask made for them. */
+async function approved(asked: Awaited<ReturnType<typeof ask>>) {
+  for (const request of asked.requests) {
+    await stub().sidekickDecideSourceRequest({ ...address, requestId: request.requestId, userId: request.person.userId, decision: "approve" });
+  }
+}
+
 async function setDelegation(userId: typeof creator, allowed: boolean) {
   const request = { ...address, userId, allowed, operationId: crypto.randomUUID() };
   const prepared = await stub().sidekickPrepareMyDelegation(request);
@@ -166,8 +173,8 @@ describe("Sidekick sources", () => {
     const fromJane = await mail(janeMail, jane, "Seed round intro");
     expect(fromJane).toHaveLength(1);
     expect(await admit(fromJane[0]!)).toMatchObject({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
-    // The run acts as a delegate, not as the person whose mail started it.
-    expect((await runs()).map((run) => run.coordinator_user_id)).toEqual([creator]);
+    // Jane lent no account, and her mail is not acted on with the creator's: the run acts as the Sidekick itself.
+    expect((await runs()).map((run) => run.coordinator_user_id)).toEqual([null]);
 
     // The creator takes their own source back and stays a delegate: their mail stops starting it.
     expect(await stub().sidekickWithdrawSource({ ...address, userId: creator, connectionId: creatorMail })).toEqual({ withdrawn: true });
@@ -231,9 +238,13 @@ describe("Sidekick sources", () => {
 
   it("keeps a person's own filter when the definition is saved again", async () => {
     await watchingMail();
-    // Asking for one's own account is approved by the act of asking.
+    // An ask for one's own account waits for one's own answer, like anybody's: until then nothing of theirs changes.
     const own = await ask([creator], FILTER);
-    expect(own.requests.map((request) => request.state)).toEqual(["approved"]);
+    expect(own.requests.map((request) => ({ state: request.state, yours: request.yours }))).toEqual([{ state: "pending", yours: true }]);
+    const sourcesNow = async () => SidekickSourcesResultSchema.parse(await stub().sidekickReadSources({ ...address, actor: actor() }))
+      .sources.map((source) => ({ connection: source.connectionId, condition: source.condition }));
+    expect(await sourcesNow()).toEqual([{ connection: creatorMail, condition: null }]);
+    await approved(own);
     await stub().sidekickSubmitDefinition({ ...address, draft: { ...definition, instructions: "Update the dashboard, briefly." },
       evaluatorRules: rules, submittedByRunId: null });
     await stub().sidekickApply({ ...address, actor: actor() });
@@ -275,7 +286,7 @@ describe("Sidekick sources", () => {
     // The creator's own rule lets their new mail in, unfiltered. They then approve an ask about label changes, filtered.
     const asked = await stub().sidekickRequestSources({ ...address, actor: actor(), actorName: "Adam",
       ask: { userIds: [creator], connectorType: "google", eventTypes: ["email.updated"], condition: FILTER } });
-    expect(asked.requests.map((request) => request.state)).toEqual(["approved"]);
+    await approved(asked);
     await reconciled();
     const listed = SidekickSourcesResultSchema.parse(await stub().sidekickReadSources({ ...address, actor: actor() }));
     expect(listed.sources.map((source) => ({ events: source.eventTypes, condition: source.condition }))).toEqual([
@@ -313,7 +324,7 @@ describe("Sidekick sources", () => {
     expect(await registered()).toEqual([janeMail]);
   });
 
-  it("acts as the person whose mail started the run when they are a delegate, and as another delegate when they are not", async () => {
+  it("acts as the person whose mail started the run when they are a delegate, and as the Sidekick itself when they are not", async () => {
     await watchingMail();
     const asked = await ask([jane]);
     await stub().sidekickDecideSourceRequest({ ...address, requestId: asked.requests[0]!.requestId, userId: jane, decision: "approve" });
@@ -323,8 +334,8 @@ describe("Sidekick sources", () => {
       expect(await admit(delivery)).toMatchObject({ admitted: true });
       return (await runs()).at(-1)!.coordinator_user_id;
     };
-    // Jane lends events and no account: her mail's run acts as the one delegate there is.
-    expect(await acting(janeMail, jane)).toBe(creator);
+    // Jane lends events and no account: her mail's run acts as the Sidekick itself, not as the delegate there is.
+    expect(await acting(janeMail, jane)).toBeNull();
     // Approving made her a reader, so she can lend her accounts too. Her mail's run then acts as her.
     await setDelegation(jane, true);
     expect(await acting(janeMail, jane)).toBe(jane);
@@ -643,7 +654,7 @@ describe("a run nobody is behind", () => {
     await stub().sidekickWithdrawSource({ ...address, userId: creator, connectionId: creatorMail });
     expect(await admit(matched)).toEqual({ admitted: false, outcomeCode: "sidekick_source_not_permitted" });
     await reconciled();
-    expect((await ask([creator])).requests.map((request) => request.state)).toEqual(["approved"]);
+    await approved(await ask([creator]));
     await reconciled();
     expect(await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ code: string | null }>(
       "SELECT delegation_attention_code AS code FROM automation_directory WHERE automation_id = ?", automationId).one().code))

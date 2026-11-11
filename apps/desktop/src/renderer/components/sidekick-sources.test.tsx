@@ -69,7 +69,7 @@ describe('the source request card in a conversation', () => {
     expect(within(article).getByText('Start Deals from Gmail')).toBeInTheDocument();
     expect(within(article).getByText('Email received, only when “it is about a pre-seed round”')).toBeInTheDocument();
     expect(within(article).getByText('Asked by Adam. Only the person asked can answer.')).toBeInTheDocument();
-    // Mine, pending: both live. The requester's own, approved by asking: Approve filled.
+    // Mine, pending: both live. The requester's own, which they approved: Approve filled.
     expect(pair('Me')).toEqual([
       { label: 'Decline', pressed: 'false', disabled: false },
       { label: 'Approve', pressed: 'false', disabled: false },
