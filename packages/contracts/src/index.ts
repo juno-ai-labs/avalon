@@ -68,7 +68,7 @@ export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 import { ConversationParentKindSchema } from "./conversation-parent";
-import { CanvasSidebarListSchema, CanvasSummarySchema } from "./canvases";
+import { CanvasArtifactKindSchema, CanvasSidebarListSchema, CanvasSummarySchema } from "./canvases";
 import { ActivityMarkAllSeenCommandSchema, ActivityPageSchema } from "./activity";
 import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
@@ -211,14 +211,12 @@ export const HarnessFailureCodeSchema = z.enum([
 export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
 
 /**
- * The OpenRouter models a creator may pin a work stream to from the composer's
- * developer-mode model selector, in the order the selector lists them.
+ * The supported OpenRouter conversation pins, ordered for model catalogs.
  *
- * **Each vendor's models are ordered newest first.** The selector groups by
- * vendor, so that ordering is what a reader sees under each heading, and the
- * model somebody is most likely to want is the one they do not have to scan
- * for. A new model therefore goes at the *top* of its family rather than the
- * end of the list. The "orders each vendor's models newest first" test holds
+ * **Each vendor's models are ordered newest first.** Catalogs group by vendor,
+ * so the model somebody is most likely to want appears without scrolling.
+ * A new model therefore goes at the top of its family rather than the end of
+ * the list. The "orders each vendor's models newest first" test holds
  * the half of this a machine can check — a family whose ids carry comparable
  * version numbers must not ascend — which is every family except the two whose
  * members share a version (`gpt-5.6-*`, `deepseek-v4-*`) and are ordered by
@@ -300,6 +298,8 @@ export const WorkspaceSchema = z.object({
   accessClass: z.enum(["member", "guest"]).optional(),
   role: MemberRoleSchema.nullable(),
   timezone: IanaTimezoneSchema,
+  // Older servers omit this presentation setting; clients treat absence as hidden.
+  modelSelectorVisible: z.boolean().optional(),
   createdAt: TimestampSchema
 }).refine((workspace) => workspace.accessClass === "guest"
   ? workspace.role === null : workspace.role !== null,
@@ -1601,7 +1601,13 @@ export const AutomationSummarySchema = z.object({
    * made, which is its output rather than where it works. The dashboard card
    * links each. Absent from an older Worker and from reads that do not ask.
    */
-  attachedCanvases: z.array(z.object({ id: IdSchema, title: z.string() })).optional(),
+  attachedCanvases: z.array(z.object({
+    id: IdSchema, title: z.string(),
+    // Self-contained appearance even when this Canvas is outside the sidebar page.
+    // Optional for summaries from older Workers.
+    artifactKind: CanvasArtifactKindSchema.nullable().optional(),
+    appearance: WorkstreamAppearanceSchema.optional(),
+  })).optional(),
   /**
    * This viewer has not read the latest message in the Sidekick's shared
    * conversation, or marked it unread. Sidebar rows only; absent elsewhere.

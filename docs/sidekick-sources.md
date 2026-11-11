@@ -30,10 +30,10 @@ notice are.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/sidekick-sources.ts` | The source and request records, what a reader is shown of each, and the route inputs. |
-| `apps/api/src/durable-objects/sidekick-source-storage.ts` | WorkspaceDO migration 145 (`sidekick_sources`, `sidekick_source_requests`, `sidekick_source_request_operations`, the backfill from delegation) and the rows' reads and writes. |
+| `apps/api/src/durable-objects/sidekick-source-storage.ts` | WorkspaceDO migration 146 (`sidekick_sources`, `sidekick_source_requests`, `sidekick_source_request_operations`, the backfill from delegation) and the rows' reads and writes. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | Who may ask, answer, read and withdraw (`requestSources`, `decideSourceRequest`, `readSources`, `withdrawSource`); whether an event may enter (`eventSource`); the saver's own sources (`putOwnSources`); `admitExternalEvent`, which enforces both filters. |
 | `apps/api/src/durable-objects/sidekick-source-registrations.ts` | Which connections each configured rule is registered on. |
-| `apps/api/src/durable-objects/sidekick-source-notices.ts` | The Activity rows and notices a request writes, and migration 145's rebuild of the two tables whose CHECKs name the kinds. |
+| `apps/api/src/durable-objects/sidekick-source-notices.ts` | The Activity rows and notices a request writes, and migration 146's rebuild of the two tables whose CHECKs name the kinds. |
 | `apps/api/src/services/sidekick-source-decision-link.ts`, `apps/browser/src/source-decision.tsx` | The signed link in the email and the page that answers from it. |
 | `packages/contracts/src/sidekick-source-words.ts` | The one naming of a connector and its events for a person ("Gmail", "Email received"), shared by notices and clients. |
 | `apps/api/src/services/semantic-trigger-admission.ts` | The delivery: asks, judges the source's condition and the trigger's, admits with both verdicts. |
@@ -66,7 +66,7 @@ Three things write a source:
 | --- | --- | --- |
 | `apply`, through `putOwnSources` | A manager saves a definition that adds a rule (a connection and an event type) the previously accepted revision did not have, on their own connection or on an Organization connection. Only the added rule gives a source: a save that changes anything else (the instructions, a schedule) adds nothing. Event types are added to what they already let in; a condition they set is kept. | `own_definition` |
 | `decideSourceRequest`, and `requestSources` for the asker's own account | The person asked approves. One row per connection of that connector they own then, and per Organization connection of it. | `request` |
-| Migration 145 | Every person whose delegation admitted a configured rule's events gets a source for exactly those. | `migration` |
+| Migration 146 | Every person whose delegation admitted a configured rule's events gets a source for exactly those. | `migration` |
 
 The `origin` matters later. A source that came from a saved rule
 (`own_definition`) or from the migration stands for the rule it came from. Only
@@ -162,7 +162,7 @@ rule is registered:
   connection of that connector only through a source whose `origin` is
   `request`: the person approved a request for that event. That is how one
   "new email" trigger covers two people's mailboxes. A source made by a
-  person's own saved rule, or by migration 145 from one, records that rule's
+  person's own saved rule, or by migration 146 from one, records that rule's
   event type and not its scope. Read as account-wide, it would turn their
   rule about one thread into all of their mail.
 - A rule about a **globally addressed resource** (a Google file) reaches every
@@ -377,7 +377,7 @@ source's condition.
 | `apps/api/test-workers/sidekick-sources.test.ts` | Real workerd. A person's mail starts a Sidekick through their source whether or not they are a delegate, and stops when the source is taken back while they stay a delegate; an event matched before a withdrawal is refused at admission; only the person asked answers and only a manager asks; a filtered source refuses without a verdict and with a refusing one, and an unfiltered one needs none; saving a definition keeps a person's own filter; a repeated ask answers with what it already asked; a run with no delegate starts as the Sidekick itself and only a manager continues it; content is withheld once the source is gone. |
 | `apps/api/test-workers/sidekick-source-routes.test.ts` | Real workerd, through the HTTP routes: 401 with no session, an ask and its answer by the person asked and by nobody else, a body that smuggles a field refused 400, a request read by its asker and the person asked and by no uninvolved member, withdrawing, and the emailed link's malformed bodies and a person who has left. |
 | `apps/api/test-workers/conversation-tools.test.ts` | Real workerd. A run nobody is behind lists and reads every attached Canvas that is not archived, and writes a site's rows there, with no person at all; a run somebody asked for is held to what that person can open. |
-| `apps/api/test/workspace-sidekick-sources-migration.test.ts` | Migration 145's backfill over the real migration chain: a delegate gets a source for each connection of theirs a rule is configured or registered on, every delegate gets one on a configured Organization connection, and a withdrawn grant, a grant with no membership and a person with no grant get none. |
+| `apps/api/test/workspace-sidekick-sources-migration.test.ts` | Migration 146's backfill over the real migration chain: a delegate gets a source for each connection of theirs a rule is configured or registered on, every delegate gets one on a configured Organization connection, and a withdrawn grant, a grant with no membership and a person with no grant get none. |
 | `packages/connectors/src/index.test.ts` | Google's `readActivityContent`: one message for new mail, by one request, and nothing for a label change, a subject with no message, a missing message, or a connection that may not read mail. |
 | `apps/api/test/sidekick-event-content.test.ts` | The opening with content, cut content, no content, and unreadable content. |
 | `apps/api/test-workers/sidekick-source-notices.test.ts` | Real workerd. The asked person's row lists though the Sidekick is closed to them, and reads as seen once the request is answered or replaced; the asker is told on an approval and a decline and nobody on a cancel or an own ask; the email is queued after the commit; an edited link is refused and a replaced request's link says so; a build older than contract 14 gets neither the rows nor their count. |
@@ -419,7 +419,7 @@ source's condition.
 ### 2026-11-10 — A source is its own record, apart from delegation
 
 **What changed:** `sidekick_sources`, `sidekick_source_requests` and
-`sidekick_source_request_operations` (WorkspaceDO migration 145).
+`sidekick_source_request_operations` (WorkspaceDO migration 146).
 Registration, matching and admission read sources and no longer read
 delegation. A source carries event types and an optional written condition,
 judged in the delivery beside the trigger's own. A manager asks a person for a

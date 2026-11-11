@@ -69,12 +69,13 @@ describe('useRailExitFade', () => {
 });
 
 describe('RailSurface', () => {
-  function renderSurface(leaving: boolean): void {
-    render(
+  function renderSurface(leaving: boolean, focusOnOpen = true): ReturnType<typeof render> {
+    return render(
       <Tooltip.Provider>
         <RailSurface
           label="Preview"
           leaving={leaving}
+          focusOnOpen={focusOnOpen}
           onClose={vi.fn()}
           onResize={vi.fn()}
           resizeLabel="Resize Preview"
@@ -85,6 +86,25 @@ describe('RailSurface', () => {
       </Tooltip.Provider>,
     );
   }
+
+  it.each([true, false])('moves focus on arrival only when requested (%s)', (focusOnOpen) => {
+    vi.useFakeTimers();
+    onTestFinished(() => { vi.useRealTimers(); });
+    const composer = document.createElement('textarea');
+    document.body.append(composer);
+    onTestFinished(() => composer.remove());
+    composer.focus();
+    const { unmount } = renderSurface(false, focusOnOpen);
+    act(() => vi.advanceTimersToNextFrame());
+    expect(document.activeElement).toBe(focusOnOpen ? screen.getByRole('complementary', { name: 'Preview' }) : composer);
+    // An automatically revealed panel also must not reclaim focus on removal.
+    const other = document.createElement('button');
+    document.body.append(other);
+    onTestFinished(() => other.remove());
+    other.focus();
+    unmount();
+    expect(document.activeElement).toBe(focusOnOpen ? composer : other);
+  });
 
   it('does not reclaim focus from a control opened before its arrival frame',()=>{
     let arrive:FrameRequestCallback=()=>{};

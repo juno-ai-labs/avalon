@@ -14,7 +14,7 @@ import { PUSH_BODY_PREVIEW_CHARACTERS } from "@rally/contracts/push-notification
  * (migration 138); `subject_id` names what a row is about beyond its parent:
  * an artifact's resource id for `artifact_updated`, the access request's id
  * for the three access kinds, or the Sidekick source request's id for the
- * three source kinds, which migration 145 admits
+ * three source kinds, which migration 146 admits
  * (`SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS`).
  *
  * Seen is derived, never written per row: a row is seen once the recipient's

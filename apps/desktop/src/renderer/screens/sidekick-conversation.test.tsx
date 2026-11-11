@@ -21,6 +21,7 @@ const MEMBER = '00000000-0000-7000-8000-000000000a53';
 
 const api = vi.hoisted(() => ({
   getAutomation: vi.fn(),
+  getWorkspace: vi.fn(async () => ({ id: "w", name: "Team", region: "global", timezone: "UTC", modelSelectorVisible: false, currentUser: { id: "viewer", name: "Viewer", email: "viewer@example.test", timezone: "UTC" } })),
   getAutomationRuns: vi.fn(async () => []),
   getSidekickDelegates: vi.fn(),
   getSidekickSources: vi.fn(),
@@ -93,7 +94,7 @@ function boot(): WorkstreamBoot {
   } as WorkstreamBoot;
 }
 
-function renderSidekick(viewerId: string, search = ''): void {
+function renderSidekick(viewerId: string, search = ''): QueryClient {
   session.current = { user: { id: viewerId, name: 'Viewer', email: 'viewer@example.test' }, workspace: { id: 'w', region: 'global', role: 'member' } };
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const conversation = boot();
@@ -106,6 +107,7 @@ function renderSidekick(viewerId: string, search = ''): void {
       <Routes><Route element={<AutomationScreen />} path="/sidekicks/:id" /></Routes>
     </MemoryRouter>
   </QueryClientProvider></Tooltip.Provider>);
+  return queryClient;
 }
 
 async function send(text: string): Promise<void> {
@@ -192,5 +194,21 @@ describe("a Sidekick's shared conversation", () => {
     await send('What happened overnight?');
     await waitFor(() => expect(createMessage).toHaveBeenCalled());
     expect(createMessage.mock.calls[0]![0]).not.toHaveProperty('intent');
+  });
+  it('shows the model control when the Organization enables it', async () => {
+    api.getWorkspace.mockResolvedValueOnce({ id: 'w', name: 'Team', region: 'global', timezone: 'UTC', modelSelectorVisible: true,
+      currentUser: { id: AUTHOR, name: 'Viewer', email: 'viewer@example.test', timezone: 'UTC' } });
+    renderSidekick(AUTHOR);
+    await screen.findByRole('textbox', { name: 'Message Incident triage and the team' });
+    expect(await screen.findByRole('button', { name: /^Model:/u })).toBeDisabled();
+  });
+
+  it('hides the model control when the refreshed Organization setting turns off', async () => {
+    api.getWorkspace.mockResolvedValueOnce({ id: 'w', name: 'Team', region: 'global', timezone: 'UTC', modelSelectorVisible: true,
+      currentUser: { id: AUTHOR, name: 'Viewer', email: 'viewer@example.test', timezone: 'UTC' } });
+    const queryClient = renderSidekick(AUTHOR);
+    expect(await screen.findByRole('button', { name: /^Model:/u })).toBeDisabled();
+    await queryClient.invalidateQueries({ queryKey: ['workspace'] });
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Model:/u })).not.toBeInTheDocument());
   });
 });

@@ -308,10 +308,15 @@ and its own alarm and facet storage are untouched. Gating and walking artifact h
 remaining piece of "nothing in it ever writes again", recorded under **Open
 questions**.
 
-One permitted door writes: `runInspectionSql`, the Access-gated operator SQL
-surface ([`engineering-mcp.md`](engineering-mcp.md)), is the repair door and
-the one way to inspect or correct what a retired object holds, the tombstone
-included.
+Two permitted doors write, both the operator's
+([`engineering-mcp.md`](engineering-mcp.md)). `runInspectionSql`, the
+Access-gated operator SQL surface, is the repair door and the one way to
+inspect or correct what a retired object holds, the tombstone included.
+`WorkspaceDO.sidekickRemove` archives one Sidekick for `archive_sidekick`: it
+writes only this object's own storage (the Sidekick's rows, the Sidekick
+list's waterline and the Sidekick's external bindings), because the alarm
+mutators it reaches are inert, the sockets it would publish to are closed, and
+no session into an abandoned Organization authenticates to call it.
 
 ## Failure modes and limits
 
@@ -498,6 +503,28 @@ walk needs to resume. The former bearer-token workspace retirement route has
 been removed; connector-maintenance credentials do not authorize retirement.
 
 ## Changelog
+
+### 2026-11-10 — A retired Organization object permits archiving a Sidekick
+
+**What changed:** `sidekickRemove` joins `WorkspaceDO`'s permit list, so
+`archive_sidekick` can archive a Sidekick after the Organization is retired.
+
+**Why:** Retirement stops a Sidekick but leaves its row as it stood, so a
+retired Organization still lists paused and draft Sidekicks that only
+hand-written SQL could reach. The incident is in
+[`engineering-mcp.md`](engineering-mcp.md#changelog), under the same date.
+
+**Considered and rejected:** Having retirement archive every Sidekick itself.
+It would make the row say what the tombstone already enforces, but it rewrites
+Sidekicks in every Organization retired from then on and does nothing for the
+ones already closed.
+
+**Consequences:** This is a second write a retired object accepts, and the
+first that runs product code. It is safe only while the archive stays local to
+the object: a change that makes `HostedSidekick.remove` call another object,
+enqueue an effect or arm an alarm outside the inert mutators has to be checked
+against a retired Organization, and
+`test-workers/engineering-sidekick-inspection.test.ts` runs that case.
 
 ### 2026-11-09 — The Thread operations are removed once run, and the workspace walk stops reading Threads
 

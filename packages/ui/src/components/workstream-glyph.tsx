@@ -259,7 +259,8 @@ export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symb
    * one with nothing to say passes nothing.
    */
   onMarkerHover?: ((over: boolean) => void) | undefined;
-  symbol: LucideIcon;
+  /** An identity icon or a short count, sharing the same hexagon silhouette. */
+  symbol: LucideIcon | string;
 }): React.JSX.Element {
   // SVG ids are document-global and the strip draws one of these per Sidekick,
   // so a fixed id would point every hexagon at the first one's mask.
@@ -290,7 +291,9 @@ export function HexagonGlyph({ className, fill, ink, marker, onMarkerHover, symb
         </defs>
       )}
       <path className="automation-glyph-shape" d="M43 6C47 3 52 3 57 6L86 23C91 26 94 30 94 36L94 66C94 72 91 76 86 79L57 95C52 98 47 98 42 95L14 78C9 75 6 71 6 65L6 35C6 29 9 25 14 22Z" fill={fill} mask={marker ? `url(#${maskId})` : undefined} />
-      <Icon x={25} y={25} size={50} strokeWidth={1.9} />
+      {typeof Icon === 'string'
+        ? <text dominantBaseline="central" fill={ink} fontSize={Math.min(34, 120 / Icon.length)} fontWeight={600} textAnchor="middle" x={50} y={50}>{Icon}</text>
+        : <Icon x={25} y={25} size={50} strokeWidth={1.9} />}
       {marker && (
         /*
           The marker's hover target, and nothing more. What it *means* is the

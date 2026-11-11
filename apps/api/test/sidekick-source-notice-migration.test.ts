@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 145 rebuilds `workstream_notification_intents` and
+ * WorkspaceDO migration 146 rebuilds `workstream_notification_intents` and
  * `workspace_activity_items` once each, so their CHECKs admit the three
  * notices a Sidekick source request writes. A rebuild that drops a row, a
  * lease, a delivery time, an index or an identity-fence trigger would lose a
@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
-const VERSION = 145;
+const VERSION = 146;
 const WORKSPACE_ID = "00000000-0000-7000-8000-00000000c145";
 const openDatabases: DatabaseSync[] = [];
 
@@ -61,7 +61,7 @@ afterEach(() => {
   while (openDatabases.length > 0) openDatabases.pop()?.close();
 });
 
-describe("WorkspaceDO migration 145, a source request's notices", () => {
+describe("WorkspaceDO migration 146, a source request's notices", () => {
   it("keeps every intent and Activity row with its indexes and identity fence, and admits the three source kinds in both", () => {
     const database = openDatabase();
     apply(database, VERSION - 1);

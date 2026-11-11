@@ -1,4 +1,5 @@
 import { MemoryRouter } from 'react-router-dom';
+import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -253,13 +254,54 @@ const singleSelectElicitation: ElicitationData = {
 };
 
 describe('ElicitationPanel', () => {
-  it('shows a cancelled question without answer controls', () => {
+  it('opens and closes a cancelled question without answer controls', () => {
+    const onAnswer = vi.fn();
     render(<ElicitationPanel
       elicitation={{ ...singleSelectElicitation, status: 'cancelled', answer: null }}
-      onAnswer={vi.fn()}
+      onAnswer={onAnswer}
     />);
-    expect(screen.getByLabelText('Question cancelled')).toBeVisible();
+    expect(screen.getByText('Question cancelled')).toBeVisible();
+    expect(screen.getByText(singleSelectElicitation.prompt)).not.toBeVisible();
+    expect(screen.getByText('No answer was recorded.')).not.toBeVisible();
     expect(screen.queryByRole('button', { name: 'Submit' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Question cancelled'));
+    expect(screen.getByText(singleSelectElicitation.prompt)).toBeVisible();
+    expect(screen.getByText('No answer was recorded.')).toBeVisible();
+    fireEvent.click(screen.getByText('Question cancelled'));
+    expect(screen.getByText(singleSelectElicitation.prompt)).not.toBeVisible();
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
+  it('preserves cancelled-question disclosure across row remounts without opening another question', () => {
+    // Exercise the MessageBlock boundary used by the virtualized feed. The
+    // feed stays mounted while its rows leave and re-enter the visible window.
+    function Feed({ visible, elicitationId = singleSelectElicitation.id }: { visible: boolean; elicitationId?: string }) {
+      const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+      return visible ? <MessageBlock
+        {...actions}
+        message={{ ...baseMessage, messageType: 'elicitation', elicitation: {
+          ...singleSelectElicitation, id: elicitationId, status: 'cancelled', answer: null,
+        } }}
+        rowDisclosure={{ expanded, onToggle: (id) => setExpanded((current) => {
+          const next = new Set(current);
+          if (!next.delete(id)) next.add(id);
+          return next;
+        }) }}
+      /> : null;
+    }
+    const { rerender } = render(<Feed visible />);
+    fireEvent.click(screen.getByText('Question cancelled'));
+    expect(screen.getByText(singleSelectElicitation.prompt)).toBeVisible();
+    rerender(<Feed visible={false} />);
+    rerender(<Feed visible />);
+    expect(screen.getByText(singleSelectElicitation.prompt)).toBeVisible();
+    rerender(<Feed visible elicitationId="another-question" />);
+    expect(screen.getByText(singleSelectElicitation.prompt)).not.toBeVisible();
+    rerender(<Feed visible />);
+    expect(screen.getByText(singleSelectElicitation.prompt)).toBeVisible();
+    fireEvent.click(screen.getByText('Question cancelled'));
+    rerender(<Feed visible={false} />);
+    rerender(<Feed visible />);
+    expect(screen.getByText(singleSelectElicitation.prompt)).not.toBeVisible();
   });
   it('keeps answer and skip diagnostics out of the response control', async () => {
     const answerDiagnostic = 'provider answer failure: request=private';

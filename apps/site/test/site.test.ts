@@ -258,7 +258,7 @@ describe('public Rally site', () => {
     const nav = renderSiteChrome('<!-- rally:site-nav -->');
     const links = [...nav.matchAll(/<a [^>]*href="([^"]+)"([^>]*)>(.*?)<\/a>/gu)];
     expect(links.map(([, href, attrs, body]) => `${/aria-label="([^"]+)"/u.exec(attrs ?? '')?.[1] ?? body} ${href}`)).toEqual([
-      'Features /#features', 'Pricing /#pricing', 'Compare /#compare',
+      'Canvases /canvases/', 'Sidekicks /sidekicks/', 'Pricing /#pricing', 'Compare /#compare',
       'Sign in to Rally or sign up for Rally https://app.rallywith.ai',
     ]);
     expect(nav).toContain('<span>Sign in to Rally</span><span>Sign up for Rally</span>');

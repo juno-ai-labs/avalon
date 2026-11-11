@@ -8,9 +8,10 @@ import {
   type WorkstreamTranscriptSnapshot,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
 } from '@rally/contracts';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
-import type { PropsWithChildren } from 'react';
+import { useState, type PropsWithChildren } from 'react';
+import { useOpenAttachedArtifact } from './use-open-attached-artifact';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopRealtimeSocketHandshakePhase } from '../../common/realtime-socket';
 import type { Message, WorkstreamBoot, WorkstreamDetail, WorkstreamSummary } from './types';
@@ -1775,6 +1776,56 @@ describe('useWorkstreamSocket', () => {
       expect.any(AbortSignal),
       WORKSTREAM_OPEN_TIMEOUT_BASE_MS,
     );
+  });
+
+  it('opens the newest batched live artifact and preserves the restored panel across a revisit snapshot', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const client = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000095';
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`, ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+    })) });
+    const artifact = (id: string) => legacySuggestedResource({ id, direction: 'artifact', relationshipType: 'generated' });
+    const first = artifact('00000000-0000-7000-8000-000000000096');
+    const second = artifact('00000000-0000-7000-8000-000000000097');
+    const third = artifact('00000000-0000-7000-8000-000000000098');
+    const fourth = artifact('00000000-0000-7000-8000-000000000099');
+    const useConversation = () => {
+      useWorkstreamSocket(api, workstreamId, true);
+      const detail = useQuery<WorkstreamDetail>({ queryKey: ['workstream', workstreamId], enabled: false });
+      const generation = useQuery<number>({ queryKey: workstreamSocketSnapshotGenerationQueryKey(workstreamId), enabled: false });
+      const [panel, open] = useState('saved panel');
+      useOpenAttachedArtifact(workstreamId, detail.data?.resources, true, open, generation.data ?? 0);
+      return panel;
+    };
+    const view = renderHook(useConversation, { wrapper: createWrapper(client) });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => { socket.open(); socket.message(snapshotFrame({ sequence: 1, workstream: { id: workstreamId, resources: [] } })); });
+    await flushPromises();
+    act(() => {
+      socket.message({ type: 'resource_attached', sequence: 2, occurredAt: '2026-07-31T19:20:01.000Z', resource: first });
+      socket.message({ type: 'resource_attached', sequence: 3, occurredAt: '2026-07-31T19:20:02.000Z', resource: second });
+    });
+    await flushPromises();
+    expect(view.result.current).toBe('00000000-0000-7000-8000-000000000097');
+    expect(queryDetail(client, workstreamId)?.resources.map((resource) => resource.id)).toEqual([
+      '00000000-0000-7000-8000-000000000097', '00000000-0000-7000-8000-000000000096',
+    ]);
+    view.unmount();
+    const revisit = renderHook(useConversation, { wrapper: createWrapper(client) });
+    await flushPromises();
+    expect(revisit.result.current).toBe('saved panel');
+    const nextSocket = FakeWebSocket.instances.at(-1)!;
+    act(() => {
+      nextSocket.open();
+      nextSocket.message(snapshotFrame({ sequence: 4, workstream: { id: workstreamId, resources: [third, second, first] } }));
+    });
+    await flushPromises();
+    expect(revisit.result.current).toBe('saved panel');
+    act(() => nextSocket.message({ type: 'resource_attached', sequence: 5, occurredAt: '2026-07-31T19:20:04.000Z', resource: fourth }));
+    await flushPromises();
+    expect(revisit.result.current).toBe('00000000-0000-7000-8000-000000000099');
   });
 
   it('normalizes legacy suggested resources in snapshots and live frames without losing sequence', async () => {

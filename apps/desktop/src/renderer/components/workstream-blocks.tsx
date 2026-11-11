@@ -2000,9 +2000,9 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
 
 /**
  * Which collapsible rows are open, held by a caller that virtualizes its
- * transcript. Two kinds of row use it — a clamped system note, and a settled
- * run's work accordion — and one set covers both: message ids are unique, and
- * the question ("which rows has this reader opened") is the same one.
+ * transcript. Clamped messages, work accordions, and cancelled questions share
+ * one set of row/disclosure identities: the question ("which rows has this
+ * reader opened") is the same one.
  *
  * `useState` inside the row is not enough there. The work-stream transcript
  * unmounts a row that scrolls out of the window, and the row's open/closed flag
@@ -2502,9 +2502,11 @@ function WorkAccordionBlock({ disclosure, message }: {
 }
 
 export function ElicitationPanel({
+  disclosure,
   elicitation,
   onAnswer,
 }: {
+  disclosure?: RowDisclosure;
   elicitation: ElicitationData;
   onAnswer: (answer: string | string[] | null, customResponse?: string) => Promise<void>;
 }): React.JSX.Element {
@@ -2512,6 +2514,7 @@ export function ElicitationPanel({
   const [selected, setSelected] = useState<string[]>([]);
   const [customSelected, setCustomSelected] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [locallyExpanded, setLocallyExpanded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const customInputRef = useRef<HTMLInputElement>(null);
@@ -2532,6 +2535,7 @@ export function ElicitationPanel({
     setSelected([]);
     setCustomSelected(false);
     setCollapsed(false);
+    setLocallyExpanded(false);
     setError(null);
   }, [elicitation.id]);
 
@@ -2543,7 +2547,26 @@ export function ElicitationPanel({
     );
   }
   if (elicitation.status === 'cancelled') {
-    return <div aria-label="Question cancelled" className="elicitation-resolved-answer human-message-bubble">Question cancelled</div>;
+    const disclosureId = `elicitation-${elicitation.id}:cancelled`;
+    const expanded = disclosure ? disclosure.expanded.has(disclosureId) : locallyExpanded;
+    return (
+      <details className="elicitation-cancelled" open={expanded}>
+        <summary onClick={(event) => {
+          // Keep native keyboard activation, but let the feed own the toggle
+          // so remounting a virtualized row restores its measured open state.
+          event.preventDefault();
+          if (disclosure) disclosure.onToggle(disclosureId);
+          else setLocallyExpanded((current) => !current);
+        }}>
+          <ChevronRight aria-hidden="true" size={14} strokeWidth={1.8} />
+          <span>Question cancelled</span>
+        </summary>
+        <div className="elicitation-cancelled-content">
+          <p>{normalizeModelText(elicitation.prompt)}</p>
+          <p className="elicitation-cancelled-note">No answer was recorded.</p>
+        </div>
+      </details>
+    );
   }
 
   const toggle = (value: string): void => {
@@ -2963,7 +2986,7 @@ export function MessageBlock({
       );
       return prompt ? <>{prompt}{response}</> : response;
     }
-    return <div className="transcript-event" id={`message-${message.id}`}><ElicitationPanel elicitation={message.elicitation} onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)} /></div>;
+    return <div className="transcript-event" id={`message-${message.id}`}><ElicitationPanel disclosure={rowDisclosure} elicitation={message.elicitation} onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)} /></div>;
   }
   // Ahead of the system branch, and on the type rather than the author: an
   // activation is appended by Rally on an automation's behalf, so it arrives

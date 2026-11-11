@@ -193,8 +193,10 @@ a `sidekick_imports` ledger, and each one was imported from its legacy
 `SidekickDO` on first use or on the alarm. Once every Organization outside a
 retired one had imported, the class was deleted (Wrangler tag `v13`) and
 migration 92 dropped the ledger. A Sidekick still pending in a retired
-Organization was never imported; the Organization refuses new work, so nothing
-reads it.
+Organization was never imported. Its directory row has no `region`, and
+`HostedSidekick.row()` reads it as no Sidekick. The one exception is
+`HostedSidekick.remove`, which reads the row as stored so an operator can
+archive it ([`engineering-mcp.md`](engineering-mcp.md)).
 
 ## Invariants
 
@@ -317,6 +319,22 @@ of the optimistic hand-off, the rule that everything the response does not
 depend on still waits for it, and the email-address reservation.
 
 ## Changelog
+
+### 2026-11-10 — Archiving reads a never-imported Sidekick's row
+
+**What changed:** `HostedSidekick.remove` reads the directory row whether or
+not it has a `region`. Every other method still reads a row without one as no
+Sidekick.
+
+**Why:** `archive_sidekick` now works in a retired Organization, and one of
+the Sidekicks it was built to clear was never imported, so the archive
+answered `sidekick_not_found`. The incident is in
+[`engineering-mcp.md`](engineering-mcp.md#changelog), under the same date.
+
+**Consequences:** A never-imported row holds only what the old directory
+projection carried, and most hosted columns are NULL. `remove` reads who may
+manage it and its lifecycle and nothing else. Do not widen another method to
+such a row without checking every column it reads.
 
 ### 2026-11-09 — One hosting primitive for a Sidekick and a Canvas; the Channel and Space host is deleted
 

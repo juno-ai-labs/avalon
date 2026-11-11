@@ -110,7 +110,7 @@ changelogs of [`sidekick-sources.md`](../../sidekick-sources.md#changelog) and
 
 ## Rollout
 
-Ships to everyone on merge, with no flag. WorkspaceDO migration 145 adds the
+Ships to everyone on merge, with no flag. WorkspaceDO migration 146 adds the
 tables and backfills a source for every person whose delegation admitted a
 configured rule's events.
 

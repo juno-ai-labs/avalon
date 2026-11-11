@@ -4443,6 +4443,14 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS,
 }, {
   version: 145,
+  description: "index live child projections so Canvas activity reads do not scan completed history",
+  statements: [
+    `CREATE INDEX sidekick_child_projections_running_idx ON sidekick_child_projections(sidekick_id)
+      WHERE json_extract(effect_json, '$.archivedAt') IS NULL
+        AND json_extract(effect_json, '$.state') IN ('scheduled', 'running', 'preparing_context', 'waiting_capacity', 'interrupting')`,
+  ],
+}, {
+  version: 146,
   description: "record who lets events into a Sidekick apart from who it may act as, and the requests that ask",
   // See SIDEKICK_SOURCE_SCHEMA_STATEMENTS and docs/sidekick-sources.md. The
   // second list admits a request's three notice kinds on the intents and
@@ -5653,11 +5661,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const occurredAt = new Date().toISOString();
     const waterline = this.canvasListWaterline();
     const present = this.presentByCanvas();
+    const activity = new Map<string, { backgroundAgents: number; sidekicks: number }>();
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed || (!everyone && !readers.has(attachment.userId))) continue;
       const frame = this.sidebarListFrame("workspace_canvas_list", attachment.userId, () => WorkspaceCanvasListEventSchema.parse({
-        type: "workspace_canvas_list", occurredAt, waterline, items: this.canvasList(attachment, present),
+        type: "workspace_canvas_list", occurredAt, waterline, items: this.canvasList(attachment, present, activity),
       }));
       if (frame !== null) sendSidebarListFrame(socket, frame);
     }
@@ -5688,10 +5697,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** One socket's Canvas list; see `canvasSidebarRows`. */
-  private canvasList(attachment: WorkspaceSocketAttachment, present = this.presentByCanvas()) {
+  private canvasList(attachment: WorkspaceSocketAttachment, present = this.presentByCanvas(),
+    activity = new Map<string, { backgroundAgents: number; sidekicks: number }>()) {
     return canvasSidebarRows(this.state.storage.sql,
       { userId: attachment.userId, member: viewerOf(attachment).accessClass === "member" }, present, SIDEBAR_LIST_LIMIT,
-      canvasAppearanceReporter(this.env));
+      canvasAppearanceReporter(this.env), null, activity);
   }
 
   // ---------------------------------------------------------------------------
@@ -5858,6 +5868,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // sends opened stop routing to them; the rows stay, suspended.
         if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
         this.sidekickDirectoryMoved = true;
+      },
+      noteExecutionChanged: (sidekickId) => {
+        if (this.state.storage.sql.exec(
+          `SELECT 1 FROM sidekick_conversation_attachments
+            WHERE automation_id = ? AND parent_kind = 'canvas' AND substream_id = '0' LIMIT 1`, sidekickId,
+        ).toArray().length > 0) this.noteCanvasDirectoryMoved();
       },
       noteViewerReadChanged: (userId) => {
         // The waterline is the list's, so it moves; only this reader is sent it.
@@ -8053,7 +8069,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const report = this.invalidAppearanceReporter(request.workspaceId);
     // The sidebar's rule: a member's own reach, without an owner's into every Canvas.
     const canvases = canvasesAttachedTo(this.state.storage.sql,
-      { userId: request.userId, actorRole: request.accessClass === "guest" ? null : "member" }, admitted.map((row) => row.automation_id));
+      { userId: request.userId, actorRole: request.accessClass === "guest" ? null : "member" }, admitted.map((row) => row.automation_id), canvasAppearanceReporter(this.env));
     return { items: admitted.map((row) => ({ ...automationSummary(row, report), attachedCanvases: canvases.get(row.automation_id) ?? [] })) };
   }
 
@@ -11560,7 +11576,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     ).toArray();
     // Only a member is sent this list. Their role is not read: an owner's
     // reach into every Canvas is for managing one, not for listing it here.
-    const canvases = canvasesAttachedTo(this.state.storage.sql, { userId, actorRole: "member" }, rows.map((row) => row.automation_id));
+    const canvases = canvasesAttachedTo(this.state.storage.sql, { userId, actorRole: "member" }, rows.map((row) => row.automation_id), canvasAppearanceReporter(this.env));
     return rows.map((row) => ({ ...automationSummary(row, this.invalidAppearanceReporter(workspaceId)),
       pinnedPosition: row.pinned_position, attachedCanvases: canvases.get(row.automation_id) ?? [] }));
   }
@@ -12121,6 +12137,10 @@ applyRetirementGate(WorkspaceDO, {
     // with this object; its conversations are still separate objects the walk
     // has to find and close.
     "childrenForRetirement",
+    // `archive_sidekick`, for the Sidekicks a closed Organization still lists.
+    // It writes only this object's own storage; `docs/workspace-retirement.md`
+    // says what has to stay true for that.
+    "sidekickRemove",
   ],
   drop: {
     // A conversation's effects for a hosted parent, handed to the Queue before

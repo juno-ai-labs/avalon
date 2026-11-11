@@ -12,7 +12,7 @@ import type { ParentNotice } from "./workspace-notification-intent-protocol";
 import { recordParentNotice } from "./workspace-notification-intent-storage";
 
 /**
- * Part of WorkspaceDO migration 145: what a Sidekick source request tells
+ * Part of WorkspaceDO migration 146: what a Sidekick source request tells
  * people. It runs after `SIDEKICK_SOURCE_SCHEMA_STATEMENTS`, which makes
  * `sidekick_source_requests`.
  *

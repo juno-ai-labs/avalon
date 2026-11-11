@@ -55,6 +55,7 @@ import {
   reportTelemetryProductIntent,
   type WorkstreamFeedSource,
   workstreamFeedSourceQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
 } from '../lib/telemetry';
 import {
   adjacentTranscriptRange,
@@ -85,6 +86,7 @@ import { useVirtualScrollAnchor } from '../lib/use-virtual-scroll-anchor';
 import { useSiteArtifacts } from '../lib/use-site-artifacts';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
 import { openRailAtEvenSplit, restoreRail, useRailFillsPane } from '../lib/rail-split';
+import { useOpenAttachedArtifact } from '../lib/use-open-attached-artifact';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
@@ -94,6 +96,7 @@ import {
   type WorkstreamMessageDeliveryMode,
 } from '../lib/use-workstream-socket';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
+import { useWorkspaceQuery } from '../lib/use-workspace';
 import { patchCachedWorkstreamViewerState, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { answerConversationElicitation } from '../lib/conversation-elicitation';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, PendingOpening, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
@@ -920,7 +923,7 @@ const IGNORE_FILES = (): void => undefined;
  * opened from a Breakout's sidebar.
  */
 type ConversationPanel =
-  | { kind: 'resource'; resourceId: string; workstreamScoped?: boolean }
+  | { kind: 'resource'; resourceId: string; workstreamScoped?: boolean; focusOnOpen?: boolean }
   | { kind: 'attachment'; preview: AttachmentPreview };
 
 /**
@@ -984,6 +987,8 @@ export interface ConversationSurfaceProps {
   conversationName?: string;
   /** A line just over the composer for a mode the host has put it in, such as editing a Sidekick. */
   composerNotice?: React.ReactNode;
+  /** Work delegated by this conversation, supplied by its host's live projection. */
+  composerActivity?: React.ReactNode;
   /** Escape in an empty composer leaves that mode. */
   onComposerCancel?: () => void;
   /**
@@ -1020,6 +1025,7 @@ function ConversationSurfaceContent({
   composerMenuActions: hostMenuActions,
   composerPlaceholder,
   composerNotice,
+  composerActivity,
   conversationName,
   onComposerCancel,
   withoutComposer = false,
@@ -1037,6 +1043,7 @@ function ConversationSurfaceContent({
 
   const { api, session } = useCollaborationSession();
   const { guest } = useShellCapabilities();
+  const workspace = useWorkspaceQuery({ api, session });
   const workspaceSocket = useOptionalWorkspaceSocket();
   const presenceUserIdsByWorkstream = workspaceSocket?.presenceUserIdsByWorkstream ?? NO_WORKSPACE_PRESENCE;
   const queryClient = useQueryClient();
@@ -1119,6 +1126,9 @@ function ConversationSurfaceContent({
   useEffect(()=>{setAnnotationPreviewOpener?.(openAttachment);return()=>setAnnotationPreviewOpener?.(null);},[openAttachment,setAnnotationPreviewOpener]);
   const openResourceDetails = useCallback((resourceId: string): void => {
     openPanel({ kind: 'resource', resourceId });
+  }, [openPanel]);
+  const revealAttachedArtifact = useCallback((resourceId: string): void => {
+    openPanel({ kind: 'resource', resourceId, focusOnOpen: false });
   }, [openPanel]);
   // A navigation can ask this conversation to open onto an artifact (a
   // Canvas opened onto one). Arriving by it, the panel restored below is that
@@ -1274,6 +1284,13 @@ function ConversationSurfaceContent({
    * live snapshot that replaces it; what stays is reading and composing.
    */
   const feedFromLocalCache = feedSource.data === 'local_cache';
+  const snapshotGeneration = useQuery<number>({
+    queryKey: workstreamSocketSnapshotGenerationQueryKey(id, substreamId),
+    queryFn: async () => 0,
+    enabled: false,
+    initialData: 0,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
   // The rail's detail reads through the *preview* route, exactly as the
   // attachment lightbox does: it materializes readable text for a file that is
   // not already text, which is what makes a cited Word file or PDF worth
@@ -1304,6 +1321,13 @@ function ConversationSurfaceContent({
     setPanel(null);
     closeOwnRail();
   }, [resourcePanel, closeOwnRail, feedFromLocalCache, routedDetail]);
+  useOpenAttachedArtifact(
+    artifactPanelKey,
+    feedFromLocalCache ? undefined : routedDetail?.resources,
+    conversationVisible,
+    revealAttachedArtifact,
+    snapshotGeneration.data,
+  );
   // Popped-out windows follow new versions from the app shell
   // (`App.tsx`), which reads every version this conversation's socket carries
   // through `followResourceHeads`.
@@ -2547,6 +2571,7 @@ function ConversationSurfaceContent({
           {/* Over the composer rather than inside it: the capsule's grid has
               no row for a line of its own. */}
           {!withoutComposer && composerNotice && <div className="composer-mode-notice">{composerNotice}</div>}
+          {!withoutComposer && composerActivity}
           {!withoutComposer && <WorkstreamComposer
             {...(onComposerCancel ? { onCancel: onComposerCancel } : {})}
             api={api ?? undefined}
@@ -2569,10 +2594,10 @@ function ConversationSurfaceContent({
                say what the flag served, while a pinned one whose run failed
                before its first token records nothing and would otherwise read
                as following a flag it never consults. */
-            model={{
+            model={workspace.data?.modelSelectorVisible ? {
               model: displayedDetail.latestHarnessRun?.model ?? displayedDetail.modelOverride ?? null,
               pinned: (displayedDetail.modelOverride ?? null) !== null,
-            }}
+            } : undefined}
             onAttach={attachmentDraft.addFiles}
             onOpenAttachment={openAttachment}
             onRemoveAttachment={attachmentDraft.removeAttachment}
@@ -2595,6 +2620,7 @@ function ConversationSurfaceContent({
       {railVariant === 'context' && resourcePanel && (railOpen || railLeaving) && <InspectorRail
         panel={{
           resourceId: resourcePanel.resourceId,
+          focusOnOpen: resourcePanel.focusOnOpen,
           onClose: closeOwnRail,
           expandAction: panelExpandAction,
           ancestors: panelAncestors,
