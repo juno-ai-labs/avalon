@@ -819,6 +819,26 @@ describe("durable UI-to-model transcript projection", () => {
     expect(elicitation?.content).toContain(`"person_id":"${AUTHOR_USER_ID}"`);
   });
 
+  it("hands a Chat's opening Rally message to the model as context, and its later replies as assistant turns", async () => {
+    // A seeded Canvas: Rally's opening message, then a person, then Rally's answer.
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      projectionEnv([], {}),
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
+      [
+        message("00000000-0000-4000-8000-000000000071", 1, { author: "agent", textContent: "Welcome to Rally." }),
+        message("00000000-0000-4000-8000-000000000072", 2, { author: "human", textContent: "Add five ideas to the wall" }),
+        message("00000000-0000-4000-8000-000000000073", 3, { author: "agent", textContent: "Added five." }),
+      ],
+    );
+
+    // The first turn a provider is given must be a user's: Gemini, the
+    // fallback model, refuses a conversation that opens with the model's own.
+    expect(projection.messages.map((item) => item.role)).toEqual(["user", "user", "assistant"]);
+    expect(projection.messages[0]?.content)
+      .toBe("RALLY'S OWN EARLIER MESSAGE IN THIS CONVERSATION. CONTEXT, NOT A REQUEST\n\nWelcome to Rally.");
+    expect(projection.messages[2]?.content).toBe("Added five.");
+  });
+
   it("attributes a request addressed to Rally to the member who sent it", async () => {
     const projection = await __integrationTesting.projectModelProtocolTranscript(
       projectionEnv([], {}),

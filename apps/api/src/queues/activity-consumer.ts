@@ -52,6 +52,8 @@ import { consumeGitHubDeliveryMessage, isGitHubDeliveryQueueMessage } from "../s
 
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
+import { CANVAS_SEEDS } from "../canvas-seeds";
+import { CanvasSeedQueueSchema, runCanvasSeed } from "../services/canvas-seed-service";
 import { MemorySweepMessageSchema, runMemorySweep } from "../services/memory-sweep-service";
 import { MemoryDigestSyncMessageSchema } from "../durable-objects/memory-digest-sync";
 import { refreshMemoryDigestCopies } from "../services/memory-digest-service";
@@ -785,6 +787,16 @@ async function consumeOne(message: Message<unknown>, env: Env,
   if (maintenance.success) {
     if (maintenance.data.region !== env.AVALON_REGION) throw new Error('connector_maintenance_region_mismatch');
     await runConnectorMaintenance(env, maintenance.data.operationId, new AbortController().signal);
+    message.ack(); return;
+  }
+  const canvasSeed = CanvasSeedQueueSchema.safeParse(message.body);
+  if (canvasSeed.success) {
+    if (canvasSeed.data.region !== env.AVALON_REGION) throw new Error("canvas_seed_region_mismatch");
+    // A throw is the retry, and after the queue's retries the dead-letter
+    // queue: a guide that did not land is found there, not in a log.
+    try {
+      await runCanvasSeed(env, canvasSeed.data, CANVAS_SEEDS);
+    } catch (error) { if (!isRetirementRefusal(error)) throw error; }
     message.ack(); return;
   }
   const installation = ConnectorInstallationQueueSchema.safeParse(message.body);
