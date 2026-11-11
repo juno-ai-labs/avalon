@@ -14,7 +14,7 @@ import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import type * as Platform from '../lib/platform';
 import { expandRequest, openResourceRequest } from '../lib/navigation-routes';
-import type { ConversationSurfaceProps } from './conversation-surface';
+import type { ConversationSurfaceProps, ConversationHostPanel } from './conversation-surface';
 import type * as ConversationSurfaceExports from './conversation-surface';
 
 type ConversationSurfaceModule = typeof ConversationSurfaceExports;
@@ -62,14 +62,18 @@ vi.mock('./conversation-surface', () => ({
   ConversationSurface: (props: ConversationSurfaceProps) => {
     const location = useLocation();
     const [panelOpen, setPanelOpen] = useState(false);
+    const [hostPanel, setHostPanel] = useState<ConversationHostPanel | null>(null);
     surfaces.push({ props, requested: openResourceRequest(location.state)?.resourceId ?? null, expanded: expandRequest(location) !== null });
     return <div>
+      {hostPanel && <aside aria-label={hostPanel.label}>{hostPanel.render({ onClose: () => setHostPanel(null), ancestors: undefined, expandAction: undefined })}</aside>}
       {props.composerActivity}
-      {props.renderHeader?.({ presentUserIds: [ME, MAYA], panelOpen } as never)}
+      {props.renderHeader?.({ presentUserIds: [ME, MAYA], panelOpen, openPanel: setHostPanel } as never)}
       <button onClick={() => setPanelOpen((open) => !open)} type="button">{panelOpen ? 'Close test panel' : 'Open test panel'}</button>
     </div>;
   },
 }));
+
+vi.mock('./automation', () => ({ SidekickPanel: ({ id, controls }: { id: string; controls: { onClose: () => void } }) => <div>Sidekick panel {id}<button onClick={controls.onClose}>Close panel</button></div> }));
 
 function detail(overrides: Partial<CanvasDetail> = {}): CanvasDetail {
   return {
@@ -259,7 +263,7 @@ describe('CanvasScreen', () => {
     expect(screen.queryByText('Sidekicks')).toBeNull();
   });
 
-  it("opens a Sidekick's page from its row only for someone it is shared with, and says how to change it otherwise", async () => {
+  it("opens a Sidekick in the right panel from its row only for someone it is shared with, and says how to change it otherwise", async () => {
     getCanvas.mockResolvedValue(detail({ sidekicks: [
       attached(TRACKER, 'Launch tracker', { canOpen: true }), attached(DIGEST, 'Weekly digest', { canOpen: false }),
     ] }));
@@ -276,7 +280,11 @@ describe('CanvasScreen', () => {
     expect(screen.getByRole('menu')).toBeInTheDocument();
     expect(sidekickRow('Launch tracker')).not.toHaveAttribute('aria-disabled');
     fireEvent.click(sidekickRow('Launch tracker'));
-    expect(await screen.findByText(`Sidekick page /sidekicks/${TRACKER}`)).toBeInTheDocument();
+    expect(await screen.findByRole('complementary', { name: 'Sidekick: Launch tracker' })).toHaveTextContent(`Sidekick panel ${TRACKER}`);
+    expect(screen.getByRole('button', { name: 'Canvas menu: Q4 revenue review' })).toBeInTheDocument();
+    expect(screen.queryByText(/Sidekick page/u)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close panel' }));
+    expect(screen.queryByRole('complementary', { name: 'Sidekick: Launch tracker' })).toBeNull();
   });
 
   it("opens the Canvas's Chat as a canvas conversation under a header naming it", async () => {

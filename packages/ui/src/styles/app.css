@@ -8620,3 +8620,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .annotation-chip > [role='alert'] { flex-basis:100%; padding:0 8px 8px; }
 .annotation-chip > [role='alert'] button { margin:6px 8px 0 0; color:inherit; background:transparent; border:1px solid var(--av-sys-color-border-default); border-radius:6px; padding:4px 8px; cursor:pointer; }
 .annotation-chips > [role='status'] { color:var(--av-sys-color-text-muted); font-size:12px; }
+
+/* A hosted Sidekick uses the whole right slot; its previews cover that same slot. */
+.conversation-host-panel > .rail-surface-content { grid-template-rows: minmax(0, 1fr); }
+.conversation-host-panel .rail-resizer { display: none; }

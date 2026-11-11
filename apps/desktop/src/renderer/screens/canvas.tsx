@@ -24,7 +24,8 @@ import { isNotFoundError, useRestoredRouteFallback } from '../lib/landing';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { layoutKey, readArtifactPanel } from '../lib/desktop-layout';
 import { openResourceRequest, openResourceState } from '../lib/navigation-routes';
-import { ConversationOpeningSkeleton, ConversationSurface } from './conversation-surface';
+import { SidekickPanel } from './automation';
+import { ConversationOpeningSkeleton, ConversationSurface, type ConversationHeaderContext } from './conversation-surface';
 
 /**
  * `/canvases/:id`: a Canvas open. Its Chat, the `canvas`-kind conversation
@@ -280,7 +281,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     renderGlyph={(chosen) => <CanvasMark appearance={chosen} id={id} kind={kind} size={24} />}
   />;
   // Keep the common actions in the same tile row as an artifact's title menu.
-  const menuItems = (panelOpen: boolean): React.JSX.Element => <>
+  const menuItems = (panelOpen: boolean, openPanel?: ConversationHeaderContext['openPanel']): React.JSX.Element => <>
     <ActionTiles>
       <ActionTile disabled={!canvas.data} icon={<IconUsers aria-hidden="true" size={20} stroke={1.6} />} label="Share" onSelect={() => setSharing(true)} />
       <ActionTile disabled={!newestArtifact || panelOpen} disabledReason={!newestArtifact ? 'This Canvas has no artifacts yet.' : panelOpen ? 'The artifact panel is already open.' : undefined} icon={<IconLayoutSidebarRight aria-hidden="true" size={20} stroke={1.6} />} label="Open artifact" onSelect={() => {
@@ -300,7 +301,11 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       Change appearance
     </TitleMenuItem>
     <CanvasSidekicksSection
-      onOpen={(sidekick) => void navigate(`/sidekicks/${encodeURIComponent(sidekick.id)}`)}
+      onOpen={(sidekick) => openPanel?.({
+        key: `sidekick:${sidekick.id}`,
+        label: `Sidekick: ${sidekick.name}`,
+        render: (controls) => <SidekickPanel id={sidekick.id} key={sidekick.id} controls={controls} />,
+      })}
       sidekicks={sidekicks}
     />
     {canvas.data?.canManage && <>
@@ -312,7 +317,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     </>}
   </>;
   // Edited from the title the pill shows, so not before there is one to show.
-  const level = (panelOpen: boolean): TitlePillLevel => renaming && (canvas.data || row) ? {
+  const level = (panelOpen: boolean, openPanel?: ConversationHeaderContext['openPanel']): TitlePillLevel => renaming && (canvas.data || row) ? {
     // Set aside while the title is edited, so a click in the field is not a press of the menu.
     key: `canvas:${id}`,
     icon: mark,
@@ -329,16 +334,16 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     icon: mark,
     title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
     label: naming ? 'Canvas menu: Rally is choosing a name' : `Canvas menu: ${title}`,
-    menu: menuItems(panelOpen),
+    menu: menuItems(panelOpen, openPanel),
     iconAction: appearancePicker,
   };
-  const header = (presentUserIds: readonly string[], panelOpen: boolean): React.JSX.Element => {
+  const header = (presentUserIds: readonly string[], panelOpen: boolean, openPanel?: ConversationHeaderContext['openPanel']): React.JSX.Element => {
     const present = presentUserIds.filter((userId) => userId !== session?.user.id).flatMap((userId) => {
       const member = membersById.get(userId);
       return member ? [member] : [];
     });
     return <TitlePillHeader
-      current={level(panelOpen)}
+      current={level(panelOpen, openPanel)}
       trailing={<span className="canvas-header-trailing">
         {present.length > 0 && <span aria-label={`${present.length} ${present.length === 1 ? 'person' : 'people'} here`} className="canvas-header-present" role="group">
           <AvatarStack currentUserId={session?.user.id ?? null} members={present} presentUserIds={presentUserIds} />
@@ -357,7 +362,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       parentKind="canvas"
       composerActivity={<ComposerAgentActivity activity={workspaceSocket?.state === 'connected' && workspaceSocket.sidebarReady
         ? (row?.runningActivity ?? (!canvas.isError ? canvas.data?.runningActivity : undefined)) : undefined} />}
-      renderHeader={(context) => header(context.presentUserIds, context.panelOpen)}
+      renderHeader={(context) => header(context.presentUserIds, context.panelOpen, context.openPanel)}
       // Offline, the Canvas is still named in the list: the pane keeps its
       // pill and Share over the state rather than a bare Back and Forward.
       stateHeader={header([], false)}

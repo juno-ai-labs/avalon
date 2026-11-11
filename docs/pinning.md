@@ -1,7 +1,7 @@
 # Pinning
 
-A person pins what they want to hand: a Canvas or a Sidekick. Each of the two
-sidebar sections has a **Pinned** group above its list, and the pin lives on
+A person pins what they want to hand: a Canvas or a Sidekick. The Canvases
+sidebar has a **Pinned** group above its list, and pins live on
 the server, so the same person opening Rally on another machine finds their
 list as they left it. Canvas pins also appear in the centered group of the
 leftmost navigation rail, in exactly the same order. Pins of the kinds before
@@ -28,8 +28,8 @@ list row's `pinnedPosition`, so nothing else answers the question.
 | `apps/api/src/routes/canvases.ts` | `PUT /canvases/pinned-order` (`{itemIds}`): one person's Canvas pin order, for members and guests. |
 | `apps/api/src/routes/navigation.ts` | `GET /navigation/artifact-pins`, kept for the detached artifact window and always empty (see [Artifact pins](#artifact-pins)). |
 | `packages/contracts/src/canvases.ts` | `SidebarPinRequestSchema`, `SidebarPinOrderRequestSchema`. |
-| `apps/desktop/src/renderer/components/navigation-rows.tsx` | The Pinned group both sections draw: `PinnedSection`, `PinnableRow`, `usePinWrite`, `splitPinned`; Sidekicks alone use `useRowPinDrop`. |
-| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx` | Each list's Pinned group above its other rows. |
+| `apps/desktop/src/renderer/components/navigation-rows.tsx` | The shared Pinned group primitives: `PinnedSection`, `PinnableRow`, `usePinWrite`, `splitPinned`; Sidekicks alone use `useRowPinDrop`. |
+| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx` | The Canvas list's visible Pinned group; the Sidekick list component is no longer mounted by the shell. |
 | `apps/desktop/src/renderer/components/canvas-pin-drag.ts`, `canvas-pin-rail.tsx` | Shared Canvas drag payload and ordering; the rail shortcuts read the same Canvas list. |
 | `apps/desktop/src/renderer/screens/canvas.tsx` | The Canvas title menu's pin switch. |
 
@@ -66,8 +66,7 @@ nothing writes one.
 
 `splitPinned` draws the rows with a position, in position order, above every
 other row and in the left rail. A row's context menu pins and unpins it, and
-so does a Canvas's title menu. A Sidekick that needs input is drawn in that
-section's **Needs input** group, above Pinned, rather than twice. A refused pin
+so does a Canvas's title menu. Sidekicks no longer have a sidebar section; their stored pins and pin API remain, but draw no sidebar group. A refused pin
 keeps the server's list and shows an error (`usePinWrite`).
 
 Canvas rows and rail shortcuts use `useCanvasPinDrag`: a typed Canvas payload
@@ -75,8 +74,7 @@ allows dragging between either surface. Dropping above or below the middle of
 a pin inserts on that side; dropping in the group gap appends. Both surfaces
 also reorder with Alt + Up/Down. A new pin is saved before an optional order
 write, so a refused order can leave it pinned at the end; the failure is shown
-and the server list stays authoritative. Sidekicks retain append-only drag
-pinning through `useRowPinDrop`.
+and the server list stays authoritative. The unmounted Sidekick list retains its append-only drag implementation.
 
 One `CanvasPinDragProvider` owns the drag state, memoized split and write
 lifecycle for both views. It arms both empty drop destinations at drag start
