@@ -1,13 +1,14 @@
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight } from 'lucide-react';
-import { useCallback } from 'react';
+import { useCallback, useContext } from 'react';
 import { Link } from 'react-router-dom';
 
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { answerConversationElicitation } from '../lib/conversation-elicitation';
 import { composeTranscript, orderedTranscriptMessages, transcriptOverlaysQueryKey, type TranscriptOverlay } from '../lib/transcript';
+import { SidekickPanelContext } from '../lib/sidekick-panel';
 import { sidekickRunSearch } from '../lib/sidekick-status';
 import type { AutomationSummary, Message } from '../lib/types';
 import { orderedTranscriptQueryKey, useWorkstreamSocket } from '../lib/use-workstream-socket';
@@ -73,6 +74,7 @@ export function useSidekickRunNumber(sidekickId: string, runId: string | null): 
  * `run`), so it moves as the run does; `docs/automation-lifecycle.md` owns it.
  */
 export function SidekickRunRow({ message }: { message: Message }): React.JSX.Element | null {
+  const panel = useContext(SidekickPanelContext);
   const activation = message.automationActivation;
   const run = activation?.run;
   // The Sidekick's own mark, from the list the workspace socket keeps; the
@@ -102,7 +104,11 @@ export function SidekickRunRow({ message }: { message: Message }): React.JSX.Ele
         <RelativeTime className="sidekick-run-row-time" value={message.createdAt} />
       </summary>
       {run.reply && <p className="sidekick-run-row-reply">{run.reply}</p>}
-      <Link className="sidekick-run-row-open" to={{ search: sidekickRunSearch(activation.runId) }}>Open run</Link>
+      <Link className="sidekick-run-row-open" to={`/sidekicks/${encodeURIComponent(activation.automationId)}${sidekickRunSearch(activation.runId)}`} onClick={(event) => {
+        if (!panel || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        panel.openRun(activation.runId ?? null);
+      }}>Open run</Link>
     </details>
     {run.state === 'needs_input'
       // A waiting run's reply is its question; the answer form says it once

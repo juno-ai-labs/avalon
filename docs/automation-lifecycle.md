@@ -1072,7 +1072,11 @@ loads its authoring tools in `"0"` only for a turn so marked
 (`services/integrations.ts`); a turn that reached `"0"`'s loop any other way
 gets the delegation tools alone.
 
-**In the client.** The Sidekick screen's composer offers a manager **Edit
+**In the client.** The same Sidekick screen is hosted by a standalone route
+or by a Canvas's right panel. The panel keeps runs local, closes on archive,
+and leaves the Canvas's route and draft intact;
+[`desktop-shell.md`](desktop-shell.md#one-right-slot) owns this layout.
+The Sidekick screen's composer offers a manager **Edit
 Sidekick** in its actions menu, a checkbox entry (`ComposerMenuAction.checked`)
 that switches the composer into marking every message `intent:
 "edit_sidekick"` until it is switched off; the composer then reads "Describe a

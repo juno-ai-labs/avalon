@@ -1,6 +1,6 @@
 # Desktop and web shell
 
-The shell is everything around a pane: the navigation sidebar (a rail of three
+The shell is everything around a pane: the navigation sidebar (a rail of two
 sections beside one list), the floating title pills and their menus, and the
 one right slot a pane's artifact or attachment opens in. The Electron client
 and the browser web app mount the same shell, the desktop renderer's
@@ -10,7 +10,7 @@ and its native services. What differs by host or by guest is read from
 
 The product has two sections, **Canvases** and **Sidekicks**
 ([the Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)).
-The rail's third section, **Activity**, is a list of things to go to rather
+The rail's Activity section is a list of things to go to rather
 than a section of the product ([`activity.md`](activity.md)). Channels,
 Threads, Breakouts, the Thread-feed Activity and the Pinned and Artifacts
 sections were removed at the 2026-11 cutover; the changelog below records them.
@@ -26,9 +26,9 @@ routes the shell serves, or who owns the right panel.
 | `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: the restorable `last-route`, else `/canvases`, once onboarding is finished. `LANDING_ROUTE`, `restorableRoute`, `RESTORED_ROUTE`, `useRestoredRouteFallback`, `useOpenLanding`. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Sidekicks, Activity), the account menu under it, the list's header and its actions, and the phone sheet; `useSectionCounts`, the rail's counts, and `useRailDockBadge`, which sends Activity's unseen count (`dockBadgeCount`) to the dock. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Activity), the account menu under it, the list's header and its actions, and the phone sheet; `useSectionCounts`, the rail's counts, and `useRailDockBadge`, which sends Activity's unseen count (`dockBadgeCount`) to the dock. |
 | `apps/desktop/src/common/sidebar-attention.ts` | `canvasNeedsAttention` and `sidekickNeedsAttention`: what counts as needing attention, shared by `useSectionCounts` and the menu bar ([`menu-bar.md`](menu-bar.md)). |
-| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx`, `activity-sidebar-section.tsx` | `CanvasesSection`, `SidekicksSection` (with `useSidekickList`) and `ActivitySection` (with `useActivityList`), the three lists. |
+| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx`, `activity-sidebar-section.tsx` | `CanvasesSection` and `ActivitySection` (with `useActivityList`), the two visible lists; `useSidekickList` still supplies live Sidekick data to menus and screens. |
 | `apps/desktop/src/renderer/components/navigation-rows.tsx` | The row primitives both lists draw: `RowLayout`, `SectionHeading`, `PinnedSection`, `useSectionMotion`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the rail, the account menu's trigger included. |
 | `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#in-the-client)). |
@@ -93,8 +93,7 @@ It holds two columns:
 - **The rail**, a 76px column under the macOS window controls, which the main
   window centers over it per macOS version (the width is
   `--navigation-rail-width`; change it and the light position together):
-  **Canvases**, a page outline (the sheet every artifact tile draws), and
-  **Sidekicks**, the Tabler hexagon a Sidekick is drawn in, and **Activity**,
+  **Canvases**, a page outline (the sheet every artifact tile draws), and **Activity**,
   the triangle outline it wore before the pivot, then the account menu at the
   bottom, labelled Settings. Pinned Canvas shortcuts occupy the center, in
   the same order as the Canvases list; both surfaces accept drag pinning and
@@ -108,16 +107,14 @@ It holds two columns:
   title-only; its accessible name also announces unread state. An empty rail
   shows a pin drop hint, highlighted throughout a Canvas drag. The choice is a device preference
   (`rally.sidebar-section`, default `canvases`); a value stored before the
-  cutover (`channels`, `threads`, `pinned`, `artifacts`) reads as the default,
-  and `activity` opens Activity again. Arriving at a Canvas or a Sidekick moves
-  the rail to its section (Activity excepted: once open, only a rail pick
+  cutover (`channels`, `threads`, `pinned`, `artifacts`, `sidekicks`) reads as the default,
+  and `activity` opens Activity again. Arriving at a Canvas or a standalone Sidekick selects
+  Canvases (Activity excepted: once open, only a rail pick
   leaves it, whatever the pane opens and however, a row, a link inside the
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
-  For members, clicking **Sidekicks** always opens `/sidekicks`, including when
-  its list or an individual Sidekick is already open. Repeated clicks at the
-  dashboard add no history entries, and the phone sheet closes to reveal the
-  dashboard. A guest only changes the list, keeping the shared pane open
-  because guests have no dashboard directory.
+  Sidekicks have no rail tile, list or sidebar creation action. The account
+  menu still opens the Sidekicks library, and direct Sidekick routes remain
+  available with Canvases beside them (or Activity if it was selected).
   The window's landing is its
   first route that belongs to a section, so a launch's redirect from `/` to
   `/canvases` is the landing and not a navigation. Landing on a dashboard
@@ -148,11 +145,10 @@ It holds two columns:
   Each section carries a red count (`RailBadge`, 15px in the danger red
   design.html draws; nothing at zero, `99+` past two digits), which the
   button's accessible name reads after the section ("Canvases, 10 unread",
-  "Sidekicks, 1 waiting"; read from its content the badge came first),
+  "Activity, 3 unseen"),
   the badge itself hidden from a screen reader: **Canvases**, each Canvas holding something this
-  person has not read; **Sidekicks**, each Sidekick that needs input or holds
-  something unread; **Activity**, every item this person has not seen
-  (`unseenCount`, "3 unseen"). All three are read from the lists the
+  person has not read; **Activity**, every item this person has not seen
+  (`unseenCount`, "3 unseen"). Both are read from the lists the
   workspace socket keeps, the same rows the lists draw. The dock badge, and
   an installed browser app's icon badge, is Activity's `unseenCount`
   (`dockBadgeCount`), the count a push sets while Rally is closed
@@ -169,14 +165,7 @@ It holds two columns:
 - **One list**, titled with the section's name. **Canvases** is a Pinned
   group, then every Canvas by recent activity; its actions are **Canvas dashboard**
   and **New Canvas**
-  (`POST /canvases`, then the new Canvas's route). **Sidekicks** is **Needs
-  input**, then Pinned, then every Sidekick by what it last did, or by name
-  from the heading's **Recent** control (the same `DropdownSelect` and ⇵
-  glyph as the Canvases list's); its action is **New Sidekick**
-  (`/sidekicks/new`), preceded by **Sidekicks home** (`/sidekicks`) to return
-  to the dashboard from any Sidekick. Home also dismisses the phone sheet
-  when its destination is already open, and gives a direct shortcut when the
-  rail is hidden on a phone. A guest gets neither New action nor Home.
+  (`POST /canvases`, then the new Canvas's route). A guest has no New action.
   **Activity** lists the
   person's mentions, adds and Sidekick run notices newest first, each a kind
   glyph, who did what where, the preview, a time and an unseen dot, opening
@@ -263,7 +252,7 @@ sidebar, so the app shell provides no context there.
 
 The sidebar is a sheet behind the list's own header: the close button at the
 left, the section's title centred, its actions at the right. The rail is a row
-of tabs under it: Canvases, Sidekicks, Activity, then the account menu as a last tab
+of tabs under it: Canvases, Activity, then the account menu as a last tab
 labelled Settings. While a visible pane header carries the menu button
 (`PHONE_NAVIGATION_CONTROL`), the shut sheet keeps no bar and is hidden whole;
 a screen without one keeps the sheet's header as its top bar, and closing the
@@ -311,7 +300,7 @@ levels; reduced motion turns that off.
   Change appearance, then a **Sidekicks** section when the Canvas has any
   attached (`CanvasSidekicksSection`), then Archive canvas for a manager. A
   Sidekick's row is its hexagon, name and state (Draft, Active, Paused). It
-  opens the Sidekick's page only for someone whose own Sidekicks list holds
+  opens the Sidekick in the Canvas's right panel only when `canOpen` admits
   it; for anyone else it stays focusable, opens nothing, and its tooltip says
   to ask in the Canvas's chat. The menu archives no Sidekick: one the
   Canvas made is archived by asking its chat, or with the Canvas.
@@ -346,7 +335,7 @@ levels; reduced motion turns that off.
 
 The right panel holds the desktop's embedded browser, or whatever the
 conversation opened: a Canvas's artifact with its actions, an attachment, a
-citation's file, or a prior version. None of these opens as a modal. The
+citation's file, a prior version, or a host-owned item such as a Sidekick. None of these opens as a modal. The
 panel's header is a pane header: the item's title pill, its actions in the
 pill's menu, and the round close button. At phone width (640px and under) the
 panel takes the whole width, with no resize edge. Above it, an attachment or
@@ -355,6 +344,16 @@ tab splits its window in half; [`desktop-layout.md`](desktop-layout.md) owns
 the width and its resize edge. `ConversationSurface` scopes the panel to the
 conversation that opened it (`railScope`, the parent id), and a surface only
 closes, fades or restores a panel it owns.
+
+A Canvas supplies a Sidekick through `ConversationHeaderContext.openPanel`:
+`ConversationHostPanel` names it and renders it with the slot's close, expand
+and ancestor controls. The same Sidekick detail and conversation UI serves the
+standalone route and this panel. Run selection is local to the panel, leaving
+the Canvas URL, history and draft in place; archiving closes the panel. The
+embedded conversation does not restore or claim the shell's rail. Its manually
+opened previews cover the same slot, and Escape closes only the innermost
+panel. File paste goes to the conversation containing the focused target.
+Sidekick panels are transient; only resource panels restore after relaunch.
 
 `RailSurface` focuses an explicitly opened panel and returns focus on removal.
 Automatic artifact reveals pass `focusOnOpen: false` through `InspectorRail`,
@@ -436,7 +435,12 @@ It does not own:
 - **Desktop component tests:** `components/navigation-sidebar.test.tsx` (the
   rail, its sections, the phone sheet), `screens/landing.test.tsx`,
   `App.session-gate.test.tsx` (routes and redirects), `lib/ui-store.test.ts`
-  (the stored section), `lib/browser-rail-links.test.ts`. Run with
+  (the stored section), `lib/browser-rail-links.test.ts`.
+- **Canvas-hosted Sidekicks:** `screens/canvas.test.tsx` covers the command-pill
+  choice and access gating. `screens/sidekick-conversation.test.tsx` mounts the
+  real conversation and verifies that opening and closing preserves the Canvas
+  draft and keeps rail ownership on the Canvas. `lib/use-file-paste.test.tsx`
+  covers routing pastes between mounted conversations. Run with
   `pnpm --filter @rally/desktop exec vitest run <path>`.
 - **A guest in the shell:** `lib/browser-collaboration.test.tsx`.
 - **Panel focus:** `components/rail-surface.test.tsx` verifies explicit opens
@@ -451,6 +455,26 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-10 — Open Canvas Sidekicks beside their Chat
+
+**What changed:** Removed Sidekicks from the navigation rail and sidebar list.
+A Canvas command-pill Sidekick opens the shared Sidekick UI in the existing
+right slot, with local run selection, close, expansion and nested previews.
+Retired saved sidebar selections fall back to Canvases.
+
+**Why:** The requested flow keeps the Canvas as the working context while a
+person inspects or edits one of its attached Sidekicks.
+
+**Considered and rejected:** Continuing to navigate to a standalone Sidekick
+would replace the Canvas; a separate panel-specific Sidekick implementation
+would duplicate its conversation, lifecycle and details controls.
+
+**Consequences:** Hosts can supply content to the conversation's panel primitive.
+Embedded conversations keep preview state local and never claim the outer
+rail. Standalone links, Activity destinations and the account-menu library
+remain available.
+
 
 ### 2026-11-09 — Give an empty Activity feed its own page
 

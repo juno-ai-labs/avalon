@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -66,7 +66,10 @@ vi.mock('../lib/use-transcript-follow', () => ({
   }),
 }));
 
-import { AutomationScreen } from './automation';
+import { AutomationScreen, SidekickPanel } from './automation';
+import { ConversationSurface } from './conversation-surface';
+import { useUiStore } from '../lib/ui-store';
+import { layoutKey, writeLayout } from '../lib/desktop-layout';
 
 function sidekick(overrides: Partial<AutomationDetail> = {}): AutomationDetail {
   return {
@@ -93,7 +96,7 @@ function boot(): WorkstreamBoot {
   } as WorkstreamBoot;
 }
 
-function renderSidekick(viewerId: string, search = ''): QueryClient {
+function renderSidekick(viewerId: string, search = '', inCanvas = false): QueryClient {
   session.current = { user: { id: viewerId, name: 'Viewer', email: 'viewer@example.test' }, workspace: { id: 'w', region: 'global', role: 'member' } };
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const conversation = boot();
@@ -101,9 +104,17 @@ function renderSidekick(viewerId: string, search = ''): QueryClient {
   queryClient.setQueryData(['ordered-transcript', SIDEKICK], conversation.transcript);
   queryClient.setQueryData(['substream-workstream', SIDEKICK, 'run-1'], conversation);
   queryClient.setQueryData(['substream-ordered-transcript', SIDEKICK, 'run-1'], conversation.transcript);
+  const canvasId = '00000000-0000-7000-8000-000000000c51';
+  queryClient.setQueryData(['workstream', canvasId], { ...conversation, id: canvasId, title: 'Launch plan' });
+  queryClient.setQueryData(['ordered-transcript', canvasId], conversation.transcript);
   render(<Tooltip.Provider><QueryClientProvider client={queryClient}>
-    <MemoryRouter initialEntries={[`/sidekicks/${SIDEKICK}${search}`]}>
-      <Routes><Route element={<AutomationScreen />} path="/sidekicks/:id" /></Routes>
+    <MemoryRouter initialEntries={[inCanvas ? `/canvases/${canvasId}` : `/sidekicks/${SIDEKICK}${search}`]}>
+      <Routes><Route element={<AutomationScreen />} path="/sidekicks/:id" />
+        <Route path="/canvases/:id" element={<ConversationSurface parentId={canvasId} parentKind="canvas" substreamId="0" renderHeader={({ openPanel }) => <button onClick={() => openPanel({
+          key: `sidekick:${SIDEKICK}`, label: 'Sidekick: Incident triage',
+          render: (controls) => <SidekickPanel id={SIDEKICK} controls={controls} />,
+        })}>Open attached Sidekick</button>} />} />
+      </Routes>
     </MemoryRouter>
   </QueryClientProvider></Tooltip.Provider>);
   return queryClient;
@@ -124,12 +135,31 @@ describe("a Sidekick's shared conversation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    useUiStore.setState({ railOpen: false, railScope: null, railExpanded: false, railLeaving: false });
     vi.stubGlobal('ResizeObserver', class { observe(): void {} unobserve(): void {} disconnect(): void {} });
     createMessage.mockResolvedValue({ turnId: 'turn', clientMessageId: 'message', createdAt: '2026-11-07T09:01:00.000Z', deliveryState: 'queued' });
     api.getAutomation.mockResolvedValue(sidekick());
     api.getSidekickDelegates.mockResolvedValue({ sidekickId: SIDEKICK, creatorUserId: AUTHOR, you: { userId: AUTHOR, allowed: false }, delegates: [] });
   });
   afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('opens the real Sidekick in the Canvas panel, preserves the Canvas draft and releases only its own slot', async () => {
+    writeLayout(layoutKey('w', AUTHOR, `artifact-panel:${SIDEKICK}:0`), JSON.stringify({ resourceId: 'old-sidekick-artifact', workstreamScoped: false }));
+    renderSidekick(AUTHOR, '', true);
+    const canvasComposer = await screen.findByRole('textbox', { name: 'Ask Rally or the people here' });
+    fireEvent.change(canvasComposer, { target: { value: 'Keep this Canvas draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
+    const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
+    await within(panel).findByRole('textbox', { name: 'Message Incident triage and the team' });
+    expect(canvasComposer).toHaveValue('Keep this Canvas draft');
+    expect(useUiStore.getState().railScope).toBe('00000000-0000-7000-8000-000000000c51');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Sidekick details' }));
+    expect(within(panel).getByRole('complementary', { name: 'Sidekick details' })).not.toHaveAttribute('inert');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close panel' }));
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Sidekick: Incident triage' })).toBeNull());
+    expect(canvasComposer).toHaveValue('Keep this Canvas draft');
+    expect(useUiStore.getState().railOpen).toBe(false);
+  });
 
   it("sends a manager's message as a wizard edit once Edit Sidekick is on", async () => {
     renderSidekick(AUTHOR);
