@@ -37,7 +37,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; guests invited by email on Save. |
 | `apps/desktop/src/renderer/components/canvas-mark.tsx` | `CanvasMark` and `canvasMark`: the chosen icon and colour, else the kind's glyph and `canvasHue`, field by field. |
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx` | The Canvases sidebar section: a Pinned group and every Canvas by recent activity. |
-| `apps/desktop/src/renderer/lib/canvases.ts` | The list as the socket keeps it (`useCanvasList`), the routes, a row's second line, and creating a Canvas. |
+| `apps/desktop/src/renderer/lib/canvases.ts` | The list as the socket keeps it (`useCanvasList`), routes and Canvas creation. |
 
 ## How it works
 
@@ -528,12 +528,10 @@ artifact has its own database (`artifact_registry.stateful = 1`); and
 whose publish made the newest version (`sidekickId`, `runId`, its
 `runNumber` counted as the run's own row counts it, oldest first, and the
 Sidekick's `sidekickName`), null when the newest version is no run's or its
-Sidekick was deleted, and absent from an older Worker. Deleting a Sidekick
-moves only the Sidekick list's waterline, so a connected client keeps
-"<Sidekick> · run #N" on the card until its next Canvas list frame. It is read by joining
-`sidekick_runs` on its primary key, so the list pays one probe per Canvas a
-run wrote last. The list holds every Canvas the viewer may open as its creator, a
-participant, a member of an Organization-wide one or someone its writer
+Sidekick was deleted, and absent from an older Worker. This field and its query
+joins are retained for released clients that display run attribution; the current
+renderer no longer consumes it. Removing that legacy projection is a follow-up. The list holds every Canvas the viewer may open as its
+creator, a participant, a member of an Organization-wide one or someone its writer
 Sidekick is shared with, most recently active first, at most 250, the bound
 the Sidekick list already has; an owner's or administrator's list does not add
 every private Canvas they could open. **Recent** sorts by the Canvas's
@@ -585,11 +583,13 @@ card grid with Sidekicks; the shared layout is described in
   `useSocketOwnedList`; there is no list route. The home page keeps activity
   order and filters client-side from the row's own fields: Live uses the same
   active automatic-trigger rule as the **Live updating** badge, Data is `hasStoredData`,
-  Made by me `createdByUserId`, and Shared with me `sharedWithMe`. A home card whose
-  newest version a run wrote names that run, "<Sidekick> · run #N"
-  (`canvasWrittenByRun`), and opens the Sidekick's conversation at it
-  (`?run=`); the link carries the run's number in its route state, so the run's
-  pill is numbered before the shared conversation has loaded. Viewer presence
+  Made by me `createdByUserId`, and Shared with me `sharedWithMe`. The second
+  line of sidebar rows and home cards shows sharing with the Share panel's
+  icons: a lock for **Only you** / **Only the creator**, people for **Specific
+  people**, and a building for **Everyone in the Organization**. A writer
+  Sidekick adds **and the Sidekick's audience** to creator and participants
+  labels, with a people icon instead of a lock. Home cards retain their viewer
+  facepiles and timestamps. Viewer presence
   is shown separately from **Data backed**, which means the Canvas holds a
   listed database-backed artifact. **Live updating** means an active attached
   Sidekick has a schedule or event trigger; manual-only, paused and draft
@@ -928,6 +928,24 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-11 — Show sharing in Canvas list subtitles
+
+**What changed:** Sidebar rows and home cards show their sharing setting and
+matching icon. Writer Sidekick audiences are included. The sidebar presence
+line and green dot, and the home card's run link, were removed; home cards keep
+presence facepiles and timestamps.
+
+**Why:** The requested second line is a stable place to check sharing while
+browsing. Keeping presence or run attribution on that line would displace the
+sharing setting again. The Share panel's inherited Sidekick audience must be
+reflected here so a run-created Canvas never claims it is private to its creator.
+
+**Consequences:** Both surfaces share one status component. The unused
+`lastWrittenBy` projection remains for older clients; removing its wire field
+and query joins is a follow-up.
+
+Pull request [#1559](https://github.com/juno-ai-labs/avalon/pull/1559).
 
 ### 2026-11-10 — Find Canvases by automatic upkeep
 

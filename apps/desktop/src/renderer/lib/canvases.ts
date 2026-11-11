@@ -1,11 +1,10 @@
-import { asWorkstreamId, type CanvasEditor, type CanvasSidebarRow } from '@rally/contracts';
+import { asWorkstreamId, type CanvasSidebarRow } from '@rally/contracts';
 import { useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useOptionalCollaborationSession } from './collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from './sidebar-list-store';
 import { ApiError, type RallyApi } from './api';
-import { sidekickRunSearch } from './sidekick-status';
 import { uuidV7 } from './telemetry';
 import type { AutomationSummary, WorkspaceMember } from './types';
 import { useWorkspaceMembers } from './workspace-members';
@@ -125,81 +124,9 @@ export function useCanvasList(): CanvasSidebarRow[] | undefined {
   return useSocketOwnedList<CanvasSidebarRow[]>(SIDEBAR_LIST_QUERY_KEYS.canvases).data;
 }
 
-/** "Maya", "Maya and Theo", "Maya, Theo and Priya". */
-export function joinNames(names: readonly string[]): string {
-  if (names.length <= 1) return names[0] ?? '';
-  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
-}
-
-/** A person's first name as a row says it, or "you" for the viewer. */
-export function personName(
-  userId: string,
-  membersById: ReadonlyMap<string, Pick<WorkspaceMember, 'name'>>,
-  currentUserId: string | undefined,
-): string {
-  if (userId === currentUserId) return 'you';
-  const name = membersById.get(userId)?.name.trim();
-  return name ? name.split(/\s+/u)[0]! : 'Someone';
-}
-
 /** Everyone in a Canvas now but the viewer, who knows they are there. */
 export function othersPresent(row: Pick<CanvasSidebarRow, 'presentUserIds'>, currentUserId: string | undefined): string[] {
   return row.presentUserIds.filter((userId) => userId !== currentUserId);
-}
-
-function editorName(
-  editor: CanvasEditor,
-  membersById: ReadonlyMap<string, Pick<WorkspaceMember, 'name'>>,
-  sidekicksById: ReadonlyMap<string, Pick<AutomationSummary, 'name'>>,
-  currentUserId: string | undefined,
-): string {
-  switch (editor.kind) {
-    case 'rally': return 'Rally';
-    case 'sidekick': return (editor.id ? sidekicksById.get(editor.id)?.name : undefined) ?? 'a Sidekick';
-    case 'person': return editor.id ? personName(editor.id, membersById, currentUserId) : 'Someone';
-  }
-}
-
-/**
- * A Canvas row's second line: who is in it now, when anyone else is, and
- * otherwise who last changed it — or, for one nobody has changed, who made it.
- */
-export function canvasRowDetail(
-  row: CanvasSidebarRow,
-  membersById: ReadonlyMap<string, Pick<WorkspaceMember, 'name'>>,
-  sidekicksById: ReadonlyMap<string, Pick<AutomationSummary, 'name'>>,
-  currentUserId: string | undefined,
-): string {
-  const present = othersPresent(row, currentUserId);
-  if (present.length > 0) {
-    const names = present.map((userId) => personName(userId, membersById, currentUserId));
-    return `${joinNames(names)} ${present.length === 1 ? 'is' : 'are'} here`;
-  }
-  if (row.lastEditor) return `Edited by ${editorName(row.lastEditor, membersById, sidekicksById, currentUserId)}`;
-  if (row.writerSidekickId) return `Made by ${sidekicksById.get(row.writerSidekickId)?.name ?? 'a Sidekick'}`;
-  return `Made by ${personName(row.createdByUserId, membersById, currentUserId)}`;
-}
-
-/**
- * The home card's line for a Canvas a Sidekick run last wrote: "<Sidekick> ·
- * run #N", opening the Sidekick's conversation at that run. Null while
- * anyone else is in it (who is here comes first, as `canvasRowDetail` says)
- * and when its newest version is no run's. The Sidekick's name is the live
- * one when the socket's Sidekick list has it, the row's otherwise.
- */
-export function canvasWrittenByRun(
-  row: Pick<CanvasSidebarRow, 'lastWrittenBy' | 'presentUserIds'>,
-  sidekicksById: ReadonlyMap<string, Pick<AutomationSummary, 'name'>>,
-  currentUserId: string | undefined,
-): { label: string; to: string; runNumber: number } | null {
-  const run = row.lastWrittenBy;
-  if (!run || othersPresent(row, currentUserId).length > 0) return null;
-  const name = sidekicksById.get(run.sidekickId)?.name ?? run.sidekickName;
-  return {
-    label: `${name} · run #${run.runNumber}`,
-    to: `/sidekicks/${encodeURIComponent(run.sidekickId)}${sidekickRunSearch(run.runId)}`,
-    runNumber: run.runNumber,
-  };
 }
 
 /**
@@ -243,7 +170,7 @@ export function useCreateCanvas(): (prompt?: string) => Promise<void> {
 
 /**
  * Who a Canvas row or screen can name: the Organization's members and the
- * Sidekicks the socket keeps, each by id, for `canvasRowDetail` and friends.
+ * Sidekicks the socket keeps, each by id, for Canvas people and Sidekick menus.
  */
 export function useCanvasNameSources(api: Pick<RallyApi, 'getWorkspaceMembers'> | null | undefined): {
   members: WorkspaceMember[] | undefined;

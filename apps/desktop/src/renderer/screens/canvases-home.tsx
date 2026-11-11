@@ -6,11 +6,12 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { canvasMark } from '../components/canvas-mark';
+import { CanvasSharingStatus } from '../components/canvas-sharing-status';
 import { AvatarStack, Button, EmptyState, ErrorNotice, TitleSkeleton } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
-import { canvasNaming, canvasRoute, canvasRowDetail, canvasWrittenByRun, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
+import { canvasNaming, canvasRoute, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useDocumentTitle } from '../lib/document-title';
 import { formatSidebarActivityTime } from '../lib/format';
@@ -52,7 +53,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const currentUserId = session?.user.id;
   const rows = useCanvasList();
   useDocumentTitle('Canvases');
-  const { membersById, sidekicksById } = useCanvasNameSources(api);
+  const { membersById } = useCanvasNameSources(api);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<CanvasFilter>('all');
   const create = useCreateCanvas();
@@ -72,7 +73,6 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       const member = membersById.get(userId);
       return member ? [member] : [];
     });
-    const run = canvasWrittenByRun(canvas, sidekicksById, currentUserId);
     // A server older than attaching sends none.
     const attachedSidekicks = canvas.sidekicks ?? [];
     const liveUpdating = isLiveUpdating(canvas);
@@ -93,10 +93,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       <div className="canvas-card-body">
         <h3><Link aria-describedby={[liveUpdating ? `canvas-live-${canvas.id}` : null, canvas.hasStoredData ? `canvas-data-${canvas.id}` : null,
           attachedSidekicks.length > 0 ? `canvas-sidekicks-${canvas.id}` : null].filter(Boolean).join(' ') || undefined} className="dashboard-card-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
-        <small><span>{run
-          // Above the card's stretched title link, so it opens the run and not the Canvas.
-          ? <Link className="canvas-card-run" state={{ runNumber: run.runNumber }} to={run.to}>{run.label}</Link>
-          : canvasRowDetail(canvas, membersById, sidekicksById, currentUserId)}</span><RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
+        <small><CanvasSharingStatus canvas={canvas} currentUserId={currentUserId} /><RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
       </div>
     </li>;
   };
