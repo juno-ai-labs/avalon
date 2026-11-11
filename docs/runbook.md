@@ -549,24 +549,44 @@ Each admitted invocation performs this fail-closed transaction:
    channel-aware publication. An unexpected,
    duplicate, or incomplete key aborts the run before any copy or deletion.
 2. Select all versions older than the highest five, except the version still
-   named by `stable-mac.yml`. For each exact candidate
-   key, stream the source object into the archive with its HTTP and custom
-   metadata and `InfrequentAccess`. A matching existing archive object is reused
-   without another write, which keeps retries idempotent and avoids resetting
-   the archive storage-duration clock.
-3. Before deleting anything, require the archive copy to have the same key,
-   size, ETag, HTTP metadata values, and custom metadata values as the source,
-   and require its storage class to be `InfrequentAccess`.
+   named by `stable-mac.yml`. Archive them one version at a time, oldest first;
+   steps 3–5 are one version's transaction.
+3. For each of the version's five keys, stream the source object into the
+   archive with its HTTP and custom metadata and `InfrequentAccess`. A matching
+   existing archive object is reused without another write, which keeps retries
+   idempotent and avoids resetting the archive storage-duration clock. Require
+   the archive copy to have the same key, size, ETag, HTTP metadata values, and
+   custom metadata values as the source, and require its storage class to be
+   `InfrequentAccess`.
 4. Re-list the active bucket immediately before deletion. Abort without deleting
-   if any key, metadata, ETag, release grouping, or retained-version decision
-   changed while copies were in progress. This protects a release that races the
+   if any key, metadata or ETag differs from the initial inventory minus the
+   versions this run already archived, or if the release grouping or
+   retained-version decision changed. This protects a release that races the
    nightly job.
-5. Delete only the computed, verified candidate-key array. Re-list both sides,
-   require the calculated complete release set plus every mutable pointer in
-   active storage, prove every candidate is absent from the active bucket, and
-   prove its verified archive copy remains present. Stable may make the active
+5. Delete exactly that version's five keys, prove each is absent from the active
+   bucket, and prove its verified archive copy remains present. Log
+   `desktop_release_retention_version_archived` with the number of versions
+   still to go.
+6. After the last version, re-list and require the calculated complete release
+   set plus every mutable pointer in active storage. Stable may make the active
    set temporarily larger than five when more than five Faster releases land
    inside its 24-hour window.
+
+Archiving per version is what lets a backlog drain. Every key costs about six R2
+calls and the DMG and ZIP are each roughly 180 MB, so one run cannot archive
+hundreds of versions inside a Cron invocation's wall time and subrequest budget,
+and a single R2 `delete()` takes at most 1,000 keys. A run the platform stops
+keeps every version it finished; the next night resumes at the oldest one left.
+Expect one failed Cron event per night until such a backlog is gone, each with
+`desktop_release_retention_version_archived` lines before it.
+
+The Worker is deployed by hand with `pnpm deploy:release-retention`; no
+workflow deploys it. A change merged here is not live until someone runs that,
+and the Worker that ran from 2026-08-07 to at least 2026-11-11 predated the
+channel manifests and failed every night on
+`Unexpected active R2 key: stable/darwin/arm64/faster-mac.yml`. After deploying,
+check that `avalon-release-retention`'s version in Workers & Pages is the one
+Wrangler printed.
 
 The Worker calls `noRetry()` so Cloudflare cannot start a concurrent automatic
 retry after a partial failure; the next nightly invocation safely reuses any

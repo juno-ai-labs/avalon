@@ -1,3 +1,5 @@
+import { logEvent } from "./logger";
+
 const RELEASE_PREFIX = "stable/darwin/arm64/";
 /**
  * Every product name a release artifact in this bucket may carry, current
@@ -298,6 +300,35 @@ function assertArchivedCopy(source: R2Object, archived: R2Object | null): void {
   }
 }
 
+/**
+ * Copies one active object into the archive, or reuses a matching archive copy
+ * already there, and verifies it. Returns whether it wrote a new copy.
+ */
+async function archiveObject(
+  bindings: RetentionBindings,
+  key: string,
+  sourceHead: R2Object | undefined,
+): Promise<boolean> {
+  if (sourceHead === undefined) throw new Error(`Retention source object disappeared: ${key}`);
+  const existingArchive = await bindings.ARCHIVED_RELEASES.head(key);
+  if (existingArchive !== null) {
+    assertArchivedCopy(sourceHead, existingArchive);
+    return false;
+  }
+
+  const source = await bindings.ACTIVE_RELEASES.get(key);
+  if (source === null) throw new Error(`Retention source object disappeared: ${key}`);
+  if (JSON.stringify(comparableObject(source)) !== JSON.stringify(comparableObject(sourceHead))) {
+    throw new Error(`Retention source object changed before copy: ${key}`);
+  }
+  const putOptions: R2PutOptions = { storageClass: "InfrequentAccess" };
+  if (source.customMetadata !== undefined) putOptions.customMetadata = source.customMetadata;
+  if (source.httpMetadata !== undefined) putOptions.httpMetadata = source.httpMetadata;
+  await bindings.ARCHIVED_RELEASES.put(key, source.body, putOptions);
+  assertArchivedCopy(sourceHead, await bindings.ARCHIVED_RELEASES.head(key));
+  return true;
+}
+
 function baseReport(plan: RetentionPlan, dryRun: boolean): RetentionReport {
   return {
     ...plan,
@@ -327,49 +358,60 @@ export async function runRetention(
   const report = baseReport(initial.plan, options.dryRun);
   if (initial.plan.candidateKeys.length === 0 || options.dryRun) return report;
 
+  // Each old version is archived as its own transaction, oldest first: copy and
+  // verify its five objects, prove the active inventory is exactly what this run
+  // expects, delete those five, and prove they are gone and archived. A run the
+  // platform cuts short (Cron wall time, the subrequest budget) therefore keeps
+  // every version it finished, and the next night resumes from the oldest one
+  // left. One transaction over the whole backlog could not finish once the
+  // bucket held hundreds of old versions: a single delete takes at most 1,000
+  // keys, and every key costs about six R2 calls.
   const activeByKey = new Map(initialObjects.map((object) => [object.key, object]));
-  for (const key of initial.plan.candidateKeys) {
-    const sourceHead = activeByKey.get(key);
-    if (sourceHead === undefined) throw new Error(`Retention source object disappeared: ${key}`);
-    const existingArchive = await bindings.ARCHIVED_RELEASES.head(key);
-    if (existingArchive !== null) {
-      assertArchivedCopy(sourceHead, existingArchive);
-      report.skippedExistingObjectCount += 1;
-      continue;
+  let expectedObjects = initialObjects;
+  for (const [index, version] of initial.plan.archiveVersions.entries()) {
+    const keys = initial.releases.get(version);
+    if (keys === undefined) throw new Error(`Missing preflight keys for release ${version}`);
+    for (const key of keys) {
+      const copied = await archiveObject(bindings, key, activeByKey.get(key));
+      if (copied) report.copiedObjectCount += 1;
+      else report.skippedExistingObjectCount += 1;
     }
 
-    const source = await bindings.ACTIVE_RELEASES.get(key);
-    if (source === null) throw new Error(`Retention source object disappeared: ${key}`);
-    if (JSON.stringify(comparableObject(source)) !== JSON.stringify(comparableObject(sourceHead))) {
-      throw new Error(`Retention source object changed before copy: ${key}`);
+    const immediatelyBeforeDelete = await listAll(bindings.ACTIVE_RELEASES);
+    if (inventoryFingerprint(expectedObjects) !== inventoryFingerprint(immediatelyBeforeDelete)) {
+      throw new Error("Active release inventory changed during retention; refusing deletion");
     }
-    const putOptions: R2PutOptions = { storageClass: "InfrequentAccess" };
-    if (source.customMetadata !== undefined) putOptions.customMetadata = source.customMetadata;
-    if (source.httpMetadata !== undefined) putOptions.httpMetadata = source.httpMetadata;
-    await bindings.ARCHIVED_RELEASES.put(key, source.body, putOptions);
-    assertArchivedCopy(sourceHead, await bindings.ARCHIVED_RELEASES.head(key));
-    report.copiedObjectCount += 1;
-  }
+    const currentPlan = analyzeInventory(
+      immediatelyBeforeDelete,
+      options.keepCount,
+      await pointerVersions(bindings.ACTIVE_RELEASES, immediatelyBeforeDelete),
+    ).plan;
+    if (
+      !sameStrings(currentPlan.archiveVersions, initial.plan.archiveVersions.slice(index)) ||
+      !sameStrings(currentPlan.retainedVersions, initial.plan.retainedVersions)
+    ) {
+      throw new Error("Active release keep set changed during retention; refusing deletion");
+    }
 
-  const immediatelyBeforeDelete = await listAll(bindings.ACTIVE_RELEASES);
-  if (inventoryFingerprint(initialObjects) !== inventoryFingerprint(immediatelyBeforeDelete)) {
-    throw new Error("Active release inventory changed during retention; refusing deletion");
+    await bindings.ACTIVE_RELEASES.delete(keys);
+    for (const key of keys) {
+      if (await bindings.ACTIVE_RELEASES.head(key)) {
+        throw new Error(`Archived key still exists in the active bucket: ${key}`);
+      }
+      const sourceHead = activeByKey.get(key);
+      if (sourceHead === undefined) throw new Error(`Missing preflight metadata for ${key}`);
+      assertArchivedCopy(sourceHead, await bindings.ARCHIVED_RELEASES.head(key));
+    }
+    const deleted = new Set(keys);
+    expectedObjects = expectedObjects.filter((object) => !deleted.has(object.key));
+    report.deletedObjectCount += keys.length;
+    report.archivedObjectCount += keys.length;
+    logEvent("info", "desktop_release_retention_version_archived", {
+      message: `desktop_release_retention_version_archived ${version}`,
+      version,
+      remaining_versions: initial.plan.archiveVersions.length - index - 1,
+    });
   }
-  const finalPlan = analyzeInventory(
-    immediatelyBeforeDelete,
-    options.keepCount,
-    await pointerVersions(bindings.ACTIVE_RELEASES, immediatelyBeforeDelete),
-  ).plan;
-  if (
-    !sameStrings(finalPlan.archiveVersions, initial.plan.archiveVersions) ||
-    !sameStrings(finalPlan.retainedVersions, initial.plan.retainedVersions) ||
-    !sameStrings(finalPlan.candidateKeys, initial.plan.candidateKeys)
-  ) {
-    throw new Error("Active release keep set changed during retention; refusing deletion");
-  }
-
-  await bindings.ACTIVE_RELEASES.delete(initial.plan.candidateKeys);
-  report.deletedObjectCount = initial.plan.candidateKeys.length;
 
   const finalObjects = await listAll(bindings.ACTIVE_RELEASES);
   const completed = analyzeInventory(
@@ -390,16 +432,7 @@ export async function runRetention(
   ) {
     throw new Error("Final active release inventory failed retention verification");
   }
-  for (const key of initial.plan.candidateKeys) {
-    if (await bindings.ACTIVE_RELEASES.head(key)) {
-      throw new Error(`Archived key still exists in the active bucket: ${key}`);
-    }
-    const sourceHead = activeByKey.get(key);
-    if (sourceHead === undefined) throw new Error(`Missing preflight metadata for ${key}`);
-    assertArchivedCopy(sourceHead, await bindings.ARCHIVED_RELEASES.head(key));
-  }
 
   report.activeObjectCount = finalObjects.length;
-  report.archivedObjectCount = initial.plan.candidateKeys.length;
   return report;
 }
