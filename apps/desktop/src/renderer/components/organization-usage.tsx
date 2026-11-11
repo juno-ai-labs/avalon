@@ -93,9 +93,15 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
   const { usage, fetchedAt } = reading;
   const setPlan = useSetOrganizationPlan(api);
   const scope = useLocalCacheScope();
-  const billing = useQuery({ queryKey: ['organization-billing', scope], queryFn: () => api!.getBillingStatus!(), enabled: canChangePlan && Boolean(api?.getBillingStatus) });
+  const billing = useQuery({ queryKey: ['organization-billing', scope], queryFn: () => api!.getBillingStatus!(), enabled: canChangePlan && Boolean(api?.getBillingStatus), refetchOnWindowFocus: 'always' });
+  useEffect(() => {
+    if (!canChangePlan || !api?.getBillingStatus) return;
+    const refresh = () => { void billing.refetch(); };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [api, canChangePlan, billing.refetch]);
   return <>
-    {billing.data?.enabled && api ? <OrganizationBilling api={api} billing={billing.data} /> : <label className="settings-preference-row">
+    {billing.data?.enabled && api ? <OrganizationBilling api={api} billing={billing.data} currentPlan={usagePlanLabel(usage.plan)} /> : <label className="settings-preference-row">
       <SettingCopy
         setting={settings.plan}
         description={setPlan.error
@@ -104,7 +110,7 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
       />
       <DropdownSelect
         ariaLabel="Plan"
-        disabled={!canChangePlan || !api || offline || setPlan.isPending || (Boolean(api?.getBillingStatus) && billing.data?.enabled !== false)}
+        disabled={!canChangePlan || !api || offline || setPlan.isPending || billing.data?.enabled === true}
         onValueChange={(value) => {
           const plan = PlanIdSchema.parse(value);
           if (plan !== usage.plan) setPlan.mutate(plan);

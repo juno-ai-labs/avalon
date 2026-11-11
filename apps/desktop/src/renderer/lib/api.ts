@@ -989,6 +989,10 @@ export class RallyApi {
    * The Organization's plan and how much of this week's shared quota is left.
    * Any member may read it; the dollars behind the percentage never cross.
    */
+  async getWorkspaceUsage(signal?: AbortSignal): Promise<OrganizationUsage> {
+    return this.request('/workspace/usage', { schema: OrganizationUsageSchema, signal });
+  }
+
   async getBillingStatus() {
     return this.request('/workspace/billing', { schema: BillingStatusSchema });
   }
@@ -997,10 +1001,6 @@ export class RallyApi {
   }
   async createBillingPortal() {
     return this.request('/workspace/billing/portal', { method: 'POST', schema: BillingUrlSchema });
-  }
-
-  async getWorkspaceUsage(signal?: AbortSignal): Promise<OrganizationUsage> {
-    return this.request('/workspace/usage', { schema: OrganizationUsageSchema, signal });
   }
 
   /** Administrators only. Answers with the meter as it reads under the new plan. */

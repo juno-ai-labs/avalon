@@ -8,17 +8,17 @@ current behavior until `BILLING_CONFIG` is supplied.
 
 ## Where the code lives
 
-- `apps/api/src/services/billing-config.ts`: validated offer and promotion configuration.
-- `apps/api/src/services/billing.ts`: trial, checkout, reconciliation and settlement.
-- `apps/api/src/services/stripe.ts`: Stripe REST adapter and raw-body signature verification.
-- `apps/api/src/routes/billing.ts`: administrator API and public signed webhook.
-- `packages/db/migrations/0131_billing.sql`: organization/customer mapping and permanent settlement receipts.
-- `apps/desktop/src/renderer/components/organization-billing.tsx`: shared desktop/browser settings.
+`apps/api/src/services/billing.ts` owns the lifecycle, with `billing-config.ts` and
+`stripe.ts` beside it. The HTTP boundary is `routes/billing.ts`, the D1 schema is
+`packages/db/migrations/0131_billing.sql`, and the shared desktop/browser UI is
+`apps/desktop/src/renderer/components/organization-billing.tsx`.
 
 ## How it works
 
 Administrators open Organization Usage settings, select an offer and supported
-currency, optionally enable overages, and continue to Stripe Checkout. The base
+currency, optionally enable overages, and prepare Stripe Checkout. A direct
+**Open Stripe** link opens the hosted flow on a user gesture in both clients;
+returning to Settings refreshes billing status. The base
 quantity is always one. Checkout collects billing addresses and tax IDs and uses
 Stripe's configured payment methods. Stripe Billing Portal manages payment
 methods, invoices and existing subscriptions. Configure its allowed plan changes
@@ -28,23 +28,38 @@ The no-card trial starts at Organization creation. Defaults match the landing
 page: 14 days, extended to 60 total days when three active members (the creator
 and two teammates) join before expiry. Guests and pending invitations do not
 qualify. The extension is earned once before a subscription is created; leaving
-and rejoining cannot restart it. Existing Organizations do not receive a new trial.
+and rejoining cannot restart it. Membership triggers persist earned awards; the
+first billing read also checks durable join times, so a day-15 read can recognize
+a team formed on day 13. Open checkouts with older trial terms are expired and
+recreated; a trialing subscription is extended if an older hosted checkout completed. Existing Organizations do not receive a new trial.
 Stripe requires at least 48 hours for an explicit trial end; checkout in the last
 two days rounds the remaining trial up to 48 hours, preserving the free trial.
 
-Signed subscription webhooks re-fetch current Stripe state under an Organization
-lock. Active/trialing subscriptions set the existing usage plan and publish the
-meter. Past-due/canceled states are recorded without erasing the usage history.
-Billing does not suspend running work: there is currently no subscription access
-enforcement. A canceled subscription remains attached for operator reconciliation;
-self-service re-subscription after cancellation is not yet implemented.
+Signed subscription webhooks and status/checkout recovery use the same reconciliation
+path under an Organization ownership claim. Active/trialing subscriptions select
+the configured offer; other states return to `unpaidPlan` (default `starter`).
+No running work is suspended. Canceled and incomplete-expired subscriptions allow
+fresh checkout; late events for older subscriptions cannot replace a current one.
+Offer metadata disambiguates offers sharing a price, and a price-only match must
+be unique. Unknown customers/other deployments are acknowledged and logged.
+
+Closing an Organization holds the same claim as checkout. A live subscription or
+open checkout blocks closure before the last member loses access. Restore billing
+configuration before closing an Organization with a previously created customer.
 
 Optional USD overages use the existing weekly quota and anniversary-month ledger.
 The first partial period after consent/paid activation is free. A scheduled job
 snapshots every fully closed period after the configured settlement delay (14 days
 by default, matching maximum usage queue retention) and adds an invoice item to
-the subscription's next invoice. Prices and quantities are frozen in permanent
-receipts. A retry first searches Stripe invoice-item metadata, even beyond Stripe's
+the subscription's next invoice. Paid terms are stored per subscription, independently
+of the current account. Cancellation records Stripe's `ended_at` and the quota
+before downgrade. After the delay, the final partial month is calculated from
+retained usage events through that cutoff; later usage is excluded. A final
+standalone invoice includes remaining pending items for this Organization's Stripe
+customer, uses the saved payment method when available, and is finalized for
+collection. Re-subscription preserves the previous subscription's settlement.
+Prices and quantities are frozen in permanent
+receipts. A retry first searches Stripe invoice-item metadata since the closed period ended, even beyond Stripe's
 24-hour idempotency retention, before issuing another write. No current-period
 estimate is charged. Currency conversion is not guessed: non-USD plans cannot opt
 into overages yet. The existing weekly allowance values remain defined by the
@@ -78,32 +93,40 @@ custom quota plan definitions are not implemented.
 
 ## Failure modes and limits
 
-Stripe errors are surfaced with their HTTP status and retried by webhook delivery
-or the next scheduled run. Concurrent operations return `billing_busy`. The lock's
-five-minute lease allows recovery after a terminated Worker. Unknown prices fail
-reconciliation: retain retired offers with `enabled: false` so old subscriptions
-can still be recognized. An open checkout must finish or expire before selection
-changes. Late usage arriving after settlement is not automatically adjusted;
-reconcile exceptional late events with Stripe credit/debit adjustments.
+Stripe errors carry HTTP status and allowlisted provider type/code plus declared
+request fields; arbitrary metadata keys and provider messages are withheld. Each
+Organization's scheduled failure is logged with its workspace ID and does not
+stop the next Organization.
 
-Subscription payment failure and cancellation update status, but do not currently
-revoke product access. Existing clients cannot change a paid plan via the old
-plan endpoint. Stripe keys are absent from the client and from source control.
+Concurrent operations return `billing_busy`. Ownership does **not** expire: no
+clock deadline can allow a slow Stripe request and its replacement to both write.
+A terminated Worker can leave `sync_token` set. Recovery requires an operator to
+fence the original invocation (stop the old deployment and ensure it cannot resume)
+then clear that token. Do not clear a token merely because it is old. Automatic
+lease takeover was removed instead of assigning another guessed duration. Stripe
+session/receipt discovery recovers uncertain external writes after release.
+
+Unknown/ambiguous prices fail reconciliation: retain retired offers with
+`enabled: false`. Extraordinary usage arriving after settlement needs manual
+adjustment. The cancellation cutoff reader requires the cutoff week to remain in
+the 90-day event-retention window; after that it fails closed with
+`billing_cutoff_history_expired` rather than charging post-cancellation usage.
+Recover from the retained usage lakehouse before collecting that exceptional tail.
 
 ## Testing
 
-`pnpm --filter @rally/api exec vitest run test/billing.test.ts test/usage-metering.test.ts`
-uses real migrated SQLite and a fake external Stripe HTTP service. It covers trials,
-checkout reuse, selection validation, signature rotation/tampering/replay and
-settlement receipts. Full lint and typecheck cover both client platforms.
-Live Stripe checkout, portal, tax registrations and payment methods require a
-Stripe test account and must be exercised before production activation.
+`apps/api/test/billing.test.ts` exercises real migrated SQLite and a fake Stripe
+HTTP service: eligibility, checkout recovery, lifecycle transitions, authorization,
+serialization, cancellation cutoffs and isolated settlement. The usage and
+access-revocation suites cover their shared boundaries. Renderer tests cover the
+direct-click handoff, focus refresh and the legacy picker after a failed status read.
+Live Stripe and a full authenticated desktop/browser flow remain activation checks.
 
 ## Configuration and activation
 
 1. Apply regional D1 migrations. Keep billing disabled until setup is complete.
-2. Create recurring organization prices in Stripe: Start $100/month and Grow
-   $250/month, plus negotiated offers if needed. Add currency options to those
+2. Create recurring organization prices in Stripe for Start, Grow and negotiated
+   offers. Add currency options to those
    prices; amounts and tax behavior live in Stripe.
 3. Set Worker secrets `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` using the
    secret store, never a `VITE_` variable. Subscribe the webhook to
@@ -117,6 +140,7 @@ Stripe test account and must be exercised before production activation.
 {
   "returnUrl": "https://app.rallywith.ai",
   "automaticTax": true,
+  "unpaidPlan": "starter",
   "trialDays": 14,
   "teamTrialDays": 60,
   "teamTrialMembers": 3,
@@ -146,4 +170,8 @@ The product needs group pricing and changing promotions without coupling seats t
 charges. Stripe-hosted payment collection was chosen over storing payment details.
 The existing ledger stays the usage authority; speculative currency conversion and
 per-event charges were rejected because they would diverge from its weekly quota.
-Future changes must preserve pre-consent exclusion and permanent charge receipts.
+Recovery and webhook reconciliation share one path so a lost delivery cannot leave
+paid customers on the wrong plan. Non-expiring ownership prevents stale writers;
+per-subscription terms preserve obligations through cancellation and re-subscription.
+Future changes must preserve pre-consent exclusion, cancellation cutoffs and
+permanent charge receipts.

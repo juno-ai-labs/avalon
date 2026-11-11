@@ -2,7 +2,7 @@ import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import { z } from 'zod';
 import { ApiError } from '../lib/api-error';
 import type { Env } from '../env';
-import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
+import { codeShaped, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 
 export async function stripe<T>(env: Pick<Env, 'STRIPE_SECRET_KEY'>, path: string, schema: z.ZodType<T>, fields?: Record<string, string>, key?: string): Promise<T> {
   if (!env.STRIPE_SECRET_KEY) throw new ApiError(503, 'stripe_not_configured', 'Billing is not configured');
@@ -16,7 +16,25 @@ export async function stripe<T>(env: Pick<Env, 'STRIPE_SECRET_KEY'>, path: strin
     },
     ...(fields ? { body: new URLSearchParams(fields) } : {}),
   });
-  if (!response.ok) throw new ApiError(502, `stripe_http_${response.status}`, 'Stripe could not complete the request');
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    const error = z.object({ error: z.object({ type: z.string().optional(), code: z.string().optional(), param: z.string().optional() }) }).safeParse(payload);
+    const types = new Set(['api_error', 'card_error', 'idempotency_error', 'invalid_request_error', 'authentication_error', 'rate_limit_error']);
+    const codes = new Set(['resource_missing', 'idempotency_key_in_use', 'parameter_invalid_integer', 'parameter_invalid_empty',
+      'parameter_invalid_string_blank', 'parameter_missing', 'parameter_unknown', 'parameter_invalid_enum', 'parameter_invalid_string_empty',
+      'parameter_invalid_string_long', 'parameter_invalid_string_short', 'parameter_invalid_string_unicode', 'parameter_invalid_string_pattern',
+      'api_key_expired', 'invalid_api_key', 'rate_limit', 'lock_timeout', 'card_declined', 'expired_card', 'incorrect_cvc', 'incorrect_number',
+      'authentication_required', 'invoice_no_customer_line_items', 'invoice_no_subscription_line_items', 'invoice_not_editable',
+      'invoice_already_paid', 'invoice_payment_intent_requires_action', 'tax_id_invalid', 'currency_not_supported']);
+    const detail = error.success ? error.data.error : null;
+    // A provider param may contain arbitrary metadata keys. Only our declared
+    // request fields may be reported; sanitizing an unknown key is not redaction.
+    const param = detail?.param && Object.hasOwn(fields ?? {}, detail.param) ? detail.param : undefined;
+    const reason = codeShaped([`stripe_http_${response.status}`,
+      detail?.type && types.has(detail.type) ? detail.type : 'provider_error',
+      detail?.code && codes.has(detail.code) ? detail.code : detail?.code ? 'unrecognized_error_code' : undefined, param].filter(Boolean).join(':'));
+    throw new ApiError(502, `stripe_http_${response.status}`, 'Stripe could not complete the request', undefined, reason);
+  }
   const parsed = schema.safeParse(await response.json());
   if (!parsed.success) throw new ApiError(502, zodDiagnosticCode(parsed.error, 'stripe_response')!, 'Stripe returned an invalid response');
   return parsed.data;
