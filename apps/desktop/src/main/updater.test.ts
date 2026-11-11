@@ -545,6 +545,57 @@ describe('Linux updates', () => {
     expect(beforeInstall).toHaveBeenCalledOnce();
   });
 
+  it.each(['check', 'download'])('keeps session protection when a background %s fails during preparation', async (work) => {
+    let finishPreparation!: () => void;
+    const beforeInstall = vi.fn(() => new Promise<void>((resolve) => { finishPreparation = resolve; }));
+    const onInstallFailed = vi.fn();
+    const { updater, controller, showMessageBox, timeouts } = setup({
+      platform: 'linux', arch: 'x64', linuxPackageType: 'deb', beforeInstall, onInstallFailed,
+    });
+    updater.emit('update-downloaded', { version: '1.2.0' });
+    updater.emit(work === 'check' ? 'checking-for-update' : 'update-available', { version: '1.3.0' });
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(beforeInstall).toHaveBeenCalledOnce());
+
+    updater.emit('error', new Error('background network failure'));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(onInstallFailed).not.toHaveBeenCalled();
+    expect(showMessageBox).not.toHaveBeenCalled();
+    if (work === 'download') expect(timeouts.at(-1)?.delayMs).toBe(3_000);
+
+    finishPreparation();
+    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledOnce());
+    expect(onInstallFailed).not.toHaveBeenCalled();
+  });
+
+  it('does not install a superseded update after pending preparation resolves', async () => {
+    let finishPreparation!: () => void;
+    const beforeInstall = vi.fn(() => new Promise<void>((resolve) => { finishPreparation = resolve; }));
+    const onInstallFailed = vi.fn();
+    const { updater, controller, showMessageBox } = setup({ beforeInstall, onInstallFailed });
+    updater.emit('update-downloaded', { version: '1.2.0' });
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(beforeInstall).toHaveBeenCalledOnce());
+    controller.setReleaseChannel('faster');
+    finishPreparation();
+    await vi.waitFor(() => expect(showMessageBox).toHaveBeenCalledOnce());
+    expect(onInstallFailed).toHaveBeenCalledOnce();
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it('does not classify later background errors as installer failures if quit returns', async () => {
+    const onInstallFailed = vi.fn();
+    const { updater, controller, showMessageBox } = setup({ onInstallFailed });
+    updater.emit('update-downloaded', { version: '1.2.0' });
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledOnce());
+    updater.emit('checking-for-update');
+    updater.emit('error', new Error('background check failed'));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(onInstallFailed).not.toHaveBeenCalled();
+    expect(showMessageBox).not.toHaveBeenCalled();
+  });
+
   it('restores the session when a Linux installer emits an error and permits another attempt', async () => {
     const onInstallFailed = vi.fn(async () => undefined);
     const { updater, controller, showMessageBox } = setup({ platform: 'linux', arch: 'x64', linuxPackageType: 'deb', onInstallFailed });

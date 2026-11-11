@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { linuxHash, loadLinuxRelease, parseLinuxFeed, publishLinuxRelease } from './linux-release.mjs';
+import { linuxHash, loadLinuxRelease, parseLinuxFeed, publishLinuxRelease, writeLinuxChecksums } from './linux-release.mjs';
 
 async function fixture(t, version = '1.2.0') {
   const directory = await mkdtemp(join(tmpdir(), 'linux-release-'));
@@ -16,6 +16,7 @@ async function fixture(t, version = '1.2.0') {
     manifest += `  - url: ${name}\n    sha512: ${linuxHash(bytes)}\n    size: ${bytes.length}\n`;
   }
   await writeFile(join(directory, 'latest-linux.yml'), manifest);
+  await writeLinuxChecksums(directory);
   return loadLinuxRelease(directory);
 }
 function store() {
@@ -51,6 +52,16 @@ test('keeps Stable pinned during the rolling day and refuses rollback', async (t
   assert.equal(parseLinuxFeed(objects.get('stable-linux.yml')).version, '1.2.0');
   assert.equal(parseLinuxFeed(objects.get('faster-linux.yml')).version, '1.3.0');
   await assert.rejects(publishLinuxRelease({ release: await fixture(t), ...ports }), /backwards/);
+});
+test('refuses changed or missing checksums without rewriting the downloaded release', async (t) => {
+  const release = await fixture(t);
+  const path = join(release.directory, 'SHA256SUMS');
+  await writeFile(path, 'changed checksums\n');
+  await assert.rejects(loadLinuxRelease(release.directory), /SHA256SUMS mismatch/);
+  assert.equal(await readFile(path, 'utf8'), 'changed checksums\n');
+  await rm(path);
+  await assert.rejects(loadLinuxRelease(release.directory), /ENOENT/);
+  await assert.rejects(readFile(path), /ENOENT/);
 });
 test('does not expose a release when public payload verification fails', async (t) => {
   const { objects, ports } = store();

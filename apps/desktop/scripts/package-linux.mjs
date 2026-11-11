@@ -3,6 +3,7 @@ import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyLinuxApplication, verifyLinuxRelease } from './verify-linux-release.mjs';
+import { writeLinuxChecksums } from './linux-release.mjs';
 
 const mode = process.argv[2] ?? 'local';
 if (!['local', 'release'].includes(mode)) throw new Error('Usage: package-linux.mjs <local|release>');
@@ -19,8 +20,12 @@ try {
   run('pnpm', ['build', ...(mode === 'release' ? ['--mode', 'packaged'] : [])]);
   run('pnpm', ['exec', 'electron-builder', '--config', 'electron-builder.linux.yml', '--linux', '--x64',
     '--publish', 'never', `--config.directories.output=${staging}`, ...(mode === 'local' ? ['--dir'] : [])]);
-  await verifyLinuxApplication(join(staging, 'linux-unpacked', 'rally'));
-  if (mode === 'release') await verifyLinuxRelease(staging);
+  if (mode === 'release') {
+    await writeLinuxChecksums(staging);
+    await verifyLinuxRelease(staging);
+  } else {
+    await verifyLinuxApplication(join(staging, 'linux-unpacked', 'rally'));
+  }
   await mkdir(dirname(output), { recursive: true });
   await rm(output, { recursive: true, force: true });
   await rename(staging, output);

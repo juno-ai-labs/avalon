@@ -220,7 +220,7 @@ jobs:
         run: pnpm --filter @rally/desktop test:release
 
   release:
-    needs: [plan, verify, linux-build]
+    needs: [plan, verify]
     if: needs.plan.outputs.should_release == 'true'
     # Concurrency is declared at workflow level, above, so that the plan is made
     # inside the queue rather than before it.

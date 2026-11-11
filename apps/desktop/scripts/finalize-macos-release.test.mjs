@@ -9,7 +9,7 @@ import {
   selectDeveloperIdIdentity,
   writeFinalMacFeed,
 } from './finalize-macos-release.mjs';
-import { parseMacUpdateFeed, sha512File } from './release-lib.mjs';
+import { parseUpdateFeed, sha512File } from './release-lib.mjs';
 
 const IDENTITIES = `
   1) 642062832487A93FF44B46D449EFB750F4AE1216 "Developer ID Application: Pay Tgthr, Inc (2ZG8V3KUG2)"
@@ -41,7 +41,7 @@ test('post-build update feed is ZIP-primary and contains all final artifact meta
     ],
     date: '2026-08-02T00:00:00.000Z',
   });
-  assert.deepEqual(parseMacUpdateFeed(yaml), {
+  assert.deepEqual(parseUpdateFeed(yaml), {
     version: '1.2.3',
     files: [
       { url: 'Rally-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 },
@@ -64,7 +64,7 @@ test('final feed rewrite replaces electron-builder metadata after its process ex
       writeFile(join(directory, 'latest-mac.yml'), 'stale electron-builder metadata'),
     ]);
     await writeFinalMacFeed(directory, '1.2.3', { SOURCE_DATE_EPOCH: '1785628800' });
-    const feed = parseMacUpdateFeed(await readFile(join(directory, 'latest-mac.yml'), 'utf8'));
+    const feed = parseUpdateFeed(await readFile(join(directory, 'latest-mac.yml'), 'utf8'));
     assert.deepEqual(feed.files, [
       {
         url: zipName,

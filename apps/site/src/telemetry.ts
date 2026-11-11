@@ -350,6 +350,7 @@ function reportSiteAction(link: SiteActionLink): void {
 export const SITE_ACTION_LINKS = {
   'sign-in-header': { action: 'primary_cta', placement: 'header' },
   'download-hero': { action: 'download', placement: 'hero' },
+  'download-linux-hero': { action: 'download', placement: 'hero' },
   'web-app-hero': { action: 'secondary_cta', placement: 'hero' },
   'web-app-offer': { action: 'primary_cta', placement: 'offer' },
   'download-pricing-start': { action: 'download', placement: 'pricing', plan: 'start' },
@@ -386,7 +387,8 @@ function initializeSiteActions(): void {
       reportXIntent('signUp');
     }
     reportSiteAction({ ...action, ...(flowId ? { flowId } : {}) });
-    if (action.action === 'download') reportXIntent('download');
+    // The configured X conversion is specifically Mac download intent.
+    if (action.action === 'download' && id !== 'download-linux-hero') reportXIntent('download');
   };
   document.addEventListener('click', selected, { capture: true });
   // A middle-click opens a link without firing `click`.
