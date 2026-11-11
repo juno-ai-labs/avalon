@@ -4,13 +4,12 @@ import { POLLING_FOR_EVENTS_SKILL } from "./platform-skills/polling-for-events-s
 import { TRACKING_SEEN_OR_DONE_ITEMS_SKILL } from "./platform-skills/tracking-seen-or-done-items-skill";
 import { USING_THE_LOCAL_INAPP_BROWSER_SKILL } from "./platform-skills/using-the-local-inapp-browser-skill";
 import {
-  CREATING_AN_APP_SKILL,
   DEEP_RESEARCH_SKILL,
-  REPORTING_ON_DATA_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
+  TASK_SKILLS,
   USING_EXTERNAL_STRUCTURED_DATA_SKILL,
   WRITING_AN_EMAIL_SKILL,
-} from "@rally/skills/task-skills";
+} from "@rally/skills";
 import type { HarnessSkill } from "./index";
 
 export {
@@ -58,7 +57,6 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   // Offered only where the Terminal plugin is in scope, by its `ownerPlugin`:
   // the whole procedure ends in publishing a directory from a sandbox.
   BUILDING_LIVE_SITES_SKILL,
-  // Outcome skills compose the procedures above for a report or an app.
-  REPORTING_ON_DATA_SKILL,
-  CREATING_AN_APP_SKILL,
+  // Request-routing task skills compose the procedures above for a report or app.
+  ...TASK_SKILLS,
 ];

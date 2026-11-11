@@ -28,14 +28,10 @@ headers — is here, loaded at the moment it matters. Its `ownerPlugin` scopes i
 to runs that hold the Terminal plugin, because the whole procedure ends in
 publishing a directory from a sandbox.
 
-**Task skills** teach how to complete requested work — research, email, data
-processing, reports or apps — and live one folder per skill in
-[`packages/skills/task-skills/`](../packages/skills/task-skills/index.ts).
-**Platform skills** teach how to use Rally itself — Sidekicks, Tables, site
-publishing or the in-app browser — and live in
-[`platform-skills/`](../packages/agent-harness/src/platform-skills/README.md).
-An outcome skill can compose task and platform procedures instead of repeating
-them. Classify by what the skill teaches, not whether Rally ships it.
+The [platform-skills README](../packages/agent-harness/src/platform-skills/README.md)
+defines where platform and task skills belong. Task skills live one folder per
+skill in [`packages/skills/task-skills/`](../packages/skills/task-skills/index.ts).
+Skills can compose companion procedures instead of repeating them.
 
 ## The bar: a medium-sized model, at two moments
 
