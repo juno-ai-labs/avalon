@@ -9,6 +9,7 @@ describe('sidekickNext', () => {
     // Design §3's Incident triage: an alert and a schedule read "On alert".
     expect(sidekickNext({ status: 'active', nextRunAt: '2026-11-13T14:00:00', triggerKinds: ['schedule', 'external_event'] }, now)).toBe('On alert');
     expect(sidekickNext({ status: 'active', triggerKinds: ['manual'] }, now)).toBe('On request');
+    expect(sidekickNext({ status: 'active', triggerKinds: ['invocation'] }, now)).toBe('On app request');
   });
 
   it('says nothing is next for a Sidekick that is not running, or that nothing wakes', () => {

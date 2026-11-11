@@ -130,7 +130,7 @@ export interface AutomationSummary {
   /** The question a run waiting on input asked; absent when none waits. */
   pendingQuestion?: string | null;
   /** What wakes it, each kind once in definition order; absent from a server that predates it. */
-  triggerKinds?: Array<'manual' | 'schedule' | 'external_event'>;
+  triggerKinds?: Array<'manual' | 'schedule' | 'external_event' | 'invocation'>;
   /** The IANA zone `nextRunAt` is read in (its schedule's); absent for an interval, no schedule, or an older server. */
   scheduleTimeZone?: string;
 }
@@ -619,7 +619,7 @@ export interface Message {
     automationName: string;
     /** The run behind it, which is also its substream under the Sidekick. */
     runId?: string;
-    trigger?: 'manual' | 'schedule' | 'external_event' | 'inbound_email';
+    trigger?: 'manual' | 'schedule' | 'external_event' | 'invocation' | 'inbound_email';
     /** Present on a run's own row in its Sidekick's shared conversation: the run as it stands. */
     run?: {
       state: 'pending' | 'running' | 'needs_input' | 'completed' | 'failed' | 'stopped';
@@ -730,7 +730,7 @@ export interface AutomationRun {
   id: string;
   automationId: string;
   coordinatorUserId?: string | null;
-  triggerType: 'manual' | 'schedule' | 'external_event' | 'inbound_email';
+  triggerType: 'manual' | 'schedule' | 'external_event' | 'invocation' | 'inbound_email';
   status: AutomationRunStatus;
   plannedFor: string | null;
   startedAt: string | null;

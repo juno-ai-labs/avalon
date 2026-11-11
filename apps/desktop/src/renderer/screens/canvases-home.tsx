@@ -30,7 +30,7 @@ const FILTERS: ReadonlyArray<readonly [CanvasFilter, string]> = [
 
 function isLiveUpdating(canvas: CanvasSidebarRow): boolean {
   return canvas.sidekicks?.some((sidekick) => sidekick.status === 'active'
-    && sidekick.triggerKinds?.some((kind) => kind !== 'manual')) ?? false;
+    && sidekick.triggerKinds?.some((kind) => kind === 'schedule' || kind === 'external_event')) ?? false;
 }
 
 function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserId: string | undefined): boolean {

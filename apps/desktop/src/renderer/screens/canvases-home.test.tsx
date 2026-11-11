@@ -136,13 +136,15 @@ describe('CanvasesHomeScreen', () => {
   });
 
   it('labels and filters live updating only for active attached Sidekicks with automatic triggers', () => {
-    const sidekick = (triggerKinds: ('manual' | 'schedule' | 'external_event')[], status: 'active' | 'paused' | 'draft' = 'active') => ({
+    const sidekick = (triggerKinds: ('manual' | 'schedule' | 'external_event' | 'invocation')[], status: 'active' | 'paused' | 'draft' = 'active') => ({
       id: `updater-${triggerKinds.join('-')}-${status}`, name: 'Updater', madeHere: true, status, triggerKinds,
     });
     renderHome(clientWith([
-      canvas('scheduled', 'Scheduled', { hasStoredData: true, sidekicks: [sidekick(['manual']), sidekick(['schedule'])] }),
-      canvas('event', 'Event driven', { sidekicks: [sidekick(['external_event'])] }),
+      canvas('scheduled', 'Scheduled', { hasStoredData: true, sidekicks: [sidekick(['manual']), sidekick(['schedule', 'invocation'])] }),
+      canvas('event', 'Event driven', { sidekicks: [sidekick(['external_event', 'invocation'])] }),
       canvas('manual', 'Manual only', { sidekicks: [sidekick(['manual'])] }),
+      canvas('invocation', 'App invocation only', { sidekicks: [sidekick(['invocation'])] }),
+      canvas('requested', 'Manual and app invocation', { sidekicks: [sidekick(['manual', 'invocation'])] }),
       canvas('paused', 'Paused', { sidekicks: [sidekick(['schedule'], 'paused')] }),
       canvas('draft', 'Draft', { sidekicks: [sidekick(['schedule'], 'draft')] }),
       canvas('empty', 'No triggers', { sidekicks: [sidekick([])] }),
@@ -150,6 +152,8 @@ describe('CanvasesHomeScreen', () => {
       canvas('none', 'No Sidekicks'),
     ]));
     expect(screen.getAllByText('Live updating')).toHaveLength(2);
+    expect(screen.getByRole('link', { name: 'App invocation only' })).toHaveAccessibleDescription('Sidekicks: Updater');
+    expect(screen.getByRole('link', { name: 'Manual and app invocation' })).toHaveAccessibleDescription('Sidekicks: Updater');
     expect(screen.getByRole('link', { name: 'Scheduled' })).toHaveAccessibleDescription('Live updating Data backed Sidekicks: Updater; Updater');
     expect(screen.getByRole('link', { name: 'Event driven' })).toHaveAccessibleDescription('Live updating Sidekicks: Updater');
     const live = screen.getByRole('button', { name: 'Live' });
