@@ -39,7 +39,7 @@ notice are.
 | `apps/api/src/services/semantic-trigger-admission.ts` | The delivery: asks, judges the source's condition and the trigger's, admits with both verdicts. |
 | `apps/api/src/services/sidekick-source-service.ts`, `apps/api/src/routes/automations.ts` | The routes a signed-in person and an agent use. |
 | `apps/api/src/services/sidekick-source-tools.ts`, `apps/api/src/services/integrations.ts` (`asksForSources`, `builtInSkillsFor`) | The agent's tools (list, ask, and try a filter), which turns are offered them, and which turns list the skill. |
-| `packages/agent-harness/src/filtered-trigger-skill.ts` | `setting-up-a-filtered-trigger`, the wizard's procedure. |
+| `packages/agent-harness/src/platform-skills/filtered-trigger-skill.ts` | `setting-up-a-filtered-trigger`, the wizard's procedure. |
 | `apps/api/src/services/sidekick-event-content.ts`, `packages/connectors/src/types.ts` (`readActivityContent`) | The host's read of what an admitted event is about, and the run's opening with it. |
 
 ## How it works

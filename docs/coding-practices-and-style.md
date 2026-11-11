@@ -10,6 +10,11 @@ adding a repository-wide lint rule.
 Use static `import` declarations. Do not use JavaScript or TypeScript dynamic
 `import()` in production code, tests, or repository scripts.
 
+The source files in `packages/skills/` follow the same production rules as the
+harness even though their paths do not include `src/`. They ship in workerd:
+Node globals and imports are unavailable, and the shared lint scopes include
+them explicitly.
+
 Static imports keep the complete dependency graph visible to TypeScript, the
 bundler, lint, reviewers, and deployment tooling before execution. A dependency
 must not first become resolvable because a request, test branch, or script path
