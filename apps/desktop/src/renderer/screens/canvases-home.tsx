@@ -1,7 +1,7 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { IconBolt, IconDatabase, IconHexagon } from '@tabler/icons-react';
 import { SidekickStack } from '@rally/ui/components/sidekick-stack';
-import { Plus, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Plus, Sparkles, Store } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -11,6 +11,7 @@ import { AvatarStack, Button, EmptyState, ErrorNotice, TitleSkeleton } from '../
 import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
+import { CANVAS_TEMPLATE_CATEGORIES } from '../lib/canvas-templates';
 import { canvasNaming, canvasRoute, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useDocumentTitle } from '../lib/document-title';
@@ -45,7 +46,7 @@ function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserI
  * `/canvases`: every Canvas this person can open, the list the workspace
  * socket keeps (`workspace_canvas_list`), laid out as the Sidekicks library is.
  * Canvases stay in activity order; Live and Data match their card badges.
- * With none at all, the page is only how to make one.
+ * Members can start a Canvas from the Marketplace even before their list arrives.
  */
 export function CanvasesHomeScreen(): React.JSX.Element {
   const { api, session } = useCollaborationSession();
@@ -56,6 +57,8 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const { membersById } = useCanvasNameSources(api);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<CanvasFilter>('all');
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  const showMarketplace = !guest && marketplaceOpen;
   const create = useCreateCanvas();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<Error | null>(null);
@@ -66,6 +69,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     create(prompt).catch((cause: unknown) => setCreateError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))).finally(() => setCreating(false));
   };
   const needle = search.trim().toLocaleLowerCase();
+  const hasCanvases = !!rows?.length;
   const shown = (rows ?? []).filter((row) => matchesFilter(row, filter, currentUserId)
     && (needle === '' || row.title.toLocaleLowerCase().includes(needle)));
   const row = (canvas: CanvasSidebarRow): React.JSX.Element => {
@@ -107,23 +111,47 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       <div className="sidekicks-library-actions window-no-drag">{newCanvas}</div>
     </header>
     {createError && <ErrorNotice occurrence={createError}>{createError.message}</ErrorNotice>}
-    {rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
+    {hasCanvases && !showMarketplace && <div className="sidekicks-library-controls">
+      <SidebarSearch aria-label="Search Canvases" mode="input" onChange={(event) => setSearch(event.target.value)} placeholder="Search Canvases" value={search} />
+    </div>}
+    {(hasCanvases || !guest) && <div aria-label="Canvas filter" className="sidekick-filters canvas-dashboard-filters" role="group">
+      {hasCanvases && FILTERS.map(([value, label]) => <button aria-pressed={!showMarketplace && filter === value} key={value} onClick={() => {
+        setFilter(value);
+        setMarketplaceOpen(false);
+      }} type="button">{label}</button>)}
+      {!guest && <button aria-controls={showMarketplace ? 'canvas-marketplace' : undefined} aria-expanded={showMarketplace} className="canvas-marketplace-toggle" onClick={() => setMarketplaceOpen((open) => !open)} type="button">
+        <Store aria-hidden="true" size={16} />Marketplace
+      </button>}
+    </div>}
+    {showMarketplace ? <CanvasMarketplace creating={creating} onStart={start} />
+      : rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
       : rows.length === 0 ? <CanvasesEmptyState creating={creating} guest={guest} onStart={start} />
-        : <>
-          <div className="sidekicks-library-controls">
-            <SidebarSearch aria-label="Search Canvases" mode="input" onChange={(event) => setSearch(event.target.value)} placeholder="Search Canvases" value={search} />
-          </div>
-          <div aria-label="Canvas filter" className="sidekick-filters" role="group">
-            {FILTERS.map(([value, label]) => <button aria-pressed={filter === value} key={value} onClick={() => setFilter(value)} type="button">{label}</button>)}
-          </div>
-          <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
-            <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${shown.length} ${shown.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
-            {shown.length === 0
-              ? <EmptyState description="Try a different search or filter." title="No matching Canvases" />
-              : <ul className="dashboard-grid">{shown.map(row)}</ul>}
-          </section>
-        </>}
+        : <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
+          <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${shown.length} ${shown.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
+          {shown.length === 0
+            ? <EmptyState description="Try a different search or filter." title="No matching Canvases" />
+            : <ul className="dashboard-grid">{shown.map(row)}</ul>}
+        </section>}
   </main>;
+}
+
+function CanvasMarketplace({ creating, onStart }: { creating: boolean; onStart: (prompt: string) => void }): React.JSX.Element {
+  const [category, setCategory] = useState<(typeof CANVAS_TEMPLATE_CATEGORIES)[number]>(CANVAS_TEMPLATE_CATEGORIES[0]);
+  return <section aria-label="Canvas templates" className="canvas-marketplace" id="canvas-marketplace">
+    <div aria-label="Template category" className="sidekick-filters canvas-template-categories" role="group">
+      {CANVAS_TEMPLATE_CATEGORIES.map((item) => <button aria-pressed={category === item} key={item.label} onClick={() => setCategory(item)} type="button">{item.label}</button>)}
+    </div>
+    <ul className="dashboard-grid">
+      {category.templates.map((template) => <li key={template.name}>
+        <button className="dashboard-card canvas-template-card" disabled={creating} onClick={() => onStart(template.prompt)} type="button">
+          <span className="canvas-template-title">{template.name}</span>
+          <ArrowUpRight aria-hidden="true" size={16} />
+          <span className="canvas-template-description">{template.description}</span>
+        </button>
+      </li>)}
+    </ul>
+    {creating && <p role="status">Starting Canvas…</p>}
+  </section>;
 }
 
 /**

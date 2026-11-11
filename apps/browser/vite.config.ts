@@ -5,10 +5,11 @@ import tailwindcss from "tailwindcss";
 import autoprefixer from "autoprefixer";
 import desktopTheme from "../desktop/tailwind.config";
 import { artifactPickerPlugin } from "../desktop/artifact-picker-plugin";
+import { canvasTemplatePlugin } from "../desktop/canvas-template-plugin";
 export default defineConfig({
   // The opaque HTML-file frame loads Rally's annotation script from this
   // origin, as it does on the desktop; the plugin is shared like the theme.
-  plugins: [react(), artifactPickerPlugin()],
+  plugins: [react(), artifactPickerPlugin(), canvasTemplatePlugin()],
   // Copied Channel links are minted against the public site, as on the desktop.
   define: { "import.meta.env.VITE_PUBLIC_WEB_BASE_URL": JSON.stringify(process.env.VITE_PUBLIC_WEB_BASE_URL ?? "https://rallywith.ai") },
   resolve: { dedupe: ["react", "react-dom"] },
