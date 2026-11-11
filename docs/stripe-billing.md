@@ -2,14 +2,16 @@
 
 Billing attaches to an Organization, including a single-person Organization.
 Membership never changes the subscription quantity. Stripe owns prices, currencies,
-taxes, discounts, payment methods and invoices; Rally owns eligibility and its
-shared usage ledger. Configuration is opt-in: existing deployments keep their
+taxes, discounts, payment methods and invoices. With synchronization enabled it
+also records free-account trials, earned awards and all recorded usage totals;
+Rally retains its eligibility rules and audit ledger. Configuration is opt-in: existing deployments keep their
 current behavior until `BILLING_CONFIG` is supplied.
 
 ## Where the code lives
 
 `apps/api/src/services/billing.ts` owns the lifecycle, with `billing-config.ts` and
-`stripe.ts` beside it. The HTTP boundary is `routes/billing.ts`, the D1 schema is
+`stripe.ts` beside it. `stripe-billing-sync.ts` synchronizes free-account trial
+records, allowance metadata and usage meters. The HTTP boundary is `routes/billing.ts`, the D1 schema is
 `packages/db/migrations/0131_billing.sql`, and the shared desktop/browser UI is
 `apps/desktop/src/renderer/components/organization-billing.tsx`.
 
@@ -24,7 +26,10 @@ Stripe's configured payment methods. Stripe Billing Portal manages payment
 methods, invoices and existing subscriptions. Configure its allowed plan changes
 to prices in Rally's offer catalog.
 
-Start is the free default plan and requires no checkout. The paid catalog maps
+Start is the free default plan and requires no checkout. When synchronization is
+enabled, it receives a Stripe customer and a separate zero-price subscription
+record without collecting a card. This record is excluded from paid-subscription
+eligibility and never consumes the first-paid pilot offer. The paid catalog maps
 Grow, Max and Ultra to `growth`, `max` and `ultra`. Prices and included usage are
 listed in [usage metering](usage-metering.md#plans); configure matching Stripe
 prices before enabling billing. Changing a catalog entry does not migrate an
@@ -90,27 +95,84 @@ estimate is charged. Currency conversion is not guessed: non-USD plans cannot op
 into overages yet. The existing weekly allowance values remain defined by the
 usage plan contract; changing Stripe prices does not change those allowances.
 
-### Source of truth
+### Synchronization and source of truth
 
-Stripe owns subscriptions, their trial deadlines after checkout, discounts,
-payment methods, invoices and collected payments. It is **not** a complete
-record of every Organization's free period or usage in this implementation:
+Set `synchronization` to provision every local Organization in Stripe on the
+existing five-minute scheduled tick, including accounts that never open billing.
+Billing reads and checkout also synchronize the profile. Stripe customer and
+subscription discovery recover lost create receipts beyond Stripe's idempotency
+window. The Organization claim serializes all external writes.
 
-- Before checkout, trial eligibility and earned extensions live in regional D1;
-  Stripe may not yet have a customer or subscription. Free Start accounts do not
-  automatically create Stripe subscriptions.
-- Checkout transfers the remaining trial to Stripe; reconciliation applies earned
-  extensions to trialing subscriptions. Coupons are applied in Stripe.
-- Detailed usage, included allowances and unbilled/free-period usage stay in Rally's
-  usage ledger. Only settled, opted-in overage quantities become Stripe invoice items.
-- The pilot is automatically applied at first paid checkout while enabled. Stripe
-  records the applied coupon, discount dates and discounted invoices; the landing
-  page no longer assigns visitor-specific eligibility deadlines.
+The separate zero-price subscription has `billing_role=free_record`. It records
+the no-card trial and earned team extension; its metadata keeps the original
+start, base deadline, team deadline and qualification rule even when initial sync
+happens after expiry. A persisted award receipt prevents repeatedly applying the
+same deadline, so subsequent edits to the free-record trial deadline in Stripe
+refresh Rally's checkout cache. Paid subscriptions and pilot coupons retain their
+existing lifecycle. Customer metadata shows the current plan, included allowance,
+weekly allocation, quota anchor, paid/free subscription IDs, available pilot
+coupon, meter IDs and pending/failed usage-hour counts. Metadata reflects the
+latest profile sync, so delivery counts may lag one scheduled tick.
 
-Making Stripe the complete billing authority would require provisioning every
-Organization there, synchronizing all trial/promotion awards and reporting usage
-(including included and free usage) through a durable, replayable integration.
-Rally's event ledger would still be needed for audit and reconciliation.
+Every accepted usage event atomically updates `billing_usage_hours` through a
+usage-database trigger. Separate Organization-paid and Rally-paid totals are
+kept per UTC hour, including free accounts, trial/pilot periods, included usage
+and overages. These permanent totals and their revisions form the delivery outbox;
+pruning raw events after 90 days does not remove pending or confirmed totals.
+Migration 0004 backfills the retained event ledger before installing the trigger.
+
+Two dedicated Stripe meters use `event_time_window=hour` and sum aggregation.
+Each send contains the **absolute** micro-USD total for its hour. Stripe replaces
+the earlier value for that hour, so replay after an uncertain response cannot
+add the same usage twice, even after its 24-hour identifier-deduplication window.
+A retry uses a fresh event identifier; replay safety comes from Stripe's
+[hourly replacement semantics](https://docs.stripe.com/billing/subscriptions/usage-based/meters/configure).
+A late event increments the revision and causes the complete total to be resent.
+A receipt for an older revision cannot acknowledge a concurrent ledger update.
+Only customer IDs, timestamps and aggregate cost values leave Rally; detailed
+per-event identities remain in its ledger/lakehouse.
+
+Stripe processes events asynchronously. The background synchronizer reads meter
+summaries before marking a revision confirmed. A mismatch stays pending and
+visible for reconciliation. **Sync errors and mismatches do not block overage
+invoicing.** Settlement continues independently using Rally's existing weekly
+allowance and closed-period calculation; the reporting meters are not attached to
+billable prices, which would charge the same usage again.
+
+Stripe is the operational record for customers, trial awards, subscription
+state, applied promotions, reported usage totals, invoices and payments. Rally's
+ledger remains the audit/replay source and calculates the existing allowance and
+overage rules. This does not migrate that custom arithmetic to Stripe prices or
+credit grants. Synchronization is eventual, and its pending/error state matters
+when comparing the two systems.
+
+Stripe accepts usage timestamps only within the past 35 days. Older unsent hours
+remain in the outbox with `billing_usage_timestamp_expired`; they are never
+re-timestamped into today's usage. Events already pruned before migration 0004
+remain in the lakehouse and rollups, not in Stripe's event history. This provider
+boundary means historical completeness cannot be claimed simply by enabling the
+integration. Unknown-cost events and failed producer queue sends retain the
+existing usage-metering limitations.
+Stripe documents the ingestion window and asynchronous processing in
+[recording usage](https://docs.stripe.com/billing/subscriptions/usage-based/recording-usage-api).
+
+### Recovery
+
+- `billing_usage_hours` records the current total/revision, meter, last sent and
+  confirmed revisions/times, and a diagnostic error code. Inspect rows whose
+  confirmed revision differs from the current one, or whose meter differs from
+  the configured payer meter. Customer metadata summarizes pending/failed hours.
+- An interrupted send is replayed automatically. A successful send awaiting
+  aggregation is rechecked on later ticks. Provider failures remain pending and
+  retry without preventing the next hour or Organization from synchronizing.
+- For an asynchronously rejected event, fix the provider/configuration cause,
+  then set that hour's `sent_revision=0, confirmed_revision=0` to replay its
+  absolute total. Do not edit the amount or raw ledger to hide a discrepancy.
+- Before changing meter IDs, plan the historical migration: events older than
+  Stripe's 35-day ingestion window cannot be silently copied into a new meter.
+  Use the retained audit history for an operator-led financial adjustment where
+  needed; a current-timestamp event is not a historical backfill.
+- Keep the existing non-expiring Organization claim recovery procedure below.
 
 ## Invariants
 
@@ -164,7 +226,12 @@ Recover from the retained usage lakehouse before collecting that exceptional tai
 
 `apps/api/test/billing.test.ts` exercises real migrated SQLite and a fake Stripe
 HTTP service: eligibility, checkout recovery, lifecycle transitions, authorization,
-serialization, cancellation cutoffs and isolated settlement. The usage and
+serialization, cancellation cutoffs and isolated settlement.
+`test/stripe-billing-sync.test.ts` covers profile recovery, awards, first-paid
+eligibility, hourly delivery, delayed aggregation, replay, concurrent updates,
+retention and settlement continuing through sync failures.
+`test-workers/usage-ledger.test.ts` proves the hourly outbox and rollup remain
+atomic when queue batches overlap on real D1. The usage and
 access-revocation suites cover their shared boundaries. Renderer tests cover the
 direct-click handoff, focus refresh and the legacy picker after a failed status read.
 Live Stripe and a full authenticated desktop/browser flow remain activation checks.
@@ -172,7 +239,7 @@ Live Stripe and a full authenticated desktop/browser flow remain activation chec
 ## Configuration and activation
 
 1. Apply regional and usage D1 migrations, including usage migration 0003 for
-   Max/Ultra plan history. Keep billing disabled until setup is complete.
+   Max/Ultra plan history and 0004 for the permanent hourly usage outbox. Keep billing disabled until setup is complete.
 2. Create recurring organization prices in Stripe for Grow, Max, Ultra and negotiated
    offers. Add currency options to those
    prices; amounts and tax behavior live in Stripe.
@@ -200,6 +267,28 @@ Live Stripe and a full authenticated desktop/browser flow remain activation chec
   ]
 }
 ```
+
+To synchronize free accounts and all recorded usage, create a dedicated **$0
+monthly licensed price** on a separate trial-record product. Exclude that product
+from the Billing Portal's editable subscription products; it must stay free.
+Create two reporting-only Stripe meters with sum aggregation and
+`event_time_window: "hour"`, one for Organization-paid micro-USD and one for
+Rally-paid micro-USD. Do not attach these meters to billable prices. Add:
+
+```json
+"synchronization": {
+  "freePriceId": "price_REPLACE_FREE_RECORD",
+  "organizationMeterId": "mtr_REPLACE_ORGANIZATION",
+  "rallyMeterId": "mtr_REPLACE_RALLY"
+}
+```
+
+The API validates the free price and meter ingestion mode before provisioning or
+sending. Use separate Stripe resources per deployment/account; keep webhook
+routing aligned with Organization ownership. Verify in test mode that free
+records remain zero-price, team awards update their trial, the pilot remains
+available at paid checkout, and repeated hourly totals replace rather than add.
+Omitting `synchronization` preserves the earlier checkout-only integration.
 
 To enable the two-month pilot, create a Stripe coupon with `percent_off: 100`,
 `duration: "repeating"`, and `duration_in_months: 2`, then add its ID as the top-level
@@ -246,5 +335,10 @@ are waived: included usage stays available and opted-in overages remain billable
 Stripe history prevents repeat redemption without a second local promotion ledger;
 visitor-specific marketing deadlines were removed in favor of first-paid eligibility
 for every Organization while the campaign is enabled.
+Free-account records and hourly usage synchronization were added so Stripe can
+hold the billing record before checkout and through free usage. Hourly absolute
+values were chosen over raw-event retries because Stripe only deduplicates event
+identifiers for at least 24 hours. The audit ledger stays durable; reconciliation
+is background work and deliberately does not gate invoice collection.
 Future changes must preserve pre-consent exclusion, cancellation cutoffs and
 permanent charge receipts.
