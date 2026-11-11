@@ -60,6 +60,7 @@ function objectApi({
   inventoryStatus = 200,
   inventoryStatuses = [],
   inventoryBodyErrors = false,
+  inventoryErrors = null,
   inventoryTimestamp = '2026-08-13T19:09:29.001Z',
   putErrors = [],
   putInvalidJson = false,
@@ -123,6 +124,9 @@ function objectApi({
     assert.ok(inventoryMatch, 'GET must use the authoritative object inventory');
     const status = scriptedInventoryStatuses.shift() ?? inventoryStatus;
     if (status < 200 || status >= 300) {
+      if (inventoryErrors) {
+        return Response.json({ success: false, errors: inventoryErrors, result: null }, { status });
+      }
       const body = new ReadableStream({
         start(controller) {
           if (inventoryBodyErrors) {
@@ -130,6 +134,7 @@ function objectApi({
             return;
           }
           controller.enqueue(Buffer.from('provider error'));
+          controller.close();
         },
         cancel() {
           errorBodyCancelled = true;
@@ -409,7 +414,10 @@ test('validates authoritative inventory responses without trusting cached object
   for (const status of [403, 429]) {
     await t.test(`non-transient inventory refusal is not retried: ${status}`, async () => {
       const { root, desktopDirectory } = await fixture();
-      const api = objectApi({ inventoryStatus: status });
+      const api = objectApi({
+        inventoryStatus: status,
+        inventoryErrors: [{ code: 10000, message: 'secret detail' }],
+      });
       const sleeps = [];
       try {
         await assert.rejects(
@@ -421,11 +429,11 @@ test('validates authoritative inventory responses without trusting cached object
             sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
             temporaryRoot: root,
           }),
-          new RegExp(`Could not verify .* HTTP ${status}`, 'u'),
+          (error) => error.message.endsWith(`HTTP ${status} (success=false; error codes 10000)`)
+            && !error.message.includes('secret detail'),
         );
         assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 1);
         assert.deepEqual(sleeps, []);
-        assert.equal(api.errorBodyCancelled, true);
       } finally {
         await rm(root, { recursive: true, force: true });
       }

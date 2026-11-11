@@ -838,6 +838,30 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-11-11 — A refused artifact inventory read names Cloudflare's error codes
+
+**What changed:** When the publisher's post-upload inventory read ends on a
+non-OK response, it now reads that final response and reports its envelope
+shape and numeric Cloudflare error codes, in the same form the upload failure
+already used. Retried 5xx responses are still discarded unread. The provider's
+message text is never reported.
+
+**Why:** Release v1.716.0 built, signed and notarized, then aborted because one
+inventory read returned HTTP 403 immediately after the same token's PUT of that
+object succeeded. The publisher discarded the body, so the log could not say
+whether the token was refused, the request was blocked, or the API refused for
+another reason. A 403 that follows a successful write with the same token is
+unlikely to be a revoked token, the case the earlier entry declined to retry,
+but without the code nobody can tell which one it was.
+
+**Considered and rejected:** Retrying 403 now. Whether it should be retried
+depends on which Cloudflare code it carries, and that has not been observed.
+The next occurrence will name it.
+
+**Consequences:** Every inventory refusal now carries its error codes. Any
+decision to retry a particular 403 should key on the code it names, not on the
+status alone.
+
 ### 2026-11-10 — Artifact inventory verification retries transient Cloudflare failures
 
 **What changed:** After each private artifact upload, the publisher's

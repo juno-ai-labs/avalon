@@ -114,6 +114,21 @@ async function discardBody(response) {
   }
 }
 
+// Names a Cloudflare API failure by its envelope shape and numeric error codes
+// only; the provider's message text is never reported.
+function cloudflareFailureDetail(body) {
+  const codes = Array.isArray(body?.errors)
+    ? body.errors.map((error) => error?.code).filter((code) => Number.isInteger(code)).slice(0, 5)
+    : [];
+  const detail = body === null
+    ? 'invalid JSON response'
+    : body?.success === false
+      ? 'success=false'
+      : 'missing success=true';
+  const codeDetail = codes.length > 0 ? `; error codes ${codes.join(',')}` : '';
+  return `${detail}${codeDetail}`;
+}
+
 async function uploadAndVerify(
   bucket,
   key,
@@ -150,17 +165,8 @@ async function uploadAndVerify(
   });
   const putBody = await put.json().catch(() => null);
   if (!put.ok || putBody?.success !== true) {
-    const codes = Array.isArray(putBody?.errors)
-      ? putBody.errors.map((error) => error?.code).filter((code) => Number.isInteger(code)).slice(0, 5)
-      : [];
-    const detail = putBody === null
-      ? 'invalid JSON response'
-      : putBody?.success === false
-        ? 'success=false'
-        : 'missing success=true';
-    const codeDetail = codes.length > 0 ? `; error codes ${codes.join(',')}` : '';
     throw new Error(
-      `Could not upload r2://${target}: Cloudflare returned HTTP ${put.status} (${detail}${codeDetail})`,
+      `Could not upload r2://${target}: Cloudflare returned HTTP ${put.status} (${cloudflareFailureDetail(putBody)})`,
     );
   }
   const uploaded = putBody.result;
@@ -197,8 +203,13 @@ async function uploadAndVerify(
     if (attempt < INVENTORY_ATTEMPTS - 1) await discardBody(inventory);
   }
   if (!inventory.ok) {
-    await discardBody(inventory);
-    throw new Error(`Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`);
+    // Read the final refusal rather than discarding it: its error codes are
+    // what distinguish a revoked token from a provider-side refusal.
+    const inventoryError = await inventory.json().catch(() => null);
+    throw new Error(
+      `Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`
+        + ` (${cloudflareFailureDetail(inventoryError)})`,
+    );
   }
   if (inventory.headers.get('cf-cache-status') !== 'DYNAMIC') {
     await inventory.body?.cancel();
