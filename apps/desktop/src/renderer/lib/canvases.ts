@@ -1,7 +1,7 @@
 import { asWorkstreamId, type CanvasSidebarRow } from '@rally/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useOptionalCollaborationSession } from './collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from './sidebar-list-store';
@@ -142,59 +142,90 @@ export function othersPresent(row: Pick<CanvasSidebarRow, 'presentUserIds'>, cur
  * (`HostedCanvas.create`), so a request that landed but whose answer was lost
  * does not make a second Canvas. Success ends the series.
  */
-export function useCreateCanvas(): (prompt?: string) => Promise<void> {
+export function useCreateCanvas(): (prompt?: string) => void {
   const api = useOptionalCollaborationSession()?.api;
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
-  const series = useRef<{ text: string; canvasId: ReturnType<typeof asWorkstreamId>; clientMessageId: string; inFlight: Promise<void> | null } | null>(null);
+  const creationKey = useCanvasCreationKey();
+  const series = useRef<{ scope: readonly unknown[]; text: string; canvasId: ReturnType<typeof asWorkstreamId>; clientMessageId: string; inFlight: Promise<void> | null } | null>(null);
   return useCallback((prompt?: string) => {
-    if (!api) return Promise.reject(new Error('Rally is not connected yet.'));
     const text = prompt?.trim() ?? '';
-    const current = series.current;
-    if (current?.inFlight) return current.inFlight;
+    const current = series.current?.scope === creationKey ? series.current : null;
+    if (current?.inFlight) {
+      if (location.pathname !== canvasRoute(current.canvasId)) void navigate(canvasRoute(current.canvasId));
+      return;
+    }
     const attempt = current?.text === text ? current
-      : { text, canvasId: asWorkstreamId(uuidV7()), clientMessageId: crypto.randomUUID(), inFlight: null };
+      : { scope: creationKey, text, canvasId: asWorkstreamId(uuidV7()), clientMessageId: crypto.randomUUID(), inFlight: null };
     series.current = attempt;
     const createdAt = new Date().toISOString();
-    const retry = (): Promise<void> => {
-      if (attempt.inFlight) return attempt.inFlight;
+    queryClient.setQueryDefaults(creationKey, { gcTime: Number.POSITIVE_INFINITY });
+    const complete = (): void => {
+      queryClient.setQueryData<Record<string, CanvasCreation>>(creationKey, (records) => {
+        const next = { ...records };
+        delete next[attempt.canvasId];
+        return next;
+      });
+    };
+    const retry = (editedPrompt = attempt.text): void => {
+      if (attempt.inFlight) return;
+      // A correction is a new message; an unchanged retry replays the same receipt.
+      if (editedPrompt.trim() !== attempt.text) {
+        attempt.text = editedPrompt.trim();
+        attempt.clientMessageId = crypto.randomUUID();
+      }
       const publish = (status: CanvasCreation['status'], error: Error | null = null): void => {
-        queryClient.setQueryData<CanvasCreation>(canvasCreationQueryKey(attempt.canvasId), { status, error, retry, createdAt });
+        queryClient.setQueryData<Record<string, CanvasCreation>>(creationKey, (records) => ({
+          ...records, [attempt.canvasId]: { status, error, retry, complete, createdAt, prompt: attempt.text },
+        }));
       };
       publish('creating');
-      const inFlight = api.createCanvas({
+      const request = api ? api.createCanvas({
         canvasId: attempt.canvasId,
-        ...(text ? { prompt: { text, clientMessageId: attempt.clientMessageId } } : {}),
-      }).then(() => {
+        ...(attempt.text ? { prompt: { text: attempt.text, clientMessageId: attempt.clientMessageId } } : {}),
+      }) : Promise.reject(new Error('Rally is not connected yet.'));
+      attempt.inFlight = request.then(() => {
         publish('ready');
         if (series.current === attempt) series.current = null;
       }, (cause: unknown) => {
-        // The open Canvas owns recovery, even if its launcher has unmounted.
         publish('failed', cause instanceof Error ? cause : new Error('The Canvas could not be made.'));
       }).finally(() => { attempt.inFlight = null; });
-      attempt.inFlight = inFlight;
-      return inFlight;
     };
-    const inFlight = retry();
+    retry();
     void navigate(canvasRoute(attempt.canvasId));
-    return inFlight;
-  }, [api, navigate, queryClient]);
+  }, [api, creationKey, location.pathname, navigate, queryClient]);
 }
 
-interface CanvasCreation {
+export interface CanvasCreation {
   status: 'creating' | 'failed' | 'ready';
   error: Error | null;
-  retry: () => Promise<void>;
+  retry: (prompt?: string) => void;
+  complete: () => void;
   createdAt: string;
+  prompt: string;
 }
 
-function canvasCreationQueryKey(id: string): readonly unknown[] {
-  return ['canvas-creation', id];
+const NO_CREATIONS: Record<string, CanvasCreation> = {};
+
+function useCanvasCreationKey(): readonly unknown[] {
+  const session = useOptionalCollaborationSession()?.session;
+  const userId = session?.user.id;
+  const region = session?.workspace?.region;
+  const workspaceId = session?.workspace?.id;
+  return useMemo(() => ['canvas-creations', userId, region, workspaceId], [userId, region, workspaceId]);
 }
 
-/** Window-local creation state survives the launcher and never enters the socket-owned caches. */
+/** Window-local recovery survives navigation until the first live snapshot. */
+export function useCanvasCreations(): Record<string, CanvasCreation> {
+  const queryKey = useCanvasCreationKey();
+  return useQuery<Record<string, CanvasCreation>>({
+    queryKey, enabled: false, gcTime: Number.POSITIVE_INFINITY,
+  }).data ?? NO_CREATIONS;
+}
+
 export function useCanvasCreation(id: string): CanvasCreation | undefined {
-  return useQuery<CanvasCreation>({ queryKey: canvasCreationQueryKey(id), enabled: false }).data;
+  return useCanvasCreations()[id];
 }
 
 /**
