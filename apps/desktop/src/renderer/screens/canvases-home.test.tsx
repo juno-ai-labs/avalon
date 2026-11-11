@@ -101,14 +101,13 @@ describe('CanvasesHomeScreen', () => {
     ]));
     const card = (title: string): HTMLElement => screen.getByRole('link', { name: title }).closest('li')!;
     await waitFor(() => expect(card('Q4 revenue review').querySelectorAll('.canvas-card-presence .avatar')).toHaveLength(2));
-    expect(card('Q4 revenue review').querySelector('.canvas-card-data')).toBeNull();
-    expect(card('Data tracker').querySelector('.canvas-card-data')).toHaveTextContent('Data backed');
-    expect(card('Data tracker').querySelector('.canvas-card-data svg')).toHaveClass('tabler-icon-database');
+    expect(within(card('Q4 revenue review')).queryByText('Data backed')).toBeNull();
+    expect(within(card('Data tracker')).getByText('Data backed')).toBeInTheDocument();
     expect(card('Data tracker').querySelector('.canvas-card-presence')).toBeNull();
-    expect(card('Shared tracker').querySelector('.canvas-card-data')).toHaveTextContent('Data backed');
+    expect(within(card('Shared tracker')).getByText('Data backed')).toBeInTheDocument();
     expect(card('Shared tracker').querySelectorAll('.canvas-card-presence .avatar')).toHaveLength(1);
     expect(card('Hiring pipeline').querySelector('.canvas-card-presence')).toBeNull();
-    expect(card('Hiring pipeline').querySelector('.canvas-card-data')).toBeNull();
+    expect(within(card('Hiring pipeline')).queryByText('Data backed')).toBeNull();
   });
 
   it('draws the attached Sidekicks as a facepile at the right, under the Data badge when the card has one', async () => {

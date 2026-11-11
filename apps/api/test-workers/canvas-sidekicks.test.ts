@@ -116,7 +116,7 @@ describe("a Sidekick a Canvas's Chat made", () => {
     ]));
   });
 
-  it("carries attached trigger kinds to Canvas readers and refreshes the list after a trigger-only edit", async () => {
+  it("keeps attached trigger kinds current without refreshing for instruction-only edits", async () => {
     const addressed = { workspaceId: WORKSPACE_ID, automationId: MADE_HERE };
     const actor = { ...member(CREATOR), participantOfOwningWorkstream: false };
     const draft = {
@@ -128,6 +128,13 @@ describe("a Sidekick a Canvas's Chat made", () => {
       "SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'canvases'").one().waterline);
     const attached = async () => (await workspace().canvasListFor({ workspaceId: WORKSPACE_ID, userId: PARTICIPANT, accessClass: "member" }))[0]!.sidekicks![0]!;
     await workspace().sidekickSaveDefinition({ ...addressed, actor, evaluatorRules: null, submittedByRunId: null,
+      draft: { ...draft, ready: false, triggers: [{ type: "manual" }] } });
+    const beforeDraft = await waterline();
+    await workspace().sidekickSaveDefinition({ ...addressed, actor, evaluatorRules: null, submittedByRunId: null,
+      draft: { ...draft, ready: false, triggers: [{ type: "interval", intervalSeconds: 3600, summary: "Every hour" }] } });
+    expect.soft(await attached()).toMatchObject({ triggerKinds: ["schedule"], status: "draft" });
+    expect.soft(await waterline()).toBeGreaterThan(beforeDraft);
+    await workspace().sidekickSaveDefinition({ ...addressed, actor, evaluatorRules: null, submittedByRunId: null,
       draft: { ...draft, triggers: [{ type: "manual" }] } });
     expect.soft(await attached()).toMatchObject({ triggerKinds: ["manual"], canOpen: false });
     const before = await waterline();
@@ -137,6 +144,12 @@ describe("a Sidekick a Canvas's Chat made", () => {
     expect.soft(await waterline()).toBeGreaterThan(before);
     const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(PARTICIPANT) });
     expect.soft(detail.sidekicks?.[0]?.triggerKinds).toEqual(["schedule"]);
+    const beforeInstructions = await waterline();
+    await workspace().sidekickSaveDefinition({ ...addressed, actor, evaluatorRules: null, submittedByRunId: null,
+      draft: { ...draft, instructions: "Add a row for each new email, including its subject.",
+        triggers: [{ type: "interval", intervalSeconds: 3600, summary: "Every hour" }] } });
+    expect.soft(await attached()).toMatchObject({ triggerKinds: ["schedule"], status: "active" });
+    expect.soft(await waterline()).toBe(beforeInstructions);
   });
 
   it("carries the actual Canvas mark beyond the sidebar page and refreshes it after appearance and artifact changes", async () => {
