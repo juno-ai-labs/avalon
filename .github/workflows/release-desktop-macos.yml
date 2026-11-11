@@ -579,11 +579,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install Linux packaging and smoke dependencies
         run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libsecret-1-0 libfuse2t64
-      # Ubuntu 24.04 AppArmor blocks Chromium's userns sandbox; see docs/linux-desktop.md.
-      - name: Allow Chromium's user-namespace sandbox on the runner
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # Ubuntu 24.04 AppArmor blocks Chromium's userns sandbox for the node_modules
+      # fixture; lifted for this step only so the package smoke keeps default
+      # policy. See docs/linux-desktop.md.
       - name: Exercise real Linux updater checksum rejection and installation
-        run: xvfb-run -a pnpm --filter @rally/desktop test:linux-updater
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          trap 'sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1' EXIT
+          xvfb-run -a pnpm --filter @rally/desktop test:linux-updater
       - name: Build AppImage and Debian packages and exercise microphone capture
         env:
           RALLY_DESKTOP_SESSION_KEY: ${{ secrets.RALLY_DESKTOP_SESSION_KEY }}

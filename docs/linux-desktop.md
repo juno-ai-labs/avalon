@@ -97,11 +97,13 @@ standalone `pkexec` package or the older `policykit-1` package; this does not cl
 support for Debian 11 or Ubuntu 20.04 without testing their runtime libraries.
 Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor; Chromium
 then needs a root-owned setuid `chrome-sandbox`, or it aborts at launch. The
-release job lifts the restriction on its runner so the smokes stay sandboxed.
-Users of an AppImage on such a system hit the same restriction unless their
-distribution ships an AppArmor profile for it; the Debian package's post-install
-loads electron-builder's AppArmor profile (and sets the helper setuid), so it
-starts under the restriction.
+release job lifts the restriction only around the `node_modules` updater fixture,
+which ships nothing. The package smoke runs under default policy on purpose: an
+AppImage's helper sits on a read-only mount and cannot be setuid, so until the
+AppImage has its own way to start sandboxed there, that smoke fails and Linux is
+not published rather than shipping a download that aborts for 24.04 users. The
+Debian package's post-install loads electron-builder's AppArmor profile (and sets
+the helper setuid), so an installed `.deb` starts under the restriction.
 AppImages need a user-writable location and FUSE support or extraction mode.
 Debian installation needs a desktop privilege agent and package manager.
 
@@ -147,22 +149,24 @@ remain platform acceptance checks; the synthetic microphone is not those checks.
 
 ## Changelog
 
-### 2026-11-11 — Let the release job's Linux smokes start Chromium's sandbox
+### 2026-11-11 — Lift the userns restriction only for the updater fixture
 
-**What changed:** The release workflow's Ubuntu job sets
-`kernel.apparmor_restrict_unprivileged_userns=0` before launching Electron.
+**What changed:** The release workflow's updater-fixture step sets
+`kernel.apparmor_restrict_unprivileged_userns=0` for its own run and restores it.
 
 **Why:** The first release that carried the Linux job (run 42958136759) failed
 `test:linux-updater`: on Ubuntu 24.04, AppArmor denied the user-namespace sandbox
 and Chromium aborted because the fallback setuid helper in `node_modules` is not
 root-owned. The Mac release shipped; Linux was not published.
 
-**Considered and rejected:** `--no-sandbox` for every smoke would test an
-unsandboxed launch the package never makes. Chowning `chrome-sandbox` covers only
-`node_modules`, not the AppImage and Debian binaries the package smoke extracts.
+**Considered and rejected:** `--no-sandbox` would test an unsandboxed launch the
+package never makes. Lifting the restriction for the whole job made the AppImage
+smoke pass on the runner while the same AppImage aborts on stock 24.04, so
+`linux-publish` would have shipped a broken download.
 
-**Consequences:** Smokes prove sandboxed startup on the runner, not under the
-default Ubuntu 24.04 AppArmor policy that users of the AppImage have.
+**Consequences:** The package smoke remains the gate for what users get. It fails
+until the AppImage starts sandboxed on default 24.04 policy or the team decides to
+publish the `.deb` alone; either is a product decision outside this fix.
 
 ### 2026-11-11 — Ship Linux through the shared desktop with separate update feeds
 
