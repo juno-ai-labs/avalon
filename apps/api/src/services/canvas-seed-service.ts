@@ -1,9 +1,7 @@
 import {
   ArtifactManifestSchema,
-  type ArtifactManifest,
   RegionSchema,
   SITE_MANIFEST_MIME_TYPE,
-  artifactManifestKey,
   asUserId,
   asWorkspaceId,
   type WorkstreamAppearance,
@@ -18,17 +16,11 @@ import { sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logError } from "../observability/logger";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { ensureArtifactHostname } from "./artifact-hostname";
 import { createCanvas } from "./canvas-service";
 import { insertPublishedResource, publicationIdentity, publishedRowByIdentity } from "./resource-publication";
 import { allocateResourceSlugBesideCreation } from "./resource-slug";
 import { declaresStorageClass } from "./terminal/site-publish";
-import {
-  existingArtifactForResource,
-  pointArtifactAtVersion,
-  registerArtifact,
-  writeArtifactVersion,
-} from "./terminal/site-resource-bridge";
+import { activateSiteVersion, existingArtifactForResource, publishSiteVersion } from "./terminal/site-resource-bridge";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
@@ -156,15 +148,14 @@ export async function seedCanvas(env: Env, input: { workspaceId: string; creator
 /**
  * Publish a seed's site as the Canvas's first artifact, at version 1.
  *
- * The third caller of the site writes, after Rally's own publish
- * (`terminal/resource-bridge.ts`) and a person's
- * (`canvas-publication-service.ts`), and the same order as both: files,
- * manifest, hostname, resource row, registry, pointer. It differs in two
- * ways. Its identity is the one Rally's publish of `site.path` from this
- * Canvas's Chat would compute, so the first time Rally revises the site that
- * is version 2 of this artifact and not a second site. And it only ever
- * writes version 1: a row whose stored manifest is past version 1 was
- * published since, and is left alone.
+ * Through `publishSiteVersion`, as Rally's own publish and a person's go, so
+ * the order of the writes is theirs. What is the seed's own: the files come
+ * from the Worker, with no sandbox; the revision's author is `system`; and
+ * the identity is the one Rally's publish of `site.path` from this Canvas's
+ * Chat would compute, so the first time Rally revises the site that is
+ * version 2 of this artifact and not a second site. It only ever writes
+ * version 1: a row whose stored manifest is past version 1 was published
+ * since, and is left alone.
  */
 async function publishSeedSite(env: Env, target: { workspaceId: string; canvasId: string; seedKey: string; title: string }, site: CanvasSeed["site"]): Promise<void> {
   const { workspaceId, canvasId } = target;
@@ -186,61 +177,49 @@ async function publishSeedSite(env: Env, target: { workspaceId: string; canvasId
   const existing = await publishedRowByIdentity(runtime.DB, workspaceId, providerResourceId);
   if (existing && existing.id !== resourceId) return;
 
-  let manifest: ArtifactManifest;
   if (existing) {
     // The row's own manifest says which case this is, where its bytes cannot:
     // a deploy between two attempts changes the seed's files, and comparing
     // them would read an unfinished first attempt as a later republish.
     const stored = existing.content_ref ? await env.PAYLOADS.get(existing.content_ref) : null;
     if (!stored) throw new Error("canvas_seed_manifest_missing");
-    manifest = ArtifactManifestSchema.parse(JSON.parse(await stored.text()) as unknown);
+    const manifest = ArtifactManifestSchema.parse(JSON.parse(await stored.text()) as unknown);
     // Past version 1, Rally published since, and that publish registered and
     // pointed its own version. At version 1 an earlier attempt wrote the row
     // and may have stopped: finish serving the bytes it stored.
     if (manifest.artifactVersion !== 1) return;
+    const registered = await existingArtifactForResource(runtime.DB, workspaceId, resourceId);
+    await activateSiteVersion(env, runtime.DB, {
+      workspaceId, workstreamId: canvasId, resourceId, manifest,
+      hostnameStub: registered?.hostnameStub ?? null, registeredVersion: registered?.version ?? null,
+    });
   } else {
-    const written = await writeArtifactVersion(env, {
-      workspaceId, workstreamId: canvasId, region: env.AVALON_REGION,
-      artifactId, resourceId, version: 1, mode, stateful,
+    await publishSiteVersion(env, runtime.DB, {
+      workspaceId, workstreamId: canvasId, resourceId, previous: null, artifactId,
+      claimant: `canvas-seed:${target.seedKey}`, mode, stateful,
       files, fallbackTitle: target.title, serverModuleSha256: serverModule?.sha256 ?? null,
-    });
-    manifest = written.manifest;
-    // The public origin before the row, as every site publish orders it.
-    await ensureArtifactHostname(env, { workspaceId, artifactId });
-    await insertPublishedResource(runtime.DB, {
-      publicationParentId: canvasId,
-      resourceId, workspaceId, resourceType: "generated_site", providerResourceId,
-      // The Canvas's own name, not the directory's: it is what the panel
-      // shows, and a later republish that names no title keeps it.
-      title: target.title, mimeType: SITE_MANIFEST_MIME_TYPE,
-      contentRef: written.manifestRef, contentSha256: contentDigest,
-      // No person published this, and no run did.
-      uploadedByUserId: null, modelContentStatus: "unsupported", timestamp: nowIso(),
-      author: { kind: "system" },
-      metadataJson: JSON.stringify({
-        sourcePath: site.path, size: written.manifest.totalBytes, attachmentKind: "site", contentMode: "unsupported",
-        publicationEventType: "resource_attached", canvasSeed: target.seedKey,
-        artifactId, artifactVersion: 1, artifactMode: mode, artifactStateful: stateful,
-      }),
-    });
-    await allocateResourceSlugBesideCreation(runtime, workspaceId, resourceId);
-  }
-
-  const registered = await existingArtifactForResource(runtime.DB, workspaceId, resourceId);
-  if (!registered) {
-    await registerArtifact(runtime.DB, {
-      artifactId: manifest.artifactId, hostnameStub: await ensureArtifactHostname(env, { workspaceId, artifactId: manifest.artifactId }),
-      workspaceId, workstreamId: canvasId, resourceId: resourceId,
-      mode: manifest.mode, stateful: manifest.stateful, version: manifest.artifactVersion,
-      manifestRef: artifactManifestKey(manifest.artifactId, manifest.artifactVersion),
+      recordResource: async ({ written }) => {
+        await insertPublishedResource(runtime.DB, {
+          publicationParentId: canvasId,
+          resourceId, workspaceId, resourceType: "generated_site", providerResourceId,
+          // The Canvas's own name, not the directory's: it is what the panel
+          // shows, and a later republish that names no title keeps it.
+          title: target.title, mimeType: SITE_MANIFEST_MIME_TYPE,
+          contentRef: written.manifestRef, contentSha256: contentDigest,
+          // No person published this, and no run did.
+          uploadedByUserId: null, modelContentStatus: "unsupported", timestamp: nowIso(),
+          author: { kind: "system" },
+          metadataJson: JSON.stringify({
+            sourcePath: site.path, size: written.manifest.totalBytes, attachmentKind: "site", contentMode: "unsupported",
+            publicationEventType: "resource_attached", canvasSeed: target.seedKey,
+            artifactId, artifactVersion: 1, artifactMode: mode, artifactStateful: stateful,
+          }),
+        });
+        await allocateResourceSlugBesideCreation(runtime, workspaceId, resourceId);
+        return true;
+      },
     });
   }
-  // Last, once every byte it names is durable. Pointing is an upsert, so a
-  // replay points a site that already serves at the version it serves.
-  await pointArtifactAtVersion(env, {
-    artifactId: manifest.artifactId, workspaceId, workstreamId: canvasId, resourceId: resourceId,
-    region: env.AVALON_REGION, manifest,
-  });
 
   await attachWorkstreamRuntimeResource(runtime, {
     workspaceId, workstreamId: canvasId, substreamId: "0", resourceId: resourceId, attachedByUserId: null,
