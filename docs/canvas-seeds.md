@@ -40,8 +40,9 @@ finished.
 
 **Publishing with no sandbox.** Rally's own publish reads a site out of a
 Canvas's sandbox, and a person's publish is refused an `index.js`. A seed's
-files are Rally's own, so `publishSeedSite` calls the shared site writes
-directly, in the order every site publish uses. Its identity is
+files are Rally's own, so `publishSeedSite` hands them to
+`publishSiteVersion`, the function every site publish goes through
+([`live-web-artifacts.md`](live-web-artifacts.md#publishing)). Its identity is
 `terminal:<canvasId>:<path>`, the one Rally's publish of that path from this
 Chat computes, so Rally's first revision is version 2 of this artifact. Its
 first version is authored as `system`, because an `agent` version must name

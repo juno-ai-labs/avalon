@@ -138,7 +138,8 @@ function fixture(
     }),
     delete: vi.fn(async (key: string) => { objects.delete(key); }),
   });
-  const recordPublish = vi.fn(async () => undefined);
+  // What the artifact host answers a publish with: whether its pointer moved.
+  const recordPublish = vi.fn(async () => ({ advanced: true }));
   const baseEnv = createTestEnv({
     DB: workspaceDatabase(database), PLATFORM_DB: sqliteD1(platformDatabase),
     PAYLOADS: bucket, AVALON_REGION: "global", APP_ENV: "test",

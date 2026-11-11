@@ -47,15 +47,28 @@ exists.
 
 ### Publishing
 
-A person can also publish a static site into a Canvas, from Claude, ChatGPT
-or OpenCode through `POST /canvases/:id/artifacts`: the same version write,
-hostname, registry and host pointer as below, in the same order, with the
-person as the revision's author, and never an active site
-([`rally-mcp.md`](rally-mcp.md#publishing)). The row writes both publishers
-share live in `services/resource-publication.ts`.
+A site has three publishers, and one function holds the order they share.
+`publishSiteVersion` (`services/terminal/site-resource-bridge.ts`) claims the
+version, writes its files and manifest, reserves the hostname, calls the
+publisher's own `recordResource` to insert or swap the resource row, then
+registers the artifact and points the host at it (`activateSiteVersion`). A
+publisher supplies only what is its own:
 
-A third caller publishes a Canvas seed's site with no sandbox and no person,
-through the same writes in the same order ([`canvas-seeds.md`](canvas-seeds.md)).
+- **Rally's publish** (`terminal/resource-bridge.ts`): the files a run wrote
+  in the sandbox, the run as author, and a lost race as
+  `resource_publish_conflict`.
+- **A person's publish** (`canvas-publication-service.ts`), from Claude,
+  ChatGPT or OpenCode through `POST /canvases/:id/artifacts`: the person as
+  author, never an active site, and a lost race settled by whether the winner
+  published the same content ([`rally-mcp.md`](rally-mcp.md#publishing)).
+- **A Canvas seed's publish** (`canvas-seed-service.ts`): Rally's own files
+  with no sandbox, `system` as author, and only ever version 1
+  ([`canvas-seeds.md`](canvas-seeds.md)).
+
+`activateSiteVersion` on its own is the repair for a publish that stopped
+between the row and the pointer: an unchanged retry and a resumed seed both
+call it with the manifest the row holds. The row writes themselves live in
+`services/resource-publication.ts`.
 
 `publish_resource` accepts a directory. It gains no parameter for what
 to do with one: **the kind is resolved from the directory's root entry**, because
@@ -854,6 +867,27 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-10 — One function holds the order of a site publish
+
+**What changed:** `publishSiteVersion` and `activateSiteVersion` in
+`services/terminal/site-resource-bridge.ts` now run the steps of a site
+publish: claim, files and manifest, hostname, the caller's resource row,
+registry, pointer. Rally's publish, a person's and a Canvas seed's each call
+it and pass only their own row write as `recordResource`.
+
+**Why:** Seeding the Getting Started guide added a third publisher, and review
+of it pointed out that the order, which this document calls the contract, was
+then written out by hand in three places. A change to it would have had to be
+made three times and nothing would have failed if one was missed. It was
+folded in the same pull request at the owner's direction.
+
+**What a future change has to respect:** the three publishers differ in their
+row write and in what a lost race means, and that stays theirs:
+`recordResource` answers `false` to stop activation, or throws. A fourth
+publisher supplies its own, and does not sequence the steps itself. The
+lower-level writes stay exported for tests and for the engineering
+inspection, not for a new caller to order by hand.
 
 ### 2026-11-10 — A run can write a stateful site's rows
 
