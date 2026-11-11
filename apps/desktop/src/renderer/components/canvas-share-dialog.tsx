@@ -1,10 +1,11 @@
 import { asUserId, type CanvasDetail, type CanvasVisibility } from '@rally/contracts';
 import { CreateScopeInvitationsSchema } from '@rally/contracts/scope-grants';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { IconBuilding, IconChevronRight, IconLock, IconUsers } from '@tabler/icons-react';
+import { IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import { canvasDetailQueryKey, useCanvasNameSources } from '../lib/canvases';
+import { CANVAS_VISIBILITY_OPTIONS } from '../lib/canvas-sharing';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import type { WorkspaceMember } from '../lib/types';
 import { AccessDecisionActions } from './canvas-access-request';
@@ -13,11 +14,6 @@ import { RelativeTime } from './relative-time';
 import { useScopeInvitations } from './scope-sharing-panel';
 import { SidebarSearch } from './sidebar-search';
 
-const VISIBILITY_OPTIONS = {
-  creator: { icon: IconLock, label: 'Only the creator', description: 'Nobody else can open it.' },
-  participants: { icon: IconUsers, label: 'Specific people', description: 'The people chosen below, guests among them.' },
-  workspace: { icon: IconBuilding, label: 'Everyone in the Organization', description: 'Every member can open it, and any guests you add.' },
-} satisfies Record<CanvasVisibility, { icon: typeof IconLock; label: string; description: string }>;
 const VISIBILITY_VALUES = ['creator', 'participants', 'workspace'] as const;
 
 /**
@@ -26,7 +22,7 @@ const VISIBILITY_VALUES = ['creator', 'participants', 'workspace'] as const;
  * audience), so its copy says so rather than "Nobody else".
  */
 function visibilityDescription(value: CanvasVisibility, written: boolean): string {
-  if (!written || value === 'workspace') return VISIBILITY_OPTIONS[value].description;
+  if (!written || value === 'workspace') return CANVAS_VISIBILITY_OPTIONS[value].description;
   return value === 'creator'
     ? 'And everyone the Sidekick that writes it is shared with.'
     : 'The people chosen below, guests among them, and everyone the Sidekick that writes it is shared with.';
@@ -115,7 +111,7 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
   const creator = membersById.get(canvas.createdByUserId);
   if (!canvas.canManage) {
     return <div className="canvas-share">
-      <p className="canvas-share-visibility"><strong>{VISIBILITY_OPTIONS[canvas.visibility].label}</strong>{visibilityDescription(canvas.visibility, canvas.writerSidekickId !== null)}</p>
+      <p className="canvas-share-visibility"><strong>{CANVAS_VISIBILITY_OPTIONS[canvas.visibility].label}</strong>{visibilityDescription(canvas.visibility, canvas.writerSidekickId !== null)}</p>
       <PeopleList ids={[canvas.createdByUserId, ...canvas.participantUserIds]} membersById={membersById} owner={canvas.createdByUserId} />
       <p className="canvas-share-note">Only {creator ? creator.name : 'its creator'} and the Organization’s administrators can change who can open it.</p>
     </div>;
@@ -149,7 +145,7 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
       <legend className="sr-only">Who can open it</legend>
       <div className="canvas-share-options">
         {VISIBILITY_VALUES.map((value) => {
-          const { icon: Icon, label } = VISIBILITY_OPTIONS[value];
+          const { icon: Icon, label } = CANVAS_VISIBILITY_OPTIONS[value];
           return <label className="action-tile canvas-share-option" key={value}>
             <input aria-describedby={`${visibilityDescriptionId}-${value}`} checked={visibility === value} className="sr-only"
               name="canvas-visibility" onChange={() => setVisibility(value)} type="radio" value={value} />
