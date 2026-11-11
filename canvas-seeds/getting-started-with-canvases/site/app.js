@@ -37,13 +37,15 @@ async function call(path, body) {
   return response.json();
 }
 
-/** Sends a change and draws the state the server answers with. */
+/** Sends a change and draws the state the server answers with. Answers whether it saved. */
 async function send(path, body) {
   try {
     render(await call(path, body ?? {}));
     say("");
+    return true;
   } catch {
     if (!stopped) say("That did not save. Try again.");
+    return false;
   }
 }
 
@@ -123,6 +125,9 @@ function renderSteps(states) {
   for (const element of steps) {
     const step = byId.get(element.dataset.step);
     element.classList.toggle("done", step.done);
+    // The tick is drawn, so it is also said: the mark itself is hidden from
+    // a screen reader.
+    element.querySelector("[data-step-state]").textContent = step.done ? "Done: " : "To do: ";
     const where = element.querySelector(".step-where");
     where.dataset.label ??= where.textContent;
     where.textContent = step.done && step.team && step.by && step.by !== "you" ? `Done by ${step.by}` : where.dataset.label;
@@ -220,15 +225,17 @@ for (const prompt of document.querySelectorAll("[data-prompt]")) {
 for (const button of document.querySelectorAll("[data-copy-starter]")) {
   const text = button.parentElement.querySelector("[data-starter]");
   button.addEventListener("click", async () => {
-    await copy(text.textContent, button, text);
-    send("api/steps", { step: "own_canvas" });
+    // Only a copy that worked finishes the guide. A failed one leaves the
+    // prompt selected to copy by hand, and ticking would fold it away.
+    if (await copy(text.textContent, button, text)) send("api/steps", { step: "own_canvas" });
   });
 }
 
 /**
  * Copies `text` and says so on the button. A framed page is not always allowed
  * the clipboard API, so this falls back to the older command, and failing that
- * selects the words so the person can copy them by hand.
+ * selects the words so the person can copy them by hand. Answers whether it
+ * copied.
  */
 async function copy(text, button, source) {
   let copied;
@@ -262,6 +269,7 @@ async function copy(text, button, source) {
   button.resetTimer = setTimeout(() => {
     button.textContent = button.dataset.label;
   }, 2000);
+  return copied;
 }
 
 // -------------------------------------------------------------------- wall
@@ -271,8 +279,9 @@ document.querySelector("[data-add-card]").addEventListener("submit", async (even
   const input = event.currentTarget.elements.text;
   const text = input.value.trim();
   if (text === "") return;
-  input.value = "";
-  await send("api/cards", { text });
+  // The idea stays in the box until it is saved, and is cleared only if the
+  // person has not typed something else meanwhile.
+  if (await send("api/cards", { text }) && input.value.trim() === text) input.value = "";
 });
 
 cardList.addEventListener("click", (event) => {

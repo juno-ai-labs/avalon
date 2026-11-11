@@ -12,6 +12,12 @@ const STEPS = ["use_the_page", "ask_rally", "comment", "make_it_yours", "teammat
 /** Steps done once for the whole team: whoever does one ticks it for everybody. */
 const TEAM_STEPS = new Set(["make_it_yours", "teammate"]);
 
+/**
+ * The wall's title in `index.html`. Renaming it is step 3, so it is left out
+ * when the page is compared with the one this site started as.
+ */
+const WALL_TITLE = /<h2 id="wall-title"[^>]*>[\s\S]*?<\/h2>/u;
+
 const STARTER_CARDS = [
   "A tracker for our hiring plan",
   "A launch checklist with owners and dates",
@@ -31,9 +37,11 @@ export class SiteData extends DurableObject {
       `CREATE TABLE IF NOT EXISTS wall_cards (
          id INTEGER PRIMARY KEY,
          text TEXT NOT NULL,
-         added_by_kind TEXT NOT NULL CHECK (added_by_kind IN ('person', 'rally', 'starter')),
+         -- The page names the kind on every card it writes. A row written
+         -- from the Chat with only its text is therefore Rally's.
+         added_by_kind TEXT NOT NULL DEFAULT 'rally' CHECK (added_by_kind IN ('person', 'rally', 'starter')),
          added_by_id TEXT,
-         added_by_name TEXT NOT NULL,
+         added_by_name TEXT NOT NULL DEFAULT 'Rally',
          asked_by_id TEXT,
          created_at TEXT NOT NULL DEFAULT (datetime('now'))
        )`,
@@ -87,7 +95,7 @@ export class SiteData extends DurableObject {
     const path = url.pathname;
     const post = request.method === "POST";
 
-    if (path === "/api/state" && request.method === "GET") return json(this.state(viewer));
+    if (path === "/api/state" && request.method === "GET") return json(await this.state(viewer));
 
     if (path === "/api/cards" && post) {
       const body = await readJson(request);
@@ -99,7 +107,7 @@ export class SiteData extends DurableObject {
         viewer.id,
         viewer.name,
       );
-      return json(this.state(viewer));
+      return json(await this.state(viewer));
     }
 
     const cardAction = /^\/api\/cards\/(\d+)\/(vote|remove)$/.exec(path);
@@ -130,7 +138,7 @@ export class SiteData extends DurableObject {
         this.ctx.storage.sql.exec("DELETE FROM wall_votes WHERE card_id = ?", cardId);
         this.ctx.storage.sql.exec("DELETE FROM wall_cards WHERE id = ?", cardId);
       }
-      return json(this.state(viewer));
+      return json(await this.state(viewer));
     }
 
     if (path === "/api/steps" && post) {
@@ -142,7 +150,7 @@ export class SiteData extends DurableObject {
         viewer.name,
         body.step,
       );
-      return json(this.state(viewer));
+      return json(await this.state(viewer));
     }
 
     if (path.startsWith("/api/")) return json({ error: "no such route" }, 404);
@@ -150,7 +158,7 @@ export class SiteData extends DurableObject {
   }
 
   /** Everything the page draws, for one viewer. */
-  state(viewer) {
+  async state(viewer) {
     const sql = this.ctx.storage.sql;
     const cards = sql
       .exec(
@@ -171,17 +179,37 @@ export class SiteData extends DurableObject {
         voted: card.voted === 1,
         mine: card.added_by_kind === "person" && card.added_by_id === viewer.id,
       }));
-    return { viewer: { name: viewer.name }, steps: this.steps(viewer), cards };
+    return { viewer: { name: viewer.name }, steps: this.steps(viewer, await this.pageWasRemade()), cards };
+  }
+
+  /**
+   * Whether the page's HTML differs from the HTML this site first ran with
+   * here, which only a republish changes: the proof of step 4 that needs
+   * nobody to record it. Read once per start, because a republish restarts
+   * the class and nothing else changes the files.
+   */
+  async pageWasRemade() {
+    if (this.remade === undefined) {
+      const html = await (await this.env.ASSETS.fetch("/index.html")).text();
+      const bytes = new TextEncoder().encode(html.replace(WALL_TITLE, ""));
+      const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+        .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      const first = this.ctx.storage.kv.get("first_page_digest");
+      if (first === undefined) this.ctx.storage.kv.put("first_page_digest", digest);
+      this.remade = first !== undefined && first !== digest;
+    }
+    return this.remade;
   }
 
   /**
    * Which steps are done, and by whom.
    *
-   * A step the stored data already proves is read from that data. The rest are
-   * rows in `guide_steps_done`, written by the page when a person ticks a step
-   * and by Rally from the Chat.
+   * A step is read from what the site can see for itself wherever it can:
+   * the stored rows, and whether the page was republished. The rows in
+   * `guide_steps_done`, written by the page when a person ticks a step and by
+   * Rally from the Chat, cover the rest and add who did a team step.
    */
-  steps(viewer) {
+  steps(viewer, pageWasRemade) {
     const sql = this.ctx.storage.sql;
     const one = (statement, ...params) => sql.exec(statement, ...params).toArray()[0];
     const recorded = new Map();
@@ -197,8 +225,10 @@ export class SiteData extends DurableObject {
       viewer.id,
     );
     const voted = one("SELECT 1 AS found FROM wall_votes WHERE voter_id = ? LIMIT 1", viewer.id);
+    // A card Rally wrote for this person, or one it wrote without saying
+    // for whom: then nobody can be told apart, and it counts for everyone.
     const rallyAddedForViewer = one(
-      "SELECT 1 AS found FROM wall_cards WHERE added_by_kind = 'rally' AND asked_by_id = ? LIMIT 1",
+      "SELECT 1 AS found FROM wall_cards WHERE added_by_kind = 'rally' AND (asked_by_id = ? OR asked_by_id IS NULL) LIMIT 1",
       viewer.id,
     );
     // The second person to add a card, which is what shows the Canvas is shared.
@@ -211,6 +241,8 @@ export class SiteData extends DurableObject {
     const proved = {
       use_the_page: addedCard && voted ? { by: "you" } : null,
       ask_rally: rallyAddedForViewer ? { by: "you" } : null,
+      // Rally's row names who asked; the remade page proves it without one.
+      make_it_yours: recorded.get("make_it_yours") ?? (pageWasRemade ? { by: null } : null),
       teammate: secondPerson ? { by: secondPerson.id === viewer.id ? "you" : secondPerson.name } : null,
     };
 

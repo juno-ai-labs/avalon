@@ -839,6 +839,19 @@ describe("durable UI-to-model transcript projection", () => {
     expect(projection.messages[2]?.content).toBe("Added five.");
   });
 
+  it("keeps Rally's reply an assistant turn when a compaction checkpoint comes before it", async () => {
+    // After a compaction the caller puts a user-role checkpoint in front, so
+    // the first message loaded after it does not open the conversation.
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      projectionEnv([], {}),
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: null },
+      [message("00000000-0000-4000-8000-000000000074", 9, { author: "agent", textContent: "Published version 3." })],
+      true,
+    );
+
+    expect(projection.messages).toMatchObject([{ role: "assistant", content: "Published version 3." }]);
+  });
+
   it("attributes a request addressed to Rally to the member who sent it", async () => {
     const projection = await __integrationTesting.projectModelProtocolTranscript(
       projectionEnv([], {}),
