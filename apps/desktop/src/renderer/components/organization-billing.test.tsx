@@ -10,7 +10,7 @@ describe('hosted billing handoff', () => {
     let answer!: (value: { url: string }) => void;
     const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(),
       createBillingCheckout: vi.fn(() => new Promise<{ url: string }>((resolve) => { answer = resolve; })) };
-    render(<OrganizationBilling api={api} currentPlan="Starter plan" billing={{ enabled: true, status: 'none', subscribed: false,
+    render(<OrganizationBilling api={api} currentPlan="Start plan" billing={{ enabled: true, status: 'none', subscribed: false,
       trialEndsAt: '2020-01-01T00:00:00Z', overageEnabled: false, offers: [{ id: 'start', name: 'Start', plan: 'starter', currencies: ['usd'], overageAvailable: true }] }} />);
     fireEvent.click(screen.getByText('Continue to checkout'));
     expect(openExternal).not.toHaveBeenCalled();

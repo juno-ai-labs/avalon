@@ -40,14 +40,15 @@ what Rally has saved to the Organization's shared memory (see
 
 The **Usage** block shows the Organization's plan and its shared weekly quota.
 
-- **Plan** is **Starter plan** ($100 a month) or **Growth plan** ($250 a
-  month). It sets the weekly quota everyone in the Organization shares. Only
-  owners and administrators can change it.
-- **Weekly quota** shows how much of this week's quota is left, with a meter,
-  and when it resets.
-- If the Organization has used more than its quota this month, a **Usage
-  beyond quota this month** row says so, marked **Not billed**: Rally is not
-  charging for it yet.
+- **Plan** is **Start** ($0 a month, $40 of effective usage), **Grow**
+  ($100, $200 of usage), **Max** ($250, $500 of usage), or **Ultra**
+  ($1,000, $2,000 of usage). One quarter of the allowance is allocated each
+  week and shared by everyone. Only owners and administrators can change plans.
+- **Weekly quota** shows how much of this week's quota is left and when it resets.
+- With billing enabled, administrators select a paid offer and open Stripe to
+  subscribe or manage payment details. Start requires no payment details.
+- **Usage beyond quota this month** shows excess usage. Charges require an active
+  subscription with overage billing enabled; otherwise the estimate is not billed.
 
 The same meter sits in the account menu, under your avatar, for everyone.
 

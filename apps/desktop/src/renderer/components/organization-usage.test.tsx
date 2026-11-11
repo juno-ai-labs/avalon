@@ -94,7 +94,7 @@ describe('Usage in Settings', () => {
     expect(meter).toHaveAttribute('aria-valuemin', '0');
     expect(meter).toHaveAttribute('aria-valuemax', '100');
     expect(meter).not.toHaveClass('meter-warning');
-    expect(screen.getByText('Starter plan')).toBeVisible();
+    expect(screen.getByText('Start plan')).toBeVisible();
     expect(screen.getByText('72% left')).toBeVisible();
     expect(screen.getByText('Resets Thursday, October 8 at 9:00 AM. Shared by everyone in Juno Labs.')).toBeVisible();
     expect(screen.queryByText('Usage beyond quota this month')).not.toBeInTheDocument();
@@ -106,14 +106,17 @@ describe('Usage in Settings', () => {
     renderSection(api);
 
     const picker = await screen.findByRole('combobox', { name: 'Plan' });
-    expect(picker).toHaveTextContent('Starter plan');
+    expect(picker).toHaveTextContent('Start plan');
     fireEvent.click(picker);
-    expect(screen.getByRole('option', { name: /Growth plan/ })).toHaveTextContent('$250 a month');
-    fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
+    expect(screen.getByRole('option', { name: /Start plan/ })).toHaveTextContent('$0 a month');
+    expect(screen.getByRole('option', { name: /Grow plan/ })).toHaveTextContent('$100 a month');
+    expect(screen.getByRole('option', { name: /Max plan/ })).toHaveTextContent('$250 a month');
+    expect(screen.getByRole('option', { name: /Ultra plan/ })).toHaveTextContent('$1,000 a month');
+    fireEvent.keyDown(screen.getByRole('option', { name: /Grow plan/ }), { key: 'Enter' });
 
     expect(await screen.findByText('44% left')).toBeVisible();
     expect(api.setWorkspacePlan).toHaveBeenCalledWith('growth');
-    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Growth plan');
+    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Grow plan');
     expect(await usageCacheSlice.read(SCOPE, 'usage')).toMatchObject({ usage: { plan: 'growth', quotaRemainingPercent: 44 } });
   });
 
@@ -127,14 +130,14 @@ describe('Usage in Settings', () => {
     renderSection(api);
 
     fireEvent.click(await screen.findByRole('combobox', { name: 'Plan' }));
-    fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
+    fireEvent.keyDown(screen.getByRole('option', { name: /Grow plan/ }), { key: 'Enter' });
     expect(await screen.findByText('44% left')).toBeVisible();
 
     answerRead(usage(72));
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(screen.getByText('44% left')).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Growth plan');
+    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Grow plan');
     expect(await usageCacheSlice.read(SCOPE, 'usage')).toMatchObject({ usage: { plan: 'growth' } });
   });
 
@@ -144,18 +147,18 @@ describe('Usage in Settings', () => {
     renderSection(api);
 
     fireEvent.click(await screen.findByRole('combobox', { name: 'Plan' }));
-    fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
+    fireEvent.keyDown(screen.getByRole('option', { name: /Grow plan/ }), { key: 'Enter' });
 
     expect(await screen.findByText('The plan could not be changed. This action requires a workspace administrator')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'OK' }));
-    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Starter plan');
+    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Start plan');
   });
 
   it('shows the plan to a member who is not an administrator but does not let them change it', async () => {
     renderSection(apiAnswering(usage(72)), SCOPE, false);
 
     const picker = await screen.findByRole('combobox', { name: 'Plan' });
-    expect(picker).toHaveTextContent('Starter plan');
+    expect(picker).toHaveTextContent('Start plan');
     expect(picker).toBeDisabled();
   });
 
@@ -371,9 +374,9 @@ it('refreshes billing after returning from hosted checkout while Settings stays 
     trialEndsAt: '2020-01-01T00:00:00Z', overageEnabled: false, offers: [{ id: 'start', name: 'Start', plan: 'starter' as const, currencies: ['usd'], overageAvailable: false }] })) };
   renderSection(api);
   expect(await screen.findByText('Continue to checkout')).toBeVisible();
-  expect(screen.getByText(/Starter plan. Trial ended/)).toBeVisible();
+  expect(screen.getByText(/Start plan. Trial ended/)).toBeVisible();
   subscribed = true;
   fireEvent(window, new Event('focus'));
   expect(await screen.findByText('Manage billing')).toBeVisible();
-  expect(screen.getByText(/Starter plan · Subscription: active/)).toBeVisible();
+  expect(screen.getByText(/Start plan · Subscription: active/)).toBeVisible();
 });
