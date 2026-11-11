@@ -1,6 +1,9 @@
 import { inspectQueues, peekDeadLetters } from "./queues";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
+  InspectEngineeringOrgSettingsInputSchema,
+  UpdateEngineeringOrgSettingsInputSchema,
+  EngineeringOrgSettingsResultSchema,
   InspectEngineeringUsageInputSchema,
   ChangeEngineeringPlanInputSchema,
   EngineeringUsageResultSchema,
@@ -518,6 +521,20 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     inputSchema: { queueId: z.string().min(1) },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ queueId }) => tool(principal, "inspect_dead_letters", { queue_id: queueId }, () => peekDeadLetters(env, queueId)));
+
+  server.registerTool("inspect_org_settings", {
+    description: "Read an Organization's stored presentation settings, including whether its model selector is visible. These values are independent of defaults for new Organizations.",
+    inputSchema: InspectEngineeringOrgSettingsInputSchema.shape,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "inspect_org_settings", { workspace_id: request.orgId }, async () =>
+    EngineeringOrgSettingsResultSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOrganizationSettings(request))));
+
+  server.registerTool("update_org_settings", {
+    description: "Set whether the model selector is visible for everyone in an Organization on macOS and web, independent of Debug mode. Persists the setting and refreshes connected clients. Does not change model routing or pins. Safe to repeat after an uncertain result; inspect_org_settings reads the saved value.",
+    inputSchema: UpdateEngineeringOrgSettingsInputSchema.shape,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "update_org_settings", { workspace_id: request.orgId, model_selector_visible: request.modelSelectorVisible }, async () =>
+    EngineeringOrgSettingsResultSchema.parse(await (await organizationBinding(env, request.orgId)).updateOrganizationSettings(request, principal))));
 
   server.registerTool("inspect_usage_plan", {
     description: "Read an Organization's current plan, weekly quota remaining and reset, and current-period overage from its owning region's authoritative usage ledger.",

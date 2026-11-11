@@ -6,16 +6,18 @@ export const FEATURE_FLAGS = {
   developerSettings: false,
   multipleWorkspacesEnabled: true,
   pushNotificationsEnabled: true,
-} as const satisfies ClientFeatureFlags;
+  modelSelectorVisibleForNewOrgs: false,
+} as const satisfies ClientFeatureFlags & { modelSelectorVisibleForNewOrgs: boolean };
 
 export const FEATURE_FLAG_ENV_KEYS = {
   developerSettings: "FEATURE_FLAG_DEVELOPER_SETTINGS",
   multipleWorkspacesEnabled: "FEATURE_FLAG_MULTIPLE_WORKSPACES_ENABLED",
   pushNotificationsEnabled: "FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED",
-} as const satisfies Record<keyof ClientFeatureFlags, string>;
+  modelSelectorVisibleForNewOrgs: "FEATURE_FLAG_MODEL_SELECTOR_VISIBLE_FOR_NEW_ORGS",
+} as const satisfies Record<keyof typeof FEATURE_FLAGS, string>;
 
 export type FeatureFlagEnvironment = Partial<Record<
-  (typeof FEATURE_FLAG_ENV_KEYS)[keyof ClientFeatureFlags], unknown
+  (typeof FEATURE_FLAG_ENV_KEYS)[keyof typeof FEATURE_FLAGS], unknown
 >>;
 
 /** Canonical model identities shared by runtime selection, routing and presentation. */
