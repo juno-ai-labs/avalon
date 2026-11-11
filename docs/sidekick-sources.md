@@ -275,9 +275,13 @@ otherwise any eligible delegate, and with none the Sidekick itself.
 
 ### In the client
 
-Three surfaces show a request and share one Approve and Decline pair: the
-card in the conversation the request was asked from, the asked person's
-Activity row, and the Sources section of the Sidekick's panel.
+Three surfaces show a request and share one pair of buttons, Decline then
+Approve: the card in the conversation the request was asked from, the asked
+person's Activity row, and the Sources section of the Sidekick's panel.
+The Sources section lists one line per person, connection and condition:
+`readSources` groups a person's rows on one connection that share a
+condition and names their event types together, so a person who lets in new
+mail unfiltered and label changes under a filter reads as two lines.
 [`shared-ui.md`](shared-ui.md#sidekick-sources) owns the components, their
 reads and what re-reads them; [`activity.md`](activity.md) owns the row.
 
@@ -464,6 +468,16 @@ file is named.
   and for the person asked, and as an empty list for a member it does not
   concern". That test does not cover the reader who can open the Canvas; no
   automated guard holds that arm.
+- **An ask's place is a Canvas the asker can open, and a notice leads a
+  person only to a Canvas they can open.** The card is drawn in the place for
+  everyone who can open it, so an ask must not put a card in a Canvas its
+  asker cannot see, and a link into a Canvas closed to its reader would open
+  nothing. Guard: the two `canvasOpenTo` checks in `requestSources`. Tests:
+  the `sidekick_source_place_denied` case of "refuses an ask for $what with
+  $status $code, and asks nobody" in `sidekick-source-routes.test.ts`, and
+  "leads each person asked to the Canvas the request was asked in only if
+  they can open it, and otherwise to the Sidekick" in
+  `apps/api/test-workers/sidekick-source-notices.test.ts`.
 - **An emailed link decides one request, as one person, one way.** The
   signature binds the Organization, the Sidekick, the request, the person and
   the decision. The request's `pending` state makes the link single-use.
@@ -562,14 +576,15 @@ source's condition.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test-workers/sidekick-sources.test.ts` | Real workerd. A person's mail starts a Sidekick through their source whether or not they are a delegate, and stops when the source is taken back while they stay a delegate; an event matched before a withdrawal is refused at admission; only the person asked answers and only a manager asks, by their stored role; a filtered source refuses without a verdict, with a refusing one and with one for another filter, and an unfiltered one needs none; saving a definition keeps a person's own filter and adds nothing when it adds no rule; a whole-account rule reaches another account only through a requested source; a request about one event type leaves another event type's source alone; a rule on another person's account is refused until they approve a request for it; a repeated ask answers with what it already asked; a run with no delegate starts as the Sidekick itself and only a manager continues it; a Sidekick that had already stopped stays stopped until it is resumed; content is withheld once the source is gone. |
-| `apps/api/test-workers/sidekick-source-routes.test.ts` | Real workerd, through the HTTP routes: 401 with no session, an ask and its answer by the person asked and by nobody else, a body that smuggles a field refused 400, a request read by its asker and the person asked and by no uninvolved member, withdrawing, and the emailed link's malformed bodies and a person who has left. |
+| `apps/api/test-workers/sidekick-sources.test.ts` | Real workerd. A person's mail starts a Sidekick through their source whether or not they are a delegate, and stops when the source is taken back while they stay a delegate; an event matched before a withdrawal is refused at admission; only the person asked answers and only a manager asks, by their stored role; a filtered source refuses without a verdict, with a refusing one and with one for another filter, and an unfiltered one needs none; saving a definition keeps a person's own filter and adds nothing when it adds no rule; a whole-account rule reaches another account only through a requested source; a request about one event type leaves another event type's source alone; a rule on another person's account is refused until they approve a request for it; a repeated ask answers with what it already asked; trying a draft filter reads the acting person's own recent events and nobody else's, and says it judged nothing with no classifier or no such events; a run with no delegate starts as the Sidekick itself and only a manager continues it; an agent acting for nobody cannot continue a run a delegate is behind; a Sidekick that had already stopped stays stopped until it is resumed, whatever other warning is written meanwhile and whoever asks it something in its conversation under their own access, and its managers are told about the run that waits; a run whose requester has left asks for input and stops nothing; the host reads the one message for a run on real workerd with only Gmail stood in, fences it with the run's id, starts the run on its event alone with the connector's own code when the read fails, and reads nothing from a disabled connection; content is withheld once the source is gone. |
+| `apps/api/test-workers/sidekick-source-routes.test.ts` | Real workerd, through the HTTP routes: 401 with no session, an ask and its answer by the person asked and by nobody else, a body that smuggles a field refused 400, a request read by its asker, the person asked and a member who can open the Canvas it was asked in, and by no uninvolved member, withdrawing, each ask refusal by its status and code (an unknown connector or event, a person outside the Organization, the asker's own account with none connected, a Canvas the asker cannot open), an approval with no account connected, and the emailed link's malformed bodies and a person who has left. |
 | `apps/api/test-workers/canvas-sidekicks.test.ts`, `apps/api/test-workers/conversation-tools.test.ts` | Real workerd. A run nobody is behind lists, reads and is told about every attached Canvas that is not archived, and writes a site's rows there, with no person at all; a run somebody asked for is held to what that person can open; an id with no run row is never the Sidekick itself. |
-| `apps/api/test/connector-tool-selection.test.ts` | Which turns are offered the three source tools: the wizard and a Canvas's Chat on a person's turn, and no run, delegation worker, background agent, agent's message or review. |
+| `apps/api/test/semantic-trigger-admission.test.ts` | The delivery, with the object and the classifier stood in: the person's filter is judged first, the trigger's question is not asked of an event that filter kept out, both verdicts are sent, and neither is judged without a classifier credential. |
+| `apps/api/test/connector-tool-selection.test.ts` | Which turns are offered the three source tools: the wizard and a Canvas's Chat on a person's turn, and no run, delegation worker, background agent, agent's message or review; the filtered-trigger skill is listed on the same turns and no others. |
 | `apps/api/test/workspace-sidekick-sources-migration.test.ts` | Migration 146 over the real migration chain: a delegate gets a source for each connection of theirs a rule is configured or registered on, every delegate gets one on a configured Organization connection, and a withdrawn grant, a grant with no membership and a person with no grant get none; every active Sidekick with a trigger that nobody lends an account to is marked stopped, whatever it said before, and no other. |
 | `packages/connectors/src/index.test.ts` | Google's `readActivityContent`: one message for new mail, by one request, and nothing for a label change, a subject with no message, a missing message, or a connection that may not read mail. |
 | `apps/api/test/sidekick-event-content.test.ts` | The opening with content, cut content, no content, and unreadable content; content that tries to close its own fence, in any case or spacing. |
-| `apps/api/test-workers/sidekick-source-notices.test.ts` | Real workerd. The asked person's row lists though the Sidekick is closed to them, and reads as seen once the request is answered or replaced; the asker is told on an approval and a decline and nobody on a cancel or an own ask; the email is queued after the commit; an edited link is refused and a replaced request's link says so; a build older than contract 14 gets neither the rows nor their count. |
+| `apps/api/test-workers/sidekick-source-notices.test.ts` | Real workerd. The asked person's row lists though the Sidekick is closed to them, and reads as seen once the request is answered or replaced; the asker is told on an approval and a decline and nobody on a cancel or an own ask; the email is queued after the commit; a person asked is led to the Canvas the request was asked in only if they can open it, and otherwise to the Sidekick; an edited link is refused and a replaced request's link says so; a build older than contract 14 gets neither the rows nor their count. |
 | `apps/api/test/sidekick-source-decision-link.test.ts`, `apps/api/test/sidekick-source-notice-migration.test.ts` | The link's shape and signature against an independent HMAC, `GET` 405, unsigned 401, wrong origin 403; and the two rebuilt tables keeping their rows, indexes and triggers. |
 | `apps/api/test/sidekick-source-tools.test.ts` | An ask leaves its request ids in the transcript and nothing else. |
 | `packages/agent-harness/src/skills.test.ts`, `packages/agent-harness/src/prompts.test.ts` | The skill's owner plugin and the rules it must keep; the "Acting as the Sidekick itself" prompt section. |
@@ -582,11 +597,13 @@ Traps:
   the delivery (`semantic-trigger-admission.ts`) judges the source's
   condition first, or that it skips the trigger's question for an event the
   person's filter kept out. `apps/api/test/semantic-trigger-admission.test.ts`
-  runs the delivery, and it has no case with a source condition, so that
-  order is not covered by any test.
-- **Three behaviors have no test**: the `sidekick_source_place_denied`
-  refusal, where a `source_request` notice leads (`placeCanvasId`), and the
-  `judged: false` answers of `sidekick_test_source_condition`.
+  covers that order, with the object and the classifier stood in: "does not
+  ask the trigger's question of an event the person's filter kept out",
+  "judges the person's filter, then the trigger's condition, and sends both
+  verdicts", "sends the source's verdict alone when the trigger has no
+  condition of its own" and "reports both filters unavailable, and asks
+  nothing, without a TypeSafe credential". A change to the delivery's order
+  is checked there and nowhere in workerd.
 - **A source's provenance is set by hand in two tests.** They clear
   `request_id` with SQL to stand for a source a saved rule or the migration
   made. A test that needs such a source should do the same; no route makes
@@ -604,7 +621,7 @@ view.
 | Table | Key | Columns |
 | --- | --- | --- |
 | `sidekick_sources` | `(sidekick_id, user_id, connection_id, event_type)` | `connector_type`; `condition` (null lets every event of that type in); `membership_incarnation` (the membership the source was given under); `request_id` (the request the person approved for this event type, or null for a source a saved rule or the migration made); `approved_at`; `updated_at`. Index `(user_id, sidekick_id)`. |
-| `sidekick_source_requests` | `request_id` | `sidekick_id`; `user_id` (the person asked); `connector_type`; `event_types_json`; `condition`; `state`; `requested_by_user_id`; `requested_by_name`; `person_name`; `place_parent_kind` and `place_parent_id`; `created_at`; `decided_at`. A unique index on `(sidekick_id, user_id, connector_type)` over pending rows keeps one open ask per person, Sidekick and connector. |
+| `sidekick_source_requests` | `request_id` | `sidekick_id`; `user_id` (the person asked); `connector_type`; `event_types_json`; `condition`; `state`; `requested_by_user_id`; `requested_by_name`; `person_name`; `place_parent_kind` and `place_parent_id`; `created_at`; `decided_at`. A unique index on `(sidekick_id, user_id, connector_type)` over pending rows keeps one open ask per person, Sidekick and connector. Index `(sidekick_id, created_at)`. |
 | `sidekick_source_request_operations` | `(sidekick_id, operation_id, position)` | `request_id`. What one asking operation answered with, in order, so a retried ask reads its answer back. |
 
 - **`state`** is `pending`, `approved`, `declined` or `cancelled`. A request
@@ -613,8 +630,8 @@ view.
   `pending`.
 - **`place`** (`place_parent_kind`, `place_parent_id`) is the conversation the
   ask was made in: a `canvas` or an `automation` (a Sidekick's shared
-  conversation), or both null. It is where the card is drawn, and it decides
-  who else may read the request.
+  conversation), or both null. It is where the card is drawn, and a Canvas
+  place lets everyone who can open that Canvas read the request.
 - **`person_name`** is the asked person's name as it stood when they
   answered. The asker's Activity row names them from it without a read of
   D1. It is null until they answer, and stays null for a cancelled request.
@@ -636,27 +653,132 @@ some Sidekicks stopped ([operations](#operations)).
   mailbox, or sending as its owner, takes delegation.
 - **Only the person asked answers.** Who answers comes from their session or
   the signed link, never from a tool argument, and no agent tool answers.
+- **A manager cannot put a rule on a colleague's account alone.** A new or
+  changed rule on another person's own connection is refused until that
+  person approves a request for the event type
+  (`sidekick_source_owner_must_approve`).
 - **The filter is a classifier's judgement, not a hard boundary.** It is
   judged on a subject, a sender and a snippet. It can let in mail the person
   would not have chosen, and it can be steered by whoever writes the mail.
   The request's words are what the person agreed to, not a guarantee.
+- **The person reads the words that are judged.** The email and the push
+  quote the condition exactly as it is stored, with no Markdown rewrite. A
+  rewrite that dropped a footnote or a link's target would have the person
+  approve words the classifier never sees.
 - **The emailed link is bearer authority.** It is signed for one Organization,
   Sidekick, request, person and decision, has no expiry and asks for no
   sign-in. It decides for whoever opens it until the request is settled: a
   forwarded email forwards the decision, and a scanner that runs JavaScript
   can open it and answer. What it can do is bounded to that one decision, and
   an approval lends events and no account
-  ([`security.md`](security.md#authentication-and-authorization)).
+  ([`security.md`](security.md#authentication-and-authorization)). Only a
+  newer, different ask to the same person cancels it
+  ([operations](#operations)).
 - **Event content is untrusted.** It is the sender's words. The opening
-  fences it between marker lines, removes the marker words from inside it and
-  says before and after that it is evidence.
+  fences it between two marker lines that carry the run's id, which the
+  sender cannot know, removes the marker words from inside it and says before
+  and after that it is evidence.
 - **A run with no delegate has a base identity and its limits.** It executes
   under `{ type: "workspace" }` plus its `automationRun`. It uses the
   Organization's connections and the Canvases the Sidekick is attached to. It
   cannot use any person's connection and cannot write the Organization's
   memory ([`automation-lifecycle.md`](automation-lifecycle.md#who-a-run-acts-as)).
-- **The source tools are not offered to runs.** A run or a background agent
-  cannot ask for a source, so nothing it reads can make it ask or approve.
+- **The source tools and the skill go only to a turn a person is driving.** A
+  run, a background agent, a delegation worker, and a wizard or Chat turn
+  that another agent's message or Rally's review notice started cannot ask
+  for a source, so nothing they read can make them ask or approve. The
+  delegation tools are a separate matter: a Sidekick run that acts as a
+  person still holds `sidekick_set_delegation`
+  ([open questions](#open-questions)).
+
+## Operations
+
+**After migration 146 deploys, some Sidekicks are stopped on purpose.** The
+migration's last statement sets
+`automation_directory.delegation_attention_code = 'no_eligible_delegate'` on
+every Sidekick that is active, has a schedule or an event rule, has its
+delegation migrated (`delegation_migrated = 1`), and has no allowed
+delegation grant, whatever warning it carried before. Before this change such
+a Sidekick did not run; people withdrew to stop one. From here a Sidekick
+with no delegate runs as itself, and a deploy is not those people's agreement
+to that. Nothing sets that code after the migration.
+
+Find them in the Organization's object (`run_workspace_sql`,
+[`engineering-mcp.md`](engineering-mcp.md)):
+
+```sql
+SELECT automation_id, title, updated_at FROM automation_directory
+ WHERE delegation_attention_code = 'no_eligible_delegate' AND lifecycle = 'active';
+```
+
+Each one admits a run nobody is behind (a schedule's, an event's, or a
+manager's Run with no delegate) as `needs_input` with the "nobody lends this
+Sidekick an account" message, and its managers are told. Two acts start it
+again, and both are a person's:
+
+- a delegate enrolls, and the next run that delegate is behind clears the
+  code (`admitOccurrence`). A run a person asks for under their own access
+  in the Sidekick's conversation runs and does not clear it: they lent the
+  Sidekick nothing;
+- a manager pauses and resumes it (`resumeFromPause` clears the code), and it
+  then runs as itself.
+
+No other warning overwrites the code (`noteDelegationAttention`), so a
+stopped Sidekick does not start because a source came back or a report
+failed. [`automation-lifecycle.md`](automation-lifecycle.md#delegation-consent-authority)
+owns the rule.
+
+**A leaked or forwarded decision link.** A link works until its request is
+settled, and there is no route that cancels a request. To end one, a manager
+asks the same person again for the same Sidekick and connector with
+different event types or a different condition: that cancels the request the
+link names, and the link then reads "replaced". An identical ask returns the
+waiting request and cancels nothing. If the link was already used to approve,
+the person withdraws the source from the Sidekick's Sources panel
+(`POST /automations/:id/sources/withdraw`).
+
+**Why did this event not start the Sidekick?** The delivery's outcome code
+says which filter refused it: `sidekick_source_not_permitted` (no eligible
+source for that connection and event type), a `sidekick_source_condition_*`
+code (the person's filter), or a `sidekick_semantic_*` code (the trigger's
+own condition). `sidekick_sources` filtered by `sidekick_id` shows who lets
+what in; a row whose person has left the Organization is listed and lets
+nothing in.
+
+## Open questions
+
+These moved here from the PRD, which freezes when it completes. Delete each
+one as it is resolved; the resolution becomes a changelog entry.
+
+1. **Should the emailed page wait for one press before it answers?** Today
+   opening the link answers, so a mail scanner that runs JavaScript can
+   answer for the person. A press would stop a scanner and cost the person a
+   second tap on a phone. The owner chose one click on 2026-11-10.
+2. **Should an agent's ask for the asker's own account stay pending until
+   they press?** Today `sidekick_request_source` approves the acting person's
+   own account at once. Staying pending would make every source a person's
+   own press, and would add a step to the common case of one person setting
+   up their own trigger.
+3. **Should `sidekick_set_delegation` be offered to a Sidekick run at all?** A
+   run that acts as a person holds it, and that run may have just read a
+   stranger's email. Approving a source makes the person a reader of the
+   Sidekick, and being a reader is what lets an enrolment as a delegate take
+   effect. Removing the tool from runs would close that path; it would also
+   stop a run from enrolling anybody, which no recorded use needs.
+4. **Should the full text of an admitted email be visible to every reader of
+   the Sidekick's run, or given to the model only?** Today it is part of the
+   run's opening message, which everyone who can read the run can read.
+   Giving it to the model only would keep a person's mail from the
+   Sidekick's other readers, and would make a run harder to check.
+5. **What threshold should a person's filter use?** It shares the trigger
+   gate's `0.5`, which was measured for the opposite cost: there a missed run
+   is worse than a wasted one, and here a wrongly admitted message is worse.
+   The number is the team's to set from a measurement.
+6. **Should a source be pinned to the Canvas it was asked in?** Today a
+   source names the Sidekick, so a manager who attaches the Sidekick to
+   another Canvas sends admitted events' results there too. Pinning would
+   make the person's approval cover one Canvas, and would need a rule for a
+   Sidekick asked about from its own conversation.
 
 ## Changelog
 
@@ -665,14 +787,18 @@ some Sidekicks stopped ([operations](#operations)).
 **What changed:** `sidekick_sources`, `sidekick_source_requests` and
 `sidekick_source_request_operations` (WorkspaceDO migration 146).
 Registration, matching and admission read sources and no longer read
-delegation. A source carries event types and an optional written condition,
-judged in the delivery beside the trigger's own. A manager asks a person for a
-source and only that person answers: on a card in the conversation, in
-Activity, or from one click in an email. A run an admitted event starts is
-handed that event's content, fenced as evidence, and holds no tool on the
-account. The request and its answer are three Activity and notice kinds with
-their own notification choice, Source requests, which defaults to push and
-email.
+delegation. A source is one row per person, connection and event type, with
+an optional written condition, judged in the delivery beside the trigger's
+own, and the request the person approved for it, if they did. A manager asks
+a person for a source and only that person answers: on a card in the
+conversation, in Activity, or from one click in an email. A manager's new or
+changed rule on a colleague's own connection is refused until that colleague
+approves a request for the event type. A run an admitted event starts is
+handed that event's content, fenced as evidence between marker lines that
+carry the run's id, and holds no tool on the account. The request and its
+answer are three Activity and notice kinds with their own notification
+choice, Source requests, which defaults to push and email. The source tools
+and the skill are offered only to a turn a person is driving.
 
 **Why:** One boolean per person answered both "whose events start this" and
 "whose accounts may it use". Asking a colleague to feed a shared dashboard
@@ -706,19 +832,51 @@ and its state while only the person concerned can act.
 - Raising `MINIMUM_SERVED_CLIENT_CONTRACT` to 14 instead of leaving the new
   Activity kinds out for older builds. That refuses every installed build
   the socket to protect only the people who are asked.
-- Offering the source tools to runs. A run reads event content, and what it
-  reads must not be able to ask in a delegate's name.
+- Offering the source tools to runs, or to a wizard turn that another
+  agent's message or Rally's review notice started. A run reads event
+  content, and nobody typed the other two. What a loop reads must not be
+  able to ask in a person's name.
 - Giving the saver a source for every rule in a definition they save. A
   manager fixing a typo would lend their own events to a rule somebody else
   wrote, so only a rule the save adds counts.
+- Giving the saver no source on an Organization connection. Review asked for
+  it to be dropped. Without it a new Sidekick that watches a private channel
+  on the Organization's Slack never fires: an event limited to an audience
+  needs the source of somebody in that audience, and before this change the
+  author's delegation supplied that. The saver's source is what a new
+  Sidekick has on the day it is made.
+- One source row per connection, holding a list of event types and one
+  condition. It was the first shape. Approving a request about one event
+  type then replaced the event types and the condition the person had
+  already let in for another, and one flag on the row could not say which of
+  its event types the person had approved account-wide.
+- Letting any source of the owner's allow a manager's rule on that owner's
+  connection. A source a saved rule or the migration made stands for one
+  rule. A manager could then replace a colleague's rule about one thread
+  with a rule about all of their mail, with no act of theirs.
+- Running the notice's body through the Markdown rewrite, as other notices
+  do. The rewrite can drop a footnote or a link's target, so the person
+  would approve words that differ from the condition the classifier judges.
+- Fixed marker lines around the event's content. A sender who knows the
+  marker text can write a line that looks like the end marker. The run's id
+  on both lines is something the sender cannot know.
 
 **Consequences:** The two records answer different questions and nothing may
 read one for the other. The person's condition lives on their source and moves
-only by their own answer. Only a requested source carries a whole-account rule
-to another person's connection. The emailed link is bearer authority that a
-mail scanner running JavaScript can use; whether the page should ask for a
-click is open. The filter shares the trigger gate's `0.5` threshold, measured
-for the opposite cost, until the team sets one. The email draws Decline and
+only by their own answer. A source is per event type, so code that writes one
+must never write a person's other event types on the same connection. Only a
+requested source (`request_id` set) carries a whole-account rule to another
+person's connection, and only one lets a manager put a new rule there; a
+writer that sets `request_id` without the person's approval breaks both.
+Migration 146 marks every active Sidekick that has a trigger and no allowed
+delegate as stopped (`no_eligible_delegate`), and it stays stopped until a
+person is behind one of its runs or a manager pauses and resumes it; no other
+warning may overwrite that code, or a Sidekick would start with nobody's act
+([operations](#operations)). The emailed link is bearer authority that a
+mail scanner running JavaScript can use, and only a newer, different ask
+cancels it. The questions this change left open are listed under
+[open questions](#open-questions). The filter shares the trigger gate's `0.5`
+threshold, measured for the opposite cost, until the team sets one. The email draws Decline and
 Approve as two equal outlines; in the app the pair is drawn for every reader
 and filled only with the person's choice, so a disabled button there is state
 and must not be dimmed. A source row's Activity content must stay what its

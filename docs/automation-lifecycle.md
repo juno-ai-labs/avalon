@@ -83,15 +83,32 @@ order, and with none as the Sidekick itself (`admitExternalEvent`).
 
 An occurrence with no delegate that a schedule or an event started is not
 blocked. Its run is admitted `pending` with no coordinator and acts as the
-Sidekick itself ([who a run acts as](#who-a-run-acts-as)). One Sidekick is
-the exception: one that had already stopped for want of a delegate before
-this rule, whose `delegation_attention_code` is `no_eligible_delegate`. It
-stays stopped. Its runs are admitted `needs_input` with "Needs attention:
-nobody lends this Sidekick an account. Add a delegate, or pause and resume it
-to run with the Organization's connections alone." until a delegate enrolls
-or a manager pauses and resumes it; resume clears that code (`admitOccurrence`,
-`resumeFromPause`). People withdrew to stop that Sidekick, and a deploy is not
-their agreement to run it as itself.
+Sidekick itself ([who a run acts as](#who-a-run-acts-as)). One kind of
+Sidekick is the exception: one that had nobody to act as when this rule
+shipped. The last statement of WorkspaceDO migration 146 sets
+`delegation_attention_code` to `no_eligible_delegate` on every Sidekick that
+is active, has a schedule or an event rule, has its delegation migrated
+(`delegation_migrated = 1`), and has no allowed delegation grant, whatever
+warning it carried before. Such a Sidekick stays stopped. A run nobody is
+behind is admitted `needs_input` with "Needs attention: nobody lends this
+Sidekick an account. Add a delegate, or pause and resume it to run with the
+Organization's connections alone.", and its managers are told
+(`admitOccurrence`). People withdrew to stop that Sidekick, and a deploy is
+not their agreement to run it as itself.
+
+Nothing sets `no_eligible_delegate` after the migration, and no other warning
+replaces it: `noteDelegationAttention` writes another code only over a code
+that is not `no_eligible_delegate`. Only clearing removes it, and two things
+clear it. `admitOccurrence` clears it when it admits a delegate's run:
+somebody lends the Sidekick an account again. A run a person asked for under
+their own access in the Sidekick's conversation runs, and leaves the code
+alone: they lent the Sidekick nothing, and clearing it there would start its
+schedules as itself on a passer-by's message. `resumeFromPause` clears it
+when a manager pauses and resumes the Sidekick, which then runs as itself. A
+warning that could overwrite the code would start the Sidekick with nobody's
+act.
+[`sidekick-sources.md`](sidekick-sources.md#operations) has the query that
+finds these Sidekicks after a deploy.
 
 An event its source does not let in
 retains no private payload in the Sidekick; the directory then has a safe
@@ -144,7 +161,8 @@ files) from account-relative resources (mail and calendars). A rule about the
 former expands to every connection that can open the file and whose owner let
 the event in, through any source. A rule about a whole account expands to
 another person's connection of that connector only through a source that
-person gave by approving a request (`origin` `request`). The ordinary resource
+person gave by approving a request for that event type (its `request_id` is
+set). The ordinary resource
 resolver creates or finds that connection's Rally resource ID by provider ID;
 titles never identify a source. Expanded registrations retain their saved
 `sourceEvaluatorId`, so queued delivery still checks the current definition.
@@ -1405,13 +1423,31 @@ admitted with no coordinator, provisioned under the Organization's principal
 (`executionPrincipal: { type: "workspace" }` plus its `automationRun`) with
 nobody seated in its conversation, and told so in a prompt section ("Acting
 as the Sidekick itself"). It cannot use any person's connection. It writes
-its Sidekick's memory and never the Organization's (`resolveMemoryAccess`),
-and a step that needs a personal account asks for a delegate in the run and
-otherwise reports what was not done. The exceptions, a Sidekick that had
+its Sidekick's memory and never the Organization's (`resolveMemoryAccess`).
+The exceptions, a Sidekick that had
 already stopped for want of a delegate and a loop whose last delegate
 withdraws mid-run, are under [delegation](#delegation-consent-authority). A tool that needs
 a person refuses as before: a Terminal repository checkout, the connection
 card, a change request to the wizard.
+
+The prompt section says what the run may use and what it does instead of the
+connection step every Sidekick run is given, whose connection tools this run
+does not hold:
+
+- It replaces that connection step (`get_connector_connection_state`, then
+  `show_connector_connection`), and says this run does not have those
+  connection tools.
+- When a step needs a person's own account, the run asks with
+  `request_elicitation` for someone to allow the Sidekick to act as them on
+  the Sidekick's page. It names the account and the step, and offers one
+  option to continue once that is done and one to decline.
+- A person who manages the Sidekick continues the run
+  (`run_continuation_requires_manager` for anyone else).
+- When they decline, or `request_elicitation` is not available, the run
+  finishes what the shared connections allow and says in its final message
+  which step was not done and why.
+- A missing shared Organization connection is reported once, in the final
+  message, with the note that a manager connects it under Settings.
 
 A run its triggers start, or that a delegate asks for, acts as a delegate when
 there is one: its coordinator, re-picked from the eligible delegates when that
@@ -1437,10 +1473,13 @@ only for its own runs":
   and message name it), so the run's reply can say why rather than reporting a
   generic failure.
 - The Sidekick's shared Terminal files hold what runs under its delegates'
-  access wrote. No named refusal keeps a requester's run from them: the
-  Terminal plugin passes the requester (`runRequesterUserId`) to its resource
-  bridge, but there is no `sidekick_requester_files_unavailable` check in the
-  tree.
+  access wrote, and they are reached only through someone the Sidekick acts
+  for. So a requester's run gets no Terminal at all: the Terminal plugin
+  reads the run's account view, and when it names a requester
+  (`requesterUserId`) it returns no plugin
+  (`apps/api/src/services/terminal/plugin.ts`,
+  [`terminal-workspaces.md`](terminal-workspaces.md)). The run is not offered
+  tools that could only refuse, so there is no named refusal for this case.
 - A guest on the Sidekick's list runs under their own access as a member does;
   a tool that needs an account they lack refuses by its named code.
 - Only the requester continues it. Everyone the Sidekick is shared with can
@@ -1956,6 +1995,19 @@ somebody opened the list to find; every other surface folds `scheduled` into
   drafts, applies and activates, and then differs from a working Sidekick with
   nothing to do only in that it never fires.
 
+- **`no_eligible_delegate` keeps a Sidekick stopped until a person acts.**
+  WorkspaceDO migration 146 is the only writer of that code. No other warning
+  overwrites it (`noteDelegationAttention`), and only an admission with
+  somebody to act as (`admitOccurrence`) or a resume (`resumeFromPause`)
+  clears it. A code path that set it for one run's trouble would stop a
+  running Sidekick, and one that let another warning replace it would start
+  a stopped Sidekick as itself with nobody's act. Guards: the workerd test
+  "stays stopped where it had already stopped for want of a delegate, until
+  somebody resumes it" in `apps/api/test-workers/sidekick-sources.test.ts`,
+  and "marks stopped every Sidekick with a trigger that nobody lends an
+  account to, whatever it said before, and no other" in
+  `apps/api/test/workspace-sidekick-sources-migration.test.ts`.
+
 - **A review's evidence is the accepted revision's runs, and only its
   finishes count toward the next one.** `noteRunFinished` counts a finish only
   under the accepted revision, and every query in `reviewNotice` filters on
@@ -2288,6 +2340,13 @@ conversation, and a request from any other agent (one relaying an edit, or one
 of this Sidekick's runs) ends the review, as the wake
 or as a row; otherwise a review stays open until a person speaks or the next
 notice lands.
+A Sidekick whose `automation_directory.delegation_attention_code` is
+`no_eligible_delegate` is stopped on purpose: WorkspaceDO migration 146 set
+the code because the Sidekick was active with a trigger and no allowed
+delegate at deploy. It starts again when a run with somebody to act as is
+admitted, or when a manager pauses and resumes it. Do not clear the code by
+hand. [`sidekick-sources.md`](sidekick-sources.md#operations) has the query
+that finds these Sidekicks and the reason.
 [`runbook.md`](runbook.md) has the production inspection paths.
 
 ## Authoring discovery
@@ -2330,17 +2389,6 @@ survive as described above.
 
 ## Changelog
 
-### 2026-11-10 — Canvas card links carry their own appearance
-
-Sidekick attachment summaries now include each admitted Canvas's chosen
-appearance and newest artifact kind, and changes to either refresh the Sidekick
-list. The 250-row Canvas sidebar page can omit an older attached Canvas, so
-looking up its mark there left a permanent blank. Carrying the mark in the
-existing attachment read preserves the actual icon without per-Canvas requests
-or a generic fallback. Older summaries still use the client's Canvas directory
-when available. The title display stops after 30 graphemes while preserving the
-full name for hover and assistive technology.
-
 ### 2026-11-10 — A Sidekick runs as itself, and delegation no longer decides what starts it
 
 **What changed:** Two things delegation used to decide left it. Whose events
@@ -2382,11 +2430,16 @@ deploy: its people withdrew to stop it.
 If it is the Sidekick's own, it works with no person and is gated by the
 attachment or the Organization; if it is a person's, it refuses by name when
 there is none. Three cases still stop for want of a person, and each is
-deliberate: a Sidekick whose attention code was already `no_eligible_delegate`
-stays stopped until a delegate enrolls or a manager pauses and resumes it; a
+deliberate: a Sidekick that migration 146 marked `no_eligible_delegate`,
+because it was active with a trigger and no allowed delegate at deploy,
+stays stopped until a person is behind one of its runs or a manager pauses
+and resumes it; a
 run a person asked for under their own access waits once that person has
 left; and a loop acting as a person stops when its last delegate withdraws
-mid-run, and never goes on under that person's name. Only a stored run row
+mid-run, and never goes on under that person's name. `no_eligible_delegate`
+is the stop itself, so no code path may set it for one run's trouble and no
+other warning may overwrite it: only `admitOccurrence` and `resumeFromPause`
+clear it. Only a stored run row
 with nobody asking makes a call the Sidekick itself, so a run id with no row
 is held to its loop's person. Organization connections are now used by runs
 with nobody behind them, where a delegate was required before, and such a run
@@ -2394,9 +2447,22 @@ writes its Sidekick's memory and never the Organization's. The stored names
 `sidekick_delegation_sources` (the alarm kind) and `event_no_eligible_delegate`
 (the attention code) now describe sources; they are stored and on the wire, so
 they stay. `sidekick_set_delegation` still lets an agent enroll a member with
-no act of theirs: unchanged here, and an open question in the PRD.
+no act of theirs, and a Sidekick run that acts as a person still holds it:
+unchanged here, and an
+[open question](sidekick-sources.md#open-questions).
 
 Design: `docs/PRDs/2026-11-10_sidekick-sources/prd.md`.
+
+### 2026-11-10 — Canvas card links carry their own appearance
+
+Sidekick attachment summaries now include each admitted Canvas's chosen
+appearance and newest artifact kind, and changes to either refresh the Sidekick
+list. The 250-row Canvas sidebar page can omit an older attached Canvas, so
+looking up its mark there left a permanent blank. Carrying the mark in the
+existing attachment read preserves the actual icon without per-Canvas requests
+or a generic fallback. Older summaries still use the client's Canvas directory
+when available. The title display stops after 30 graphemes while preserving the
+full name for hover and assistive technology.
 
 ### 2026-11-10 — A Sidekick's Canvas attachment is the publish grant, and a Canvas makes Sidekicks it steers
 

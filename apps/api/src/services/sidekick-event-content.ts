@@ -1,4 +1,4 @@
-import type { ConnectorConnectionContext } from "@rally/connectors";
+import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import { MESSAGE_MAX_CHARACTERS } from "@rally/contracts";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 
@@ -70,7 +70,8 @@ export async function readSidekickEventContent(
     return content ? { outcome: "read", ...content } : { outcome: "none" };
   } catch (error) {
     if (signal.aborted) throw error;
-    return { outcome: "unavailable", code: diagnosticErrorCode(error, "event_content_unreadable") };
+    // A connector's own refusal already names its reason (`provider_error`, `unauthorized`); only its code crosses, never its message.
+    return { outcome: "unavailable", code: error instanceof ConnectorError ? error.code : diagnosticErrorCode(error, "event_content_unreadable") };
   }
 }
 

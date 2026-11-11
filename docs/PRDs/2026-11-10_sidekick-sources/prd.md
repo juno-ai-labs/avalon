@@ -87,13 +87,19 @@ renderer. The email page is the browser's.
 
 Three clauses of earlier PRDs move.
 
-- Sidekick delegation said a personal event "requires its source owner's
-  eligible grant". It now requires that person's source. Delegation no longer
-  decides anything about a trigger.
-- Sidekick delegation said runnable work with no eligible delegate shows
-  "Needs attention: no delegated user is available". A run a schedule or an
-  event starts now runs as the Sidekick itself. A Sidekick that had already
-  stopped that way stays stopped until a person acts.
+- Sidekick delegation's admission table said, for a personal connector
+  event, "The bound connection's owner must be an eligible delegate and
+  allowed to read the event", and for a workspace connector event, "At least
+  one eligible delegate must be allowed to receive it"
+  ([its trigger table](../2026-10-22_sidekick-delegation/prd.md#product-behavior)).
+  Both rows move. A personal event now needs the connection owner's source,
+  and an event limited to an audience on an Organization connection needs the
+  source of somebody in that audience. Delegation no longer decides anything
+  about a trigger; it still chooses who the admitted run acts as.
+- Sidekick delegation said "When runnable work has no eligible delegate,
+  show **Needs attention: no delegated user is available**". A run a
+  schedule or an event starts now runs as the Sidekick itself. A Sidekick
+  that had already stopped that way stays stopped until a person acts.
 - Sidekicks attached to Canvases said "every write admits the acting person
   again; losing the Canvas stops it". For a run a schedule or an event starts,
   the attachment alone now authorises its reach into a Canvas. A run a person
@@ -108,13 +114,94 @@ The decisions taken during the build, and why, are recorded once, in the
 changelogs of [`sidekick-sources.md`](../../sidekick-sources.md#changelog) and
 [`automation-lifecycle.md`](../../automation-lifecycle.md#changelog).
 
+## Agent behavior
+
+The durable contract is in
+[`sidekick-sources.md`](../../sidekick-sources.md#agent-tools); the schemas
+are in `apps/api/src/services/sidekick-source-tools.ts`. This section records
+what was agreed.
+
+**Plugin.** No new plugin. The three tools join the existing Sidekicks plugin
+(canonical id `rally:sidekicks`, model id `rally_sidekicks`, wire prefix
+`sidekick_`), after its delegation tools. The plugin's loading is unchanged:
+it is preloaded for a Sidekick's wizard and stays behind `list_plugins` in a
+Canvas's Chat. Loading it starts nothing, asks nobody
+and stores nothing. Its system message gains one paragraph where the tools
+are offered: sources are whose events may start a Sidekick, separate from
+delegation; only the person asked can approve and an ask is not an approval;
+to let someone's events in, ask for a source and never for delegation; load
+the `setting-up-a-filtered-trigger` skill before asking.
+
+**Where they are offered.** Only to a turn a person is driving: a person's
+message in a Canvas's Chat or in a Sidekick's wizard. A Sidekick run, a
+background agent, a run's delegation worker, and a wizard or Chat turn that
+another agent's message or Rally's review notice started are not offered
+them. Those turns work from content nobody typed, and such content must not
+be able to ask in a person's name.
+
+**Tools.**
+
+| Wire name | Capability | Mode | Idempotency | What it does |
+| --- | --- | --- | --- | --- |
+| `sidekick_sources_list` | `rally.sidekick.sources.list` | read | safe | Input `sidekickId`. Returns each source (`userId`, `name`, `account`, `connectorType`, `eventTypes`, `condition`, `available`) and each request still waiting or declined. |
+| `sidekick_request_source` | `rally.sidekick.sources.request` | write, serial | record before execute, re-enterable on its receipt | Input `sidekickId`, `userIds` (at least one), `connectorType`, `eventTypes` (at least one), optional `condition`. Returns `sidekickId` and each request as it stands: `approved` for the acting person's own account, `pending` for everyone else. It never waits for an answer. The client draws its output as the request's card. |
+| `sidekick_test_source_condition` | `rally.sidekick.sources.test` | read | safe | Input `connectorType`, `eventType`, `condition`. Judges the acting person's own ten most recent events of that type with the production judge and returns `judged: true`, how many it let in, and each event's title, summary, snippet and verdict. With no classifier configured, or no recent events of that type, it returns `judged: false` and a reason. |
+
+Every input is a strict object: an unknown field is refused. No tool takes
+who is acting, where the card is drawn, or an answer. The host supplies the
+acting person from the loop, the card's place from the conversation, and the
+ask's `operationId` from the tool call's receipt, so a retried call returns
+the requests the first call made.
+
+**Sequence.** The skill's order: settle who and which events, write the
+filter as a claim about one event, try it with
+`sidekick_test_source_condition`, save the trigger, ask with
+`sidekick_request_source`, then check with `sidekick_sources_list`. The
+Sidekick's id comes from the conversation's context. Each named person is
+resolved to an Organization user first, and the model asks which person is
+meant when a name matches nobody or more than one. Event types come from the
+connector's declared events.
+
+**Failures.** Each carries a code and a sentence the model can act on:
+`sidekick_source_request_requires_manager` (stop: only a manager asks),
+`sidekick_source_person_unavailable` (correct the person and retry),
+`sidekick_source_connector_unknown` and `sidekick_source_event_unknown`
+(correct and retry; the second names the event type),
+`sidekick_source_connection_missing` (stop: the acting person connects that
+account first). A save of the definition can also be refused
+`sidekick_source_owner_must_approve`: a rule names another person's own
+connection and that person has not approved a request for the event type.
+The sentence says to ask them with a source request and save again once they
+approve.
+
+**Forbidden.** No tool approves or declines; only the person asked answers,
+in their session or from their email. Asking is not waiting: the tool call
+ends at once and nothing pauses, which keeps the tool execution policy.
+
+**Skill.** `setting-up-a-filtered-trigger`, owned by `rally:sidekicks`, is
+listed only where a plugin in scope holds `sidekick_request_source`.
+
+**Not done.** No prompt and tool evaluation on the medium fallback model was
+run for these tools. `docs/prds.md` asks for one; the tests cover the
+schemas, the offering and the transcript output only.
+
 ## Rollout
 
 Ships to everyone on merge, with no flag. WorkspaceDO migration 146 adds the
 tables and backfills a source for every person whose delegation admitted a
-configured rule's events.
+configured rule's events. Its last statement marks every active Sidekick
+that has a trigger and no allowed delegate as stopped, so no Sidekick starts
+running as itself because of the deploy
+([`sidekick-sources.md`](../../sidekick-sources.md#operations)).
 
 ## Open questions
+
+This PRD freezes when it completes. The living list, with what each answer
+would change, is in
+[`sidekick-sources.md`](../../sidekick-sources.md#open-questions); it also
+holds two questions raised in review after this list was written (whether a
+Sidekick run should hold `sidekick_set_delegation`, and who may read an
+admitted email's full text).
 
 1. Should an agent enrolling a delegate become a request too? (Non-goal 2.)
 2. What threshold should a person's filter use? It shares the trigger gate's

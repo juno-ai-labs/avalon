@@ -802,8 +802,15 @@ It is written to give the model latitude: it states what one event carries,
 how a filter is judged and that the person reads and approves the same text,
 gives a way to try a draft on real events, and leaves the wording to the
 model. It names its owner plugin's three source tools, as an owned skill may.
-Those tools are offered only in a conversation a person is talking in, so a
-Sidekick run and a background agent never see them.
+Those tools are offered only to a turn a person is driving
+(`asksForSources` in `apps/api/src/services/integrations.ts`). A Sidekick
+run, a background agent, a run's delegation worker, and a wizard or Chat turn
+that another agent's message (`agentExchange`) or Rally's review notice
+(`reason === "sidekick_review"`) started never see them. The skill tells the
+model to call `sidekick_request_source`, so the host lists it only where a
+plugin in scope holds that tool (`builtInSkillsFor`): owning the plugin is
+not enough, because a run carries the Sidekicks plugin without the source
+tools.
 
 `polling-for-events` owns trigger selection and source-resource lookup. Its
 catalog covers actions after external changes, including site refreshes. It

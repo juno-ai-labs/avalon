@@ -281,7 +281,7 @@ Sidekick source (`source_request`, [`sidekick-sources.md`](sidekick-sources.md))
 is the same group for the person asked: "<requester> asked for your
 <connector> to start <Sidekick>" behind a bolt, and under it the condition in
 full when there is one (the one-line preview cuts it, and it is what they are
-agreeing to), then Approve and Decline, the
+agreeing to), then Decline and Approve, in that order, the
 pair the conversation's card and the Sidekick panel draw
 ([`shared-ui.md`](shared-ui.md#sidekick-sources)), sending
 `POST /sidekicks/:id/source-requests/:requestId/decision` for the row's

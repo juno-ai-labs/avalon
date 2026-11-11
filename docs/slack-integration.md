@@ -329,8 +329,14 @@ App Home is a personalized surface published per user. Rally publishes only for 
 - **Needs input**, present only when a listed Sidekick waits on someone
   (`needsInput`, or its newest waiting run): each row is the Sidekick's name,
   linked, and the question its waiting run asked (`pendingQuestion`), or
-  "Open it in Rally to see what it needs." when no run asked one: what it
-  waits on is its delegation, or its shared conversation waiting on input
+  "Open it in Rally to see what it needs." when no run asked one: the
+  Sidekick then carries an attention warning (a watched account whose owner
+  does not let its events in, or a report that could not be posted), or its
+  shared conversation is waiting on input. A Sidekick with no delegate no
+  longer waits on its delegation, because it runs as itself; only one that was
+  already stopped for want of a delegate still does, and its waiting run's
+  summary says so
+  ([`automation-lifecycle.md`](automation-lifecycle.md#delegation-consent-authority))
 - **Sidekicks**: the person's Sidekick list as their sidebar has it (their own,
   the Organization's and those shared with them), drafts left out; each row is
   the name linked to the Sidekick's canonical link (`sidekickCanonicalUrl`),

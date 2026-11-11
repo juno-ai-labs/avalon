@@ -67,14 +67,17 @@ start a Sidekick; [`sidekick-sources.md`](sidekick-sources.md) owns the record
 and the request that asks for one. `components/sidekick-sources.tsx` is how
 people read and answer them, on three surfaces that share one component:
 
-- **`SourceDecisionButtons`** is Approve and Decline for one request, and it
+- **`SourceDecisionButtons`** is Decline and Approve for one request, drawn
+  in that order, and it
   is the request's state as much as its controls. While nobody has chosen,
   both are outlines. Once the person asked chooses, their choice is filled
   (Approve green, Decline red) and the other stays an outline. Only the person
   asked is handed `onDecide`; everyone else sees the same two buttons and
   cannot press them. So `disabled` on this pair means "not yours" or
   "answered", and it is never dimmed: a rule that dims every disabled button
-  would wash out a filled choice. The chosen Approve is a `success.strong`
+  would wash out a filled choice. Because the pair is never dimmed, a press
+  in flight says so in words: the pressed button reads "Declining…" or
+  "Approving…" until the answer is acknowledged. The chosen Approve is a `success.strong`
   fill under `sys.color.success.on` (`#ffffff` light, `#08150e` dark), and
   the chosen Decline is `danger.base` under `danger.on`. The fill is `strong`
   and not `base` because white on light `success.base` is 4.41:1, under the

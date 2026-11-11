@@ -306,10 +306,10 @@ they cannot list it. All three are recorded with their Activity rows by
 
 A manager who asks a person to let events from one of their connections start
 a Sidekick ([`sidekick-sources.md`](sidekick-sources.md)) gives that person a
-`source_request` intent: "<requester> asked to use your <connector> for
+`source_request` intent: "<requester> asked for your <connector> to start
 <Sidekick>". When the person approves or declines, whoever asked gets a
-`source_approved` or `source_declined` intent: "<person> approved <Sidekick>'s
-use of their <connector>", or "declined". The body of all three is what was
+`source_approved` or `source_declined` intent: "<person> approved their
+<connector> for <Sidekick>", or "declined". The body of all three is what was
 asked: "Events: Email received. Only when: it is about a pre-seed round", the
 events by their manifest labels and the condition when there is one
 (`sourceNoticeText`). The connector is named as the person calls the product
@@ -333,13 +333,21 @@ Approve and a Decline link, each signed for that request, that person and that
 decision (`sourceDecisionActions`,
 [`sidekick-sources.md`](sidekick-sources.md)). The email sink draws them as
 its two buttons, Decline then Approve, both outlined, and quotes the whole of
-what was asked above them. Push ignores the actions. A push or an email's
-link for a `source_request` opens the Canvas the request was asked in
-(`placeCanvasId`), where its card is, because the person asked usually cannot
-open the Sidekick until they approve. A request asked from a Sidekick's own
-conversation names no Canvas, so its notice links to the Sidekick, and the
-Activity row is where that person answers. The two answer kinds link to the
-Sidekick. When
+what was asked above them. Push ignores the actions. The body of all three
+source kinds is sent as it is stored, without the Markdown rewrite other
+parent notices get (`parentNoticeWords`): the condition is what the person
+agrees to and what the classifier judges, so the email and the push show the
+same words.
+
+Where a push or an email's link for a `source_request` leads depends on the
+person asked. The notice names the Canvas the request was asked in
+(`placeCanvasId`) only for an asked person who can open that Canvas when the
+ask is made (`requestSources`); the link then opens that Canvas, where the
+request's card is. For a person who cannot open the Canvas, and for a request
+asked from a Sidekick's own conversation, the link is the Sidekick, which the
+person usually cannot open before they approve. That person answers from the
+email's two buttons or from their Activity row. The two answer kinds link to
+the Sidekick. When
 `BROWSER_APP_ORIGIN` is not configured there is nowhere for the links to open,
 so the notice goes without them and `source_decision_link_unavailable` is
 logged with the reason.
@@ -366,7 +374,9 @@ A **sink** takes a notice and adds only its transport's form. There are two:
   with `actions` (a Sidekick source request) has a button for each action in
   that button's place, all outlined so neither answer is drawn as the default,
   quotes its text whole with no cut, because the person agrees to all of it,
-  and adds a line saying that opening one records the answer. It goes
+  and adds a note (`ACTIONS_NOTE`) saying what an approval shares (each
+  matching event starts the Sidekick, which reads that event's content and
+  nothing else in the account) and that either button answers at once. It goes
   through `sendEmail` and the native Cloudflare `EMAIL` binding (production
   only). `rally-notice/<organization>/<intent>` is its correlation reference;
   Cloudflare does not deduplicate it. D1 `email_delivery_receipts` records a
@@ -610,7 +620,7 @@ clearing it, and the version after that a new row.
 `canvas-access-requests.test.ts` covers a request's push to its decider, an
 approval's push to the requester and a denial's.
 `sidekick-source-notices.test.ts` covers a source request's push to the person
-asked ("Avery asked to use your Gmail for Deals") though they cannot open the
+asked ("Avery asked for your Gmail to start Deals") though they cannot open the
 Sidekick, the answer's push to whoever asked, nothing sent for a replaced
 request or a person's own ask, the email queued after the commit for a person
 who chose email, its two signed links and its literal text, and the Approve
