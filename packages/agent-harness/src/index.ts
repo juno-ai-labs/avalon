@@ -1,3 +1,5 @@
+import type { HarnessSkill } from "@rally/skills";
+export type { HarnessSkill } from "@rally/skills";
 import { ADDRESSING_FALLBACK_MODEL, TYPESAFE_ADDRESSING_MODEL, MODEL_IDS } from "@rally/contracts/runtime-config";
 import type { RallyCheckpointPort } from "./evaluation";
 import type { ToolPaginationResult } from "@rally/contracts/tool-pagination";
@@ -116,7 +118,7 @@ export {
   undescribedParameters,
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
-export { READING_GOOGLE_MEETING_NOTES_SKILL } from "./google-meeting-notes-skill";
+export { READING_GOOGLE_MEETING_NOTES_SKILL } from "@rally/skills";
 export { renderCodeApi, renderType, type CodeApiPlugin, type CodeApiTool } from "./code-api";
 export {
   BUILDING_LIVE_SITES_SKILL,
@@ -130,7 +132,7 @@ export {
   USING_THE_LOCAL_INAPP_BROWSER_SKILL,
   WRITING_AN_EMAIL_SKILL,
 } from "./built-in-skills";
-export { CREATING_AN_APP_SKILL, REPORTING_ON_DATA_SKILL, TASK_SKILLS } from "./task-skills";
+export { CREATING_AN_APP_SKILL, REPORTING_ON_DATA_SKILL, TASK_SKILLS } from "@rally/skills";
 export {
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILLS_SYSTEM_MESSAGE,
@@ -3483,38 +3485,6 @@ export interface HarnessToolResult {
 /** A historical completed effect whose result cannot be presented as current. */
 export interface HarnessToolReplayRefusal {
   refusal: { code: string; message: string };
-}
-
-/**
- * One loadable instruction module, as the host hands it to the harness.
- *
- * Authored as markdown. `description` and `whenToUse` are the only parts the
- * model sees before it loads the skill, so they carry the whole routing
- * decision: what this is, and when it applies. `body` is paid for only on load.
- *
- * `SKILL.md` files parse straight into this shape with `parseSkillMarkdown`
- * from `@juno-ai/bind/skills`.
- */
-export interface HarnessSkill {
-  /** Host-selected routing preference; does not activate instructions. */
-  recommended?: boolean;
-  /** Lower-kebab identifier, unique within a run. What `load_skill` takes. */
-  name: string;
-  /** Tier-1 catalog line: what the skill does. */
-  description: string;
-  /** Tier-1 activation hint: when to reach for it. */
-  whenToUse: string;
-  /** The instructions injected once loaded. */
-  body: string;
-  /**
-   * The plugin whose tools this skill describes, if any. Two effects, both
-   * conservative: the skill is offered only to a run whose scope already
-   * includes that plugin, and loading it *names* the plugin rather than
-   * activating it — a document must not be able to grant a capability.
-   */
-  ownerPlugin?: string;
-  /** Bundled reference files, readable with `read_skill_resource` after loading. */
-  resources?: Array<{ path: string; body: string; contentType?: string }>;
 }
 
 /**

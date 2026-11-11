@@ -1,5 +1,5 @@
 import { ARTIFACT_VIEWER_COLUMN } from "@rally/contracts";
-import type { HarnessSkill } from "../../index";
+import type { HarnessSkill } from "../../types";
 
 /**
  * What "create an app" means in Rally, and the one question to settle before
