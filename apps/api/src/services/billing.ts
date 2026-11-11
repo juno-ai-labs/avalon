@@ -60,7 +60,7 @@ export const SubscriptionSchema = z.object({
   ended_at: z.number().nullable().optional(), trial_end: z.number().nullable().optional(),
   default_payment_method: z.string().nullable().optional(),
   metadata: z.record(z.string(), z.string()),
-  items: z.object({ data: z.array(z.object({ price: z.object({ id: z.string() }) })) }),
+  items: z.object({ data: z.array(z.object({ price: z.object({ id: z.string(), unit_amount: z.number().nullable().optional() }) })) }),
 });
 type Subscription = z.infer<typeof SubscriptionSchema>;
 
@@ -73,7 +73,8 @@ async function reconcileSubscription(env: Env, account: BillingAccount, subscrip
   if (!offer) throw new ApiError(409, candidates.length ? 'billing_offer_ambiguous' : 'billing_price_unknown', 'Subscription offer is not configured unambiguously');
   // A checkout can complete while the team award is being earned. Reconcile the
   // Stripe trial too, so opening an older hosted page cannot shorten the award.
-  if (subscription.status === 'trialing' && account.trial_ends_at > (subscription.trial_end ?? 0)) {
+  const pilot = Boolean(subscription.metadata.pilot_coupon_id);
+  if (!pilot && subscription.status === 'trialing' && account.trial_ends_at > (subscription.trial_end ?? 0)) {
     subscription = await stripe(env, `subscriptions/${subscription.id}`, SubscriptionSchema,
       { trial_end: String(account.trial_ends_at), proration_behavior: 'none' }, `trial:${subscription.id}:${account.trial_ends_at}`);
   }
@@ -85,7 +86,7 @@ async function reconcileSubscription(env: Env, account: BillingAccount, subscrip
   if (overage && startedAt !== null) {
     await env.DB.prepare(`INSERT INTO billing_terms(subscription_id, workspace_id, customer_id, price_id, starts_at)
       VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`).bind(subscription.id, account.workspace_id,
-        subscription.customer, offer.overagePriceId!, Math.max(account.trial_ends_at, startedAt)).run();
+        subscription.customer, offer.overagePriceId!, pilot ? startedAt : Math.max(account.trial_ends_at, startedAt)).run();
   }
   if (subscription.status === 'canceled') {
     const workspace = await env.DB.prepare('SELECT plan FROM workspaces WHERE id = ?').bind(account.workspace_id).first<{ plan: string }>();
@@ -103,26 +104,35 @@ async function reconcileSubscription(env: Env, account: BillingAccount, subscrip
 }
 
 // Pagination uses Stripe's published maximum page size (100), not an account cap.
-async function liveSubscription(env: Env, customerId: string) {
+async function subscriptionHistory(env: Env, customerId: string) {
+  const config = billingConfig(env);
+  let hasPaidSubscription = false;
   let after = '';
   do {
     const page = await stripe(env, `subscriptions?customer=${customerId}&status=all&limit=100${after ? `&starting_after=${after}` : ''}`,
       z.object({ has_more: z.boolean(), data: z.array(SubscriptionSchema) }));
     const live = page.data.find((item) => !['canceled', 'incomplete_expired'].includes(item.status));
-    if (live) return live;
+    // A canceled pilot still counts, including its zero-dollar invoices. An
+    // expired incomplete payment never activated a subscription. Unknown retired
+    // prices count as paid; keep their catalog entries for reconciliation.
+    hasPaidSubscription ||= page.data.some((item) => item.status !== 'incomplete_expired' && (
+      Boolean(item.metadata.pilot_coupon_id) || item.metadata.paid_subscription === 'true' ||
+      item.items.data.some(({ price }) => price.unit_amount === 0 ? false : price.unit_amount != null ? true :
+        !config.offers.some((offer) => offer.priceId === price.id && offer.plan === 'starter'))));
+    if (live) return { live, hasPaidSubscription };
     after = page.has_more ? page.data.at(-1)!.id : '';
   } while (after);
-  return null;
+  return { live: null, hasPaidSubscription };
 }
 
-async function refreshUnderLock(env: Env, account: BillingAccount): Promise<BillingAccount> {
-  if (!account.customer_id) return account;
-  const live = await liveSubscription(env, account.customer_id);
+async function refreshUnderLock(env: Env, account: BillingAccount) {
+  if (!account.customer_id) return { ...account, hasPaidSubscription: false };
+  const { live, hasPaidSubscription } = await subscriptionHistory(env, account.customer_id);
   if (live) await reconcileSubscription(env, account, live);
   else if (hasLiveSubscription(account)) {
     await reconcileSubscription(env, account, await stripe(env, `subscriptions/${account.subscription_id}`, SubscriptionSchema));
   }
-  return billingAccount(env, account.workspace_id);
+  return { ...await billingAccount(env, account.workspace_id), hasPaidSubscription };
 }
 
 export async function refreshBillingAccount(env: Env, workspaceId: string) {
@@ -146,6 +156,8 @@ export async function createCheckout(env: Env, workspaceId: string, offerId: str
     const account = await refreshUnderLock(env, await billingAccount(env, workspaceId));
     // Recovery applies the plan too, then takes the administrator straight to management.
     if (hasLiveSubscription(account)) return createBillingPortal(env, workspaceId);
+    const pilotCouponId = !account.hasPaidSubscription && offer.plan !== 'starter' ? config.pilotCouponId : undefined;
+    const trialEndsAt = pilotCouponId || account.hasPaidSubscription ? 0 : account.trial_ends_at;
     let customerId = account.customer_id;
     if (!customerId) {
       const customer = await stripe(env, 'customers', StripeIdSchema, { 'metadata[workspace_id]': workspaceId, 'metadata[region]': env.AVALON_REGION }, `customer:${workspaceId}`);
@@ -157,16 +169,25 @@ export async function createCheckout(env: Env, workspaceId: string, offerId: str
       if (pending.metadata.offer_id !== offerId || pending.currency !== currency || pending.metadata.overage_enabled !== String(overage)) {
         throw new ApiError(409, 'billing_checkout_pending', 'Complete or let the existing checkout expire before choosing another offer');
       }
-      if (Number(pending.metadata.trial_ends_at) >= account.trial_ends_at) return { url: pending.url };
+      if ((pending.metadata.pilot_coupon_id ?? '') === (pilotCouponId ?? '') && Number(pending.metadata.trial_ends_at) >= trialEndsAt) return { url: pending.url };
       await stripe(env, `checkout/sessions/${pending.id}/expire`, StripeIdSchema, {}, `expire:${pending.id}`);
       await env.DB.prepare('UPDATE billing_accounts SET checkout_generation = ? WHERE workspace_id = ?').bind(crypto.randomUUID(), workspaceId).run();
     }
     // The persisted generation identifies this attempt. An uncertain Stripe
     // response recovers through the open-session query before another write.
     const attempt = await env.DB.prepare('SELECT checkout_generation FROM billing_accounts WHERE workspace_id = ?').bind(workspaceId).first<{ checkout_generation: string }>();
+    if (pilotCouponId) {
+      // A two-month coupon on an annual price would waive the entire annual
+      // invoice. The pilot is for monthly subscriptions only.
+      const price = await stripe(env, `prices/${offer.priceId}`, z.object({ recurring: z.object({ interval: z.string(), interval_count: z.number() }).nullable() }));
+      if (price.recurring?.interval !== 'month' || price.recurring.interval_count !== 1) {
+        throw new ApiError(409, 'billing_pilot_requires_monthly_price', 'The pilot offer requires a monthly subscription price');
+      }
+    }
     const fields: Record<string, string> = {
       mode: 'subscription', customer: customerId, currency,
-      'metadata[offer_id]': offerId, 'metadata[overage_enabled]': String(overage), 'metadata[trial_ends_at]': String(account.trial_ends_at),
+      payment_method_collection: 'always',
+      'metadata[offer_id]': offerId, 'metadata[overage_enabled]': String(overage), 'metadata[trial_ends_at]': String(trialEndsAt),
       'line_items[0][price]': offer.priceId, 'line_items[0][quantity]': '1',
       success_url: config.returnUrl, cancel_url: config.returnUrl,
       'automatic_tax[enabled]': String(config.automaticTax),
@@ -174,16 +195,22 @@ export async function createCheckout(env: Env, workspaceId: string, offerId: str
       'customer_update[address]': 'auto', 'customer_update[name]': 'auto',
       'subscription_data[metadata][workspace_id]': workspaceId,
       'subscription_data[metadata][offer_id]': offer.id,
+      'subscription_data[metadata][paid_subscription]': String(offer.plan !== 'starter'),
       'subscription_data[metadata][overage_enabled]': String(overage),
     };
-    if (offer.couponId) fields['discounts[0][coupon]'] = offer.couponId;
+    if (pilotCouponId) {
+      fields['discounts[0][coupon]'] = pilotCouponId;
+      fields['metadata[pilot_coupon_id]'] = pilotCouponId;
+      fields['subscription_data[metadata][pilot_coupon_id]'] = pilotCouponId;
+    }
+    else if (offer.couponId) fields['discounts[0][coupon]'] = offer.couponId;
     else fields.allow_promotion_codes = 'true';
     // Stripe requires trial_end at least 48 hours ahead. Use a stable duration
     // near expiry so retries do not change an idempotent request's parameters.
-    if (account.trial_ends_at > Date.now() / 1000 + 172800) fields['subscription_data[trial_end]'] = String(account.trial_ends_at);
-    else if (account.trial_ends_at > Date.now() / 1000) fields['subscription_data[trial_period_days]'] = '2';
+    if (trialEndsAt > Date.now() / 1000 + 172800) fields['subscription_data[trial_end]'] = String(trialEndsAt);
+    else if (trialEndsAt > Date.now() / 1000) fields['subscription_data[trial_period_days]'] = '2';
     const session = await stripe(env, 'checkout/sessions', StripeUrlSchema, fields,
-      `checkout:${workspaceId}:${attempt!.checkout_generation}:${offerId}:${currency}:${overage}:${account.trial_ends_at}:${account.subscription_id ?? 'first'}`);
+      `checkout:${workspaceId}:${attempt!.checkout_generation}:${offerId}:${currency}:${overage}:${trialEndsAt}:${account.subscription_id ?? 'first'}:${pilotCouponId ?? 'none'}`);
     // The next new checkout (after expiration/cancellation) must not reuse this
     // session's idempotency key. Lost writes recover through Stripe's open list.
     await env.DB.prepare('UPDATE billing_accounts SET checkout_generation = ? WHERE workspace_id = ?').bind(crypto.randomUUID(), workspaceId).run();
@@ -278,7 +305,7 @@ export async function billClosedOverage(env: Env, workspaceId: string, now = Dat
           } while (after && !existing);
           const item = existing ? { id: existing } : await stripe(env, 'invoiceitems', StripeIdSchema, {
             customer: term.customer_id, ...(cutoff === null ? { subscription: term.subscription_id } : {}), price: row.price_id,
-            quantity: String(row.amount_microusd), 'metadata[receipt]': receipt,
+            quantity: String(row.amount_microusd), 'metadata[receipt]': receipt, discountable: 'false',
             description: `Rally usage beyond shared quota — period starting ${row.period_start}`,
           }, receipt);
           itemId = item.id;

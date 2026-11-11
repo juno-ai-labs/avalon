@@ -41,6 +41,25 @@ recreated; a trialing subscription is extended if an older hosted checkout compl
 Stripe requires at least 48 hours for an explicit trial end; checkout in the last
 two days rounds the remaining trial up to 48 hours, preserving the free trial.
 
+When `pilotCouponId` is configured, every Organization's first paid monthly
+subscription automatically receives that Stripe coupon. The pilot takes precedence
+over the offer's ordinary coupon and promotion-code entry. Checkout collects a
+payment method even when the first invoice is zero, starts the subscription
+immediately, and does not stack the no-card/team trial. Included plan allowances
+remain unchanged. Overage invoice items are explicitly non-discountable, including
+on final cancellation invoices; the existing first-partial-period settlement policy
+still applies.
+
+Stripe's paginated subscription history decides first-paid eligibility, including
+canceled subscriptions whose webhooks never reached Rally. A canceled pilot counts
+as used even though its invoices were free. Zero-price Start subscriptions and
+expired incomplete payments do not consume the offer. No browser date, signup
+link or local-storage flag grants financial eligibility. Each Organization has its
+own eligibility; this is not a once-per-person promotion. Subscription metadata
+records the pilot coupon so reconciliation preserves its treatment after the
+campaign is disabled. Re-subscribing after a paid subscription also cannot restart
+the remaining no-card trial.
+
 Signed subscription webhooks and status/checkout recovery use the same reconciliation
 path under an Organization ownership claim. Active/trialing subscriptions select
 the configured offer; other states return to `unpaidPlan` (default `starter`).
@@ -84,8 +103,9 @@ record of every Organization's free period or usage in this implementation:
   extensions to trialing subscriptions. Coupons are applied in Stripe.
 - Detailed usage, included allowances and unbilled/free-period usage stay in Rally's
   usage ledger. Only settled, opted-in overage quantities become Stripe invoice items.
-- The visitor-specific pilot offer on the landing page is not redeemed automatically
-  by billing; its attribution parameter is not yet consumed by signup.
+- The pilot is automatically applied at first paid checkout while enabled. Stripe
+  records the applied coupon, discount dates and discounted invoices; the landing
+  page no longer assigns visitor-specific eligibility deadlines.
 
 Making Stripe the complete billing authority would require provisioning every
 Organization there, synchronizing all trial/promotion awards and reporting usage
@@ -181,6 +201,25 @@ Live Stripe and a full authenticated desktop/browser flow remain activation chec
 }
 ```
 
+To enable the two-month pilot, create a Stripe coupon with `percent_off: 100`,
+`duration: "repeating"`, and `duration_in_months: 2`, then add its ID as the top-level
+`pilotCouponId` in `BILLING_CONFIG`. Use monthly prices (`interval: "month"`,
+`interval_count: 1`); checkout rejects annual/multi-month pilot prices because a
+percentage coupon would otherwise waive the entire longer invoice. Scope the
+coupon to the subscription products if desired, including all three paid plans.
+Percentage discounts work across the catalog's supported currencies. Stripe owns
+the discount duration/percentage and returns billing to the normal subscription
+price when it expires. Keep the landing claim aligned if those terms change.
+
+Omit `pilotCouponId` to stop new pilot checkouts without removing existing discounts.
+A pending checkout is replaced with current campaign terms when an administrator
+returns through Rally; already-open hosted pages can still complete until expiry.
+For an immediate campaign cutoff, expire those Stripe Checkout Sessions as well.
+Remove the landing offer card when ending the campaign. Before live activation,
+use Stripe test mode/test clocks to verify two discounted monthly invoices, a
+normal third invoice, card collection, tax treatment, and a non-discounted overage
+invoice item. Live credentials and coupon provisioning are deployment steps.
+
 For an automatic special, supply an offer's `couponId`; otherwise Checkout accepts
 Stripe promotion codes. Disable new sales with `enabled: false`, retaining the
 price mapping. For overages, add `overagePriceId` pointing to a one-time USD price
@@ -202,5 +241,10 @@ per-event charges were rejected because they would diverge from its weekly quota
 Recovery and webhook reconciliation share one path so a lost delivery cannot leave
 paid customers on the wrong plan. Non-expiring ownership prevents stale writers;
 per-subscription terms preserve obligations through cancellation and re-subscription.
+The pilot uses a Stripe discount rather than a trial because only subscription fees
+are waived: included usage stays available and opted-in overages remain billable.
+Stripe history prevents repeat redemption without a second local promotion ledger;
+visitor-specific marketing deadlines were removed in favor of first-paid eligibility
+for every Organization while the campaign is enabled.
 Future changes must preserve pre-consent exclusion, cancellation cutoffs and
 permanent charge receipts.
