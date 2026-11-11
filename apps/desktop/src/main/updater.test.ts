@@ -476,8 +476,12 @@ describe('desktop auto-update runtime', () => {
     }));
   });
 
-  it('retries only failed downloads with bounded exponential backoff', async () => {
-    const { updater, timeouts, showMessageBox, openExternal } = setup();
+  it.each([
+    { platform: 'darwin' as const, arch: 'arm64', env: {}, linuxPackageType: undefined, url: MANUAL_UPDATE_URL },
+    { platform: 'linux' as const, arch: 'x64', env: { APPIMAGE: '/home/me/Rally.AppImage' }, linuxPackageType: undefined, url: 'https://downloads.rallywith.ai/stable/linux/x64/Rally.AppImage' },
+    { platform: 'linux' as const, arch: 'x64', env: {}, linuxPackageType: 'deb', url: 'https://downloads.rallywith.ai/stable/linux/x64/Rally.deb' },
+  ])('retries failed downloads and offers the matching installer ($url)', async (runtime) => {
+    const { updater, timeouts, showMessageBox, openExternal } = setup(runtime);
     showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: false });
     updater.emit('update-available', { version: '1.1.0' });
 
@@ -498,7 +502,7 @@ describe('desktop auto-update runtime', () => {
         message: 'Couldn’t update automatically',
         buttons: ['Download Latest', 'Later'],
       }));
-      expect(openExternal).toHaveBeenCalledWith(MANUAL_UPDATE_URL);
+      expect(openExternal).toHaveBeenCalledWith(runtime.url);
     });
 
     // Later duplicate errors cannot stack recovery prompts.
@@ -522,5 +526,85 @@ describe('desktop auto-update runtime', () => {
     }));
     expect(timeouts).toEqual([]);
     expect(updater.downloadUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('Linux updates', () => {
+  it.each(['AppImage', 'deb'])('downloads and explicitly installs a Linux %s update', async (format) => {
+    const beforeInstall = vi.fn(async () => undefined);
+    const { updater, controller, statuses } = setup({ platform: 'linux', arch: 'x64',
+      env: format === 'AppImage' ? { APPIMAGE: '/home/me/Rally.AppImage' } : {},
+      linuxPackageType: format === 'deb' ? 'deb' : undefined, beforeInstall });
+    updater.emit('update-available', { version: '1.2.0' });
+    updater.emit('download-progress', { percent: 50 });
+    updater.emit('update-downloaded', { version: '1.2.0' });
+    expect(statuses.at(-1)).toEqual({ kind: 'downloaded', version: '1.2.0' });
+    expect(updater.autoInstallOnAppQuit).toBe(format === 'AppImage');
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true));
+    expect(beforeInstall).toHaveBeenCalledOnce();
+  });
+
+  it.each(['check', 'download'])('keeps session protection when a background %s fails during preparation', async (work) => {
+    let finishPreparation!: () => void;
+    const beforeInstall = vi.fn(() => new Promise<void>((resolve) => { finishPreparation = resolve; }));
+    const onInstallFailed = vi.fn();
+    const { updater, controller, showMessageBox, timeouts } = setup({
+      platform: 'linux', arch: 'x64', linuxPackageType: 'deb', beforeInstall, onInstallFailed,
+    });
+    updater.emit('update-downloaded', { version: '1.2.0' });
+    updater.emit(work === 'check' ? 'checking-for-update' : 'update-available', { version: '1.3.0' });
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(beforeInstall).toHaveBeenCalledOnce());
+
+    updater.emit('error', new Error('background network failure'));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(onInstallFailed).not.toHaveBeenCalled();
+    expect(showMessageBox).not.toHaveBeenCalled();
+    if (work === 'download') expect(timeouts.at(-1)?.delayMs).toBe(3_000);
+
+    finishPreparation();
+    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledOnce());
+    expect(onInstallFailed).not.toHaveBeenCalled();
+  });
+
+  it('does not install a superseded update after pending preparation resolves', async () => {
+    let finishPreparation!: () => void;
+    const beforeInstall = vi.fn(() => new Promise<void>((resolve) => { finishPreparation = resolve; }));
+    const onInstallFailed = vi.fn();
+    const { updater, controller, showMessageBox } = setup({ beforeInstall, onInstallFailed });
+    updater.emit('update-downloaded', { version: '1.2.0' });
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(beforeInstall).toHaveBeenCalledOnce());
+    controller.setReleaseChannel('faster');
+    finishPreparation();
+    await vi.waitFor(() => expect(showMessageBox).toHaveBeenCalledOnce());
+    expect(onInstallFailed).toHaveBeenCalledOnce();
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it('does not classify later background errors as installer failures if quit returns', async () => {
+    const onInstallFailed = vi.fn();
+    const { updater, controller, showMessageBox } = setup({ onInstallFailed });
+    updater.emit('update-downloaded', { version: '1.2.0' });
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledOnce());
+    updater.emit('checking-for-update');
+    updater.emit('error', new Error('background check failed'));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(onInstallFailed).not.toHaveBeenCalled();
+    expect(showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('restores the session when a Linux installer emits an error and permits another attempt', async () => {
+    const onInstallFailed = vi.fn(async () => undefined);
+    const { updater, controller, showMessageBox } = setup({ platform: 'linux', arch: 'x64', linuxPackageType: 'deb', onInstallFailed });
+    updater.emit('update-downloaded', { version: '1.2.0' });
+    updater.quitAndInstall.mockImplementationOnce(() => { updater.emit('error', new Error('Authorization cancelled')); });
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({ message: 'Couldn’t restart to update' })));
+    expect(onInstallFailed).toHaveBeenCalledOnce();
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledTimes(2));
   });
 });

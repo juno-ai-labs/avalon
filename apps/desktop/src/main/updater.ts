@@ -74,6 +74,7 @@ export interface AutoUpdateDependencies {
   readonly platform: NodeJS.Platform;
   readonly arch: string;
   readonly env: NodeJS.ProcessEnv;
+  readonly linuxPackageType?: string;
   readonly currentVersion: string;
   /** When the running build was made, in epoch milliseconds; unknown builds are never stale. */
   readonly currentBuildTime?: number | undefined;
@@ -116,13 +117,12 @@ function sameStatus(left: DesktopUpdateStatus, right: DesktopUpdateStatus): bool
 }
 
 /**
- * Wire the signed macOS update lifecycle. The feed is embedded by
+ * Wire the macOS and Linux update lifecycle. The feed is embedded by
  * electron-builder in app-update.yml; setting a feed URL at runtime would make
  * packaged builds dependent on mutable local configuration.
  */
 export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateController {
   const log = deps.log ?? console;
-  const updater = deps.updater ?? electronUpdater.autoUpdater;
   const policy = updatePolicy(deps);
   const showDialog = (options: MessageBoxOptions): Promise<MessageBoxReturnValue | null> => (
     deps.showMessageBox(options).catch((error: unknown) => {
@@ -139,7 +139,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
         void showDialog({
           type: 'info',
           message: 'Updates aren’t available in this build',
-          detail: 'Automatic updates work in the installed Apple-silicon Rally app.',
+          detail: 'Automatic updates are available in the installed macOS app, Linux AppImage, and Debian package.',
           buttons: ['OK'],
         });
       },
@@ -148,6 +148,13 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     };
   }
 
+  const updater = deps.updater ?? electronUpdater.autoUpdater;
+  // A Debian install can require an administrator prompt: apply on explicit
+  // restart, never unexpectedly during ordinary quit.
+  const installOnQuit = deps.platform !== 'linux' || deps.linuxPackageType !== 'deb';
+  const manualUpdateUrl = deps.platform === 'linux'
+    ? `https://downloads.rallywith.ai/stable/linux/x64/Rally.${deps.linuxPackageType === 'deb' ? 'deb' : 'AppImage'}`
+    : MANUAL_UPDATE_URL;
   let status: DesktopUpdateStatus = { kind: 'idle' };
   let manualCheck = false;
   let checkInFlight = false;
@@ -156,6 +163,8 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   let downloadRetryScheduled = false;
   let manualRecoveryPrompted = false;
   let installInFlight = false;
+  let invokingInstaller = false;
+  let installerError: Error | undefined;
   /** The build staged for install. While set, checks keep running in the
    * background and the restart offer stays up until a newer build replaces it. */
   let stagedVersion: string | null = null;
@@ -199,13 +208,15 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       type: 'warning',
       message: 'Couldn’t update automatically',
       detail:
-        'Rally could not finish the update after several attempts. Download the latest signed Rally installer and replace the current copy in Applications.',
+        deps.platform === 'linux'
+          ? 'Rally could not finish the update. Download the latest Linux package and replace the current installation.'
+          : 'Rally could not finish the update after several attempts. Download the latest signed Rally installer and replace the current copy in Applications.',
       buttons: ['Download Latest', 'Later'],
       defaultId: 0,
       cancelId: 1,
     }).then((result) => {
       if (result?.response !== 0) return;
-      void deps.openExternal(MANUAL_UPDATE_URL).catch((error: unknown) => {
+      void deps.openExternal(manualUpdateUrl).catch((error: unknown) => {
         log.error('[rally] failed to open the manual update download', error);
       });
     });
@@ -214,32 +225,52 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     // A channel change invalidates any dialog or renderer command associated
     // with the previously downloaded build.
     if (installInFlight || status.kind !== 'downloaded') return;
+    const version = status.version;
+    const channel = currentChannel;
     installInFlight = true;
     applyStartedAt = now();
     void Promise.resolve()
       .then(() => deps.beforeInstall?.())
-      .then(() => updater.quitAndInstall(false, true))
-      .catch(async (error: unknown) => {
-        outcome('apply', 'failed', applyStartedAt);
-        applyStartedAt = null;
-        log.error('[rally] could not prepare the downloaded update for installation', error);
-        const rollbackStartedAt = now();
-        try {
-          await deps.onInstallFailed?.();
-          outcome('rollback', 'success', rollbackStartedAt);
-        } catch (rollbackError) {
-          outcome('rollback', 'failed', rollbackStartedAt);
-          log.error('[rally] could not roll back failed update preparation', rollbackError);
-        } finally {
-          installInFlight = false;
+      .then(() => {
+        if (status.kind !== 'downloaded' || status.version !== version || currentChannel !== channel) {
+          throw new Error('The prepared update is no longer current');
         }
-        await showDialog({
-          type: 'warning',
-          message: 'Couldn’t restart to update',
-          detail: 'Rally kept your current session and did not install the update. Please try again.',
-          buttons: ['OK'],
-        });
-      });
+        // Linux BaseUpdater reports install failures synchronously through
+        // `error`. Background checks/downloads can also emit that event while
+        // preparation is pending, so only capture it inside the installer call.
+        invokingInstaller = true;
+        installerError = undefined;
+        try {
+          const result = updater.quitAndInstall(false, true);
+          if (installerError) throw installerError;
+          return result;
+        } finally {
+          invokingInstaller = false;
+        }
+      })
+      .catch((error: unknown) => { void installationFailed(error); });
+  };
+  const installationFailed = async (error: unknown): Promise<void> => {
+    if (!installInFlight) return;
+    outcome('apply', 'failed', applyStartedAt);
+    applyStartedAt = null;
+    log.error('[rally] could not prepare the downloaded update for installation', error);
+    const rollbackStartedAt = now();
+    try {
+      await deps.onInstallFailed?.();
+      outcome('rollback', 'success', rollbackStartedAt);
+    } catch (rollbackError) {
+      outcome('rollback', 'failed', rollbackStartedAt);
+      log.error('[rally] could not roll back failed update preparation', rollbackError);
+    } finally {
+      installInFlight = false;
+    }
+    await showDialog({
+      type: 'warning',
+      message: 'Couldn’t restart to update',
+      detail: 'Rally kept your current session and did not install the update. Please try again.',
+      buttons: ['OK'],
+    });
   };
 
   let staleBuildPromptedVersion: string | null = null;
@@ -306,7 +337,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   };
 
   updater.autoDownload = true;
-  updater.autoInstallOnAppQuit = true;
+  updater.autoInstallOnAppQuit = installOnQuit;
   updater.channel = deps.releaseChannel;
   // electron-updater enables downgrades as a side effect of setting a channel.
   // Rally's two channels differ only in when their monotonic manifest moves;
@@ -418,7 +449,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       finishSupersededChannelWork();
       return;
     }
-    updater.autoInstallOnAppQuit = true;
+    updater.autoInstallOnAppQuit = installOnQuit;
     previousStagedVersion = stagedVersion;
     stagedVersion = info.version;
     setStatus({ kind: 'downloaded', version: info.version });
@@ -427,6 +458,10 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     promptIfStaleBuild();
   });
   updater.on('error', (error) => {
+    if (invokingInstaller) {
+      installerError = error;
+      return;
+    }
     const checking = checkInFlight;
     checkInFlight = false;
     if (channelRecheckPending) {

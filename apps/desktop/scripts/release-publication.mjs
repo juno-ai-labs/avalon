@@ -2,7 +2,7 @@ import {
   assertNextReleaseVersion,
   assertReleaseAfterMissingManifest,
   compareVersions,
-  parseMacUpdateFeed,
+  parseUpdateFeed,
 } from './release-lib.mjs';
 import { createPublishedSiteReleaseConfig } from './site-release-config.mjs';
 import {
@@ -38,7 +38,7 @@ function validatePublicationOptions(options) {
 
 export function encodePreparedReleasePublication({ manifestBytes, publicationOptions }) {
   const options = validatePublicationOptions(publicationOptions);
-  const feed = parseMacUpdateFeed(manifestBytes.toString('utf8'));
+  const feed = parseUpdateFeed(manifestBytes.toString('utf8'));
   if (feed.version !== options.version) {
     throw new Error(
       `Release publication receipt manifest ${feed.version} does not match options ${options.version}`,
@@ -58,7 +58,7 @@ export function parsePreparedReleasePublication(value) {
   }
   const manifestBytes = Buffer.from(canonicalBase64(value.manifestBase64), 'base64');
   const publicationOptions = validatePublicationOptions(value.publicationOptions);
-  const feed = parseMacUpdateFeed(manifestBytes.toString('utf8'));
+  const feed = parseUpdateFeed(manifestBytes.toString('utf8'));
   if (value.version !== feed.version || publicationOptions.version !== feed.version) {
     throw new Error('Release publication receipt version does not match its manifest and options');
   }
@@ -68,7 +68,7 @@ export function parsePreparedReleasePublication(value) {
 function readFeed(manifestBytes, name) {
   if (!manifestBytes) return undefined;
   try {
-    return parseMacUpdateFeed(manifestBytes.toString('utf8'));
+    return parseUpdateFeed(manifestBytes.toString('utf8'));
   } catch (error) {
     throw new Error(`${name} is invalid`, { cause: error });
   }

@@ -27,7 +27,11 @@
     "release:promote:stable": "node scripts/promote-stable-release.mjs",
     "telemetry:publish-artifacts": "node scripts/publish-telemetry-artifacts.mjs",
     "test:release": "node --test scripts/*.test.mjs",
-    "test:crashpad": "node scripts/telemetry-crashpad-fixture.mjs"
+    "test:crashpad": "node scripts/telemetry-crashpad-fixture.mjs",
+    "package:linux:local": "node scripts/package-linux.mjs local",
+    "package:linux:release": "node scripts/package-linux.mjs release",
+    "release:publish:linux": "node scripts/publish-linux-release.mjs",
+    "test:linux-updater": "node scripts/linux-updater-fixture.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "latest",

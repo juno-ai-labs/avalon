@@ -97,6 +97,12 @@ the actions on a ruled line below it, then Figure 1. Every marketing page
 ends with the `.closer` plate and the footer, whose oversized italic
 wordmark closes the page.
 
+The hero stacks three equal-width actions vertically: web entry, macOS download,
+then Linux x64 AppImage download. The group is rendered by
+`rally:desktop-downloads` on both `/` and `/start-fast/`. At narrower widths the
+hero columns stack and the buttons fill the available width on small screens; touch-only devices retain the web
+entry as their action.
+
 A **highlight** (`<mark class="hl hl-maya" data-name="Maya">`) is a person's
 selection: their colour behind the words, a bar at the start and their name
 flag above, drawn from `data-name`. The "Why Rally" statement uses three.

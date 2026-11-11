@@ -36,13 +36,14 @@ cookie format is X's, not ours: if X changes it, X-ad visits stop being
 attributed while the pixel keeps firing.
 
 Two kinds of tracked click also send X a custom event, from the browser
-(`reportXIntent`): every link whose site action is `download` sends "Rally | Mac
+(`reportXIntent`): Mac installer links with action `download` send "Rally | Mac
 download intent" (`tw-rg7j5-rg7j6`), and every web-app entry link
 (`web-app-hero`, `web-app-offer`, `sign-in-header`) sends "Rally | Sign up
 intent" (`tw-rg7j5-ri4zl`). The header button's label alternates between Sign in
 and Sign up, so that event also counts returning users signing in. The X Conversion
 API (server-side conversions) is not wired: nothing on the server confirms a
-download, so there is no server-side event to send yet.
+download, so there is no server-side event to send yet. Linux downloads do not
+fire the Mac-specific X conversion.
 
 ## What we track
 
@@ -65,7 +66,8 @@ Tagged links on the landing page, by `data-site-action` id:
 | `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally, on every device | primary_cta · header |
 | `web-app-hero` | Hero Sign up now (app.rallywith.ai), the left and primary button | secondary_cta · hero |
 | `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai, with `pilotOfferFirstSeen`), which slides in two seconds after the page loads | primary_cta · offer |
-| `download-hero` | Hero Download the macOS app, the right and secondary button, hidden on touch-only devices | download · hero |
+| `download-hero` | Hero Download the macOS app, before Linux, hidden on touch-only devices | download · hero |
+| `download-linux-hero` | Hero Download for Linux, below macOS, hidden on touch-only devices | download · hero |
 | `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Katherine and Alex), in the home page's Sidekicks band and the `/sidekicks/` hero | demo_request · sidekicks |
@@ -115,8 +117,9 @@ Check these on every edit to the landing page:
    without it is not counted. A new link needs its id added to
    `SITE_ACTION_LINKS` in `apps/site/src/telemetry.ts`; the site tests fail on
    an unknown id or a tracked id that is missing from the page.
-2. **Give each download button its own id.** All of them point at the same DMG;
-   the id is the only way to tell them apart.
+2. **Give each download button its own id.** Mac buttons link to the DMG and
+   Linux links to the AppImage. Both hero downloads currently map to the same
+   first-party action/placement; that event does not split downloads by platform.
 3. **Keep the page at `/`.** The page-view charts filter on `$pathname = '/'`; clicks carry `page: landing` instead.
 4. **Keep the telemetry script.** Vite injects `src/site-entry.ts` into every
    page; don't remove the plugin in `apps/site/vite.config.ts`.

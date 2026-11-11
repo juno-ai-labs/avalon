@@ -1,4 +1,4 @@
-name: Release Rally for macOS
+name: Release Rally desktop
 
 on:
   # A tag is an artifact of a release, not an input to one: nothing triggers on
@@ -558,3 +558,72 @@ jobs:
           if [ -n "${RALLY_SIGNING_KEYCHAIN:-}" ]; then
             security delete-keychain "$RALLY_SIGNING_KEYCHAIN" || true
           fi
+
+  linux-build:
+    needs: [plan, verify]
+    if: needs.plan.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: desktop-release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.verify.outputs.release_commit }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Linux packaging and smoke dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libsecret-1-0 libfuse2t64
+      - name: Exercise real Linux updater checksum rejection and installation
+        run: xvfb-run -a pnpm --filter @rally/desktop test:linux-updater
+      - name: Build AppImage and Debian packages and exercise microphone capture
+        env:
+          RALLY_DESKTOP_SESSION_KEY: ${{ secrets.RALLY_DESKTOP_SESSION_KEY }}
+        run: xvfb-run -a pnpm --filter @rally/desktop package:linux:release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Rally-${{ needs.plan.outputs.tag }}-linux-x64
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            apps/desktop/release/linux-release/*.AppImage
+            apps/desktop/release/linux-release/*.deb
+            apps/desktop/release/linux-release/*.blockmap
+            apps/desktop/release/linux-release/latest-linux.yml
+            apps/desktop/release/linux-release/SHA256SUMS
+
+  linux-publish:
+    needs: [plan, verify, release, linux-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: desktop-release
+    env:
+      RALLY_RELEASE_COMMIT: ${{ needs.verify.outputs.release_commit }}
+      RALLY_RELEASE_PUBLISH_CONFIRM: ${{ needs.plan.outputs.version }}
+      RALLY_RELEASE_R2_BUCKET: ${{ vars.RALLY_RELEASE_R2_BUCKET || vars.AVALON_RELEASE_R2_BUCKET }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.verify.outputs.release_commit }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @rally/desktop...
+      - uses: actions/download-artifact@v4
+        with:
+          name: Rally-${{ needs.plan.outputs.tag }}-linux-x64
+          path: apps/desktop/release/linux-release
+      - name: Publish verified Linux payloads and update channels
+        run: pnpm --filter @rally/desktop release:publish:linux

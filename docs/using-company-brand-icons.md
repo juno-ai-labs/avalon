@@ -87,8 +87,8 @@ route; the transcript does not, and always draws the protocol mark for a custom
 server (see [`plugin-activity-rows.md`](plugin-activity-rows.md)).
 
 The public landing is static HTML and has no React runtime, so it cannot go
-through `ConnectorMark`. It inlines `@thesvg/react/apple`'s `mono` path on the
-download button, painted in `currentColor`. When a brand has no `mono`
+through `ConnectorMark`. It inlines the `mono` artwork from `@thesvg/react/apple` and
+`@thesvg/react/linux` on the download buttons, painted in `currentColor`. When a brand has no `mono`
 variant (LinkedIn), inline its `default` path with the hard-coded fill swapped
 for `currentColor`. A Lucide or Tabler stand-in is still
 not a company mark there, and adding React to the site just to mount one

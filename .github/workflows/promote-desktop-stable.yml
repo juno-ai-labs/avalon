@@ -19,13 +19,17 @@ concurrency:
 
 jobs:
   promote:
+    strategy:
+      fail-fast: false
+      matrix:
+        prefix: [stable/darwin/arm64, stable/linux/x64]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: desktop-release
     env:
       RALLY_RELEASE_R2_BUCKET: ${{ vars.RALLY_RELEASE_R2_BUCKET || vars.AVALON_RELEASE_R2_BUCKET }}
       RALLY_RELEASE_BASE_URL: https://downloads.rallywith.ai
-      RALLY_RELEASE_PREFIX: stable/darwin/arm64
+      RALLY_RELEASE_PREFIX: ${{ matrix.prefix }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

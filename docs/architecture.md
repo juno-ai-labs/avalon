@@ -1,6 +1,6 @@
 # Architecture
 
-Rally is a pnpm TypeScript monorepo with an Electron desktop client, a lite
+Rally is a pnpm TypeScript monorepo with a macOS/Linux Electron desktop client, a lite
 browser client, a Hono API Worker
 across configured deployments,
 internal operator Workers, and shared packages that hold every contract and rule
