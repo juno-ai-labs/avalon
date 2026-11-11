@@ -32,23 +32,23 @@ Organization must not wait on a Canvas, a publish and a message
 
 **Copying.** `seedCanvas` calls, in order: `createCanvas` (the owner as
 creator, an id named from the Organization and the seed), `canvasUpdate` (icon
-and colour), `recordSeedRequest` (the creator's request), `publishSeedSite`,
-`canvasSetAudience` (the whole Organization), and the message port's
+and colour), `publishSeedSite`, `canvasSetAudience` (the whole Organization),
+`recordSeedRequest` (the creator's request), and the message port's
 `appendMessage` (Rally's answer, authored as the agent with no run). The
 audience follows the site so no member opens a Canvas with no artifact.
 Rally's message is last because it marks the seed as finished.
 
 **The request.** The Chat opens on a message recorded as the creator's own:
 what they would have asked Rally for to get this Canvas, and how Rally should
-help people through it. It is how a seed tells Rally what its site is for. The
-transcript is the one thing every run reads, so the request reaches the model
-as an ordinary user turn; a file in the site reaches it only if Rally opens
-it. `recordSeedRequest` sends it down the path a person's message takes
+help people through it. The transcript is the one thing every run reads, so
+the request reaches the model as an ordinary user turn. `recordSeedRequest`
+sends it down the path a person's message takes
 (`ConversationService.writableClient`, then `createMessage`) with
 `recordOnly`, so no run starts and no classifier is asked. The author is the
 creator under the `canvas_seed` principal, which the Chat's object checks
-against current membership like every non-session principal; a non-session
-principal also sends no `message sent` analytics event.
+against current membership like every non-session principal. It is written in
+plain words, with no tool, table or column named: every member reads it under
+the creator's name, and the words stay in that Chat for good.
 
 **Publishing with no sandbox.** Rally's own publish reads a site out of a
 Canvas's sandbox, and a person's publish is refused an `index.js`. A seed's
@@ -100,13 +100,15 @@ step depends on either except step 3's tick.
   made. Guard: `test-workers/canvas-seed.test.ts`.
 - **The request is recorded, never asked.** It starts no run and queues
   nothing: Rally's answer is the seed's own. Guard: the same test.
-- **The request is looked up before it is sent.** A resend under the same id
-  with other words is refused as an idempotency conflict, and a deploy between
-  two attempts changes the words. Guard: the same test.
-- **The request asks for no read of the page on a data-only step.** A run in
-  which `read_resource` fails has its whole reply replaced by an "Attachment
-  content unverified" notice, and `read_resource` cannot read a site. No
-  automated guard; see the changelog.
+- **The request is written only into an empty Chat.** One that already holds
+  the request is left alone, since a resend with other words is refused. One
+  that holds anyone else's message is too: the request would not open it, and
+  could queue behind that message and land after Rally's answer. Guard: the
+  same test.
+- **The request never holds the guide up.** A failure to record it is logged
+  as `canvas_seed_request_failed` and the seed goes on. A failed message
+  preparation is kept under its client id, so a retry could never get past
+  it. Guard: the same test.
 - **A finished seed is never reapplied.** `seedCanvas` returns when the
   opening message exists. Without that, a job replayed from the dead-letter
   queue weeks later would reopen a Canvas its owner had closed. Guard: the
@@ -152,15 +154,12 @@ joins later a Canvas of their own.
   thrown so a retry reaches a version that has it.
 - **The Organization was retired first, or the guide was archived:**
   acknowledged, not retried. An archived guide is a finished seed.
-- **The creator left before the job ran:** no request is recorded, and the
-  Chat opens on Rally's message alone.
+- **The creator left before the job ran, or the request could not be
+  recorded:** the Chat opens on Rally's message alone.
 - **Rally never reads the README:** steps 2 and 4 still tick; step 3 ticks if
-  Rally follows the request, and by hand if not. In every local run that
-  edited the page, Rally read it.
+  Rally follows the request, and by hand if not.
 - **A long Chat is compacted:** the request is summarised with the rest of the
   early transcript, and Rally is back to the README and the page's comments.
-- **Every member sees the request under the creator's name.** They did not
-  type it. The feed folds it behind "Show more".
 - The guide polls every 4 seconds and stops on 401 or 403, so its own
   refusals never use 403. A card has no length cap and the wall no card cap.
 
@@ -173,26 +172,12 @@ joins later a Canvas of their own.
   `workspace_identity_mismatch`.
 - `apps/api/test/regional-workspace-create.test.ts` covers the send, the
   replay and a refused send.
-- With `OPENROUTER_API_KEY` and the Daytona settings in `.env.local`, real
-  runs work on the local stack, and steps 2, 3 and 4 were checked that way in
-  new Organizations: each step's prompt sent to
-  `POST /conversations/:id/substreams/0/messages` (step 3 as a Comment mode
-  annotation on `#wall-title`), then the Chat's tool calls and the site's rows
-  read from local storage.
-  - Step 2: five cards with `asked_by_id` set, no publish, a one-line reply.
-  - Step 3: Rally imported the site, read `README.md`, changed only the
-    title, published version 2, and wrote the `comment` row with the README's
-    statement.
-  - Step 4: Rally read the README, put the team's name in the heading, added
-    a section with its own new table, kept `data-greeting`, `id="wall-title"`
-    and the step ids, added no `private_to_viewer` column, published version
-    3 to the same path, and wrote the `make_it_yours` row.
-  - The Chat's stored model payloads showed the request as a user turn
-    carrying the creator's `rally_author` tag, and Rally's answer as an
-    assistant turn.
-- Not runnable here: Rally staying quiet between two people, because the
-  local stack signs in one person; and a live site inside the artifact panel
+- A real model can be run against the guide on the local stack
   ([`dev-environment.md`](dev-environment.md#what-cannot-be-verified-in-a-sandbox)).
+  Steps 2, 3 and 4 were run that way when the request was added; the record
+  is in [#1556](https://github.com/juno-ai-labs/avalon/pull/1556).
+- Not runnable here: Rally staying quiet between two people, because the
+  local stack signs in one person; and a live site inside the artifact panel.
 
 ## Open questions
 
@@ -203,12 +188,7 @@ joins later a Canvas of their own.
   answer (a site's instruction file, or an artifact's description in the
   Canvas context) would outlast compaction and serve every site.
 - **Whether the request earns its place.** In one local run each, Rally did
-  steps 2 and 3 correctly with and without it. Without it, Rally still found
-  the README through the comment at the top of `index.html`, and still wrote
-  the `comment` row. The one difference seen was step 2's reply: one line
-  with the request, a list of the ideas without. One run each is not a
-  measurement; if the request is ever dropped, the page's comments are what
-  carry Rally to the README.
+  steps 2 and 3 correctly without it.
 
 ## Changelog
 
@@ -229,19 +209,19 @@ repeat that path's participation, attention and projection writes.
 `canvas_seed` was added as a principal because none of the four that existed
 describes Rally acting with no person behind it.
 
-One thing was learned from a real model and a future edit of the words has to
-respect it. The first wording told Rally to read `README.md` before changing
-the page. On step 2, which changes no page, Rally tried to read the site with
-`read_resource`, that failed, and the host replaced its whole reply with an
-"Attachment content unverified" notice, though the cards had been written.
-The request now ties the README to editing the page and says step 2 needs
-only the data tools.
-
-The same runs showed the request is not what makes the guide work. Seeded
-without it, Rally did steps 2 and 3 correctly and found the README from the
-comment at the top of `index.html`. The request was kept because the owner
-asked for the Canvas to read as one a person asked for; do not credit it with
-the steps working.
+Three things were learned from runs with a real model, and a future edit of
+the words has to respect them. The first wording told Rally to read
+`README.md` before changing the page. On step 2, which changes no page, Rally
+tried to read the site with `read_resource`, that failed, and the host
+replaced its whole reply with an "Attachment content unverified" notice,
+though the cards had been written. The request now ties the README to changing
+the page and tells Rally not to read the page for step 2. The second wording
+named the tool and the tables; review pointed out that no person writes that
+and that the names are frozen into every guide's Chat, and plain words did
+steps 2 and 3 as well. And the request is not what makes the guide work:
+seeded without it, Rally did steps 2 and 3 correctly and found the README from
+the comment at the top of `index.html`. It was kept because the owner asked
+for the Canvas to read as one a person asked for.
 
 ### 2026-11-10 — The guide, and seeding it into every new Organization
 
