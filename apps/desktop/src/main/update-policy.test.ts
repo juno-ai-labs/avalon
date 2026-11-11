@@ -9,7 +9,7 @@ const supported = {
 };
 
 describe('desktop auto-update policy', () => {
-  it('enables only the packaged Apple-silicon macOS app', () => {
+  it('enables the packaged Apple-silicon macOS app', () => {
     expect(updatePolicy(supported)).toEqual({ kind: 'enabled' });
   });
 
@@ -21,4 +21,13 @@ describe('desktop auto-update policy', () => {
   ])('disables unsupported runtime %#', (input, reason) => {
     expect(updatePolicy(input)).toEqual({ kind: 'disabled', reason });
   });
+});
+
+it('enables Linux x64 AppImage and Debian updates, but refuses unpacked directories and other architectures', () => {
+  const linux = { ...supported, platform: 'linux' as const, arch: 'x64' };
+  expect(updatePolicy({ ...linux, env: { APPIMAGE: '/home/me/Rally.AppImage' } })).toEqual({ kind: 'enabled' });
+  expect(updatePolicy({ ...linux, linuxPackageType: 'deb' })).toEqual({ kind: 'enabled' });
+  expect(updatePolicy(linux)).toEqual({ kind: 'disabled', reason: 'not an AppImage or Debian installation' });
+  expect(updatePolicy({ ...linux, linuxPackageType: 'deb', arch: 'arm64' })).toEqual({ kind: 'disabled', reason: "unsupported architecture 'arm64'" });
+  expect(updatePolicy({ ...linux, env: { APPIMAGE: '/app', RALLY_DISABLE_AUTO_UPDATE: '1' } })).toEqual({ kind: 'disabled', reason: 'RALLY_DISABLE_AUTO_UPDATE is set' });
 });

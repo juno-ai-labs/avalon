@@ -1,29 +1,6 @@
-appId: ai.rallywith.desktop
-productName: Rally
-copyright: Copyright © 2026 Juno AI Labs Inc
-asar: true
-artifactName: Rally-${version}-${os}-${arch}.${ext}
+extends: ./electron-builder.base.yml
 afterPack: ./scripts/sign-macos-dock-plugin.mjs
 afterAllArtifactBuild: ./scripts/finalize-macos-release.mjs
-directories:
-  output: release
-  buildResources: resources
-files:
-  - out/**/*
-  - "!out/**/*.map"
-  - package.json
-# Both schemes are declared so a build that replaces an older install keeps
-# answering the `avalon://` links already circulating. `rallywithai` is the one
-# every surface mints; `avalon` is registered and never emitted. The list has to
-# match LEGACY_DESKTOP_DEEP_LINK_PROTOCOLS in `@rally/contracts`: the operating
-# system only routes a scheme a build declared here.
-protocols:
-  - name: Rally desktop authentication
-    schemes:
-      - rallywithai
-  - name: Avalon desktop authentication (legacy)
-    schemes:
-      - avalon
 publish:
   - provider: generic
     url: https://downloads.rallywith.ai/stable/darwin/arm64
