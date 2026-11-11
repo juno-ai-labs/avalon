@@ -1514,9 +1514,15 @@ export function MarkdownBody({
   // see a [^1]: under ## Sources unless the definition rides along with the
   // fragment. Identity of `fragment` is preserved when nothing is missing, so
   // the parse that already owns the defs is unchanged.
+  // While streaming, the last line is still arriving: a definition there can
+  // name a prefix of its target (`[1]: https://www.alph`), and borrowing it
+  // would hand that prefix to links in settled fragments, outside the tail's
+  // `HostFaviconHold`. It rides along once its newline arrives.
   const definitionBlocks = useMemo(
-    () => (collapseParts ? markdownDefinitionBlocks(markdown) : EMPTY_DEFINITION_BLOCKS),
-    [collapseParts, markdown],
+    () => (collapseParts
+      ? markdownDefinitionBlocks(streaming ? markdown.slice(0, markdown.lastIndexOf('\n') + 1) : markdown)
+      : EMPTY_DEFINITION_BLOCKS),
+    [collapseParts, markdown, streaming],
   );
   const dropBorrowedFootnotes = useMemo<MarkdownComponents['section']>(() => (
     ({ children: sectionChildren, node, ...props }) => {
