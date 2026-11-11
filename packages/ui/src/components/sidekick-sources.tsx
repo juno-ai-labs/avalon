@@ -171,7 +171,7 @@ export function SidekickSourcesList({ data, loading, words, onDecide, deciding =
     {data && <>
       {data.sources.length === 0 && <p className="sidekick-sources-empty">Nothing lets events in from a person’s account.</p>}
       {data.sources.length > 0 && <ul aria-label="Sources" className="sidekick-delegates">
-        {data.sources.map((source) => <li key={`${source.person.userId}:${source.connectionId}`}>
+        {data.sources.map((source) => <li key={`${source.person.userId}:${source.connectionId}:${source.condition ?? ''}`}>
           <PersonAvatar person={source.person} />
           <span className="sidekick-delegate-copy">
             {who(source.person, source.yours)}

@@ -50,6 +50,7 @@ import {
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
   ADDRESSING_FALLBACK_MODEL,
   BUILT_IN_SKILLS,
+  SETTING_UP_A_FILTERED_TRIGGER_SKILL,
   READING_GOOGLE_MEETING_NOTES_SKILL,
   RequestElicitationInputSchema,
   type RequestElicitationInput,
@@ -2206,7 +2207,7 @@ function createAvalonAutomationsPlugin(
   });
   return {
     ...plugin,
-    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it. ${delegationUser ? `${sidekickDelegationGuidance()} ${sidekickSourceGuidance()}` : ""}`,
+    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it. ${delegationUser ? `${sidekickDelegationGuidance()}${asksForSources(input) ? ` ${sidekickSourceGuidance()}` : ""}` : ""}`,
     // An automation's own conversation exists to draft and edit it, so the
     // tools are in hand from the first turn there. In a room they stay
     // discoverable behind `list_plugins`, where most turns never need them.
@@ -2227,7 +2228,8 @@ function createAvalonAutomationsPlugin(
       },
     })), ...createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
       .flatMap((tool) => expandPages(tool, "sidekick", null)),
-      ...(delegationUser ? [...sidekickDelegationTools(env, input, delegationUser, false), ...sidekickSourceTools(env, input, delegationUser, false)] : [])],
+      ...(delegationUser ? [...sidekickDelegationTools(env, input, delegationUser, false),
+        ...(asksForSources(input) ? sidekickSourceTools(env, input, delegationUser, false) : [])] : [])],
     onActivate: async () => prepare(),
   };
 }
@@ -4042,7 +4044,7 @@ export async function runWorkstreamHarness(
       // complete tool surface. Ordinary conversations compose built-in,
       // connector and Sidekick skills; fixed-job profiles inherit none of them.
       // This keeps general guidance from contradicting a profile's capabilities.
-      skills: profile ? [...profile.skills] : [...BUILT_IN_SKILLS, ...connectorSkillsForPlugins(harnessTools.plugins), ...sidekickCatalog.map((entry) => ({ ...entry.skill,
+      skills: profile ? [...profile.skills] : [...builtInSkillsFor(harnessTools.plugins), ...connectorSkillsForPlugins(harnessTools.plugins), ...sidekickCatalog.map((entry) => ({ ...entry.skill,
         recommended: sidekickSnapshot.recommendedRefs?.includes(entry.durableRef) ?? false,
       }))],
       // Built-in refs share this snapshot and pass through unchanged on retry.
@@ -5239,14 +5241,29 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  */
 /**
  * Whether a loop may ask people for a source (`sidekick_request_source` and
- * its two companions): only a conversation a person is talking in. A Sidekick
- * run is handed the content of the event that started it, a stranger's email
- * among it, and asking in its delegate's name, or approving that delegate's
- * own account on the spot, is not something what it read may bring about. A
- * background agent works from content the same way.
+ * its two companions): only a turn a person is driving, in a conversation
+ * they are talking in. A Sidekick run is handed the content of the event that
+ * started it, a stranger's email among it, and asking in its delegate's name,
+ * or approving that delegate's own account on the spot, is not something what
+ * it read may bring about. A background agent works from content the same
+ * way, and so does a turn another agent's message or Rally's own review
+ * notice started, the wizard's included: nobody typed it.
  */
-function asksForSources(input: Pick<WorkstreamWorkflowInput, "automationRun" | "automationDelegation" | "backgroundAgent">): boolean {
-  return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true;
+function asksForSources(input: Pick<WorkstreamWorkflowInput,
+  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "reason">): boolean {
+  return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true
+    && !input.agentExchange && input.reason !== "sidekick_review";
+}
+
+/**
+ * The built-in skills a loop is offered. A skill that names tools is listed
+ * only where a plugin in scope holds them: `setting-up-a-filtered-trigger`
+ * tells the model to call `sidekick_request_source`, which a Sidekick run and
+ * a background agent do not have (`asksForSources`).
+ */
+function builtInSkillsFor(plugins: readonly HarnessPlugin[]): HarnessSkill[] {
+  const asks = plugins.some((plugin) => plugin.tools.some((tool) => tool.definition.capability === "rally.sidekick.sources.request"));
+  return asks ? [...BUILT_IN_SKILLS] : BUILT_IN_SKILLS.filter((skill) => skill.name !== SETTING_UP_A_FILTERED_TRIGGER_SKILL.name);
 }
 
 async function sidekickCanvasContextMessage(env: Env, input: WorkstreamWorkflowInput): Promise<ModelMessage | null> {

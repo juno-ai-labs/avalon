@@ -578,7 +578,10 @@ describe("prompt renderers", () => {
     });
 
     expect(prompt).toContain("# Acting as the Sidekick itself");
-    expect(prompt).toContain("It uses the organization's shared connections, the Sidekick's own conversation and memory, and the Canvases the Sidekick is attached to.");
+    expect(prompt).toContain("It uses the Organization's shared connections, the Sidekick's own conversation and memory, and the Canvases the Sidekick is attached to.");
+    // The step every Sidekick run is given names connection tools this run does not hold; this section says so and takes its place.
+    expect(prompt).toContain("This section replaces the connection step above, whose connection tools this run does not have.");
+    expect(prompt).toContain("When they decline, or request_elicitation is not available, finish what the shared connections allow");
     expect(prompt).toContain("It has no person's personal connections.");
     expect(prompt).toContain("ask with request_elicitation for someone to allow this Sidekick to act as them");
     expect(prompt).not.toContain("# Organization execution authority");

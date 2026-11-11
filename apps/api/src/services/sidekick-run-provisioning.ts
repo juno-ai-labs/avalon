@@ -97,7 +97,7 @@ export async function provisionSidekickRun(env: Env, message: SidekickRunProvisi
         authorUserId: null,
         externalActorJson: null,
         messageType: "system",
-        text: openingWithEventContent(definition.opening.textContent, content),
+        text: openingWithEventContent(definition.opening.textContent, content, run.runId),
         structuredContentJson: JSON.stringify(definition.opening.structuredContent),
         producedByRunId: null,
         now: Date.now(),

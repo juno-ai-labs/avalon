@@ -323,8 +323,8 @@ describe("what a Sidekick source request tells people", () => {
       eventLabels: ["Email received"], condition: CONDITION };
     expect(await decideSourceRequestByLink(env, approve)).toEqual(approved);
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
-      `SELECT user_id, connector_type, event_types_json, condition, origin FROM sidekick_sources WHERE sidekick_id = ?`, SIDEKICK_ID).toArray()))
-      .toEqual([{ user_id: PERSON, connector_type: "google", event_types_json: '["email.received"]', condition: CONDITION, origin: "request" }]);
+      `SELECT user_id, connector_type, event_type, condition, request_id FROM sidekick_sources WHERE sidekick_id = ?`, SIDEKICK_ID).toArray()))
+      .toEqual([{ user_id: PERSON, connector_type: "google", event_type: "email.received", condition: CONDITION, request_id: request!.requestId }]);
     // Opened again, the link says the same and whoever asked is not told twice.
     expect(await decideSourceRequestByLink(env, approve)).toEqual(approved);
     expect(await intents("source_approved")).toHaveLength(1);
