@@ -134,7 +134,10 @@ export function RailSurface({
           // inside the visible sidebar reach the panel or close it.
           if (!event.currentTarget.contains(event.target as Node)) return;
           onKeyDown?.(event);
-          if (event.key === 'Escape') onClose();
+          if (event.key === 'Escape' && !event.defaultPrevented) {
+            event.stopPropagation();
+            onClose();
+          }
         }}
         ref={surfaceRef}
         tabIndex={-1}

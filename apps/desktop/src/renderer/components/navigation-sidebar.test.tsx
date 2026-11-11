@@ -15,7 +15,7 @@ import { ActivityHomeScreen } from '../screens/activity-home';
 import { NavigationSidebar } from './navigation-sidebar';
 
 /*
- * The rail and its three sections, Canvases, Sidekicks and Activity, inside
+ * The rail and its two sections, Canvases and Activity, inside
  * the real sidebar, and the phone sheet the sidebar becomes at phone width.
  */
 
@@ -109,21 +109,18 @@ beforeEach(() => {
   api.createCanvas.mockResolvedValue({ canvasId: '00000000-0000-7000-8000-0000000000c9', turnId: null });
 });
 
-describe('the Canvases and Sidekicks sections', () => {
-  it('draws a rail of Canvases and Sidekicks, each with its count, and switches between them', () => {
+describe('the Canvases navigation', () => {
+  it('draws Canvases and Activity with counts and no Sidekicks shortcut', () => {
     renderSidebar(workspace, '/canvases/00000000-0000-7000-8000-0000000000c1');
     const rail = screen.getByRole('navigation', { name: 'Sections' });
     expect([...rail.querySelectorAll('.navigation-rail-sections .navigation-rail-label')].map((label) => label.textContent))
-      .toEqual(['Canvases', 'Sidekicks', 'Activity']);
+      .toEqual(['Canvases', 'Activity']);
     const canvases = within(rail).getByRole('button', { name: /Canvases/ });
     expect(canvases).toHaveAttribute('aria-current', 'page');
     // The section first, then its count, in the button's own name.
     expect(canvases).toHaveAccessibleName('Canvases, 1 unread');
     expect(canvases.querySelector('.navigation-rail-badge')).toHaveTextContent('1');
-    expect(within(rail).getByRole('button', { name: /Sidekicks/ })).toHaveAccessibleName('Sidekicks, 1 waiting');
-    fireEvent.click(within(rail).getByRole('button', { name: /Sidekicks/ }));
-    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
-    expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+    expect(within(rail).queryByRole('button', { name: /Sidekicks/ })).toBeNull();
 
     fireEvent.click(canvases);
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
@@ -148,11 +145,6 @@ describe('the Canvases and Sidekicks sections', () => {
 
   it('closes the phone sheet for either dashboard or a row', () => {
     renderSidebar();
-    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-    fireEvent.click(within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ }));
-    expect(screen.getByTestId('location')).toHaveTextContent(/^\/sidekicks$/);
-    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
-
     fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
     fireEvent.click(screen.getByRole('button', { name: /Canvases/ }));
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/canvases$/);
@@ -181,23 +173,6 @@ describe('the Canvases and Sidekicks sections', () => {
     // Spent: the next navigation closes the sheet as any other does.
     fireEvent.click(screen.getByRole('link', { name: /Launch plan/ }));
     expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
-  });
-
-  it('at phone width, closing the sheet on another list returns its bar to the open screen\'s section', () => {
-    const width = window.innerWidth;
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
-    try {
-      renderSidebar({ ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } }, '/canvases');
-      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-      fireEvent.click(screen.getByRole('button', { name: /Sidekicks/ }));
-
-      fireEvent.keyDown(window, { key: 'Escape' });
-
-      expect(useUiStore.getState().sidebarSection).toBe('canvases');
-      expect(screen.getByRole('heading', { name: 'Canvases' })).toBeInTheDocument();
-    } finally {
-      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-    }
   });
 
   it('closes the phone sheet on Escape and hands focus back to its button', () => {
@@ -268,62 +243,12 @@ describe('the Canvases and Sidekicks sections', () => {
     expect(second!.canvasId).toBe(first!.canvasId);
   });
 
-  it('draws the Sidekicks section with Needs input first, and New Sidekick', () => {
-    useUiStore.getState().setSidebarSection('sidekicks');
-    renderSidebar();
-    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Needs input' })).getByRole('link', { name: /Incident triage/ })).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'All Sidekicks' })).getByRole('link', { name: /Weekly changelog/ })).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Pinned Sidekicks' })).getByRole('link', { name: /Revenue analyst/ })).toBeInTheDocument();
-    expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-label')))
-      .toEqual(['Pinned Canvas shortcuts', 'Needs input', 'Pinned Sidekicks', 'All Sidekicks']);
-    fireEvent.click(screen.getByRole('button', { name: 'New Sidekick' }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/sidekicks/new');
-  });
-
-  it.each(['/sidekicks/triage', '/sidekicks/new', '/sidekicks'])('opens the Sidekicks dashboard from %s', (route) => {
-    useUiStore.getState().setSidebarSection('sidekicks');
+  it.each(['/sidekicks/triage', '/sidekicks/new', '/sidekicks'])('keeps Canvases beside a standalone Sidekick route (%s)', (route) => {
     renderSidebar(workspace, route);
-    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Sidekicks home' }));
-    expect(screen.getByTestId('location')).toHaveTextContent(/^\/sidekicks$/);
-    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
-  });
-
-  it.each(['/canvases', '/sidekicks/triage', '/sidekicks/new', '/sidekicks/triage?run=run-1', '/sidekicks'])(
-    'always opens the dashboard from the Sidekicks rail button (%s)', (route) => {
-      renderSidebar(workspace, route);
-      const button = within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ });
-      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-      fireEvent.click(button);
-      expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks$/);
-      expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
-      expect(button).toHaveAttribute('aria-current', 'page');
-      fireEvent.click(button);
-      expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks$/);
-    },
-  );
-
-  it.each(['home', 'rail'])('keeps one Back step to the open Sidekick after repeated %s clicks', (shortcut) => {
-    renderSidebar(workspace, '/sidekicks/triage');
-    const button = shortcut === 'home'
-      ? screen.getByRole('button', { name: 'Sidekicks home' })
-      : within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ });
-    fireEvent.click(button);
-    expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks$/);
-    fireEvent.click(button);
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
-    expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks\/triage$/);
-  });
-
-  it('keeps a guest on their open Canvas when selecting the Sidekicks list', () => {
-    renderSidebar({ ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } }, '/canvases/shared');
-    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-    fireEvent.click(within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Sidekicks/ }));
-    expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases\/shared$/);
-    expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+    expect(screen.getByRole('heading', { name: 'Canvases' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sidekicks home' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByRole('button', { name: 'New Sidekick' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'All Sidekicks' })).toBeNull();
   });
 
   it('offers a guest neither New action', () => {
@@ -334,15 +259,15 @@ describe('the Canvases and Sidekicks sections', () => {
 
   it('shows the section of whatever was opened, however it was opened', () => {
     renderSidebar(workspace, '/sidekicks/triage');
-    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
-    expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+    expect(screen.getByRole('heading', { name: 'Canvases' })).toBeInTheDocument();
+    expect(useUiStore.getState().sidebarSection).toBe('canvases');
   });
 
   it('keeps the section left open when the window lands on a section home', () => {
-    useUiStore.getState().setSidebarSection('sidekicks');
+    useUiStore.getState().setSidebarSection('activity');
     renderSidebar(workspace, '/canvases', undefined, true);
-    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
-    expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+    expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
+    expect(useUiStore.getState().sidebarSection).toBe('activity');
   });
 
   it('at phone width, names the home the route lands on in the bar while Activity stays the stored section', () => {
@@ -363,23 +288,23 @@ describe('the Canvases and Sidekicks sections', () => {
   });
 
   it('keeps the section left open across a launch the landing redirects to the Canvases home', () => {
-    useUiStore.getState().setSidebarSection('sidekicks');
+    useUiStore.getState().setSidebarSection('activity');
     renderSidebar(workspace, '/', undefined, true, true);
     expect(screen.getByTestId('location')).toHaveTextContent('/canvases');
-    expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+    expect(useUiStore.getState().sidebarSection).toBe('activity');
   });
 
-  it('opens the section of a Canvas the window lands on', () => {
-    useUiStore.getState().setSidebarSection('sidekicks');
+  it('keeps Canvases selected when a Canvas opens', () => {
+    useUiStore.getState().setSidebarSection('canvases');
     renderSidebar(workspace, '/canvases/00000000-0000-7000-8000-0000000000c1');
     expect(useUiStore.getState().sidebarSection).toBe('canvases');
   });
 
   it('remembers either section across launches', async () => {
-    useUiStore.getState().setSidebarSection('sidekicks');
+    useUiStore.getState().setSidebarSection('activity');
     vi.resetModules();
     const relaunched = await import('../lib/ui-store');
-    expect(relaunched.useUiStore.getState().sidebarSection).toBe('sidekicks');
+    expect(relaunched.useUiStore.getState().sidebarSection).toBe('activity');
   });
 });
 
@@ -453,7 +378,7 @@ describe('the Activity section', () => {
     const activity = within(rail).getByRole('button', { name: /Activity/ });
     expect(activity).toHaveAccessibleName('Activity, 2 unseen');
     expect(activity.querySelector('.navigation-rail-badge')).toHaveTextContent('2');
-    expect(within(rail).getByRole('button', { name: /^Sidekicks, \d+ waiting$/ })).toBeInTheDocument();
+    expect(within(rail).queryByRole('button', { name: /Sidekicks/ })).toBeNull();
     fireEvent.click(activity);
     expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
 
@@ -565,10 +490,10 @@ describe('the Activity section', () => {
       expect(screen.getByTestId('location')).toHaveAttribute('data-navigation', 'REPLACE');
     });
 
-    it('opens the top row when a guest re-enters Activity from the Sidekicks list', () => {
+    it('opens the top row when a guest re-enters Activity from Canvases', () => {
       renderSidebar({ ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } }, '/activity', page);
-      pick(/Sidekicks/);
-      expect(screen.getByTestId('address')).toHaveTextContent(/^\/activity$/u);
+      pick(/Canvases/);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
       pick(/Activity/);
       expect(screen.getByTestId('address')).toHaveTextContent(TOP);
     });
@@ -624,7 +549,7 @@ describe('the Activity section', () => {
         renderSidebar(guest, route, { unseenCount: 0, items: [] });
         fireEvent.click(within(screen.getByRole('complementary', { name: 'Rally navigation' })).getByRole('button', { name: 'Open navigation' }));
         const rail = within(screen.getByRole('navigation', { name: 'Sections' }));
-        fireEvent.click(rail.getByRole('button', { name: /Sidekicks/ }));
+        fireEvent.click(rail.getByRole('button', { name: /Canvases/ }));
         fireEvent.click(rail.getByRole('button', { name: /Activity/ }));
 
         expect(screen.getByText('No activity yet')).toBeInTheDocument();

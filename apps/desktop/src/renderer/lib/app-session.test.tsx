@@ -699,7 +699,7 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('opens the Activity section from its link, leaving the pane to the section', async () => {
-    useUiStore.setState({ sidebarSection: 'sidekicks', sidebarOpen: false });
+    useUiStore.setState({ sidebarSection: 'canvases', sidebarOpen: false });
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -1448,7 +1448,7 @@ describe('single-platform desktop identity routing', () => {
     const { url, assertDestination } = testCase;
     const innerWidth = window.innerWidth;
     if ('width' in testCase) Object.defineProperty(window, 'innerWidth', { configurable: true, value: testCase.width });
-    useUiStore.setState({ sidebarSection: 'sidekicks', sidebarOpen: false, sheetAfterNavigation: false });
+    useUiStore.setState({ sidebarSection: 'canvases', sidebarOpen: false, sheetAfterNavigation: false });
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000030';
     bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValue({

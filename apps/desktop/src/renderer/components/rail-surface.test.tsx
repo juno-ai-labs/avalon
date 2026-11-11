@@ -87,6 +87,17 @@ describe('RailSurface', () => {
     );
   }
 
+  it('closes only the nested preview when Escape is pressed inside it', () => {
+    const closeHost = vi.fn();
+    const closePreview = vi.fn();
+    render(<Tooltip.Provider><RailSurface label="Sidekick" onClose={closeHost} onResize={vi.fn()} resizeLabel="Resize Sidekick" width={400}>
+      <RailSurface label="Attachment" onClose={closePreview} onResize={vi.fn()} resizeLabel="Resize attachment" width={400}><button>Preview content</button></RailSurface>
+    </RailSurface></Tooltip.Provider>);
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Preview content' }), { key: 'Escape' });
+    expect(closePreview).toHaveBeenCalledOnce();
+    expect(closeHost).not.toHaveBeenCalled();
+  });
+
   it.each([true, false])('moves focus on arrival only when requested (%s)', (focusOnOpen) => {
     vi.useFakeTimers();
     onTestFinished(() => { vi.useRealTimers(); });

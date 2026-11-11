@@ -3,10 +3,10 @@ import { create } from 'zustand';
 export type RailVariant = 'context' | 'browser';
 /**
  * Which list the sidebar's rail shows. A section stored before the 2026-11
- * cutover (`channels`, `threads`, `pinned`, `artifacts`) reads as the default,
+ * cutover (`channels`, `threads`, `pinned`, `artifacts`) or the retired `sidekicks` reads as the default,
  * Canvases; `activity` opens Activity again.
  */
-export type SidebarSection = 'canvases' | 'sidekicks' | 'activity';
+export type SidebarSection = 'canvases' | 'activity';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
@@ -170,7 +170,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
   sheetAfterNavigation: false,
   sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
-  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['canvases', 'sidekicks', 'activity'], 'canvases'),
+  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['canvases', 'activity'], 'canvases'),
   railOpen: false,
   railExpanded: false,
   railVariant: 'context',
