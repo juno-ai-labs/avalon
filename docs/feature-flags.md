@@ -44,6 +44,30 @@ deployments, but the new server does not publish it. Remove that event schema
 and desktop handler once all API versions that publish it have been retired;
 current clients already refresh through HTTP and subscription snapshots.
 
+### Organization model selector visibility
+
+`FEATURE_FLAGS.modelSelectorVisibleForNewOrgs` defaults to `false` and accepts
+`FEATURE_FLAG_MODEL_SELECTOR_VISIBLE_FOR_NEW_ORGS` using the same Boolean parser.
+It seeds `workspaces.model_selector_visible` once at creation through regional
+onboarding (including engineering MCP), legacy onboarding, and development auth.
+Changing the deployment default never rewrites existing Organizations or a
+replayed creation. Migration 0130 starts existing Organizations hidden.
+
+The local `pnpm db:seed` creates the fixed development Organization with the SQL
+default of `0` before sign-in. Development auth preserves that existing value,
+even when the creation flag is true; use `update_org_settings` to enable the
+control for a seeded Organization.
+
+The engineering MCP's `inspect_org_settings({ orgId })` reads the saved value;
+`update_org_settings({ orgId, modelSelectorVisible })` writes it and publishes
+`workspace_profile` through the existing workspace sync path. The setting lives
+beside the Organization profile in regional D1, and `GET /workspace` exposes
+`modelSelectorVisible` to members and guests. The shared conversation surface
+uses its existing workspace query in macOS and web; absence on an older server
+or while loading means hidden. Device Debug mode no longer affects visibility.
+The control retains its read-only model/pin display; visibility grants no model
+routing capability.
+
 ### Agent model routing
 
 `AGENT_MODEL_DEFAULTS` holds the common models and ordered fallback list.
@@ -133,8 +157,9 @@ The conversation's served-model pill retains its existing behavior. See
 
 Configuration owns deployment-wide defaults. Authentication and product access
 remain with their existing services. Reading a stored conversation pin still
-uses its authoritative object. Ace and the engineering MCP no longer offer
-remote flag or model-route editing; change constants or deployment variables.
+uses its authoritative object. Ace and the engineering MCP offer no remote deployment-flag or model-route
+editing; change constants or deployment variables. The engineering MCP can edit
+the saved Organization visibility setting independently of its creation default.
 
 ## Failure modes and limits
 
@@ -173,6 +198,25 @@ and add a behavioral test for its gate. A new agent role must be mapped in
 `AGENT_MODEL_ENV_KEYS`; no service provisioning or admin editor is required.
 
 ## Changelog
+
+### 2026-11-10 — Organization-owned model selector visibility
+
+**What changed:** A saved Organization profile setting replaces the device Debug
+gate. Engineering MCP reads and changes it, and an environment-overridable flag
+seeds new Organizations with visibility off by default.
+
+**Why:** Visibility must be an operator-controlled choice shared by an
+Organization's members and both client platforms, with independently configurable
+creation defaults.
+
+**Considered and rejected:** Resolving the deployment flag on every read would
+retroactively change existing Organizations and erase the distinction between a
+saved choice and a creation default. Keeping Debug as a second gate would make
+an enabled Organization depend on each person's device settings.
+
+**Consequences:** Existing Organizations start hidden. Creation retries retain
+stored choices; updates refresh clients through `workspace_profile`. This is
+presentation only and leaves model routing and conversation pins unchanged.
 
 ### 2026-11-10 — Restore organization switching by default
 
