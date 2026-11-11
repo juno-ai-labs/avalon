@@ -72,15 +72,15 @@ afterEach(() => {
 });
 
 describe('site telemetry reporter', () => {
-  it('reports Linux download intent without changing the direct AppImage link', async () => {
+  it('reports Linux download intent without changing the direct Debian package link', async () => {
     const api = stubApi();
-    await start('<a data-site-action="download-linux-hero" href="https://downloads.rallywith.ai/stable/linux/x64/Rally.AppImage" download>Download for Linux</a>');
+    await start('<a data-site-action="download-linux-hero" href="https://downloads.rallywith.ai/stable/linux/x64/Rally.deb" download>Download for Linux</a>');
     const link = document.querySelector<HTMLAnchorElement>('a')!;
     link.addEventListener('click', (event) => event.preventDefault());
     link.click();
     await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
     expect(api.clicks()[0]?.properties).toEqual({ page: 'landing', pathname: '/', action: 'download', placement: 'hero' });
-    expect(link.href).toBe('https://downloads.rallywith.ai/stable/linux/x64/Rally.AppImage');
+    expect(link.href).toBe('https://downloads.rallywith.ai/stable/linux/x64/Rally.deb');
   });
 
   it('joins the web CTA to its destination flow without changing the direct Mac download', async () => {
