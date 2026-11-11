@@ -28,7 +28,10 @@ button of its own for the browser. `renderer/lib/browser-rail-links.ts` holds
 the one decision: while a Canvas's conversation surface is mounted on the
 desktop, it registers itself as the rail host (`useBrowserRailLinks`; a
 Sidekick's surface shares the component but does not register), and `openLink`
-sends an http or https URL there. Any other scheme, and any link clicked where
+sends an http or https URL there. Links originating inside a hosted Sidekick
+are excluded before both containing-host selection and the fallback host: they
+open externally so reading a link cannot replace the Sidekick and lose its
+local run or details selection. Any other scheme, and any link clicked where
 no Canvas is on screen, takes the `openExternal` path it took before, where
 main's allowlist still admits only web URLs. Anchors reach it through one
 document listener (`captureLinkClicks`), which leaves alone a click a component

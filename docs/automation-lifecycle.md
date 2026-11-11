@@ -444,7 +444,7 @@ records where a running signal would come from.
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksLibraryScreen`, the Sidekicks home; `SidekicksLibraryRoute`, which renders it in the main window on both hosts. |
 | `apps/desktop/src/renderer/components/sidekick-run-row.tsx` | A run's row in the shared conversation, collapsed, opening into the run's own conversation. |
-| `apps/desktop/src/renderer/components/sidekick-sidebar-section.tsx` | The Sidekicks sidebar section: Needs input, Pinned, then every Sidekick. |
+| `apps/desktop/src/renderer/lib/sidekicks.ts` | The live Sidekick list supplied by the workspace socket for screens and menus. |
 | `apps/desktop/src/common/route-id.ts`, `src/main/index.ts`, `src/renderer/lib/platform.ts` | `openSidekick` on the bridge, for a window with no router of its own (Settings): main parses the id with `parseRouteId` and emits the Sidekick's deep link for the active Organization, so the main window opens `/sidekicks/:id` and comes forward; the browser tab routes to it. |
 
 ### Creation and ownership
@@ -524,7 +524,7 @@ elicitation forms.
 
 ### Conversational publication
 
-The Sidekicks section of the rail lists every Sidekick the viewer can open. A
+The account-menu Sidekicks library lists every Sidekick the viewer can open. A
 running Sidekick still carries `SIDEKICK_RUNNING_MARKER`, the
 **play** in `success-base` cut out of its hexagon, wherever its glyph is drawn.
 
@@ -1072,7 +1072,11 @@ loads its authoring tools in `"0"` only for a turn so marked
 (`services/integrations.ts`); a turn that reached `"0"`'s loop any other way
 gets the delegation tools alone.
 
-**In the client.** The Sidekick screen's composer offers a manager **Edit
+**In the client.** The same Sidekick screen is hosted by a standalone route
+or by a Canvas's right panel. The panel keeps runs local, closes on archive,
+and leaves the Canvas's route and draft intact;
+[`desktop-shell.md`](desktop-shell.md#one-right-slot) owns this layout.
+The Sidekick screen's composer offers a manager **Edit
 Sidekick** in its actions menu, a checkbox entry (`ComposerMenuAction.checked`)
 that switches the composer into marking every message `intent:
 "edit_sidekick"` until it is switched off; the composer then reads "Describe a

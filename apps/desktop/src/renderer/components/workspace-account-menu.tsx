@@ -5,7 +5,6 @@ import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { IconDeviceDesktopDown, IconHexagon, IconLogout, IconSettings, IconUserPlus, IconUsers } from '@tabler/icons-react';
 import { desktopBridge } from '../lib/platform';
 import { navigateAppRoute } from '../lib/app-navigation';
-import { useUiStore } from '../lib/ui-store';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import type { SupportPerson, SupportWorkspace, WorkspaceAttention } from '@rally/contracts';
 import { Check, LoaderCircle, Plus } from 'lucide-react';
@@ -80,9 +79,8 @@ export interface WorkspaceAccountMenuProps {
 const ADD_MEMBERS_DISABLED_REASON = 'Only administrators can add members.';
 const SIDEKICKS_DISABLED_REASON = 'Guests use the Sidekicks a conversation offers.';
 
-/** The Sidekicks home, in the main window, with its section open in the sidebar. */
+/** The Sidekicks library remains available from the account menu. */
 function openSidekicksHome(): void {
-  useUiStore.getState().setSidebarSection('sidekicks');
   navigateAppRoute('/sidekicks');
 }
 

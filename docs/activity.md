@@ -6,8 +6,8 @@ conversation, somebody added them to a Canvas's conversation, a Sidekick run
 needs their input, a run they asked for finished, somebody else replied in
 a conversation they are in, somebody published a new version in a Canvas
 they pinned, somebody asked to open a Canvas they decide on, or their own
-request to open one was approved. It is the third section of
-the rail, beside Canvases and Sidekicks, in the Mac app and the browser alike.
+request to open one was approved. It is the second section of
+the rail, beside Canvases, in the Mac app and the browser alike.
 
 The feed is the push's own source. Each event that records a push
 notification intent writes the recipient's Activity row in the same
