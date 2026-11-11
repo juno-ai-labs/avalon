@@ -1,7 +1,6 @@
 import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import {
   ArtifactManifestSchema,
-  artifactManifestKey,
   SITE_MANIFEST_MIME_TYPE,
   asWorkspaceId,
   classifyAttachmentKind,
@@ -30,10 +29,7 @@ import {
   type PublicationAuthor,
 } from "./resource-publication";
 import { allocateResourceSlugBesideCreation } from "./resource-slug";
-import { ensureArtifactHostname } from "./artifact-hostname";
-import {
-  claimArtifactVersion, existingArtifactForResource, pointArtifactAtVersion, registerArtifact, writeArtifactVersion,
-} from "./terminal/site-resource-bridge";
+import { activateSiteVersion, existingArtifactForResource, publishSiteVersion } from "./terminal/site-resource-bridge";
 import { TerminalToolError } from "./terminal/tools";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
@@ -207,59 +203,45 @@ export class CanvasPublicationService {
     const build = built && source.kind !== "static"
       ? { source: source.kind, files: built.files.length, renderedTextLength: built.renderedTextLength } : undefined;
     const resourceId = existing?.id ?? newId();
-    // A new artifact id is this call's alone; a republish takes its version
-    // before writing a byte, so a concurrent publish of the same name writes
-    // under another (`claimArtifactVersion`).
-    const artifactId = previous?.artifactId ?? newId();
-    const version = previous
-      ? await claimArtifactVersion(runtime, { artifactId, from: previous.version + 1, claimant: operationId })
-      : 1;
     const title = [...(request.title ?? name.split("/").at(-1) ?? "site")].slice(0, 300).join("");
-    const written = await writeArtifactVersion(runtime, {
-      workspaceId: this.auth.workspaceId, workstreamId: canvasId, region: this.env.AVALON_REGION,
-      artifactId, resourceId, version, mode: "static", stateful: false,
-      files: served, fallbackTitle: title, serverModuleSha256: null,
-    });
-    // The public origin before the row, as Rally's own publish orders it, so
-    // a retry after a lost response still registers and points at these bytes.
-    const hostnameStub = previous?.hostnameStub ?? await ensureArtifactHostname(runtime, {
-      workspaceId: this.auth.workspaceId, artifactId: written.artifactId,
-    });
     const receipt = { publicationOperationId: operationId, publicationEventType: existing ? "resource_updated" : "resource_attached" };
-    if (existing) {
-      const swapped = await swapPublishedContent({
-        workspace: runtime.DB, env: runtime, workspaceId: this.auth.workspaceId, existing,
-        sourcePath: name, objectSource: "person", displayName: request.title, description: request.description,
-        bytes: written.manifestBytes, digest: contentDigest, mimeType: SITE_MANIFEST_MIME_TYPE,
-        attachmentKind: "site", contentMode: "unsupported", derivativeStatus: "unsupported", author, receipt,
-      });
-      // Another publish moved the row first: its manifest is the site's, and
-      // it registers and points at it. Activating this call's version now
-      // would serve a manifest the row does not hold.
-      if (swapped.superseded) return supersededOutcome(swapped, contentDigest);
-    } else {
-      const timestamp = nowIso();
-      await insertPublishedResource(runtime.DB, {
-      publicationParentId: canvasId,
-        resourceId, workspaceId: this.auth.workspaceId, resourceType: "generated_site", providerResourceId, title,
-        mimeType: SITE_MANIFEST_MIME_TYPE, contentRef: written.manifestRef, contentSha256: contentDigest,
-        uploadedByUserId: this.auth.userId, modelContentStatus: "unsupported", timestamp, author,
-        metadataJson: JSON.stringify({ sourcePath: name, size: written.manifest.totalBytes, attachmentKind: "site",
-          contentMode: "unsupported", ...receipt, artifactId: written.artifactId, artifactVersion: version,
-          artifactMode: "static", artifactStateful: false, ...(request.description ? { description: request.description } : {}) }),
-      });
-      await allocateResourceSlugBesideCreation(runtime, this.auth.workspaceId, resourceId);
-    }
-    await registerArtifact(runtime.DB, {
-      artifactId: written.artifactId, hostnameStub, workspaceId: this.auth.workspaceId, workstreamId: canvasId,
-      resourceId, mode: "static", stateful: false, version, manifestRef: written.manifestRef,
+    // What another publish left on the row, when it moved the row first.
+    const lost: { to: Awaited<ReturnType<typeof swapPublishedContent>> | null } = { to: null };
+    // The version, its bytes, the hostname, the registry and the pointer are
+    // `publishSiteVersion`'s, in its order. This publish's own part is the
+    // resource row, with the person as its author.
+    const { landed } = await publishSiteVersion(runtime, runtime.DB, {
+      workspaceId: this.auth.workspaceId, workstreamId: canvasId, resourceId,
+      previous, claimant: operationId, mode: "static", stateful: false,
+      files: served, fallbackTitle: title, serverModuleSha256: null,
+      recordResource: async ({ written, version }) => {
+        if (existing) {
+          const swapped = await swapPublishedContent({
+            workspace: runtime.DB, env: runtime, workspaceId: this.auth.workspaceId, existing,
+            sourcePath: name, objectSource: "person", displayName: request.title, description: request.description,
+            bytes: written.manifestBytes, digest: contentDigest, mimeType: SITE_MANIFEST_MIME_TYPE,
+            attachmentKind: "site", contentMode: "unsupported", derivativeStatus: "unsupported", author, receipt,
+          });
+          // Another publish moved the row first: its manifest is the site's, and
+          // it registers and points at it. Activating this call's version now
+          // would serve a manifest the row does not hold.
+          if (swapped.superseded) lost.to = swapped;
+          return !swapped.superseded;
+        }
+        await insertPublishedResource(runtime.DB, {
+          publicationParentId: canvasId,
+          resourceId, workspaceId: this.auth.workspaceId, resourceType: "generated_site", providerResourceId, title,
+          mimeType: SITE_MANIFEST_MIME_TYPE, contentRef: written.manifestRef, contentSha256: contentDigest,
+          uploadedByUserId: this.auth.userId, modelContentStatus: "unsupported", timestamp: nowIso(), author,
+          metadataJson: JSON.stringify({ sourcePath: name, size: written.manifest.totalBytes, attachmentKind: "site",
+            contentMode: "unsupported", ...receipt, artifactId: written.artifactId, artifactVersion: version,
+            artifactMode: "static", artifactStateful: false, ...(request.description ? { description: request.description } : {}) }),
+        });
+        await allocateResourceSlugBesideCreation(runtime, this.auth.workspaceId, resourceId);
+        return true;
+      },
     });
-    // Last, once every byte it names is durable: until it returns the site
-    // serves its previous version.
-    await pointArtifactAtVersion(runtime, {
-      artifactId: written.artifactId, workspaceId: this.auth.workspaceId, workstreamId: canvasId, resourceId,
-      region: this.env.AVALON_REGION, manifest: written.manifest,
-    });
+    if (!landed && lost.to) return supersededOutcome(lost.to, contentDigest);
     return { resourceId, title: existing?.title ?? title, outcome: existing ? "updated" as const : "created" as const,
       ...(build ? { build } : {}) };
   }
@@ -283,22 +265,11 @@ export class CanvasPublicationService {
     if (!stored) return false;
     const manifest = ArtifactManifestSchema.parse(JSON.parse(await stored.text()) as unknown);
     if (manifest.artifactId !== previous.artifactId) return false;
-    let registered = false;
-    if (previous.version < manifest.artifactVersion) {
-      const hostnameStub = previous.hostnameStub ?? await ensureArtifactHostname(runtime, {
-        workspaceId: this.auth.workspaceId, artifactId: previous.artifactId,
-      });
-      registered = await registerArtifact(runtime.DB, {
-        artifactId: previous.artifactId, hostnameStub, workspaceId: this.auth.workspaceId, workstreamId: canvasId,
-        resourceId: existing.id, mode: "static", stateful: false, version: manifest.artifactVersion,
-        manifestRef: artifactManifestKey(previous.artifactId, manifest.artifactVersion),
-      });
-    }
-    const pointed = await pointArtifactAtVersion(runtime, {
-      artifactId: previous.artifactId, workspaceId: this.auth.workspaceId, workstreamId: canvasId, resourceId: existing.id,
-      region: this.env.AVALON_REGION, manifest,
+    const activated = await activateSiteVersion(runtime, runtime.DB, {
+      workspaceId: this.auth.workspaceId, workstreamId: canvasId, resourceId: existing.id,
+      manifest, hostnameStub: previous.hostnameStub, registeredVersion: previous.version,
     });
-    return registered || pointed.advanced;
+    return activated.registered || activated.advanced;
   }
 
   private assertSize(bytes: number) {

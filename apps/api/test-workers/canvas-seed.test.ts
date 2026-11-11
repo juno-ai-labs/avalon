@@ -18,7 +18,8 @@ import { consumeActivityQueue } from "../src/queues/activity-consumer";
 import { createMessageObjectPort } from "../src/runtime/message-port";
 import { CanvasService } from "../src/services/canvas-service";
 import { seedCanvas, seededCanvasId } from "../src/services/canvas-seed-service";
-import { pointArtifactAtVersion, writeArtifactVersion } from "../src/services/terminal/site-resource-bridge";
+import { existingArtifactForResource, publishSiteVersion } from "../src/services/terminal/site-resource-bridge";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -89,17 +90,21 @@ function guideFiles(change: { path: string; edit: (text: string) => string } | n
   }));
 }
 
-/** Rally republishing the guide: the next version's files, then the serving pointer. */
-async function republishGuide(canvasId: string, version: number, edit: (html: string) => string) {
+/** Rally republishing the guide: the next version, through the path every site publish takes. */
+async function republishGuide(canvasId: string, edit: (html: string) => string) {
+  const runtime = withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID);
   const [artifact] = await registeredArtifacts(canvasId);
-  const target = { workspaceId: WORKSPACE_ID, workstreamId: canvasId, region: "global" as const,
-    artifactId: String(artifact!.artifact_id), resourceId: String(artifact!.resource_id) };
+  const resourceId = String(artifact!.resource_id);
   const files = await guideFiles({ path: "index.html", edit });
-  const written = await writeArtifactVersion(TEST_ENV, {
-    ...target, version, mode: "active", stateful: true, files, fallbackTitle: "Getting Started with Canvases",
+  await publishSiteVersion(runtime, runtime.DB, {
+    workspaceId: WORKSPACE_ID, workstreamId: canvasId, resourceId,
+    previous: await existingArtifactForResource(runtime.DB, WORKSPACE_ID, resourceId),
+    claimant: crypto.randomUUID(), mode: "active", stateful: true, files,
+    fallbackTitle: "Getting Started with Canvases",
     serverModuleSha256: files.find((file) => file.path === "index.js")!.sha256,
+    // The row write is each publisher's own and is covered where it lives.
+    recordResource: () => Promise.resolve(true),
   });
-  await pointArtifactAtVersion(TEST_ENV, { ...target, manifest: written.manifest });
 }
 
 beforeEach(async () => {
@@ -211,11 +216,11 @@ describe("seeding the Getting Started guide into an Organization", () => {
     expect(doneSteps(await guideState(host, grace))).toEqual(["ask_rally"]);
 
     // Step 3 renames the wall. That republish is not step 4.
-    await republishGuide(canvasId, 2, (html) => html.replace(">Team wall</h2>", ">Idea board</h2>"));
+    await republishGuide(canvasId, (html) => html.replace(">Team wall</h2>", ">Idea board</h2>"));
     expect(doneSteps(await guideState(host, ada))).toEqual(["ask_rally"]);
 
     // Step 4 remakes the page, and the page proves it to everybody.
-    await republishGuide(canvasId, 3, (html) => html.replace("This is a Canvas.", "This is Northwind's Canvas."));
+    await republishGuide(canvasId, (html) => html.replace("This is a Canvas.", "This is Northwind's Canvas."));
     expect(doneSteps(await guideState(host, grace))).toEqual(["ask_rally", "make_it_yours"]);
   });
 
