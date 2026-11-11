@@ -98,11 +98,11 @@ describe("seeding the Getting Started guide into an Organization", () => {
     expect({
       title: detail.title, createdByUserId: detail.createdByUserId, visibility: detail.visibility,
       appearance: detail.appearance, lastEditor: detail.lastEditor,
-      artifacts: detail.artifacts.map((artifact) => [artifact.kind, artifact.version]),
+      artifacts: detail.artifacts.map((artifact) => [artifact.title, artifact.kind, artifact.version]),
     }).toEqual({
       title: "Getting Started with Canvases", createdByUserId: OWNER, visibility: "workspace",
       appearance: { icon: "graduation-cap", color: "blue" }, lastEditor: { kind: "rally", id: null },
-      artifacts: [["site", 1]],
+      artifacts: [["Getting Started with Canvases", "site", 1]],
     });
     expect((await registeredArtifacts(canvasId)).map((row) => [row.mode, row.stateful, row.current_version]))
       .toEqual([["active", 1, 1]]);

@@ -125,7 +125,7 @@ export async function seedCanvas(env: Env, input: { workspaceId: string; creator
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, workspaceId));
   await workspace.canvasUpdate({ workspaceId, canvasId, actor, appearance: seed.appearance });
-  await publishSeedSite(env, { workspaceId, canvasId, seedKey: seed.key }, seed.site);
+  await publishSeedSite(env, { workspaceId, canvasId, seedKey: seed.key, title: seed.title }, seed.site);
   await workspace.canvasSetAudience({ workspaceId, canvasId, actor, update: { visibility: "workspace", userIds: [] } });
   // Rally's words, with no run behind them: the same append a scheduled
   // wake-up's notice makes, authored as the agent.
@@ -157,7 +157,7 @@ export async function seedCanvas(env: Env, input: { workspaceId: string; creator
  * writes version 1: a row that already holds other content was published
  * since, and is left alone.
  */
-async function publishSeedSite(env: Env, target: { workspaceId: string; canvasId: string; seedKey: string }, site: CanvasSeed["site"]): Promise<void> {
+async function publishSeedSite(env: Env, target: { workspaceId: string; canvasId: string; seedKey: string; title: string }, site: CanvasSeed["site"]): Promise<void> {
   const { workspaceId, canvasId } = target;
   const runtime = withWorkspaceRuntimeDatabase(env, workspaceId);
   const providerResourceId = await publicationIdentity("terminal", canvasId, site.path);
@@ -189,7 +189,7 @@ async function publishSeedSite(env: Env, target: { workspaceId: string; canvasId
     const written = await writeArtifactVersion(env, {
       workspaceId, workstreamId: canvasId, region: env.AVALON_REGION,
       artifactId, resourceId, version: 1, mode, stateful,
-      files, fallbackTitle: site.path, serverModuleSha256: serverModule?.sha256 ?? null,
+      files, fallbackTitle: target.title, serverModuleSha256: serverModule?.sha256 ?? null,
     });
     manifest = written.manifest;
     // The public origin before the row, as every site publish orders it.
@@ -197,7 +197,9 @@ async function publishSeedSite(env: Env, target: { workspaceId: string; canvasId
     await insertPublishedResource(runtime.DB, {
       publicationParentId: canvasId,
       resourceId, workspaceId, resourceType: "generated_site", providerResourceId,
-      title: site.path, mimeType: SITE_MANIFEST_MIME_TYPE,
+      // The Canvas's own name, not the directory's: it is what the panel
+      // shows, and a later republish that names no title keeps it.
+      title: target.title, mimeType: SITE_MANIFEST_MIME_TYPE,
       contentRef: written.manifestRef, contentSha256: contentDigest,
       // No person published this, and no run did.
       uploadedByUserId: null, modelContentStatus: "unsupported", timestamp: nowIso(),
