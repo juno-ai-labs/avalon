@@ -61,9 +61,8 @@ changes visible without navigation.
 
 A Sidekick's shared conversation uses this surface in the main window. Generated descriptions summarize instructions; ready submissions save immediately. The surface has no sidebar of its own: who is in a Canvas is the header's face pile, and a Sidekick's details are the column to the right of its conversation (`SidekickDetailLayout`).
 
-The composer shows no running count above the input;
-[`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
-records where a running signal would come from.
+The Canvas host supplies `composerActivity` above the input on desktop and web;
+[`canvases.md`](canvases.md#running-helpers-above-the-composer) owns its counts.
 
 ## Where the code lives
 

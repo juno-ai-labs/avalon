@@ -4428,6 +4428,14 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "a Sidekick's Canvas attachments become the one record of which Canvases it works on, and mark the one a Canvas's Chat made",
   // See SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS and docs/automation-lifecycle.md#attached-conversations.
   statements: SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS,
+}, {
+  version: 145,
+  description: "index live child projections so Canvas activity reads do not scan completed history",
+  statements: [
+    `CREATE INDEX sidekick_child_projections_running_idx ON sidekick_child_projections(sidekick_id)
+      WHERE json_extract(effect_json, '$.archivedAt') IS NULL
+        AND json_extract(effect_json, '$.state') IN ('scheduled', 'running', 'preparing_context', 'waiting_capacity', 'interrupting')`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {
@@ -5599,11 +5607,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const occurredAt = new Date().toISOString();
     const waterline = this.canvasListWaterline();
     const present = this.presentByCanvas();
+    const activity = new Map<string, { backgroundAgents: number; sidekicks: number }>();
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed || (!everyone && !readers.has(attachment.userId))) continue;
       const frame = this.sidebarListFrame("workspace_canvas_list", attachment.userId, () => WorkspaceCanvasListEventSchema.parse({
-        type: "workspace_canvas_list", occurredAt, waterline, items: this.canvasList(attachment, present),
+        type: "workspace_canvas_list", occurredAt, waterline, items: this.canvasList(attachment, present, activity),
       }));
       if (frame !== null) sendSidebarListFrame(socket, frame);
     }
@@ -5634,10 +5643,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** One socket's Canvas list; see `canvasSidebarRows`. */
-  private canvasList(attachment: WorkspaceSocketAttachment, present = this.presentByCanvas()) {
+  private canvasList(attachment: WorkspaceSocketAttachment, present = this.presentByCanvas(),
+    activity = new Map<string, { backgroundAgents: number; sidekicks: number }>()) {
     return canvasSidebarRows(this.state.storage.sql,
       { userId: attachment.userId, member: viewerOf(attachment).accessClass === "member" }, present, SIDEBAR_LIST_LIMIT,
-      canvasAppearanceReporter(this.env));
+      canvasAppearanceReporter(this.env), null, activity);
   }
 
   // ---------------------------------------------------------------------------
@@ -5803,6 +5813,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // sends opened stop routing to them; the rows stay, suspended.
         if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
         this.sidekickDirectoryMoved = true;
+      },
+      noteExecutionChanged: (sidekickId) => {
+        if (this.state.storage.sql.exec(
+          `SELECT 1 FROM sidekick_conversation_attachments
+            WHERE automation_id = ? AND parent_kind = 'canvas' AND substream_id = '0' LIMIT 1`, sidekickId,
+        ).toArray().length > 0) this.noteCanvasDirectoryMoved();
       },
       noteViewerReadChanged: (userId) => {
         // The waterline is the list's, so it moves; only this reader is sent it.

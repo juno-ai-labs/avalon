@@ -84,14 +84,9 @@ topic, which is all a window that reads the detail surfaces and never the list
 needs. No additional broadcast
 channel or polling is involved.
 
-The composer shows no running count. Its two indicators, running background
-agents and running Sidekicks, were fed by a Thread's viewer-state row and by the
-`sidekick_activity` command's counts for a Thread or Channel target; with
-Threads and Channels retired nothing wrote either, so both are deleted rather
-than kept empty. The future source for a Sidekick is a running flag on its
-`automation_directory` row, pushed with the `automations` sidebar list the
-socket already sends; a background-agent count would ride the same way on the
-conversation that started it.
+Canvas helper counts travel on the existing Canvas list snapshot and pushes;
+[`canvases.md`](canvases.md#running-helpers-above-the-composer) owns their
+aggregation, execution notifications and reconnect behavior.
 
 ### The topology
 
