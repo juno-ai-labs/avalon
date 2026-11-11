@@ -478,8 +478,12 @@ message before capturing or clicking the row.
   means no answered question and no pending answer either.
   With a key in `.env.local` (then `pnpm env:sync` and a Worker restart) a
   run does complete, and the data tools of a live site work against local
-  storage. The Terminal tools still do not: they need a Daytona sandbox, so
-  nothing that imports, edits or publishes a site from the Chat can be staged.
+  storage. The Terminal tools need more: `DAYTONA_API_KEY`,
+  `DAYTONA_TARGET`, a snapshot the key's organization holds, and
+  `TERMINAL_REGION_CAPABILITY=supported`. Without all four the region stays
+  `unsupported` and Rally says it cannot import, edit or publish a site. With
+  them, a run creates a real sandbox on that Daytona organization, which
+  stopping the local Worker does not delete.
 - **Playing frames into the live screen from the CDP side.** This does not work
   and the recipe that said to wrap `window.WebSocket` in the renderer was
   wrong: the renderer opens no sockets. The Node main process owns them and
