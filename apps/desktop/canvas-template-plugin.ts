@@ -1,12 +1,14 @@
-import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
 import type { Plugin } from 'vite';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
+import { describeZodIssues } from '../../packages/contracts/src/zod-diagnostics';
+import { CANVAS_TEMPLATE_CATEGORIES } from './src/renderer/lib/canvas-template-categories';
+
 const templateMetadata = z.object({
   name: z.string().trim().min(1),
   description: z.string().trim().min(1),
-  tags: z.array(z.string().trim().min(1)).min(1),
+  tags: z.array(z.enum(CANVAS_TEMPLATE_CATEGORIES.map(({ tag }) => tag))).min(1),
 });
 
 /** Compile Markdown templates so the renderer can use them without a YAML parser. */

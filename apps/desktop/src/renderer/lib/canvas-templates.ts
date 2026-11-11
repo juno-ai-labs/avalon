@@ -8,7 +8,7 @@ import sharedGroceryList from './canvas-template-prompts/parents/shared-grocery-
 import familyCalendarFeed from './canvas-template-prompts/parents/family-calendar-feed.md?canvas-template';
 import recruitingMarketMap from './canvas-template-prompts/recruiters/recruiting-market-map.md?canvas-template';
 
-const templates = [
+export const CANVAS_TEMPLATES = [
   prDashboard,
   emailNotificationScreener,
   repositoryChangesPodcast,
@@ -19,14 +19,3 @@ const templates = [
   familyCalendarFeed,
   recruitingMarketMap,
 ];
-
-function category(tag: string, label: string) {
-  return { label, templates: templates.filter((template) => template.tags.includes(tag)) };
-}
-
-export const CANVAS_TEMPLATE_CATEGORIES = [
-  category('developers', 'Developers'),
-  category('product-managers', 'Product managers'),
-  category('parents', 'Parents'),
-  category('recruiters', 'Recruiters'),
-] as const;
