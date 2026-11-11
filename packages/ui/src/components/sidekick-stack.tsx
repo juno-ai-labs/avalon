@@ -1,5 +1,5 @@
 import { Tip, TipGroup } from './primitives';
-import { AutomationGlyph } from './workstream-glyph';
+import { AutomationGlyph, HexagonGlyph } from './workstream-glyph';
 
 /** A Sidekick as a stack draws it: its mark and its name. */
 export interface StackedSidekick {
@@ -37,7 +37,9 @@ export function SidekickStack({ sidekicks, limit = 4, id }: {
         </span>
       </Tip>)}
       {overflow > 0 && <Tip describesTrigger={false} label={sidekicks.slice(visible.length).map((sidekick) => sidekick.name).join('; ')}>
-        <span aria-hidden="true" className="avatar-overflow sidekick-stack-overflow">+{overflow}</span>
+        <span aria-hidden="true" className="sidekick-stack-item sidekick-stack-overflow">
+          <HexagonGlyph fill="var(--av-ref-color-neutral-4)" ink="var(--av-sys-color-text-muted)" symbol={`+${overflow}`} />
+        </span>
       </Tip>}
     </TipGroup>
   </span>;

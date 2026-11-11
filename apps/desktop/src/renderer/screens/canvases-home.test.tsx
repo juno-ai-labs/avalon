@@ -127,7 +127,7 @@ describe('CanvasesHomeScreen', () => {
     // The card's link is described by both, since the preview itself is decorative.
     expect(screen.getByRole('link', { name: 'Inbox' })).toHaveAccessibleDescription('Data backed Sidekicks: Inbox listener; Digest');
     // No Data badge: the facepile takes the top right itself, and stops at four with the rest counted.
-    expect(card('PR dashboard').querySelectorAll('.sidekick-stack-item')).toHaveLength(4);
+    expect(card('PR dashboard').querySelectorAll('.sidekick-stack-item:not(.sidekick-stack-overflow)')).toHaveLength(4);
     expect(card('PR dashboard').querySelector('.sidekick-stack-overflow')).toHaveTextContent('+2');
     expect(within(card('PR dashboard')).getByRole('img', { hidden: true,
       name: 'Sidekicks: Watcher 1; Watcher 2; Watcher 3; Watcher 4; and 2 more' })).toBeInTheDocument();
