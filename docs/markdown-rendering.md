@@ -303,7 +303,9 @@ item or table — settles into a segment or the stream ends, both of which are
 fresh mounts that ask again.
 For the same reason a streaming body with heading collapse builds its borrowed
 definitions from complete lines only: a `[1]: https://www.alph` still arriving
-would otherwise ride along into earlier, settled sections, outside the hold.
+would otherwise ride along into earlier, settled sections, outside the hold. The
+heading of a streaming section with no body yet is held too, since it is the
+line still arriving.
 
 Markers are requesters in their own right, not free riders on the links: a
 lifted definition's link is never rendered, so before markers wore icons those
@@ -1024,7 +1026,8 @@ refetched. A host that cannot open a browser or read a link should omit
 **What changed:** Links and footnote markers in a streaming body's open tail no
 longer request a favicon; `HostFaviconHold` turns the request off for that
 subtree, and the icon arrives when the block settles. Under heading collapse,
-the definitions lent to settled sections leave out the line still arriving.
+the definitions lent to settled sections leave out the line still arriving. A
+streaming section's heading is held until its body starts.
 
 **Why:** Production logs on 2026-11-11 showed bursts of
 `favicon_unavailable:firecrawl_parse_200` and `firecrawl_http_400` 502s, logged
