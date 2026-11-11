@@ -121,6 +121,7 @@ export const OrganizationUsageSchema = z.object({
     periodStart: z.string().datetime(),
     periodEndsAt: z.string().datetime(),
     billed: z.literal(false),
+    billingEnabled: z.boolean().optional(),
   }),
 });
 export type OrganizationUsage = z.infer<typeof OrganizationUsageSchema>;

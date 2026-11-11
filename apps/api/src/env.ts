@@ -38,6 +38,9 @@ import type { TerminalProviderRpcBinding } from './services/terminal/provider-rp
 import type { TelemetryDeliveryRpcBinding } from './telemetry/telemetry-delivery-contract';
 
 export interface Env extends FeatureFlagEnvironment {
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  BILLING_CONFIG?: string;
   DB: D1Database;
   TELEMETRY_DB: D1Database;
   AUDIT_DB: D1Database;

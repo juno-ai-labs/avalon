@@ -1,5 +1,6 @@
 import type { ProductAnalyticsPreference } from '@rally/contracts/telemetry';
 import { ProductAnalyticsPreferenceClient } from '../../common/product-analytics-preference';
+import { BillingStatusSchema, BillingUrlSchema } from '@rally/contracts/billing';
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
@@ -984,6 +985,16 @@ export class RallyApi {
    * The Organization's plan and how much of this week's shared quota is left.
    * Any member may read it; the dollars behind the percentage never cross.
    */
+  async getBillingStatus() {
+    return this.request('/workspace/billing', { schema: BillingStatusSchema });
+  }
+  async createBillingCheckout(offerId: string, currency: string, overage: boolean) {
+    return this.request('/workspace/billing/checkout', { method: 'POST', body: { offerId, currency, overage }, schema: BillingUrlSchema });
+  }
+  async createBillingPortal() {
+    return this.request('/workspace/billing/portal', { method: 'POST', schema: BillingUrlSchema });
+  }
+
   async getWorkspaceUsage(signal?: AbortSignal): Promise<OrganizationUsage> {
     return this.request('/workspace/usage', { schema: OrganizationUsageSchema, signal });
   }
