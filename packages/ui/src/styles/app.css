@@ -8236,7 +8236,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-row.is-unread .navigation-row-title { font-weight: 650; }
 .navigation-row-unread-dot { background: var(--av-sys-color-badge-base); border-radius: 999px; flex: none; height: 8px; width: 8px; }
 .navigation-sidekick-mark { display: inline-flex; flex: none; height: 36px; width: 36px; }
-.navigation-row-live-dot { background: var(--av-sys-color-success-base); border-radius: 999px; display: inline-block; height: 7px; margin-right: 6px; vertical-align: 1px; width: 7px; }
 /* Muted on an unread row too: the dot and the bold title say it (design.html §1). */
 .navigation-row-time { color: var(--av-sys-color-text-muted); flex: none; font-size: 12px; }
 /* Activity: one row per thing that happened to this person, in the shared row
