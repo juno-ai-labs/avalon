@@ -108,7 +108,9 @@ It holds two columns:
   shows a pin drop hint, highlighted throughout a Canvas drag. The choice is a device preference
   (`rally.sidebar-section`, default `canvases`); a value stored before the
   cutover (`channels`, `threads`, `pinned`, `artifacts`, `sidekicks`) reads as the default,
-  and `activity` opens Activity again when Last Opened is selected. Arriving at a Canvas or a standalone Sidekick selects
+  and `activity` opens Activity again. The default root startup resets the
+  choice to Canvases; the launch restoration below applies to Last Opened.
+  Arriving at a Canvas or a standalone Sidekick selects
   Canvases (Activity excepted: once open, only a rail pick
   leaves it, whatever the pane opens and however, a row, a link inside the
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
@@ -117,8 +119,8 @@ It holds two columns:
   available with Canvases beside them (or Activity if it was selected).
   The window's landing is its
   first route that belongs to a section, so a launch's redirect from `/` to
-  `/canvases` is the landing and not a navigation. With Last Opened selected, landing on a dashboard
-  keeps the stored choice; the default root landing selects Canvases. Landing on `/activity` selects Activity.
+  `/canvases` is the landing and not a navigation. Landing on a dashboard
+  keeps the stored choice. Landing on `/activity` selects Activity.
   Clicking **Canvases** always opens `/canvases`, including when a Canvas is
   already open and its rail entry is selected. The list header's **Canvas
   dashboard** home icon, immediately before New Canvas, uses the same action.
@@ -128,8 +130,8 @@ It holds two columns:
   Entering Activity opens its top row (the first the list draws) in the pane,
   as a mail client opens a folder's first message, and draws that row open:
   the rail's button pushes the row's route, so Back returns to what was open;
-  a launch with Last Opened selected and Activity stored replaces the landing
-  with it once the first list arrives, so Back does not return to the Canvases home, but only when
+  a launch with Activity stored replaces the landing with it once the first
+  list arrives, so Back does not return to the Canvases home, but only when
   the landing is a section home: a Canvas or Sidekick the window lands on,
   restored from this device or opened by a link, is kept, and so is anything
   navigated to before the list arrived; a link that names Activity
@@ -204,7 +206,9 @@ reappearing there; [`list-motion.md`](list-motion.md) owns the motion.
 `/` is the landing (`LandingScreen`). It defaults to `/canvases` and resets
 the sidebar to Canvases before navigation so saved Activity cannot redirect it.
 Account → Preferences → On startup can opt this device into **Last Opened**.
-Explicit links keep their destination. With Last Opened selected, it reopens the
+Explicit links keep their destination. Closing browser Settings marks its return
+to `/` with `RESTORED_ROUTE`, so it resumes the current visit without applying
+the startup choice or resetting the sidebar. With Last Opened selected, it reopens the
 route this person last had open on this device, `rally.desktop-layout:<organization>:<user>:last-route`,
 when that is a Canvas, a Sidekick or a section home (`restorableRoute`), and
 otherwise opens `/canvases`. The app shell writes `last-route` on every
@@ -458,6 +462,23 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-11 — Default launches to the Canvas homepage
+
+**What changed:** New launches open Canvases and select its sidebar section.
+Account → Preferences can opt this device into Last Opened. Closing browser
+Settings restores the current visit regardless of that startup choice.
+
+**Why:** Opening the app should give a predictable Canvas homepage by default,
+while keeping restoration available for people who prefer to resume their work.
+
+**Considered and rejected:** Unconditionally restoring the saved route preserves
+the old behavior but defeats the requested default. Applying the startup choice
+to in-session returns would discard the page the person left to open Settings.
+
+**Consequences:** Explicit links and Settings returns retain their destination.
+Only a default startup resets the saved sidebar selection; Last Opened keeps
+route validation and stale-resource fallback.
 
 ### 2026-11-10 — Open Canvas Sidekicks beside their Chat
 

@@ -105,6 +105,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     workspaceName: session.workspace?.name ?? '',
     session,
     api,
+    identityApi,
     invitationApi: null,
     deepLinkError: null,
     exchangingTicket: false,

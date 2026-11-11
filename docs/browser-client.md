@@ -39,14 +39,9 @@ shows a loading state before offering sign-in.
 
 ## Account privacy preference
 
-Preferences reads and saves Product analytics through the identity-scoped cookie
-adapter (`/regional/<region>/browser/api/_/telemetry/preference`). The shared
-account-preference client used by Electron also sends this PATCH with the last
-read version; `RallyApi` supplies the browser cookie transport.
-A 409 adopts the current account preference rather than overwriting a newer
-choice from another device. A failed save shows an error and re-reads the
-account; no browser-local consent value is treated as authoritative.
-This changes account consent, not browser telemetry collection.
+Preferences uses the browser shell's identity-scoped `RallyApi` to read and save
+Product analytics. The shared protocol, consent scope and failure behavior are
+owned by [telemetry](telemetry.md#account-preference-in-the-web-app).
 
 ## How it works
 
