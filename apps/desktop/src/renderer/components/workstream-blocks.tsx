@@ -93,7 +93,7 @@ import { bareAddressAutolink, EMAIL_MENTION, EMAIL_MENTION_AT } from '@rally/con
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
-import { httpHostname, useHostFavicon } from '../lib/host-favicon';
+import { HostFaviconHold, httpHostname, useHostFavicon } from '../lib/host-favicon';
 import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
 import type { ElicitationData, Message, MessageAttachment, MessageMention, WorkTotal } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
@@ -1590,8 +1590,11 @@ export function MarkdownBody({
               />
             );
           })}
-          {/* Only here is the source's last line still arriving. */}
-          {renderMarkdown(tail, extra, tailRemarkPlugins)}
+          {/* Only here is the source's last line still arriving, so only
+              here can a link's hostname be a prefix of the one being typed. */}
+          <HostFaviconHold.Provider value={true}>
+            {renderMarkdown(tail, extra, tailRemarkPlugins)}
+          </HostFaviconHold.Provider>
         </>
       );
     };

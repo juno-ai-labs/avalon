@@ -1214,6 +1214,21 @@ describe('MessageBlock markdown', () => {
     expect(getFavicon).toHaveBeenCalledWith('docs.example.com');
   });
 
+  it('asks for no favicon while a streaming link is still being typed, and asks once the line settles', async () => {
+    const getFavicon = vi.fn<(hostname: string) => Promise<Blob | null>>(async () => null);
+    optionalAppSession.mockReturnValue({ api: { getFavicon } });
+
+    const { rerender } = render(<MarkdownBody streaming>{'Settled at https://docs.example.com\n\nThen\nsee www.alph'}</MarkdownBody>);
+    rerender(<MarkdownBody streaming>{'Settled at https://docs.example.com\n\nThen\nsee www.alphamount'}</MarkdownBody>);
+
+    expect(screen.getByRole('link', { name: 'www.alphamount' })).toBeInTheDocument();
+    await waitFor(() => expect(getFavicon).toHaveBeenCalledWith('docs.example.com'));
+    rerender(<MarkdownBody>{'Settled at https://docs.example.com\n\nThen\nsee www.alphamountain.ai'}</MarkdownBody>);
+    await waitFor(() => expect(getFavicon).toHaveBeenCalledWith('www.alphamountain.ai'));
+    expect(getFavicon.mock.calls.map(([hostname]) => hostname)).not.toContain('www.alph');
+    expect(getFavicon.mock.calls.map(([hostname]) => hostname)).not.toContain('www.alphamount');
+  });
+
   it('keeps a multiline connector mention as a chip', () => {
     const text = 'Ask @Google\nDrive\nto sync';
     const { container } = render(<MessageBlock {...actions} message={{
