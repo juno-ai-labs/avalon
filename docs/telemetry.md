@@ -863,6 +863,33 @@ control in the browser. A local browser switch would not change server consent.
 **Consequences:** Web saves require a successful server acknowledgement; desktop
 local-first disable, offline sync, and crash handling remain unchanged.
 
+### 2026-11-11 — Artifact inventory verification retries a 403 and names Cloudflare's error codes
+
+**What changed:** The post-upload inventory read now retries an HTTP 403 as
+well as a 5xx, with the same seven attempts and 500 ms doubling backoff. When
+the final response still fails, the error names Cloudflare's numeric error
+codes from its body (`HTTP 403; codes: 10000`), never the provider's message.
+
+**Why:** Release v1.716.0 built, signed and notarized, then aborted before
+distribution when one inventory read, for one renderer source map, returned
+HTTP 403. Every earlier upload and inventory read in that run had succeeded
+with the same token, and the PUT for that very object had just succeeded. The
+error carried only the status, so the provider's reason was lost. The previous
+entry rejected retrying a 403 because a revoked token would then wait half a
+minute before failing. That case cannot reach this read: the inventory read
+runs only after a PUT that succeeded with the same token, so a revoked token
+fails on the PUT, on its first response. A token that can write but cannot list
+would still fail, after roughly 31 seconds, on the first artifact.
+
+**Considered and rejected:** Retrying 403 only for a specific Cloudflare error
+code, because the code of v1.716.0's 403 was not recorded. Naming the codes is
+what lets a later change narrow the retry if one turns out to be permanent.
+Retrying 429 is still rejected, for the reason in the entry below.
+
+**Consequences:** Any recurrence of a non-OK inventory read now reaches the
+log with its Cloudflare error codes. A future change that narrows the retry
+should start from those codes.
+
 ### 2026-11-10 — Artifact inventory verification retries transient Cloudflare failures
 
 **What changed:** After each private artifact upload, the publisher's
