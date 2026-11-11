@@ -24,6 +24,14 @@ states say "Canvas", its ready state invites a request to Rally, and its
 composer reads "Ask Rally or the people here…". The header is the host's
 `renderHeader`: the Canvas's pill, the people in it now and Share.
 
+For a newly created parent, `openingDetail` supplies a display-only empty shell
+and `connectionEnabled` holds socket admission until the parent exists. The
+composer occupies the same mounted position before and after the canonical
+snapshot; `sendBlocked` reaches `ComposerInput.submitBlocked`, which disables
+Send and Enter even while recording audio. Dictation's ordinary empty-draft
+exception cannot bypass this readiness gate. The Canvas owns creation, retry
+and the opening detail ([`canvases.md`](canvases.md#in-the-client)).
+
 ## A Sidekick's shared conversation
 
 `screens/automation.tsx` hosts a Sidekick's conversation (`"0"`) on this
@@ -885,6 +893,17 @@ captured pin IDs. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-11-11 — Keep readiness separate from dictation's empty-draft exception
+
+`ComposerInput.submitBlocked` carries the host's readiness gate independently
+of `submitDisabled`. Dictation may still enable stop-and-send for an empty draft,
+but cannot enable it before its conversation exists and is live. Reusing only
+the ordinary disabled state was insufficient because recording deliberately
+bypasses that state to collect the final transcript. An optimistic parent's
+display-only detail keeps the real composer mounted until admission and the
+snapshot arrive; future opening states must preserve that mounted identity.
+
 
 ### 2026-11-09 — Every human message uses the right-side bubble
 

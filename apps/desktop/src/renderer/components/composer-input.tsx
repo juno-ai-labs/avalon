@@ -167,6 +167,8 @@ interface ComposerInputProps {
   /** Host-owned trailing action, rendered to the right of Send. */
   submitAccessory?: ReactNode;
   submitDisabled: boolean;
+  /** A host readiness gate, including while dictation has unsent audio. */
+  submitBlocked?: boolean;
   submitLabel: string;
   submitting?: boolean;
   uploading: boolean;
@@ -281,6 +283,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   shouldSubmitOnEnter,
   submitAccessory,
   submitDisabled,
+  submitBlocked = false,
   submitLabel,
   submitting = false,
   uploading,
@@ -484,12 +487,12 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     // The transcript has landed, so `submitDisabled` now reflects the final
     // draft rather than the empty one the stop was allowed on. Nothing to send
     // — or an attachment still uploading — leaves the draft where it is.
-    if (submitDisabled) return;
+    if (submitBlocked || submitDisabled) return;
     void onSubmit();
-  }, [dictation.state, onSubmit, sendAfterDictation, submitDisabled]);
+  }, [dictation.state, onSubmit, sendAfterDictation, submitBlocked, submitDisabled]);
 
   const submit = async (): Promise<void> => {
-    if (sendAfterDictation) return;
+    if (submitBlocked || sendAfterDictation) return;
     // Stopping comes before the empty-draft guard, because while dictation is
     // running the draft is not the whole story: it stays empty until the first
     // partial arrives, and on a provider that sends nothing before the final
@@ -844,10 +847,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 host already passes `submitDisabled` for an empty draft, so the
                 disabled state is the one it always computed. */}
             {renderSubmit ? renderSubmit({
-              disabled: (submitDisabled && !dictationActive) || sendAfterDictation,
+              disabled: submitBlocked || (submitDisabled && !dictationActive) || sendAfterDictation,
               pending: submitting || sendAfterDictation,
               onClick: () => void submit(),
-            }) : <button aria-label={submitLabel} className={clsx('composer-send', submitContent !== undefined && 'has-content')} disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
+            }) : <button aria-label={submitLabel} className={clsx('composer-send', submitContent !== undefined && 'has-content')} disabled={submitBlocked || (submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
               {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : submitContent ?? <ArrowUp size={15} />}
             </button>}
             {submitAccessory}
