@@ -74,9 +74,10 @@ The regional bridge uses D1 only for identity and routing:
 
 | Tool | Route lookup | Authoritative read or write |
 | --- | --- | --- |
+| `inspect_org_settings`, `update_org_settings` | Resolve the Organization in exactly one region | Regional D1 [Organization presentation settings](feature-flags.md#organization-model-selector-visibility) |
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
-| `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
+| `pause_sidekick`, `resume_sidekick`, `archive_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause, resume or archive, which call HostedSidekick in WorkspaceDO |
 | `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, the regional retirement service: the D1 fence, then the graph walk over every object |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
@@ -232,6 +233,34 @@ ordinary product permissions. Password credential administration is the separate
 operator capability above. Guests can be selected; actions the app refuses for them
 are refused here too.
 
+Every tool that acts as a user resolves that user through
+`engineeringUserAuth`, one D1 read of the Organization and the relationship
+together. It refuses with one of two codes, and the remedies differ:
+
+- `organization_abandoned`: `workspaces.abandoned_at` is set, the same fence
+  that ends every session into the Organization
+  ([`workspace-retirement.md`](workspace-retirement.md)). No user passes, so
+  trying another one cannot help. `send_message`, the two text reads,
+  `pause_sidekick` and `resume_sidekick` do not work in an abandoned
+  Organization.
+- `user_not_active_organization_user`: the named user has no active member or
+  guest relationship in the Organization. Another user may pass.
+
+The abandoned check runs first, so an abandoned Organization reports its own
+state whoever was named.
+
+`archive_sidekick` is the exception, because it is cleanup: a Sidekick left
+paused or in draft in a closed Organization is otherwise out of reach, and
+archiving only stops and hides it, where the other tools would be using the
+Organization. It passes `abandoned: "admit"`, so it works in an abandoned
+Organization as one of its still-active users, and `WorkspaceDO` permits
+`sidekickRemove` on a retired object, so it works after `retire_org` too. It
+also archives a Sidekick a retired Organization never imported
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). An
+Organization its last member abandoned has no active user left (leaving
+suspends them), so nobody can be named there and the tool still refuses with
+`user_not_active_organization_user`.
+
 Creation takes a fresh UUID `operationId`, reused with the original arguments
 after an uncertain outcome. The Organization's ID is that operation ID, and
 its creation uses the onboarding journal. A transient failure can leave member
@@ -312,6 +341,10 @@ and `resume` as the app's buttons, as the selected user, so HostedSidekick
 decides who may manage the Sidekick and refuses with its own codes. Both are
 idempotent, so they take no `operationId`; the bridge mints one per call only
 to pair the attempt and result audit rows.
+
+`archive_sidekick` calls AutomationService `archive` the same way, in any
+lifecycle. It is the one of the three with no undo, so it is marked
+destructive.
 
 ### Retiring an Organization
 
@@ -582,6 +615,9 @@ Sidekick's shared conversation and reads it back, refuses it read as a Canvas,
 and reaches a run conversation through `run_canvas_sql`'s registry check.
 Audit coverage reads operator and receipt attribution from the real audit
 database and refuses product writes when the attempt cannot be persisted.
+`apps/api/test/engineering-user-auth.test.ts` covers whom a tool may act as,
+over the checked-in migrations, and `engineering-sidekick-inspection.test.ts`
+covers the archive in a retired Organization.
 Only the external model provider is doubled. The text formatter's unit tests
 cover bylines, display text, attachments, elicitation, annotations and hidden
 internal content; the desktop transcript suite covers the extracted display helper.
@@ -705,6 +741,53 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-10 — Archive in an abandoned Organization, and name its refusal
+
+**What changed:** `engineeringUserAuth` refuses an abandoned Organization as
+`organization_abandoned` (409) and keeps `user_not_active_organization_user`
+(403) for a missing or inactive relationship. It is still one D1 read: the
+Organization row with the relationship left-joined, where it was an inner join
+that required `abandoned_at IS NULL`. `archive_sidekick` passes
+`abandoned: "admit"` and so works in an abandoned Organization, and
+`WorkspaceDO` permits `sidekickRemove` on a retired object.
+
+**Why:** The inner join returned no row for either cause, and the one code it
+threw blamed the user. On 2026-11-10 `archive_sidekick` refused five calls
+that way in two retired Organizations whose acting users were active, one of
+them the owner, and sent the operator to try users who could not pass either.
+Those five Sidekicks were then out of reach of any tool except hand-written
+SQL, which the archive tool exists to replace. The owner asked for archive to
+work there.
+
+**Considered and rejected:** Admitting every tool into an abandoned
+Organization, for the reason the body gives. Clearing
+`abandoned_at` by hand to archive and setting it back, which reopens sign-in
+for the window. A second query run only after a refusal to find its cause: the
+joined read costs the same one round trip.
+
+**Not done:** An Organization its last member abandoned has no active user to
+name, because leaving suspends them. Archiving there would need the tool to
+act without a user, which nobody has asked for.
+
+**Consequences:** A change to this read must keep the two causes apart, and
+must tell a matched guest (role `NULL`) from no relationship by the member's
+id, not by the role. A new tool is refused in an abandoned Organization unless
+it asks; add `abandoned: "admit"` only for one that cleans up.
+[`workspace-retirement.md`](workspace-retirement.md) owns the permit.
+
+### 2026-11-10 — Archive a Sidekick as a user
+
+**What changed:** `archive_sidekick` archives a Sidekick as a selected user
+through AutomationService `archive`, over a new bridge method
+`archiveSidekick`, audited as `archive_sidekick`.
+
+**Why:** An operator asked to archive every paused and draft Sidekick on the
+platform. The server could pause and resume but not archive, and the only
+other route was a SQL update of `lifecycle`, which skips the run stop, the
+alarm cancellation, the registration clearing and the list refresh the
+product's archive does. A change here must keep the tool on the product's own
+path for that reason.
 
 ### 2026-11-10 — Defer lakehouse queries and Organization retirement
 

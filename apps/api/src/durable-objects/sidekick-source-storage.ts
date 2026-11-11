@@ -9,7 +9,7 @@ import {
 import { ApiError } from "../lib/api-error";
 
 /**
- * WorkspaceDO migration 145: Sidekick sources and the requests that ask for one.
+ * WorkspaceDO migration 146: Sidekick sources and the requests that ask for one.
  *
  * A source is one person's permission for events they can see on one
  * connection to start one Sidekick: their own connection, or an Organization

@@ -13,8 +13,7 @@ import { WorkstreamComposer } from './workstream-composer';
 import { SidekickMentionContext, sidekickMentionDirectory } from '../lib/sidekick-mentions';
 import type { WorkspaceInvitee } from '@rally/contracts';
 
-// The composer shows the work stream's model only while Application →
-// Developer → Debug enabled is on, so this bridge is what turns it on and off.
+// Device settings do not control model visibility; the host supplies the model control.
 const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false },
 }));
@@ -957,10 +956,9 @@ describe('WorkstreamComposer draft caching', () => {
 });
 
 describe('WorkstreamComposer model control', () => {
-  it('shows no model control unless developer mode is on', async () => {
-    renderComposer(undefined, false, undefined, workstream, [creator], {
-      model: 'deepseek/deepseek-v4-pro', pinned: true,
-    });
+  it('shows no model control when the host omits it, even in Debug mode', async () => {
+    applicationSettings.current.debugEnabled = true;
+    renderComposer();
 
     await screen.findByLabelText('Message Rally');
     expect(screen.queryByRole('button', { name: /^Model:/u })).not.toBeInTheDocument();
@@ -970,7 +968,6 @@ describe('WorkstreamComposer model control', () => {
     // The pin is written once, at creation, and nothing afterwards edits it —
     // so this control exists to be read. A menu here would offer a change the
     // next run would not honour.
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderComposer(undefined, false, undefined, workstream, [creator], {
       model: 'deepseek/deepseek-v4-pro', pinned: true,
     });
@@ -991,7 +988,6 @@ describe('WorkstreamComposer model control', () => {
     // What is immutable for an unpinned conversation is the setting, not the
     // model: it re-resolves deployment configuration on every launch, so the id shown is only
     // what the latest run happened to get.
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderComposer(undefined, false, undefined, workstream, [creator], {
       model: 'x-ai/grok-4.3', pinned: false,
     });

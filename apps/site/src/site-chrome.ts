@@ -7,6 +7,8 @@
 import { readFileSync } from 'node:fs';
 import { loadBlogPosts, type BlogPost } from './blog-pages';
 import { escapeHtml as escape, loadComparisons, type Comparison } from './comparison-pages';
+import { renderLoopFigure, renderPeopleFigure } from './explorable-figures';
+import { renderLiveCarousel } from './live-examples';
 
 /** Every rival, read from `content/compare/*.md` and sorted by `order`. */
 export const comparisons: readonly Comparison[] = loadComparisons(new URL('../content/compare/', import.meta.url));
@@ -29,8 +31,8 @@ const ORIGIN = 'https://rallywith.ai';
 
 /** The header's links and sign-in button, the same on every marketing page. */
 export function renderSiteNav(): string {
-  return '<nav aria-label="Primary"><a class="header-link" href="/#features">Features</a><a class="header-link" href="/#pricing">Pricing</a>'
-    + '<a class="header-link" href="/#compare">Compare</a>'
+  return '<nav aria-label="Primary"><a class="header-link" href="/canvases/">Canvases</a><a class="header-link" href="/sidekicks/">Sidekicks</a>'
+    + '<a class="header-link" href="/#pricing">Pricing</a><a class="header-link" href="/#compare">Compare</a>'
     // The web app signs in and signs up through one door, so the label rolls between the two.
     + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in to Rally or sign up for Rally">'
     + '<span class="header-sign-in-wheel" aria-hidden="true"><span>Sign in to Rally</span><span>Sign up for Rally</span></span></a></nav>';
@@ -53,14 +55,21 @@ export function renderSiteFooter(): string {
     '<a href="/blog/">All posts</a>',
     ...blogPosts.slice(0, 1).map(({ slug, title }) => `<a href="/blog/${slug}/">${escape(title)}</a>`),
   ];
+  const product = [
+    '<a href="/canvases/">Canvases</a>',
+    '<a href="/sidekicks/">Sidekicks</a>',
+    '<a href="/#pricing">Pricing</a>',
+  ];
   return `<footer class="rally-footer"><div class="footer-grid">`
     + `<div class="footer-brand"><a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt=""><span>rally</span></a>`
     + `<p class="footer-tagline">Made for people who work with AI, not on it.</p></div>`
+    + footerColumn('footer-product', 'Product', product)
     + footerColumn('footer-compared', 'Compared to', compared)
     + footerColumn('footer-trust', 'Trust Center', trust)
     + footerColumn('footer-help', 'Help', help)
     + footerColumn('footer-blog', 'Blog', blog)
-    + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small></p></footer>`;
+    + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small><small>rallywith.ai</small></p>`
+    + `<p class="footer-mark" aria-hidden="true">rally</p></footer>`;
 }
 
 /** Every rival in one table, each row linking to its own page. */
@@ -100,7 +109,9 @@ export function renderLlmsTxt(): string {
 
 ## Product
 
-- [Rally home](${ORIGIN}/): what Rally is, features, pricing, team, and technology
+- [Rally home](${ORIGIN}/): what Rally is, Canvases, Sidekicks, pricing, and technology
+- [Canvases](${ORIGIN}/canvases/): live artifacts, documents, spreadsheets, dashboards and sites that Rally keeps current from your connected tools and that a team works from together
+- [Sidekicks](${ORIGIN}/sidekicks/): shared AI agents that run on a schedule or when something happens
 - [Help Center](${ORIGIN}/help/): the Rally manual, from installing Rally to running an Organization. Its own index of every page, each published as Markdown: ${ORIGIN}/help/llms.txt
 
 ## Compared to
@@ -131,9 +142,18 @@ function renderLandingSections(): string {
   return renderSiteChrome(readFileSync(new URL('./landing-sections.html', import.meta.url), 'utf8'));
 }
 
+/** The animated Canvas in the home page's hero and the Canvases page, from `canvas-demo.html`. */
+function renderCanvasDemo(): string {
+  return readFileSync(new URL('./canvas-demo.html', import.meta.url), 'utf8');
+}
+
 const markers: Record<string, () => string> = {
   'site-nav': renderSiteNav,
   'landing-sections': renderLandingSections,
+  'canvas-demo': renderCanvasDemo,
+  'live-carousel': renderLiveCarousel,
+  'loop-figure': renderLoopFigure,
+  'people-figure': renderPeopleFigure,
   'site-footer': renderSiteFooter,
   'comparison-table': renderComparisonTable,
 };

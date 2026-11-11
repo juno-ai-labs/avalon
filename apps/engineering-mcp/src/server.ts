@@ -1,6 +1,9 @@
 import { inspectQueues, peekDeadLetters } from "./queues";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
+  InspectEngineeringOrgSettingsInputSchema,
+  UpdateEngineeringOrgSettingsInputSchema,
+  EngineeringOrgSettingsResultSchema,
   InspectEngineeringUsageInputSchema,
   ChangeEngineeringPlanInputSchema,
   EngineeringUsageResultSchema,
@@ -15,6 +18,7 @@ import {
   CreateEngineeringOrgResultSchema,
   SendEngineeringMessageInputSchema,
   SendEngineeringMessageResultSchema,
+  ArchiveEngineeringSidekickResultSchema,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   RetireEngineeringOrgInputSchema,
@@ -271,6 +275,15 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
       await (await organizationBinding(env, request.orgId)).setSidekickPaused({ ...request, paused }, principal))));
   }
 
+  server.registerTool("archive_sidekick", {
+    description: "Archive a Sidekick as userId, exactly as the app's Archive action does: open runs stop, scheduled and pending runs are cancelled, its activity triggers are cleared, and it leaves everyone's Sidekick list. There is no undo. userId must be allowed to manage the Sidekick in the app; its author always is. Works in any lifecycle; archiving an archived Sidekick changes nothing. Also works in an abandoned or retired Organization, as a user who is still an active member of it. Returns the resulting lifecycle.",
+    inputSchema: sidekickPauseSchema.shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "archive_sidekick", {
+    workspace_id: request.orgId, sidekick_id: request.sidekickId, user_id: request.userId,
+  }, async () => ArchiveEngineeringSidekickResultSchema.parse(
+    await (await organizationBinding(env, request.orgId)).archiveSidekick(request, principal))));
+
   server.registerTool("retire_org", {
     description: "Retire an Organization permanently through the regional retirement service: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Task-capable clients receive a durable handle to poll while failed passes are retried. Synchronous results report complete: false while parts are still open; call again with the same orgId to resume the walk.",
     inputSchema: RetireEngineeringOrgInputSchema.unwrap().shape,
@@ -508,6 +521,20 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     inputSchema: { queueId: z.string().min(1) },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ queueId }) => tool(principal, "inspect_dead_letters", { queue_id: queueId }, () => peekDeadLetters(env, queueId)));
+
+  server.registerTool("inspect_org_settings", {
+    description: "Read an Organization's stored presentation settings, including whether its model selector is visible. These values are independent of defaults for new Organizations.",
+    inputSchema: InspectEngineeringOrgSettingsInputSchema.shape,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "inspect_org_settings", { workspace_id: request.orgId }, async () =>
+    EngineeringOrgSettingsResultSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOrganizationSettings(request))));
+
+  server.registerTool("update_org_settings", {
+    description: "Set whether the model selector is visible for everyone in an Organization on macOS and web, independent of Debug mode. Persists the setting and refreshes connected clients. Does not change model routing or pins. Safe to repeat after an uncertain result; inspect_org_settings reads the saved value.",
+    inputSchema: UpdateEngineeringOrgSettingsInputSchema.shape,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "update_org_settings", { workspace_id: request.orgId, model_selector_visible: request.modelSelectorVisible }, async () =>
+    EngineeringOrgSettingsResultSchema.parse(await (await organizationBinding(env, request.orgId)).updateOrganizationSettings(request, principal))));
 
   server.registerTool("inspect_usage_plan", {
     description: "Read an Organization's current plan, weekly quota remaining and reset, and current-period overage from its owning region's authoritative usage ledger.",

@@ -89,6 +89,16 @@ export const SetEngineeringSidekickPausedResultSchema = deferredZodSchema(() => 
 }));
 export type SetEngineeringSidekickPausedResult = z.infer<typeof SetEngineeringSidekickPausedResultSchema>;
 
+export const ArchiveEngineeringSidekickInputSchema = deferredZodSchema(() => SetEngineeringSidekickPausedInputSchema.unwrap().omit({ paused: true }));
+export type ArchiveEngineeringSidekickInput = z.infer<typeof ArchiveEngineeringSidekickInputSchema>;
+export const ArchiveEngineeringSidekickResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  sidekickId: AutomationIdSchema,
+  lifecycle: z.literal("deleted"),
+}));
+export type ArchiveEngineeringSidekickResult = z.infer<typeof ArchiveEngineeringSidekickResultSchema>;
+
 export const RetireEngineeringOrgInputSchema = deferredZodSchema(() => z.strictObject({
   orgId: WorkspaceIdSchema.describe("The Organization to close for good. Retiring it again resumes an unfinished walk."),
 }));
@@ -467,6 +477,19 @@ export const EngineeringD1SqlResultSchema = deferredZodSchema(() => z.strictObje
 }));
 export type EngineeringD1SqlResult = z.infer<typeof EngineeringD1SqlResultSchema>;
 
+export const InspectEngineeringOrgSettingsInputSchema = z.strictObject({ orgId: WorkspaceIdSchema });
+export const UpdateEngineeringOrgSettingsInputSchema = InspectEngineeringOrgSettingsInputSchema.extend({
+  modelSelectorVisible: z.boolean(),
+});
+export const EngineeringOrgSettingsResultSchema = z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  modelSelectorVisible: z.boolean(),
+});
+export type InspectEngineeringOrgSettingsInput = z.infer<typeof InspectEngineeringOrgSettingsInputSchema>;
+export type UpdateEngineeringOrgSettingsInput = z.infer<typeof UpdateEngineeringOrgSettingsInputSchema>;
+export type EngineeringOrgSettingsResult = z.infer<typeof EngineeringOrgSettingsResultSchema>;
+
 export const InspectEngineeringUsageInputSchema = z.strictObject({ orgId: WorkspaceIdSchema });
 export const ChangeEngineeringPlanInputSchema = InspectEngineeringUsageInputSchema.extend({ plan: PlanIdSchema });
 export const EngineeringUsageResultSchema = z.strictObject({ region: RegionSchema, orgId: WorkspaceIdSchema, usage: OrganizationUsageSchema });
@@ -476,12 +499,15 @@ export type EngineeringUsageResult = z.infer<typeof EngineeringUsageResultSchema
 
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
 export interface EngineeringInspectionRpcBinding {
+  inspectOrganizationSettings(input: InspectEngineeringOrgSettingsInput): Promise<EngineeringOrgSettingsResult>;
+  updateOrganizationSettings(input: UpdateEngineeringOrgSettingsInput, operator: EngineeringOperator): Promise<EngineeringOrgSettingsResult>;
   inspectOrganizationUsage(input: InspectEngineeringUsageInput): Promise<EngineeringUsageResult>;
   changeOrganizationPlan(input: ChangeEngineeringPlanInput, operator: EngineeringOperator): Promise<EngineeringUsageResult>;
   provisionUserPassword(input: EngineeringPasswordUserInput, operator: EngineeringOperator): Promise<EngineeringProvisionPasswordResult>;
   revokeUserPassword(input: EngineeringPasswordUserInput, operator: EngineeringOperator): Promise<EngineeringRevokePasswordResult>;
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
+  archiveSidekick(input: ArchiveEngineeringSidekickInput, operator: EngineeringOperator): Promise<ArchiveEngineeringSidekickResult>;
   retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;

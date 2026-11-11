@@ -1,12 +1,18 @@
+import { readOrganizationSettings, updateOrganizationSettings } from "./services/organization-settings";
+import { publishWorkspaceSync } from "./services/workspace-realtime-service";
 import { readOrganizationUsage, setWorkspacePlan, publishOrganizationUsage } from "./services/usage-metering";
 import { provisionUserPassword, revokeUserPassword } from "./services/password-login-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
+  InspectEngineeringOrgSettingsInputSchema,
+  UpdateEngineeringOrgSettingsInputSchema,
+  EngineeringOrgSettingsResultSchema,
   InspectEngineeringUsageInputSchema,
   ChangeEngineeringPlanInputSchema,
   EngineeringUsageResultSchema,
   type EngineeringUsageResult,
+  type EngineeringOrgSettingsResult,
   EngineeringPasswordUserInputSchema,
   EngineeringProvisionPasswordResultSchema,
   EngineeringRevokePasswordResultSchema,
@@ -20,6 +26,9 @@ import {
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
   type SendEngineeringMessageResult,
+  ArchiveEngineeringSidekickInputSchema,
+  ArchiveEngineeringSidekickResultSchema,
+  type ArchiveEngineeringSidekickResult,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   type SetEngineeringSidekickPausedResult,
@@ -93,7 +102,7 @@ import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-au
 import { createEngineeringOrg } from "./services/engineering-creation";
 import { sendEngineeringMessage, readEngineeringConversation } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
-import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
+import { archiveEngineeringSidekick, setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
 import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
@@ -261,6 +270,39 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         representedUserId: request.userId, operationId: crypto.randomUUID(), sidekickId: request.sidekickId,
       }, async () => SetEngineeringSidekickPausedResultSchema.parse(await setEngineeringSidekickPaused(this.env, request)),
       (result) => ({ lifecycle: result.lifecycle }));
+    });
+  }
+
+  async archiveSidekick(input: unknown, operator: unknown): Promise<ArchiveEngineeringSidekickResult> {
+    return this.productOperation("archiveSidekick", async () => {
+      const request = ArchiveEngineeringSidekickInputSchema.parse(input);
+      // Archiving an archived Sidekick changes nothing, so as with pause there is no caller recovery key.
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "archive_sidekick", orgId: request.orgId,
+        representedUserId: request.userId, operationId: crypto.randomUUID(), sidekickId: request.sidekickId,
+      }, async () => ArchiveEngineeringSidekickResultSchema.parse(await archiveEngineeringSidekick(this.env, request)),
+      (result) => ({ lifecycle: result.lifecycle }));
+    });
+  }
+
+  async inspectOrganizationSettings(input: unknown): Promise<EngineeringOrgSettingsResult> {
+    return this.productOperation("inspectOrganizationSettings", async () => {
+      const { orgId } = InspectEngineeringOrgSettingsInputSchema.parse(input);
+      return EngineeringOrgSettingsResultSchema.parse(await readOrganizationSettings(this.env, orgId));
+    });
+  }
+
+  async updateOrganizationSettings(input: unknown, operator: unknown): Promise<EngineeringOrgSettingsResult> {
+    return this.productOperation("updateOrganizationSettings", async () => {
+      const request = UpdateEngineeringOrgSettingsInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "update_org_settings", orgId: request.orgId, operationId: crypto.randomUUID(),
+      }, async () => {
+        const result = await updateOrganizationSettings(this.env, request.orgId, request.modelSelectorVisible);
+        // Publish even on an idempotent retry, repairing a previous uncertain publication.
+        await publishWorkspaceSync(this.env, request.orgId, ["workspace_profile"]);
+        return EngineeringOrgSettingsResultSchema.parse(result);
+      }, () => ({ modelSelectorVisible: request.modelSelectorVisible }));
     });
   }
 

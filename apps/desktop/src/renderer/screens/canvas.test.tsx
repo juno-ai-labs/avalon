@@ -45,6 +45,9 @@ vi.mock('../lib/collaboration-session', () => ({
   useShellCapabilities: () => ({ host: 'desktop', guest: false }),
 }));
 
+const socketStatus = vi.hoisted(() => ({ state: 'connected', sidebarReady: true }));
+vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => socketStatus }));
+
 const copyText = vi.hoisted(() => vi.fn());
 vi.mock('../lib/platform', async (importOriginal) => ({
   ...await importOriginal<typeof Platform>(),
@@ -61,6 +64,7 @@ vi.mock('./conversation-surface', () => ({
     const [panelOpen, setPanelOpen] = useState(false);
     surfaces.push({ props, requested: openResourceRequest(location.state)?.resourceId ?? null, expanded: expandRequest(location) !== null });
     return <div>
+      {props.composerActivity}
       {props.renderHeader?.({ presentUserIds: [ME, MAYA], panelOpen } as never)}
       <button onClick={() => setPanelOpen((open) => !open)} type="button">{panelOpen ? 'Close test panel' : 'Open test panel'}</button>
     </div>;
@@ -129,6 +133,8 @@ const lastSurface = () => surfaces.at(-1)!;
 
 beforeEach(() => {
   surfaces.length = 0;
+  socketStatus.state = 'connected';
+  socketStatus.sidebarReady = true;
   copyText.mockReset().mockResolvedValue(undefined);
   window.localStorage.clear();
   getCanvas.mockReset().mockResolvedValue(detail());
@@ -925,4 +931,68 @@ describe('CanvasScreen', () => {
     expect(within(dialog).queryByRole('button', { name: 'Save' })).toBeNull();
     expect(await within(dialog).findByText(/Only Maya Lin and the Organization’s administrators/)).toBeInTheDocument();
   });
+});
+
+it('hands the current Canvas live counts to the composer and follows its pushes', async () => {
+  const client = renderCanvas();
+  await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+  act(() => { applyVersionedSidebarList(client, 'canvases', 1, [listRow('Q4 revenue review', {
+    runningActivity: { backgroundAgents: 2, sidekicks: 1 },
+  })]); });
+  await screen.findByText('2 background agents running · 1 Sidekick running', { selector: '[role="status"]' });
+  act(() => { applyVersionedSidebarList(client, 'canvases', 2, [listRow('Q4 revenue review', {
+    runningActivity: { backgroundAgents: 0, sidekicks: 0 },
+  })]); });
+  await waitFor(() => expect(screen.queryByText(/background agents running/u, { selector: '[role="status"]' })).toBeNull());
+});
+
+it('refreshes counts for an open Canvas outside the sidebar page', async () => {
+  getCanvas.mockResolvedValue(detail({ runningActivity: { backgroundAgents: 1, sidekicks: 0 } }));
+  const client = renderCanvas();
+  await screen.findByText('1 background agent running', { selector: '[role="status"]' });
+  let resolveRefresh!: (value: ReturnType<typeof detail>) => void;
+  getCanvas.mockReturnValue(new Promise((resolve) => { resolveRefresh = resolve; }));
+  act(() => { applyVersionedSidebarList(client, 'canvases', 1, []); });
+  expect(screen.getByRole('status')).toHaveTextContent('1 background agent running');
+  await act(async () => { resolveRefresh(detail({ runningActivity: { backgroundAgents: 0, sidekicks: 1 } })); });
+  await screen.findByText('1 Sidekick running', { selector: '[role="status"]' });
+  expect(screen.queryByText('1 background agent running', { selector: '[role="status"]' })).toBeNull();
+});
+
+it('gates the actual Canvas composer on the current connection snapshot', async () => {
+  const client = renderCanvas();
+  await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+  for (const [state, sidebarReady, count] of [['connecting', false, 1], ['connected', false, 2], ['connected', true, 3], ['disconnected', false, 4]] as const) {
+    act(() => {
+      socketStatus.state = state;
+      socketStatus.sidebarReady = sidebarReady;
+      applyVersionedSidebarList(client, 'canvases', count, [listRow('Q4 revenue review', {
+        runningActivity: { backgroundAgents: count, sidekicks: 0 },
+      })]);
+    });
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe(sidebarReady ? '3 background agents running' : ''));
+  }
+});
+
+it('cancels an initial off-page detail read when a newer Canvas push arrives', async () => {
+  let resolveOld!: (value: CanvasDetail) => void;
+  getCanvas.mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }))
+    .mockResolvedValue(detail({ runningActivity: { backgroundAgents: 0, sidekicks: 1 } }));
+  const client = renderCanvas();
+  await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(1));
+  const oldSignal = getCanvas.mock.calls[0]![1] as AbortSignal;
+  act(() => { applyVersionedSidebarList(client, 'canvases', 1, []); });
+  await screen.findByText('1 Sidekick running', { selector: '[role="status"]' });
+  expect(oldSignal.aborted).toBe(true);
+  await act(async () => { resolveOld(detail({ runningActivity: { backgroundAgents: 9, sidekicks: 0 } })); });
+  expect(screen.getByRole('status')).toHaveTextContent('1 Sidekick running');
+});
+
+it('does not retry an inaccessible Canvas on unrelated Canvas pushes', async () => {
+  getCanvas.mockRejectedValue(new ApiError('Not found', 404, 'canvas_not_found'));
+  const client = renderCanvas();
+  await waitFor(() => expect(client.getQueryState(['canvas', CANVAS])?.status).toBe('error'));
+  const calls = getCanvas.mock.calls.length;
+  await act(async () => { applyVersionedSidebarList(client, 'canvases', 1, []); });
+  expect(getCanvas).toHaveBeenCalledTimes(calls);
 });

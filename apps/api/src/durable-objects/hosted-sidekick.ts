@@ -1,7 +1,7 @@
 import type { ConversationToolResolveRequest, ConversationToolResolveResult } from "./workspace-conversation-tool-protocol";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
-import { sidekickRowRunState } from "./sidekick-directory-sql";
+import { AUTOMATION_TRIGGER_KINDS_SQL, sidekickRowRunState } from "./sidekick-directory-sql";
 import { waitingRunActivityRecipients } from "./workspace-activity";
 import { recordSidekickRunNotices } from "./workspace-notification-intent-storage";
 import { SidekickRunNotificationSchema, type SidekickRunNotification } from "@rally/contracts/push-notifications";
@@ -41,6 +41,7 @@ import {
 import { type SidekickAttachment, SidekickAttachmentSchema } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
 import { z } from "zod";
+import { projectionIsRunning } from "./canvas-agent-activity";
 import {
   AutomationDetailSchema,
   SidekickSkillSourceSchema,
@@ -411,6 +412,8 @@ export interface HostedSidekickHost {
   afterRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void>;
   /** Inside the transaction that changed a directory row: the sidebar's waterline and a deleted Sidekick's bindings. */
   noteDirectoryChanged(automationId: string, deleted: boolean, now: number): void;
+  /** Child execution changed, without changing the Sidekick library row. */
+  noteExecutionChanged(sidekickId: string): void;
   /**
    * Inside the transaction that changed one person's read of a shared
    * conversation: their sidebar's waterline, with the Sidekick list sent only
@@ -1654,7 +1657,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
 
   async remove(input: AutomationActorRequest): Promise<void> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "remove");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
+    // The one call that reads a never-imported row: archiving is how an
+    // operator clears it, and every step below is keyed on the Sidekick's id.
+    const row = this.assertIdentity(this.storedRow(), request.workspaceId, request.automationId);
     await this.assertManager(row, request.actor);
     if (row.lifecycle === "deleted") return;
     this.storage.transactionSync(() => this.archive(Date.now()));
@@ -2234,6 +2239,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    */
   protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
     prior: PriorChildProjection | null, now: number): void {
+    if (projectionIsRunning(prior) !== projectionIsRunning(effect)) {
+      this.host.noteExecutionChanged(this.sidekickId);
+    }
     if (substreamId === "0") {
       const unreadMoved = (prior?.latestAttentionOrdinal ?? null) !== (effect.latestAttentionOrdinal ?? null) && this.hasReaders();
       if (unreadMoved || (prior?.state === "needs_input") !== (effect.state === "needs_input")) {
@@ -2293,6 +2301,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (moved && (sidekickRowRunState(before?.state) !== sidekickRowRunState(next)
       || (next === "needs_input" && before?.summary !== summary))) {
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
+    }
+    if (moved && before && TERMINAL_RUN_STATES.has(before.state) !== TERMINAL_RUN_STATES.has(next)) {
+      this.host.noteExecutionChanged(this.sidekickId);
     }
     if (moved && before?.state === "needs_input") for (const userId of waiting) this.host.noteActivityChanged(userId);
     if (!live && moved?.completed_at === now) {
@@ -3501,13 +3512,24 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   /**
    * The Sidekick's row. `region` is set on every row a hosted Sidekick wrote;
    * a row without it is one a retired Organization never imported, and reads
-   * as no Sidekick.
+   * as no Sidekick to everything but `remove`.
    */
   row(): HostedSidekickRow | null {
     const row = first(this.sql.exec<HostedSidekickRow>(
       `SELECT * FROM automation_directory WHERE automation_id = ? AND region IS NOT NULL`, this.sidekickId,
     ));
     return row;
+  }
+
+  /**
+   * The row as stored, imported or not. A never-imported row holds only what
+   * the directory projection carried (most hosted columns are NULL), so read
+   * nothing from it but who may manage it and its lifecycle.
+   */
+  private storedRow(): HostedSidekickRow | null {
+    return first(this.sql.exec<HostedSidekickRow>(
+      `SELECT * FROM automation_directory WHERE automation_id = ?`, this.sidekickId,
+    ));
   }
 
   private assertSidekick(workspaceId: string, automationId: string): HostedSidekickRow {
@@ -3748,19 +3770,20 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       this.sidekickId,
     ));
     if (readers) this.host.noteWriterReaders(this.sidekickId, readers.readers);
-    // A Canvas it is attached to shows its name, state and mark, on its card
+    // A Canvas it is attached to shows its name, state, mark and triggers, on its card
     // and in its menu. Read here for the reason above; the host pushes the
     // Canvas list only when these differ from what it last saw, so a run's
     // own touches cost nothing.
-    const face = first(this.sql.exec<{ face: string }>(
-      `SELECT directory.title || '|' || directory.lifecycle || '|' || COALESCE(directory.appearance_json, '') AS face
+    const face = first(this.sql.exec<{ face: string; trigger_kinds: string }>(
+      `SELECT directory.title || '|' || directory.lifecycle || '|' || COALESCE(directory.appearance_json, '') AS face,
+              ${AUTOMATION_TRIGGER_KINDS_SQL}
          FROM automation_directory directory
         WHERE directory.automation_id = ?1
           AND EXISTS (SELECT 1 FROM sidekick_conversation_attachments
                        WHERE automation_id = ?1 AND parent_kind = 'canvas' AND substream_id = '0')`,
       this.sidekickId,
     ));
-    if (face) this.host.noteAttachedSidekickFace(this.sidekickId, face.face);
+    if (face) this.host.noteAttachedSidekickFace(this.sidekickId, JSON.stringify(face));
   }
 }
 

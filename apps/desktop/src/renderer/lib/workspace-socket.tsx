@@ -147,6 +147,8 @@ interface WorkspaceSocketContextValue {
   setForegroundWorkstreamId(workstreamId: string | null): void;
   /** The last sidebar the server sent unasked, or null before the first one. */
   sidebarConnect: SidebarConnect | null;
+  /** The current transport has delivered its sidebar snapshot, not a previous connection's. */
+  sidebarReady: boolean;
   /**
    * Mark all seen: every Activity item recorded until now. Answered by the
    * Activity push; sent only on a subscribed socket this window holds, and a
@@ -242,6 +244,7 @@ export function WorkspaceSocketProvider({
   const [state, setState] = useState<WorkspaceSocketState>('connecting');
   const [topicWaterlines, setTopicWaterlines] = useState<Partial<Record<WorkspaceSyncTopic, number>>>({});
   const [sidebarConnect, setSidebarConnect] = useState<SidebarConnect | null>(null);
+  const [sidebarReady, setSidebarReady] = useState(false);
   const [presenceUserIdsByWorkstream, setPresenceUserIdsByWorkstream] = useState<Record<string, readonly string[]>>({});
   // `null` until main has answered. A consumer dials nothing while it does not
   // know: the answer is one IPC round trip, and a socket opened in that gap
@@ -498,9 +501,11 @@ export function WorkspaceSocketProvider({
         ]));
       }
       setSidebarConnect((current) => ({ generation: (current?.generation ?? 0) + 1 }));
+      setSidebarReady(true);
     };
     /** What every end of a socket's life resets, whoever ended it. */
     const releaseSocket = (): void => {
+      setSidebarReady(false);
       clearSocketTimers();
       subscribed = false;
       conversationViewsAvailable = false;
@@ -1110,6 +1115,7 @@ export function WorkspaceSocketProvider({
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,
       sidebarConnect,
+      sidebarReady,
       requestConversationView,
       markAllActivitySeen,
       retry,
@@ -1121,6 +1127,7 @@ export function WorkspaceSocketProvider({
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,
       sidebarConnect,
+      sidebarReady,
       exposedState,
       topicWaterlines,
     ],

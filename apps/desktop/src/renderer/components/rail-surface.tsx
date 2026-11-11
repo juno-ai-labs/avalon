@@ -57,6 +57,8 @@ interface RailSurfaceProps {
   onClose: () => void;
   /** Lets the panel reach the surface, which holds focus when the rail opens. */
   surfaceRef?: RefObject<HTMLElement | null>;
+  /** Automatic reveals preserve the person's current keyboard focus. */
+  focusOnOpen?: boolean;
   /** True while this panel is fading out over the one that replaced it. */
   leaving?: boolean;
   /** Keys pressed inside the panel, the surface itself included; not in its portalled menus. */
@@ -83,6 +85,7 @@ export function RailSurface({
   onResize,
   onClose,
   leaving = false,
+  focusOnOpen = true,
   onKeyDown,
   dropTarget,
   surfaceRef: hostRef,
@@ -94,9 +97,10 @@ export function RailSurface({
   // A panel only ever becomes the leaving one after it has held the slot, so
   // this is what it was when it arrived, and the focus below is its arrival.
   const arrivedLeaving = useRef(leaving);
+  const arrivedFocusOnOpen = useRef(focusOnOpen);
 
   useEffect(() => {
-    if (arrivedLeaving.current) return;
+    if (arrivedLeaving.current || !arrivedFocusOnOpen.current) return;
     previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const arrivedFocus = document.activeElement;
     const frame = requestAnimationFrame(() => {

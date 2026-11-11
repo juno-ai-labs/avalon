@@ -41,6 +41,33 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 
 ## How it works
 
+### Running helpers above the composer
+
+`canvas-agent-activity.ts` derives `runningActivity` from the existing
+version-fenced `sidekick_child_projections`. The Canvas detail and sidebar row
+carry counts of background agents rooted in its Chat and distinct attached
+Sidekicks doing work. Both the wizard (including unpublished drafts) and
+activation runs count, along with their background workers. Overlapping wizard
+and run activity still counts as one Sidekick, and it stays counted until neither
+is working. Idle, completed, failed, cancelled, archived and input-waiting
+conversations do not count. A live lifecycle alone is not execution.
+
+Child execution transitions advance the Canvas list waterline through a separate
+execution hook, without changing the Sidekick library. WorkspaceDO migration
+145 adds a partial index containing only live child projections; completed history
+is retained but not scanned for counts. Each publish shares computed counts across
+viewers of the same Canvas, within that synchronous publish only.
+
+The workspace socket sends viewer-authorized rows. An open Canvas outside the
+sidebar page refreshes its detail on list changes, cancelling older reads first;
+inactive and failed detail queries are left alone. Its last counts remain visible
+during a background refresh. A reconnect clears them until a new read completes.
+Desktop and web share the rolling-number animation, shimmer and reduced-motion
+fallback. A continuously mounted, visually hidden status region announces the
+current label; animated outgoing digits are hidden from assistive technology.
+Zero or unknown counts occupy no layout space, and the current connection must
+have delivered its sidebar before counts are shown.
+
 ### Identity
 
 A Canvas id is a conversation-parent id: the same `WorkstreamId` brand a
@@ -536,19 +563,17 @@ card grid with Sidekicks; the shared layout is described in
   (`canvasWrittenByRun`), and opens the Sidekick's conversation at it
   (`?run=`); the link carries the run's number in its route state, so the run's
   pill is numbered before the shared conversation has loaded. Viewer presence
-  is a facepile at the preview's top left; the independent **Data** badge at
-  its top right uses the Stored data pop-out row's `IconDatabase` and means
-  the Canvas holds a listed database-backed artifact.
-  A static site has no Data badge. Both indicators can appear together. The
-  Canvas's attached Sidekicks are a **Sidekick facepile** (`SidekickStack`,
-  `@rally/ui`): overlapping hexagons at the preview's right, under the Data
-  badge when the card has one and in its place when it has none, the first
-  four and then a count, as `AvatarStack` cuts people off. The stack is named
-  as a whole ("Sidekicks: Launch tracker; Digest") and the card's link is
-  described by it beside the Data badge. The
-  preview is decorative; the link describes its Data badge for assistive
-  technology, and the metadata names current viewers. Clicking a face opens
-  the Canvas through the same stretched link as the rest of the card.
+  is shown separately from **Data backed**, which means the Canvas holds a
+  listed database-backed artifact. **Live updating** means an active attached
+  Sidekick has a schedule or event trigger; manual-only, paused and draft
+  Sidekicks do not qualify. Trigger kinds travel in the Canvas projection so
+  readers who cannot open the Sidekick still see this state. The projection
+  uses the same definition query as the Sidekick directory, and refreshes when
+  its trigger kinds change, including draft changes; instruction-only edits
+  do not refresh it.
+  The attached Sidekick facepile names each mark on hover and lists hidden
+  names on its hexagonal overflow count. Clicking it opens the Canvas; the title link's
+  accessible description carries the indicators and stack name.
 - **The mark** (`CanvasMark`) holds the chosen icon, else the row's
   `artifactKind` glyph, in a pastel pair through `markColors`: the chosen
   colour, else a hue stable for the id (`canvasHue`). The home card's preview
@@ -573,7 +598,18 @@ card grid with Sidekicks; the shared layout is described in
   a link naming an artifact opens it expanded. The surface does not close a
   requested panel on the device cache's copy of the conversation, which may
   list none of its artifacts. Closing the panel clears what was saved, and the
-  command menu's **Open artifact** is the way back to it.
+  command menu's **Open artifact** is the way back to it. While the conversation
+  is visible, a newly attached artifact opens the right panel at an even split,
+  including after a person closed it. `useOpenAttachedArtifact` follows the
+  conversation's live resource list. Replacement socket snapshots establish
+  the baseline, so a refreshed retained cache cannot override a saved panel or
+  explicit artifact link. Automatic reveals leave keyboard focus where it was.
+  A refresh or new version of an existing artifact does not reopen the panel,
+  nor does an ordinary source attachment. If several artifacts arrive together,
+  the newest attachment opens. Hidden conversations do not take the panel from
+  the conversation on screen. The shared surface applies this to Sidekick
+  conversations too. An arrival replaces the current right-panel content,
+  including the browser, and uses the existing full-pane layout in narrow windows.
 - **The header** is a centred `TitlePillHeader` naming the Canvas,
   with the face pile of everyone else in it now and Share at the right.
   The pill's menu starts with four action tiles, using the artifact menu's
@@ -768,6 +804,16 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   anyone else; Change appearance and the pill's mark opening the palette,
   saving through the route, the pill drawing the answer, and the pill
   following a choice the list push carries.
+- `apps/desktop/src/renderer/lib/use-open-attached-artifact.test.tsx` — new
+  artifacts open a dismissible panel, including after closing it; initial
+  resources, source uploads, existing artifact refreshes and hidden
+  conversations leave it alone; replacement snapshots reset the baseline,
+  preserving saved panels and explicit links on a revisit. Run with `pnpm --filter @rally/desktop exec vitest run
+  src/renderer/lib/use-open-attached-artifact.test.tsx`.
+- `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx` — batches two
+  live attachment frames through the real client handler and opens the newest;
+  unmounts and revisits with retained queries, then replaces the snapshot and
+  preserves the restored panel before opening a later live attachment.
 - `canvases-home.test.tsx`, `canvas-sidebar-section.test.tsx` and
   `components/navigation-sidebar.test.tsx` (the Activity section) — each mark
   in the chosen icon and colour, and an unchosen one in its kind and hue.
@@ -855,6 +901,48 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-10 — Explain a card's Sidekicks and automatic updates
+
+Canvas cards now identify attached Sidekicks and distinguish automatic updates
+from data-backed content. Trigger kinds travel in the Canvas projection because
+a second client lookup would miss Sidekicks whose own page the Canvas reader
+cannot open. The shared trigger query also drives refresh detection, keeping
+draft projections current without publishing unchanged cards after
+instruction-only edits.
+
+### 2026-11-10 — Keep delegated work visible in a Canvas
+
+The composer again shows running background-agent and Sidekick counts. The
+Thread retirement removed both consumers and their old publishers, leaving a
+Canvas looking idle while its helpers built an artifact. Counts now derive
+from the hosted children's existing projections and travel on the Canvas list;
+a second subscription or polling loop would duplicate state the Organization
+already owns. Keep authoring distinct from lifecycle: an unsaved Sidekick can
+be working, and an active one can be idle. Counts remain scoped to the Canvas,
+version-fenced and hidden until the current connection has fresh state. A partial
+index over live projections avoids scanning retained history, and counts are
+shared only within each publish rather than maintained in another activity table.
+
+### 2026-11-10 — Open an artifact as it joins the conversation
+
+**What changed:** The conversation surface follows additions in its existing live
+resource feed and opens the newest attached artifact at an even split without
+taking keyboard focus. Socket snapshots establish the baseline; live additions
+follow the snapshot's newest-first ordering.
+
+**Why:** The initial Canvas detail opened an artifact only when the Canvas was opened, leaving a newly
+generated artifact behind a closed panel until someone clicked its card.
+Watching the Canvas detail or every version update was rejected: the former can
+lag the conversation and the latter would undo an intentional close. A retained
+detail from a previous visit must not turn a replacement snapshot into an
+attachment and overwrite the saved or explicitly requested panel; automatic
+reveals must not interrupt someone typing a follow-up.
+
+**Consequences:** Initial restoration, explicit
+artifact links and refreshes keep their existing behavior; only a new attachment
+in the visible conversation opens the panel again.
+
 
 ### 2026-11-10 — A Canvas holds attached Sidekicks, and its archive takes the ones it made
 

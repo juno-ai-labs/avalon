@@ -84,14 +84,9 @@ topic, which is all a window that reads the detail surfaces and never the list
 needs. No additional broadcast
 channel or polling is involved.
 
-The composer shows no running count. Its two indicators, running background
-agents and running Sidekicks, were fed by a Thread's viewer-state row and by the
-`sidekick_activity` command's counts for a Thread or Channel target; with
-Threads and Channels retired nothing wrote either, so both are deleted rather
-than kept empty. The future source for a Sidekick is a running flag on its
-`automation_directory` row, pushed with the `automations` sidebar list the
-socket already sends; a background-agent count would ride the same way on the
-conversation that started it.
+Canvas helper counts travel on the existing Canvas list snapshot and pushes;
+[`canvases.md`](canvases.md#running-helpers-above-the-composer) owns their
+aggregation, execution notifications and reconnect behavior.
 
 ### The topology
 
@@ -293,6 +288,14 @@ replaces the workspace connection and the open feed. Each connection still
 obtains its own authorized ticket; starting earlier bypasses no access check.
 The resume registry outlives the feed, so returning to a conversation resumes
 from its last room sequence.
+
+Live `resource_attached` and previously unseen `resource_updated` entries are
+prepended to the conversation's resource list, matching snapshots' newest
+attachment first ordering. Updating an existing entry preserves its position.
+This lets the artifact panel select the newest addition even when several
+frames reach the renderer in one batch. The snapshot-generation marker lets
+the panel treat a replacement snapshot as a baseline instead of live additions,
+including when a returning conversation initially paints retained query data.
 
 ### Opening a feed
 

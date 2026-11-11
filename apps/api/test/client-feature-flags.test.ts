@@ -1,6 +1,6 @@
 import { asUserId, type ClientFeatureFlags } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveClientFeatureFlags, resolveClientFeatureFlagsForSubject, resolvePushNotificationsEnabled } from "../src/services/client-feature-flags";
+import { resolveClientFeatureFlags, resolveClientFeatureFlagsForSubject, resolvePushNotificationsEnabled, resolveModelSelectorVisibleForNewOrgs } from "../src/services/client-feature-flags";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 const subject = { userId: asUserId("00000000-0000-4000-8000-000000000001") };
@@ -55,4 +55,12 @@ describe("local client feature flags", () => {
     expect(logged).toHaveBeenCalledWith(expect.objectContaining({ event: "feature_flag_override_invalid", variable: "FEATURE_FLAG_PUSH_NOTIFICATIONS_ENABLED" }));
     expect(JSON.stringify(logged.mock.calls)).not.toContain("secret-typo");
   });
+});
+
+describe("Organization creation default", () => {
+  it.each([[undefined, false], ["", false], [" TRUE ", true], ["false", false], [1, true], [0, false]])(
+    "resolves %s to %s", (value, expected) => {
+      expect(resolveModelSelectorVisibleForNewOrgs(createTestEnv({ FEATURE_FLAG_MODEL_SELECTOR_VISIBLE_FOR_NEW_ORGS: value }))).toBe(expected);
+    },
+  );
 });

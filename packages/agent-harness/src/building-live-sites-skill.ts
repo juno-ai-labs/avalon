@@ -103,7 +103,7 @@ Report these outcomes separately:
 ## Build and verify the site
 
 For a request to create an app or tool, load \`creating-an-app\` first if you
-have not, and settle its question before the first file.
+have not. Ask its entry-privacy question only when that skill requires it.
 
 1. **Decide the site's kind by what the request needs, and express it
    only in files.** There is no mode setting anywhere — the layout is
@@ -125,9 +125,11 @@ have not, and settle its question before the first file.
      database, and never publish a page that looks like it saves but
      does not.
    - If the user asks for a **protected, private, members-only, or
-     Canvas-only** site, it must be active even when it would
-     otherwise be static. Write \`index.js\` and reject every request
-     without \`x-rally-viewer-id\` before routing or serving assets.
+     Canvas-only** site, or the site displays private connected data,
+     make it active even when it would otherwise be static. Write
+     \`index.js\` and reject every request without \`x-rally-viewer-id\`
+     before routing or serving assets. Use this protection and complete
+     the requested publication, data population and updates.
 
 2. **Lay out one stable directory** beneath the workspace's resource
    output directory, named for the site (\`launch-checklist/\`, not
@@ -198,8 +200,14 @@ have not, and settle its question before the first file.
    \`\`\`
 
    **Sites are public by default.** Rally adds trusted viewer headers
-   only when the request has a valid Rally viewer session; a direct
-   public visit or crawler has neither header. Someone who is not signed in
+   only when the request has a valid session for this artifact. Rally
+   issues that session after checking canonical resource access,
+   including the owning Canvas's audience for Canvas artifacts;
+   signing into Rally alone does not grant access. The site does not
+   need to reimplement Canvas membership checks. This is Rally resource
+   authorization, not a check of each viewer's account at the source
+   provider. A direct public visit or crawler has neither header.
+   Someone without an artifact viewer session
    reaches your handler with no viewer headers, for reads and submissions
    alike; your code decides what they may do. If this site must be protected, put
    this guard at the very start of the handler, before
@@ -223,7 +231,8 @@ have not, and settle its question before the first file.
 
    **Signing in is Rally's.** When this guard answers 401 to someone
    loading a page, Rally sends them to sign in and back to the same
-   page, so a protected site's link works for anyone who can see it.
+   page, where Rally checks their access to this artifact before
+   issuing a viewer session. Holding the link does not grant access.
    On a public site, link a visitor who wants to add something to
    sign-in, for example as "Sign in to vote". \`/__rally/\` is Rally's own
    route, and the one root-absolute path a page uses:

@@ -1,5 +1,5 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
-import { IconDatabase } from '@tabler/icons-react';
+import { IconBolt, IconDatabase, IconHexagon } from '@tabler/icons-react';
 import { SidekickStack } from '@rally/ui/components/sidekick-stack';
 import { Plus, Sparkles } from 'lucide-react';
 import { useState } from 'react';
@@ -19,7 +19,7 @@ type CanvasFilter = 'all' | 'data' | 'mine' | 'shared' | 'sidekicks';
 
 const FILTERS: ReadonlyArray<readonly [CanvasFilter, string]> = [
   ['all', 'All'],
-  ['data', 'Data'],
+  ['data', 'Data backed'],
   ['mine', 'Made by me'],
   ['shared', 'Shared with me'],
   ['sidekicks', 'From Sidekicks'],
@@ -70,19 +70,24 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     const run = canvasWrittenByRun(canvas, sidekicksById, currentUserId);
     // A server older than attaching sends none.
     const attachedSidekicks = canvas.sidekicks ?? [];
+    const liveUpdating = attachedSidekicks.some((sidekick) => sidekick.status === 'active'
+      && sidekick.triggerKinds?.some((kind) => kind !== 'manual'));
     const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.artifactKind, canvas.appearance);
     return <li className="dashboard-card" key={canvas.id}>
       <div aria-hidden="true" className="dashboard-card-preview" style={{ background: tint }}>
         <Icon aria-hidden="true" color={ink} size={44} />
         {present.length > 0 && <span className="canvas-card-presence"><AvatarStack currentUserId={currentUserId} members={present} nameTooltip={false} presentUserIds={canvas.presentUserIds} showTooltip={false} /></span>}
-        {canvas.hasStoredData && <span className="canvas-card-data" id={`canvas-data-${canvas.id}`}><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data</span>}
-        {/* The Sidekicks attached to it, on the right under the Data badge, or in its place when there is none. */}
-        {attachedSidekicks.length > 0 && <span className={canvas.hasStoredData ? 'canvas-card-sidekicks is-below-data' : 'canvas-card-sidekicks'}>
-          <SidekickStack id={`canvas-sidekicks-${canvas.id}`} sidekicks={attachedSidekicks} />
-        </span>}
+        <span className="canvas-card-indicators">
+          {liveUpdating && <span className="canvas-card-badge" id={`canvas-live-${canvas.id}`}><IconBolt aria-hidden="true" size={16} stroke={1.9} />Live updating</span>}
+          {canvas.hasStoredData && <span className="canvas-card-badge" id={`canvas-data-${canvas.id}`}><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data backed</span>}
+          {attachedSidekicks.length > 0 && <Link className="canvas-card-badge canvas-card-sidekicks" tabIndex={-1} to={canvasRoute(canvas.id)}>
+            <IconHexagon aria-hidden="true" size={16} stroke={1.9} />
+            <SidekickStack id={`canvas-sidekicks-${canvas.id}`} sidekicks={attachedSidekicks} />
+          </Link>}
+        </span>
       </div>
       <div className="canvas-card-body">
-        <h3><Link aria-describedby={[canvas.hasStoredData ? `canvas-data-${canvas.id}` : null,
+        <h3><Link aria-describedby={[liveUpdating ? `canvas-live-${canvas.id}` : null, canvas.hasStoredData ? `canvas-data-${canvas.id}` : null,
           attachedSidekicks.length > 0 ? `canvas-sidekicks-${canvas.id}` : null].filter(Boolean).join(' ') || undefined} className="dashboard-card-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
         <small><span>{run
           // Above the card's stretched title link, so it opens the run and not the Canvas.

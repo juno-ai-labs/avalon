@@ -194,9 +194,8 @@ accepted-send cleanup; closing the app discards them.
   shown as failed and never written to disk.
 - Attachments beyond the ten a message may carry, whether they were found on
   restore or created by a drop that raced it.
-- The model chosen in the composer's developer-mode selector. A draft outlives the
-  session, and a model pinned last week is not a choice anyone would expect to still
-  be in force when the sentence beside it comes back.
+- Model routing and pins. The composer only displays the conversation's model;
+  the Organization controls its visibility ([feature flags](feature-flags.md)).
 
 ## Invariants
 

@@ -61,9 +61,8 @@ changes visible without navigation.
 
 A Sidekick's shared conversation uses this surface in the main window. Generated descriptions summarize instructions; ready submissions save immediately. The surface has no sidebar of its own: who is in a Canvas is the header's face pile, and a Sidekick's details are the column to the right of its conversation (`SidekickDetailLayout`).
 
-The composer shows no running count above the input;
-[`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
-records where a running signal would come from.
+The Canvas host supplies `composerActivity` above the input on desktop and web;
+[`canvases.md`](canvases.md#running-helpers-above-the-composer) owns its counts.
 
 ## Where the code lives
 
@@ -91,6 +90,9 @@ records where a running signal would come from.
   the human, assistant, tool, activity, attachment, and failure rows it
   composes. Both adapters render `MessageFeed`; windowing is the one thing it
   takes from its host, because only the paging surface needs it.
+  Its `ElicitationPanel` keeps keyboard focus on a choice distinct from focus
+  inside **Other**: the radio or checkbox outlines its row; the nested text
+  field uses its own focus styling.
 - `MessageActions` in `workstream-blocks.tsx` is the one hover row under a
   message, on every surface that draws one: Rally's turn and a person's turn.
   The host says whether the text actions apply; the row owns order, labels,
@@ -524,7 +526,13 @@ drawn as Rally's turn with the prompt, and the answer is the person's own row
 after it: `orderedTranscriptMessages` gives the answering turn its own row
 (`elicitation-<id>:answer`) and marks the question `elicitationAnswerFollows`
 with the answered state, and until that turn lands the question's row draws
-the answer under the prompt. An automation's page keeps its lifecycle controls (apply,
+the answer under the prompt. A cancelled question is a muted, collapsed
+disclosure, not a person's message bubble. Expanding it shows the original
+prompt and “No answer was recorded”; it offers no answer or retry controls.
+Its open state lives in the feed's `RowDisclosure`, keyed by elicitation ID,
+so leaving and re-entering the virtual window preserves the row's height.
+Callers without feed-owned disclosure state keep a local toggle.
+An automation's page keeps its lifecycle controls (apply,
 pause, resume, delete, run now, the run-history dialog) outside the feed rather than
 inside it. Neither host may smuggle those controls through an optional common
 prop.
