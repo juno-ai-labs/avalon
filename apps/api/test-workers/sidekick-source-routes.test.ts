@@ -162,7 +162,7 @@ describe("the Sidekick source routes, for a signed-in person", () => {
     expect(await storedRequests()).toEqual([]);
   });
 
-  it("asks another member with 201 and one pending request for them, approves an ask for the asker's own account, and lists both", async () => {
+  it("asks another member with 201 and one pending request for them, leaves an ask for the asker's own account for them to approve, and lists both", async () => {
     const forRobin = await as(MANAGER, "POST", requests(), mail([PERSON]));
     expect(forRobin.status, JSON.stringify(forRobin.body)).toBe(201);
     expect(forRobin.body).toEqual({ sidekickId: SIDEKICK_ID, requests: [{
@@ -178,9 +178,15 @@ describe("the Sidekick source routes, for a signed-in person", () => {
     const ownMail = await connectGoogle(MANAGER, "avery@example.com");
     const own = await as(MANAGER, "POST", requests(), mail([MANAGER], { condition: null }));
     expect(own.status, JSON.stringify(own.body)).toBe(201);
+    // Asking approves nobody, the asker included: theirs waits for their own press, and lets nothing in until then.
     expect(own.body).toMatchObject({ sidekickId: SIDEKICK_ID, requests: [{
-      person: { userId: MANAGER, displayName: "Avery" }, state: "approved", yours: true, condition: null, decidedAt: expect.any(Number) }] });
+      person: { userId: MANAGER, displayName: "Avery" }, state: "pending", yours: true, condition: null, decidedAt: null }] });
     expect((own.body as { requests: unknown[] }).requests).toHaveLength(1);
+    expect(await storedSources()).toEqual([]);
+    const ownRequestId = (own.body as { requests: Array<{ requestId: string }> }).requests[0]!.requestId;
+    const pressed = await as(MANAGER, "POST", decision(ownRequestId), { decision: "approve" });
+    expect(pressed.status, JSON.stringify(pressed.body)).toBe(200);
+    expect(pressed.body).toMatchObject({ state: "approved", yours: true });
 
     const listed = await as(MANAGER, "GET", sources());
     expect(listed.status, JSON.stringify(listed.body)).toBe(200);
@@ -330,7 +336,7 @@ describe("the Sidekick source routes' refusals, by name", () => {
       ask: async () => mail([PERSON], { eventTypes: ["email.received", "email.exploded"] }) },
     { what: "somebody who is not in the Organization, beside somebody who is", status: 409, code: "sidekick_source_person_unavailable",
       ask: async () => mail([PERSON, UNKNOWN_ID]) },
-    // Robin could be asked; the asker's own account is approved by asking, and there is none to approve.
+    // Robin could be asked; the asker is here to be told now that they have no account to approve.
     { what: "the asker's own account with none connected, beside somebody who could be asked", status: 409, code: "sidekick_source_connection_missing",
       ask: async () => mail([PERSON, MANAGER]) },
     { what: "a card in a Canvas the asker cannot open", status: 403, code: "sidekick_source_place_denied",

@@ -1207,10 +1207,12 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    * A manager asks people to let events from one of their connectors start
    * this Sidekick, with an optional condition each person's events must meet.
    *
-   * Asking for one's own connection is one's own act and is approved here.
-   * Everyone else is asked and decides for themselves: nothing a manager or an
-   * agent does stands in for the person's answer. Asking again for the same
-   * thing answers with the request already waiting.
+   * Everyone asked decides for themselves, the asker included: an agent
+   * writes the ask and its filter, and nothing it does stands in for the
+   * person's answer, their own account's no less than a colleague's. The
+   * asker is told nothing about their own request: its card is in the
+   * conversation they asked from, and it is listed under Sources. Asking
+   * again for the same thing answers with the request already waiting.
    */
   async requestSources(input: z.input<typeof SidekickSourceAskRequestSchema>): Promise<SidekickSourceRequestResult> {
     const request = parseRpcInput(SidekickSourceAskRequestSchema, input, "sidekick_source_ask");
@@ -1269,9 +1271,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       const already = request.ask.operationId ? this.sources().requestsForOperation(this.sidekickId, request.ask.operationId) : [];
       if (already.length > 0) return { row, requests: already, notices };
       const requests: SidekickSourceRequest[] = [];
-      let sourcesMoved = false;
       for (const [index, userId] of userIds.entries()) {
-        const relationship = relationships[index]!;
         const waiting = this.sources().requestsForSidekick(this.sidekickId).find((entry) => entry.state === "pending"
           && entry.userId === userId && entry.connectorType === request.ask.connectorType
           && entry.condition === condition && JSON.stringify(entry.eventTypes) === JSON.stringify(eventTypes));
@@ -1280,8 +1280,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
           continue;
         }
         const own = userId === request.actor.userId;
-        const connections = own ? this.sourceConnections(row.workspace_id, userId, request.ask.connectorType) : [];
-        if (own && connections.length === 0) throw sidekickSourceError("sidekick_source_connection_missing");
+        // The asker is here to be told now that they have nothing to approve; anybody else finds out when they answer.
+        if (own && this.sourceConnections(row.workspace_id, userId, request.ask.connectorType).length === 0) {
+          throw sidekickSourceError("sidekick_source_connection_missing");
+        }
         const { request: created, replaced } = this.sources().ask({
           requestId: requestIds[index]!, sidekickId: this.sidekickId, userId, connectorType: request.ask.connectorType,
           eventTypes, condition, requestedByUserId: request.actor.userId, requestedByName: request.actorName,
@@ -1293,19 +1295,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         if (!own) {
           notices.push(...recordSourceRequestAsked(this.host, { workspaceId: row.workspace_id, generation: row.authority_generation,
             request: created, notice: askNotices.get(created.requestId)!, now }));
-          requests.push(created);
-          continue;
         }
-        for (const connection of connections) {
-          for (const eventType of eventTypes) {
-            this.sources().put({ sidekickId: this.sidekickId, userId, connectionId: connection.id, connectorType: request.ask.connectorType,
-              eventType, condition, membershipIncarnation: relationship!.incarnation, requestId: created.requestId }, now);
-          }
-        }
-        requests.push(this.sources().settle(created.requestId, "approved", now)!);
-        sourcesMoved = true;
+        requests.push(created);
       }
-      if (sourcesMoved) this.scheduleSourceReconciliation();
       // The whole answer, a waiting request this call found among it.
       if (request.ask.operationId) this.sources().recordOperation(this.sidekickId, request.ask.operationId, requests.map((entry) => entry.requestId));
       this.touchDirectory(now);
@@ -1895,12 +1887,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const initialPlan = this.externalEventPlan(request, initial);
     if (initialPlan.kind === "refuse") return { admitted: false, outcomeCode: initialPlan.outcomeCode };
     const source = await this.eventSource(request.event, request.registrationId);
-    // Who the run acts as is the delegates' answer, and whose event it is
-    // comes first: a run a person's mail started acts as that person when
-    // they are a delegate, so a reply goes through their mailbox and nobody
-    // else's. Otherwise any delegate, and with none the Sidekick itself.
+    // Who the run acts as follows whose event it is. An event that belongs
+    // to somebody (a person's mail, a private place) starts a run that acts
+    // as one of them when they are a delegate, so a reply goes through their
+    // mailbox, and as the Sidekick itself when none of them is: a person who
+    // let their events in lent no account, and their mail is not acted on
+    // with a third person's. An event the whole Organization can see is
+    // anybody's, so any delegate serves it, and with none the Sidekick itself.
     const coordinator = source === null ? null
-      : (source.audience === null ? null : await this.coordinator(null, source.audience, false)) ?? await this.coordinator();
+      : source.audience === null ? await this.coordinator() : await this.coordinator(null, source.audience, false);
     const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
     const plan = this.externalEventPlan(request, row);
     if (plan.kind === "refuse") return { admitted: false, outcomeCode: plan.outcomeCode };

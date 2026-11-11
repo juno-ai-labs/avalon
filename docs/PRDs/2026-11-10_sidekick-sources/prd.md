@@ -144,7 +144,7 @@ be able to ask in a person's name.
 | Wire name | Capability | Mode | Idempotency | What it does |
 | --- | --- | --- | --- | --- |
 | `sidekick_sources_list` | `rally.sidekick.sources.list` | read | safe | Input `sidekickId`. Returns each source (`userId`, `name`, `account`, `connectorType`, `eventTypes`, `condition`, `available`) and each request still waiting or declined. |
-| `sidekick_request_source` | `rally.sidekick.sources.request` | write, serial | record before execute, re-enterable on its receipt | Input `sidekickId`, `userIds` (at least one), `connectorType`, `eventTypes` (at least one), optional `condition`. Returns `sidekickId` and each request as it stands: `approved` for the acting person's own account, `pending` for everyone else. It never waits for an answer. The client draws its output as the request's card. |
+| `sidekick_request_source` | `rally.sidekick.sources.request` | write, serial | record before execute, re-enterable on its receipt | Input `sidekickId`, `userIds` (at least one), `connectorType`, `eventTypes` (at least one), optional `condition`. Returns `sidekickId` and each request as it stands, `pending` when new: asking approves nobody, the acting person included. It never waits for an answer. The client draws its output as the request's card. |
 | `sidekick_test_source_condition` | `rally.sidekick.sources.test` | read | safe | Input `connectorType`, `eventType`, `condition`. Judges the acting person's own ten most recent events of that type with the production judge and returns `judged: true`, how many it let in, and each event's title, summary, snippet and verdict. With no classifier configured, or no recent events of that type, it returns `judged: false` and a reason. |
 
 Every input is a strict object: an unknown field is refused. No tool takes
@@ -199,9 +199,10 @@ running as itself because of the deploy
 This PRD freezes when it completes. The living list, with what each answer
 would change, is in
 [`sidekick-sources.md`](../../sidekick-sources.md#open-questions); it also
-holds two questions raised in review after this list was written (whether a
+held two questions raised in review after this list was written (whether a
 Sidekick run should hold `sidekick_set_delegation`, and who may read an
-admitted email's full text).
+admitted email's full text). The owner answered both, and questions 4 and 5
+below, on 2026-11-11; the answers are in that document's changelog.
 
 1. Should an agent enrolling a delegate become a request too? (Non-goal 2.)
 2. What threshold should a person's filter use? It shares the trigger gate's

@@ -25,7 +25,7 @@ const SourcesListInputSchema = z.strictObject({
 const RequestSourceInputSchema = z.strictObject({
   sidekickId: IdSchema.describe("The Sidekick whose trigger these people's events should start."),
   userIds: z.array(UserIdSchema).min(1)
-    .describe("The Organization users to ask, by userId. Include the person you are working for to add their own account; theirs is approved at once."),
+    .describe("The Organization users to ask, by userId. Include the person you are working for to ask for their own account; they approve theirs on the request, as everyone does."),
   connectorType: z.string().min(1)
     .describe("The connector whose events are asked for, as the Sidekick's trigger names it, for example google."),
   eventTypes: z.array(z.string().min(1)).min(1)
@@ -96,7 +96,7 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   }, {
     definition: {
       name: name("request_source"),
-      description: "Ask Organization users to let events from one of their accounts start a Sidekick, optionally only events meeting a written filter. Each person gets a request only they can approve or decline, in Rally and by email; this returns each request's state and never waits for an answer. Asking the person you work for approves their own account at once. To change a filter, ask again with the new one.",
+      description: "Ask Organization users to let events from one of their accounts start a Sidekick, optionally only events meeting a written filter. Each person gets a request only they can approve or decline, in Rally and by email; this returns each request's state and never waits for an answer. Nobody is approved by asking, the person you work for included. To change a filter, ask again with the new one.",
       capability: "rally.sidekick.sources.request", mode: "write" as const, idempotency: "record_before_execute" as const,
       inputSchema: z.toJSONSchema(RequestSourceInputSchema),
     },
