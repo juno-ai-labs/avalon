@@ -1,3 +1,4 @@
+import { ProductAnalyticsPreferenceClient } from '../common/product-analytics-preference';
 import { parsePasswordLoginRequest } from '../common/password-login';
 import { annotationDraftKeyForScope } from '../common/draft-keys';
 import { createElectronFetch } from '@rally/electron-network';
@@ -20,7 +21,6 @@ import {
   CreateWorkspaceRequestSchema,
   IdSchema,
   OnboardingRegionRequestSchema,
-  ProductAnalyticsPreferenceSchema,
   RegionSchema,
   SessionSchema,
   SocketTicketSchema,
@@ -1215,51 +1215,28 @@ const debugSettingsController = new DebugSettingsController({
   onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
 });
 
-async function requestProductAnalyticsPreference(): Promise<{
-  enabled: boolean;
-  version: number;
-}> {
+const productAnalyticsPreference = new ProductAnalyticsPreferenceClient(async (path, options) => {
   const auth = await loadStoredAuth();
   if (!auth) throw new Error('Sign in before changing Product analytics');
-  const response = await electronFetch(`${apiBaseForAuth(auth)}/telemetry/preference`, {
-    headers: { Accept: 'application/json', Authorization: `Bearer ${auth.accessToken}` },
-    signal: AbortSignal.timeout(PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS),
-  });
-  if (!response.ok) throw await responseError(response);
-  return ProductAnalyticsPreferenceSchema.parse(await readJsonBody(response));
-}
-
-async function syncProductAnalyticsPreference(
-  enabled: boolean,
-  expectedVersion: number,
-): Promise<{ enabled: boolean; version: number }> {
-  const auth = await loadStoredAuth();
-  if (!auth) throw new Error('Sign in before changing Product analytics');
-  const apply = (version: number) => electronFetch(`${apiBaseForAuth(auth)}/telemetry/preference`, {
-    method: 'PATCH',
+  const response = await electronFetch(`${apiBaseForAuth(auth)}${path}`, {
+    method: options.method,
     headers: {
       Accept: 'application/json',
       Authorization: `Bearer ${auth.accessToken}`,
-      'Content-Type': 'application/json',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
     },
-    body: JSON.stringify({ enabled, expectedVersion: version }),
-    signal: AbortSignal.timeout(15_000),
+    ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+    signal: options.signal ?? AbortSignal.timeout(PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS),
   });
-  const response = await apply(expectedVersion);
-  if (response.status === 409) {
-    // Another installation won the compare-and-set. Adopt that canonical
-    // preference instead of replaying this installation's stale choice over it.
-    return requestProductAnalyticsPreference();
-  }
   if (!response.ok) throw await responseError(response);
-  return ProductAnalyticsPreferenceSchema.parse(await readJsonBody(response));
-}
+  return options.schema.parse(await readJsonBody(response));
+});
 
 const productAnalyticsSettingsController = new ProductAnalyticsSettingsController({
   readSettings: () => readStoredApplicationSettings(userDataDirectory()),
   writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
-  readPreference: requestProductAnalyticsPreference,
-  syncPreference: syncProductAnalyticsPreference,
+  readPreference: () => productAnalyticsPreference.read(),
+  syncPreference: (enabled, expectedVersion) => productAnalyticsPreference.update(enabled, expectedVersion),
   invalidateNativeCrashGeneration: async () => {
     await invalidateActiveNativeCrashGeneration({
       rootDirectory: join(userDataDirectory(), 'telemetry', 'native-crashes'),

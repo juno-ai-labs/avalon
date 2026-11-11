@@ -37,6 +37,12 @@ The browser shell lives in the browser package and declares its own UI dependenc
 Both hosts reuse application recovery and query defaults. Initial session restoration
 shows a loading state before offering sign-in.
 
+## Account privacy preference
+
+Preferences uses the browser shell's identity-scoped `RallyApi` to read and save
+Product analytics. The shared protocol, consent scope and failure behavior are
+owned by [telemetry](telemetry.md#account-preference-in-the-web-app).
+
 ## How it works
 
 Vite builds the client and content-addressed assets. The Worker reads the built

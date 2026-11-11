@@ -1,3 +1,5 @@
+import type { ProductAnalyticsPreference } from '@rally/contracts/telemetry';
+import { ProductAnalyticsPreferenceClient } from '../../common/product-analytics-preference';
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
@@ -842,6 +844,18 @@ export class RallyApi {
       modelSelectorVisible: raw.modelSelectorVisible ?? false,
       currentUser,
     };
+  }
+
+  private readonly productAnalyticsPreference = new ProductAnalyticsPreferenceClient(
+    (path, options) => this.request(path, options),
+  );
+
+  getProductAnalyticsPreference(signal?: AbortSignal): Promise<ProductAnalyticsPreference> {
+    return this.productAnalyticsPreference.read(signal);
+  }
+
+  updateProductAnalyticsPreference(enabled: boolean, expectedVersion: number): Promise<ProductAnalyticsPreference> {
+    return this.productAnalyticsPreference.update(enabled, expectedVersion);
   }
 
   async getMyPreferences(signal?: AbortSignal): Promise<MemberPreferences> {

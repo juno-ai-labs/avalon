@@ -1,3 +1,5 @@
+import { readDevicePreferences, setDeviceStartupPage } from '../lib/device-preferences';
+import { BrowserProductAnalyticsSetting } from '../components/browser-product-analytics-setting';
 import { startConnectorAuthorization } from '../lib/start-connector-authorization';
 import { useDocumentTitle } from '../lib/document-title';
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
@@ -25,6 +27,7 @@ import {
   Menu,
   MonitorCog,
   Bell,
+  Brain,
   ChevronRight,
   Ellipsis,
   Plug,
@@ -191,7 +194,7 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
   );
 }
 
-/** Settings → Account: the text the agent adds to its system prompt on turns this person starts. */
+/** Settings → Account → Preferences: the text the agent adds to its system prompt on turns this person starts. */
 function PersonalSystemPromptSetting({ api, workspaceId }: { api: RallyApi; workspaceId: string }): React.JSX.Element {
   const queryClient = useQueryClient();
   // Per Organization, so the key carries it: another Organization's text must
@@ -238,7 +241,7 @@ function PersonalSystemPromptSetting({ api, workspaceId }: { api: RallyApi; work
 
 /**
  * A settings heading over one scope's remembered facts: the person's own under
- * Account, the Organization's under Organization. Per Organization, so the key
+ * Memories, the Organization's under Organization. Per Organization, so the key
  * carries it; Remove shows where the server says the reader may remove a fact.
  */
 function MemoryReviewSection({ emptyCopy, forget, heading, queryKey, read }: {
@@ -257,7 +260,7 @@ function MemoryReviewSection({ emptyCopy, forget, heading, queryKey, read }: {
   </>;
 }
 
-/** Settings → Account → Agent: whether this person's transcripts show the agent's work. */
+/** Settings → Account → Preferences → Agent: whether this person's transcripts show the agent's work. */
 function AgentWorkSetting({ api, workspaceId }: { api: RallyApi; workspaceId: string }): React.JSX.Element {
   const preferences = useMemberPreferences(api, workspaceId);
   const save = useSaveMemberPreferences(api, workspaceId);
@@ -396,7 +399,7 @@ function fallbackConnectionIcon(connection: WorkstreamConnection): LucideIcon {
  * and this app. Every other section configures the Organization or a member's
  * place in it, and its routes refuse a guest, so a guest sees it disabled.
  */
-const GUEST_SETTINGS_SECTIONS: ReadonlySet<SettingsSection> = new Set(['account', 'members', 'application']);
+const GUEST_SETTINGS_SECTIONS: ReadonlySet<SettingsSection> = new Set(['account', 'preferences', 'members', 'application']);
 const GUEST_SECTION_DISABLED_REASON = 'Only members of this organization can open this.';
 
 const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
@@ -404,6 +407,8 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
     label: 'Settings',
     items: [
       { id: 'account', label: 'Account', icon: UserRound },
+      { id: 'preferences', label: 'Preferences', icon: MonitorCog, child: true },
+      { id: 'memories', label: 'Memories', icon: Brain },
       { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'workspace', label: 'Organization', icon: Users },
       // Its own page beneath Organization: the roster, guests and invitations
@@ -631,6 +636,7 @@ export function WorkspaceSettingsScreen({
   const webhookRefreshCancelRef = useRef<HTMLButtonElement | null>(null);
   const reconnectCancelRef = useRef<HTMLButtonElement | null>(null);
   const disconnectCancelRef = useRef<HTMLButtonElement | null>(null);
+  const [startupPage, setStartupPage] = useState(() => readDevicePreferences().startupPage ?? 'canvas-homepage');
   const [linkedSection] = useState(linkedSettingsSection);
   const [requestedSection, setActiveSection] = useState<SettingsSection>(linkedSection ?? 'account');
   // At phone width the sections list is a sheet over the page. It starts open
@@ -1535,6 +1541,67 @@ export function WorkspaceSettingsScreen({
             </button>
           </header>
           <div className="settings-content-scroll" inert={navigationSheetOpen}>
+            {activeSection === 'preferences' && (
+              <section aria-labelledby="settings-title" className="settings-pane">
+                <div className="settings-list-card">
+                  <div className="settings-preference-row">
+                    <SettingCopy setting={settings.startupPage} />
+                    <DropdownSelect ariaLabel={settings.startupPage.label}
+                      onValueChange={(value) => {
+                        const next = value === 'last-opened' ? 'last-opened' : 'canvas-homepage';
+                        setDeviceStartupPage(next);
+                        setStartupPage(next);
+                      }}
+                      options={[{ label: 'Canvas Homepage', value: 'canvas-homepage' }, { label: 'Last Opened', value: 'last-opened' }]}
+                      value={startupPage} variant="secondary" />
+                  </div>
+                </div>
+                {!guest && api && <>
+                  <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Agent</h2></div>
+                  <div className="settings-list-card">
+                    <AgentWorkSetting api={api} workspaceId={workspace.id} />
+                    <PersonalSystemPromptSetting api={api} key={workspace.id} workspaceId={workspace.id} />
+                  </div>
+                </>}
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Privacy & diagnostics</h2><p>Control product analytics and detailed crash reporting for your account.</p></div>
+                {browserHost ? <BrowserProductAnalyticsSetting /> : <>
+                <div className="settings-list-card">
+                  <SettingToggle
+                    setting={settings.analytics}
+                    aria-label="Product analytics"
+                    checked={applicationSettings?.productAnalyticsEnabled ?? true}
+                    disabled={
+                    applicationSettings === null
+                    || updateProductAnalytics.isPending
+                    }
+                    onChange={(event) => updateProductAnalytics.mutate(event.currentTarget.checked)}
+                    role="switch"
+                  />
+                </div>
+                {applicationSettings?.productAnalyticsPreferencePending && (
+                  <p className="settings-oauth-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={14} />Waiting to sync this account preference.</p>
+                )}
+                {applicationSettings?.nativeCrashRestartRequired && (
+                  <p className="settings-oauth-status" role="status">Crash upload has stopped for this launch. Restart Rally to remove local native crash dumps and apply the current setting.</p>
+                )}
+                {applicationSettingsLoadError && <ErrorNotice>{applicationSettingsLoadError}</ErrorNotice>}
+                {updateProductAnalytics.error && <ErrorNotice occurrence={updateProductAnalytics.error}>{updateProductAnalytics.error.message}</ErrorNotice>}
+                </>}
+              </section>
+            )}
+            {activeSection === 'memories' && !guest && api && (
+              <section aria-labelledby="settings-title" className="settings-pane">
+                <div data-setting-id={settings.personalMemories.id} tabIndex={-1}>
+                  <MemoryReviewSection
+                    emptyCopy="Rally has not remembered anything about you yet."
+                    forget={(factId) => api.forgetMyMemory(factId)}
+                    heading="What Rally remembers about you"
+                    queryKey={['memory', 'me', workspace.id]}
+                    read={(signal) => api.getMyMemory(signal)}
+                  />
+                </div>
+              </section>
+            )}
             {activeSection === 'account' && (
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading"><h2><SettingLabel setting={settings.profile} /></h2><p>Your Rally identity and access in this Organization.</p></div>
@@ -1572,20 +1639,6 @@ export function WorkspaceSettingsScreen({
                   </label>
                 </div>
                 {updateUserTimezone.error && <ErrorNotice occurrence={updateUserTimezone.error}>{updateUserTimezone.error.message}</ErrorNotice>}
-                {api && <>
-                  <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Agent</h2></div>
-                  <div className="settings-list-card">
-                    <PersonalSystemPromptSetting api={api} key={workspace.id} workspaceId={workspace.id} />
-                    <AgentWorkSetting api={api} workspaceId={workspace.id} />
-                  </div>
-                  <MemoryReviewSection
-                    emptyCopy="Rally has not remembered anything about you yet."
-                    forget={(factId) => api.forgetMyMemory(factId)}
-                    heading="What Rally remembers about you"
-                    queryKey={['memory', 'me', workspace.id]}
-                    read={(signal) => api.getMyMemory(signal)}
-                  />
-                </>}
                 </>}
                 {/* Members and guests alike: either can connect an app. A
                     support session is refused, since the list spans the
@@ -2475,31 +2528,6 @@ export function WorkspaceSettingsScreen({
                 {(applicationSettingsLoadError || updateLockdownMode.error) && (
                   <ErrorNotice>{applicationSettingsLoadError ?? updateLockdownMode.error?.message}</ErrorNotice>
                 )}
-                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Privacy & diagnostics</h2><p>Control product analytics and detailed crash reporting for your account.</p></div>
-                <div className="settings-list-card">
-                  <SettingToggle
-                    setting={settings.analytics}
-                    aria-label="Product analytics"
-                    checked={applicationSettings?.productAnalyticsEnabled ?? true}
-                    disabled={
-                    applicationSettings?.productAnalyticsAvailable === false
-                    || applicationSettings === null
-                    || updateProductAnalytics.isPending
-                    }
-                    onChange={(event) => updateProductAnalytics.mutate(event.currentTarget.checked)}
-                    role="switch"
-                  />
-                </div>
-                {applicationSettings?.productAnalyticsAvailable === false && (
-                  <p className="settings-oauth-status">Product analytics is managed in the Rally desktop app.</p>
-                )}
-                {applicationSettings?.productAnalyticsPreferencePending && (
-                  <p className="settings-oauth-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={14} />Waiting to sync this account preference.</p>
-                )}
-                {applicationSettings?.nativeCrashRestartRequired && (
-                  <p className="settings-oauth-status" role="status">Crash upload has stopped for this launch. Restart Rally to remove local native crash dumps and apply the current setting.</p>
-                )}
-                {updateProductAnalytics.error && <ErrorNotice occurrence={updateProductAnalytics.error}>{updateProductAnalytics.error.message}</ErrorNotice>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Rally feel at home on this Mac.</p></div>
                 <ThemePicker />
                 {isSettingAvailable(settings.menuBar, settingsContext) && (

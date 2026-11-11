@@ -44,6 +44,19 @@ the implementation that future changes must preserve.
 For the implementation checklist, see
 [`adding-new-instrumented-event.md`](adding-new-instrumented-event.md).
 
+## Account preference in the web app
+
+Settings → Account → Preferences edits the same account-level Product analytics
+consent on both hosts. `common/product-analytics-preference.ts` owns the
+`/telemetry/preference` GET/PATCH protocol, response schema and version guard;
+a 409 re-reads the canonical value without replaying the stale choice. Electron
+supplies its native authenticated transport; web reuses the browser shell's
+identity-scoped `RallyApi` and HttpOnly cookies. Browser saves require a connection
+and display the acknowledged value; failures show an error and re-read the
+account. Desktop retains local-first disable, pending offline writes, spool
+purging and native crash generation invalidation. This introduces no browser
+telemetry collector or event producer.
+
 ## Storage and background writes
 
 `TELEMETRY_DB` owns accepted events, delivery receipts, and replay audit rows.
@@ -837,6 +850,16 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-11-11 — Save account analytics consent from the web app
+
+**What changed:** Preferences reads and updates account consent through a single
+shared client on web and desktop, with version conflicts adopting the newer value.
+Web uses the existing identity cookie adapter; desktop uses native bearer transport.
+**Why:** The account-level preference was exposed as a disabled desktop-only
+control in the browser. A local browser switch would not change server consent.
+**Consequences:** Web saves require a successful server acknowledgement; desktop
+local-first disable, offline sync, and crash handling remain unchanged.
 
 ### 2026-11-10 — Artifact inventory verification retries transient Cloudflare failures
 
