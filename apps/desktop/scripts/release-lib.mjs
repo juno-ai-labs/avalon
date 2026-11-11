@@ -146,21 +146,21 @@ function yamlScalar(value) {
   return trimmed;
 }
 
-export function parseMacUpdateFeed(text) {
+export function parseUpdateFeed(text, manifestName = 'latest-mac.yml') {
   const lines = text.split(/\r?\n/u);
   const versionLine = lines.find((line) => /^version:\s*/u.test(line));
-  if (!versionLine) throw new Error('latest-mac.yml is missing its version');
+  if (!versionLine) throw new Error(`${manifestName} is missing its version`);
   const version = yamlScalar(versionLine.replace(/^version:\s*/u, ''));
   parseVersion(version);
 
   const fileIndexes = lines
     .map((line, index) => (/^\s*-\s+url:\s*/u.test(line) ? index : -1))
     .filter((index) => index >= 0);
-  if (fileIndexes.length === 0) throw new Error('latest-mac.yml is missing files[0].url');
+  if (fileIndexes.length === 0) throw new Error(`${manifestName} is missing files[0].url`);
   const files = fileIndexes.map((fileIndex, position) => {
     const url = yamlScalar(lines[fileIndex].replace(/^\s*-\s+url:\s*/u, ''));
     if (!url || /^https?:\/\//u.test(url) || url.includes('/') || url.includes('?') || url.includes('#')) {
-      throw new Error(`latest-mac.yml must reference a sibling artifact filename; received ${url}`);
+      throw new Error(`${manifestName} must reference a sibling artifact filename; received ${url}`);
     }
     let sha512;
     let size;
@@ -171,18 +171,21 @@ export function parseMacUpdateFeed(text) {
       if (/^\s+size:\s*/u.test(line)) size = Number(yamlScalar(line.replace(/^\s+size:\s*/u, '')));
     }
     if (!sha512 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(sha512)) {
-      throw new Error(`latest-mac.yml is missing a valid files[${position}].sha512`);
+      throw new Error(`${manifestName} is missing a valid files[${position}].sha512`);
     }
     if (!Number.isSafeInteger(size) || size <= 0) {
-      throw new Error(`latest-mac.yml is missing a valid positive files[${position}].size`);
+      throw new Error(`${manifestName} is missing a valid positive files[${position}].size`);
     }
     return { url, sha512, size };
   });
   if (new Set(files.map((file) => file.url)).size !== files.length) {
-    throw new Error('latest-mac.yml contains duplicate file URLs');
+    throw new Error(`${manifestName} contains duplicate file URLs`);
   }
   return { version, files, file: files[0] };
 }
+
+// Compatibility entry point for the existing Mac release pipeline.
+export const parseMacUpdateFeed = parseUpdateFeed;
 
 export async function sha512File(filePath) {
   const hash = createHash('sha512');
