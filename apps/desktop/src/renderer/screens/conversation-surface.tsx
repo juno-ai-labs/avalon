@@ -96,6 +96,7 @@ import {
   type WorkstreamMessageDeliveryMode,
 } from '../lib/use-workstream-socket';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
+import { useWorkspaceQuery } from '../lib/use-workspace';
 import { patchCachedWorkstreamViewerState, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { answerConversationElicitation } from '../lib/conversation-elicitation';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, PendingOpening, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
@@ -1041,6 +1042,7 @@ function ConversationSurfaceContent({
 
   const { api, session } = useCollaborationSession();
   const { guest } = useShellCapabilities();
+  const workspace = useWorkspaceQuery({ api, session });
   const workspaceSocket = useOptionalWorkspaceSocket();
   const presenceUserIdsByWorkstream = workspaceSocket?.presenceUserIdsByWorkstream ?? NO_WORKSPACE_PRESENCE;
   const queryClient = useQueryClient();
@@ -2590,10 +2592,10 @@ function ConversationSurfaceContent({
                say what the flag served, while a pinned one whose run failed
                before its first token records nothing and would otherwise read
                as following a flag it never consults. */
-            model={{
+            model={workspace.data?.modelSelectorVisible ? {
               model: displayedDetail.latestHarnessRun?.model ?? displayedDetail.modelOverride ?? null,
               pinned: (displayedDetail.modelOverride ?? null) !== null,
-            }}
+            } : undefined}
             onAttach={attachmentDraft.addFiles}
             onOpenAttachment={openAttachment}
             onRemoveAttachment={attachmentDraft.removeAttachment}

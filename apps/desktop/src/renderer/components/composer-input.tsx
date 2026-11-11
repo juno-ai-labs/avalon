@@ -25,7 +25,6 @@ import {
   toggleListAtSelection,
 } from '../lib/markdown-lists';
 import { normalizeMentionLabels, splitMentionHighlights } from '../lib/mention-highlight';
-import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { appendDictationTranscript, type RealtimeDictationApi, useRealtimeDictation } from '../lib/use-realtime-dictation';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useFilePaste } from '../lib/use-file-paste';
@@ -133,10 +132,9 @@ interface ComposerInputProps {
    */
   mentionListbox?: { id: string; activeOptionId: string | undefined };
   /**
-   * The model pill in the toolbar. Composers that pass nothing show none; those
-   * that do still only show it while Application → Developer → **Debug enabled**
-   * is on, because which model the work runs on is a developer's question rather
-   * than part of describing work.
+   * The model pill in the toolbar. The conversation host supplies it only when
+   * the Organization's modelSelectorVisible setting is enabled. Device Debug
+   * mode does not gate it.
    */
   model?: ComposerModelControl;
   /** Absent where the message cannot carry files: no attach control, drop or paste. */
@@ -298,7 +296,6 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const attachFiles = useCallback((files: FileList | File[]): void => {
     if (!submitting) onAttach?.(files);
   }, [onAttach, submitting]);
-  const debugEnabled = useDebugEnabled();
   const drop = useFileDrop((files) => attachFiles(files), submitting || !onAttach);
   const paste = useFilePaste(attachFiles, submitting || !onAttach, attachments.length < MAX_ATTACHMENTS);
   // An IME's in-flight text never reaches `value`, so the highlight layer steps
@@ -815,7 +812,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 </DropdownMenu.Root>
               </div>
             )}
-            {model && debugEnabled && (
+            {model && (
               /* One control, in one place, in both layouts: a disabled pill.
                  The tooltip carrying the full model id survives the disable,
                  so the id is reachable by hover and not only as the accessible

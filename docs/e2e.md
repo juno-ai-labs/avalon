@@ -376,15 +376,15 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 10. Stop and immediately restart while the first permission request is still pending (before recording starts). Resolve the older request last and confirm it cannot reopen a microphone, socket, or overwrite the new draft.
 11. After Stop, deliver a transcript delta followed by a corrected completion event. Confirm the partial remains visible and Rally waits for the completion before closing. While it waits, edit the draft or activate **Cancel dictation** and confirm the pending finalization ends immediately without overwriting the edit. Switch conversations during recording and confirm the old capture stops instead of writing into the new draft.
 
-## Desktop model-selector acceptance
+## Model-selector acceptance (macOS and web)
 
 Nothing in the Canvases and Sidekicks client picks a model at creation: the
 pickers that lived on the Thread and Breakout launchers went with
 them. What remains is the locked pill on a conversation that has run, and a
 Sidekick's own `model_override`.
 
-1. With Application → Developer → **Debug enabled** off, open a Canvas whose Chat has run and confirm its composer shows no model control.
-2. Turn Debug enabled on in the Settings window and confirm the control appears without reopening the screen, immediately to the right of the attachment button, disabled: no menu on click or on Enter, skipped by Tab, reported as disabled to assistive technology, and carrying the run's full model id in its accessible name. Confirm it stays legible at its disabled opacity.
+1. With the Organization's `modelSelectorVisible` false (the default), open a Canvas whose Chat has run and confirm its composer shows no model control, with device Debug both on and off.
+2. Call engineering MCP `update_org_settings({ orgId, modelSelectorVisible: true })` and confirm the control appears on connected macOS and web clients without reopening the screen, immediately to the right of the attachment button, disabled: no menu on click or on Enter, skipped by Tab, reported as disabled to assistive technology, and carrying the run's full model id in its accessible name. Confirm it stays legible at its disabled opacity. Set the value back to false and confirm it disappears. Switching to another Organization follows that Organization's saved value.
 3. Make a Chat's run fail before it streams a token — an invalid `OPENROUTER_API_KEY` does it — and confirm the pill reads what the conversation's row holds (`model_override`, or **Default** when none) rather than a model nobody ran.
 4. Repeat for a Sidekick with a `model_override` on its row: draft it in its own conversation, apply it, and exercise every trigger (**Run now**, a scheduled run, a run triggered by matching connector activity, and a run started by mail to the Sidekick's address), confirming each run's conversation carries the override and each run uses it. All four go through the one producer, reading the pin from the Sidekick's row through `readRunDefinition`; the point of exercising all four is that a pin has to survive into a trigger that fires days later.
 
