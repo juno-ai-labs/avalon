@@ -53,6 +53,11 @@ onboarding (including engineering MCP), legacy onboarding, and development auth.
 Changing the deployment default never rewrites existing Organizations or a
 replayed creation. Migration 0130 starts existing Organizations hidden.
 
+The local `pnpm db:seed` creates the fixed development Organization with the SQL
+default of `0` before sign-in. Development auth preserves that existing value,
+even when the creation flag is true; use `update_org_settings` to enable the
+control for a seeded Organization.
+
 The engineering MCP's `inspect_org_settings({ orgId })` reads the saved value;
 `update_org_settings({ orgId, modelSelectorVisible })` writes it and publishes
 `workspace_profile` through the existing workspace sync path. The setting lives
@@ -167,13 +172,6 @@ flag-service availability requirement.
 
 ## Testing
 
-`development-auth.test.ts` exercises creation defaults and persistence over real
-D1 migrations. `test-workers/engineering-creation.test.ts` exercises MCP creation,
-replay, audited settings writes, invalid inputs and the workspace refresh event.
-`sidekick-conversation.test.tsx` checks the shared conversation surface's visibility
-and `workstream-composer.test.tsx` checks the control independent of Debug mode.
-
-
 `apps/api/test/client-feature-flags.test.ts` covers defaults, Boolean overrides,
 invalid inputs, identical HTTP/socket answers, and the push gate.
 `apps/api/test/agent-model-flags.test.ts` covers all role defaults, shared and
@@ -219,7 +217,6 @@ an enabled Organization depend on each person's device settings.
 **Consequences:** Existing Organizations start hidden. Creation retries retain
 stored choices; updates refresh clients through `workspace_profile`. This is
 presentation only and leaves model routing and conversation pins unchanged.
-
 
 ### 2026-11-10 — Restore organization switching by default
 
