@@ -212,6 +212,55 @@ describe("release retention", () => {
     }
   });
 
+  it("archives a backlog one release at a time, oldest first", async () => {
+    const active = new MockBucket(inventory([
+      "1.10.0", "1.11.0", "1.12.0", "1.13.0", "1.14.0", "1.15.0", "1.16.0", "1.17.0", "1.18.0",
+    ]));
+    const archive = new MockBucket();
+
+    const report = await runRetention(bindings(active, archive), { dryRun: false, keepCount: 5 });
+
+    expect(report).toMatchObject({
+      activeObjectCount: 27,
+      archivedObjectCount: 20,
+      deletedObjectCount: 20,
+      retainedVersions: ["1.14.0", "1.15.0", "1.16.0", "1.17.0", "1.18.0"],
+    });
+    expect(active.deleteCalls).toEqual([
+      releaseKeys("1.10.0").sort(),
+      releaseKeys("1.11.0").sort(),
+      releaseKeys("1.12.0").sort(),
+      releaseKeys("1.13.0").sort(),
+    ]);
+    expect(archive.objects.size).toBe(20);
+  });
+
+  it("keeps the releases it finished when a run is cut short, and the next run resumes", async () => {
+    const active = new MockBucket(inventory(["1.12.0", "1.13.0", "1.14.0", "1.15.0", "1.16.0", "1.17.0", "1.18.0"]));
+    const archive = new MockBucket();
+    const failingKey = `${prefix}Avalon-1.13.0-mac-arm64.zip`;
+    const put = archive.put.bind(archive);
+    archive.put = async (key, value, options) => {
+      if (key === failingKey) throw new Error("Exceeded wall time");
+      return put(key, value, options);
+    };
+
+    await expect(runRetention(bindings(active, archive), { dryRun: false, keepCount: 5 }))
+      .rejects.toThrow("Exceeded wall time");
+    for (const key of releaseKeys("1.12.0")) {
+      expect(active.objects.has(key)).toBe(false);
+      expect(archive.objects.get(key)?.storageClass).toBe("InfrequentAccess");
+    }
+    for (const key of releaseKeys("1.13.0")) expect(active.objects.has(key)).toBe(true);
+
+    archive.put = put;
+    const resumed = await runRetention(bindings(active, archive), { dryRun: false, keepCount: 5 });
+
+    expect(resumed.archiveVersions).toEqual(["1.13.0"]);
+    expect(resumed.deletedObjectCount).toBe(5);
+    expect(resumed.activeObjectCount).toBe(27);
+  });
+
   it("accepts already verified archive objects without rewriting them", async () => {
     const activeObjects = inventory(["1.13.0", "1.14.0", "1.15.0", "1.16.0", "1.17.0", "1.18.0"]);
     const active = new MockBucket(activeObjects);
