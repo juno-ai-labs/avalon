@@ -521,7 +521,8 @@ rolling 24-hour window. The JSON receipt records when Stable last moved.
 Production retention is automated by the private `avalon-release-retention`
 Worker in `apps/release-retention`. It has no route, `workers.dev` URL, preview
 URL, or application secret. Its only capabilities are bindings to the active and
-archive release buckets. Deploy it from the repository root with:
+archive release buckets. No workflow deploys it; a merged change is not live
+until someone runs, from the repository root:
 
 ```text
 pnpm deploy:release-retention
@@ -577,16 +578,12 @@ calls and the DMG and ZIP are each roughly 180 MB, so one run cannot archive
 hundreds of versions inside a Cron invocation's wall time and subrequest budget,
 and a single R2 `delete()` takes at most 1,000 keys. A run the platform stops
 keeps every version it finished; the next night resumes at the oldest one left.
-Expect one failed Cron event per night until such a backlog is gone, each with
-`desktop_release_retention_version_archived` lines before it.
+Expect one failed Cron event per night until such a backlog is gone (see the
+alerting note below for telling it apart from a real failure).
 
-The Worker is deployed by hand with `pnpm deploy:release-retention`; no
-workflow deploys it. A change merged here is not live until someone runs that,
-and the Worker that ran from 2026-08-07 to at least 2026-11-11 predated the
-channel manifests and failed every night on
-`Unexpected active R2 key: stable/darwin/arm64/faster-mac.yml`. After deploying,
-check that `avalon-release-retention`'s version in Workers & Pages is the one
-Wrangler printed.
+If a version's multi-key `delete()` ever lands partially, every later run fails
+with `Incomplete release <version>`. Its archive copies were verified before the
+delete, so recover by deleting that version's remaining active keys by hand.
 
 The Worker calls `noRetry()` so Cloudflare cannot start a concurrent automatic
 retry after a partial failure; the next nightly invocation safely reuses any
@@ -616,9 +613,13 @@ curl "http://localhost:8799/cdn-cgi/handler/scheduled?cron=0+9+*+*+*&time=178609
 The timestamp above simulates 02:00 PDT on 2026-08-07. Require an `ok` outcome
 and a structured completion log with `dryRun: true`. After deployment, preserve
 the Wrangler output showing both Cron Triggers and inspect Workers & Pages →
-`avalon-release-retention` → Cron Events after the next window. Alert on failed
+`avalon-release-retention` → Cron Events after the next window, and check its
+deployed version is the one Wrangler printed. Alert on failed
 events, unexpected `dry-run` production reports, a non-five retained set, or any
-copy/delete count that does not match the plan.
+copy/delete count that does not match the plan. While a backlog drains, a failed
+event that ends on a platform limit (wall time or subrequests) after
+`desktop_release_retention_version_archived` lines with a falling
+`remaining_versions` is expected progress; any other exception is a real failure.
 
 ### Forced migrations
 
