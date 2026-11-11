@@ -20,10 +20,17 @@ import { putStagedResourceObject, releaseStagedResourceObject } from "./resource
  * WorkspaceDO (`withWorkspaceRuntimeDatabase`), never plain D1.
  */
 
-/** Who a revision is by. Rally's run, or a person publishing by hand. */
+/**
+ * Who a revision is by. Rally's run, a person publishing by hand, or Rally
+ * itself with no run and no person behind it: a seeded Canvas's first version
+ * (`canvas-seed-service.ts`). That last one is `system`, the kind a version
+ * may carry with no identity at all (`resource_versions_provenance_fence_insert`
+ * refuses an `agent` without its run).
+ */
 export type PublicationAuthor =
   | { kind: "agent"; runId: string; onBehalfOfUserId: string | null }
-  | { kind: "member"; userId: string };
+  | { kind: "member"; userId: string }
+  | { kind: "system" };
 
 export interface PublishedRow {
   id: string;
@@ -88,6 +95,7 @@ export function publishedRowByIdentity(workspace: D1Database, workspaceId: strin
 }
 
 function authorColumns(author: PublicationAuthor) {
+  if (author.kind === "system") return { kind: "system", runId: null, userId: null, onBehalfOf: null };
   return author.kind === "agent"
     ? { kind: "agent", runId: author.runId, userId: null, onBehalfOf: author.onBehalfOfUserId }
     : { kind: "member", runId: null, userId: author.userId, onBehalfOf: null };

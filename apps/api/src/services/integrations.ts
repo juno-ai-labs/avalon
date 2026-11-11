@@ -238,6 +238,7 @@ import {
   participantModelMessageContent,
   projectElicitationResponseMessage,
   projectImportedSourceMessage,
+  projectLeadingAssistantMessage,
   projectParticipantModelMessage,
   projectSidekickPostMessage,
   renderElicitationResponseMessage,
@@ -1600,7 +1601,9 @@ async function projectModelProtocolTranscript(
         continue;
       }
       projected.push(modelDerivative(
-        { role: "assistant", content },
+        // Nothing before it: an assistant turn here would open the provider
+        // conversation, which not every model accepts.
+        projected.length === 0 ? projectLeadingAssistantMessage(content) : { role: "assistant", content },
         "participant_turn",
         message.id,
         message.sequenceNumber,
