@@ -1,3 +1,5 @@
+import { ArtifactSidekickInvocationSchema, type ArtifactSidekickInvocation } from "@rally/contracts";
+import { artifactSidekickBinding } from "./artifact-sidekick-bindings";
 import {
   CHANNEL_COLOR_SYNC_MIGRATION,
   CHANNEL_MESSAGE_SEARCH_MIGRATION,
@@ -6208,6 +6210,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickRemove(input: Parameters<HostedSidekick["remove"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.remove(input));
+  }
+
+  /** Host-scoped app invocation. Resolve the accepted binding before entering normal run admission. */
+  async artifactInvokeSidekick(input: ArtifactSidekickInvocation) {
+    await this.initialized;
+    const request = parseRpcInput(ArtifactSidekickInvocationSchema, input, "artifact_invocation");
+    this.assertWorkspace(request.workspaceId);
+    const automationId = artifactSidekickBinding(this.state.storage.sql, request.artifactId, request.bindingName);
+    if (!automationId) throw new ApiError(404, "sidekick_invocation_unbound", "No Sidekick is bound to this app and name");
+    return this.sidekickCall(automationId, request.workspaceId, (sidekick) => sidekick.invokeArtifact({ ...request, automationId }));
   }
 
   async sidekickRunNow(input: Parameters<HostedSidekick["runNow"]>[0]) {

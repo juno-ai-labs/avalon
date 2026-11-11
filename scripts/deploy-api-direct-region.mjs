@@ -3,11 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { isEntryPoint } from './entry-point.mjs';
 
 // Shared by the ordinary direct release and the first Ashby Global bootstrap.
-// Readers stay ahead of the API writer, just as in versioned promotion.
+// Capability services precede the API; artifacts follow its named invocation export.
 const configs = Object.fromEntries(configuredRegions.map((region) => [region, [
-  `wrangler.artifacts.${region}.jsonc`, `wrangler.documents.${region}.jsonc`, `wrangler.terminal.${region}.jsonc`,
+  `wrangler.documents.${region}.jsonc`, `wrangler.terminal.${region}.jsonc`,
   ...(region === 'global' ? ['wrangler.telemetry.global.jsonc', 'wrangler.pricing.global.jsonc'] : []),
-  `.wrangler.lakehouses.${region}.json`,
+  `.wrangler.lakehouses.${region}.json`, `wrangler.artifacts.${region}.jsonc`,
 ]]));
 
 export function deployDirectRegion(region, sha, run = spawnSync) {

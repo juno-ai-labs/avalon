@@ -466,6 +466,7 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
   switch (trigger.type) {
     case 'manual': return 'On request';
+    case 'invocation': return 'When called by an app';
     case 'calendar': return trigger.summary;
     case 'interval': return trigger.summary;
     case 'connector_activity': return `When there is matching activity in ${trigger.connectorType.replaceAll('_', ' ')}`;

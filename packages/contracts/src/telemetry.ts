@@ -242,7 +242,7 @@ export type TelemetryMenuBarAction = (typeof TELEMETRY_MENU_BAR_ACTIONS)[number]
 const menuBarAction = z.enum(TELEMETRY_MENU_BAR_ACTIONS);
 
 const automationTriggerType = z.enum([
-  "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook",
+  "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "invocation",
 ]);
 const automationDeliveryTargetType = z.enum(["email", "slack_agent_dm"]);
 /** Where a digest goes: an automation destination, or the person's own Personal Channel. */

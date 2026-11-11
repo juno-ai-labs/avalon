@@ -81,6 +81,7 @@ export function sidekickNext(row: Pick<AutomationSummary, 'nextRunAt' | 'schedul
   const kinds = row.triggerKinds ?? [];
   if (kinds.includes('external_event')) return 'On alert';
   if (row.nextRunAt && (kinds.length === 0 || kinds.includes('schedule'))) return formatNextRun(row.nextRunAt, 'short', now, row.scheduleTimeZone);
+  if (kinds.includes('invocation')) return 'On app request';
   if (kinds.includes('manual')) return 'On request';
   return '—';
 }

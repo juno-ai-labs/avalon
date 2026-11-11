@@ -121,6 +121,7 @@ function fixture(route: unknown | null, options: {
       AVALON_REGION: "global",
       ARTIFACT_SERVING_DOMAIN: "rallyusercontent.test",
       ARTIFACT_HOSTS: hosts,
+      ARTIFACT_SIDEKICKS: { send: async () => { throw new Error("unexpected_sidekick_invocation"); } },
       PLATFORM_DB: createTestD1Database({
         prepare,
       }),
@@ -361,7 +362,7 @@ describe("artifact serving hostname routes", () => {
       manifest: MANIFEST,
     };
     const { env } = fixture({ hostname_stub: STUB, artifact_id: ARTIFACT, region: "global" }, {
-      checkSessionResult: { ok: true, viewerId: "user-1", viewerName: "Ada", version: 1, mode: "static", stateful: false, manifest: MANIFEST },
+      checkSessionResult: { ok: true, workspaceId: "00000000-0000-7000-8000-0000000000c1", viewerId: "user-1", viewerName: "Ada", version: 1, mode: "static", stateful: false, manifest: MANIFEST },
       currentStateResult: state,
     });
     const framing = { ...env, BROWSER_APP_ORIGIN: "https://app.example.test" };
@@ -507,6 +508,7 @@ describe("artifact serving hostname routes", () => {
     }, {
       checkSessionResult: {
         ok: true,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
         viewerId: "user-1",
         viewerName: "Ada Lovelace",
         version: 1,
@@ -721,6 +723,7 @@ describe("signing in from a site's own URL", () => {
     const { env } = fixture(route, {
       checkSessionResult: {
         ok: true,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
         viewerId: "user-1",
         viewerName: "Ada",
         version: 1,
@@ -843,6 +846,7 @@ describe("submissions from people who are not signed in", () => {
       currentStateResult: state,
       checkSessionResult: {
         ok: true,
+        workspaceId: "00000000-0000-7000-8000-0000000000c1",
         viewerId: "user-1",
         viewerName: "Ada",
         version: 1,

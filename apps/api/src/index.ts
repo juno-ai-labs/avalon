@@ -1,3 +1,4 @@
+export { ArtifactSidekickDispatcher, ArtifactSidekickLoopback } from "./artifacts/sidekick-dispatch";
 export { AshbyRegionalBridge } from "./ashby-regional-bridge";
 export { AshbyRoutingBridge } from "./ashby-routing-bridge";
 import workerEvents from "./worker-events";
