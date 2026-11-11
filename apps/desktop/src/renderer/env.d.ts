@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 
+import './canvas-template-modules';
 import type { RallyDesktopBridge } from '../common/desktop';
 
 declare global {

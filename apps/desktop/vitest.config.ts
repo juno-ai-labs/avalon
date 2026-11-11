@@ -1,6 +1,7 @@
 import { availableParallelism } from 'node:os';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+import { canvasTemplatePlugin } from './canvas-template-plugin';
 
 // Settings that describe how a test behaves rather than what it runs against,
 // so both projects below take them verbatim.
@@ -64,7 +65,7 @@ export default defineConfig({
     maxWorkers: availableParallelism(),
     projects: [
       {
-        plugins: [react()],
+        plugins: [react(), canvasTemplatePlugin()],
         test: {
           name: 'renderer',
           environment: 'jsdom',

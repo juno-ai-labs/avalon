@@ -209,7 +209,7 @@ describe('CanvasesHomeScreen', () => {
     ]));
     const filters = screen.getByRole('group', { name: 'Canvas filter' });
     expect(within(filters).getAllByRole('button').map((button) => button.textContent))
-      .toEqual(['All', 'Live', 'Data backed', 'Made by me', 'Shared with me']);
+      .toEqual(['All', 'Live', 'Data backed', 'Made by me', 'Shared with me', 'Marketplace']);
     fireEvent.click(within(filters).getByRole('button', { name: 'Data backed' }));
     expect(screen.getByRole('link', { name: 'Shared plan' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Recent' })).toHaveTextContent('1 Canvas');
@@ -240,6 +240,74 @@ describe('CanvasesHomeScreen', () => {
     expect(createCanvas).toHaveBeenCalledWith({ canvasId: expect.any(String), prompt: { text: 'A tracker for our Q1 hiring plan', clientMessageId: expect.any(String) } });
   });
 
+  it('keeps an unsent prompt when returning from the Marketplace', () => {
+    renderHome(clientWith([]));
+    const marketplace = screen.getByRole('button', { name: 'Marketplace' });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'My draft prompt' } });
+    fireEvent.click(marketplace);
+    expect(screen.queryByRole('textbox', { name: 'Prompt' })).toBeNull();
+    fireEvent.click(marketplace);
+    expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('My draft prompt');
+  });
+
+  it('opens the Marketplace with the current starter templates grouped by category', () => {
+    renderHome(clientWith([canvas('mine', 'My Canvas')]));
+    const mine = screen.getByRole('button', { name: 'Made by me' });
+    fireEvent.click(mine);
+    const marketplace = screen.getByRole('button', { name: 'Marketplace' });
+    expect(marketplace).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(marketplace);
+    expect(marketplace).toHaveAttribute('aria-pressed', 'true');
+    expect(mine).toHaveAttribute('aria-pressed', 'false');
+    const templates = screen.getByRole('region', { name: 'Canvas templates' });
+    const categories = within(templates).getByRole('group', { name: 'Template category' });
+    expect(within(categories).getByRole('button', { name: 'Developers', pressed: true })).toBeInTheDocument();
+    const countByCategory = [
+      ['Developers', 3],
+      ['Product managers', 2],
+      ['Parents', 3],
+      ['Recruiters', 1],
+    ] as const;
+    expect(within(categories).getAllByRole('button').map((button) => button.textContent))
+      .toEqual(countByCategory.map(([label]) => label));
+    for (const [label, count] of countByCategory) {
+      const category = within(categories).getByRole('button', { name: label });
+      fireEvent.click(category);
+      expect(category).toHaveAttribute('aria-pressed', 'true');
+      const cards = within(templates).getByRole('list');
+      expect(within(cards).getAllByRole('button')).toHaveLength(count);
+    }
+    expect(screen.queryByRole('link', { name: 'My Canvas' })).toBeNull();
+    expect(screen.queryByRole('searchbox', { name: 'Search Canvases' })).toBeNull();
+    fireEvent.click(marketplace);
+    expect(screen.queryByRole('region', { name: 'Canvas templates' })).toBeNull();
+    expect(mine).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('link', { name: 'My Canvas' })).toBeInTheDocument();
+    fireEvent.click(marketplace);
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    expect(screen.queryByRole('region', { name: 'Canvas templates' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'All', pressed: true })).toBeInTheDocument();
+    expect(createCanvas).not.toHaveBeenCalled();
+  });
+
+  it('starts a new Canvas with the selected template as its first message, even on an empty dashboard', async () => {
+    renderHome(clientWith([]));
+    fireEvent.click(screen.getByRole('button', { name: 'Marketplace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Recruiters' }));
+    const cards = within(screen.getByRole('region', { name: 'Canvas templates' })).getByRole('list');
+    const template = within(cards).getByRole('button');
+    fireEvent.click(template);
+    expect(template).toBeDisabled();
+    expect(await screen.findByText('Opened canvas')).toBeInTheDocument();
+    expect(createCanvas).toHaveBeenCalledExactlyOnceWith({
+      canvasId: expect.any(String),
+      prompt: {
+        text: expect.stringMatching(/^(?!---)[^\n]*\brecruiting market map\b[\s\S]*\n\n\S/iu),
+        clientMessageId: expect.any(String),
+      },
+    });
+  });
+
   it('makes an empty Canvas from New Canvas', async () => {
     renderHome(clientWith([canvas('00000000-0000-7000-8000-0000000000c1', 'Mine')]));
     fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
@@ -251,6 +319,7 @@ describe('CanvasesHomeScreen', () => {
     shell.guest = true;
     renderHome(clientWith([]));
     expect(screen.queryByRole('button', { name: 'New Canvas' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Marketplace' })).toBeNull();
     expect(screen.getByText('No Canvases yet')).toBeInTheDocument();
   });
 
