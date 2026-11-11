@@ -1,7 +1,7 @@
 import type { ConversationToolResolveRequest, ConversationToolResolveResult } from "./workspace-conversation-tool-protocol";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
-import { sidekickRowRunState } from "./sidekick-directory-sql";
+import { AUTOMATION_TRIGGER_KINDS_SQL, sidekickRowRunState } from "./sidekick-directory-sql";
 import { waitingRunActivityRecipients } from "./workspace-activity";
 import { recordSidekickRunNotices } from "./workspace-notification-intent-storage";
 import { SidekickRunNotificationSchema, type SidekickRunNotification } from "@rally/contracts/push-notifications";
@@ -3206,19 +3206,20 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       this.sidekickId,
     ));
     if (readers) this.host.noteWriterReaders(this.sidekickId, readers.readers);
-    // A Canvas it is attached to shows its name, state and mark, on its card
+    // A Canvas it is attached to shows its name, state, mark and triggers, on its card
     // and in its menu. Read here for the reason above; the host pushes the
     // Canvas list only when these differ from what it last saw, so a run's
     // own touches cost nothing.
-    const face = first(this.sql.exec<{ face: string }>(
-      `SELECT directory.title || '|' || directory.lifecycle || '|' || COALESCE(directory.appearance_json, '') AS face
+    const face = first(this.sql.exec<{ face: string; trigger_kinds: string }>(
+      `SELECT directory.title || '|' || directory.lifecycle || '|' || COALESCE(directory.appearance_json, '') AS face,
+              ${AUTOMATION_TRIGGER_KINDS_SQL}
          FROM automation_directory directory
         WHERE directory.automation_id = ?1
           AND EXISTS (SELECT 1 FROM sidekick_conversation_attachments
                        WHERE automation_id = ?1 AND parent_kind = 'canvas' AND substream_id = '0')`,
       this.sidekickId,
     ));
-    if (face) this.host.noteAttachedSidekickFace(this.sidekickId, face.face);
+    if (face) this.host.noteAttachedSidekickFace(this.sidekickId, JSON.stringify(face));
   }
 }
 

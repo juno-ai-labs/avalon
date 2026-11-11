@@ -557,19 +557,17 @@ card grid with Sidekicks; the shared layout is described in
   (`canvasWrittenByRun`), and opens the Sidekick's conversation at it
   (`?run=`); the link carries the run's number in its route state, so the run's
   pill is numbered before the shared conversation has loaded. Viewer presence
-  is a facepile at the preview's top left; the independent **Data** badge at
-  its top right uses the Stored data pop-out row's `IconDatabase` and means
-  the Canvas holds a listed database-backed artifact.
-  A static site has no Data badge. Both indicators can appear together. The
-  Canvas's attached Sidekicks are a **Sidekick facepile** (`SidekickStack`,
-  `@rally/ui`): overlapping hexagons at the preview's right, under the Data
-  badge when the card has one and in its place when it has none, the first
-  four and then a count, as `AvatarStack` cuts people off. The stack is named
-  as a whole ("Sidekicks: Launch tracker; Digest") and the card's link is
-  described by it beside the Data badge. The
-  preview is decorative; the link describes its Data badge for assistive
-  technology, and the metadata names current viewers. Clicking a face opens
-  the Canvas through the same stretched link as the rest of the card.
+  is shown separately from **Data backed**, which means the Canvas holds a
+  listed database-backed artifact. **Live updating** means an active attached
+  Sidekick has a schedule or event trigger; manual-only, paused and draft
+  Sidekicks do not qualify. Trigger kinds travel in the Canvas projection so
+  readers who cannot open the Sidekick still see this state. The projection
+  uses the same definition query as the Sidekick directory, and refreshes when
+  its trigger kinds change, including draft changes; instruction-only edits
+  do not refresh it.
+  The attached Sidekick facepile names each mark on hover and lists hidden
+  names on its hexagonal overflow count. Clicking it opens the Canvas; the title link's
+  accessible description carries the indicators and stack name.
 - **The mark** (`CanvasMark`) holds the chosen icon, else the row's
   `artifactKind` glyph, in a pastel pair through `markColors`: the chosen
   colour, else a hue stable for the id (`canvasHue`). The home card's preview
@@ -897,6 +895,15 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-10 — Explain a card's Sidekicks and automatic updates
+
+Canvas cards now identify attached Sidekicks and distinguish automatic updates
+from data-backed content. Trigger kinds travel in the Canvas projection because
+a second client lookup would miss Sidekicks whose own page the Canvas reader
+cannot open. The shared trigger query also drives refresh detection, keeping
+draft projections current without publishing unchanged cards after
+instruction-only edits.
 
 ### 2026-11-10 — Keep delegated work visible in a Canvas
 
