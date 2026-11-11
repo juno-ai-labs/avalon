@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom';
 
 import { canvasMark } from '../components/canvas-mark';
 import { CanvasSharingStatus } from '../components/canvas-sharing-status';
-import { AvatarStack, Button, EmptyState, ErrorNotice, TitleSkeleton } from '../components/primitives';
+import { AvatarStack, Button, EmptyState, TitleSkeleton } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
@@ -62,14 +62,6 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const [draftPrompt, setDraftPrompt] = useState('');
   const showMarketplace = !guest && marketplaceOpen;
   const create = useCreateCanvas();
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<Error | null>(null);
-  const start = (prompt?: string): void => {
-    if (creating) return;
-    setCreating(true);
-    setCreateError(null);
-    create(prompt).catch((cause: unknown) => setCreateError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))).finally(() => setCreating(false));
-  };
   const needle = search.trim().toLocaleLowerCase();
   const hasCanvases = !!rows?.length;
   const shown = (rows ?? []).filter((row) => matchesFilter(row, filter, currentUserId)
@@ -104,7 +96,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     </li>;
   };
   // A guest makes no Canvas (`canvas_create_member_required`), so is offered none.
-  const newCanvas = guest ? null : <Button className="button-primary" disabled={creating} onClick={() => start()}>
+  const newCanvas = guest ? null : <Button className="button-primary" onClick={() => create()}>
     <Plus aria-hidden="true" size={16} />New Canvas
   </Button>;
   return <main className="sidekicks-library dashboard-home">
@@ -112,7 +104,6 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       <div><h1>Canvases</h1><p>Live pages your team and Rally build together.</p></div>
       <div className="sidekicks-library-actions window-no-drag">{newCanvas}</div>
     </header>
-    {createError && <ErrorNotice occurrence={createError}>{createError.message}</ErrorNotice>}
     {hasCanvases && !showMarketplace && <div className="sidekicks-library-controls">
       <SidebarSearch aria-label="Search Canvases" mode="input" onChange={(event) => setSearch(event.target.value)} placeholder="Search Canvases" value={search} />
     </div>}
@@ -125,9 +116,9 @@ export function CanvasesHomeScreen(): React.JSX.Element {
         <Store aria-hidden="true" size={16} />Marketplace
       </button>}
     </div>}
-    {showMarketplace ? <CanvasMarketplace creating={creating} onStart={start} />
+    {showMarketplace ? <CanvasMarketplace onStart={create} />
       : rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
-      : rows.length === 0 ? <CanvasesEmptyState creating={creating} guest={guest} onPromptChange={setDraftPrompt} onStart={start} prompt={draftPrompt} />
+      : rows.length === 0 ? <CanvasesEmptyState guest={guest} onPromptChange={setDraftPrompt} onStart={create} prompt={draftPrompt} />
         : <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
           <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${shown.length} ${shown.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
           {shown.length === 0
@@ -137,7 +128,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   </main>;
 }
 
-function CanvasMarketplace({ creating, onStart }: { creating: boolean; onStart: (prompt: string) => void }): React.JSX.Element {
+function CanvasMarketplace({ onStart }: { onStart: (prompt: string) => void }): React.JSX.Element {
   const [category, setCategory] = useState<(typeof CANVAS_TEMPLATE_CATEGORIES)[number]['tag']>(CANVAS_TEMPLATE_CATEGORIES[0].tag);
   const templates = CANVAS_TEMPLATES.filter((template) => template.tags.includes(category));
   return <section aria-label="Canvas templates" className="canvas-marketplace">
@@ -146,14 +137,13 @@ function CanvasMarketplace({ creating, onStart }: { creating: boolean; onStart: 
     </div>
     <ul className="dashboard-grid">
       {templates.map((template) => <li key={template.name}>
-        <button className="dashboard-card canvas-template-card" disabled={creating} onClick={() => onStart(template.prompt)} type="button">
+        <button className="dashboard-card canvas-template-card" onClick={() => onStart(template.prompt)} type="button">
           <span className="canvas-template-title">{template.name}</span>
           <ArrowUpRight aria-hidden="true" size={16} />
           <span className="canvas-template-description">{template.description}</span>
         </button>
       </li>)}
     </ul>
-    {creating && <p role="status">Starting Canvas…</p>}
   </section>;
 }
 
@@ -161,8 +151,7 @@ function CanvasMarketplace({ creating, onStart }: { creating: boolean; onStart: 
  * A first-run Canvases page: New Canvas, and a card that starts one from a
  * prompt, which becomes the Chat's first message.
  */
-function CanvasesEmptyState({ creating, guest, onPromptChange, onStart, prompt }: {
-  creating: boolean;
+function CanvasesEmptyState({ guest, onPromptChange, onStart, prompt }: {
   guest: boolean;
   onPromptChange: (prompt: string) => void;
   onStart: (prompt?: string) => void;
@@ -176,8 +165,8 @@ function CanvasesEmptyState({ creating, guest, onPromptChange, onStart, prompt }
       event.preventDefault();
       if (prompt.trim()) onStart(prompt);
     }}>
-      <textarea aria-label="Prompt" disabled={creating} onChange={(event) => onPromptChange(event.target.value)} placeholder="A tracker for our Q1 hiring plan" rows={3} value={prompt} />
-      <Button className="button-primary" disabled={creating || !prompt.trim()} type="submit">{creating ? 'Starting…' : 'Start'}</Button>
+      <textarea aria-label="Prompt" onChange={(event) => onPromptChange(event.target.value)} placeholder="A tracker for our Q1 hiring plan" rows={3} value={prompt} />
+      <Button className="button-primary" disabled={!prompt.trim()} type="submit">Start</Button>
     </form>
   </section>;
 }

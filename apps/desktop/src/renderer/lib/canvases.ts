@@ -1,6 +1,7 @@
 import { asWorkstreamId, type CanvasSidebarRow } from '@rally/contracts';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useOptionalCollaborationSession } from './collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from './sidebar-list-store';
@@ -130,7 +131,7 @@ export function othersPresent(row: Pick<CanvasSidebarRow, 'presentUserIds'>, cur
 }
 
 /**
- * Make a Canvas and open it. With a prompt, it is the Chat's first message,
+ * Open a Canvas immediately and create it in the background. A prompt is the Chat's first message,
  * sent by the server as the creator's (`POST /canvases`), so the Canvas opens
  * on a conversation already under way.
  *
@@ -141,31 +142,90 @@ export function othersPresent(row: Pick<CanvasSidebarRow, 'presentUserIds'>, cur
  * (`HostedCanvas.create`), so a request that landed but whose answer was lost
  * does not make a second Canvas. Success ends the series.
  */
-export function useCreateCanvas(): (prompt?: string) => Promise<void> {
+export function useCreateCanvas(): (prompt?: string) => void {
   const api = useOptionalCollaborationSession()?.api;
   const navigate = useNavigate();
-  const series = useRef<{ text: string; canvasId: ReturnType<typeof asWorkstreamId>; clientMessageId: string; inFlight: Promise<void> | null } | null>(null);
+  const location = useLocation();
+  const queryClient = useQueryClient();
+  const creationKey = useCanvasCreationKey();
+  const series = useRef<{ scope: readonly unknown[]; text: string; canvasId: ReturnType<typeof asWorkstreamId>; clientMessageId: string; inFlight: Promise<void> | null } | null>(null);
   return useCallback((prompt?: string) => {
-    if (!api) return Promise.reject(new Error('Rally is not connected yet.'));
     const text = prompt?.trim() ?? '';
-    const current = series.current;
-    if (current?.inFlight) return current.inFlight;
+    const current = series.current?.scope === creationKey ? series.current : null;
+    if (current?.inFlight) {
+      if (location.pathname !== canvasRoute(current.canvasId)) void navigate(canvasRoute(current.canvasId));
+      return;
+    }
     const attempt = current?.text === text ? current
-      : { text, canvasId: asWorkstreamId(uuidV7()), clientMessageId: crypto.randomUUID(), inFlight: null };
+      : { scope: creationKey, text, canvasId: asWorkstreamId(uuidV7()), clientMessageId: crypto.randomUUID(), inFlight: null };
     series.current = attempt;
-    const inFlight = api.createCanvas({
-      canvasId: attempt.canvasId,
-      ...(text ? { prompt: { text, clientMessageId: attempt.clientMessageId } } : {}),
-    }).then((created) => {
-      if (series.current === attempt) series.current = null;
-      void navigate(canvasRoute(created.canvasId));
-    }, (cause: unknown) => {
-      attempt.inFlight = null;
-      throw cause;
-    });
-    attempt.inFlight = inFlight;
-    return inFlight;
-  }, [api, navigate]);
+    const createdAt = new Date().toISOString();
+    queryClient.setQueryDefaults(creationKey, { gcTime: Number.POSITIVE_INFINITY });
+    const complete = (): void => {
+      queryClient.setQueryData<Record<string, CanvasCreation>>(creationKey, (records) => {
+        const next = { ...records };
+        delete next[attempt.canvasId];
+        return next;
+      });
+    };
+    const retry = (editedPrompt = attempt.text): void => {
+      if (attempt.inFlight) return;
+      // A correction is a new message; an unchanged retry replays the same receipt.
+      if (editedPrompt.trim() !== attempt.text) {
+        attempt.text = editedPrompt.trim();
+        attempt.clientMessageId = crypto.randomUUID();
+      }
+      const publish = (status: CanvasCreation['status'], error: Error | null = null): void => {
+        queryClient.setQueryData<Record<string, CanvasCreation>>(creationKey, (records) => ({
+          ...records, [attempt.canvasId]: { status, error, retry, complete, createdAt, prompt: attempt.text },
+        }));
+      };
+      publish('creating');
+      const request = api ? api.createCanvas({
+        canvasId: attempt.canvasId,
+        ...(attempt.text ? { prompt: { text: attempt.text, clientMessageId: attempt.clientMessageId } } : {}),
+      }) : Promise.reject(new Error('Rally is not connected yet.'));
+      attempt.inFlight = request.then(() => {
+        publish('ready');
+        if (series.current === attempt) series.current = null;
+      }, (cause: unknown) => {
+        publish('failed', cause instanceof Error ? cause : new Error('The Canvas could not be made.'));
+      }).finally(() => { attempt.inFlight = null; });
+    };
+    retry();
+    void navigate(canvasRoute(attempt.canvasId));
+  }, [api, creationKey, location.pathname, navigate, queryClient]);
+}
+
+export interface CanvasCreation {
+  status: 'creating' | 'failed' | 'ready';
+  error: Error | null;
+  retry: (prompt?: string) => void;
+  complete: () => void;
+  createdAt: string;
+  prompt: string;
+}
+
+const NO_CREATIONS: Record<string, CanvasCreation> = {};
+
+function useCanvasCreationKey(): readonly unknown[] {
+  const session = useOptionalCollaborationSession()?.session;
+  const userId = session?.user.id;
+  const region = session?.workspace?.region;
+  const workspaceId = session?.workspace?.id;
+  return useMemo(() => ['canvas-creations', userId, region, workspaceId], [userId, region, workspaceId]);
+}
+
+/** Window-local recovery survives navigation until the first live snapshot. */
+export function useCanvasCreations(): Record<string, CanvasCreation> {
+  const queryKey = useCanvasCreationKey();
+  return useQuery<Record<string, CanvasCreation>>({
+    queryKey, enabled: false, gcTime: Number.POSITIVE_INFINITY,
+  }).data ?? NO_CREATIONS;
+}
+
+export function useCanvasCreation(id: string): CanvasCreation | undefined {
+  return useCanvasCreations()[id];
 }
 
 /**
