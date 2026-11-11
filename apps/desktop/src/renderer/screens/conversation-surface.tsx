@@ -976,6 +976,10 @@ export interface ScrollToTurnRequest {
 const TRANSCRIPT_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
 export interface ConversationSurfaceProps {
+  /** Display-only shell for an optimistic parent. Never written to the canonical caches. */
+  openingDetail?: WorkstreamDetail;
+  /** The parent must exist before opening its conversation socket. */
+  connectionEnabled?: boolean;
   /** Already inside a panel: previews cover that slot without claiming the shell. */
   embedded?: boolean;
   parentKind: ConversationParentKind;
@@ -1034,6 +1038,8 @@ export function ConversationSurface(props: ConversationSurfaceProps): React.JSX.
 }
 
 function ConversationSurfaceContent({
+  openingDetail,
+  connectionEnabled = true,
   parentKind,
   parentId: id,
   substreamId,
@@ -1484,7 +1490,7 @@ function ConversationSurfaceContent({
   const socketConnection = useWorkstreamSocket(
     api,
     id,
-    Boolean(api && id),
+    Boolean(api && id && connectionEnabled),
     'active_workstream',
     undefined,
     true,
@@ -1492,9 +1498,9 @@ function ConversationSurfaceContent({
   );
   const requestSocketSnapshot = socketConnection.requestSnapshot;
   useEffect(() => {
-    if (socketConnection.state !== 'connected' || payloadBelongsToRoute) return;
+    if (!connectionEnabled || socketConnection.state !== 'connected' || payloadBelongsToRoute) return;
     requestSocketSnapshot();
-  }, [payloadBelongsToRoute, requestSocketSnapshot, socketConnection.state]);
+  }, [connectionEnabled, payloadBelongsToRoute, requestSocketSnapshot, socketConnection.state]);
   const socketState = socketConnection.state;
   /** The room is on the line and what is on screen is its own: ranges can be asked for against it. */
   const feedLive = socketState === 'connected' && !feedFromLocalCache;
@@ -2061,7 +2067,7 @@ function ConversationSurfaceContent({
     confirmedParticipantUserIds: string[] = [],
     deliveryMode?: WorkstreamMessageDeliveryMode,
   ): Promise<void> => {
-    if (!api || !routedDetail) throw new Error('This conversation is not ready to receive messages.');
+    if (!api || !connectionEnabled || !routedDetail || feedFromLocalCache) throw new Error('This conversation is not ready to receive messages.');
     if (annotationDraft?.readyPins.length && (sending || activeElicitation)) throw new Error(activeElicitation ? 'Answer the open question before sending artifact comments.' : 'Your artifact comments are still sending.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
     // refuse must not appear in the transcript first and be pulled back out of
@@ -2349,7 +2355,8 @@ function ConversationSurfaceContent({
         : stopAcknowledgement);
   }, [stopAcknowledgement]);
 
-  if (!payloadBelongsToRoute || !routedDetail) {
+  const detail = routedDetail ?? openingDetail;
+  if (!detail) {
     if (
       socketConnection.state === 'reconnecting'
       || socketConnection.state === 'unavailable'
@@ -2374,7 +2381,7 @@ function ConversationSurfaceContent({
     );
   }
 
-  const detail = routedDetail;
+  const opening = !routedDetail;
   const runTiming = workstreamRunTiming(detail.harnessStatus, detail.latestHarnessRun);
   const orderedOwnsRunTiming = orderedTranscriptOwnsRunTiming(
     orderedTranscript.data,
@@ -2491,7 +2498,7 @@ function ConversationSurfaceContent({
         ref={transcriptRef}
       >
         <ConnectingCardSlot>
-          {feedFromLocalCache && (
+          {(feedFromLocalCache || (opening && connectionEnabled)) && (
             <ConnectingCard
               detail="Sending is available once Rally connects"
               error={socketConnection.openingError}
@@ -2606,6 +2613,7 @@ function ConversationSurfaceContent({
           {!withoutComposer && composerNotice && <div className="composer-mode-notice">{composerNotice}</div>}
           {!withoutComposer && composerActivity}
           {!withoutComposer && <WorkstreamComposer
+            autoFocus={Boolean(openingDetail)}
             {...(onComposerCancel ? { onCancel: onComposerCancel } : {})}
             api={api ?? undefined}
             placeholder={composerPlaceholder ?? (parentKind === 'automation'
@@ -2639,7 +2647,7 @@ function ConversationSurfaceContent({
             onStop={async () => {
               await stop.mutateAsync();
             }}
-            sendBlocked={feedFromLocalCache}
+            sendBlocked={!connectionEnabled || opening || feedFromLocalCache || (Boolean(openingDetail) && !socketConnection.sendReady)}
             sending={sending}
             uploading={attachmentDraft.uploading}
             key={conversationAddress}

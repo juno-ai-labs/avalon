@@ -611,11 +611,22 @@ card grid with Sidekicks; the shared layout is described in
   Sidekick's `AppearancePicker`, a popup rather than a
   submenu (a submenu has no room beside a phone-width menu); each click saves
   through `PATCH /canvases/:id`.
-- **Making one** is `POST /canvases`, with the "Start from a prompt" card's
-  text as `prompt`; the client opens the new Canvas, whose Chat already holds
-  the prompt as the creator's message. `useCreateCanvas` holds one attempt
-  series and guards the in-flight call, so a double click or a retry after a
-  lost answer reaches the server's replay rather than making a second Canvas.
+- **Making one** opens `/canvases/:id` immediately under a client-minted id,
+  while `useCreateCanvas` sends `POST /canvases` in the background. Both browser
+  and Electron mount the real composer at once: typing, local draft persistence
+  and microphone recording work during creation. Send (including Enter and
+  stop-and-send during dictation) stays disabled until creation succeeds and the
+  conversation socket has delivered its live snapshot. The same composer and
+  draft key stay mounted throughout; the snapshot replaces a display-only empty
+  conversation, never a fabricated socket cache entry. Detail reads and socket
+  admission wait for the create answer. The "Start from a prompt" card sends its
+  text as `prompt`, which the server records as the creator's first message.
+  Window-local `canvas-creation` query state survives the launcher unmounting;
+  failure leaves the composer open and offers **Try again** after the error is
+  acknowledged. A double click shares the in-flight attempt; retry reuses both
+  `canvasId` and `clientMessageId`, so an answer lost in transit makes no second
+  Canvas or opening message. Completion never navigates, so leaving during
+  creation cannot pull the person back.
 - **An open Canvas** is `ConversationSurface` with `parentKind: "canvas"` and
   substream `"0"`, so the composer, annotations (a Canvas's comments), the
   inspector rail, its resource cards and versions menu, and the
@@ -759,6 +770,12 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | A publish lands but its note to the Canvas cannot run (the Organization object fails, or holds no such Canvas) | The publish still succeeds and `canvas_artifact_note_failed` is logged with the reason. The artifact is missing from the Canvas until the path is published again or a retried attempt recovers it as `landed`, each of which notes it again; nothing else repairs it. |
 
 ## Testing
+
+- `screens/canvas-creation.test.tsx` drives the real launcher, Canvas screen,
+  conversation and composer with held network/audio boundaries. It covers the
+  immediate browser/Electron shell, text and active dictation surviving creation
+  and the first snapshot, blocked sending, retry identity, and navigation away.
+  Run with `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/canvas-creation.test.tsx`.
 
 - `apps/api/test/authorization-policy.test.ts` — `audienceAdmits`,
   `canvasAdmits` and `canvasManages`.
@@ -928,6 +945,19 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-11 — Open a new Canvas before its create request answers
+
+Creation and chat admission previously kept people waiting before they could
+write. The shared browser/Electron screen now mounts its composer under the
+final id immediately, starts creation asynchronously, and enables sending only
+once the live conversation is ready. A separate display-only opening detail
+keeps optimistic state out of the socket's canonical caches; the same mounted
+composer preserves text and active dictation across both waits. Failure and
+retry belong to the open Canvas, since its launcher has already unmounted.
+Waiting to navigate until success was rejected because it puts network latency
+back in front of the first keystroke. Future changes must preserve stable draft
+identity, replay-safe retries, and the send gate even during recording.
 
 ### 2026-11-11 — Show sharing in Canvas list subtitles
 

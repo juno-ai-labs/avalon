@@ -3,7 +3,7 @@ import { AppearancePicker } from '@rally/ui/components/appearance-picker';
 import { ActionTile, ActionTiles, TitleMenuItem, TitleMenuSeparator, TitlePillHeader, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconArchive, IconLayoutSidebarRight, IconLink, IconPalette, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useActivityList } from '../components/activity-sidebar-section';
@@ -15,7 +15,8 @@ import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import { CanvasSidekicksSection, madeSidekicksArchiveCopy } from '../components/canvas-sidekicks-menu';
 import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
-import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasCreation, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import type { WorkstreamDetail } from '../lib/types';
 import { copyLink } from '../lib/copy-link';
 import { sidebarListApplied } from '../lib/sidebar-list-store';
 import { useDocumentTitle } from '../lib/document-title';
@@ -47,10 +48,23 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
+  const creation = useCanvasCreation(id);
+  const creationBlocked = creation !== undefined && creation.status !== 'ready';
+  const creationTime = creation?.createdAt;
+  // Render-only: no invented detail or transcript enters the socket-owned caches.
+  const openingDetail = useMemo<WorkstreamDetail | undefined>(() => creationTime ? {
+    id, title: 'New Canvas', titleStatus: 'settled', harnessStatus: 'completed', scope: 'personal',
+    createdAt: creationTime, lastActivityAt: creationTime,
+    latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
+    firstUnreadSequenceNumber: null, nextPendingWakeup: null, pinPosition: null,
+    participantUserIds: [], participantExtraCount: 0, participants: [], viewers: [],
+    resources: [], connections: [], backgroundTasks: [],
+  } : undefined, [creationTime, id]);
   const canvas = useQuery({
     queryKey: canvasDetailQueryKey(id),
     queryFn: ({ signal }) => api!.getCanvas(id, signal),
-    enabled: Boolean(api),
+    enabled: Boolean(api) && !creationBlocked,
     staleTime: 5_000,
   });
   // The list row paints the name before the detail answers.
@@ -202,7 +216,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       return next;
     });
   }, [id, queryClient, rowColor, rowIcon, rowTitle, rowTitleStatus]);
-  const title = canvas.data?.title ?? row?.title ?? '';
+  const title = canvas.data?.title ?? row?.title ?? openingDetail?.title ?? '';
   const naming = canvasNaming(canvas.data ?? row);
   const missing = Boolean(canvas.error && !row && isNotFoundError(unreachable ? access.error : canvas.error));
   const requestable = unreachable && access.data !== undefined;
@@ -262,7 +276,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // answers, so a link to one that does not exist draws the state above rather
   // than a conversation whose socket then fails as well. One in the list opens
   // at once, beside the detail read.
-  if (!row && !canvas.data) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
+  if (!row && !canvas.data && !creation) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
   const newestArtifact = canvas.data?.artifacts[0];
   const appearance = canvas.data?.appearance ?? row?.appearance;
   const kind = canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null;
@@ -288,14 +302,14 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
         // Replace the entry so Back leaves the Canvas rather than reopening its panel.
         if (newestArtifact) void navigate(location.pathname, { replace: true, state: openResourceState(id, newestArtifact.resourceId, { expanded: false }) });
       }} />
-      <ActionTile disabled={!workspace} icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={copyCanvasLink} />
-      <ActionTile disabled={!api} icon={pinned ? <IconPinnedOff aria-hidden="true" size={20} stroke={1.6} /> : <IconPin aria-hidden="true" size={20} stroke={1.6} />} label={pinned ? 'Unpin' : 'Pin'} onSelect={togglePin} />
+      <ActionTile disabled={!workspace || creationBlocked} icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={copyCanvasLink} />
+      <ActionTile disabled={!api || creationBlocked} icon={pinned ? <IconPinnedOff aria-hidden="true" size={20} stroke={1.6} /> : <IconPin aria-hidden="true" size={20} stroke={1.6} />} label={pinned ? 'Unpin' : 'Pin'} onSelect={togglePin} />
     </ActionTiles>
-    <TitleMenuItem disabled={!api} icon={<IconPencil aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => { setRenameError(null); setRenaming(true); }}>
+    <TitleMenuItem disabled={!api || creationBlocked} icon={<IconPencil aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => { setRenameError(null); setRenaming(true); }}>
       Rename…
     </TitleMenuItem>
     {/* The palette the pill's mark opens, the Sidekick's own. */}
-    <TitleMenuItem disabled={!api} icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
+    <TitleMenuItem disabled={!api || creationBlocked} icon={<IconPalette aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
       setChoosingAppearance(true);
     }}>
       Change appearance
@@ -338,7 +352,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
     label: naming ? 'Canvas menu: Rally is choosing a name' : `Canvas menu: ${title}`,
     menu: menuItems(panelOpen, openPanel),
-    iconAction: appearancePicker,
+    iconAction: creationBlocked ? undefined : appearancePicker,
   };
   const header = (presentUserIds: readonly string[], panelOpen: boolean, openPanel?: ConversationHeaderContext['openPanel']): React.JSX.Element => {
     const present = presentUserIds.filter((userId) => userId !== session?.user.id).flatMap((userId) => {
@@ -361,6 +375,12 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
     {renameError && <ErrorNotice occurrence={renameError} title="The Canvas could not be renamed">{canvasRenameRefusal(renameError)}</ErrorNotice>}
     <ConversationSurface
+      {...(openingDetail ? { openingDetail } : {})}
+      connectionEnabled={!creationBlocked}
+      composerNotice={creation?.error ? <>
+        <ErrorNotice occurrence={creation.error} title="The Canvas could not be made">Your draft is still here. Try creating the Canvas again.</ErrorNotice>
+        <Button onClick={() => void creation.retry()}>Try again</Button>
+      </> : undefined}
       parentId={id}
       parentKind="canvas"
       composerActivity={<ComposerAgentActivity activity={workspaceSocket?.state === 'connected' && workspaceSocket.sidebarReady

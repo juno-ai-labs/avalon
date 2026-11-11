@@ -1,4 +1,5 @@
 import { asWorkstreamId, type CanvasSidebarRow } from '@rally/contracts';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -130,7 +131,7 @@ export function othersPresent(row: Pick<CanvasSidebarRow, 'presentUserIds'>, cur
 }
 
 /**
- * Make a Canvas and open it. With a prompt, it is the Chat's first message,
+ * Open a Canvas immediately and create it in the background. A prompt is the Chat's first message,
  * sent by the server as the creator's (`POST /canvases`), so the Canvas opens
  * on a conversation already under way.
  *
@@ -144,6 +145,7 @@ export function othersPresent(row: Pick<CanvasSidebarRow, 'presentUserIds'>, cur
 export function useCreateCanvas(): (prompt?: string) => Promise<void> {
   const api = useOptionalCollaborationSession()?.api;
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const series = useRef<{ text: string; canvasId: ReturnType<typeof asWorkstreamId>; clientMessageId: string; inFlight: Promise<void> | null } | null>(null);
   return useCallback((prompt?: string) => {
     if (!api) return Promise.reject(new Error('Rally is not connected yet.'));
@@ -153,19 +155,46 @@ export function useCreateCanvas(): (prompt?: string) => Promise<void> {
     const attempt = current?.text === text ? current
       : { text, canvasId: asWorkstreamId(uuidV7()), clientMessageId: crypto.randomUUID(), inFlight: null };
     series.current = attempt;
-    const inFlight = api.createCanvas({
-      canvasId: attempt.canvasId,
-      ...(text ? { prompt: { text, clientMessageId: attempt.clientMessageId } } : {}),
-    }).then((created) => {
-      if (series.current === attempt) series.current = null;
-      void navigate(canvasRoute(created.canvasId));
-    }, (cause: unknown) => {
-      attempt.inFlight = null;
-      throw cause;
-    });
-    attempt.inFlight = inFlight;
+    const createdAt = new Date().toISOString();
+    const retry = (): Promise<void> => {
+      if (attempt.inFlight) return attempt.inFlight;
+      const publish = (status: CanvasCreation['status'], error: Error | null = null): void => {
+        queryClient.setQueryData<CanvasCreation>(canvasCreationQueryKey(attempt.canvasId), { status, error, retry, createdAt });
+      };
+      publish('creating');
+      const inFlight = api.createCanvas({
+        canvasId: attempt.canvasId,
+        ...(text ? { prompt: { text, clientMessageId: attempt.clientMessageId } } : {}),
+      }).then(() => {
+        publish('ready');
+        if (series.current === attempt) series.current = null;
+      }, (cause: unknown) => {
+        // The open Canvas owns recovery, even if its launcher has unmounted.
+        publish('failed', cause instanceof Error ? cause : new Error('The Canvas could not be made.'));
+      }).finally(() => { attempt.inFlight = null; });
+      attempt.inFlight = inFlight;
+      return inFlight;
+    };
+    const inFlight = retry();
+    void navigate(canvasRoute(attempt.canvasId));
     return inFlight;
-  }, [api, navigate]);
+  }, [api, navigate, queryClient]);
+}
+
+interface CanvasCreation {
+  status: 'creating' | 'failed' | 'ready';
+  error: Error | null;
+  retry: () => Promise<void>;
+  createdAt: string;
+}
+
+function canvasCreationQueryKey(id: string): readonly unknown[] {
+  return ['canvas-creation', id];
+}
+
+/** Window-local creation state survives the launcher and never enters the socket-owned caches. */
+export function useCanvasCreation(id: string): CanvasCreation | undefined {
+  return useQuery<CanvasCreation>({ queryKey: canvasCreationQueryKey(id), enabled: false }).data;
 }
 
 /**
