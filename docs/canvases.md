@@ -37,6 +37,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; guests invited by email on Save. |
 | `apps/desktop/src/renderer/components/canvas-mark.tsx` | `CanvasMark` and `canvasMark`: the chosen icon and colour, else the kind's glyph and `canvasHue`, field by field. |
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx` | The Canvases sidebar section: a Pinned group and every Canvas by recent activity. |
+| `apps/desktop/src/renderer/components/canvas-creation-notices.tsx` | Shell-owned failure notices and navigation back to a pending Canvas's recovery controls. |
 | `apps/desktop/src/renderer/lib/canvases.ts` | The list as the socket keeps it (`useCanvasList`), routes and Canvas creation. |
 
 ## How it works
@@ -611,11 +612,22 @@ card grid with Sidekicks; the shared layout is described in
   Sidekick's `AppearancePicker`, a popup rather than a
   submenu (a submenu has no room beside a phone-width menu); each click saves
   through `PATCH /canvases/:id`.
-- **Making one** is `POST /canvases`, with the "Start from a prompt" card's
-  text as `prompt`; the client opens the new Canvas, whose Chat already holds
-  the prompt as the creator's message. `useCreateCanvas` holds one attempt
-  series and guards the in-flight call, so a double click or a retry after a
-  lost answer reaches the server's replay rather than making a second Canvas.
+- **Making one** opens `/canvases/:id` under its final client-minted id before
+  `POST /canvases` answers. The shared browser/Electron composer accepts typing
+  and recording immediately; Send and Enter wait for creation and the first live
+  snapshot. A display-only empty detail keeps that composer mounted without
+  seeding canonical socket caches. The submitted opening prompt stays visible;
+  a failed prompt can be edited before retry. Unchanged retries reuse both ids;
+  an edited prompt gets a new message receipt under the same Canvas id.
+  Window-local `canvas-creations` state is scoped by account and Organization
+  and retained across navigation until the
+  first live snapshot clears its entry. The shell reports failures even away
+  from the Canvas, with **Open Canvas** restoring its recovery controls and
+  draft. Recovery metadata does not survive a reload; ordinary draft persistence
+  is unchanged. A pending New Canvas click returns to that attempt; completion
+  never navigates. Recoverable detail-read failures keep recording mounted and
+  offer **Retry loading Canvas details**; definitive access refusals retain the
+  normal unavailable states.
 - **An open Canvas** is `ConversationSurface` with `parentKind: "canvas"` and
   substream `"0"`, so the composer, annotations (a Canvas's comments), the
   inspector rail, its resource cards and versions menu, and the
@@ -760,6 +772,11 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 ## Testing
 
+- `apps/desktop/src/renderer/screens/canvas-creation.test.tsx` — immediate opening
+  on both hosts, send readiness, prompt visibility and correction, recovery away
+  from the route, pending relaunch, first-snapshot cleanup, detail-read failures
+  during recording, and stable draft/composer identity. Network and audio
+  boundaries are held independently.
 - `apps/api/test/authorization-policy.test.ts` — `audienceAdmits`,
   `canvasAdmits` and `canvasManages`.
 - `apps/api/test-workers/canvas-artifact-notices.test.ts` — on real workerd:
@@ -928,6 +945,27 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-11 — Open a new Canvas before its create request answers
+
+**What changed:** The shared browser/Electron screen mounts its composer under
+its final id immediately, creates asynchronously, and enables sending after the
+live snapshot. Pending and failed attempts stay recoverable across navigation;
+opening prompts remain visible and editable after rejection. The first snapshot
+removes optimistic state, and transient detail failures preserve active recording.
+
+**Why:** Creation and chat admission kept people waiting before their first
+keystroke. Navigation moved ahead of the network, which also means its launcher
+cannot own failure reporting or prompt recovery. Keeping those with the shell
+and retaining one mounted composer prevents lost drafts and interrupted audio.
+
+**Considered and rejected:** Waiting to navigate until success puts latency back
+before composition. Writing an invented detail into canonical caches would let
+optimistic presentation masquerade as an admitted conversation.
+
+**Consequences:** Stable draft identity and replay-safe unchanged retries must
+survive future opening states. Editing a rejected prompt creates a new message
+receipt: if the earlier request landed, its original message is not undone.
 
 ### 2026-11-11 — Show sharing in Canvas list subtitles
 
