@@ -54,6 +54,14 @@ person as the revision's author, and never an active site
 ([`rally-mcp.md`](rally-mcp.md#publishing)). The row writes both publishers
 share live in `services/resource-publication.ts`.
 
+A third caller publishes without a sandbox or a person: a Canvas seed's site
+(`services/canvas-seed-service.ts`, [`canvas-seeds.md`](canvas-seeds.md)).
+It makes the same writes in the same order, may be an active or stateful
+site because its files are Rally's own, takes the identity Rally's publish
+of that path from the Canvas's Chat would compute, and only ever writes
+version 1. Its revision is authored as `system`: an `agent` version must
+name its run, and no run made this one.
+
 `publish_resource` accepts a directory. It gains no parameter for what
 to do with one: **the kind is resolved from the directory's root entry**, because
 a parameter restating what the files already say is a parameter that can disagree
