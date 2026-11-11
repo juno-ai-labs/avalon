@@ -117,9 +117,6 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
   launchAtLoginAvailable: boolean;
   /** The account choice shown in Settings. */
   productAnalyticsEnabled: boolean;
-  /** False on the browser fallback, which can display but cannot persist the
-   * account preference. Older desktop bridges omit it and remain writable. */
-  productAnalyticsAvailable?: boolean;
   /** Collection is off while an enable is awaiting server acknowledgement. */
   productAnalyticsEffective: boolean;
   /** A durable offline account mutation waiting to synchronize. */

@@ -85,7 +85,8 @@ the conversation instead and covers the scrollbar's last few pixels.
 
 The shell records the Canvas and Sidekick routes (`/canvases`, `/canvases/:id`,
 `/sidekicks`, `/sidekicks/:id`) as `last-route`, without a query. The root
-landing reopens the saved route when it is one of those (`restorableRoute`); a
+landing defaults to the Canvases homepage. With Last Opened selected in Account
+→ Preferences, it reopens a saved route when it is one of those (`restorableRoute`); a
 Canvas or Sidekick that has gone falls back to its section home without a
 dialog ([`desktop-shell.md`](desktop-shell.md#the-landing-and-the-routes)). Otherwise,
 including a Channel or Thread route saved before the cutover, it opens
