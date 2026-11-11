@@ -1,3 +1,6 @@
+import { useLocalCacheScope } from '../lib/local-cache-scope';
+import { useQuery } from '@tanstack/react-query';
+import { OrganizationBilling } from './organization-billing';
 import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { PLAN_IDS, PlanIdSchema } from '@rally/contracts/usage';
@@ -89,8 +92,10 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
 }): React.JSX.Element {
   const { usage, fetchedAt } = reading;
   const setPlan = useSetOrganizationPlan(api);
+  const scope = useLocalCacheScope();
+  const billing = useQuery({ queryKey: ['organization-billing', scope], queryFn: () => api!.getBillingStatus!(), enabled: canChangePlan && Boolean(api?.getBillingStatus) });
   return <>
-    <label className="settings-preference-row">
+    {billing.data?.enabled && api ? <OrganizationBilling api={api} billing={billing.data} /> : <label className="settings-preference-row">
       <SettingCopy
         setting={settings.plan}
         description={setPlan.error
@@ -99,7 +104,7 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
       />
       <DropdownSelect
         ariaLabel="Plan"
-        disabled={!canChangePlan || !api || offline || setPlan.isPending}
+        disabled={!canChangePlan || !api || offline || setPlan.isPending || (Boolean(api?.getBillingStatus) && billing.data?.enabled !== false)}
         onValueChange={(value) => {
           const plan = PlanIdSchema.parse(value);
           if (plan !== usage.plan) setPlan.mutate(plan);
@@ -108,7 +113,8 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
         value={setPlan.isPending ? setPlan.variables ?? usage.plan : usage.plan}
         variant="secondary"
       />
-    </label>
+    </label>}
+    {billing.error && <ErrorNotice>Billing could not be loaded. {billing.error.message}</ErrorNotice>}
     <div className="settings-preference-row">
       <SettingCopy
         setting={settings.quota}
@@ -129,9 +135,9 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
           <small>{usagePeriodLabel(usage.overage.periodStart, usage.overage.periodEndsAt)}</small>
         </span>
         <span className="usage-overage-value">
-          <s>{formatMicrousd(usage.overage.amountMicrousd)}</s>
-          <Tip label={NOT_BILLED_EXPLANATION} side="top">
-            <Badge className="usage-not-billed" tabIndex={0}>Not billed</Badge>
+          {usage.overage.billingEnabled ? <span>{formatMicrousd(usage.overage.amountMicrousd)}</span> : <s>{formatMicrousd(usage.overage.amountMicrousd)}</s>}
+          <Tip label={usage.overage.billingEnabled ? "Overage charges appear on a later invoice after usage settles." : NOT_BILLED_EXPLANATION} side="top">
+            <Badge className="usage-not-billed" tabIndex={0}>{usage.overage.billingEnabled ? "Overage enabled" : "Not billed"}</Badge>
           </Tip>
         </span>
       </div>

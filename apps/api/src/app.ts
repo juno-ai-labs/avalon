@@ -1,3 +1,4 @@
+import { billingRoutes, stripeWebhookRoutes } from './routes/billing';
 import { messageIssueRoutes } from "./routes/message-issues";
 import { sharingRoutes } from "./routes/sharing";
 import { canvasRoutes } from "./routes/canvases";
@@ -134,6 +135,7 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/dev", devRoutes);
   app.route("/connections", connectionCallbackRoutes);
   app.route("/ingest", webhookIngestionRoutes);
+  app.route("/stripe/webhook", stripeWebhookRoutes);
   app.route("/ingest/daytona", daytonaWebhookRoutes);
   app.route("/socket", socketRoutes);
   app.route("/slack", slackIngressRoutes);
@@ -183,6 +185,7 @@ export function createApp(): Hono<HonoAppEnv> {
   const protectedApi = new Hono<HonoAppEnv>();
   protectedApi.use("*", requireAuth);
   protectedApi.use("*", workspaceRealtimeInvalidation);
+  protectedApi.route("/workspace/billing", billingRoutes);
   protectedApi.route("/workspace", workspaceRoutes);
   protectedApi.route("/workspaces", workspaceMembershipRoutes);
   protectedApi.route("/connections", connectionRoutes);

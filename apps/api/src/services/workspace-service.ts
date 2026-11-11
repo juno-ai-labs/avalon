@@ -605,11 +605,12 @@ export class WorkspaceService {
 
   /**
    * Move this Organization to a plan. Administrators only, as with every other
-   * Organization-wide setting; there is no billing behind it yet, so the change
-   * is the quota alone (docs/usage-metering.md).
+   * Organization-wide setting. When billing is configured, only Stripe
+   * reconciliation may change the paid plan (docs/stripe-billing.md).
    */
   async setPlan(plan: PlanId): Promise<OrganizationUsage> {
     this.requireAdmin();
+    if (this.env.BILLING_CONFIG) throw new ApiError(409, "billing_checkout_required", "Manage your plan through billing");
     const now = Date.now();
     if (!await setWorkspacePlan(this.env, this.auth.workspaceId, plan, now)) {
       throw new ApiError(404, "workspace_not_found", "Workspace not found");
