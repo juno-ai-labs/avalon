@@ -37,7 +37,8 @@ Before launching Electron, the Ubuntu 24.04 build job sets
 allows Chromium's user-namespace sandbox for the non-root updater fixture and
 both packaged smoke tests. Without it, Electron can fall back to an unconfigured
 setuid helper and abort with the `chrome-sandbox` ownership/mode error. The
-setting lasts for that runner; it is not included in the distributed packages.
+setting lasts for that runner; these checks establish startup with permitted user
+namespaces, not compatibility with stock Ubuntu's AppArmor policy.
 
 Linux publishes under `stable/linux/x64/`. The immutable AppImage, Debian package,
 optional blockmaps, versioned SHA256SUMS, and versioned release receipt are
@@ -82,6 +83,7 @@ video and display capture remain denied. No Linux native audio addon is required
   `system-key-storage.test.ts` guards Lockdown availability and encryption.
 - Shipped windows keep Chromium sandboxing enabled. The smoke's root-only
   `--no-sandbox` exception belongs to an isolated test launch, never the package.
+  Sandbox acceptance requires a non-root launch.
 
 ## Boundary
 
@@ -104,6 +106,15 @@ standalone `pkexec` package or the older `policykit-1` package; this does not cl
 support for Debian 11 or Ubuntu 20.04 without testing their runtime libraries.
 AppImages need a user-writable location and FUSE support or extraction mode.
 Debian installation needs a desktop privilege agent and package manager.
+
+The landing-page AppImage requires permission to create user namespaces. Stock
+Ubuntu 24.04 restricts them through AppArmor, so the AppImage can abort with the
+`chrome-sandbox` ownership/mode error unless a host AppArmor profile grants
+`userns` for the executable or the host otherwise permits those namespaces.
+The CI sysctl does not fix that user-facing limitation. Debian installation runs
+electron-builder's AppArmor-profile setup; the extracted-deb smoke does not run
+that installation hook. Stock Ubuntu AppImage startup and installed-deb sandbox
+setup remain unverified platform acceptance checks.
 
 If Linux publication fails after Mac succeeds, rerun the failed publish job using
 the same Actions artifact within its seven-day retention window. Preserve that
@@ -144,11 +155,6 @@ permission handlers producing nonzero synthetic audio. The smoke accepts an
 optional screenshot path when invoked directly.
 Real hardware, Wayland, OS privilege prompts and a full installed-version upgrade
 remain platform acceptance checks; the synthetic microphone is not those checks.
-
-Run sandbox acceptance checks as a non-root user: the isolated smoke launch's
-root-only `--no-sandbox` exception cannot validate the CI sandbox setup. Changes
-to the Ubuntu runner policy must be verified in the Linux release job; a local
-container without Ubuntu's AppArmor restriction cannot establish that result.
 
 ## Changelog
 
