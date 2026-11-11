@@ -304,7 +304,7 @@ HTTP, then immediately hands the clean URL and `[rally.ticket.v1, ticket]`
 protocol offer to the browser-shaped adapter. The conversation's list row is
 already on the client from the workspace socket, so nothing else is asked for.
 Foregrounding a Canvas sends `set_presence` on the workspace socket, which is
-how the Canvas's face pile and live dot learn who is in it.
+how the Canvas's face pile learns who is in it.
 For the main feed, the Worker also starts a best-effort ticket-scoped
 AgentLoopDO preparation without awaiting it, so admission and snapshot work
 can overlap the ticket's return trip and native handshake. A room retains only

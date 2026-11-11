@@ -46,26 +46,48 @@ beforeEach(() => {
 });
 
 describe('CanvasesSection', () => {
-  it('draws Pinned first in pinned order, then every other Canvas by recency', async () => {
+  it('draws Pinned first in pinned order, then every other Canvas by recency', () => {
     renderSection([
       canvas('00000000-0000-7000-8000-0000000000c1', 'Acme follow-up', { unread: true }),
-      canvas('00000000-0000-7000-8000-0000000000c2', 'Launch plan', { pinnedPosition: 1, lastEditor: { kind: 'rally', id: null } }),
-      canvas('00000000-0000-7000-8000-0000000000c3', 'Q4 revenue review', { pinnedPosition: 0, presentUserIds: [MAYA] }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Launch plan', { visibility: 'workspace', pinnedPosition: 1, lastEditor: { kind: 'rally', id: null } }),
+      canvas('00000000-0000-7000-8000-0000000000c3', 'Q4 revenue review', { visibility: 'participants', pinnedPosition: 0, presentUserIds: [MAYA] }),
     ], '/canvases/00000000-0000-7000-8000-0000000000c1');
     const pinned = screen.getByRole('region', { name: 'Pinned Canvases' });
     expect(within(pinned).getAllByRole('link').map((link) => link.textContent)).toEqual([
       expect.stringContaining('Q4 revenue review'), expect.stringContaining('Launch plan'),
     ]);
-    expect(await within(pinned).findByText('Maya is here')).toBeInTheDocument();
-    expect(within(pinned).getByRole('img', { name: 'People are here' })).toBeInTheDocument();
-    expect(within(pinned).getByText('Edited by Rally')).toBeInTheDocument();
+    expect(within(pinned).getByText('Specific people')).toBeInTheDocument();
+    expect(within(pinned).getByText('Everyone in the Organization')).toBeInTheDocument();
+    expect(within(pinned).getByText('Specific people').previousElementSibling).toHaveClass('tabler-icon-users');
+    expect(within(pinned).getByText('Everyone in the Organization').previousElementSibling).toHaveClass('tabler-icon-building');
     const all = screen.getByRole('region', { name: 'All canvases' });
     const row = within(all).getByRole('link', { name: /Acme follow-up/ });
     expect(row).toHaveAttribute('href', '/canvases/00000000-0000-7000-8000-0000000000c1');
     expect(row).toHaveAttribute('aria-current', 'page');
     expect(row).toHaveClass('is-unread');
     expect(within(row).getByRole('img', { name: 'Unread' })).toBeInTheDocument();
-    expect(within(row).getByText('Made by you')).toBeInTheDocument();
+    expect(within(row).getByText('Only you')).toBeInTheDocument();
+    expect(within(row).getByText('Only you').previousElementSibling).toHaveClass('tabler-icon-lock');
+  });
+
+  it('includes the writer Sidekick audience for creator-only and participant Canvases', () => {
+    const writerSidekickId = '00000000-0000-7000-8000-0000000000e1';
+    renderSection([
+      canvas('00000000-0000-7000-8000-0000000000c1', 'My digest', { writerSidekickId }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Shared digest', { writerSidekickId, visibility: 'participants', pinnedPosition: 0 }),
+      canvas('00000000-0000-7000-8000-0000000000c3', 'Team digest', { writerSidekickId, createdByUserId: MAYA }),
+    ]);
+    for (const [title, label] of [
+      ['My digest', "You and the Sidekick's audience"],
+      ['Shared digest', "Specific people and the Sidekick's audience"],
+      ['Team digest', "Creator and the Sidekick's audience"],
+    ] as const) {
+      const row = screen.getByRole('link', { name: new RegExp(title) });
+      const status = within(row).getByText(label);
+      expect(status.closest('.canvas-sharing-status')?.querySelector('svg')).toHaveClass('tabler-icon-users');
+    }
+    expect(screen.queryByText('Only you')).toBeNull();
+    expect(screen.queryByText('Only the creator')).toBeNull();
   });
 
   it('sorts All canvases by name when asked, and by recent activity otherwise', () => {
