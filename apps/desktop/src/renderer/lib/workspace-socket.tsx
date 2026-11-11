@@ -42,7 +42,8 @@ import { retainConversationParents } from './conversation-cache';
 import { useLocalCacheScope } from './local-cache-scope';
 import { applyPushedOrganizationUsage, organizationUsageQueryKey } from './organization-usage';
 import { desktopBridge } from './platform';
-import { SIDEBAR_LIST_QUERY_KEYS, applyVersionedSidebarList } from './sidebar-list-store';
+import { SIDEBAR_LIST_QUERY_KEYS, applyVersionedSidebarList, type ActivityList } from './sidebar-list-store';
+import { invalidateMovedSourceRequests } from './sidekick-sources';
 import { applyResourceHeads, followResourceHeads } from './resource-heads';
 import { realtimeSocketTelemetry } from './socket-telemetry';
 import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from './telemetry';
@@ -480,8 +481,12 @@ export function WorkspaceSocketProvider({
         applyVersionedSidebarList(queryClient, 'canvases', sidebar.canvases.waterline, sidebar.canvases.items, authoritative);
       }
       if (sidebar.activity) {
+        const previousActivity = queryClient.getQueryData<ActivityList>(SIDEBAR_LIST_QUERY_KEYS.activity);
         applyVersionedSidebarList(queryClient, 'activity', sidebar.activity.waterline,
           { unseenCount: sidebar.activity.unseenCount, items: sidebar.activity.items }, authoritative);
+        // A reconnect's answer stands in for the pushes missed while away,
+        // as the Sidekicks list's does below.
+        if (hadSubscribed) invalidateMovedSourceRequests(queryClient, previousActivity?.items, sidebar.activity.items);
       }
       // A reconnect's answer that moved the list stands in for the pushes the
       // socket missed while it was away. The first answer this window hears
@@ -735,8 +740,14 @@ export function WorkspaceSocketProvider({
           }
           const activityList = safeParseSocketEvent(WorkspaceActivityListEventSchema, decoded);
           if (activityList.success) {
-            applyVersionedSidebarList(queryClient, 'activity', activityList.data.waterline,
-              { unseenCount: activityList.data.unseenCount, items: activityList.data.items });
+            const previousActivity = queryClient.getQueryData<ActivityList>(SIDEBAR_LIST_QUERY_KEYS.activity);
+            // A source request answered or replaced moves the asked person's
+            // row and writes the requester's, and nothing else tells an open
+            // card or Sources section: re-read the Sidekicks it moved.
+            if (applyVersionedSidebarList(queryClient, 'activity', activityList.data.waterline,
+              { unseenCount: activityList.data.unseenCount, items: activityList.data.items })) {
+              invalidateMovedSourceRequests(queryClient, previousActivity?.items, activityList.data.items);
+            }
             return;
           }
           const sidebarList = safeParseSocketEvent(WorkspaceSidebarListEventSchema, decoded);

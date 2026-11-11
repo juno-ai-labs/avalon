@@ -369,6 +369,18 @@ describe("memory scopes and durable tables", () => {
       message: expect.stringContaining("Its scopes are: sidekick, workspace"),
     });
   });
+
+  it("lets a run nobody is behind write its Sidekick's memory and never the Organization's", async () => {
+    const { env } = fixture();
+    // Automation two's run carries the Organization's principal: nobody lent it an account.
+    const itself = input("owner", 2);
+    const scopes = await resolveMemoryAccess(routedEnv(env, itself), itself);
+    expect(scopes.map((scope) => [scope.kind, scope.ownerId, scope.writable])).toEqual([
+      ["workspace", WORKSPACE_ID, false],
+      ["sidekick", AUTOMATION_TWO, true],
+    ]);
+    await expect(writableScope(routedEnv(env, itself), itself, "workspace")).rejects.toMatchObject({ code: "memory_scope_not_writable" });
+  });
   });
 
   it("asks the WorkspaceDO for each scope once, and decides writability on every call", async () => {

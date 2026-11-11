@@ -197,19 +197,23 @@ tools are opted in explicitly, while hosted MCP schemas/results remain untouched
 
 - A personal connection can be used only by its owner principal.
 - A workspace connection is an organization capability: every ordinary conversation in that Organization (a Canvas's Chat, a Sidekick's) receives all tools granted to the connection. Those tool calls execute as the workspace principal, even when the run was started by a member.
-- Sidekicks retain configured source bindings; delegation and the selected operation identity govern their use independently of ownership scope.
+- Sidekicks retain configured source bindings. Whose events may start a Sidekick is its sources' answer; delegation and the selected operation identity govern which accounts a run's tools use, independently of ownership scope.
 - A conversation participant does not expose their personal connections by joining.
 - Tools require both a manifest capability and a capability recorded on the connection.
 - Credentials are decrypted only for the duration of a backend operation.
 
-Sidekick event matching and delivery use that owner's eligible consent rather
-than the Sidekick's ownership scope. An Organization-owned Sidekick (or one that a retired Thread owned)
-can receive a personal event only while the owner is an eligible delegate;
-restricted workspace events require an eligible delegate inside the real
-audience. This standing consent covers the Sidekick's configured sharing and
-existing shared history. It does not widen ordinary conversation attachments or
-connector event visibility. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
-owns the common admission policy, coordinator identity and migration.
+Sidekick event matching and delivery read the Sidekick's **sources**, never
+its delegation and never its ownership scope. A personal event enters only
+while the connection's owner holds an eligible source for that connection and
+event type; an event restricted to an audience on an Organization connection
+needs the eligible source of somebody in that audience; an event the whole
+Organization can see needs none. A source lends events and no account: it
+does not widen ordinary conversation attachments, connector event visibility
+or what a run's tools may use.
+[`sidekick-sources.md`](sidekick-sources.md#whether-an-event-may-enter) owns
+the rule. Delegation decides only who a run acts as and whose personal
+connections its tools may use
+([Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)).
 
 Hosted MCP personal connections add one more layer without weakening those
 rules. Their static connector descriptor supplies trusted catalog prose and
@@ -1304,6 +1308,23 @@ A connector's normalized `title`/`summary` is not independently bounded to the A
 
 Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot is in a conversation only where it was invited, which links the room to nothing now, or where a Sidekick's Slack source names it (see [`external-conversation-bindings.md`](external-conversation-bindings.md)). Slack starts no conversation: a DM or mention is answered that work starts in Rally, and a reply in a Sidekick run's bound thread receives an `eyes` reaction once admitted. Optional personal authorizations use Slack's hosted MCP server and its live `tools/list` surface rather than Rally's historical snapshot. Slack delivers bounded message, reaction, file-share, channel, and membership events. Replies in bound threads go to their run; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/slack-integration.md` for the product and data flow and `docs/slack-permissions.md` for the complete OAuth scope inventory.
 
+### Reading what an activity is about
+
+An adapter may implement `readActivityContent(connection, activity, signal)`:
+the content one activity is about, read with the connection the activity came
+from. Google implements it for `email.received`, where the event carries a
+subject and a snippet and the content is the one message: its headers, its
+text, its attachments' names. It makes one request for that message and never
+reads the thread or searches. Anything else answers `null`: another event
+type, a subject that names no message, a message that is gone, a connection
+without `gmail.read`.
+
+The host calls it for an event that was let into a Sidekick, so the run is
+handed what its event is about without holding the account's tools
+([`sidekick-sources.md`](sidekick-sources.md#what-a-run-is-handed)). It is not
+a tool and no model argument reaches it: the activity's `subject` is the
+adapter's own, stored at ingest.
+
 ### Product measurement
 
 Connector setup intent records only connector, personal/workspace scope, setup
@@ -1629,6 +1650,23 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-10 — An adapter can read what one activity is about
+
+**What changed:** Adapters gain an optional `readActivityContent`, and Google
+implements it for new mail: the one message an `email.received` activity
+names. Sidekick events are now admitted through sources, not delegation; the
+2026-10-22 entry below describes the rule this replaced.
+
+**Why:** A person can let their mail start a Sidekick without lending their
+account, and a mail event carries no body.
+[`sidekick-sources.md`](sidekick-sources.md#changelog) holds the reasoning
+and what was rejected.
+
+**Consequences:** The method is the host's, never the model's. An adapter
+that implements it reads only what the activity's own `subject` names: one
+that searched or widened to a thread would turn a filtered permission into
+access to the account.
 
 ### 2026-11-09 — Provider webhooks run only on WorkspaceDO authority
 

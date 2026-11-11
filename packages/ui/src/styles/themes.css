@@ -149,7 +149,9 @@
    * that is on, a selected preset — which is neither the vivid hue nor the
    * wash. `vivid` is the one saturated step, for a status indicator a few
    * pixels across — the healthy dot beside a connection — where `base`, tuned
-   * for text and fills, read as grey. */
+   * for text and fills, read as grey. `on` is the ink over a solid `strong`
+   * fill, as `danger.on` is over `danger.base`: a choice somebody made, drawn
+   * filled. */
   --av-sys-color-success-base: #4f8271;
   --av-sys-color-success-strong: #3d6a5b;
   --av-sys-color-success-fill: #dfeae5;
@@ -158,6 +160,7 @@
   --av-sys-color-success-wash: #eef4f1;
   --av-sys-color-success-edge: #cfe0d8;
   --av-sys-color-success-vivid: #1fa85c;
+  --av-sys-color-success-on: #ffffff;
 
   /* Attention short of failure. */
   --av-sys-color-warning-base: #b8860b;
@@ -277,7 +280,9 @@
    * that is on, a selected preset — which is neither the vivid hue nor the
    * wash. `vivid` is the one saturated step, for a status indicator a few
    * pixels across — the healthy dot beside a connection — where `base`, tuned
-   * for text and fills, read as grey. */
+   * for text and fills, read as grey. `on` is the ink over a solid `strong`
+   * fill, as `danger.on` is over `danger.base`: a choice somebody made, drawn
+   * filled. */
   --av-sys-color-success-tint: rgba(79, 130, 113, 0.12);
 
   /* What sits between a layer and what it covers. `solid` hides the backdrop
@@ -666,6 +671,7 @@
   --av-sys-color-success-wash: #0e1712;
   --av-sys-color-success-edge: #1e2f26;
   --av-sys-color-success-vivid: #34d276;
+  --av-sys-color-success-on: #08150e;
 
   --av-sys-color-warning-base: #d9b168;
   --av-sys-color-warning-soft: #cfa961;

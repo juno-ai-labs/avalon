@@ -1,5 +1,5 @@
 import type { ActivityItem } from '@rally/contracts';
-import { IconAt, IconCircleCheck, IconFilePencil, IconLock, IconLockOpen, IconMessage, IconMessageQuestion, IconUserPlus } from '@tabler/icons-react';
+import { IconAt, IconBolt, IconBoltOff, IconCircleCheck, IconFilePencil, IconLock, IconLockOpen, IconMessage, IconMessageQuestion, IconUserPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Fragment, type ReactNode, type RefObject } from 'react';
 import { Link, useLocation } from 'react-router-dom';
@@ -12,10 +12,12 @@ import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList, type ActivityList } from '../lib/sidebar-list-store';
 import { sidekickRunSearch } from '../lib/sidekick-status';
+import { sourceWords } from '../lib/sidekick-sources';
 import { AccessDecisionActions } from './canvas-access-request';
 import { RowLayout, SectionHeading, useSectionMotion } from './navigation-rows';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
+import { SourceRequestActions } from './sidekick-sources';
 
 /** This viewer's Activity as the workspace socket keeps it; `undefined` until it has said. */
 export function useActivityList(): ActivityList | undefined {
@@ -45,7 +47,19 @@ function rowParts(item: ActivityItem, who: string, where: string): RowPart[] {
     case 'access_granted': return [actor, ' let you into ', place];
     // Never the title: the requester was refused the Canvas.
     case 'access_denied': return [actor, ' declined your request to open a Canvas'];
+    // A source is one person's events from one of their accounts, so the row
+    // says whose account: the reader's own when they are asked, the asked
+    // person's when the requester is told how they answered. The Sidekick
+    // comes last, as every row's place does, so the two-line cut spares it.
+    case 'source_request': return [actor, ` asked for your ${sourceAccount(item)} to start `, place];
+    case 'source_approved': return [actor, ` approved their ${sourceAccount(item)} for `, place];
+    case 'source_declined': return [actor, ` declined their ${sourceAccount(item)} for `, place];
   }
+}
+
+/** The connector a source row is about, in the words the card and the panel use ("Gmail"). */
+function sourceAccount(item: ActivityItem): string {
+  return item.sourceRequest ? sourceWords(item.sourceRequest).connector : 'account';
 }
 
 function rowText(parts: RowPart[]): ReactNode {
@@ -66,6 +80,9 @@ const GLYPHS: Record<ActivityItem['kind'], ReactNode> = {
   access_request: <IconLock aria-hidden="true" size={18} stroke={1.8} />,
   access_granted: <IconLockOpen aria-hidden="true" size={18} stroke={1.8} />,
   access_denied: <IconLock aria-hidden="true" size={18} stroke={1.8} />,
+  source_request: <IconBolt aria-hidden="true" size={18} stroke={1.8} />,
+  source_approved: <IconBolt aria-hidden="true" size={18} stroke={1.8} />,
+  source_declined: <IconBoltOff aria-hidden="true" size={18} stroke={1.8} />,
 };
 
 /**
@@ -78,6 +95,16 @@ function settledText(request: NonNullable<ActivityItem['accessRequest']>, viewer
 }
 
 /**
+ * How the asked person's own source request ended, where its Approve and
+ * Decline were. Only they could answer it, so an answer is always theirs.
+ */
+function sourceSettledText(state: NonNullable<ActivityItem['sourceRequest']>['state']): string {
+  if (state === 'approved') return 'You approved';
+  if (state === 'declined') return 'You declined';
+  return 'Replaced by a newer request';
+}
+
+/**
  * Where a row opens: a Canvas Chat mention or reply at its message, a pinned
  * Canvas's new version at the Canvas with that artifact open (`?artifact=`),
  * any other Canvas row at the Canvas (an access request's Share panel lists
@@ -85,8 +112,18 @@ function settledText(request: NonNullable<ActivityItem['accessRequest']>, viewer
  * run that needs input, and a mention or reply in one of a Sidekick's runs,
  * open that run, where its question is. A mention recorded before it carried
  * its message's sequence opens the Canvas.
+ *
+ * A source request (`source_request`) is about a Sidekick the person asked
+ * may not be able to open until they approve: approving is what makes them a
+ * reader. `sidekickListed` says whether their Sidekick list holds it. While
+ * it does not, the row opens the Activity home rather than a Sidekick that
+ * would refuse them, and its own Approve and Decline are all there is to do.
+ * The requester's `source_approved` and `source_declined` rows open the
+ * Sidekick, whose Sources section shows the answer, under the same guard: a
+ * source row lists for as long as its Sidekick exists, whoever reads it now.
  */
-export function activityRoute(item: ActivityItem): string {
+export function activityRoute(item: ActivityItem, sidekickListed = true): string {
+  if (item.sourceRequest && !sidekickListed) return '/activity';
   const message = item.kind === 'mention' || item.kind === 'new_message';
   if (item.parentKind === 'canvas') {
     if (message && item.substreamId === '0' && item.messageId !== null && item.messageSequence !== null) {
@@ -138,15 +175,26 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
   // run instead; every finished row of one Sidekick shares that address, so
   // none is drawn open rather than all of them at once.
   const location = useLocation();
+  const routeOf = (item: ActivityItem): string => activityRoute(item, item.parentKind !== 'automation' || sidekicksById.has(item.parentId));
   const openRun = new URLSearchParams(location.search).get('run');
   const isOpen = (item: ActivityItem): boolean => {
     if (item.kind === 'run_finished') return false;
-    const [pathname, search = ''] = activityRoute(item).split('?');
+    const [pathname, search = ''] = routeOf(item).split('?');
+    // A source request with no Sidekick to open leads to the Activity home,
+    // which is no row's own page.
+    if (pathname === '/activity') return false;
     return pathname === location.pathname && new URLSearchParams(search).get('run') === openRun;
   };
   const who = (item: ActivityItem): string => {
     if (item.kind === 'access_denied' && item.accessRequest?.decidedByName) return item.accessRequest.decidedByName;
     if (item.actor.kind === 'rally') return 'Rally';
+    // A source row names a person either way: who asked, or who answered.
+    // The request keeps both names, for a person the directory cannot name.
+    if (item.kind === 'source_request' || item.kind === 'source_approved' || item.kind === 'source_declined') {
+      return (item.actor.id ? membersById.get(item.actor.id)?.name : undefined)
+        || (item.kind === 'source_request' ? item.sourceRequest?.requestedByName : item.sourceRequest?.personName)
+        || 'Someone';
+    }
     if (item.actor.kind === 'sidekick') {
       return item.parentTitle ?? (item.actor.id ? sidekicksById.get(item.actor.id)?.name : undefined) ?? 'A Sidekick';
     }
@@ -162,12 +210,14 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
       const active = isOpen(item);
       const parts = rowParts(item, who(item), where(item));
       const request = item.kind === 'access_request' && item.actor.id !== null ? item.accessRequest : null;
+      const sourceRequest = item.kind === 'source_request' ? item.sourceRequest : null;
+      const grouped = Boolean(request || sourceRequest);
       const row = <Link
         aria-current={active ? 'page' : undefined}
         className={clsx('navigation-row activity-row', item.seen ? 'is-seen' : 'is-unread', active && 'is-active')}
-        data-motion-key={request ? undefined : `activity:${item.id}`}
+        data-motion-key={grouped ? undefined : `activity:${item.id}`}
         title={rowSentence(parts)}
-        to={activityRoute(item)}
+        to={routeOf(item)}
       >
         <RowLayout
           detail={item.preview ?? ''}
@@ -178,11 +228,13 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
           unreadLabel="Unseen"
         />
       </Link>;
-      if (!request) return <Fragment key={item.id}>{row}</Fragment>;
+      if (!grouped) return <Fragment key={item.id}>{row}</Fragment>;
       // A request's Approve and Deny sit under its link rather than in it (a
       // link holds no buttons), inside one group that owns the row's fill. On
       // settling, who decided takes the buttons' place on a line as tall as
-      // they were, so the list does not move under the pointer.
+      // they were, so the list does not move under the pointer. A source
+      // request is the same group with its own pair: only the person asked
+      // has the row, so the buttons are always theirs to press.
       return <div
         className={clsx('activity-row-group', item.seen ? 'is-seen' : 'is-unread', active && 'is-active')}
         data-motion-key={`activity:${item.id}`}
@@ -190,9 +242,20 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
       >
         {row}
         <div className="activity-row-actions">
-          {request.state === 'pending'
-            ? <AccessDecisionActions canvasId={item.parentId} canvasTitle={item.parentTitle ?? undefined} label={membersById.get(item.actor.id!)?.name || undefined} userId={item.actor.id!} />
-            : <p className="activity-row-settled">{settledText(request, session?.user.id)}</p>}
+          {sourceRequest
+            ? sourceRequest.state === 'pending'
+              ? <>
+                {/* The preview is one line and cuts the condition; nobody approves a filter they cannot read. */}
+                {sourceRequest.condition && <p className="activity-row-condition">Only when “{sourceRequest.condition}”</p>}
+                <SourceRequestActions
+                  request={{ sidekickId: item.parentId, requestId: sourceRequest.requestId, connectorType: sourceRequest.connectorType, eventTypes: sourceRequest.eventTypes }}
+                  sidekickName={item.parentTitle ?? undefined}
+                />
+              </>
+              : <p className="activity-row-settled">{sourceSettledText(sourceRequest.state)}</p>
+            : request!.state === 'pending'
+              ? <AccessDecisionActions canvasId={item.parentId} canvasTitle={item.parentTitle ?? undefined} label={membersById.get(item.actor.id!)?.name || undefined} userId={item.actor.id!} />
+              : <p className="activity-row-settled">{settledText(request!, session?.user.id)}</p>}
         </div>
       </div>;
     })}

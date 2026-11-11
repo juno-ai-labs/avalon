@@ -22,6 +22,7 @@
     "src/entry.tsx",
     "src/mcp-consent.tsx",
     "src/shell.tsx",
-    "src/site-open.tsx"
+    "src/site-open.tsx",
+    "src/source-decision.tsx"
   ]
 }

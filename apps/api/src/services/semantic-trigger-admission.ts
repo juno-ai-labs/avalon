@@ -21,21 +21,25 @@ export interface SemanticTriggerAdmissionPort {
   admitExternalEvent(input: AutomationExternalEventAdmission): Promise<{
     admitted: boolean;
     outcomeCode: string;
-    judge?: { conditions: string[]; connectorType: string | null } | undefined;
+    judge?: { conditions: string[]; sourceConditions?: string[] | undefined; connectorType: string | null } | undefined;
   }>;
 }
+
+type GateLog = {
+  code: SemanticTriggerDecision["code"];
+  confidence: number | null;
+  model: string | null;
+  failureKind?: string | undefined;
+  conditionCount: number;
+};
 
 export interface SemanticTriggerAdmissionResult {
   admitted: boolean;
   outcomeCode: string;
-  /** Present only when a condition was judged, for the delivery's log line. */
-  gate?: {
-    code: SemanticTriggerDecision["code"];
-    confidence: number | null;
-    model: string | null;
-    failureKind?: string | undefined;
-    conditionCount: number;
-  };
+  /** Present only when the trigger's condition was judged, for the delivery's log line. */
+  gate?: GateLog;
+  /** Present only when a source's condition was judged: the filter of the person whose events these are. */
+  sourceGate?: GateLog;
 }
 
 /**
@@ -74,12 +78,16 @@ export async function admitExternalEventWithSemanticGate(
   const first = await input.sidekick.admitExternalEvent(input.admission);
   if (!first.judge) return { admitted: first.admitted, outcomeCode: first.outcomeCode };
   const plan = first.judge;
+  const sourceConditions = plan.sourceConditions ?? [];
 
-  const traceId = crypto.randomUUID();
-  const decision: SemanticTriggerDecision = env.TYPESAFE_API_KEY
-    ? await judgeSemanticTriggerConditions({
+  // One judge and one metered activity for both filters: they ask the same
+  // question of the same event, and differ only in whose sentence it is.
+  const judge = async (conditions: readonly string[], feature: "semantic-trigger-gate" | "sidekick-source-gate"): Promise<SemanticTriggerDecision> => {
+    if (!env.TYPESAFE_API_KEY) return { admit: false, code: "classifier_unavailable", confidence: null, model: null };
+    const traceId = crypto.randomUUID();
+    return judgeSemanticTriggerConditions({
       typesafeApiKey: env.TYPESAFE_API_KEY,
-      conditions: plan.conditions,
+      conditions,
       event: {
         connectorType: plan.connectorType,
         eventType: input.admission.event.eventType,
@@ -91,7 +99,7 @@ export async function admitExternalEventWithSemanticGate(
       fetch: input.fetch,
       traceContext: {
         source: "semantic_trigger_gate",
-        feature: "semantic-trigger-gate",
+        feature,
         workspaceId: input.workspaceId,
         requestId: traceId,
         region: env.AVALON_REGION,
@@ -104,24 +112,32 @@ export async function admitExternalEventWithSemanticGate(
         traceId,
         defer: input.defer,
       }).record,
-    })
-    : { admit: false, code: "classifier_unavailable", confidence: null, model: null };
-
-  const verdict: AutomationSemanticConditionVerdict = {
-    admit: decision.admit,
-    code: decision.code,
-    confidence: decision.confidence,
-    model: decision.model,
+    });
   };
-  const result = await input.sidekick.admitExternalEvent({ ...input.admission, conditionVerdict: verdict });
+  const verdictOf = (decision: SemanticTriggerDecision): AutomationSemanticConditionVerdict => ({
+    admit: decision.admit, code: decision.code, confidence: decision.confidence, model: decision.model,
+  });
+  const logOf = (decision: SemanticTriggerDecision, conditionCount: number): GateLog => ({
+    code: decision.code, confidence: decision.confidence, model: decision.model,
+    failureKind: decision.failureKind, conditionCount,
+  });
+
+  // The person's filter is judged first. An event it keeps out never reaches
+  // the Sidekick's own condition, so that question is not asked of it.
+  const sourceDecision = sourceConditions.length > 0 ? await judge(sourceConditions, "sidekick-source-gate") : null;
+  const triggerDecision = plan.conditions.length > 0 && (sourceDecision === null || sourceDecision.admit)
+    ? await judge(plan.conditions, "semantic-trigger-gate") : null;
+  const result = await input.sidekick.admitExternalEvent({
+    ...input.admission,
+    ...(sourceDecision ? { sourceVerdict: { ...verdictOf(sourceDecision), conditions: sourceConditions } } : {}),
+    // A source that refused settles the delivery; the trigger's verdict is
+    // sent as unavailable only so the object's two checks both have an answer.
+    ...(plan.conditions.length > 0 ? { conditionVerdict: triggerDecision ? verdictOf(triggerDecision)
+      : { admit: false, code: "classifier_unavailable" as const, confidence: null, model: null } } : {}),
+  });
   return {
     ...result,
-    gate: {
-      code: decision.code,
-      confidence: decision.confidence,
-      model: decision.model,
-      failureKind: decision.failureKind,
-      conditionCount: plan.conditions.length,
-    },
+    ...(triggerDecision ? { gate: logOf(triggerDecision, plan.conditions.length) } : {}),
+    ...(sourceDecision ? { sourceGate: logOf(sourceDecision, sourceConditions.length) } : {}),
   };
 }

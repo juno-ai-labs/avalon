@@ -103,7 +103,7 @@ export type PushDeliveryMessage = z.infer<typeof PushDeliveryMessageSchema>;
  */
 export const PushNotificationDataSchema = z.object({
   v: z.literal(1),
-  kind: z.enum(["mention", "new_message", "participant_added", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated", "needs_input", "access_request", "access_granted", "access_denied"]),
+  kind: z.enum(["mention", "new_message", "participant_added", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated", "needs_input", "access_request", "access_granted", "access_denied", "source_request", "source_approved", "source_declined"]),
   url: HttpsUrlSchema,
   workspaceId: z.string(),
   region: RegionSchema,

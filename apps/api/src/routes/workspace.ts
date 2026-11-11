@@ -70,9 +70,9 @@ const InviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
  * admitted to a socket whose first frame it discards.
  */
 export async function workspaceSocketTicket(c: Context<HonoAppEnv>) {
-  requireCurrentClientContract((name) => c.req.header(name));
+  const clientContract = requireCurrentClientContract((name) => c.req.header(name));
   const auth = getWorkspaceAuth(c);
-  const ticket = await issueWorkspaceSocketTicket(c.env, auth);
+  const ticket = await issueWorkspaceSocketTicket(c.env, auth, clientContract);
   const url = new URL(c.env.PUBLIC_API_BASE_URL);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = `/socket/workspaces/${auth.workspaceId}`;

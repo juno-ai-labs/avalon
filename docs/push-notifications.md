@@ -176,8 +176,15 @@ decided, per the [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidek
 projection's own transaction (the state it moves from is read there) and arms
 one `sidekick_run_notice` alarm entry carrying the notice
 (`SidekickRunNotificationSchema` in `packages/contracts/src/push-notifications.ts`:
-the Sidekick's name, the run, its state and reply then). A run admitted
-straight into `needs_input` for want of a delegate arms the same entry. The
+the Sidekick's name, the run, its state and reply then). A run with no
+delegate that a schedule or an event started runs as the Sidekick itself and
+is noticed like any other run. A run admitted straight into `needs_input`,
+for a Sidekick that had already stopped for want of a delegate, never has a
+projection, so `admitOccurrence` arms the entry itself and the managers are
+told as for any Needs input. A run a person asked for under their own access
+who has since left is moved to `needs_input` at its start and tells nobody:
+its row in the Sidekick's conversation carries its summary
+([`automation-lifecycle.md`](automation-lifecycle.md#who-a-run-acts-as)). The
 entry resolves recipients, drops anyone no longer active, records one intent
 per recipient with `recordSidekickRunNotices` (already `delivered`: push is
 the only channel, so there is no lease), and enqueues each with
@@ -197,8 +204,7 @@ so the push body and the Activity row's preview, which is the body's text,
 carry the question. One notice feeds both, so they cannot disagree, and the
 question is what the recipient needs to decide whether to answer now; before
 this the body was the run's last text turn, usually empty, because the asking
-is not a text turn. A run admitted with no delegate carries the delegation
-notice instead. Both kinds read the person's **Sidekick runs** choice (`runFinished`),
+is not a text turn. Both kinds read the person's **Sidekick runs** choice (`runFinished`),
 so one row in Settings covers both.
 
 **Where a push links.** Every notice, whichever sink takes it, links through
@@ -296,6 +302,56 @@ no title (they were refused it), linking to the Canvas, and sent although
 they cannot list it. All three are recorded with their Activity rows by
 [`canvas-access-requests.md`](canvas-access-requests.md)'s settlement.
 
+### A request for a Sidekick source, and its answer
+
+A manager who asks a person to let events from one of their connections start
+a Sidekick ([`sidekick-sources.md`](sidekick-sources.md)) gives that person a
+`source_request` intent: "<requester> asked for your <connector> to start
+<Sidekick>". When the person approves or declines, whoever asked gets a
+`source_approved` or `source_declined` intent: "<person> approved their
+<connector> for <Sidekick>", or "declined". The body of all three is what was
+asked: "Events: Email received. Only when: it is about a pre-seed round", the
+events by their manifest labels and the condition when there is one
+(`sourceNoticeText`). The connector is named as the person calls the product
+(`sourceConnectorName`: Gmail for Google's mail events). A request cancelled
+by a newer ask sends nothing, and neither does a person answering their own
+ask.
+
+`HostedSidekick.requestSources` and `decideSourceRequest` prepare each notice
+before their transaction (a notice is hashed, which yields), record the intent
+and its Activity row inside it (`recordSourceRequestAsked`,
+`recordSourceRequestSettled`, through `recordParentNotice`), and enqueue after
+the commit (`enqueueSourceNotices`). All three are sent although the
+recipient may not be able to list the Sidekick (`recipientRefused`'s
+`unlisted`): the person asked usually cannot open it, and the request names it
+to them on purpose. All three read a choice of their own, **Source requests**
+(`sourceRequests`), which defaults to push and email: the request is answered
+from its email. A person who turned email off for that kind gets no email.
+
+A `source_request` notice also carries **actions** (`Notice.actions`): an
+Approve and a Decline link, each signed for that request, that person and that
+decision (`sourceDecisionActions`,
+[`sidekick-sources.md`](sidekick-sources.md)). The email sink draws them as
+its two buttons, Decline then Approve, both outlined, and quotes the whole of
+what was asked above them. Push ignores the actions. The body of all three
+source kinds is sent as it is stored, without the Markdown rewrite other
+parent notices get (`parentNoticeWords`): the condition is what the person
+agrees to and what the classifier judges, so the email and the push show the
+same words.
+
+Where a push or an email's link for a `source_request` leads depends on the
+person asked. The notice names the Canvas the request was asked in
+(`placeCanvasId`) only for an asked person who can open that Canvas when the
+ask is made (`requestSources`); the link then opens that Canvas, where the
+request's card is. For a person who cannot open the Canvas, and for a request
+asked from a Sidekick's own conversation, the link is the Sidekick, which the
+person usually cannot open before they approve. That person answers from the
+email's two buttons or from their Activity row. The two answer kinds link to
+the Sidekick. When
+`BROWSER_APP_ORIGIN` is not configured there is nowhere for the links to open,
+so the notice goes without them and `source_decision_link_unavailable` is
+logged with the reason.
+
 ## Sinks
 
 Every notification is rendered once into a **notice** (`Notice`, by
@@ -314,7 +370,13 @@ A **sink** takes a notice and adds only its transport's form. There are two:
   you in Launch plan", "Deploy watcher needs your input", "Ada declined your
   request to open a Canvas"); its body greets the person, quotes the notice's
   text (cut at 320 characters, the mention email's number), has one Open in
-  Rally button to the link, and names the Settings row that sent it. It goes
+  Rally button to the link, and names the Settings row that sent it. A notice
+  with `actions` (a Sidekick source request) has a button for each action in
+  that button's place, all outlined so neither answer is drawn as the default,
+  quotes its text whole with no cut, because the person agrees to all of it,
+  and adds a note (`ACTIONS_NOTE`) saying what an approval shares (each
+  matching event starts the Sidekick, which reads that event's content and
+  nothing else in the account) and that either button answers at once. It goes
   through `sendEmail` and the native Cloudflare `EMAIL` binding (production
   only). `rally-notice/<organization>/<intent>` is its correlation reference;
   Cloudflare does not deduplicate it. D1 `email_delivery_receipts` records a
@@ -341,7 +403,9 @@ a stored `slack_agent_dm` choice reads as no choice.
 
 Settings → Notifications → **Notify me about** holds, for each kind it offers
 — exactly the kinds a producer records: Mentions, New messages, Being added,
-Sidekick runs, Pinned Canvas updates, Access requests
+Sidekick runs, Pinned Canvas updates, Access requests, Source requests (a
+Sidekick source request and its answer, the one kind that defaults to email
+as well as push)
 (`OFFERED_NOTIFICATION_KINDS`) — the channels it goes by: `push` and `email`,
 each a [sink](#sinks). A Thread-era kind a person stored (`newThreads`,
 `newBreakouts`, `merges`) is dropped as the record is read. How
@@ -509,7 +573,8 @@ signed-Mac delivery.
 - A Web Push `404` or `410` disables the browser device at once.
 - The Worker contacts only allowlisted Web Push service hosts and follows no redirect.
 - `sw.js` opens links only on its own origin.
-- A notice is sent only to a recipient the parent still admits when it is sent (`notificationDirectoryState`): a Canvas narrowed, a Sidekick unshared or a member removed since the intent was recorded sends nothing.
+- A notice is sent only to a recipient the parent still admits when it is sent (`notificationDirectoryState`): a Canvas narrowed, a Sidekick unshared or a member removed since the intent was recorded sends nothing. A declined Canvas request and the three Sidekick source kinds are the exceptions: each is about something its recipient need not be able to open, and each still requires an active member and a parent that exists.
+- A link that acts when opened (`Notice.actions`) is signed for one recipient and one decision and rides only in the email sink: a push payload never carries one.
 - A Sidekick run notice is recorded once per recipient and kind; a retried alarm entry re-enqueues, which the per-device receipts make harmless.
 
 ## Testing
@@ -554,6 +619,12 @@ the artifact, Rally's next version moving that row, a read of the Chat
 clearing it, and the version after that a new row.
 `canvas-access-requests.test.ts` covers a request's push to its decider, an
 approval's push to the requester and a denial's.
+`sidekick-source-notices.test.ts` covers a source request's push to the person
+asked ("Avery asked for your Gmail to start Deals") though they cannot open the
+Sidekick, the answer's push to whoever asked, nothing sent for a replaced
+request or a person's own ask, the email queued after the commit for a person
+who chose email, its two signed links and its literal text, and the Approve
+link recording the answer once.
 `notice-email-sink.test.ts` covers the sinks on real workerd: with email chosen
 for every offered kind, the email sink is handed one notice per kind (mention,
 add, reply, pinned version, request, grant, denial, run finished, needs input)
@@ -576,6 +647,27 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-10 — A Sidekick source request and its answer are notices, and a notice can carry links that answer it
+
+**What changed:** Three kinds join the intents (`source_request`,
+`source_approved`, `source_declined`). They are sent although the recipient
+may not be able to list the Sidekick, and read their own choice, Source
+requests, which defaults to push and email. `Notice` gains `actions`, which
+the email sink draws as buttons.
+
+**Why:** The person asked answers from the email, and usually cannot open the
+Sidekick the request names. [`sidekick-sources.md`](sidekick-sources.md#changelog)
+holds the reasoning.
+
+**Considered and rejected:** Reading the Access requests choice. It defaults
+to push alone, so the email would have reached only people who had chosen it.
+
+**Consequences:** An action link acts when opened. It stays signed for one
+recipient and one decision, and never goes in a push payload, a log or a queue
+message. A later notice about something its recipient cannot open needs its
+own case in `recipientRefused`'s `unlisted` and in Activity's listing filter
+([`activity.md`](activity.md)), together.
 
 ### 2026-11-09 — The generic email sink uses Cloudflare
 

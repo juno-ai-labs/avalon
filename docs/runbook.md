@@ -674,6 +674,35 @@ After the rename, recover with a compatible forward deployment; do not point
 bindings back at the old class or replay historical migration tags. Local builds
 cannot establish production namespace preservation.
 
+### Sidekicks stopped by the sources migration
+
+WorkspaceDO migration 146 marks every active Sidekick that has a schedule or
+an event rule and no allowed delegate as stopped: it sets
+`automation_directory.delegation_attention_code` to `no_eligible_delegate`.
+The migration runs in each Organization's object the next time that object
+starts after the deploy. To find the stopped Sidekicks in one Organization, run this through
+`run_workspace_sql` ([`engineering-mcp.md`](engineering-mcp.md)):
+
+```sql
+SELECT automation_id, title, updated_at FROM automation_directory
+ WHERE delegation_attention_code = 'no_eligible_delegate' AND lifecycle = 'active';
+```
+
+A stopped Sidekick starts again only when a person acts: a delegate enrolls
+and a run they are behind is admitted, or a manager pauses and resumes it,
+after which it runs as itself with the Organization's connections. A run a
+person asks for under their own access in the Sidekick's conversation is
+also a run with somebody behind it, and its admission clears the code too.
+Do not
+clear the code by hand: people withdrew to stop these Sidekicks.
+
+A source request's emailed Approve or Decline link has no expiry and cannot
+be revoked on its own. If one leaked or was forwarded, a manager asks the
+same person again for the same Sidekick and connector with different event
+types or a different condition, which cancels the request the link names.
+An identical ask does not cancel it.
+[`sidekick-sources.md`](sidekick-sources.md#operations) owns both rules.
+
 ### Debugging an automation
 
 An automation's rows are its Organization's: `automation_directory` and the

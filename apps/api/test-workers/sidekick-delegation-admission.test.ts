@@ -4,10 +4,11 @@ import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:tes
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AutomationDetailSchema, AutomationRunDefinitionV1Schema, AutomationSetEvaluatorRulesInputV1Schema,
-  SidekickExecutionDelegationSchema, asUserId, asWorkspaceId, type AutomationDraft,
+  SidekickExecutionDelegationSchema, SidekickSourcesResultSchema, asUserId, asWorkspaceId, type AutomationDraft,
   WorkspaceExternalEventMatchResultSchema,
 } from "@rally/contracts";
 import { HostedSidekick } from "../src/durable-objects/hosted-sidekick";
+import { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { AUTOMATION_SCHEDULE_ALARM_KIND } from "../src/durable-objects/automation-do-protocol";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -38,6 +39,8 @@ afterEach(() => vi.restoreAllMocks());
 beforeEach(async () => {
   await reset();
   await seedWorkspaceControlPlane(env.DB, { workspaceId, userId: creator, sessionId: crypto.randomUUID() });
+  // This suite's D1 starts with no schema: a source request's view reads each person's presentation.
+  await env.DB.exec("ALTER TABLE users ADD COLUMN presentation_json TEXT");
   await env.DB.batch([
     env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,status,role) VALUES (?,?,'active','admin')").bind(workspaceId, other),
     env.DB.prepare("INSERT INTO users(id,name) VALUES (?,'Other delegate')").bind(other),
@@ -55,6 +58,29 @@ async function consent(userId: typeof creator, allowed: boolean) {
   return stub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
 }
 
+/** `owner` lets one connector's events start the Sidekick: the creator asks, and only the owner answers. */
+async function letIn(owner: typeof creator, connectorType: string, eventType: string) {
+  const asked = await stub().sidekickRequestSources({ ...address, actor: actor(), actorName: "Creator",
+    ask: { userIds: [owner], connectorType, eventTypes: [eventType] } });
+  const approval = { ...address, requestId: asked.requests[0]!.requestId, userId: owner, decision: "approve" as const };
+  await stub().sidekickDecideSourceRequest(approval);
+  return approval;
+}
+
+const withdrawSource = (userId: typeof creator, connection = connectionId) =>
+  stub().sidekickWithdrawSource({ ...address, userId, connectionId: connection });
+
+const sourceOwners = async () => SidekickSourcesResultSchema.parse(await stub().sidekickReadSources({ ...address, actor: actor() }))
+  .sources.filter((source) => source.available).map((source) => source.person.userId);
+
+/** Run the reconciliation a source or connection change queued, to its end. */
+async function reconciled() {
+  await runDurableObjectAlarm(stub());
+  await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+    "SELECT count(*) AS count FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources'",
+  ).one().count), { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS }).toBe(0);
+}
+
 async function activate(draft = definition, evaluatorRules: Parameters<ReturnType<typeof stub>["sidekickSubmitDefinition"]>[0]["evaluatorRules"] = null) {
   await stub().sidekickSubmitDefinition({ ...address, draft, evaluatorRules, submittedByRunId: null });
   await stub().sidekickApply({ ...address, actor: actor() });
@@ -64,6 +90,17 @@ async function runs() {
   return runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{
     run_id: string; coordinator_user_id: string | null; state: string; summary: string | null; opening_json: string | null;
   }>("SELECT run_id,coordinator_user_id,state,summary,opening_json FROM sidekick_runs WHERE sidekick_id=? ORDER BY created_at,run_id", automationId).toArray());
+}
+
+/**
+ * A run's start was handed to provisioning: starting it is what records its
+ * conversation, and a blocked run has none. Waited for as long as a
+ * reconciliation is, since both are the object's alarm draining.
+ */
+async function started(runId: string) {
+  await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+    "SELECT count(*) AS count FROM sidekick_children WHERE sidekick_id=? AND substream_id=?", automationId, runId,
+  ).one().count), { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS }).toBe(1);
 }
 
 async function execution() {
@@ -89,6 +126,24 @@ async function webhook(evaluatorKeys = ["deployed"]) {
   } };
 }
 
+const mailEvent = "email.received";
+
+/** A Sidekick watching new mail on its creator's own Gmail: saving the rule there is the creator's own source. */
+async function mailbox(evaluatorKeys = ["received"]) {
+  await create();
+  await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(`INSERT INTO connector_connections
+    (id,workspace_id,connector_type,scope,owner_user_id,display_name,model_plugin_id,granted_scopes_json,status,created_at,updated_at)
+    VALUES (?,?,'google','personal',?,'Creator mail','plugin_google','["gmail.read"]','healthy',?,?)`, connectionId, workspaceId, creator, now, now));
+  await activate({ ...definition, triggers: [{ type: "connector_activity", connectorType: "google", sourceBindingKey: "mail",
+    suggestedSourcePluginId: "plugin_google", eventTypes: [mailEvent], deterministicFilters: {} }] },
+  AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: evaluatorKeys.map((evaluatorKey) => ({ evaluatorKey, source: {
+    sourceBindingKey: "mail", suggestedSourcePluginId: "plugin_google", event: { kind: "event_type", eventType: mailEvent },
+  }, when: { kind: "always" } })) }));
+}
+
+/** Somebody's read of one person's place in the Organization, counted where every such read goes through. */
+type RelationshipReads = { readRelationship(workspaceId: string, userId: string): Promise<unknown> };
+
 describe("shared Sidekick delegation admission", () => {
   it("reads details without scanning delegate eligibility", async () => {
     await create();
@@ -99,7 +154,7 @@ describe("shared Sidekick delegation admission", () => {
     expect(eligibility).not.toHaveBeenCalled();
   });
 
-  it("checks only the preferred delegate for manual and personal-event admission", async () => {
+  it("checks only the delegate it picks to coordinate, for a manual run and for an admitted event", async () => {
     const request = await webhook();
     await consent(other, true);
     await runDurableObjectAlarm(stub());
@@ -117,37 +172,43 @@ describe("shared Sidekick delegation admission", () => {
   });
 
   it.each([false, true].flatMap((legacy) => [false, true].map((previouslyAdmitted) => ({ legacy, previouslyAdmitted }))))(
-    "shares pending eligibility within a request and fences reactivated sources (admitted: $previouslyAdmitted, legacy: $legacy)", async ({ previouslyAdmitted, legacy }) => {
-    await webhook(["deployed", "also_deployed"]);
+    "shares one request's relationship reads across its sources and fences reactivated sources (admitted: $previouslyAdmitted, legacy: $legacy)", async ({ previouslyAdmitted, legacy }) => {
+    await mailbox(["received", "also_received"]);
     if (legacy) await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(
       "UPDATE sidekick_revisions SET definition_json=json_remove(definition_json,'$.definitionVersion') WHERE sidekick_id=?", automationId,
     ));
-    await runDurableObjectAlarm(stub());
-    await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
-      "SELECT count(*) AS count FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources'",
-    ).one().count)).toBe(0);
+    await reconciled();
     const eventId = crypto.randomUUID();
     await stub().ingestConnectorEvent({ workspaceId, ingressEventId: eventId, payloadHash: `sha256:${"a".repeat(64)}`, event: {
-      connectorType: "generic_webhook", activity: {
-        id: eventId, workspaceId, region: "global", connectionId, connectionScope: "workspace", connectionOwnerUserId: null,
-        provider: "generic_webhook", providerEventId: eventId, eventType: "deploy.finished", resourceType: null, providerResourceId: null,
-        actor: {}, subject: {}, occurredAt: now, receivedAt: now, title: "Deployed", summary: "Deploy finished", textSnippet: "Deploy finished",
-        payloadRef: null, visibility: { kind: "workspace" }, targetUserIds: [], entityKeys: [], dedupeKey: eventId,
+      connectorType: "google", activity: {
+        id: eventId, workspaceId, region: "global", connectionId, connectionScope: "personal", connectionOwnerUserId: creator,
+        provider: "google", providerEventId: eventId, eventType: mailEvent, resourceType: "gmail_thread", providerResourceId: `thread-${eventId}`,
+        actor: {}, subject: { messageId: `message-${eventId}`, threadId: `thread-${eventId}` }, occurredAt: now, receivedAt: now,
+        title: "Mail received", summary: "New mail", textSnippet: "New mail", payloadRef: null,
+        visibility: { kind: "personal" }, targetUserIds: [], entityKeys: [], dedupeKey: eventId,
         rawContentHash: null, metadata: {}, externalPeople: [],
       },
     } });
-    const eligibility = vi.spyOn(HostedSidekick.prototype, "delegationEligible");
+    // Delegation is not asked whose events these are; the source's owner is read once for both registrations.
+    const delegation = vi.spyOn(HostedSidekick.prototype, "delegationEligible");
+    const relationships = vi.spyOn(WorkspaceDO.prototype as unknown as RelationshipReads, "readRelationship");
+    const ownerReads = () => relationships.mock.calls.filter(([, userId]) => userId === creator).length;
     const match = async () => WorkspaceExternalEventMatchResultSchema.parse(await stub().matchExternalEventDestinations({ workspaceId, eventId }));
     const first = await match();
     expect(first.deliveries).toHaveLength(2);
-    expect(eligibility).toHaveBeenCalledTimes(1);
+    expect(ownerReads()).toBe(1);
     expect((await match()).deliveries).toHaveLength(2);
-    expect(eligibility).toHaveBeenCalledTimes(2);
+    expect(ownerReads()).toBe(2);
+    expect(delegation).not.toHaveBeenCalled();
     const delivery = first.deliveries[0]!;
     const admit = () => stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId,
       event: delivery.event, payloadHash: delivery.payloadHash });
     if (previouslyAdmitted) expect(await admit()).toMatchObject({ admitted: true });
+    // Withdrawing delegation takes nothing away from a source.
     await consent(creator, false);
+    expect((await match()).deliveries).toHaveLength(2);
+    await consent(creator, true);
+    await withdrawSource(creator);
     expect(await admit()).toMatchObject({ admitted: false });
     expect((await match()).deliveries).toEqual([]);
     const registrationStates = () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{
@@ -158,7 +219,7 @@ describe("shared Sidekick delegation admission", () => {
       .toEqual(["removed", "removed"]);
     // The current durable source state must fence an envelope already in flight.
     expect(await admit()).toMatchObject({ admitted: false });
-    await consent(creator, true);
+    await letIn(creator, "google", mailEvent);
     await runDurableObjectAlarm(stub());
     await expect.poll(async () => (await registrationStates()).map((registration) => registration.state), { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS })
       .toEqual(["active", "active"]);
@@ -188,18 +249,31 @@ describe("shared Sidekick delegation admission", () => {
   });
 
   it("clears restored source coverage without clearing an unrelated permission warning", async () => {
-    await webhook();
+    await mailbox();
     const attention = async () => AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() })).delegationAttention;
+    const registered = () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      "SELECT count(*) AS count FROM workspace_external_event_registrations WHERE automation_id=? AND state='active'", automationId).one().count);
+    // A delegate's withdrawal leaves the mailbox covered: its owner's source is what covers it.
     await consent(creator, false);
+    await reconciled();
+    expect(await registered()).toBe(1);
+    expect(await attention()).toBeNull();
+    await withdrawSource(creator);
     await runDurableObjectAlarm(stub());
-    await expect.poll(async () => (await attention())?.code).toBe("event_no_eligible_delegate");
-    await consent(creator, true);
+    await expect.poll(async () => (await attention())?.code, { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS }).toBe("event_no_eligible_delegate");
+    await letIn(creator, "google", mailEvent);
     await runDurableObjectAlarm(stub());
-    await expect.poll(attention).toBeNull();
+    await expect.poll(attention, { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS }).toBeNull();
     await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(
       "UPDATE automation_directory SET delegation_attention_code='permission_report_unavailable' WHERE automation_id=?", automationId));
-    await consent(other, true);
+    // Coverage lost and coverage restored each reconcile, and neither touches the other warning.
+    await withdrawSource(creator);
     await runDurableObjectAlarm(stub());
+    await expect.poll(registered, { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS }).toBe(0);
+    expect((await attention())?.code).toBe("permission_report_unavailable");
+    await letIn(creator, "google", mailEvent);
+    await runDurableObjectAlarm(stub());
+    await expect.poll(registered, { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS }).toBe(1);
     expect((await attention())?.code).toBe("permission_report_unavailable");
   });
 
@@ -257,8 +331,7 @@ describe("shared Sidekick delegation admission", () => {
         state.storage.sql.exec(`INSERT INTO connector_connections(id,workspace_id,connector_type,scope,owner_user_id,
           display_name,model_plugin_id,granted_scopes_json,status,created_at,updated_at)
           VALUES (?,?,'google','personal',?,'Calendar account',?,'["drive.read","sheets.read"]',?,?,?)`,
-        id!, workspaceId, owner!, id === connectionId ? "plugin_google" : `plugin_${id!.replaceAll("-", "")}`,
-        id === secondConnection && lateConnection ? "disabled" : "healthy", now, now);
+        id!, workspaceId, owner!, id === connectionId ? "plugin_google" : `plugin_${id!.replaceAll("-", "")}`, "healthy", now, now);
       }
       for (const [id, connection, file] of [[resourceId, connectionId, "configured-sheet"], [wrongResource, secondConnection, "another-sheet"]]) {
         state.storage.sql.exec(`INSERT INTO resources(id,workspace_id,connection_id,resource_type,provider,provider_resource_id,title,metadata_json,created_at,updated_at)
@@ -287,29 +360,36 @@ describe("shared Sidekick delegation admission", () => {
       } } });
       return WorkspaceExternalEventMatchResultSchema.parse(await stub().matchExternalEventDestinations({ workspaceId, eventId: id }));
     }
-    await runDurableObjectAlarm(stub());
-    await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
-      "SELECT count(*) AS count FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources'",
-    ).one().count)).toBe(0);
+    await reconciled();
     const queued = (await changed(connectionId, "v1")).deliveries[0]!;
     const original = (await registrations()).find((entry) => entry.connection_id === connectionId)!;
+    // Becoming a delegate lends accounts and feeds nothing: the file on the delegate's connection stays unwatched.
+    await consent(other, true);
+    await reconciled();
+    expect((await registrations()).map((entry) => entry.connection_id)).toEqual([connectionId]);
+    const asked = await stub().sidekickRequestSources({ ...address, actor: actor(), actorName: "Creator",
+      ask: { userIds: [other], connectorType: "google", eventTypes: [eventType] } });
+    const approval = { ...address, requestId: asked.requests[0]!.requestId, userId: other, decision: "approve" as const };
     if (!lateConnection) {
-      const request = { ...address, userId: other, allowed: true, operationId: crypto.randomUUID() };
-      const prepared = await stub().sidekickPrepareMyDelegation(request);
       await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(`CREATE TRIGGER fail_source_wake
         BEFORE INSERT ON _internal_durable_alarms WHEN NEW.kind='sidekick_delegation_sources'
         BEGIN SELECT RAISE(ABORT,'source_wake_fault'); END`));
       await runInDurableObject(stub(), async (instance) => {
-        await expect(instance.sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" }))
-          .rejects.toThrow("source_wake_fault");
+        await expect(instance.sidekickDecideSourceRequest(approval)).rejects.toThrow("source_wake_fault");
       });
-      expect((await execution()).delegates.map((grant) => grant.userId)).toEqual([creator]);
-      expect(await stub().sidekickReadMyDelegationReceipt({ ...request, source: "self_service" })).toEqual({ outcome: "missing" });
+      // A source and the reconciliation it owes are one write: neither is left without the other.
+      expect(await sourceOwners()).toEqual([creator]);
       await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec("DROP TRIGGER fail_source_wake"));
-      await stub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
-    } else await consent(other, true);
-    await runDurableObjectAlarm(stub());
+    }
+    await stub().sidekickDecideSourceRequest(approval);
+    expect((await sourceOwners()).sort()).toEqual([creator, other].sort());
     if (lateConnection) {
+      // The connection the source names is off when its reconciliation runs, and comes back later.
+      const disconnected = await stub().executeRuntimeSql({ workspaceId, requestId: crypto.randomUUID(), statements: [{
+        sql: "UPDATE connector_connections SET status='disabled' WHERE id=?", params: [secondConnection],
+      }] });
+      expect(disconnected.status).toBe(200);
+      await reconciled();
       expect(await registrations()).toHaveLength(1);
       const parkedAlarm = Date.now() + 3_600_000;
       await runInDurableObject(stub(), async (_instance, state) => { await state.storage.setAlarm(parkedAlarm); });
@@ -323,7 +403,7 @@ describe("shared Sidekick delegation admission", () => {
       // is waited for rather than read once.
       if (wake === null) await expect.poll(async () => (await registrations()).length).toBe(2);
       else expect(wake).toBeLessThan(parkedAlarm);
-    }
+    } else await runDurableObjectAlarm(stub());
     await expect.poll(async () => (await registrations()).length).toBe(2);
     const expanded = await registrations();
     expect(expanded.find((entry) => entry.connection_id === connectionId)).toEqual(original);
@@ -342,7 +422,9 @@ describe("shared Sidekick delegation admission", () => {
     expect(await admit(observedAgain[0]!)).toMatchObject({ admitted: true, outcomeCode: "sidekick_occurrence_replayed" });
     expect(await runs()).toHaveLength(1);
     expect((await changed(secondConnection, "unrelated", "another-sheet")).deliveries).toEqual([]);
+    // The creator stops lending their accounts and takes their file's events back: the second is what unregisters it.
     await consent(creator, false);
+    await withdrawSource(creator);
     await runDurableObjectAlarm(stub());
     await expect.poll(async () => (await registrations()).map((entry) => entry.connection_id)).toEqual([secondConnection]);
     expect(await admit(queued)).toMatchObject({ admitted: false });
@@ -359,10 +441,11 @@ describe("shared Sidekick delegation admission", () => {
     expect((await execution()).delegates).toEqual([]);
   });
 
-  it("admits a personal event through its source owner and keeps its registration on that connection", async () => {
+  it("admits a personal event through its owner's source and keeps a mail thread's rule on that connection", async () => {
     // The held effect queue keeps these assertions before inference.
     await create();
     await consent(other, true);
+    const anotherInbox = crypto.randomUUID();
     await runInDurableObject(stub(), (_instance, state) => {
       state.storage.sql.exec(`INSERT INTO connector_connections(id,workspace_id,connector_type,scope,owner_user_id,
         display_name,model_plugin_id,granted_scopes_json,status,created_at,updated_at)
@@ -371,17 +454,27 @@ describe("shared Sidekick delegation admission", () => {
         VALUES (?,?,?,'gmail_thread','google','source-thread','Mail thread','{}',?,?)`, resourceId, workspaceId, connectionId, now, now);
     });
     const eventType = "email.received";
-    await activate({ ...definition, triggers: [{ type: "connector_activity", connectorType: "google", sourceBindingKey: "mail",
-      suggestedSourcePluginId: "plugin_google", eventTypes: [eventType], deterministicFilters: {} }] },
-    AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [{ evaluatorKey: "received", source: {
+    const draft: AutomationDraft = { ...definition, triggers: [{ type: "connector_activity", connectorType: "google", sourceBindingKey: "mail",
+      suggestedSourcePluginId: "plugin_google", eventTypes: [eventType], deterministicFilters: {} }] };
+    const evaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [{ evaluatorKey: "received", source: {
       sourceBindingKey: "mail", suggestedSourcePluginId: "plugin_google", event: { kind: "event_type", eventType },
       resourceId,
-    }, when: { kind: "always" } }] }));
+    }, when: { kind: "always" } }] });
+    // A colleague who lends their accounts has not let their mail in: the rule cannot be saved on their mailbox yet.
+    await runInDurableObject(stub(), async (instance) => {
+      await instance.sidekickSubmitDefinition({ ...address, draft, evaluatorRules, submittedByRunId: null });
+      await expect(instance.sidekickApply({ ...address, actor: actor() })).rejects.toMatchObject({ status: 422, code: "sidekick_plugin_unavailable" });
+    });
+    await letIn(other, "google", eventType);
+    await activate(draft, evaluatorRules);
     await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(`INSERT INTO connector_connections
       (id,workspace_id,connector_type,scope,owner_user_id,display_name,model_plugin_id,granted_scopes_json,status,created_at,updated_at)
       VALUES (?,?,'google','personal',?,'Another inbox','plugin_other_mail','["gmail.read"]','healthy',?,?)`,
-    crypto.randomUUID(), workspaceId, creator, now, now));
-    await runDurableObjectAlarm(stub());
+    anotherInbox, workspaceId, creator, now, now));
+    // The creator lets their own inbox in too. A rule about one thread still stays on the account that thread is in.
+    await letIn(creator, "google", eventType);
+    expect((await sourceOwners()).sort()).toEqual([creator, other].sort());
+    await reconciled();
     expect(await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ connection_id: string }>(
       "SELECT connection_id FROM workspace_external_event_registrations WHERE automation_id=? AND state='active'", automationId).toArray()))
       .toEqual([{ connection_id: connectionId }]);
@@ -405,6 +498,7 @@ describe("shared Sidekick delegation admission", () => {
     delete oldEvent.sourceConnectionOwnerUserId;
     expect(await stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId, event: oldEvent, payloadHash: delivery.payloadHash }))
       .toMatchObject({ admitted: true });
+    // Of the delegates, the one whose connection the rule is configured on coordinates the run.
     const run = (await runs())[0]!;
     expect(run.coordinator_user_id).toBe(other);
   });
@@ -441,14 +535,20 @@ describe("shared Sidekick delegation admission", () => {
     expect(saved).toMatchObject({ coordinatorUserId: other, runAsUserId: creator });
   });
 
-  it("records Needs attention without private input when no delegate is eligible", async () => {
+  it("starts a manual run as the Sidekick itself, and asks for no attention, when no delegate is eligible", async () => {
     await create(false);
     await activate();
-    await stub().sidekickRunNow({ ...address, actor: actor(), idempotencyKey: "no-delegate-manual" });
-    expect(await runs()).toEqual([{ run_id: expect.any(String), coordinator_user_id: null, state: "needs_input",
-      summary: "Needs attention: no delegated user is available", opening_json: null }]);
+    const manual = await stub().sidekickRunNow({ ...address, actor: actor(), idempotencyKey: "no-delegate-manual" });
+    expect(await runs()).toEqual([{ run_id: manual.runId, coordinator_user_id: null, state: "pending", summary: null, opening_json: null }]);
+    // Starting it blocks nothing either: it is handed to provisioning with nobody to act as.
+    await runDurableObjectAlarm(stub());
+    await started(manual.runId);
+    expect(await stub().sidekickRunProvisioning({ ...address, runId: manual.runId })).toMatchObject({ runId: manual.runId, runAsUserId: null });
+    expect(await stub().sidekickContinueRun({ ...address, runId: manual.runId, sender: { kind: "system" } }))
+      .toMatchObject({ outcome: "continue", executionPrincipal: { type: "workspace", workspaceId } });
+    expect(await runs()).toEqual([{ run_id: manual.runId, coordinator_user_id: null, state: "pending", summary: null, opening_json: null }]);
     const detail = AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() }));
-    expect(detail.delegationAttention).toMatchObject({ code: "no_eligible_delegate" });
+    expect(detail.delegationAttention).toBeNull();
   });
 
   it("migrates an established non-creator claim once, retaining its task account and never reviving a withdrawal", async () => {
@@ -477,7 +577,7 @@ describe("shared Sidekick delegation admission", () => {
     expect(await execution()).toMatchObject({ accountUserId: creator, delegates: [] });
   });
 
-  it("records a blocked hourly occurrence and lets a later occurrence use fresh consent without replaying the blocked one", async () => {
+  it("starts an hourly occurrence as the Sidekick itself when nobody is a delegate, and a later one under fresh consent without replaying the first", async () => {
     await create(false);
     await activate({ ...definition, triggers: [{ type: "interval", intervalSeconds: 3600, summary: "Hourly" }] });
     async function tick() {
@@ -489,12 +589,17 @@ describe("shared Sidekick delegation admission", () => {
       await runDurableObjectAlarm(stub());
     }
     await tick();
-    await expect.poll(async () => (await runs()).map((row) => row.state)).toEqual(["needs_input"]);
+    await expect.poll(async () => (await runs()).map((row) => row.state)).toEqual(["pending"]);
+    const unattended = (await runs())[0]!.run_id;
+    // Not blocked: once its start has been handed on, the occurrence is still to be provisioned, as nobody.
+    await started(unattended);
+    expect(await stub().sidekickRunProvisioning({ ...address, runId: unattended })).toMatchObject({ runId: unattended, runAsUserId: null });
+    expect(AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() })).delegationAttention).toBeNull();
     await consent(creator, true);
     await tick();
     await expect.poll(async () => (await runs()).length).toBe(2);
     expect((await runs()).map((row) => ({ coordinator: row.coordinator_user_id, state: row.state }))).toEqual([
-      { coordinator: null, state: "needs_input" }, { coordinator: creator, state: "pending" },
+      { coordinator: null, state: "pending" }, { coordinator: creator, state: "pending" },
     ]);
   });
 
@@ -512,27 +617,34 @@ describe("shared Sidekick delegation admission", () => {
     expect((await execution()).delegates.map((grant) => grant.userId)).toEqual([creator]);
   });
 
-  it("requires an eligible delegate inside a workspace event's restricted audience, including old queued payloads", async () => {
+  it("requires the source of somebody inside a workspace event's restricted audience, including old queued payloads", async () => {
     const request = await webhook();
-    expect(await stub().sidekickAdmitExternalEvent(request)).toEqual({ admitted: false, outcomeCode: "sidekick_no_eligible_delegate" });
+    // The creator's own source on the Organization's connection does not reach an event only `other` can see.
+    expect(await sourceOwners()).toEqual([creator]);
+    expect(await stub().sidekickAdmitExternalEvent(request)).toEqual({ admitted: false, outcomeCode: "sidekick_source_not_permitted" });
     expect(await runs()).toEqual([]);
+    // Lending accounts is not letting events in.
     await consent(other, true);
+    expect(await stub().sidekickAdmitExternalEvent(request)).toEqual({ admitted: false, outcomeCode: "sidekick_source_not_permitted" });
+    expect(await runs()).toEqual([]);
+    await letIn(other, "generic_webhook", "deploy.finished");
     expect(await stub().sidekickAdmitExternalEvent(request)).toMatchObject({ admitted: true });
+    // Of the two delegates the run acts as the one whose event it is: the only one in its audience.
     expect(await runs()).toEqual([{ run_id: expect.any(String), coordinator_user_id: other, state: "pending",
       summary: null, opening_json: expect.stringContaining("Private deploy details") }]);
   });
 
-  it("rechecks consent at delivery after a matching authorization view has observed an eligible recipient", async () => {
+  it("rechecks the source at delivery after a matching view has observed it", async () => {
     const request = await webhook();
-    await consent(other, true);
-    // The delivery was prepared while this recipient was eligible; it arrives later.
-    expect((await execution()).delegates.map((grant) => grant.userId)).toContain(other);
-    await consent(other, false);
-    expect(await stub().sidekickAdmitExternalEvent(request)).toEqual({ admitted: false, outcomeCode: "sidekick_no_eligible_delegate" });
+    await letIn(other, "generic_webhook", "deploy.finished");
+    // The delivery was prepared while this person's source stood; it arrives later.
+    expect(await sourceOwners()).toContain(other);
+    expect(await withdrawSource(other)).toEqual({ withdrawn: true });
+    expect(await stub().sidekickAdmitExternalEvent(request)).toEqual({ admitted: false, outcomeCode: "sidekick_source_not_permitted" });
     expect(await runs()).toEqual([]);
   });
 
-  it.each(["workspace"] as const)("admits a %s-owned personal Sheet event and an hourly occurrence through the same delegate, then refuses that source after withdrawal", async (scope) => {
+  it.each(["workspace"] as const)("admits a %s-owned personal Sheet event and an hourly occurrence under the same delegate, then refuses that source once its owner withdraws it", async (scope) => {
     await create(true, scope);
     await runInDurableObject(stub(), (_instance, state) => {
       state.storage.sql.exec(`INSERT INTO connector_connections(id,workspace_id,connector_type,scope,owner_user_id,
@@ -574,9 +686,12 @@ describe("shared Sidekick delegation admission", () => {
     });
     await expect.poll(async () => (await runs()).length).toBe(2);
     expect((await runs()).map((run) => run.coordinator_user_id)).toEqual([creator, creator]);
+    // No longer lending accounts takes no events away; taking the source back does.
     if (scope === "workspace") await consent(other, true);
     await consent(creator, false);
-    expect((await event("calendar-change-2")).deliveries).toEqual([]);
+    expect((await event("calendar-change-2")).deliveries).toHaveLength(1);
+    expect(await withdrawSource(creator)).toEqual({ withdrawn: true });
+    expect((await event("calendar-change-3")).deliveries).toEqual([]);
     expect(AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() })).delegationAttention?.code).toBe("event_no_eligible_delegate");
     expect(await stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId,
       event: { ...delivery.event, id: crypto.randomUUID() }, payloadHash: delivery.payloadHash })).toMatchObject({ admitted: false });

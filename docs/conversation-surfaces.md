@@ -176,6 +176,22 @@ scope collapses to its newest durable row; an intervening conversation row or
 history seam starts a separate occasion. Persistence therefore never produces
 a double-stacked control.
 
+A completed `sidekick_request_source` call is the second such exception, under
+the same opt-in. It asks people for a Sidekick source
+([`sidekick-sources.md`](sidekick-sources.md)) and is answered on its card, so
+`sidekickSourceRequestCardFromToolEvent` (`lib/sidekick-source-request-card.ts`)
+keeps it out of the Sidekicks plugin row, out of the hidden-agent-work filter,
+and `MessageBlock` draws `SidekickSourceRequestCard` for it. The card needs
+only the request ids from the call's retained output and reads where each
+request stands itself ([`shared-ui.md`](shared-ui.md#sidekick-sources)): the
+output is the asker's view, frozen when they asked, in a transcript everyone
+reads. A transcript block that keeps only the call's summary sentence draws a
+plain tool row. A
+call still running, a refused one, and one whose output holds no request id
+stay ordinary Sidekicks work. Repeated asks are not collapsed: each made its
+own requests, and an ask that replaced an earlier one leaves the earlier card
+reading "Replaced by a newer request".
+
 ## Message issue reports
 
 The shared action row offers **Oopsie** on sent user and assistant messages;

@@ -51,7 +51,11 @@ to grants in other Organizations. The old D1 `sidekick_delegation_locations`
 table is unused; its migration remains immutable.
 
 The `rally:sidekicks` plugin exposes `my_delegations_list`, `delegates_list` and
-`set_delegation` during direct and autonomous work. Authoring and Sidekick
+`set_delegation` to a turn a person is driving and to that conversation's
+background agents. A Sidekick run and its background workers get the two
+lists and not `set_delegation` (`setsDelegation`): a run is handed the
+content of the event that started it, its workers read the same, and
+enrolling a member's accounts is not something that content may bring about. Authoring and Sidekick
 activations use the `sidekick` prefix; other conversations' presentations use full wire names.
 Both presentations teach the resulting `sidekick_` wire names. Configuration
 chats use the chatting person's accounts; only activations and delegated work
@@ -64,33 +68,77 @@ visibility or manager rights. There is no canonical-speaker or special
 quoted/event-consent check. The UI retains self-service only; the manager removal
 control and endpoint are removed.
 
-Admission uses this authority for events, schedules and manual runs. A run stores
-`coordinator_user_id` independently of the directory's legacy human-access field.
-Manual Run prefers an eligible requester but never opts them in. Schedules prefer
-an eligible saved source owner, then the creator and stable grant order. Personal
-events require their source owner's eligible grant; restricted workspace events
-require an eligible delegate inside their actual audience. Matching and delivery
-both apply this policy, while preserving activation boundaries, deterministic
-filters, semantic conditions and occurrence deduplication. Ownership scope alone
-never rejects an otherwise eligible event. Coordinator selection checks an
-eligible preferred user first, then configured source owners, the creator and
-remaining grants. Audience restrictions narrow candidates before eligibility
-checks. Matching evaluators share pending eligibility checks only within that
-matching request, keyed by Sidekick, user and grant generation; delayed delivery
-checks again independently.
+Delegation decides who a run acts as and whose accounts its tools may use. It
+decides nothing about a trigger: whose events may start a Sidekick is its
+**sources'** answer, a separate record with its own consent
+([`sidekick-sources.md`](sidekick-sources.md)). Until 2026-11-10 a personal
+event required its source owner's delegation grant, and a restricted one a
+delegate inside its audience; both now ask for a source.
 
-An occurrence with no delegate gets a `needs_input` run and safe recovery summary;
-an unauthorized event retains no private payload in the Sidekick. Its directory
-has a safe `delegationAttention` code and recovery message. Source reconciliation
-clears a source warning when coverage returns; unrelated manual or scheduled
-admissions do not clear it. Permission-report warnings survive source recovery.
-New consent applies
-to future occurrences rather than replaying blocked historical work. A continued
-run retains its coordinator while eligible and selects another eligible delegate
-when that person becomes unavailable. The new coordinator is persisted on the
-existing run. Only an empty eligible list refuses with `run_no_eligible_delegate`.
-A run a non-delegate asked for is the exception: it keeps its requester as its
-principal for good and never moves to a delegate (see
+A run stores `coordinator_user_id` independently of the directory's legacy
+human-access field. Manual Run prefers an eligible requester but never opts
+them in. A schedule prefers an eligible delegate who owns a configured source
+connection, then the creator and stable grant order. An event-started run
+acts as the delegate whose event it is, when they are an eligible delegate:
+the owner of the personal connection, or a delegate inside a restricted
+event's audience. So a reply to a person's mail goes through their mailbox
+and nobody else's. When the event belongs to somebody and none of them is an
+eligible delegate, the run acts as the Sidekick itself: a person who let
+their events in lent no account, and their mail is not acted on with a third
+person's. An event the whole Organization can see acts as any eligible
+delegate in the usual order, and with none as the Sidekick itself
+(`admitExternalEvent`).
+
+An occurrence with no delegate that a schedule or an event started is not
+blocked. Its run is admitted `pending` with no coordinator and acts as the
+Sidekick itself ([who a run acts as](#who-a-run-acts-as)). One kind of
+Sidekick is the exception: one that had nobody to act as when this rule
+shipped. The last statement of WorkspaceDO migration 146 sets
+`delegation_attention_code` to `no_eligible_delegate` on every Sidekick that
+is active, has a schedule or an event rule, has its delegation migrated
+(`delegation_migrated = 1`), and has no allowed delegation grant, whatever
+warning it carried before. Such a Sidekick stays stopped. A run nobody is
+behind is admitted `needs_input` with "Needs attention: nobody lends this
+Sidekick an account. Add a delegate, or pause and resume it to run with the
+Organization's connections alone.", and its managers are told
+(`admitOccurrence`). People withdrew to stop that Sidekick, and a deploy is
+not their agreement to run it as itself.
+
+Nothing sets `no_eligible_delegate` after the migration, and no other warning
+replaces it: `noteDelegationAttention` writes another code only over a code
+that is not `no_eligible_delegate`. Only clearing removes it, and two things
+clear it. `admitOccurrence` clears it when it admits a delegate's run:
+somebody lends the Sidekick an account again. A run a person asked for under
+their own access in the Sidekick's conversation runs, and leaves the code
+alone: they lent the Sidekick nothing, and clearing it there would start its
+schedules as itself on a passer-by's message. `resumeFromPause` clears it
+when a manager pauses and resumes the Sidekick, which then runs as itself. A
+warning that could overwrite the code would start the Sidekick with nobody's
+act.
+[`sidekick-sources.md`](sidekick-sources.md#operations) has the query that
+finds these Sidekicks after a deploy.
+
+An event its source does not let in
+retains no private payload in the Sidekick; the directory then has a safe
+`delegationAttention` code and recovery message (`event_no_eligible_delegate`,
+a stored name that predates sources). Source reconciliation clears that
+warning when coverage returns; unrelated manual or scheduled admissions do not
+clear it. Permission-report warnings survive source recovery. A continued run
+retains its coordinator while eligible, selects another eligible delegate when
+that person becomes unavailable, and goes on as the Sidekick itself when none
+is left. The new coordinator is persisted on the existing run. That is a
+choice made between turns. A loop already acting as a person whose last
+delegate withdraws mid-run stops with "No eligible Sidekick delegate is
+available to continue this run."; it does not go on under that person's name
+with the Organization's connections. A run a
+non-delegate asked for is the other exception: it keeps its requester as its
+principal for good and never moves to a delegate. Once that person has left,
+a start puts the run in `needs_input` with "Needs attention: the person who
+asked for this run is no longer in the Organization", which is that run's
+state and sets no attention code on the Sidekick. A continuation of such a
+run refuses with `run_no_eligible_delegate`, which is that run's refusal and
+sets none either: `no_eligible_delegate` on the Sidekick is what keeps one
+stopped, so one run's trouble must not set it (see
 [who a run acts as](#who-a-run-acts-as)).
 Eligibility refreshes at activation and inventory loading. An ongoing background
 attempt reuses that snapshot; model/tool boundaries read the root lifecycle and
@@ -112,11 +160,17 @@ An activation whose conversation post is refused retains a fixed
 tool still returns its original failure; normal later admission clears the
 attention field. This uses the same directory state as unavailable delegation.
 
-Configured event sources reconcile through `sidekick-source-registrations.ts`.
+Configured event sources reconcile through `sidekick-source-registrations.ts`,
+from the Sidekick's sources and never from its delegates
+([`sidekick-sources.md`](sidekick-sources.md#which-connections-a-rule-is-registered-on)).
 The saved evaluator remains the source definition. An adapter's authored
 `isPortableActivityResource` distinguishes globally addressed resources (Google
-files) from account-relative resources (mail and calendars). Only the former
-can expand to another eligible delegate's connection. The ordinary resource
+files) from account-relative resources (mail and calendars). A rule about the
+former expands to every connection that can open the file and whose owner let
+the event in, through any source. A rule about a whole account expands to
+another person's connection of that connector only through a source that
+person gave by approving a request for that event type (its `request_id` is
+set). The ordinary resource
 resolver creates or finds that connection's Rally resource ID by provider ID;
 titles never identify a source. Expanded registrations retain their saved
 `sourceEvaluatorId`, so queued delivery still checks the current definition.
@@ -130,8 +184,9 @@ Global Google file observations carry a common occurrence key across accounts.
 Providers without a common identity keep their existing deduplication semantics.
 
 The existing WorkspaceDO alarm lane stores `sidekick_delegation_sources` work
-in the same transaction as consent changes. Apply, resume and legacy enrollment
-also queue it. Connection authority changes queue it through migration 130's
+(the kind's stored name) in the same transaction as a source change. Apply,
+resume and a claim of the execution principal also queue it; granting or
+withdrawing delegation does not. Connection authority changes queue it through migration 130's
 SQL triggers, while membership and reader reach use their existing invalidation
 paths. Pending changes coalesce into one entry per Sidekick; each enqueue moves
 the due instant so an older handler cannot settle a newer change. Cursor and
@@ -632,9 +687,9 @@ hands a normalized event to `WorkspaceDO.ingestConnectorEvent`; a second,
 ID-only delivery claims it for processing and calls
 `matchExternalEventDestinations`, which selects active registrations by
 connection, connector type, event type, and
-`effective_after_event_sequence`, applies the delegation audience rule (a
-personal activity requires its source owner's eligible grant, and a restricted
-workspace activity requires an eligible delegate inside its actual audience),
+`effective_after_event_sequence`, applies the source rule (an activity limited
+to an audience enters only through the source of somebody in that audience;
+[`sidekick-sources.md`](sidekick-sources.md#whether-an-event-may-enter)),
 evaluates each registration's predicate with no model inference, and returns
 one complete
 `workspace_external_event_delivery_v1` message per match carrying the
@@ -753,8 +808,7 @@ twice:
 
 A run whose projected state enters `needs_input`, or a finished state, arms a
 `sidekick_run_notice` entry in the same transaction, which pushes the run's
-requester and, for Needs input, the Sidekick's managers; a run admitted
-straight into `needs_input` for want of a delegate arms the same entry. Who is
+requester and, for Needs input, the Sidekick's managers. Who is
 told and how is [`push-notifications.md`](push-notifications.md#a-sidekick-run-that-needs-input-or-finished).
 
 The loop input carries a reference, not a copy. At loop start
@@ -955,13 +1009,17 @@ one identity and one history, and can complete more than once.
 **Refusals.** `continueRun` answers `sidekick_deleted` for an archived
 Sidekick, `sidekick_paused` for one a person paused, `run_not_found`
 when the Sidekick object holds no row or no such run, `run_no_eligible_delegate`
-when no delegated user remains eligible, `run_continuation_requires_requester`
-when a person other than the requester wrote in a requester's run, and
+when a requester's run has lost its requester, `run_continuation_requires_requester`
+when a person other than the requester wrote in a requester's run,
 `run_continuation_requires_delegate` when a person who is not an eligible
 delegate wrote in a run that acts as one (an answer to the run's question, or
-a Retry, is refused with the same code, as a 403, before it is recorded), and
+a Retry, is refused with the same code, as a 403, before it is recorded),
+`run_continuation_requires_manager` when a person who does not manage the
+Sidekick wrote in a run that acts as the Sidekick itself, and
 `run_continuation_requires_rally_user` for another agent's message that acts
-for nobody. The
+for nobody, in a run that acts as somebody. Rally's own input (`system`) is
+not screened by sender. A run with no delegate left
+continues as the Sidekick itself, under the Organization's principal. The
 child then lands the input as a delivered turn and appends a `system` row after
 it (`clientMessageId` `sidekick-run-refused:<inputId>`, structured content
 `{kind: "sidekick_run_refused", code, turnId}`) in one transaction
@@ -1293,8 +1351,11 @@ loaded into someone else's conversation, not a read of its own.
   asking is an elicitation turn, not a text turn, and the last reply was
   whatever came before the question. So the summary, the run's row in
   `"0"`, the Sidekick's row and the Needs input notice all carry the
-  question. A run admitted with no delegate waits on the delegation notice,
-  which is its summary. The list is sent again to every socket when a run is
+  question. A run admitted straight into `needs_input` asked nothing, so its
+  summary is the reason it waits: the stopped Sidekick's notice, or that its
+  requester left ([delegation](#delegation-consent-authority)). A run with
+  no delegate that a schedule or an event started does not wait: it runs as
+  the Sidekick itself. The list is sent again to every socket when a run is
   admitted (`createRun`), when a pending run is stopped by a pause, and when a
   projection moves a run between working, waiting and finished, or brings a
   waiting run's question; a working run's steps and progress text do not
@@ -1365,10 +1426,45 @@ The client mirrors the seat
 
 ### Who a run acts as
 
-A run its triggers start, or that a delegate asks for, acts as a delegate: its
-coordinator, re-picked from the eligible delegates when that person becomes
-unavailable, and its connector operations may use any delegate's personal
-account and the Organization's connections. A run someone who is not a
+A Sidekick has a base identity, and delegates add to it. **As itself** a run
+uses the Organization's connections, the Sidekick's own conversation and
+memory, its shared Terminal files, and the Canvases the Sidekick is attached
+to. **Each delegate** adds their personal connections. A run with no eligible
+delegate that a schedule or an event started is therefore not blocked: it is
+admitted with no coordinator, provisioned under the Organization's principal
+(`executionPrincipal: { type: "workspace" }` plus its `automationRun`) with
+nobody seated in its conversation, and told so in a prompt section ("Acting
+as the Sidekick itself"). It cannot use any person's connection. It writes
+its Sidekick's memory and never the Organization's (`resolveMemoryAccess`).
+The exceptions, a Sidekick that had
+already stopped for want of a delegate and a loop whose last delegate
+withdraws mid-run, are under [delegation](#delegation-consent-authority). A tool that needs
+a person refuses as before: a Terminal repository checkout, the connection
+card, a change request to the wizard.
+
+The prompt section says what the run may use and what it does instead of the
+connection step every Sidekick run is given, whose connection tools this run
+does not hold:
+
+- It replaces that connection step (`get_connector_connection_state`, then
+  `show_connector_connection`), and says this run does not have those
+  connection tools.
+- When a step needs a person's own account, the run asks with
+  `request_elicitation` for someone to allow the Sidekick to act as them on
+  the Sidekick's page. It names the account and the step, and offers one
+  option to continue once that is done and one to decline.
+- A person who manages the Sidekick continues the run
+  (`run_continuation_requires_manager` for anyone else).
+- When they decline, or `request_elicitation` is not available, the run
+  finishes what the shared connections allow and says in its final message
+  which step was not done and why.
+- A missing shared Organization connection is reported once, in the final
+  message, with the note that a manager connects it under Settings.
+
+A run its triggers start, or that a delegate asks for, acts as a delegate when
+there is one: its coordinator, re-picked from the eligible delegates when that
+person becomes unavailable, and its connector operations may use any
+delegate's personal account and the Organization's connections. A run someone who is not a
 delegate asks for in the shared conversation, a member or a guest on its list,
 acts as that person alone, the PRD's "a shared Sidekick uses delegate access
 only for its own runs":
@@ -1389,10 +1485,13 @@ only for its own runs":
   and message name it), so the run's reply can say why rather than reporting a
   generic failure.
 - The Sidekick's shared Terminal files hold what runs under its delegates'
-  access wrote. No named refusal keeps a requester's run from them: the
-  Terminal plugin passes the requester (`runRequesterUserId`) to its resource
-  bridge, but there is no `sidekick_requester_files_unavailable` check in the
-  tree.
+  access wrote, and they are reached only through someone the Sidekick acts
+  for. So a requester's run gets no Terminal at all: the Terminal plugin
+  reads the run's account view, and when it names a requester
+  (`requesterUserId`) it returns no plugin
+  (`apps/api/src/services/terminal/plugin.ts`,
+  [`terminal-workspaces.md`](terminal-workspaces.md)). The run is not offered
+  tools that could only refuse, so there is no named refusal for this case.
 - A guest on the Sidekick's list runs under their own access as a member does;
   a tool that needs an account they lack refuses by its named code.
 - Only the requester continues it. Everyone the Sidekick is shared with can
@@ -1401,6 +1500,28 @@ only for its own runs":
   it would otherwise act as the requester. The same holds the other way: a
   run under a delegate's access continues from a person only while they are
   an eligible delegate (`run_continuation_requires_delegate`).
+- A run that acts as the Sidekick itself lends nobody's access, so the people
+  who manage the Sidekick continue it, and anyone else is refused with
+  `run_continuation_requires_manager`. An agent acting for nobody continues
+  such a run and no other.
+
+**Whose reach a run has in an attached Canvas** is a separate question from
+whose accounts it uses, and WorkspaceDO answers it from the run's own row
+(`sidekickReach`), for the conversation tools, `ATTACHED CANVASES`, a publish
+and a row write alike:
+
+- A run a schedule or an event started reaches every attached Canvas that is
+  not archived, as the Sidekick itself. The attachment alone is its reach,
+  whichever delegate it acts as.
+- A run a person asked for is held to what that person can open. That is the
+  Run button or a message, whether they are a delegate or run under their own
+  access (`requester_user_id`, else the manual trigger's `requestedByUserId`).
+  A person must not read through the Sidekick what they cannot open
+  themselves.
+- A call that names a run id with no run row, such as a background agent's
+  own conversation, is never the Sidekick itself. It reaches what the person
+  its loop acts as can open, and nothing with nobody.
+- The wizard reaches what its person can open.
 
 ### Scheduled self-review
 
@@ -1559,10 +1680,11 @@ Sidekick's runs:
   `rally:conversations` plugin ([`conversation-tools.md`](conversation-tools.md));
 - publish into the Canvas, by naming it in `publish_resource`'s `canvas`
   argument (`canvasForSidekickRun`, `canvas_not_attached_to_sidekick`
-  otherwise). The person the run acts as must be able to open the Canvas now
-  (`canvas_access_denied` otherwise), as every post there asks: the
-  attachment says where the Sidekick may write, never that its person still
-  may. A run and the Canvas's Chat share an artifact's identity
+  otherwise). For a run a schedule or an event started, the attachment is
+  the Sidekick's own reach and is all it needs: a delegate who cannot open
+  the Canvas does not take it away from the run. A run a person asked for is
+  held to what that person can open (`canvas_access_denied` otherwise;
+  [who a run acts as](#who-a-run-acts-as)). A run and the Canvas's Chat share an artifact's identity
   (`terminal:<canvasId>:<path>`), so publishing a path the Chat published is a
   new version of that artifact;
 - write rows into a stateful artifact the Canvas holds, with
@@ -1590,8 +1712,9 @@ to in a host-provided message, `ATTACHED CANVASES`
 each Canvas's id, title and artifacts with their `resourceId`, the `filePath`
 a publish names, and `storesData`, and the two ways to change one. It lists
 only Canvases somebody attached the Sidekick to, never the Canvas each of its
-own runs made, which would grow by one per run, and only those the acting
-person may open. A Sidekick attached to none is sent nothing. It is a derived
+own runs made, which would grow by one per run. A run a schedule or an event
+started is told all of them; the wizard, a run a person asked for, and a loop
+whose run id has no run row, only those their person may open. A Sidekick attached to none is sent nothing. It is a derived
 user message for the reason `CANVAS CONTEXT` is one: the system prompt prefix
 is byte-stable and the list moves with every publish.
 
@@ -1884,6 +2007,19 @@ somebody opened the list to find; every other surface folds `scheduled` into
   drafts, applies and activates, and then differs from a working Sidekick with
   nothing to do only in that it never fires.
 
+- **`no_eligible_delegate` keeps a Sidekick stopped until a person acts.**
+  WorkspaceDO migration 146 is the only writer of that code. No other warning
+  overwrites it (`noteDelegationAttention`), and only an admission with
+  somebody to act as (`admitOccurrence`) or a resume (`resumeFromPause`)
+  clears it. A code path that set it for one run's trouble would stop a
+  running Sidekick, and one that let another warning replace it would start
+  a stopped Sidekick as itself with nobody's act. Guards: the workerd test
+  "stays stopped where it had already stopped for want of a delegate, until
+  somebody resumes it" in `apps/api/test-workers/sidekick-sources.test.ts`,
+  and "marks stopped every Sidekick with a trigger that nobody lends an
+  account to, whatever it said before, and no other" in
+  `apps/api/test/workspace-sidekick-sources-migration.test.ts`.
+
 - **A review's evidence is the accepted revision's runs, and only its
   finishes count toward the next one.** `noteRunFinished` counts a finish only
   under the accepted revision, and every query in `reviewNotice` filters on
@@ -2148,7 +2284,8 @@ the parent.
 
 A continued run retains its coordinator whoever sent the input, so
 `continueRun` screens a person who sends it: only a requester's run's
-requester, and only an eligible delegate in a run that acts as a delegate
+requester, only an eligible delegate in a run that acts as a delegate, and
+only a manager in a run that acts as the Sidekick itself
 (see [continuing a run](#continuing-a-run)). Outside text in a thread bound to
 the run is not screened by sender: the binding is the run's own outbound, so
 anyone in that thread may answer the run, and what they say is controlled by
@@ -2160,10 +2297,13 @@ id, and never as the "EXTERNALLY ATTRIBUTED
 name, is a user-role message too. The same row in a Sidekick's configuration
 conversation keeps the request framing.
 
-Binding records configured sources and retains an existing source while its
-delegate is unavailable. An owner can configure their own connection during
-setup; execution still requires eligible delegation. Every Sidekick scope uses
-the same consent policy. `claimExecutionPrincipal` records only the authenticated
+Binding records configured sources and retains an existing one while its
+person is unavailable. A manager can configure their own connection, or one
+whose owner already let its events in; whether an event then enters is the
+source's answer ([`sidekick-sources.md`](sidekick-sources.md)), and what a run
+may use is delegation's. A run with no delegate uses the Organization's
+connections and the Sidekick's own reach, and no person's account. Every
+Sidekick scope uses the same policy. `claimExecutionPrincipal` records only the authenticated
 claimant's consent; it adds no human access entitlement and cannot replace other
 delegates, configured sources or creator preference.
 
@@ -2212,6 +2352,13 @@ conversation, and a request from any other agent (one relaying an edit, or one
 of this Sidekick's runs) ends the review, as the wake
 or as a row; otherwise a review stays open until a person speaks or the next
 notice lands.
+A Sidekick whose `automation_directory.delegation_attention_code` is
+`no_eligible_delegate` is stopped on purpose: WorkspaceDO migration 146 set
+the code because the Sidekick was active with a trigger and no allowed
+delegate at deploy. It starts again when a run with somebody to act as is
+admitted, or when a manager pauses and resumes it. Do not clear the code by
+hand. [`sidekick-sources.md`](sidekick-sources.md#operations) has the query
+that finds these Sidekicks and the reason.
 [`runbook.md`](runbook.md) has the production inspection paths.
 
 ## Authoring discovery
@@ -2254,6 +2401,71 @@ survive as described above.
 
 ## Changelog
 
+### 2026-11-10 — A Sidekick runs as itself, and delegation no longer decides what starts it
+
+**What changed:** Two things delegation used to decide left it. Whose events
+may start a Sidekick moved to its own record, the source
+([`sidekick-sources.md`](sidekick-sources.md)): registration, matching and
+admission no longer read `sidekick_delegations`. And a run no longer needs a
+person. A run a schedule or an event starts with no eligible delegate is
+admitted `pending` with no coordinator, provisioned under the Organization's
+principal with nobody seated, and uses the Organization's connections, the
+Sidekick's conversation, memory and Terminal files, and the Canvases it is
+attached to. Its managers continue it (`run_continuation_requires_manager`).
+An event-started run acts as the delegate whose event it is, when they are
+one, and as the Sidekick itself when the event belongs to somebody who is
+not. Whose reach a run has in an attached Canvas is decided in the
+Organization object from the run's row (`sidekickReach`): a run a schedule or
+an event started reaches by the attachment alone, and a run a person asked
+for is held to what that person can open.
+
+**Why:** The owner asked for delegation and triggers to be split completely,
+and for delegates to "provide extra permissions on top of a base set of
+permissions". One boolean had been answering both "whose mail starts this" and
+"whose accounts may it use", so sharing mail on one topic meant lending a
+whole account, and a Sidekick whose only delegate withdrew stopped with Needs
+attention although most of what it does needs no person at all.
+
+**Considered and rejected:** Keeping Needs input for the no-delegate case
+until a later change (the owner chose one pull request). A third principal
+type for the Sidekick: every switch on the principal across the API and the
+connectors package would have needed a branch, where the Organization's
+principal plus `automationRun` already says "this Sidekick, nobody's access".
+Keeping the per-write check of the acting person's Canvas access for every
+run that has a coordinator: a delegate who cannot open a Canvas would then
+take away a reach the Sidekick has by its own attachment, which is the
+opposite of delegates adding to a base. Dropping that check for every run: a
+person who pressed Run, or wrote to the Sidekick, would then read through it
+a Canvas they cannot open. Starting every stopped Sidekick as itself on
+deploy: its people withdrew to stop it.
+
+**Consequences:** A new capability a run gets must say which layer it is in.
+If it is the Sidekick's own, it works with no person and is gated by the
+attachment or the Organization; if it is a person's, it refuses by name when
+there is none. Three cases still stop for want of a person, and each is
+deliberate: a Sidekick that migration 146 marked `no_eligible_delegate`,
+because it was active with a trigger and no allowed delegate at deploy,
+stays stopped until a person is behind one of its runs or a manager pauses
+and resumes it; a
+run a person asked for under their own access waits once that person has
+left; and a loop acting as a person stops when its last delegate withdraws
+mid-run, and never goes on under that person's name. `no_eligible_delegate`
+is the stop itself, so no code path may set it for one run's trouble and no
+other warning may overwrite it: only `admitOccurrence` and `resumeFromPause`
+clear it. Only a stored run row
+with nobody asking makes a call the Sidekick itself, so a run id with no row
+is held to its loop's person. Organization connections are now used by runs
+with nobody behind them, where a delegate was required before, and such a run
+writes its Sidekick's memory and never the Organization's. The stored names
+`sidekick_delegation_sources` (the alarm kind) and `event_no_eligible_delegate`
+(the attention code) now describe sources; they are stored and on the wire, so
+they stay. `sidekick_set_delegation` still lets an agent enroll a member with
+no act of theirs. A Sidekick run and its background workers no longer hold
+it, by the owner's decisions of 2026-11-11, because a run now reads outside
+content; a background agent of a conversation a person is talking in does.
+
+Design: `docs/PRDs/2026-11-10_sidekick-sources/prd.md`.
+
 ### 2026-11-10 — Canvas card links carry their own appearance
 
 Sidekick attachment summaries now include each admitted Canvas's chosen
@@ -2264,7 +2476,6 @@ existing attachment read preserves the actual icon without per-Canvas requests
 or a generic fallback. Older summaries still use the client's Canvas directory
 when available. The title display stops after 30 graphemes while preserving the
 full name for hover and assistive technology.
-
 
 ### 2026-11-10 — A Sidekick's Canvas attachment is the publish grant, and a Canvas makes Sidekicks it steers
 

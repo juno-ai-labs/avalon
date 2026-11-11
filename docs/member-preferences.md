@@ -13,8 +13,12 @@ follow the member across devices. Two kinds today:
   (`OFFERED_NOTIFICATION_KINDS`): **Mentions** (`mentions`), **New messages**
   (`newMessages`), **Being added** (`added`, which also covers being let into
   a Canvas you asked for), **Sidekick runs** (`runFinished`, both run
-  notices), **Pinned Canvas updates** (`artifactUpdates`) and **Access
-  requests** (`accessRequests`, for whoever decides on a Canvas's people).
+  notices), **Pinned Canvas updates** (`artifactUpdates`), **Access
+  requests** (`accessRequests`, for whoever decides on a Canvas's people) and
+  **Source requests** (`sourceRequests`, for being asked to let your events
+  start a Sidekick and for the answer to your own ask). Every kind defaults to
+  push alone but the last, which defaults to push and email: a source request
+  is answered from its email ([`sidekick-sources.md`](sidekick-sources.md)).
   In the client, each kind's picker offers **Push** (only where this
   deployment can push, though a stored `push` stays in a save) and **Email**,
   the same two for every kind (`NotificationChannelSettings`); a stored
@@ -35,7 +39,8 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    kind not named reads from the push switch in `push_json` (migration 106)
    someone may have turned off before channels existed, then from
    `DEFAULT_NOTIFICATION_CHANNELS` (`storedMemberPreferences`), which is push
-   alone for every kind. A channel this build does not know is dropped from a
+   alone for every kind but `sourceRequests`. A kind's default may differ, so
+   that constant is the only place to read one. A channel this build does not know is dropped from a
    stored list as it is read; `slack_agent_dm`, no longer a channel, reads that
    way, so a stored Slack choice is read as absent and never consulted (and a
    save naming it is dropped the same way). `push` in the
@@ -114,7 +119,7 @@ predates the field sends no `viewerPreferences`, which also reads as defaults.
 ## Testing
 
 `apps/api/test/member-preferences-kinds.test.ts` covers the record's kinds
-(the offered six defaulted, a stored Thread-era kind dropped) and which choice
+(every offered kind defaulted, a stored Thread-era kind dropped) and which choice
 each pushed kind reads.
 `apps/api/test-workers/member-push-preferences-migration.test.ts` covers
 migrations 106 and 107 over populated rows.

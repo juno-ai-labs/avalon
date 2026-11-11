@@ -755,7 +755,7 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships ten skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Seven are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, `using-external-structured-data`, and the two task skills described below. The other three each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, and `building-live-sites` above. The three AI-chat readers that the browser plugin owned went with it in the dead-code pass. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships eleven skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Seven are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, `using-external-structured-data`, and the two task skills described below. The other four each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` and `setting-up-a-filtered-trigger` below, `tracking-seen-or-done-items` owned by `rally:tables`, and `building-live-sites` above. The three AI-chat readers that the browser plugin owned went with it in the dead-code pass. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
 **Task skills** live in `packages/agent-harness/src/task-skills/`, one folder per skill holding its `skill.ts`, collected as `TASK_SKILLS` and spread into `BUILT_IN_SKILLS`. A task skill is named for an outcome a person asks for rather than a capability: it reads the request, settles what has to be decided before work starts, and names the procedure skills that do the work. `reporting-on-data` finds every connected source that holds part of an answer, names the keys that join them, and slices the joined records the way the person asked, deferring row-level reading to `using-external-structured-data`; it reads a zero, an unmatched filter value or a late source as a finding to caveat rather than a failure, and only a source that did not answer as a failure of that one section; its body carries a section for a Sidekick wizard, which maps the shape of all accessible data and chooses a plan for combining and slicing it that fulfills the request, saves it as the run procedure using reversible defaults, and summarizes it afterward for adjustments. `creating-an-app` reads "an app" as a live web site, turns a clear iOS or Android request toward a site because Rally builds no native apps, and builds an open site without asking when the app saves nothing people add and uses public content (a character counter, a converter, a calculator). Private connected data instead uses the protected-site procedure; storing imported dashboard data does not trigger the question about visitors’ entries. An app that saves what people add needs Rally sign-in, by default so the site knows who added what (a visitor signs in from the site and comes back), so the one question it may ask, before the first file, is whether those entries are shared or private (`private_to_viewer`). An anonymous poll, survey or feedback box stores answers without who sent them; anyone on the internet can submit to any site, so a public poll just accepts requests without a viewer id. It then hands off to `building-live-sites`. Neither sets an `ownerPlugin`, so a run without Terminal can still route an app request and say what it needs instead of the skill vanishing from the catalog.
 
@@ -790,6 +790,27 @@ explain shared files, execution-user access, and overlapping updates when those
 facts are needed. The tracking skill keeps completion records and output claims
 in durable tables. Public help also feeds the rendered manual, Markdown, search
 index and full manual for model readers; those descriptions must agree.
+
+`setting-up-a-filtered-trigger`, also owned by the Sidekicks plugin, is the
+procedure for when **another person's own account** should start a Sidekick,
+each person's events filtered by words they approve
+([`sidekick-sources.md`](sidekick-sources.md#agent-tools)). It is not for a
+topic filter on only the requester's own account or an Organization
+connection: nobody else's permission is involved there, so that is a
+`semantic_activity` trigger, which `polling-for-events` owns.
+It is written to give the model latitude: it states what one event carries,
+how a filter is judged and that the person reads and approves the same text,
+gives a way to try a draft on real events, and leaves the wording to the
+model. It names its owner plugin's three source tools, as an owned skill may.
+Those tools are offered only to a turn a person is driving
+(`asksForSources` in `apps/api/src/services/integrations.ts`). A Sidekick
+run, a background agent, a run's delegation worker, and a wizard or Chat turn
+that another agent's message (`agentExchange`) or Rally's review notice
+(`reason === "sidekick_review"`) started never see them. The skill tells the
+model to call `sidekick_request_source`, so the host lists it only where a
+plugin in scope holds that tool (`builtInSkillsFor`): owning the plugin is
+not enough, because a run carries the Sidekicks plugin without the source
+tools.
 
 `polling-for-events` owns trigger selection and source-resource lookup. Its
 catalog covers actions after external changes, including site refreshes. It

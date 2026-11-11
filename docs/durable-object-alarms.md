@@ -27,8 +27,12 @@ remain separate from this effect-ordering fence.
 ## Where the code lives
 
 Sidekick source reconciliation uses stored `sidekick_delegation_sources`
-entries. Grant mutations write the wake atomically with consent; connection
-authority triggers and existing membership/reach invalidations also queue it.
+entries. The kind keeps its stored name, but it is no longer delegation's: it
+reconciles a Sidekick's source registrations, which read `sidekick_sources`
+and never delegation ([`sidekick-sources.md`](sidekick-sources.md)). A source
+written, approved or withdrawn writes the wake in the same transaction;
+connection authority triggers and existing membership/reach invalidations
+also queue it.
 One `<sidekickId>:sources` entry coalesces pending changes. Each enqueue advances
 its due instant to at least the previous instant plus one millisecond; this is
 the existing scheduler's settlement fence, not a debounce delay. A wake queued
@@ -47,7 +51,7 @@ selection and the event cutoffs that unchanged rows preserve.
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | Adopts it for a conversation's agent: `agent_timer` entries index `workstream_wakeups`; one `terminal_observation` entry indexes its Terminal sandbox's `next_observe_at`; the retired `merge_suggestion` kind is named only so a leftover entry can be recognised. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
-| `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_run_row` (`<sidekickId>:<runId>`, armed by migration 136's triggers on `sidekick_runs`, handled by `projectRunRow`), `sidekick_memory_tables`, and the delegation kinds. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_run_row` (`<sidekickId>:<runId>`, armed by migration 136's triggers on `sidekick_runs`, handled by `projectRunRow`), `sidekick_memory_tables`, the delegation kinds, and `sidekick_delegation_sources`, which reconciles source registrations despite its stored name. |
 
 Canvas archive uses stored entries too: `canvas_archive_conversation`, keyed by
 Canvas and child, saves the recipients whose Chat sockets must close and stops
