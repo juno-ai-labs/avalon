@@ -301,7 +301,7 @@ it('settles pre-cancellation usage through a final invoice and excludes later us
   db.prepare("UPDATE billing_accounts SET subscription_id = 'sub_1', status = 'active', overage_enabled = 1, overage_started_at = unixepoch('2026-11-25')").run();
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(subscription({ status: 'canceled', ended_at: Date.parse('2027-01-15') / 1000 }))));
   await syncSubscription(env, 'cus_1', 'sub_1');
-  expect(db.prepare('SELECT ends_at,cutoff_quota_microusd FROM billing_terms').get()).toEqual({ ends_at: Date.parse('2027-01-15') / 1000, cutoff_quota_microusd: 50000000 });
+  expect(db.prepare('SELECT ends_at,cutoff_quota_microusd FROM billing_terms').get()).toEqual({ ends_at: Date.parse('2027-01-15') / 1000, cutoff_quota_microusd: 10000000 });
   const { applyUsageBatch } = await import('../src/services/usage-metering');
   for (const [id, at, cost] of [['before', '2026-12-15T12:00:00.000Z', 300000000], ['tail', '2027-01-12T12:00:00.000Z', 300000000], ['after', '2027-01-16T12:00:00.000Z', 500000000]] as const) {
     await applyUsageBatch(env, [{ v: 1, eventId: id, workspaceId: workspace, region: 'global', activity: 'agent_run', occurredAt: at, costMicrousd: cost, model: null, refs: {} }], at);
@@ -321,7 +321,7 @@ it('settles pre-cancellation usage through a final invoice and excludes later us
   }));
   await settleBillingAccounts(env);
   await settleBillingAccounts(env);
-  expect(quantities).toEqual(['250000000', '250000000']);
+  expect(quantities).toEqual(['290000000', '290000000']);
   expect(finalized).toBe(true);
   expect(seen.filter((r) => r.url.endsWith('/invoices'))).toHaveLength(1);
   expect(seen.find((r) => r.url.endsWith('/invoices'))!.body.get('default_payment_method')).toBe('pm_saved');

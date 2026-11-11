@@ -113,7 +113,7 @@ export const renderBlogSitemap = (): string => {
 export function renderLlmsTxt(): string {
   return `# Rally
 
-> Rally is a shared place where a team and AI work together. In a Canvas, people talk with Rally and it makes the artifact itself (a document, a spreadsheet, an image, a PDF, a site), shared per Canvas; Sidekicks are shared AI agents with one conversation each that run jobs on a schedule or when something happens; connectors read and write tools like Gmail, Google Drive, Slack, Notion, and GitHub. Pricing is per organization with no seat limit: Start is $100 a month, Grow is $250 a month. macOS beta. Made by Juno AI Labs Inc.
+> Rally is a shared place where a team and AI work together. In a Canvas, people talk with Rally and it makes the artifact itself (a document, a spreadsheet, an image, a PDF, a site), shared per Canvas; Sidekicks are shared AI agents with one conversation each that run jobs on a schedule or when something happens; connectors read and write tools like Gmail, Google Drive, Slack, Notion, and GitHub. Pricing is per organization with no seat limit: Start is free with $40 of effective usage; Grow is $100 with $200, Max is $250 with $500, and Ultra is $1,000 with $2,000. Allowances are allocated weekly. macOS beta. Made by Juno AI Labs Inc.
 
 ## Product
 

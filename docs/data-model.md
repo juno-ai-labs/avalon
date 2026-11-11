@@ -1053,14 +1053,16 @@ and `parent_access_operations` with migration 94.
 
 ## Usage metering
 
-Migration 0118 adds `workspaces.plan` (`starter` or `growth`, default
+Migration 0118 adds `workspaces.plan` (now `starter`, `growth`, `max` or `ultra`, default
 `starter`), with no CHECK: the plan set is a moving product decision, and
 `PlanIdSchema` parses it on every read. The ledger itself is in a separate D1 database, `USAGE_DB`, with
 its own migrations in `packages/db/usage-migrations/`: `usage_events`, one row
 per metered call keyed by `event_id` and kept 90 days, and `usage_rollups`,
 one row per workspace per quota week and monthly period, kept for good. Every
 event is also in the Iceberg table `avalon.usage_events` in R2. Overage is not
-stored; it is derived on read. See [usage metering](usage-metering.md).
+stored; it is derived on read. Usage migration 0003 rebuilds `usage_plan_changes`
+without the old two-plan CHECK constraints, preserving its rows and primary key.
+See [usage metering](usage-metering.md).
 
 ## Push devices
 
