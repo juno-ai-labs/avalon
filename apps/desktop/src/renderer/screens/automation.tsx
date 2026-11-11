@@ -9,7 +9,7 @@ import { CanvasMark } from '../components/canvas-mark';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import type { AutomationDetail } from '../lib/types';
 import { SidekickDetailLayout, type SidekickDetailHeaderContext } from '../components/sidekick-detail-layout';
-import { useSidekickList } from '../components/sidekick-sidebar-section';
+import { useSidekickList } from '../lib/sidekicks';
 import { AutomationGlyph } from '../components/workstream-glyph';
 import { canvasRoute } from '../lib/canvases';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
@@ -198,26 +198,25 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
     queue.current = result.catch(() => undefined);
     return result;
   };
-  if (leaving) return <OpeningState label="Opening Sidekicks…" />;
+  const row = sidekickRows?.find((candidate) => candidate.id === id);
+  const detail = automation.data;
+  const documentTitle = !panel && <SidekickDocumentTitle name={detail?.currentDefinition?.name ?? detail?.name ?? row?.name} />;
+  if (leaving) return <>{documentTitle}<OpeningState label="Opening Sidekicks…" /></>;
   if (automation.error) {
-    return (
-      <div className="screen-error-state screen-with-titlebar">
-        {panel && <TitlePillClose label="Close panel" onClose={panel.onClose} />}
-        <div className="screen-drag-strip window-drag" />
+    return <>{documentTitle}<div className={panel ? "sidekick-panel-opening" : "screen-error-state screen-with-titlebar"}>
+        {panel ? <TitlePillHeader current={{ key: id, icon: <AutomationGlyph id={id} />, title: 'Sidekick', label: 'Sidekick' }} trailing={<TitlePillClose label="Close panel" onClose={panel.onClose} />} /> : <div className="screen-drag-strip window-drag" />}
         <ErrorNotice title="Sidekick could not be opened">{automation.error.message}</ErrorNotice>
         <EmptyState
           action={<ErrorActions onRetry={() => void automation.refetch()} />}
           description="Try opening your Sidekick again."
           title="Sidekick"
         />
-      </div>
-    );
+      </div></>;
   }
   // The list row is enough to mount the conversation, which is what takes
   // longest to open: it starts at once and the header and details fill in
   // when the detail read answers, rather than everything waiting for it.
-  const row = sidekickRows?.find((candidate) => candidate.id === id);
-  const detail = automation.data;
+  if (!detail && !row && !panel) return <>{documentTitle}<OpeningState label="Opening Sidekick…" /></>;
   if (!detail && !row) return <div className="sidekick-panel-opening">
     {panel && <TitlePillHeader current={{ key: id, icon: <AutomationGlyph id={id} />, title: 'Sidekick', label: 'Opening Sidekick' }} trailing={<TitlePillClose label="Close panel" onClose={panel.onClose} />} />}
     <OpeningState label="Opening Sidekick…" />
@@ -230,7 +229,7 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
     if (!session?.workspace) throw new Error('No active organization');
     await copyLink({ kind: 'sidekick', region: session.workspace.region, workspaceId: session.workspace.id, sidekickId: id });
   };
-  return (
+  return <>{documentTitle}
     <SidekickDetailLayout key={id} details={!detail ? <OpeningState label="Opening Sidekick…" /> : <AutomationHeader
       automation={detail}
       delegateNames={new Map([...(delegates.data?.delegates ?? []), ...(delegates.data?.creator ? [delegates.data.creator] : [])].map((person) => [person.userId, person.displayName]))}
@@ -252,10 +251,8 @@ function AutomationDetailScreen({ id, panel }: { id: string; panel?: Conversatio
       onCopyLink={copySidekickLink}
       onRunNow={detail?.lifecycle === 'active' && !act.isPending ? () => act.mutate('run') : undefined}
     />}>
-      {!panel && <SidekickDocumentTitle name={conversation.name} />}
       <SidekickConversation {...conversation} embedded={Boolean(panel)} />
-    </SidekickDetailLayout>
-  );
+    </SidekickDetailLayout></>;
 }
 
 /**
@@ -404,7 +401,7 @@ function SidekickConversation({ id, name, draft, canvases, manages, embedded }: 
   />;
 }
 
-function SidekickDocumentTitle({ name }: { name: string }): null {
+function SidekickDocumentTitle({ name }: { name: string | undefined }): null {
   useDocumentTitle(name);
   return null;
 }

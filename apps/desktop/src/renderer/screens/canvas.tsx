@@ -301,11 +301,14 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       Change appearance
     </TitleMenuItem>
     <CanvasSidekicksSection
-      onOpen={(sidekick) => openPanel?.({
+      onOpen={(sidekick) => {
+        if (!openPanel) { void navigate(`/sidekicks/${encodeURIComponent(sidekick.id)}`); return; }
+        openPanel({
         key: `sidekick:${sidekick.id}`,
         label: `Sidekick: ${sidekick.name}`,
         render: (controls) => <SidekickPanel id={sidekick.id} key={sidekick.id} controls={controls} />,
-      })}
+        });
+      }}
       sidekicks={sidekicks}
     />
     {canvas.data?.canManage && <>

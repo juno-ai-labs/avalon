@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -96,6 +97,55 @@ describe('RailSurface', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: 'Preview content' }), { key: 'Escape' });
     expect(closePreview).toHaveBeenCalledOnce();
     expect(closeHost).not.toHaveBeenCalled();
+  });
+
+  it.each([{ isComposing: true }, { keyCode: 229 }])('keeps the panel open for IME Escape (%j)', (composition) => {
+    const close = vi.fn();
+    render(<Tooltip.Provider><RailSurface label="Sidekick" onClose={close} onResize={vi.fn()} resizeLabel="Resize Sidekick" width={400}><textarea aria-label="Message" /></RailSurface></Tooltip.Provider>);
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Message' }), { key: 'Escape', ...composition });
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('restores focus inside a surviving host so the next Escape closes it', () => {
+    vi.useFakeTimers();
+    onTestFinished(() => { vi.useRealTimers(); });
+    function Panels(): React.JSX.Element {
+      const [host, setHost] = useState(true);
+      const [preview, setPreview] = useState(false);
+      return <Tooltip.Provider>{host && <RailSurface label="Sidekick" onClose={() => setHost(false)} onResize={vi.fn()} resizeLabel="Resize Sidekick" width={400}>
+        <button onClick={() => setPreview(true)}>Open preview</button>
+        {preview && <RailSurface label="Preview" onClose={() => setPreview(false)} onResize={vi.fn()} resizeLabel="Resize preview" width={400}>Attachment</RailSurface>}
+      </RailSurface>}</Tooltip.Provider>;
+    }
+    render(<Panels />);
+    act(() => vi.advanceTimersToNextFrame());
+    const opener = screen.getByRole('button', { name: 'Open preview' });
+    opener.focus();
+    fireEvent.click(opener);
+    act(() => vi.advanceTimersToNextFrame());
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(opener).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(screen.queryByRole('complementary', { name: 'Sidekick' })).toBeNull();
+  });
+
+  it('leaves focus with a replacement preview when the previous preview unmounts', () => {
+    vi.useFakeTimers();
+    onTestFinished(() => { vi.useRealTimers(); });
+    function Panels({ stage }: { stage: number }): React.JSX.Element {
+      return <Tooltip.Provider><RailSurface label="Sidekick" onClose={vi.fn()} onResize={vi.fn()} resizeLabel="Resize Sidekick" width={400}>
+        {stage < 2 && <RailSurface key="previous" label="Previous" leaving={stage > 0} onClose={vi.fn()} onResize={vi.fn()} resizeLabel="Resize previous" width={400}>Previous</RailSurface>}
+        {stage > 0 && <RailSurface key="current" label="Current" onClose={vi.fn()} onResize={vi.fn()} resizeLabel="Resize current" width={400}>Current</RailSurface>}
+      </RailSurface></Tooltip.Provider>;
+    }
+    const view = render(<Panels stage={0} />);
+    act(() => vi.advanceTimersToNextFrame());
+    view.rerender(<Panels stage={1} />);
+    act(() => vi.advanceTimersToNextFrame());
+    const current = screen.getByRole('complementary', { name: 'Current' });
+    current.focus();
+    view.rerender(<Panels stage={2} />);
+    expect(current).toHaveFocus();
   });
 
   it.each([true, false])('moves focus on arrival only when requested (%s)', (focusOnOpen) => {

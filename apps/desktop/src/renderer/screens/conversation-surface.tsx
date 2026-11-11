@@ -1056,7 +1056,7 @@ function ConversationSurfaceContent({
   const parentNoun = parentKind === 'automation' ? 'Sidekick' : 'Canvas';
   const [searchParams, setSearchParams] = useSearchParams();
   const searchSequence = Number(searchParams.get('sequence'));
-  const searchTurnId = Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
+  const searchTurnId = !embedded && Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
 
   const requestedSearch = useRef<string | null>(null);
 
@@ -1179,6 +1179,8 @@ function ConversationSurfaceContent({
   const conversationVisibleRef = useRef(conversationVisible);
   conversationVisibleRef.current = conversationVisible;
   useWindowFilePaste(acceptFiles, !conversationVisible, (target) => {
+    const host = target instanceof Element ? target.closest('.conversation-host-panel') : null;
+    if (host) return embedded && host === layoutRef.current?.closest('.conversation-host-panel');
     const owner = target instanceof Element ? target.closest('.conversation-layout') : null;
     return owner ? owner === layoutRef.current : !embedded;
   });
@@ -1352,7 +1354,7 @@ function ConversationSurfaceContent({
   useOpenAttachedArtifact(
     artifactPanelKey,
     feedFromLocalCache ? undefined : routedDetail?.resources,
-    conversationVisible && !embedded,
+    conversationVisible && !embedded && !(panel?.kind === 'host' && storeRailOpen && railScope === railScopeKey),
     revealAttachedArtifact,
     snapshotGeneration.data,
   );
