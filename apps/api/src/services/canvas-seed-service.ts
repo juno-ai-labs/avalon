@@ -13,6 +13,7 @@ import { z } from "zod";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
+import { asApiError } from "../lib/api-error";
 import { sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logError } from "../observability/logger";
@@ -117,7 +118,15 @@ export async function seedCanvas(env: Env, input: { workspaceId: string; creator
   const canvasId = await seededCanvasId(workspaceId, seed.key);
   const actor = { userId: asUserId(input.creatorUserId), actorRole: "owner" as const };
 
-  const { created } = await createCanvas(env, { workspaceId, creatorUserId: input.creatorUserId, title: seed.title, canvasId });
+  let created: boolean;
+  try {
+    ({ created } = await createCanvas(env, { workspaceId, creatorUserId: input.creatorUserId, title: seed.title, canvasId }));
+  } catch (error) {
+    // The guide exists and its owner archived it: nothing is owed, and a
+    // replay must not retry its way into the dead-letter queue.
+    if (asApiError(error)?.code === "canvas_archived") return { canvasId, seeded: false };
+    throw error;
+  }
   const messages = createMessageObjectPort(env, workspaceId, canvasId);
   const openingKey = openingMessageKey(seed.key);
   if (!created && await messages.messageByClientId({ clientMessageId: openingKey })) return { canvasId, seeded: false };
@@ -154,8 +163,8 @@ export async function seedCanvas(env: Env, input: { workspaceId: string; creator
  * ways. Its identity is the one Rally's publish of `site.path` from this
  * Canvas's Chat would compute, so the first time Rally revises the site that
  * is version 2 of this artifact and not a second site. And it only ever
- * writes version 1: a row that already holds other content was published
- * since, and is left alone.
+ * writes version 1: a row whose stored manifest is past version 1 was
+ * published since, and is left alone.
  */
 async function publishSeedSite(env: Env, target: { workspaceId: string; canvasId: string; seedKey: string; title: string }, site: CanvasSeed["site"]): Promise<void> {
   const { workspaceId, canvasId } = target;
@@ -175,16 +184,20 @@ async function publishSeedSite(env: Env, target: { workspaceId: string; canvasId
   const resourceId = await namedId(`canvas-seed-resource:${canvasId}:${site.path}`);
   const artifactId = await namedId(`canvas-seed-artifact:${canvasId}:${site.path}`);
   const existing = await publishedRowByIdentity(runtime.DB, workspaceId, providerResourceId);
-  // A row that is not this seed's first version was published since: leave it.
-  if (existing && (existing.id !== resourceId || existing.content_sha256 !== contentDigest)) return;
+  if (existing && existing.id !== resourceId) return;
 
   let manifest: ArtifactManifest;
   if (existing) {
-    // An earlier attempt wrote the row and stopped: finish from the manifest
-    // the row holds, which is the one its bytes were stored under.
+    // The row's own manifest says which case this is, where its bytes cannot:
+    // a deploy between two attempts changes the seed's files, and comparing
+    // them would read an unfinished first attempt as a later republish.
     const stored = existing.content_ref ? await env.PAYLOADS.get(existing.content_ref) : null;
     if (!stored) throw new Error("canvas_seed_manifest_missing");
     manifest = ArtifactManifestSchema.parse(JSON.parse(await stored.text()) as unknown);
+    // Past version 1, Rally published since, and that publish registered and
+    // pointed its own version. At version 1 an earlier attempt wrote the row
+    // and may have stopped: finish serving the bytes it stored.
+    if (manifest.artifactVersion !== 1) return;
   } else {
     const written = await writeArtifactVersion(env, {
       workspaceId, workstreamId: canvasId, region: env.AVALON_REGION,

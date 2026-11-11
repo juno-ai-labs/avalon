@@ -12,10 +12,13 @@ import type { ArtifactHostDO } from "../src/durable-objects/artifact-host-do";
 import { artifactHostDOName, workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { AuthContext, Env } from "../src/env";
+import { GETTING_STARTED_WITH_CANVASES } from "../src/canvas-seeds/getting-started-with-canvases";
+import { sha256Hex } from "../src/lib/crypto";
 import { consumeActivityQueue } from "../src/queues/activity-consumer";
 import { createMessageObjectPort } from "../src/runtime/message-port";
 import { CanvasService } from "../src/services/canvas-service";
-import { seededCanvasId } from "../src/services/canvas-seed-service";
+import { seedCanvas, seededCanvasId } from "../src/services/canvas-seed-service";
+import { pointArtifactAtVersion, writeArtifactVersion } from "../src/services/terminal/site-resource-bridge";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -46,7 +49,7 @@ async function deliverSeedJob(seedKey = SEED_KEY) {
 
 function registeredArtifacts(canvasId: string) {
   return runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => state.storage.sql.exec(
-    `SELECT artifact_id, mode, stateful, current_version FROM artifact_registry WHERE workstream_id = ?`, canvasId,
+    `SELECT artifact_id, resource_id, mode, stateful, current_version FROM artifact_registry WHERE workstream_id = ?`, canvasId,
   ).toArray());
 }
 
@@ -56,6 +59,47 @@ function viewerRequest(path: string, viewer: { id: string; name: string } | null
     ...init,
     headers: viewer ? { "x-rally-viewer-id": viewer.id, "x-rally-viewer-name": encodeURIComponent(viewer.name) } : {},
   });
+}
+
+function artifactHost(artifactId: unknown): DurableObjectStub<ArtifactHostDO> {
+  return env.ARTIFACT_HOSTS.get(env.ARTIFACT_HOSTS.idFromName(
+    artifactHostDOName("global", asArtifactId(String(artifactId))),
+  )) as DurableObjectStub<ArtifactHostDO>;
+}
+
+type GuideState = {
+  viewer: { name: string };
+  steps: { id: string; done: boolean; by: string | null; parts?: Record<string, boolean> }[];
+  cards: { text: string; kind: string; by: string; mine: boolean }[];
+};
+
+async function guideState(host: DurableObjectStub<ArtifactHostDO>, viewer: { id: string; name: string }): Promise<GuideState> {
+  return (await host.fetchThroughFacet(viewerRequest("/api/state", viewer))).json<GuideState>();
+}
+
+function doneSteps(state: GuideState): string[] {
+  return state.steps.filter((step) => step.done).map((step) => step.id);
+}
+
+/** The seed's files with one changed, as a publish takes them. */
+function guideFiles(change: { path: string; edit: (text: string) => string } | null = null) {
+  return Promise.all(GETTING_STARTED_WITH_CANVASES.site.files.map(async (file) => {
+    const bytes = new TextEncoder().encode(change?.path === file.path ? change.edit(file.text) : file.text);
+    return { path: file.path, bytes, sha256: await sha256Hex(bytes) };
+  }));
+}
+
+/** Rally republishing the guide: the next version's files, then the serving pointer. */
+async function republishGuide(canvasId: string, version: number, edit: (html: string) => string) {
+  const [artifact] = await registeredArtifacts(canvasId);
+  const target = { workspaceId: WORKSPACE_ID, workstreamId: canvasId, region: "global" as const,
+    artifactId: String(artifact!.artifact_id), resourceId: String(artifact!.resource_id) };
+  const files = await guideFiles({ path: "index.html", edit });
+  const written = await writeArtifactVersion(TEST_ENV, {
+    ...target, version, mode: "active", stateful: true, files, fallbackTitle: "Getting Started with Canvases",
+    serverModuleSha256: files.find((file) => file.path === "index.js")!.sha256,
+  });
+  await pointArtifactAtVersion(TEST_ENV, { ...target, manifest: written.manifest });
 }
 
 beforeEach(async () => {
@@ -110,18 +154,15 @@ describe("seeding the Getting Started guide into an Organization", () => {
     const opening = await createMessageObjectPort(TEST_ENV, WORKSPACE_ID, canvasId)
       .messageByClientId({ clientMessageId: `canvas-seed:${SEED_KEY}:opening` });
     expect([opening?.author_type, opening?.message_type, opening?.harness_run_id]).toEqual(["agent", "text", null]);
-    expect(opening?.text_content?.split("\n")[0]).toBe(
-      "Welcome to Rally. This is a Canvas: a conversation with me, and the things I make from it. The page beside this Chat is one of them, and it is live.",
-    );
+    // The seed's own words, whatever they are: what is proved is that they arrived.
+    expect(opening?.text_content).toBe(GETTING_STARTED_WITH_CANVASES.openingMessage);
   });
 
   it("serves the guide's own page and data behind Rally's artifact host", async () => {
     await deliverSeedJob();
     const canvasId = await seededCanvasId(WORKSPACE_ID, SEED_KEY);
     const [artifact] = await registeredArtifacts(canvasId);
-    const host = env.ARTIFACT_HOSTS.get(env.ARTIFACT_HOSTS.idFromName(
-      artifactHostDOName("global", asArtifactId(String(artifact!.artifact_id))),
-    )) as DurableObjectStub<ArtifactHostDO>;
+    const host = artifactHost(artifact!.artifact_id);
     const ada = { id: OWNER, name: "Ada Lovelace" };
 
     // Nobody outside Rally reads the wall: no viewer headers, no page.
@@ -132,7 +173,7 @@ describe("seeding the Getting Started guide into an Organization", () => {
     expect(await page.text()).toContain("<title>Getting Started with Canvases</title>");
 
     const added = await host.fetchThroughFacet(viewerRequest("/api/cards", ada, { method: "POST", body: JSON.stringify({ text: "A tracker for renewals" }) }));
-    const state = await added.json<{ viewer: { name: string }; steps: { id: string; done: boolean; parts?: Record<string, boolean> }[]; cards: { text: string; kind: string; mine: boolean }[] }>();
+    const state = await added.json<GuideState>();
     expect(state.viewer).toEqual({ name: "Ada Lovelace" });
     expect(state.cards.map((card) => [card.text, card.kind, card.mine])).toEqual([
       ["A tracker for renewals", "person", true],
@@ -145,6 +186,63 @@ describe("seeding the Getting Started guide into an Organization", () => {
       ["make_it_yours", false], ["teammate", false], ["own_canvas", false],
     ]);
     expect(state.steps[0]!.parts).toEqual({ addedCard: true, voted: false });
+  });
+
+  it("ticks the Chat steps from what the site can see, with no row from Rally to say so", async () => {
+    await deliverSeedJob();
+    const canvasId = await seededCanvasId(WORKSPACE_ID, SEED_KEY);
+    const [artifact] = await registeredArtifacts(canvasId);
+    const host = artifactHost(artifact!.artifact_id);
+    const ada = { id: OWNER, name: "Ada Lovelace" };
+    const grace = { id: MEMBER, name: "Grace Hopper" };
+    expect(doneSteps(await guideState(host, ada))).toEqual([]);
+
+    // Step 2, as Rally writes it knowing who asked: the card is Rally's, and
+    // the step is that person's alone.
+    await host.writeData("INSERT INTO wall_cards (text, asked_by_id) VALUES (?, ?)", ["A renewals tracker", ada.id], 200, { rows: "all" });
+    const asked = await guideState(host, ada);
+    expect(asked.cards.filter((card) => card.kind === "rally").map((card) => [card.text, card.by])).toEqual([["A renewals tracker", "Rally"]]);
+    expect(doneSteps(asked)).toEqual(["ask_rally"]);
+    expect(doneSteps(await guideState(host, grace))).toEqual([]);
+
+    // The same write from a Rally that never read the guide's README: only
+    // the text. Nobody can be told apart, so it counts for everyone.
+    await host.writeData("INSERT INTO wall_cards (text) VALUES (?)", ["A hiring dashboard"], 200, { rows: "all" });
+    expect(doneSteps(await guideState(host, grace))).toEqual(["ask_rally"]);
+
+    // Step 3 renames the wall. That republish is not step 4.
+    await republishGuide(canvasId, 2, (html) => html.replace(">Team wall</h2>", ">Idea board</h2>"));
+    expect(doneSteps(await guideState(host, ada))).toEqual(["ask_rally"]);
+
+    // Step 4 remakes the page, and the page proves it to everybody.
+    await republishGuide(canvasId, 3, (html) => html.replace("This is a Canvas.", "This is Northwind's Canvas."));
+    expect(doneSteps(await guideState(host, grace))).toEqual(["ask_rally", "make_it_yours"]);
+  });
+
+  it("finishes a publish that stopped before the site was served, even after the seed's files changed", async () => {
+    // The first attempt writes the site's row and registry, then the
+    // artifact host cannot be reached.
+    const unreachable = new Proxy(env.ARTIFACT_HOSTS, {
+      get(target, property) {
+        if (property === "get") return () => { throw new Error("artifact_host_unreachable"); };
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    await expect(seedCanvas({ ...TEST_ENV, ARTIFACT_HOSTS: unreachable }, { workspaceId: WORKSPACE_ID, creatorUserId: OWNER },
+      GETTING_STARTED_WITH_CANVASES)).rejects.toThrow("artifact_host_unreachable");
+    const canvasId = await seededCanvasId(WORKSPACE_ID, SEED_KEY);
+    const [artifact] = await registeredArtifacts(canvasId);
+    expect((await artifactHost(artifact!.artifact_id).fetchThroughFacet(viewerRequest("/", { id: OWNER, name: "Ada" }))).status).toBe(404);
+
+    // A deploy lands between the attempts and changes one of the seed's files.
+    const redeployed = { ...GETTING_STARTED_WITH_CANVASES, site: { ...GETTING_STARTED_WITH_CANVASES.site,
+      files: GETTING_STARTED_WITH_CANVASES.site.files.map((file) => file.path === "README.md" ? { ...file, text: `${file.text}\nA later edit.\n` } : file) } };
+    expect(await seedCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: OWNER }, redeployed)).toEqual({ canvasId, seeded: true });
+
+    const page = await artifactHost(artifact!.artifact_id).fetchThroughFacet(viewerRequest("/", { id: OWNER, name: "Ada" }));
+    expect(page.status).toBe(200);
+    expect((await registeredArtifacts(canvasId)).map((row) => row.current_version)).toEqual([1]);
   });
 
   it("does nothing the second time, and does not undo what people changed since", async () => {
@@ -163,6 +261,15 @@ describe("seeding the Getting Started guide into an Organization", () => {
     expect((await owner.list()).map((row) => row.title)).toEqual(["Getting Started with Canvases"]);
     const said = await createMessageObjectPort(TEST_ENV, WORKSPACE_ID, canvasId).messagesAfter({ afterSequence: 0, limit: 10 });
     expect(said.map((message) => message.author_type)).toEqual(["agent"]);
+  });
+
+  it("does nothing, and asks for no retry, when the guide was archived", async () => {
+    await deliverSeedJob();
+    const canvasId = await seededCanvasId(WORKSPACE_ID, SEED_KEY);
+    await new CanvasService(TEST_ENV, auth(OWNER, "owner")).archive(canvasId);
+
+    // A replay of the creation, or a redrive from the dead-letter queue.
+    expect(await deliverSeedJob()).toEqual([]);
   });
 
   it("fails the job, for the queue to retry, when it names a seed this Worker does not carry", async () => {

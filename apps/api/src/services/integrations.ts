@@ -1245,6 +1245,8 @@ async function projectModelProtocolTranscript(
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "triggerMessageId" | "substreamId">
     & Partial<Pick<WorkstreamWorkflowInput, "executionPrincipal" | "parentKind">>,
   storedMessages: Message[],
+  /** Whether the caller puts messages in front of these: a compaction checkpoint, which is a user turn. */
+  precededByContext = false,
 ): Promise<{ messages: ModelMessage[]; issues: ModelTranscriptProjectionIssue[] }> {
   const externalFraming = externalInputFraming({
     parentKind: input.parentKind ?? "workstream",
@@ -1601,9 +1603,10 @@ async function projectModelProtocolTranscript(
         continue;
       }
       projected.push(modelDerivative(
-        // Nothing before it: an assistant turn here would open the provider
-        // conversation, which not every model accepts.
-        projected.length === 0 ? projectLeadingAssistantMessage(content) : { role: "assistant", content },
+        // Nothing before it, here or in what the caller prepends: an
+        // assistant turn would open the provider conversation, which not
+        // every model accepts.
+        projected.length === 0 && !precededByContext ? projectLeadingAssistantMessage(content) : { role: "assistant", content },
         "participant_turn",
         message.id,
         message.sequenceNumber,
@@ -3071,7 +3074,7 @@ export async function runWorkstreamHarness(
       )
       : [];
   const transcriptProjection = requiresCanonicalBootstrap
-    ? await projectModelProtocolTranscript(env, input, storedMessages)
+    ? await projectModelProtocolTranscript(env, input, storedMessages, (priorCompaction?.messages.length ?? 0) > 0)
     : { messages: [], issues: [] };
   const transcriptBootstrapMs = Date.now() - transcriptBootstrapStartedAtMs;
   const rawModelMessages = [

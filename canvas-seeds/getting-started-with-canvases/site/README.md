@@ -26,13 +26,20 @@ Chat, or change this site. Both are covered below.
 | `use_the_page`  | Adds a card to the wall and votes for one                   | The page, from the stored rows        |
 | `ask_rally`     | Asks you to add ideas to the wall                           | The page, from the cards you insert   |
 | `comment`       | Uses Comment mode on the page and sends you the comment     | You, with a row (below)               |
-| `make_it_yours` | Asks you to add the team's name and a section of their own  | You, with a row (below). Team step    |
+| `make_it_yours` | Asks you to add the team's name and a section of their own  | The page, once it is republished. Your row (below) adds who asked. Team step |
 | `teammate`      | A second person adds a card                                 | The page, from the stored rows        |
 | `own_canvas`    | Copies a starter prompt for a Canvas of their own           | The page, when they copy one          |
 
 `make_it_yours` and `teammate` are team steps: one person doing them ticks them
 for everybody. The other four are per person. A person can also tick a step by
 hand from the page, so a missed row never leaves anyone stuck.
+
+The page proves what it can without you. A card written from the Chat with
+only its `text` is yours by the table's defaults, and a card of yours with no
+`asked_by_id` ticks step 2 for everyone, because nobody can be told apart.
+Step 4 ticks when `index.html` no longer matches the page this site started
+as, the wall's title aside. So the rows below make the guide exact; they are
+not what makes it work.
 
 ## What to do for each request
 
@@ -42,7 +49,7 @@ user id of whoever sent the message you are answering, and the name is their
 display name.
 
 **"Add five ideas to the wall for a team that works on …" (step 2).** Insert
-one row per idea. Setting `asked_by_id` is what ticks the step for that person:
+one row per idea. Setting `asked_by_id` ticks the step for that person alone:
 
 ```sql
 INSERT INTO wall_cards (text, added_by_kind, added_by_name, asked_by_id)
@@ -105,9 +112,9 @@ below.
   private: progress through a tutorial is not a secret.
 - **Keep the sign-in guard** at the top of `fetch`. The wall shows people's
   names, so nobody outside Rally may read it.
-- **Keep the `data-step` ids and the other `data-` attributes** when you edit
-  `index.html`. `app.js` and the stored rows are keyed on them. Change the
-  words freely.
+- **Keep the `data-step` ids, the other `data-` attributes and
+  `id="wall-title"`** when you edit `index.html`. `app.js`, the stored rows
+  and the step 4 check are keyed on them. Change the words freely.
 - **Only add to the schema.** People's cards and votes outlive every version.
   New tables with `CREATE TABLE IF NOT EXISTS`; never drop, rename or clear
   one.

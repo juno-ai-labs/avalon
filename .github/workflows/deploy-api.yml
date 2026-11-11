@@ -19,6 +19,8 @@ on:
       # The Rally MCP server bundles the plugin's skills (apps/mcp/src/skills.ts).
       - "plugins/rally/skills/**"
       - "packages/**"
+      # A Canvas seed's site is bundled into the API Worker as text.
+      - "canvas-seeds/**"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - ".github/workflows/deploy-api.yml"
