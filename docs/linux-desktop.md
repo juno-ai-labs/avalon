@@ -32,6 +32,13 @@ block Mac shipping. Both platforms use the
 existing packaged session key. Local Linux directory builds use the development
 key and must never be distributed as releases.
 
+Before launching Electron, the Ubuntu 24.04 build job sets
+`kernel.apparmor_restrict_unprivileged_userns=0` on its disposable runner. This
+allows Chromium's user-namespace sandbox for the non-root updater fixture and
+both packaged smoke tests. Without it, Electron can fall back to an unconfigured
+setuid helper and abort with the `chrome-sandbox` ownership/mode error. The
+setting lasts for that runner; it is not included in the distributed packages.
+
 Linux publishes under `stable/linux/x64/`. The immutable AppImage, Debian package,
 optional blockmaps, versioned SHA256SUMS, and versioned release receipt are
 verified before mutable feeds move. The receipt binds the commit, manifest, and
@@ -137,6 +144,11 @@ permission handlers producing nonzero synthetic audio. The smoke accepts an
 optional screenshot path when invoked directly.
 Real hardware, Wayland, OS privilege prompts and a full installed-version upgrade
 remain platform acceptance checks; the synthetic microphone is not those checks.
+
+Run sandbox acceptance checks as a non-root user: the isolated smoke launch's
+root-only `--no-sandbox` exception cannot validate the CI sandbox setup. Changes
+to the Ubuntu runner policy must be verified in the Linux release job; a local
+container without Ubuntu's AppArmor restriction cannot establish that result.
 
 ## Changelog
 
