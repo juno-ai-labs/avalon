@@ -15,7 +15,7 @@ import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import { CanvasSidekicksSection, madeSidekicksArchiveCopy } from '../components/canvas-sidekicks-menu';
 import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
-import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasCreation, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasCreation, useCanvasList, useCanvasNameSources, type CanvasCreation } from '../lib/canvases';
 import type { WorkstreamDetail } from '../lib/types';
 import { copyLink } from '../lib/copy-link';
 import { sidebarListApplied } from '../lib/sidebar-list-store';
@@ -49,6 +49,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
   const creation = useCanvasCreation(id);
+  const openedOptimistically = useRef(creation !== undefined).current;
   const creationBlocked = creation !== undefined && creation.status !== 'ready';
   const creationTime = creation?.createdAt;
   // Render-only: no invented detail or transcript enters the socket-owned caches.
@@ -67,6 +68,8 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     enabled: Boolean(api) && !creationBlocked,
     staleTime: 5_000,
   });
+  const recoverableDetailFailure = openedOptimistically && canvas.error !== null
+    && (!(canvas.error instanceof ApiError) || canvas.error.status >= 500 || canvas.error.status === 408 || canvas.error.status === 429);
   // The list row paints the name before the detail answers.
   const row = useCanvasList()?.find((candidate) => candidate.id === id);
   // A Canvas that answered not found may exist in the Organization without
@@ -216,7 +219,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       return next;
     });
   }, [id, queryClient, rowColor, rowIcon, rowTitle, rowTitleStatus]);
-  const title = canvas.data?.title ?? row?.title ?? openingDetail?.title ?? '';
+  const title = canvas.data?.title ?? row?.title ?? (openedOptimistically ? 'New Canvas' : '');
   const naming = canvasNaming(canvas.data ?? row);
   const missing = Boolean(canvas.error && !row && isNotFoundError(unreachable ? access.error : canvas.error));
   const requestable = unreachable && access.data !== undefined;
@@ -249,7 +252,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     api.setCanvasPinned(id, !pinned).catch((cause: unknown) => setPinError(cause instanceof Error ? cause : new Error('The Canvas could not be pinned.')));
   };
   if (leaving) return <OpeningState label="Opening Canvases…" />;
-  if (canvas.error && !row) {
+  if (canvas.error && !row && !recoverableDetailFailure) {
     // One in-pane state, never a dialog over it (canvases.md). A malformed id
     // names nothing that could exist, so it reads as a missing one does, and
     // there is nothing to try again. One that exists but does not admit this
@@ -276,7 +279,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // answers, so a link to one that does not exist draws the state above rather
   // than a conversation whose socket then fails as well. One in the list opens
   // at once, beside the detail read.
-  if (!row && !canvas.data && !creation) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
+  if (!row && !canvas.data && !creation && !openedOptimistically) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
   const newestArtifact = canvas.data?.artifacts[0];
   const appearance = canvas.data?.appearance ?? row?.appearance;
   const kind = canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null;
@@ -376,10 +379,12 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     {renameError && <ErrorNotice occurrence={renameError} title="The Canvas could not be renamed">{canvasRenameRefusal(renameError)}</ErrorNotice>}
     <ConversationSurface
       {...(openingDetail ? { openingDetail } : {})}
+      {...(creation?.prompt ? { openingPrompt: creation.prompt } : {})}
+      onConversationReady={creation?.status === 'ready' ? creation.complete : undefined}
       connectionEnabled={!creationBlocked}
-      composerNotice={creation?.error ? <>
-        <ErrorNotice occurrence={creation.error} title="The Canvas could not be made">Your draft is still here. Try creating the Canvas again.</ErrorNotice>
-        <Button onClick={() => void creation.retry()}>Try again</Button>
+      composerNotice={creation?.error ? <CanvasCreationRetry creation={creation} /> : recoverableDetailFailure ? <>
+        <ErrorNotice occurrence={canvas.error} title="The Canvas details could not be loaded">Your conversation is still open. Try loading the Canvas details again.</ErrorNotice>
+        <Button onClick={() => void canvas.refetch()}>Retry loading Canvas details</Button>
       </> : undefined}
       parentId={id}
       parentKind="canvas"
@@ -408,6 +413,16 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       {archiveError && <ErrorNotice occurrence={archiveError}>The Canvas could not be archived. Try again.</ErrorNotice>}
     </Modal>
   </>;
+}
+
+function CanvasCreationRetry({ creation }: { creation: CanvasCreation }): React.JSX.Element {
+  const [prompt, setPrompt] = useState(creation.prompt);
+  return <div className="form-field w-full">
+    {creation.prompt && <label><span>Opening prompt</span>
+      <textarea aria-label="Opening prompt" onChange={(event) => setPrompt(event.target.value)} rows={3} value={prompt} />
+    </label>}
+    <Button className="justify-self-start" onClick={() => creation.retry(prompt)}>Try again</Button>
+  </div>;
 }
 
 /**

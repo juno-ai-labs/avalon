@@ -1,4 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -66,27 +67,32 @@ vi.mock('../lib/use-transcript-follow', () => ({
   }),
 }));
 
-import { useCreateCanvas } from '../lib/canvases';
+import { useCanvasCreations, useCreateCanvas } from '../lib/canvases';
+import { CanvasCreationNotices } from '../components/canvas-creation-notices';
+import { ApiError } from '../lib/api';
 import { CanvasScreen } from './canvas';
 
 function Launcher(): React.JSX.Element {
   const create = useCreateCanvas();
-  return <button onClick={() => void create()}>New Canvas</button>;
+  return <><button onClick={() => create()}>New Canvas</button><button onClick={() => create('Original opening prompt')}>Start from prompt</button></>;
 }
 function Location(): React.JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
   return <><output data-testid="location">{location.pathname}</output><button onClick={() => void navigate('/elsewhere')}>Leave</button></>;
 }
+function CreationRecords(): React.JSX.Element {
+  return <output data-testid="creation-count">{Object.keys(useCanvasCreations()).length}</output>;
+}
 function mount(): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<Tooltip.Provider><QueryClientProvider client={client}><MemoryRouter initialEntries={['/canvases']}>
-    <Location /><Routes>
-      <Route path="/canvases" element={<Launcher />} />
+  render(<Tooltip.Provider><ErrorNoticeProvider><QueryClientProvider client={client}><MemoryRouter initialEntries={['/canvases']}>
+    <Location /><Launcher /><CanvasCreationNotices /><CreationRecords /><Routes>
+      <Route path="/canvases" element={<p>Canvases</p>} />
       <Route path="/canvases/:id" element={<CanvasScreen />} />
       <Route path="/elsewhere" element={<p>Elsewhere</p>} />
     </Routes>
-  </MemoryRouter></QueryClientProvider></Tooltip.Provider>);
+  </MemoryRouter></QueryClientProvider></ErrorNoticeProvider></Tooltip.Provider>);
   return client;
 }
 function pendingCreate(): { resolve: () => void; reject: () => void } {
@@ -198,6 +204,99 @@ describe('optimistic Canvas creation', () => {
     expect(socket.enabled).toBe(false);
     await act(async () => create.resolve());
     await waitFor(() => expect(socket.enabled).toBe(true));
+  });
+
+  it('keeps the opening prompt visible and allows correcting it after rejection', async () => {
+    const create = pendingCreate();
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Start from prompt' }));
+    expect(screen.getByText('Original opening prompt')).toBeInTheDocument();
+    await act(async () => create.reject());
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
+    const prompt = screen.getByRole('textbox', { name: 'Opening prompt' });
+    expect(prompt).toHaveValue('Original opening prompt');
+    fireEvent.change(prompt, { target: { value: 'Corrected opening prompt' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    const first = api.createCanvas.mock.calls[0]![0] as { canvasId: string; prompt: { clientMessageId: string } };
+    expect(api.createCanvas.mock.calls[1]![0]).toEqual({ canvasId: first.canvasId, prompt: {
+      text: 'Corrected opening prompt', clientMessageId: expect.any(String),
+    } });
+    expect((api.createCanvas.mock.calls[1]![0] as typeof first).prompt.clientMessageId).not.toBe(first.prompt.clientMessageId);
+    expect(screen.getByText('Corrected opening prompt')).toBeInTheDocument();
+    await act(async () => create.resolve());
+  });
+
+  it('reports failure after leaving and reopens the Canvas with its draft and recovery controls', async () => {
+    const create = pendingCreate();
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Ask Rally or the people here' }), { target: { value: 'Recover this draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
+    await act(async () => create.reject());
+    expect(await screen.findByRole('alertdialog', { name: 'The Canvas could not be made' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Canvas' }));
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Ask Rally or the people here' })).toHaveValue('Recover this draft'));
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await act(async () => create.resolve());
+  });
+
+  it('opens the existing pending Canvas when New Canvas is clicked again after leaving', async () => {
+    const create = pendingCreate();
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(`/canvases/${canvasId()}`);
+    expect(api.createCanvas).toHaveBeenCalledOnce();
+    await act(async () => create.resolve());
+  });
+
+  it('removes recovery after the first snapshot and uses the normal send gate on reconnect', async () => {
+    const create = pendingCreate();
+    api.getCanvas.mockReturnValue(new Promise(() => undefined));
+    const client = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
+    const input = screen.getByRole('textbox', { name: 'Ask Rally or the people here' });
+    fireEvent.change(input, { target: { value: 'Keep this draft through readiness' } });
+    await act(async () => create.resolve());
+    await act(async () => deliverSnapshot(client));
+    await waitFor(() => expect(screen.getByTestId('creation-count')).toHaveTextContent('0'));
+    expect(screen.getByRole('textbox', { name: 'Ask Rally or the people here' })).toBe(input);
+    await act(async () => {
+      socket.ready = false;
+      client.setQueryData(['workstream', canvasId()], (detail: WorkstreamDetail) => ({ ...detail }));
+    });
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+  });
+
+  it('keeps recording mounted when a post-create detail read fails, and retries details in place', async () => {
+    const create = pendingCreate();
+    api.getCanvas.mockRejectedValueOnce(new ApiError('Temporarily unavailable', 503, 'service_unavailable'));
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
+    const input = screen.getByRole('textbox', { name: 'Ask Rally or the people here' });
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() => expect(audio.start).toHaveBeenCalledOnce());
+    act(() => audio.emit?.('Keep recording through detail failure'));
+    await act(async () => create.resolve());
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
+    expect(screen.getByRole('textbox', { name: 'Ask Rally or the people here' })).toBe(input);
+    expect(screen.getByRole('button', { name: 'Stop dictation' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading Canvas details' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry loading Canvas details' })).toBeNull());
+    expect(input).toHaveValue('Keep recording through detail failure');
+    expect(screen.getByRole('button', { name: 'Stop dictation' })).toBeEnabled();
+  });
+
+  it('keeps definitive access refusals on the unavailable pane', async () => {
+    const create = pendingCreate();
+    api.getCanvas.mockRejectedValueOnce(new ApiError('Access denied', 403, 'canvas_access_denied'));
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
+    await act(async () => create.resolve());
+    expect(await screen.findByText('This Canvas could not be opened.')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Ask Rally or the people here' })).toBeNull();
   });
 
   it('does not navigate back to a Canvas when creation finishes after leaving it', async () => {

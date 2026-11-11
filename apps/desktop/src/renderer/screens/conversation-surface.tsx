@@ -978,6 +978,9 @@ const TRANSCRIPT_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageD
 export interface ConversationSurfaceProps {
   /** Display-only shell for an optimistic parent. Never written to the canonical caches. */
   openingDetail?: WorkstreamDetail;
+  openingPrompt?: string;
+  /** End the parent's optimistic lifecycle once the canonical conversation can send. */
+  onConversationReady?: (() => void) | undefined;
   /** The parent must exist before opening its conversation socket. */
   connectionEnabled?: boolean;
   /** Already inside a panel: previews cover that slot without claiming the shell. */
@@ -1039,6 +1042,8 @@ export function ConversationSurface(props: ConversationSurfaceProps): React.JSX.
 
 function ConversationSurfaceContent({
   openingDetail,
+  openingPrompt,
+  onConversationReady,
   connectionEnabled = true,
   parentKind,
   parentId: id,
@@ -1502,6 +1507,9 @@ function ConversationSurfaceContent({
     requestSocketSnapshot();
   }, [connectionEnabled, payloadBelongsToRoute, requestSocketSnapshot, socketConnection.state]);
   const socketState = socketConnection.state;
+  useEffect(() => {
+    if (connectionEnabled && payloadBelongsToRoute && socketConnection.sendReady && !feedFromLocalCache) onConversationReady?.();
+  }, [connectionEnabled, feedFromLocalCache, onConversationReady, payloadBelongsToRoute, socketConnection.sendReady]);
   /** The room is on the line and what is on screen is its own: ranges can be asked for against it. */
   const feedLive = socketState === 'connected' && !feedFromLocalCache;
   const loadTranscriptRange = socketConnection.loadTranscriptRange;
@@ -2536,7 +2544,11 @@ function ConversationSurfaceContent({
               it, and inviting the person to start it is both wrong and the
               opposite of what the timer below says. The turn arrives moments
               later; until then the timer is the whole of the state. */}
-          {workstreamShowsReadyState(
+          {opening && openingPrompt ? <article className="message-block human-message">
+            <div className="human-message-content">
+              <HumanMessageBody attachments={[]} mentions={[]} messageId="opening" onOpenAttachment={openAttachment} text={openingPrompt} />
+            </div>
+          </article> : workstreamShowsReadyState(
             visibleTranscript.length,
             Boolean(activeElicitation),
             detail.harnessStatus,

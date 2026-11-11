@@ -290,15 +290,15 @@ describe('CanvasesHomeScreen', () => {
     expect(createCanvas).not.toHaveBeenCalled();
   });
 
-  it('starts a new Canvas with the selected template as its first message, even on an empty dashboard', async () => {
+  it('opens a Canvas immediately with the selected template as its first message, even on an empty dashboard', () => {
+    createCanvas.mockReturnValue(new Promise(() => undefined));
     renderHome(clientWith([]));
     fireEvent.click(screen.getByRole('button', { name: 'Marketplace' }));
     fireEvent.click(screen.getByRole('button', { name: 'Recruiters' }));
     const cards = within(screen.getByRole('region', { name: 'Canvas templates' })).getByRole('list');
     const template = within(cards).getByRole('button');
     fireEvent.click(template);
-    expect(template).toBeDisabled();
-    expect(await screen.findByText('Opened canvas')).toBeInTheDocument();
+    expect(screen.getByText('Opened canvas')).toBeInTheDocument();
     expect(createCanvas).toHaveBeenCalledExactlyOnceWith({
       canvasId: expect.any(String),
       prompt: {
