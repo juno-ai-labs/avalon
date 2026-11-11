@@ -1243,6 +1243,20 @@ describe('MessageBlock markdown', () => {
     expect(getFavicon.mock.calls.map(([hostname]) => hostname)).not.toContain('www.alphamount');
   });
 
+  it('asks for no favicon while a collapsible heading link is still being typed', async () => {
+    const getFavicon = vi.fn<(hostname: string) => Promise<Blob | null>>(async () => null);
+    optionalAppSession.mockReturnValue({ api: { getFavicon } });
+    const body = (target: string): string => `## Overview\n\nFirst.\n\n## See ${target}`;
+
+    const { rerender } = render(<MarkdownBody collapseHeadings streaming>{body('www.alph')}</MarkdownBody>);
+    rerender(<MarkdownBody collapseHeadings streaming>{body('www.alphamount')}</MarkdownBody>);
+    rerender(<MarkdownBody collapseHeadings>{body('www.alphamountain.ai')}</MarkdownBody>);
+
+    await waitFor(() => expect(getFavicon).toHaveBeenCalledWith('www.alphamountain.ai'));
+    expect(getFavicon.mock.calls.map(([hostname]) => hostname)).not.toContain('www.alph');
+    expect(getFavicon.mock.calls.map(([hostname]) => hostname)).not.toContain('www.alphamount');
+  });
+
   it('keeps a multiline connector mention as a chip', () => {
     const text = 'Ask @Google\nDrive\nto sync';
     const { container } = render(<MessageBlock {...actions} message={{
