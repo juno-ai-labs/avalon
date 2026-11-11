@@ -95,6 +95,12 @@ The initial build/CI target is Ubuntu 24.04 x64 with X11. Other distributions an
 Wayland are not yet acceptance-tested. Debian dependencies accept either the
 standalone `pkexec` package or the older `policykit-1` package; this does not claim
 support for Debian 11 or Ubuntu 20.04 without testing their runtime libraries.
+Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor; Chromium
+then needs a root-owned setuid `chrome-sandbox`, or it aborts at launch. The
+release job lifts the restriction on its runner so the smokes stay sandboxed.
+Users of an AppImage on such a system hit the same restriction unless their
+distribution ships an AppArmor profile for it; the Debian package's helper is
+installed setuid.
 AppImages need a user-writable location and FUSE support or extraction mode.
 Debian installation needs a desktop privilege agent and package manager.
 
@@ -139,6 +145,23 @@ Real hardware, Wayland, OS privilege prompts and a full installed-version upgrad
 remain platform acceptance checks; the synthetic microphone is not those checks.
 
 ## Changelog
+
+### 2026-11-11 — Let the release job's Linux smokes start Chromium's sandbox
+
+**What changed:** The release workflow's Ubuntu job sets
+`kernel.apparmor_restrict_unprivileged_userns=0` before launching Electron.
+
+**Why:** The first release that carried the Linux job (run 42958136759) failed
+`test:linux-updater`: on Ubuntu 24.04, AppArmor denied the user-namespace sandbox
+and Chromium aborted because the fallback setuid helper in `node_modules` is not
+root-owned. The Mac release shipped; Linux was not published.
+
+**Considered and rejected:** `--no-sandbox` for every smoke would test an
+unsandboxed launch the package never makes. Chowning `chrome-sandbox` covers only
+`node_modules`, not the AppImage and Debian binaries the package smoke extracts.
+
+**Consequences:** Smokes prove sandboxed startup on the runner, not under the
+default Ubuntu 24.04 AppArmor policy that users of the AppImage have.
 
 ### 2026-11-11 — Ship Linux through the shared desktop with separate update feeds
 
