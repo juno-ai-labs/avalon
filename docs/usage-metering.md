@@ -110,21 +110,25 @@ next, clamped to the last day of a short month, in UTC.
 
 ### Plans
 
-| Plan | Price | Weekly quota |
-| --- | --- | --- |
-| Starter | $100 a month | $50 |
-| Growth | $250 a month | $125 |
+| Plan | Monthly price | Included effective usage | Weekly allocation |
+| --- | --- | --- | --- |
+| Start | $0 | $40 | $10 |
+| Grow | $100 | $200 | $50 |
+| Max | $250 | $500 | $125 |
+| Ultra | $1,000 | $2,000 | $500 |
 
-The weekly quota is twice the monthly price, divided by four
-(`INCLUDED_USAGE_MULTIPLIER`). Both meters, Settings' and the account menu's,
-fill in the text colour and turn the warning colour below 20% left
-(`LOW_QUOTA_PERCENT`). Overage is priced at cost. All three are product
-decisions, set in `packages/contracts/src/usage.ts`.
+Price and included usage are independent catalog fields, so the free Start plan
+has a nonzero allowance. Each weekly allocation is one quarter of the advertised
+allowance; the existing seven-day reset cadence is unchanged (this is not an exact
+calendar-month spending cap). Both meters turn the warning colour below 20% left.
+Overage is priced at cost. These product values live in
+`packages/contracts/src/usage.ts`. Stored IDs `starter` and `growth` remain
+compatible and display as Start and Grow; Max and Ultra use `max` and `ultra`.
 
-Every workspace starts on Starter. An administrator changes the plan from the
-picker at the top of Settings → Organization → Usage, and an operator through the engineering MCP;
-both reach `setWorkspacePlan`. There is no checkout behind either yet, so a
-change moves the quota and nothing is charged. `setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
+Every new workspace starts on Start, with no payment or checkout required.
+Administrators use Stripe checkout when billing is enabled; otherwise the existing
+plan picker remains available. Operators use the engineering MCP. All paths reach
+`setWorkspacePlan`. `setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
 replaced) and rewrites `quota_microusd` on the current week's rollups, in one
 `USAGE_DB` transaction, so the meter re-prices the current week at once. Then it
 writes `workspaces.plan` in `DB`; if that second write fails, the caller shows
@@ -304,7 +308,7 @@ plan change as an independent audit attempt and result with the authenticated ac
 ## Operator plan changes
 
 The engineering MCP offers `inspect_usage_plan` and `change_usage_plan` with
-`orgId` and, for writes, `plan` (`starter` or `growth`). The MCP resolves exactly
+`orgId` and, for writes, `plan` (`starter`, `growth`, `max` or `ultra`). The MCP resolves exactly
 one owning region and the bridge calls the metering service directly. Changes
 carry the Access operator in independent audit attempt/result records, update the
 current week's allowance, preserve past weeks, and publish the current meter.
@@ -313,7 +317,14 @@ An uncertain write may have committed: inspect before retrying.
 
 ## Changelog
 
-### 2026-11-11 — Read usage through a cancellation cutoff
+### 2026-11-11 — Four plan allowances and cancellation cutoffs
+
+The requested Start/Grow/Max/Ultra catalog separates price from included usage:
+Start must provide $40 of effective usage even though its price is zero. Weekly
+allocation remains one quarter of the allowance. Usage migration 0003 preserves
+plan history while removing its obsolete two-plan CHECK constraints; PlanIdSchema
+owns validation, as it already does for workspaces. Existing rollups and charge
+receipts retain their recorded quotas; new rollups use the updated catalog.
 
 Billing can request a historical cutoff with the quota captured before downgrade.
 The cutoff week's costs come from retained usage events, excluding work performed

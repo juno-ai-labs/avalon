@@ -24,6 +24,12 @@ Stripe's configured payment methods. Stripe Billing Portal manages payment
 methods, invoices and existing subscriptions. Configure its allowed plan changes
 to prices in Rally's offer catalog.
 
+Start is the free default plan and requires no checkout. The paid catalog maps
+Grow, Max and Ultra to `growth`, `max` and `ultra`. Prices and included usage are
+listed in [usage metering](usage-metering.md#plans); configure matching Stripe
+prices before enabling billing. Changing a catalog entry does not migrate an
+existing Stripe subscription to a new price.
+
 The no-card trial starts at Organization creation. Defaults match the landing
 page: 14 days, extended to 60 total days when three active members (the creator
 and two teammates) join before expiry. Guests and pending invitations do not
@@ -64,6 +70,27 @@ receipts. A retry first searches Stripe invoice-item metadata since the closed p
 estimate is charged. Currency conversion is not guessed: non-USD plans cannot opt
 into overages yet. The existing weekly allowance values remain defined by the
 usage plan contract; changing Stripe prices does not change those allowances.
+
+### Source of truth
+
+Stripe owns subscriptions, their trial deadlines after checkout, discounts,
+payment methods, invoices and collected payments. It is **not** a complete
+record of every Organization's free period or usage in this implementation:
+
+- Before checkout, trial eligibility and earned extensions live in regional D1;
+  Stripe may not yet have a customer or subscription. Free Start accounts do not
+  automatically create Stripe subscriptions.
+- Checkout transfers the remaining trial to Stripe; reconciliation applies earned
+  extensions to trialing subscriptions. Coupons are applied in Stripe.
+- Detailed usage, included allowances and unbilled/free-period usage stay in Rally's
+  usage ledger. Only settled, opted-in overage quantities become Stripe invoice items.
+- The visitor-specific pilot offer on the landing page is not redeemed automatically
+  by billing; its attribution parameter is not yet consumed by signup.
+
+Making Stripe the complete billing authority would require provisioning every
+Organization there, synchronizing all trial/promotion awards and reporting usage
+(including included and free usage) through a durable, replayable integration.
+Rally's event ledger would still be needed for audit and reconciliation.
 
 ## Invariants
 
@@ -124,8 +151,9 @@ Live Stripe and a full authenticated desktop/browser flow remain activation chec
 
 ## Configuration and activation
 
-1. Apply regional D1 migrations. Keep billing disabled until setup is complete.
-2. Create recurring organization prices in Stripe for Start, Grow and negotiated
+1. Apply regional and usage D1 migrations, including usage migration 0003 for
+   Max/Ultra plan history. Keep billing disabled until setup is complete.
+2. Create recurring organization prices in Stripe for Grow, Max, Ultra and negotiated
    offers. Add currency options to those
    prices; amounts and tax behavior live in Stripe.
 3. Set Worker secrets `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` using the
@@ -146,8 +174,9 @@ Live Stripe and a full authenticated desktop/browser flow remain activation chec
   "teamTrialMembers": 3,
   "settlementDelayDays": 14,
   "offers": [
-    {"id":"start","name":"Start","plan":"starter","priceId":"price_REPLACE_START","currencies":["usd"]},
-    {"id":"grow","name":"Grow","plan":"growth","priceId":"price_REPLACE_GROW","currencies":["usd"]}
+    {"id":"grow","name":"Grow","plan":"growth","priceId":"price_REPLACE_GROW","currencies":["usd"]},
+    {"id":"max","name":"Max","plan":"max","priceId":"price_REPLACE_MAX","currencies":["usd"]},
+    {"id":"ultra","name":"Ultra","plan":"ultra","priceId":"price_REPLACE_ULTRA","currencies":["usd"]}
   ]
 }
 ```

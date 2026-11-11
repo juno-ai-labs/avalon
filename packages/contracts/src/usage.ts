@@ -4,30 +4,30 @@ import { RegionSchema } from "./regions";
 /**
  * Usage quota metering: the plans, the metered activities, the event the
  * producers send, and the arithmetic every reader shares. The numbers here are
- * product limits set by the usage quota PRD
- * (docs/PRDs/2026-10-03_usage-quota-metering/prd.md), not defensive guesses.
+ * product values documented in docs/usage-metering.md; the original cadence
+ * comes from docs/PRDs/2026-10-03_usage-quota-metering/prd.md.
  */
 
-export const PLAN_IDS = ["starter", "growth"] as const;
+// Keep existing persisted IDs compatible; display names are Start and Grow.
+export const PLAN_IDS = ["starter", "growth", "max", "ultra"] as const;
 export const PlanIdSchema = z.enum(PLAN_IDS);
 export type PlanId = z.infer<typeof PlanIdSchema>;
 
-export const PLANS: Readonly<Record<PlanId, { name: string; monthlyPriceUsd: number }>> = {
-  starter: { name: "Starter", monthlyPriceUsd: 100 },
-  growth: { name: "Growth", monthlyPriceUsd: 250 },
+export const PLANS: Readonly<Record<PlanId, { name: string; monthlyPriceUsd: number; includedUsageUsd: number }>> = {
+  starter: { name: "Start", monthlyPriceUsd: 0, includedUsageUsd: 40 },
+  growth: { name: "Grow", monthlyPriceUsd: 100, includedUsageUsd: 200 },
+  max: { name: "Max", monthlyPriceUsd: 250, includedUsageUsd: 500 },
+  ultra: { name: "Ultra", monthlyPriceUsd: 1000, includedUsageUsd: 2000 },
 };
-
-/** Each plan includes twice its price in inference (PRD summary). */
-export const INCLUDED_USAGE_MULTIPLIER = 2;
 
 /** Below this percentage left, the meter turns to the warning color (PRD decision 13). */
 export const LOW_QUOTA_PERCENT = 20;
 
 const MICROUSD_PER_USD = 1_000_000;
 
-/** Twice the monthly price divided by four, in micro-USD (PRD goal 1). */
+/** Allocate one quarter of the included usage each week, including the free plan. */
 export function weeklyQuotaMicrousd(plan: PlanId): number {
-  return (PLANS[plan].monthlyPriceUsd * INCLUDED_USAGE_MULTIPLIER * MICROUSD_PER_USD) / 4;
+  return (PLANS[plan].includedUsageUsd * MICROUSD_PER_USD) / 4;
 }
 
 export const METERED_ACTIVITIES = [

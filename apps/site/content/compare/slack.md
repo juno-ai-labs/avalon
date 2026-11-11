@@ -23,7 +23,7 @@ edge: "No more need to copy-paste AI prompts with each other, everyone works tog
 | Your tools | Google Workspace, Slack, Notion, GitHub, Linear, Granola, and more. Reads and writes back. | 2,600+ Marketplace apps, and Slackbot can call other tools over MCP. Free plan allows 10 apps. |
 | Runs on its own | Sidekicks run on a schedule or when something happens. | Workflow Builder runs on a schedule or a trigger. Slackbot tasks can run up to three times a day. |
 | Models | One voice, with each job routed to the model family best at it. | Salesforce says Anthropic's Claude powers the new Slackbot features. |
-| Pricing | $100 or $250 per organization a month. No seat limit. | Free, then $7.25 (Pro) or $15 (Business+) per user a month billed yearly. Enterprise+ by quote. |
+| Pricing | Free, $100, $250 or $1,000 per organization a month. No seat limit. | Free, then $7.25 (Pro) or $15 (Business+) per user a month billed yearly. Enterprise+ by quote. |
 
 ## Where Rally wins
 
@@ -41,6 +41,6 @@ Describe a weekly summary in plain words and Rally builds a Sidekick for it. The
 
 ### A bill that ignores headcount
 
-Rally costs $100 or $250 a month for the whole organization, with no seat limit and one shared quota. Add the intern to the Canvas and the invoice doesn't notice.
+Rally has a free plan and $100, $250 or $1,000 monthly plans for the whole organization, with no seat limit and one shared quota. Add the intern to the Canvas and the invoice doesn't notice.
 
 > My manager told me to cut the new AI some slack. So I installed it in ours.

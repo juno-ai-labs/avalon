@@ -355,6 +355,8 @@ export const SITE_ACTION_LINKS = {
   'web-app-offer': { action: 'primary_cta', placement: 'offer' },
   'download-pricing-start': { action: 'download', placement: 'pricing', plan: 'start' },
   'download-pricing-grow': { action: 'download', placement: 'pricing', plan: 'grow' },
+  'download-pricing-max': { action: 'download', placement: 'pricing', plan: 'max' },
+  'download-pricing-ultra': { action: 'download', placement: 'pricing', plan: 'ultra' },
   'contact-pricing-enterprise': { action: 'founder_contact', placement: 'pricing', plan: 'enterprise' },
   'demo-request': { action: 'demo_request', placement: 'sidekicks' },
   'support-contact-footer': { action: 'support_contact', placement: 'footer' },

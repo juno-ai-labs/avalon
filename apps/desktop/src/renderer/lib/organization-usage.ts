@@ -165,7 +165,7 @@ export function usagePlanLabel(plan: PlanId): string {
 
 /** "$100 a month", under each plan in the picker. */
 export function usagePlanPriceLabel(plan: PlanId): string {
-  return `$${PLANS[plan].monthlyPriceUsd} a month`;
+  return `$${PLANS[plan].monthlyPriceUsd.toLocaleString('en-US')} a month`;
 }
 
 /** The value under the meter on the Weekly quota row in Settings. */
