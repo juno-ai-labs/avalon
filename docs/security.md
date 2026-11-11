@@ -426,9 +426,8 @@ Three more rules keep a source the person's own act
   stranger's email among it, so none of them may ask in a person's name. No
   tool answers a request at all, and asking approves nobody: an ask for the
   asker's own account waits for their press like any other. A Sidekick run
-  is not offered `sidekick_set_delegation` either. A background agent is, a
-  run's own worker among them, which is an
-  [open question](sidekick-sources.md#open-questions).
+  and its background workers are not offered `sidekick_set_delegation`
+  either; a background agent of a conversation a person is talking in is.
 - **A rule on a colleague's account.** A manager's new or changed rule on
   another person's own connection is refused
   (`sidekick_source_owner_must_approve`) until that person approves a request

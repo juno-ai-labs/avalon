@@ -51,10 +51,11 @@ to grants in other Organizations. The old D1 `sidekick_delegation_locations`
 table is unused; its migration remains immutable.
 
 The `rally:sidekicks` plugin exposes `my_delegations_list`, `delegates_list` and
-`set_delegation` to a turn a person is driving and to a background agent. A
-Sidekick run gets the two lists and not `set_delegation` (`setsDelegation`):
-it is handed the content of the event that started it, and enrolling a
-member's accounts is not something that content may bring about. Authoring and Sidekick
+`set_delegation` to a turn a person is driving and to that conversation's
+background agents. A Sidekick run and its background workers get the two
+lists and not `set_delegation` (`setsDelegation`): a run is handed the
+content of the event that started it, its workers read the same, and
+enrolling a member's accounts is not something that content may bring about. Authoring and Sidekick
 activations use the `sidekick` prefix; other conversations' presentations use full wire names.
 Both presentations teach the resulting `sidekick_` wire names. Configuration
 chats use the chatting person's accounts; only activations and delegated work
@@ -2459,10 +2460,9 @@ writes its Sidekick's memory and never the Organization's. The stored names
 `sidekick_delegation_sources` (the alarm kind) and `event_no_eligible_delegate`
 (the attention code) now describe sources; they are stored and on the wire, so
 they stay. `sidekick_set_delegation` still lets an agent enroll a member with
-no act of theirs. A Sidekick run no longer holds it, by the owner's decision
-of 2026-11-11, because a run now reads outside content; a background agent
-does, and whether a run's own worker should is an
-[open question](sidekick-sources.md#open-questions).
+no act of theirs. A Sidekick run and its background workers no longer hold
+it, by the owner's decisions of 2026-11-11, because a run now reads outside
+content; a background agent of a conversation a person is talking in does.
 
 Design: `docs/PRDs/2026-11-10_sidekick-sources/prd.md`.
 

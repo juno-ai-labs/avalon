@@ -805,7 +805,8 @@ them, so give it a sentinel in `EXPECTED_TOOLS` too.
 
 The existing `rally:sidekicks` plugin offers `sidekick_my_delegations_list`,
 `sidekick_delegates_list` and `sidekick_set_delegation` to a turn a person is driving and
-to a background agent. A Sidekick run gets the two lists only.
+to that conversation's background agents. A Sidekick run and its background workers get
+the two lists only.
 Authoring's `sidekick` prefix and the room recommendation presentation's full
 canonical names produce the same wire names. The two presentations retain their
 existing discovery and recommendation tools. UUIDs, canonical Rally links and
