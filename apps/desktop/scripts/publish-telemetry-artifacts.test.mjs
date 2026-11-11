@@ -309,17 +309,17 @@ test('rejects Cloudflare upload failures without exposing provider response bodi
     {
       name: 'HTTP failure',
       api: objectApi({ putStatus: 503, putSuccess: false, putErrors: [{ code: 10001, message: 'secret detail' }] }),
-      expected: /HTTP 503 \(success=false; error codes 10001\)/u,
+      expected: /HTTP 503 \(success=false; codes: 10001\)/u,
     },
     {
       name: 'protocol failure',
       api: objectApi({ putSuccess: false }),
-      expected: /HTTP 200 \(success=false\)/u,
+      expected: /HTTP 200 \(success=false; codes: none\)/u,
     },
     {
       name: 'invalid JSON',
       api: objectApi({ putInvalidJson: true }),
-      expected: /HTTP 200 \(invalid JSON response\)/u,
+      expected: /HTTP 200 \(invalid JSON response; codes: none\)/u,
     },
   ];
   for (const failure of cases) {
