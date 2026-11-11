@@ -391,6 +391,12 @@ export default tseslint.config(
     languageOptions: { globals: globals.node }
   },
   {
+    // A Canvas seed's site is plain browser and Worker JavaScript, published as
+    // written and built by nothing (docs/canvas-seeds.md).
+    files: ["canvas-seeds/**/*.js"],
+    languageOptions: { globals: { ...globals.browser, ...globals.serviceworker } }
+  },
+  {
     files: ["apps/desktop/native/*.js"],
     languageOptions: {
       globals: {

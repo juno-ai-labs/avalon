@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting Started with Canvases</title>
+  <meta name="description" content="Six things to try in your first Rally Canvas, and a wall for your team's ideas.">
+  <meta property="og:title" content="Getting Started with Canvases">
+  <meta property="og:description" content="Six things to try in your first Rally Canvas, and a wall for your team's ideas.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!--
+    For Rally, when you change this site: read README.md in this directory
+    first. This page is the Getting Started guide of a new Organization, and
+    the README says what each of its steps asks of you and what must be kept.
+  -->
+  <main class="page">
+    <!-- Rally: putting a team's name here and adding their section is step 4. See "We are …" in README.md. -->
+    <header class="intro">
+      <p class="eyebrow">Getting started</p>
+      <h1><span data-greeting>Welcome.</span> This is a Canvas.</h1>
+      <p class="lede">
+        A Canvas is a conversation with Rally and the things it makes. This page is one of those
+        things. It is live, your whole team shares it, and you change it by asking.
+      </p>
+    </header>
+
+    <div class="columns">
+      <section class="guide" aria-labelledby="guide-title" data-guide>
+        <div class="guide-head">
+          <h2 id="guide-title">Six things to try</h2>
+          <p class="progress-count" data-progress-count></p>
+        </div>
+        <div class="progress-bar" aria-hidden="true"><span data-progress-fill></span></div>
+
+        <p class="finished-note" data-finished-note hidden>
+          You have tried all six. The wall is your team's to keep.
+          <button type="button" class="link" data-show-steps>Show the steps</button>
+        </p>
+
+        <ol class="steps" data-steps>
+          <li class="step" data-step="use_the_page">
+            <button type="button" class="step-head" aria-expanded="false">
+              <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
+              <span class="step-title">Use the page</span>
+              <span class="step-where">On this page</span>
+            </button>
+            <div class="step-body" hidden>
+              <p>
+                This page is a small app. It stores what people add, and it knows who you are
+                because you opened it from Rally.
+              </p>
+              <ul class="parts">
+                <li data-part="addedCard">Add an idea to the wall</li>
+                <li data-part="voted">Vote for an idea</li>
+              </ul>
+              <a class="button" href="#wall">Go to the wall</a>
+            </div>
+          </li>
+
+          <li class="step" data-step="ask_rally">
+            <button type="button" class="step-head" aria-expanded="false">
+              <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
+              <span class="step-title">Ask Rally to add ideas</span>
+              <span class="step-where">In the Chat</span>
+            </button>
+            <div class="step-body" hidden>
+              <p>
+                Rally can read and write what this page stores. Ask in the Chat and the new cards
+                show up on the wall a few seconds later. The page itself does not change.
+              </p>
+              <div class="prompt" data-prompt="Add five ideas to the wall for a team that works on {work|what your team does}.">
+                <label>
+                  <span>What does your team work on?</span>
+                  <input type="text" data-fill="work" placeholder="customer onboarding" autocomplete="off">
+                </label>
+                <p class="prompt-text" data-prompt-text></p>
+                <button type="button" class="button" data-copy>Copy prompt</button>
+              </div>
+              <p class="hint">Paste it into the Chat beside this page and send it.</p>
+              <button type="button" class="link" data-tick>Mark as done</button>
+            </div>
+          </li>
+
+          <li class="step" data-step="comment">
+            <button type="button" class="step-head" aria-expanded="false">
+              <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
+              <span class="step-title">Point at something and ask</span>
+              <span class="step-where">On this page, then the Chat</span>
+            </button>
+            <div class="step-body" hidden>
+              <p>You can show Rally the exact thing you mean.</p>
+              <ol class="how">
+                <li>Turn on Comment mode. It is the pointer button above this page.</li>
+                <li>Click the wall's title, <strong>Team wall</strong>.</li>
+                <li>Type what you would rather call it and press Enter.</li>
+                <li>Send the message in the Chat.</li>
+              </ol>
+              <p>Rally changes the title and publishes the page again.</p>
+              <button type="button" class="link" data-tick>Mark as done</button>
+            </div>
+          </li>
+
+          <li class="step" data-step="make_it_yours">
+            <button type="button" class="step-head" aria-expanded="false">
+              <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
+              <span class="step-title">Make this page your team's</span>
+              <span class="step-where">In the Chat</span>
+            </button>
+            <div class="step-body" hidden>
+              <p>
+                Rally changes a Canvas by publishing a new version. The version number above this
+                page goes up, and the older versions stay there to look back at.
+              </p>
+              <div class="prompt" data-prompt="We are {team|team name}. Put our name at the top of this page and add a section for {thing|something you track}.">
+                <label>
+                  <span>Your team's name</span>
+                  <input type="text" data-fill="team" placeholder="Growth" autocomplete="off">
+                </label>
+                <label>
+                  <span>Something your team tracks</span>
+                  <input type="text" data-fill="thing" placeholder="this week's experiments" autocomplete="off">
+                </label>
+                <p class="prompt-text" data-prompt-text></p>
+                <button type="button" class="button" data-copy>Copy prompt</button>
+              </div>
+              <p class="hint">One person does this for the whole team.</p>
+              <button type="button" class="link" data-tick>Mark as done</button>
+            </div>
+          </li>
+
+          <li class="step" data-step="teammate">
+            <button type="button" class="step-head" aria-expanded="false">
+              <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
+              <span class="step-title">Bring in a teammate</span>
+              <span class="step-where">Together</span>
+            </button>
+            <div class="step-body" hidden>
+              <p>
+                Everyone in your Organization can open this Canvas. Ask a teammate to open it and
+                add an idea to the wall. That ticks this step for the whole team.
+              </p>
+              <p>Then try this together in the Chat:</p>
+              <ol class="how">
+                <li>Say hello to each other. Rally stays quiet.</li>
+                <li>Ask for a change to the wall. Rally answers.</li>
+              </ol>
+              <p>
+                Rally can tell which messages are meant for it, so nobody has to tag it. Talk to
+                each other here as you would anywhere.
+              </p>
+            </div>
+          </li>
+
+          <li class="step" data-step="own_canvas">
+            <button type="button" class="step-head" aria-expanded="false">
+              <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
+              <span class="step-title">Start a Canvas of your own</span>
+              <span class="step-where">In Canvases</span>
+            </button>
+            <div class="step-body" hidden>
+              <p>Open Canvases, choose New Canvas, and say what you want to make. Or start from one of these:</p>
+              <ul class="starters">
+                <li>
+                  <span data-starter>A tracker for our hiring plan, with a row for each open role.</span>
+                  <button type="button" class="button quiet" data-copy-starter>Copy</button>
+                </li>
+                <li>
+                  <span data-starter>A launch checklist with an owner and a date for each task.</span>
+                  <button type="button" class="button quiet" data-copy-starter>Copy</button>
+                </li>
+                <li>
+                  <span data-starter>A weekly status page where each person posts what they shipped.</span>
+                  <button type="button" class="button quiet" data-copy-starter>Copy</button>
+                </li>
+              </ul>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section class="wall" id="wall" aria-labelledby="wall-title">
+        <!-- Rally: a comment asking to rename this title is step 3. After you publish, record it: see "A comment on the page" in README.md. -->
+        <h2 id="wall-title" class="wall-title">Team wall</h2>
+        <p class="wall-sub">What should we build first? Add an idea, then vote for the ones you like.</p>
+        <form class="add-card" data-add-card>
+          <label class="visually-hidden" for="new-card">An idea for the wall</label>
+          <input id="new-card" name="text" type="text" placeholder="An idea for a Canvas" autocomplete="off" required>
+          <button type="submit" class="button">Add</button>
+        </form>
+        <p class="status" data-status role="status" hidden></p>
+        <ul class="cards" data-cards></ul>
+      </section>
+    </div>
+  </main>
+
+  <template data-card-template>
+    <li class="card">
+      <p class="card-text"></p>
+      <div class="card-foot">
+        <span class="card-by"></span>
+        <button type="button" class="card-remove" data-remove hidden>Remove</button>
+        <button type="button" class="vote" data-vote aria-pressed="false">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 3.5 13 10H3z" fill="currentColor"/></svg>
+          <span class="vote-count">0</span>
+          <span class="visually-hidden">votes. Vote for this idea</span>
+        </button>
+      </div>
+    </li>
+  </template>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

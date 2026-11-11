@@ -28,6 +28,20 @@ const at = "2026-10-07T00:00:00.000Z";
 
 let database: DatabaseSync;
 let initialized: unknown[][];
+/** Every job the creation put on the activity queue, in order. */
+let queued: unknown[];
+/** Set to make the queue refuse, as an outage does. */
+let queueRefuses: boolean;
+
+function activityQueue(): Env["ACTIVITY_QUEUE"] {
+  return createCloudflareTestBinding<Env["ACTIVITY_QUEUE"]>({
+    send: (body: unknown) => {
+      if (queueRefuses) return Promise.reject(new Error("Queue send failed: Service Unavailable"));
+      queued.push(body);
+      return Promise.resolve();
+    },
+  });
+}
 
 function workspaceObjects(): Env["WORKSPACE_DOS"] {
   const stub = {
@@ -53,6 +67,7 @@ function service(): RegionalOnboardingService {
     SESSION_SIGNING_KEY: "regional-workspace-create-signing-key",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     WORKSPACE_DOS: workspaceObjects(),
+    ACTIVITY_QUEUE: activityQueue(),
   }));
 }
 
@@ -88,6 +103,8 @@ function openAuthority(): void {
 beforeEach(() => {
   database = migratedSqliteDatabase();
   initialized = [];
+  queued = [];
+  queueRefuses = false;
   database.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at, platform_user_id)
     VALUES (?, 'creator-google', 'creator@example.test', 'Creator', ?, ?, ?)`).run(platformUserId, at, at, platformUserId);
 });
@@ -110,5 +127,33 @@ describe("creating an Organization in its region", () => {
     expect(database.prepare("SELECT COUNT(*) AS routes FROM workstream_authority_routes WHERE workspace_id = ?")
       .get(workspaceId)).toEqual({ routes: 0 });
     expect(initialized).toEqual([[workspaceId, "wnam"]]);
+  });
+
+  it("asks for the Getting Started guide, with the creator as its owner, and asks again when the creation is replayed", async () => {
+    openAuthority();
+    const guide = {
+      kind: "canvas_seed", workspaceId, creatorUserId: platformUserId,
+      seedKey: "getting-started-with-canvases", region: "global",
+    };
+
+    await create();
+    expect(queued).toEqual([guide]);
+
+    // The same operation again: the first attempt may have stopped before it
+    // asked, and the job itself is what makes asking twice safe.
+    await create();
+    expect(queued).toEqual([guide, guide]);
+    expect(database.prepare("SELECT COUNT(*) AS organizations FROM workspaces WHERE id = ?").get(workspaceId))
+      .toEqual({ organizations: 1 });
+  });
+
+  it("still creates the Organization when the queue refuses the guide's job", async () => {
+    openAuthority();
+    queueRefuses = true;
+
+    const session = await create();
+
+    expect(session.workspace).toMatchObject({ id: workspaceId, name: "Northwind", role: "owner" });
+    expect(queued).toEqual([]);
   });
 });

@@ -283,6 +283,22 @@ export function projectSidekickPostMessage(input: {
 /** Deterministic, and decidable by a small model: this is not a request. */
 const OVERHEARD_HEADER = "SAID TO THE ROOM, NOT TO RALLY";
 
+/**
+ * Rally's own message when it would be the first thing the model is given: a
+ * seeded Canvas's opening message (`docs/canvas-seeds.md`), or the oldest
+ * message of a window that happens to start on one.
+ *
+ * A provider conversation has to begin with a user turn. OpenAI's models take
+ * an assistant turn first; Gemini, the fallback model, refuses one. So the
+ * message is handed over as context under a header, the way an imported
+ * assistant reply is, and never as an assistant turn.
+ */
+export function projectLeadingAssistantMessage(text: string): ModelMessage {
+  return { role: "user", content: [LEADING_ASSISTANT_HEADER, text].join("\n\n") };
+}
+
+const LEADING_ASSISTANT_HEADER = "RALLY'S OWN EARLIER MESSAGE IN THIS CONVERSATION. CONTEXT, NOT A REQUEST";
+
 /** Imported provider history is context, not a Rally member's request or Rally's own assistant output. */
 export function projectImportedSourceMessage(input: {
   provider: 'chatgpt' | 'claude' | 'claude_code';
