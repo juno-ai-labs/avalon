@@ -748,7 +748,7 @@ describe("connector tools selected for harness runs", () => {
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));
   });
 
-  it("offers the source tools to the wizard on a person's turn and to no run, agent's message or review", async () => {
+  it("offers the source tools to the wizard on a person's turn and to no run, agent's message or review, and no run the tool that changes delegation", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const sourceTools = async (input: WorkstreamWorkflowInput) =>
       (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
@@ -769,6 +769,20 @@ describe("connector tools selected for harness runs", () => {
     expect(await sourceTools(workflowInput())).toEqual(["sources_list", "request_source", "test_source_condition"]);
     expect(await sourceTools({ ...workflowInput(),
       agentExchange: { teamId: wizard, senderAgentId: wizard, messageId: "00000000-0000-7000-8000-00000000e001" } })).toEqual([]);
+
+    // A run reads outside content too, so it inspects delegation and cannot change it. Its background worker
+    // and every loop a person is driving still can.
+    const delegationTools = async (input: WorkstreamWorkflowInput) =>
+      (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
+        .filter((plugin) => plugin.canonicalId === "rally:sidekicks")
+        .map((plugin) => ({ tools: plugin.tools.map((tool) => tool.definition.name).filter((name) => name.includes("deleg")),
+          toldToSet: plugin.systemMessage?.includes("sidekick_set_delegation") ?? false }));
+    expect(await delegationTools(automationRunInput())).toEqual([{ tools: ["my_delegations_list", "delegates_list"], toldToSet: false }]);
+    expect(await delegationTools({ ...childWorkflowInput(automationConversationInput()),
+      automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } }))
+      .toEqual([{ tools: ["my_delegations_list", "delegates_list", "set_delegation"], toldToSet: true }]);
+    expect(await delegationTools(workflowInput()))
+      .toEqual([{ tools: ["my_delegations_list", "delegates_list", "set_delegation"], toldToSet: true }]);
 
     // The skill that says to call them is listed where they are, and nowhere else.
     const listsTheSkill = async (input: WorkstreamWorkflowInput) =>

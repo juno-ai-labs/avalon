@@ -266,10 +266,15 @@ describe("what a Sidekick source request tells people", () => {
     expect(await alertFor(MANAGER, `source_declined:${second!.requestId}`))
       .toEqual({ title: "Robin declined their Gmail for Deals", body: ASKED });
 
-    // Asking for one's own connection is one's own act: approved at once, and no row or notice for anybody.
+    // An ask for one's own account waits for one's own press, on the card in front of them: no row or notice tells
+    // them they asked, and none tells them they answered.
     await connectGoogle(MANAGER);
-    expect((await ask([MANAGER])).requests).toMatchObject([{ state: "approved", yours: true }]);
+    const own = (await ask([MANAGER])).requests;
+    expect(own).toMatchObject([{ state: "pending", yours: true }]);
     expect(await intents("source_request")).toHaveLength(2);
+    expect((await opened(MANAGER)).activity.items).toHaveLength(1);
+    expect(await workspace().sidekickDecideSourceRequest({ workspaceId: WORKSPACE_ID, automationId: SIDEKICK_ID,
+      requestId: own[0]!.requestId, userId: MANAGER, decision: "approve" })).toMatchObject({ state: "approved", yours: true });
     expect(await intents("source_approved")).toEqual([]);
     expect((await opened(MANAGER)).activity.items).toHaveLength(1);
   });

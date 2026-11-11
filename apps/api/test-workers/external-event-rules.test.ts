@@ -334,7 +334,10 @@ describe("external event rules across connectors", () => {
       const asked = await workspace().sidekickRequestSources({ workspaceId: WORKSPACE_ID, automationId,
         actor: { userId, actorRole: "member", participantOfOwningWorkstream: false }, actorName: "Member",
         ask: { userIds: [userId], connectorType: connector, eventTypes: [assigned] } });
-      expect(asked.requests.map((request) => request.state)).toEqual(["approved"]);
+      // Their own source waits for their own answer, like anybody's.
+      expect(asked.requests.map((request) => request.state)).toEqual(["pending"]);
+      await workspace().sidekickDecideSourceRequest({ workspaceId: WORKSPACE_ID, automationId,
+        requestId: asked.requests[0]!.requestId, userId, decision: "approve" });
     };
     await register(AUTOMATIONS.assignedToAuthor, [
       rule(AUTOMATIONS.assignedToAuthor, 1, connector, assigned, {
