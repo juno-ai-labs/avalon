@@ -1,10 +1,10 @@
 import { ShapeOutline } from '@rally/ui/components/identity-tile';
-import { IconChecks, IconDeviceDesktopDown, IconHexagon, IconHome, IconMenu2, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
+import { IconChecks, IconDeviceDesktopDown, IconHome, IconMenu2, IconPlus, IconSearch, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-import { canvasNeedsAttention, sidekickNeedsAttention } from '../../common/sidebar-attention';
+import { canvasNeedsAttention } from '../../common/sidebar-attention';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { useCreateCanvas } from '../lib/canvases';
 import { isRestoredRoute } from '../lib/landing';
@@ -22,43 +22,34 @@ import { CanvasesSection } from './canvas-sidebar-section';
 import { ErrorNotice, IconButton } from './primitives';
 import { WorkspaceUpdateNotice } from './pushed-list-pending';
 import { RailItem } from './rail-item';
-import { SidekicksSection, useSidekickList } from './sidekick-sidebar-section';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
 import { PHONE_LAYOUT_MAX_WIDTH, usePhoneLayout } from '@rally/ui/lib/phone-layout';
 
 const NAVIGATION_SHEET_ID = 'rally-navigation-sheet';
 
 /**
- * The rail's three sections. Canvases takes the page every artifact tile
- * draws; Sidekicks the hexagon a Sidekick is drawn in; Activity the triangle
- * it wore before the pivot. Settings sits at the bottom of the rail, in the
+ * The rail's two sections. Canvases takes the page every artifact tile
+ * draws; Activity takes the triangle it wore before the pivot. Settings sits at the bottom of the rail, in the
  * account menu.
  */
 const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
   { id: 'canvases', label: 'Canvases', icon: <ShapeOutline shape="sheet" /> },
-  { id: 'sidekicks', label: 'Sidekicks', icon: <IconHexagon aria-hidden="true" size={22} stroke={1.8} /> },
   { id: 'activity', label: 'Activity', icon: <ShapeOutline shape="triangle" /> },
 ];
 
 /**
- * Each section's count, and whether both lists have arrived so the counts are
- * whole. Canvases counts each Canvas holding something this person has not
- * read; Sidekicks each Sidekick waiting on input or holding something unread
- * (`common/sidebar-attention.ts`, which the menu bar counts by too); Activity
- * each item this person has not seen (`docs/activity.md`). The rail draws
+ * Each section's count. Canvases counts each Canvas holding something this person has not
+ * read; Activity counts each item this person has not seen (`docs/activity.md`). The rail draws
  * these; the dock badge is Activity's alone (`dockBadgeCount`).
  */
-export function useSectionCounts(): { counts: Record<SidebarSection, number>; complete: boolean; activity: ActivityList | undefined } {
+export function useSectionCounts(): { counts: Record<SidebarSection, number>; activity: ActivityList | undefined } {
   const canvases = useCanvasList();
-  const sidekicks = useSidekickList();
   const activity = useActivityList();
   return {
     counts: {
       canvases: (canvases ?? []).filter((row) => canvasNeedsAttention(row)).length,
-      sidekicks: (sidekicks ?? []).filter((row) => sidekickNeedsAttention(row)).length,
       activity: activity?.unseenCount ?? 0,
     },
-    complete: canvases !== undefined && sidekicks !== undefined,
     activity,
   };
 }
@@ -83,7 +74,7 @@ export function useRailDockBadge(): void {
 }
 
 /**
- * The sidebar: a rail of three sections (Canvases, Sidekicks, Activity) beside one list.
+ * The sidebar: a rail of two sections (Canvases, Activity) beside one list.
  * One list column with a tab switcher, never stacked hierarchy rails
  * (`docs/desktop-shell.md`). Shared by the Mac app and the browser.
  */
@@ -202,16 +193,13 @@ export function NavigationSidebar({
   // choice (desktop-shell.md, "landing on a section home keeps the stored
   // choice"); only the bar, its title and its actions, follow the route.
   const phone = usePhoneLayout();
-  const homeSection = routeNamesItem(pathname) ? null : sectionForPath(pathname);
+  const homeSection = routeNamesItem(pathname) ? null
+    : /^\/(sidekicks|automations)\/?$/.test(pathname) ? 'sidekicks' : sectionForPath(pathname);
   const barSection = phone && !sidebarOpen && homeSection ? homeSection : section;
-  const title = SECTIONS.find((candidate) => candidate.id === barSection)?.label ?? 'Canvases';
+  const title = barSection === 'sidekicks' ? 'Sidekicks' : SECTIONS.find((candidate) => candidate.id === barSection)?.label ?? 'Canvases';
   const createCanvas = useCreateCanvas();
   const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
-  const openSidekicksHome = (): void => {
-    setSidebarOpen(false);
-    if (address !== '/sidekicks') void navigate('/sidekicks');
-  };
   const workspaceSocket = useOptionalWorkspaceSocket();
   const openActivityDestination = useCallback((list: ActivityList, replace: boolean): void => {
     const top = list.items[0];
@@ -270,7 +258,6 @@ export function NavigationSidebar({
       return;
     }
     setSection(next);
-    if (next === 'sidekicks' && !guest) openSidekicksHome();
   };
   return <CanvasPinDragProvider><ResizableSidebar
     aria-label="Rally navigation"
@@ -326,9 +313,6 @@ export function NavigationSidebar({
             {barSection === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
-            {barSection === 'sidekicks' && !guest && <IconButton label="Sidekicks home" onClick={openSidekicksHome}>
-              <IconHome aria-hidden="true" size={18} stroke={1.8} />
-            </IconButton>}
             {barSection === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
@@ -344,7 +328,6 @@ export function NavigationSidebar({
           <WorkspaceUpdateNotice />
           {section === 'canvases' && createCanvasError && <ErrorNotice occurrence={createCanvasError}>The Canvas could not be made. Try again.</ErrorNotice>}
           {section === 'canvases' && <CanvasesSection scroll={scroll} />}
-          {section === 'sidekicks' && <SidekicksSection scroll={scroll} />}
           {section === 'activity' && <ActivitySection scroll={scroll} />}
         </SidebarScroll>
         {footerItems && <SidebarFooterItems>{footerItems}</SidebarFooterItems>}
@@ -357,7 +340,7 @@ export function NavigationSidebar({
 export function sectionForPath(pathname: string): SidebarSection | null {
   if (pathname === '/activity') return 'activity';
   if (/^\/canvases(\/|$)/.test(pathname)) return 'canvases';
-  if (/^\/(sidekicks|automations)(\/|$)/.test(pathname)) return 'sidekicks';
+  if (/^\/(sidekicks|automations)(\/|$)/.test(pathname)) return 'canvases';
   return null;
 }
 
@@ -367,7 +350,7 @@ function routeNamesItem(pathname: string): boolean {
 }
 
 /** What a section's count says it counts, for its accessible name. */
-const BADGE_NOUNS: Record<SidebarSection, string> = { canvases: 'unread', sidekicks: 'waiting', activity: 'unseen' };
+const BADGE_NOUNS: Record<SidebarSection, string> = { canvases: 'unread', activity: 'unseen' };
 
 /** What a section's count says, for its accessible name: "3 waiting". */
 function badgeLabel(section: SidebarSection, count: number): string {

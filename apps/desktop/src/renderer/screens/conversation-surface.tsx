@@ -104,6 +104,8 @@ import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentPanel } from '../components/attachment-panel';
+import { RailSurface } from '../components/rail-surface';
+import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import type { AttachmentPreview } from '../components/attachments';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import { HumanMessageBody } from '../components/workstream-blocks';
@@ -923,7 +925,21 @@ const IGNORE_FILES = (): void => undefined;
  */
 type ConversationPanel =
   | { kind: 'resource'; resourceId: string; workstreamScoped?: boolean; focusOnOpen?: boolean }
-  | { kind: 'attachment'; preview: AttachmentPreview };
+  | { kind: 'attachment'; preview: AttachmentPreview }
+  | { kind: 'host'; content: ConversationHostPanel };
+
+/** A host-owned item in the conversation's existing right slot. */
+export interface ConversationHostPanel {
+  key: string;
+  label: string;
+  render: (controls: ConversationPanelControls) => React.ReactNode;
+}
+
+export interface ConversationPanelControls {
+  onClose: () => void;
+  ancestors: readonly TitlePillLevel[] | undefined;
+  expandAction: readonly IconGroupAction[] | undefined;
+}
 
 /**
  * What the surface hands whoever renders the strip above the feed. A work
@@ -936,6 +952,7 @@ export interface ConversationHeaderContext {
   presentUserIds: readonly string[];
   /** This conversation's resource or attachment panel is currently shown. */
   panelOpen: boolean;
+  openPanel: (content: ConversationHostPanel) => void;
   openResource: (resourceId: string, returnFocus: HTMLElement) => void;
   openRail: (variant: RailVariant) => void;
   /** Open one of this conversation's artifacts in its own right panel. */
@@ -958,6 +975,8 @@ export interface ScrollToTurnRequest {
 const TRANSCRIPT_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
 export interface ConversationSurfaceProps {
+  /** Already inside a panel: previews cover that slot without claiming the shell. */
+  embedded?: boolean;
   parentKind: ConversationParentKind;
   parentId: string;
   substreamId: string;
@@ -1028,6 +1047,7 @@ function ConversationSurfaceContent({
   conversationName,
   onComposerCancel,
   withoutComposer = false,
+  embedded = false,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
@@ -1036,7 +1056,7 @@ function ConversationSurfaceContent({
   const parentNoun = parentKind === 'automation' ? 'Sidekick' : 'Canvas';
   const [searchParams, setSearchParams] = useSearchParams();
   const searchSequence = Number(searchParams.get('sequence'));
-  const searchTurnId = Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
+  const searchTurnId = !embedded && Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
 
   const requestedSearch = useRef<string | null>(null);
 
@@ -1051,7 +1071,9 @@ function ConversationSurfaceContent({
   const inspector = useUiStore((state) => state.inspector);
   const openRail = useUiStore((state) => state.openRail);
   const storeRailOpen = useUiStore((state) => state.railOpen);
-  const railVariant = useUiStore((state) => state.railVariant);
+  const storeRailVariant = useUiStore((state) => state.railVariant);
+  const railVariant = embedded ? 'context' : storeRailVariant;
+  const [embeddedRailOpen, setEmbeddedRailOpen] = useState(false);
   const railWidth = useUiStore((state) => state.railWidth);
   const railScope = useUiStore((state) => state.railScope);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
@@ -1064,12 +1086,14 @@ function ConversationSurfaceContent({
     if (useUiStore.getState().railScope !== railScopeKey) setRailScope(railScopeKey);
   }, [railScopeKey, setRailScope]);
   const openOwnRail = useCallback((variant: RailVariant = 'context'): void => {
+    if (embedded) { setEmbeddedRailOpen(true); return; }
     claimRail();
     openRail(variant);
-  }, [claimRail, openRail]);
+  }, [claimRail, embedded, openRail]);
   const closeOwnRail = useCallback((): void => {
+    if (embedded) { setEmbeddedRailOpen(false); return; }
     if (useUiStore.getState().railScope === railScopeKey) closeRail();
-  }, [closeRail, railScopeKey]);
+  }, [closeRail, embedded, railScopeKey]);
   const layoutRef = useRef<HTMLDivElement>(null);
   const layoutElement = useCallback(() => layoutRef.current, []);
   const setRailVariant = useUiStore((state) => state.setRailVariant);
@@ -1110,8 +1134,9 @@ function ConversationSurfaceContent({
   const openPanel = useCallback((next: ConversationPanel): void => {
     setPanel(next);
     // Every attachment and artifact opens at an even split with the conversation.
-    openRailAtEvenSplit(railScopeKey, () => openOwnRail('context'));
-  }, [openOwnRail, railScopeKey]);
+    if (embedded) openOwnRail();
+    else openRailAtEvenSplit(railScopeKey, () => openOwnRail('context'));
+  }, [embedded, openOwnRail, railScopeKey]);
   const resourcePanel = panel?.kind === 'resource' ? panel : null;
   const openAttachment = useCallback((preview: AttachmentPreview): void => {
     if (preview.annotation && api && preview.resourceId) {
@@ -1153,7 +1178,12 @@ function ConversationSurfaceContent({
   const conversationVisible = useContext(ConversationVisibilityContext);
   const conversationVisibleRef = useRef(conversationVisible);
   conversationVisibleRef.current = conversationVisible;
-  useWindowFilePaste(acceptFiles, !conversationVisible);
+  useWindowFilePaste(acceptFiles, !conversationVisible, (target) => {
+    const host = target instanceof Element ? target.closest('.conversation-host-panel') : null;
+    if (host) return embedded && host === layoutRef.current?.closest('.conversation-host-panel');
+    const owner = target instanceof Element ? target.closest('.conversation-layout') : null;
+    return owner ? owner === layoutRef.current : !embedded;
+  });
   const loadAttachmentContent = useCallback(
     (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
     [api],
@@ -1174,6 +1204,7 @@ function ConversationSurfaceContent({
   // move together, or the render that changes the route reads an open rail that
   // belongs to the stream it just left.
   useLayoutEffect(() => {
+    if (embedded) return;
     const savedPanel = requestedResourceId !== null
       ? { resourceId: requestedResourceId, workstreamScoped: false }
       : readArtifactPanel(artifactPanelKey);
@@ -1192,7 +1223,7 @@ function ConversationSurfaceContent({
         setRailScope(null);
       }
     };
-  }, [artifactPanelKey, closeRail, inspect, railScopeKey, requestedResourceId, resourceRequestKey, setRailScope]);
+  }, [artifactPanelKey, closeRail, embedded, inspect, railScopeKey, requestedResourceId, resourceRequestKey, setRailScope]);
   // Only a Canvas draws the browser rail; a Sidekick's links stay external.
   useBrowserRailLinks(parentKind === 'canvas', layoutElement, claimRail);
 
@@ -1323,7 +1354,7 @@ function ConversationSurfaceContent({
   useOpenAttachedArtifact(
     artifactPanelKey,
     feedFromLocalCache ? undefined : routedDetail?.resources,
-    conversationVisible,
+    conversationVisible && !embedded && !(panel?.kind === 'host' && storeRailOpen && railScope === railScopeKey),
     revealAttachedArtifact,
     snapshotGeneration.data,
   );
@@ -1355,7 +1386,7 @@ function ConversationSurfaceContent({
   // from laying out, or starting a fade for, a panel belonging to the stream
   // just left; every path that opens the rail writes the store, and each is
   // honoured from the moment the scope names this stream.
-  const railOpen = (railVariant === 'browser' || Boolean(panel)) && storeRailOpen && railScope === railScopeKey;
+  const railOpen = embedded ? Boolean(panel) && embeddedRailOpen : (railVariant === 'browser' || Boolean(panel)) && storeRailOpen && railScope === railScopeKey;
   useEffect(() => {
     if (restoredPanelKey.current !== artifactPanelKey) return;
     // A link opened in the browser covers the artifact panel rather than
@@ -1381,12 +1412,13 @@ function ConversationSurfaceContent({
   // so another opened after it opens beside.
   const panelShown = railOpen && railVariant === 'context' && Boolean(panel);
   const panelKey = !panelShown || !panel ? null
-    : panel.kind === 'resource' ? `resource:${panel.resourceId}` : `attachment:${panel.preview.resourceId ?? panel.preview.name}`;
+    : panel.kind === 'host' ? panel.content.key
+      : panel.kind === 'resource' ? `resource:${panel.resourceId}` : `attachment:${panel.preview.resourceId ?? panel.preview.name}`;
   const { expanded: panelExpanded, setExpanded: setPanelExpanded } = usePaneExpansion(
     panelKey,
     requestedResourceId !== null && panelKey === `resource:${requestedResourceId}`,
   );
-  const ownsRail = railScope === railScopeKey;
+  const ownsRail = !embedded && railScope === railScopeKey;
   const setRailExpanded = useUiStore((state) => state.setRailExpanded);
   useEffect(() => {
     if (!ownsRail) return undefined;
@@ -1398,11 +1430,11 @@ function ConversationSurfaceContent({
   // neither Expand nor a Collapse that would change nothing. The expansion
   // is kept for when the window widens.
   const panelFillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
-  const panelExpandAction = panelFillsPane ? undefined : expandToggle(panelExpanded, true, setPanelExpanded);
+  const panelExpandAction = embedded || panelFillsPane ? undefined : expandToggle(panelExpanded, true, setPanelExpanded);
   // Alone on screen, the panel carries the crumb of the conversation it covers.
   const conversationTitle = routedDetail?.title ?? '';
   const conversationMarkId = substreamId === '0' ? id : substreamId;
-  const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded && !panelFillsPane ? undefined : [
+  const panelAncestors: TitlePillLevel[] | undefined = embedded || (!panelExpanded && !panelFillsPane) ? undefined : [
     {
       key: `panel-conversation:${conversationAddress}`,
       icon: <WorkstreamGlyph appearance={routedDetail?.appearance} id={conversationMarkId} size={24} />,
@@ -1857,10 +1889,10 @@ function ConversationSurfaceContent({
   // reserves the same width for that final frame.
   useLayoutEffect(() => {
     // Only the pane whose panel is fading speaks for the slot.
-    if (!railLeaving && useUiStore.getState().railScope !== railScopeKey) return undefined;
+    if (embedded || (!railLeaving && useUiStore.getState().railScope !== railScopeKey)) return undefined;
     setRailLeaving(railLeaving);
     return () => setRailLeaving(false);
-  }, [railLeaving, railScopeKey, setRailLeaving]);
+  }, [embedded, railLeaving, railScopeKey, setRailLeaving]);
 
   const stop = useMutation({
     mutationFn: () => socketConnection.stopHarness(),
@@ -2402,7 +2434,8 @@ function ConversationSurfaceContent({
         detail: displayedDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
-        panelOpen: panelShown,
+        panelOpen: panelShown && panel?.kind !== 'host',
+        openPanel: (content) => openPanel({ kind: 'host', content }),
         openResource: openResourceDetails,
         openRail: openOwnRail,
         openArtifact: citations.openPreview,
@@ -2614,6 +2647,16 @@ function ConversationSurfaceContent({
           />}
         </div>
       </div>
+
+      {railVariant === 'context' && panel?.kind === 'host' && (railOpen || railLeaving) && <RailSurface
+        className="conversation-host-panel"
+        label={panel.content.label}
+        leaving={railLeaving}
+        onClose={closeOwnRail}
+        onResize={setRailWidth}
+        resizeLabel="Resize panel"
+        width={railWidth}
+      >{panel.content.render({ onClose: closeOwnRail, ancestors: panelAncestors, expandAction: panelExpandAction })}</RailSurface>}
 
       {railVariant === 'context' && resourcePanel && (railOpen || railLeaving) && <InspectorRail
         panel={{
