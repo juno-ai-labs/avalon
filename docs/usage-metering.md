@@ -207,7 +207,7 @@ change. The socket itself is [`realtime-sockets.md`](realtime-sockets.md)'s.
 
 It does not stop, slow or gate any work when the quota is spent: the product
 never asks permission before a tool call (`AGENTS.md`), and no run reads the
-meter. It does not charge anyone or talk to Stripe. It is not the inference
+meter. It does not charge anyone or talk to Stripe directly; [Stripe billing](stripe-billing.md) settles closed opted-in periods and synchronizes paid plan changes. It is not the inference
 archive: the [inference lakehouse](inference-lakehouse.md) keeps exact request
 and response records, and this ledger keeps only cost, activity and IDs. The
 desktop meter is owned by the settings screens and
@@ -312,6 +312,13 @@ An uncertain write may have committed: inspect before retrying.
 
 
 ## Changelog
+
+### 2026-11-11 — Billing controls self-service plan changes
+
+When Stripe billing is configured, direct member plan changes are refused. Verified
+subscription updates use the existing plan writer and meter publisher instead, so
+checkout cannot be bypassed. The engineering override remains available. Overage
+settlement reads closed ledger periods without changing quota arithmetic.
 
 ### 2026-11-07 — Index the ledger by Sidekick
 
