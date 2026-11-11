@@ -1,5 +1,3 @@
-import { systemKeyStorage } from './system-key-storage';
-import { updatePolicy } from './update-policy';
 import { parsePasswordLoginRequest } from '../common/password-login';
 import { annotationDraftKeyForScope } from '../common/draft-keys';
 import { createElectronFetch } from '@rally/electron-network';
@@ -306,6 +304,8 @@ import {
   initializeAutoUpdate,
   type AutoUpdateController,
 } from './updater';
+import { systemKeyStorage } from './system-key-storage';
+import { updatePolicy } from './update-policy';
 import {
   supersededUserDataDirectories,
   userDataDirectoryForLaunch,
@@ -1081,6 +1081,15 @@ function activeSessionEncryptionMode(): SessionEncryptionMode {
 const safeStorage = systemKeyStorage(process.platform, electronSafeStorage);
 const linuxPackageType = process.platform === 'linux' && existsSync(join(process.resourcesPath, 'package-type'))
   ? readFileSync(join(process.resourcesPath, 'package-type'), 'utf8').trim() : undefined;
+const desktopUpdateRuntime = {
+  isPackaged: app.isPackaged,
+  platform: process.platform,
+  arch: process.arch,
+  env: process.env,
+  linuxPackageType,
+};
+const releaseChannelAvailable = (process.platform === 'darwin' && process.arch === 'arm64')
+  || updatePolicy(desktopUpdateRuntime).kind === 'enabled';
 
 function encryptStoredSessionValue(value: string): Buffer {
   return encryptSessionValue(value, activeSessionEncryptionMode(), safeStorage);
@@ -1514,7 +1523,7 @@ function desktopApplicationSettings(
     ...lockdown,
     ...desktopPush.state(),
     releaseChannel: desktopReleaseChannel,
-    releaseChannelAvailable: (process.platform === 'darwin' && process.arch === 'arm64') || updatePolicy({ isPackaged: app.isPackaged, platform: process.platform, arch: process.arch, env: process.env, linuxPackageType }).kind === 'enabled',
+    releaseChannelAvailable,
     developerSettingsAvailable,
     // The effective preference, not the stored one. Debug enabled is a
     // per-device choice inside a section the service decides exists at all, so
@@ -5468,11 +5477,7 @@ if (!singleInstanceLock) {
     registerIpc();
     resolveMainWindowStartup();
     autoUpdateController = initializeAutoUpdate({
-      linuxPackageType,
-      isPackaged: app.isPackaged,
-      platform: process.platform,
-      arch: process.arch,
-      env: process.env,
+      ...desktopUpdateRuntime,
       currentVersion: app.getVersion(),
       // Stamped by electron.vite.config.ts; absent where no build ran (unit tests).
       currentBuildTime: typeof __RALLY_BUILD_TIME__ === 'string' ? Date.parse(__RALLY_BUILD_TIME__) : undefined,

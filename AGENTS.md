@@ -87,7 +87,7 @@ We have a macOS and Linux Electron app and a browser SPA.
 Linux support and its native-feature limits are described in `docs/linux-desktop.md`. When designing
 or implementing a feature, first consider which platform or platforms it should support.
 Some features are native macOS only, and others are shared across all supported platforms. When in doubt ask
-the (human) user before implementing the feature; if there is no answer, assume macOS, Linux, and web.
+the (human) user before implementing the feature; if there is no answer, assume macOS and web.
 
 ## Tool execution product policy
 

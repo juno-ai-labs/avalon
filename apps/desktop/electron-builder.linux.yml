@@ -40,4 +40,4 @@ deb:
     - libsecret-1-0
     - libasound2 | libasound2t64
     - libgbm1
-    - pkexec
+    - pkexec | policykit-1

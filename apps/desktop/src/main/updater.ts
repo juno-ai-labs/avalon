@@ -163,6 +163,8 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   let downloadRetryScheduled = false;
   let manualRecoveryPrompted = false;
   let installInFlight = false;
+  let invokingInstaller = false;
+  let installerError: Error | undefined;
   /** The build staged for install. While set, checks keep running in the
    * background and the restart offer stays up until a newer build replaces it. */
   let stagedVersion: string | null = null;
@@ -223,11 +225,29 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     // A channel change invalidates any dialog or renderer command associated
     // with the previously downloaded build.
     if (installInFlight || status.kind !== 'downloaded') return;
+    const version = status.version;
+    const channel = currentChannel;
     installInFlight = true;
     applyStartedAt = now();
     void Promise.resolve()
       .then(() => deps.beforeInstall?.())
-      .then(() => updater.quitAndInstall(false, true))
+      .then(() => {
+        if (status.kind !== 'downloaded' || status.version !== version || currentChannel !== channel) {
+          throw new Error('The prepared update is no longer current');
+        }
+        // Linux BaseUpdater reports install failures synchronously through
+        // `error`. Background checks/downloads can also emit that event while
+        // preparation is pending, so only capture it inside the installer call.
+        invokingInstaller = true;
+        installerError = undefined;
+        try {
+          const result = updater.quitAndInstall(false, true);
+          if (installerError) throw installerError;
+          return result;
+        } finally {
+          invokingInstaller = false;
+        }
+      })
       .catch((error: unknown) => { void installationFailed(error); });
   };
   const installationFailed = async (error: unknown): Promise<void> => {
@@ -438,8 +458,8 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     promptIfStaleBuild();
   });
   updater.on('error', (error) => {
-    if (installInFlight) {
-      void installationFailed(error);
+    if (invokingInstaller) {
+      installerError = error;
       return;
     }
     const checking = checkInFlight;

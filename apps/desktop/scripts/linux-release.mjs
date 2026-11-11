@@ -20,7 +20,7 @@ export function parseLinuxFeed(bytes) {
   return feed;
 }
 
-export async function loadLinuxRelease(directory) {
+async function readLinuxRelease(directory) {
   const manifestBytes = await readFile(join(directory, 'latest-linux.yml'));
   const feed = parseLinuxFeed(manifestBytes);
   await verifyFeedArtifact({ directory, feed });
@@ -34,8 +34,20 @@ export async function loadLinuxRelease(directory) {
   for (const name of names) {
     sums.push(`${createHash('sha256').update(await readFile(join(directory, name))).digest('hex')}  ${name}`);
   }
-  await writeFile(join(directory, 'SHA256SUMS'), `${sums.join('\n')}\n`);
-  return { directory, manifestBytes, feed, names: [...names, 'SHA256SUMS'] };
+  return { directory, manifestBytes, feed, names: [...names, 'SHA256SUMS'], checksums: `${sums.join('\n')}\n` };
+}
+
+export async function writeLinuxChecksums(directory) {
+  const { checksums } = await readLinuxRelease(directory);
+  await writeFile(join(directory, 'SHA256SUMS'), checksums);
+}
+
+export async function loadLinuxRelease(directory) {
+  const { checksums, ...release } = await readLinuxRelease(directory);
+  if (await readFile(join(directory, 'SHA256SUMS'), 'utf8') !== checksums) {
+    throw new Error('Linux SHA256SUMS mismatch');
+  }
+  return release;
 }
 
 /** The caller holds the existing R2 release lock throughout this transaction. */

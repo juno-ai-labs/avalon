@@ -470,13 +470,8 @@ Every new Rally release advances exactly one minor version and resets the patch 
 
 ### Linux desktop releases
 
-The desktop release workflow also builds Linux x64 AppImage and Debian packages
-from the frozen release commit. See [Linux desktop](linux-desktop.md) for commands,
-artifact layout, update channels and platform limitations. If Linux publication
-fails after Mac succeeds, rerun the failed publish job with the same uploaded
-GitHub artifact; do not rebuild an already committed Linux version. The seven-day
-Actions retention applies to those artifacts too. Keep the immutable R2 release
-receipt and exact published bytes for later recovery.
+See [Linux desktop](linux-desktop.md) for builds, publication recovery, artifact
+retention deadlines, update channels, and platform limits.
 
 ### Desktop release retention
 
