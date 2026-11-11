@@ -896,6 +896,26 @@ why the refresh lease shares the owning object's transaction.
 
 ## Changelog
 
+### 2026-11-10 — Find Canvases by automatic upkeep
+
+**What changed:** The home page's Live filter replaces From Sidekicks and
+selects Canvases marked **Live updating**.
+
+**Why:** Sidekick authorship identifies who made a Canvas, but does not tell
+someone whether it continues to update automatically. A Canvas made by a person
+can have an active scheduled or event-driven Sidekick, while a Sidekick-made
+Canvas can have no automatic updates.
+
+**Considered and rejected:** Keeping From Sidekicks as another filter. The
+requested filter set removes authorship by a Sidekick in favour of automatic
+upkeep; Made by me and Shared with me remain.
+
+**Consequences:** The filter and badge share `isLiveUpdating`; future changes
+must keep their eligibility identical. Manual-only, paused and draft Sidekicks
+do not qualify.
+
+Pull request [#1553](https://github.com/juno-ai-labs/avalon/pull/1553).
+
 ### 2026-11-10 — Explain a card's Sidekicks and automatic updates
 
 Canvas cards now identify attached Sidekicks and distinguish automatic updates
