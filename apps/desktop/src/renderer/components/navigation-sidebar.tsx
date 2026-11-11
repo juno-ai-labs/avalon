@@ -38,12 +38,11 @@ const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNo
 ];
 
 /**
- * Each section's count, and whether both lists have arrived so the counts are
- * whole. Canvases counts each Canvas holding something this person has not
+ * Each section's count. Canvases counts each Canvas holding something this person has not
  * read; Activity counts each item this person has not seen (`docs/activity.md`). The rail draws
  * these; the dock badge is Activity's alone (`dockBadgeCount`).
  */
-export function useSectionCounts(): { counts: Record<SidebarSection, number>; complete: boolean; activity: ActivityList | undefined } {
+export function useSectionCounts(): { counts: Record<SidebarSection, number>; activity: ActivityList | undefined } {
   const canvases = useCanvasList();
   const activity = useActivityList();
   return {
@@ -51,7 +50,6 @@ export function useSectionCounts(): { counts: Record<SidebarSection, number>; co
       canvases: (canvases ?? []).filter((row) => canvasNeedsAttention(row)).length,
       activity: activity?.unseenCount ?? 0,
     },
-    complete: canvases !== undefined && activity !== undefined,
     activity,
   };
 }
@@ -195,9 +193,10 @@ export function NavigationSidebar({
   // choice (desktop-shell.md, "landing on a section home keeps the stored
   // choice"); only the bar, its title and its actions, follow the route.
   const phone = usePhoneLayout();
-  const homeSection = routeNamesItem(pathname) ? null : sectionForPath(pathname);
+  const homeSection = routeNamesItem(pathname) ? null
+    : /^\/(sidekicks|automations)\/?$/.test(pathname) ? 'sidekicks' : sectionForPath(pathname);
   const barSection = phone && !sidebarOpen && homeSection ? homeSection : section;
-  const title = SECTIONS.find((candidate) => candidate.id === barSection)?.label ?? 'Canvases';
+  const title = barSection === 'sidekicks' ? 'Sidekicks' : SECTIONS.find((candidate) => candidate.id === barSection)?.label ?? 'Canvases';
   const createCanvas = useCreateCanvas();
   const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
@@ -312,6 +311,9 @@ export function NavigationSidebar({
               <IconHome aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             {barSection === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
+              <IconPlus aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
+            {barSection === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             {barSection === 'activity' && <IconButton disabled={badges.activity === 0 || !workspaceSocket} label="Mark all seen" onClick={() => workspaceSocket?.markAllActivitySeen()}>

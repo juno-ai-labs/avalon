@@ -8624,3 +8624,10 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 /* A hosted Sidekick uses the whole right slot; its previews cover that same slot. */
 .conversation-host-panel > .rail-surface-content { grid-template-rows: minmax(0, 1fr); }
 .conversation-host-panel .rail-resizer { display: none; }
+
+.sidekick-panel-opening {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}

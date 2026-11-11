@@ -32,6 +32,10 @@ export function registerBrowserRailHost(next: BrowserRailHost, element: () => El
 
 function hostFor(origin: EventTarget | null | undefined): BrowserRailHost | null {
   const node = origin instanceof Node ? origin : null;
+  const element = node instanceof Element ? node : node?.parentElement;
+  // A hosted conversation owns its links even though the Canvas surrounds it.
+  // Exclude it before both containment lookup and the portalled-menu fallback.
+  if (element?.closest('.conversation-host-panel')) return null;
   const containing = node ? hosts.find((candidate) => candidate.element()?.contains(node)) : undefined;
   return (containing ?? hosts[hosts.length - 1])?.open ?? null;
 }
