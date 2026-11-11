@@ -176,13 +176,29 @@ Main links; that arm went with Threads.)
 
 **A Sidekick sees its home and explicitly attached conversations' resources.**
 Its wizard, activations and background agents share this default. Each read
-uses the execution user's current conversation admission through
-`conversationToolScope`; private siblings and unrelated conversations are
-excluded. Activations and workers also
+asks the Organization object which conversations the loop reaches
+(`conversationToolScope`), and the answer depends on the run's own row
+(`sidekickReach` in `workspace-do.ts`, called from
+`apps/api/src/runtime/resource-port.ts`):
+
+- A run a schedule or an event started inherits resources from every
+  attached Canvas that is not archived, by the attachment alone. No person's
+  admission is checked, whichever delegate the run acts as and when it acts
+  as nobody.
+- A run a person asked for, from the Run button or by a message, is held to
+  the Canvases that person can open now.
+- A child with no run row, such as a background agent's conversation, is
+  held to the person its loop acts as, and inherits nothing when there is
+  nobody. The wizard is held to its person the same way.
+
+Private siblings and unrelated conversations are excluded in every case.
+[Who a run acts as](automation-lifecycle.md#who-a-run-acts-as) owns the rule.
+Activations and workers also
 see the Sidekick wizard's own attachments. Resources are resolved live, not
-copied to each run: later attachments appear, and detaching a conversation,
-archiving it or losing access removes its inherited resources on subsequent
-reads. Connector execution permissions remain separate.
+copied to each run: later attachments appear, and detaching a conversation or
+archiving it removes its inherited resources on subsequent reads. A person
+losing access to a Canvas removes its resources only from the loops held to
+that person. Connector execution permissions remain separate.
 
 **A Sidekick can also read a known resource ID without an attachment.** For an
 explicit ID absent from its inherited links, the shared lookup asks
@@ -192,7 +208,9 @@ background agents use the same rule. Denied, missing and foreign resources stay
 unreadable; an unavailable authority returns a retryable failure. Each lookup
 checks current permissions and returns admitted resource and artifact metadata
 with the decision, avoiding another metadata routing hop. Supplying an ID
-never creates permission.
+never creates permission. A run that acts as the Sidekick itself has no
+execution user, so it has no such lookup: it reads what its attachments give
+it and nothing by ID alone.
 
 These direct reads create no attachment and do not expand `list_resources`,
 inventory fingerprints, or the sidebar. Attachment forwarding remains the preferred handoff

@@ -181,6 +181,9 @@ export async function createAvalonTerminalPlugin(
   const assertSandboxPrincipal = (context: HarnessToolContext): void => {
     if (!sidekickWorkspace) return;
     const principal = context.executionPrincipal;
+    // A run with no delegate behind it acts as the Sidekick itself, and the
+    // shared files are the Sidekick's own.
+    if (principal.type === "workspace") return;
     if (principal.type !== "user" || !initialDelegation?.delegates.some((delegate) => delegate.userId === principal.userId)) {
       throw new TerminalToolError(
         "sandbox_authority_mismatch",

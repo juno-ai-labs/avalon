@@ -34,6 +34,9 @@ const SETTING_LABEL: Partial<Record<PushNotificationData["kind"], string>> = {
   artifact_updated: "Pinned Canvas updates",
   access_request: "Access requests",
   access_denied: "Access requests",
+  source_request: "Source requests",
+  source_approved: "Source requests",
+  source_declined: "Source requests",
 };
 
 /** Who the email goes to, read now: an inactive member is sent nothing. */
@@ -54,31 +57,40 @@ export type NoticeEmailOutcome = { outcome: EmailDelivery } | { outcome: "skippe
 /**
  * The email sink: one template for every kind, its subject the notice's own
  * title (which is per kind), its body the notice's text as a quote, and one
- * button to the notice's link. Sent through the shared Cloudflare sender, with the intent as its delivery reference.
+ * button to the notice's link. A notice that carries its own actions (a
+ * Sidekick source request's Approve and Decline) gets a button for each in
+ * that one's place, and a line saying that opening one answers. Sent through
+ * the shared Cloudflare sender, with the intent as its delivery reference.
  */
 export async function sendNoticeEmail(env: Env, notice: Notice, send?: (message: EmailMessageBuilder) => Promise<EmailSendResult>): Promise<NoticeEmailOutcome> {
   const to = await recipient(env, notice);
   if (!to) return { outcome: "skipped", reason: "recipient_inactive_or_identity_missing" };
   const title = singleLine(notice.title);
-  const excerpt = excerptOf(notice.body);
+  // What a notice's own actions answer is quoted whole: a person agrees to all of a source's
+  // condition, and a cut would have them approve a clause they never saw.
+  const excerpt = notice.actions?.length ? singleLine(notice.body) : excerptOf(notice.body);
   const name = singleLine(to.name).split(" ")[0] ?? "";
   const workspaceName = singleLine(to.workspaceName);
   const setting = SETTING_LABEL[notice.kind] ?? "Notifications";
-  const footer = `You chose email for ${setting} in ${workspaceName}. Change it in Rally under Settings, Notifications.`;
+  // "You get", not "you chose": a source request goes by email until the person says otherwise.
+  const footer = `You get email for ${setting} in ${workspaceName}. Change it in Rally under Settings, Notifications.`;
+  const actions = notice.actions?.length ? notice.actions : null;
+  const buttons = actions ?? [{ label: "Open in Rally", url: notice.url }];
   const text = [
     name ? `Hi ${name},` : "Hi,",
     "",
     `${title}.`,
     ...(excerpt ? ["", `"${excerpt}"`] : []),
     "",
-    `Open in Rally: ${notice.url}`,
+    ...buttons.map((button) => `${button.label}: ${button.url}`),
+    ...(actions ? ["", ACTIONS_NOTE] : []),
     "",
     footer,
   ].join("\n");
   const outcome = await sendEmail(env, {
     recipientEmail: to.email,
     subject: title,
-    html: noticeHtml({ greeting: name ? `Hi ${name},` : "Hi,", title, excerpt, url: notice.url, footer }),
+    html: noticeHtml({ greeting: name ? `Hi ${name},` : "Hi,", title, excerpt, buttons, answers: actions !== null, note: actions ? ACTIONS_NOTE : "", footer }),
     text,
     idempotencyKey: `rally-notice/${notice.workspaceId}/${notice.intentId}`,
     category: `notification_${notice.kind}`,
@@ -90,15 +102,34 @@ export async function sendNoticeEmail(env: Env, notice: Notice, send?: (message:
   return { outcome };
 }
 
+/**
+ * Under a notice's own actions, which today are a source request's: what an
+ * approval shares and what it does not, and that each link records the
+ * answer when it is opened, with no second step.
+ */
+const ACTIONS_NOTE = "Approving lets each matching event start this Sidekick, which reads that event's content and nothing else in your account. "
+  + "Either button answers at once. You can also answer in Rally, under Activity.";
+
 function excerptOf(body: string): string {
   const normalized = singleLine(body);
   if (normalized.length <= EXCERPT_CHARACTERS) return normalized;
   return `${normalized.slice(0, EXCERPT_CHARACTERS - 1).trimEnd()}…`;
 }
 
-function noticeHtml(input: { greeting: string; title: string; excerpt: string; url: string; footer: string }): string {
+/** A notice's one link is filled. Two answers are drawn alike, so neither reads as the one to press. */
+function buttonHtml(button: { label: string; url: string }, filled: boolean): string {
+  const style = filled
+    ? "background:#CCFF00;color:#11140f;border:1px solid #CCFF00"
+    : "background:#181b17;color:#f2f3ec;border:1px solid #5a6054";
+  return `<a href="${escapeHtml(button.url)}" style="display:inline-block;${style};text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px;margin:0 10px 10px 0">${escapeHtml(button.label)}</a>`;
+}
+
+function noticeHtml(input: { greeting: string; title: string; excerpt: string; buttons: { label: string; url: string }[]; answers: boolean; note: string; footer: string }): string {
   const quote = input.excerpt
     ? `<tr><td style="padding:18px 20px;background:#20241e;border-left:3px solid #CCFF00;border-radius:8px;font-size:15px;line-height:1.55;color:#e2e5dc">${escapeHtml(input.excerpt)}</td></tr>`
+    : "";
+  const note = input.note
+    ? `<tr><td style="padding-top:8px;font-size:13px;line-height:1.6;color:#c9ccc4">${escapeHtml(input.note)}</td></tr>`
     : "";
   return `<!doctype html>
 <html lang="en">
@@ -121,7 +152,8 @@ function noticeHtml(input: { greeting: string; title: string; excerpt: string; u
           <tr><td style="padding-top:18px;font-size:15px;line-height:1.6;color:#c9ccc4">${escapeHtml(input.greeting)}</td></tr>
           <tr><td><h1 style="margin:8px 0 18px;font-size:22px;line-height:1.3;color:#f2f3ec">${escapeHtml(input.title)}</h1></td></tr>
           ${quote}
-          <tr><td style="padding-top:28px"><a href="${escapeHtml(input.url)}" style="display:inline-block;background:#CCFF00;color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Open in Rally</a></td></tr>
+          <tr><td style="padding-top:28px">${input.buttons.map((button) => buttonHtml(button, !input.answers)).join("")}</td></tr>
+          ${note}
           <tr><td style="padding-top:28px;font-size:12px;line-height:1.6;color:#8f948b">${escapeHtml(input.footer)}</td></tr>
         </table>
       </td></tr>

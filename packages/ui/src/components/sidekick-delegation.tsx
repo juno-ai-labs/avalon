@@ -1,7 +1,12 @@
 import type { SidekickDelegatesResult } from '@rally/contracts';
 import { Avatar, Button } from './primitives';
 
-export const SIDEKICK_DELEGATION_EXPLANATION = 'This Sidekick can act as the people listed here, using their current access to carry out its work.';
+/**
+ * Delegation lends accounts; it does not say whose events start the Sidekick.
+ * That is a source (`sidekick-sources.tsx`), and the sentence says so because
+ * the two lists sit one above the other and name some of the same people.
+ */
+export const SIDEKICK_DELEGATION_EXPLANATION = 'This Sidekick can act as the people listed here, using their accounts and current access to carry out its work. Whose events start it is under Sources.';
 /** The host owns reads, acknowledgements and uncertain outcomes. No optimistic consent. */
 export function SidekickDelegationList({ data, loading, offline, needsRefresh, pending, onSetOwn, onRefresh }: {
   data?: SidekickDelegatesResult | undefined;

@@ -65,23 +65,26 @@ export function artifactDataReader(input: {
  */
 export type ArtifactDataWriteAccess =
   | { kind: "canvas_chat" }
-  | { kind: "sidekick_run"; sidekickId: string };
+  | { kind: "sidekick_run"; sidekickId: string; runId: string };
 
 export function artifactDataWriteAccess(input: {
   executionPrincipal: { type: string };
   parentKind: string;
   substreamId?: string | undefined;
-  automationRun?: { automationId: string } | undefined;
+  automationRun?: { automationId: string; runId: string } | undefined;
   automationDelegation?: unknown;
   backgroundAgent?: boolean | undefined;
 }): ArtifactDataWriteAccess | null {
-  if (input.executionPrincipal.type !== "user") return null;
   if (input.backgroundAgent === true || input.automationDelegation) return null;
+  // A run writes whoever it acts as, a person or the Sidekick itself: what it
+  // may write is its Sidekick's attachments, which the gate reads.
   if (input.automationRun) {
     return input.parentKind === "automation"
-      ? { kind: "sidekick_run", sidekickId: input.automationRun.automationId }
+      ? { kind: "sidekick_run", sidekickId: input.automationRun.automationId, runId: input.automationRun.runId }
       : null;
   }
+  // A Chat writes as the person typing into it.
+  if (input.executionPrincipal.type !== "user") return null;
   return isCanvasChat(input) ? { kind: "canvas_chat" } : null;
 }
 
@@ -120,7 +123,10 @@ export function createArtifactDataToolContext(
     if (!candidate) return null;
     const [match] = await loadVisibleWorkstreamResourcesByIds(
       env.DB,
-      createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined, undefined, input.principal),
+      // A run reads as its own conversation, so its Sidekick's reach (its
+      // attachments) is decided from the run's row and needs no person.
+      createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined,
+        input.write?.kind === "sidekick_run" ? input.write.runId : undefined, input.principal),
       {
         workspaceId: input.workspaceId,
         workstreamId: input.workstreamId,
@@ -171,8 +177,8 @@ export function createArtifactDataToolContext(
     ...(write ? {
       async resolveWritableArtifact(reference: string): Promise<WritableArtifactResolution> {
         const match = await visibleSite(reference);
-        // Only a person's run writes (`artifactDataWriteAccess`).
-        if (!match || input.principal.type !== "user") return { outcome: "not_found" };
+        // A Chat writes as its person; a run may act as the Sidekick itself (`artifactDataWriteAccess`).
+        if (!match || (write.kind === "canvas_chat" && input.principal.type !== "user")) return { outcome: "not_found" };
         const workspaceId = asWorkspaceId(input.workspaceId);
         const workspace = await durableObjectStubForWorkspace(
           env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
@@ -180,13 +186,15 @@ export function createArtifactDataToolContext(
           workspaceId: input.workspaceId,
           resourceId: match.id,
           sidekickId: write.kind === "sidekick_run" ? write.sidekickId : null,
-          userId: input.principal.userId,
+          userId: input.principal.type === "user" ? input.principal.userId : null,
+          ...(write.kind === "sidekick_run" ? { runId: write.runId } : {}),
         });
         if (!facts) return { outcome: "not_found" };
         if (facts.canvasArchived) return { outcome: "canvas_archived" };
         if (write.kind === "sidekick_run" && !facts.attachedToSidekick) return { outcome: "not_attached" };
-        // The attachment is where the Sidekick may write; its person must
-        // still be in the Canvas, which reading the site does not show.
+        // The attachment is where the Sidekick may write. Only a run somebody
+        // asked for under their own access also needs that person in the
+        // Canvas, which the object answers as `actorAdmitted`.
         if (write.kind === "sidekick_run" && !facts.actorAdmitted) return { outcome: "not_found" };
         // A Chat changes its own Canvas's sites. One from another Canvas,
         // attached here as context, is linked to this conversation and so

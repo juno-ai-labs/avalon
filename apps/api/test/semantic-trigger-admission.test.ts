@@ -183,4 +183,100 @@ describe("admitExternalEventWithSemanticGate", () => {
       conditionVerdict: { admit: false, code: "classifier_unavailable" },
     });
   });
+
+  describe("with a source's filter beside the trigger's condition", () => {
+    const SOURCE_FILTER = "The email is about a pre-seed investment round.";
+    const TRIGGER_CONDITION = "The pull request asks for a design review.";
+
+    /** The object's side when the event's source holds a filter: both sentences to judge until both verdicts arrive. */
+    function filtered(conditions: string[]) {
+      const admissions: { sourceVerdict?: unknown; conditionVerdict?: unknown }[] = [];
+      const sidekick = {
+        admitExternalEvent: vi.fn(async (input: { sourceVerdict?: unknown; conditionVerdict?: unknown }) => {
+          admissions.push(input);
+          if (input.sourceVerdict === undefined) {
+            return { admitted: false, outcomeCode: "sidekick_source_condition_unjudged",
+              judge: { conditions, sourceConditions: [SOURCE_FILTER], connectorType: "google" } };
+          }
+          return { admitted: true, outcomeCode: "sidekick_occurrence_admitted" };
+        }),
+      } satisfies SemanticTriggerAdmissionPort;
+      return { admissions, sidekick };
+    }
+
+    /** The classifier answering each call in turn, keeping the sentence each call was asked about. */
+    function answeringInTurn(...answers: [choice: string, confidence: number][]) {
+      const asked: string[] = [];
+      const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = typeof init?.body === "string" ? init.body : await new Request(input, init).text();
+        asked.push([SOURCE_FILTER, TRIGGER_CONDITION].filter((sentence) => body.includes(sentence)).join(" + "));
+        const [choice, confidence] = answers[asked.length - 1]!;
+        return new Response(JSON.stringify({ model: "jev-1.13.0", answers: { condition: { type: "choice", choice, confidence } } }),
+          { status: 200, headers: { "content-type": "application/json" } });
+      });
+      return { asked, fetcher: fetcher as unknown as typeof fetch };
+    }
+
+    const admit = (env: Env, sidekick: SemanticTriggerAdmissionPort, fetcher: typeof fetch) => admitExternalEventWithSemanticGate(env, {
+      sidekick, admission: ADMISSION, workspaceId: ADMISSION.workspaceId, defer: () => undefined, fetch: fetcher });
+
+    it("does not ask the trigger's question of an event the person's filter kept out", async () => {
+      const { asked, fetcher } = answeringInTurn(["condition_not_met", 0.9], ["condition_met", 0.99]);
+      const { admissions, sidekick } = filtered([TRIGGER_CONDITION]);
+
+      const result = await admit(testEnv(), sidekick, fetcher);
+
+      expect(asked).toEqual([SOURCE_FILTER]);
+      expect(admissions).toHaveLength(2);
+      expect(admissions[1]).toMatchObject({
+        sourceVerdict: { admit: false, code: "condition_not_met", confidence: 0.9, model: "jev-1.13.0", conditions: [SOURCE_FILTER] },
+        // Not judged: sent as unavailable so the object's two checks both have an answer, and neither admits.
+        conditionVerdict: { admit: false, code: "classifier_unavailable", confidence: null, model: null },
+      });
+      expect(result.sourceGate).toMatchObject({ code: "condition_not_met", confidence: 0.9, conditionCount: 1 });
+      expect(result).not.toHaveProperty("gate");
+    });
+
+    it("judges the person's filter, then the trigger's condition, and sends both verdicts", async () => {
+      const { asked, fetcher } = answeringInTurn(["condition_met", 0.91], ["condition_met", 0.72]);
+      const { admissions, sidekick } = filtered([TRIGGER_CONDITION]);
+
+      const result = await admit(testEnv(), sidekick, fetcher);
+
+      expect(asked).toEqual([SOURCE_FILTER, TRIGGER_CONDITION]);
+      expect(admissions[1]).toMatchObject({
+        sourceVerdict: { admit: true, code: "condition_met", confidence: 0.91, model: "jev-1.13.0", conditions: [SOURCE_FILTER] },
+        conditionVerdict: { admit: true, code: "condition_met", confidence: 0.72, model: "jev-1.13.0" },
+      });
+      // The filter the verdict answered for rides only the source's verdict.
+      expect(admissions[1]!.conditionVerdict).not.toHaveProperty("conditions");
+      expect(result).toMatchObject({ admitted: true, sourceGate: { code: "condition_met", confidence: 0.91 }, gate: { code: "condition_met", confidence: 0.72 } });
+    });
+
+    it("sends the source's verdict alone when the trigger has no condition of its own", async () => {
+      const { asked, fetcher } = answeringInTurn(["condition_met", 0.91]);
+      const { admissions, sidekick } = filtered([]);
+
+      const result = await admit(testEnv(), sidekick, fetcher);
+
+      expect(asked).toEqual([SOURCE_FILTER]);
+      expect(admissions[1]).toMatchObject({ sourceVerdict: { admit: true, code: "condition_met", conditions: [SOURCE_FILTER] } });
+      expect(admissions[1]).not.toHaveProperty("conditionVerdict");
+      expect(result).not.toHaveProperty("gate");
+    });
+
+    it("reports both filters unavailable, and asks nothing, without a TypeSafe credential", async () => {
+      const { asked, fetcher } = answeringInTurn(["condition_met", 0.99], ["condition_met", 0.99]);
+      const { admissions, sidekick } = filtered([TRIGGER_CONDITION]);
+
+      const result = await admit(testEnv({ TYPESAFE_API_KEY: undefined }), sidekick, fetcher);
+
+      expect(asked).toEqual([]);
+      expect(admissions[1]).toMatchObject({
+        sourceVerdict: { admit: false, code: "classifier_unavailable", confidence: null, model: null, conditions: [SOURCE_FILTER] },
+        conditionVerdict: { admit: false, code: "classifier_unavailable", confidence: null, model: null },
+      });
+      expect(result.sourceGate).toMatchObject({ code: "classifier_unavailable", confidence: null });
+    });
+  });
 });

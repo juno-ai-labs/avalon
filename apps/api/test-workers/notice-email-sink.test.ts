@@ -145,7 +145,24 @@ it('sends one email per notice through Cloudflare, its subject the notice title 
   expect(body.to).toBe('robin@example.test');
   expect(body.text).toBe([
     'Hi Robin,', '', 'Avery in Launch plan.', '', '"Moved the date"', '', `Open in Rally: ${CANVAS_URL}`, '',
-    'You chose email for New messages in Juno Labs. Change it in Rally under Settings, Notifications.',
+    'You get email for New messages in Juno Labs. Change it in Rally under Settings, Notifications.',
   ].join('\n'));
   expect(body.headers!["X-Rally-Category"]).toBe('notification_new_message');
+});
+
+it('quotes all of what a notice with its own answers asks, however long, and cuts an ordinary notice', async () => {
+  const send = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: 'cf_2' }));
+  const production = { ...env, APP_ENV: 'production' as const, EMAIL_NOTIFICATION_FROM: 'Rally <notify@rallywith.ai>' };
+  // A condition whose last clause sits past where an excerpt ends.
+  const asked = `Events: Email received. Only when: ${'it is about a pre-seed round, '.repeat(12)}or it names a bank account`;
+  const ordinary: Notice = { intentId: 'new_message:two', kind: 'new_message', title: 'Avery asked to use your Gmail for Deals', body: asked,
+    actorName: 'Avery', url: CANVAS_URL, workspaceId, recipientUserId: userId, parentId: canvasId, substreamId: '0' };
+  const request: Notice = { ...ordinary, intentId: 'source_request:one', kind: 'source_request',
+    actions: [{ label: 'Decline', url: `${CANVAS_URL}#decline` }, { label: 'Approve', url: `${CANVAS_URL}#approve` }] };
+  expect(await sendNoticeEmail(production, request, send)).toEqual({ outcome: 'sent' });
+  expect(send.mock.calls[0]![0].text).toContain(`"${asked}"`);
+  expect(String(send.mock.calls[0]![0].html)).toContain('or it names a bank account');
+  // The same words on a notice that asks for no answer are an excerpt.
+  expect(await sendNoticeEmail(production, ordinary, send)).toEqual({ outcome: 'sent' });
+  expect(send.mock.calls[1]![0].text).not.toContain('or it names a bank account');
 });

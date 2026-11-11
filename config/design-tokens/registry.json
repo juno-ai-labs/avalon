@@ -14,7 +14,7 @@
     "sys.color.border": "The three borders the stylesheet names directly; each resolves to a step on the line ramp.",
     "sys.color.brand": "Rally's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
     "sys.color.accent": "The hue for links and selection; keyboard focus has its own role.",
-    "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control — a switch that is on, a selected preset — which is neither the vivid hue nor the wash. `vivid` is the one saturated step, for a status indicator a few pixels across — the healthy dot beside a connection — where `base`, tuned for text and fills, read as grey.",
+    "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control — a switch that is on, a selected preset — which is neither the vivid hue nor the wash. `vivid` is the one saturated step, for a status indicator a few pixels across — the healthy dot beside a connection — where `base`, tuned for text and fills, read as grey. `on` is the ink over a solid `strong` fill, as `danger.on` is over `danger.base`: a choice somebody made, drawn filled.",
     "sys.color.warning": "Attention short of failure.",
     "sys.color.danger": "Failure and destructive action.",
     "sys.color.badge": "A count, a Needs input badge or an unread dot: the red design.html draws them in, with white digits, in both appearances. Apart from `danger`, which dark lightens until white over it fails contrast.",
@@ -289,6 +289,9 @@
       "$type": "color"
     },
     "sys.color.success.vivid": {
+      "$type": "color"
+    },
+    "sys.color.success.on": {
       "$type": "color"
     },
     "sys.color.warning.base": {

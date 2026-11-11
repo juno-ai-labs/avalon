@@ -4,7 +4,25 @@ import { z } from "zod";
 const NotificationIntentIdSchema = z.string().min(1).max(300);
 
 export const WorkspaceNotificationIntentKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished",
-  "new_message", "artifact_updated", "access_request", "access_granted", "access_denied"]);
+  "new_message", "artifact_updated", "access_request", "access_granted", "access_denied",
+  "source_request", "source_approved", "source_declined"]);
+
+/**
+ * What a Sidekick source request asks for, as each of its three notices
+ * captures it: the connector by type and by name, the events by the labels
+ * its manifest gives them, and the person's condition when one was asked.
+ * `docs/sidekick-sources.md` owns the request.
+ */
+const SourceNoticeAskSchema = {
+  parentId: z.string().min(1),
+  /** The Sidekick's name when the notice was recorded. */
+  parentTitle: z.string(),
+  requestId: z.string().min(1),
+  connectorType: z.string().min(1),
+  connectorName: z.string(),
+  eventLabels: z.array(z.string()),
+  condition: z.string().nullable(),
+};
 
 /**
  * What a hosted parent's own notice stores on its intent: everything the push
@@ -61,6 +79,24 @@ export const ParentNoticeSchema = z.discriminatedUnion("kind", [
     requestId: z.string().min(1),
     deciderName: z.string(),
   }),
+  /**
+   * Somebody asked the recipient to let events from one of their connections
+   * start a Sidekick. The recipient usually cannot open that Sidekick; the
+   * request names it to them on purpose.
+   */
+  z.strictObject({
+    kind: z.literal("source_request"), ...SourceNoticeAskSchema, requesterName: z.string(),
+    /**
+     * The Canvas the request was asked in, where its card is: what the notice
+     * opens, since the Sidekick itself is closed to the person until they
+     * approve. Absent when it was asked from the Sidekick's own conversation.
+     */
+    placeCanvasId: z.string().min(1).optional(),
+  }),
+  /** The person the recipient asked approved. */
+  z.strictObject({ kind: z.literal("source_approved"), ...SourceNoticeAskSchema, personName: z.string() }),
+  /** The person the recipient asked declined. */
+  z.strictObject({ kind: z.literal("source_declined"), ...SourceNoticeAskSchema, personName: z.string() }),
 ]);
 export type ParentNotice = z.infer<typeof ParentNoticeSchema>;
 export const WorkspaceNotificationIntentStateSchema = z.enum([

@@ -43,16 +43,25 @@ describe('the Notifications settings pane', () => {
       'How to tell you about Sidekick runs',
       'How to tell you about pinned Canvas updates',
       'How to tell you about access requests',
+      'How to tell you about source requests',
     ]);
     // The kinds still accepted when stored are never offered.
     expect(screen.queryByText(/thread|breakout|merge/iu)).toBeNull();
 
     // Push is on by default; turning it off for access requests saves that kind alone.
     // The pane has no width here, so each picker is its menu.
-    fireEvent.pointerDown(pickers.at(-1)!, { button: 0, ctrlKey: false });
+    fireEvent.pointerDown(pickers[5]!, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: /Push/u }));
     await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalled());
     expect(api.updateMyPreferences.mock.calls[0]).toContainEqual({ notify: { accessRequests: [] } });
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menuitemcheckbox')).toBeNull());
+
+    // A source request also goes by email until the person says otherwise, the one kind that does.
+    fireEvent.pointerDown(pickers[6]!, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: /Email/u }));
+    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledTimes(2));
+    expect(api.updateMyPreferences.mock.calls[1]).toContainEqual({ notify: { sourceRequests: ['push'] } });
   });
 
   it('offers Push and Email for every kind, never draws a stored Slack choice, and does not save it back', async () => {
@@ -73,7 +82,7 @@ describe('the Notifications settings pane', () => {
     await waitFor(() => expect(api.getMyPreferences).toHaveBeenCalled());
 
     const pickers = await screen.findAllByLabelText(/^How to tell you about /u);
-    expect(pickers).toHaveLength(6);
+    expect(pickers).toHaveLength(7);
     for (const picker of pickers.slice(1)) {
       fireEvent.pointerDown(picker, { button: 0, ctrlKey: false });
       const choices = await screen.findAllByRole('menuitemcheckbox');

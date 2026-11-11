@@ -1,4 +1,4 @@
-import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { agentIdForAddress, asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type {
   AutomationDetail,
   AutomationDraft,
@@ -718,8 +718,8 @@ describe("connector tools selected for harness runs", () => {
         "start_agent", "list_agents", "send_message", "reply_to_message", "stop_agent",
       ]));
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
-      ?.tools.map((tool) => tool.definition.name)).toEqual([
-        "my_delegations_list", "delegates_list", "set_delegation"]);
+      // A background agent works from content, so it is not offered the tools that ask people for a source.
+      ?.tools.map((tool) => tool.definition.name)).toEqual(["my_delegations_list", "delegates_list", "set_delegation"]);
     expect(selected.tools.some((tool) => tool.definition.name === "run_subagent")).toBe(false);
   });
 
@@ -733,17 +733,65 @@ describe("connector tools selected for harness runs", () => {
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } });
     expect(room.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
       ?.tools.map((tool) => tool.definition.name)).toEqual([
-        "my_delegations_list", "delegates_list", "set_delegation"]);
+        "my_delegations_list", "delegates_list", "set_delegation",
+        "sources_list", "request_source", "test_source_condition"]);
     // The wizard's background agent reads runs for it; a run's delegation worker does not.
+    // Neither asks people for a source: only a conversation a person is talking in does.
     const sidekicks = child.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     expect(sidekicks?.tools.map((tool) => tool.definition.name))
       .toEqual(["runs_list", "runs_list_next", "runs_read", "runs_read_next", "my_delegations_list", "delegates_list", "set_delegation"]);
     expect(sidekicks?.preload).toBe(true);
     expect(worker.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")?.tools.map((tool) => tool.definition.name))
-      .toEqual(["my_delegations_list", "delegates_list", "set_delegation"]);
+      .toEqual(["my_delegations_list", "delegates_list"]);
     expect(authoring.plugins.map((plugin) => plugin.canonicalId)).toContain("rally:sidekicks");
     expect(room.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));
+  });
+
+  it("offers the source tools to the wizard on a person's turn and to no run, agent's message or review, and neither a run nor its worker the tool that changes delegation", async () => {
+    const runtimeEnv = env(new ToolSelectionDatabase([]));
+    const sourceTools = async (input: WorkstreamWorkflowInput) =>
+      (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
+        .filter((plugin) => plugin.canonicalId === "rally:sidekicks")
+        .flatMap((plugin) => plugin.tools.map((tool) => tool.definition.name))
+        .filter((name) => ["sources_list", "request_source", "test_source_condition"].includes(name));
+    const wizard = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
+
+    expect(await sourceTools(automationConversationInput()))
+      .toEqual(["sources_list", "request_source", "test_source_condition"]);
+    // A run reads the event that started it, so nothing it reads may ask or approve.
+    expect(await sourceTools(automationRunInput())).toEqual([]);
+    // Nobody typed a turn another agent's message or Rally's review notice started.
+    expect(await sourceTools({ ...automationConversationInput(),
+      agentExchange: { teamId: wizard, senderAgentId: wizard, messageId: "00000000-0000-7000-8000-00000000e001" } })).toEqual([]);
+    expect(await sourceTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual([]);
+    // The same two turns in a Canvas's Chat, where the tools are otherwise offered.
+    expect(await sourceTools(workflowInput())).toEqual(["sources_list", "request_source", "test_source_condition"]);
+    expect(await sourceTools({ ...workflowInput(),
+      agentExchange: { teamId: wizard, senderAgentId: wizard, messageId: "00000000-0000-7000-8000-00000000e001" } })).toEqual([]);
+
+    // A run reads outside content, and its background worker reads the same: both inspect delegation and neither
+    // changes it. A conversation's own background agent and every loop a person is driving still can.
+    const delegationTools = async (input: WorkstreamWorkflowInput) =>
+      (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
+        .filter((plugin) => plugin.canonicalId === "rally:sidekicks")
+        .map((plugin) => ({ tools: plugin.tools.map((tool) => tool.definition.name).filter((name) => name.includes("deleg")),
+          toldToSet: plugin.systemMessage?.includes("sidekick_set_delegation") ?? false }));
+    expect(await delegationTools(automationRunInput())).toEqual([{ tools: ["my_delegations_list", "delegates_list"], toldToSet: false }]);
+    expect(await delegationTools({ ...childWorkflowInput(automationConversationInput()),
+      automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } }))
+      .toEqual([{ tools: ["my_delegations_list", "delegates_list"], toldToSet: false }]);
+    expect(await delegationTools(childWorkflowInput())).toMatchObject([{ tools: ["my_delegations_list", "delegates_list", "set_delegation"] }]);
+    expect(await delegationTools(workflowInput()))
+      .toEqual([{ tools: ["my_delegations_list", "delegates_list", "set_delegation"], toldToSet: true }]);
+
+    // The skill that says to call them is listed where they are, and nowhere else.
+    const listsTheSkill = async (input: WorkstreamWorkflowInput) =>
+      __integrationTesting.builtInSkillsFor((await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins)
+        .some((skill) => skill.name === "setting-up-a-filtered-trigger");
+    expect(await listsTheSkill(automationConversationInput())).toBe(true);
+    expect(await listsTheSkill(automationRunInput())).toBe(false);
+    expect(await listsTheSkill({ ...automationConversationInput(), reason: "sidekick_review" })).toBe(false);
   });
 
   it("skips a connection whose connector this deployment does not configure, rather than failing the run", async () => {

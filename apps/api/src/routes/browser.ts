@@ -27,7 +27,8 @@ import { resolveSiteForViewer } from "../services/artifact-site-resolution";
 import { IDENTITY_REGION, configuredRegions, type Region } from "@rally/contracts/regions";
 import { BrowserSessionService, BrowserSessionSchema, BrowserWorkspacesSchema } from "../services/browser-session-service";
 import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserSiteResolutionSchema, BrowserSiteResolveSchema, BrowserWorkspaceActivateSchema, BrowserWorkspaceAttentionSchema,
-  BrowserWorkspaceCreateSchema, BrowserWorkspaceCreatedSchema } from "@rally/contracts/browser-session";
+  BrowserWorkspaceCreateSchema, BrowserWorkspaceCreatedSchema, SourceDecisionLinkSchema, SourceDecisionResultSchema } from "@rally/contracts/browser-session";
+import { decideSourceRequestByLink } from "../services/sidekick-source-decision-link";
 import { startEmailLogin, deliverEmailLogin, redeemEmailLogin, EmailLoginStartSchema,
   EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
 
@@ -169,6 +170,16 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     writeCookie(c,cookie.credential,cookie.expiresAt);
     return c.json(BrowserSessionSchema.parse(cookie.session));
   });
+  // An emailed Approve or Decline for a Sidekick source request
+  // (docs/sidekick-sources.md). It reads no cookie: the signed link sent to the
+  // asked person's own mailbox is the proof, and one POST records the answer.
+  // A GET of this path answers nothing. The emailed link opens the browser
+  // client's page, which sends the POST when it loads: something that only
+  // fetches the link does not answer, and something that runs the page, as
+  // some mail scanners do, does.
+  routes.get("/source-requests/decision",(c) => { c.header("Allow","POST");return c.body(null,405); });
+  routes.post("/source-requests/decision",authBodyLimit,zValidator("json",SourceDecisionLinkSchema),async (c) =>
+    c.json(SourceDecisionResultSchema.parse(await decideSourceRequestByLink(c.env,c.req.valid("json")))));
   routes.get("/session",async (c) => {
     const service = new BrowserSessionService(c.env);
     return c.json(BrowserSessionSchema.parse(await service.describe(await service.read(credential(c)))));

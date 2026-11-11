@@ -11,8 +11,12 @@ import {
   type ParentNotice,
   type WorkspaceNotificationIntentDelivery,
 } from "../durable-objects/workspace-notification-intent-protocol";
+import { sourceNoticeText } from "../durable-objects/sidekick-source-notices";
+import { asApiError } from "../lib/api-error";
+import { logWarn } from "../observability/logger";
 import { notificationDeliveryContext } from "./conversation-effect-service";
 import { conversationLink } from "./conversation-link-service";
+import { sourceDecisionActions } from "./sidekick-source-decision-link";
 import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
 /**
@@ -40,6 +44,13 @@ export interface Notice {
   substreamId: string | null;
   /** The message the link opens at: a mention's or a reply's in a Canvas's Chat. */
   message?: { turnId: string; sequence: number };
+  /**
+   * What the recipient can decide from the notice itself, each a link that
+   * records the decision when it is opened: a Sidekick source request's
+   * Approve and Decline. A sink that can draw buttons draws these in place of
+   * its one link to `url`; push opens `url` as for every kind.
+   */
+  actions?: { label: string; url: string }[];
 }
 
 export type NoticeRendering =
@@ -82,6 +93,7 @@ export async function renderNotice(env: Env, workspace: WorkspaceStub, address: 
     intentId: words.intentId, kind: words.kind, title: words.title, body: words.body, actorName: words.actorName,
     url: linked.url, workspaceId: row.workspaceId, recipientUserId: row.recipientUserId, parentId: words.parentId,
     substreamId: words.substreamId, ...(linked.message ? { message: linked.message } : {}),
+    ...(words.actions ? { actions: words.actions } : {}),
   };
   return { outcome: "ready", notice };
 }
@@ -141,7 +153,9 @@ async function runNoticeWords(env: Env, workspace: WorkspaceStub, row: Workspace
  * Why a notice about a Canvas or Sidekick is not sent to this person now:
  * they are no longer an active member, its parent is gone, or it no longer
  * admits them (`unlisted` waives the last, for a notice about a Canvas they
- * were refused). Null when it may be sent.
+ * were refused, or a Sidekick source request and its answer, which name the
+ * Sidekick to someone who need not be able to open it). Null when it may be
+ * sent.
  */
 async function recipientRefused(env: Env, workspace: WorkspaceStub, row: WorkspaceNotificationIntentDelivery,
   options: { unlisted?: boolean } = {}): Promise<Exclude<NoticeRendering, { outcome: "ready" }> | null> {
@@ -165,28 +179,63 @@ function parentWords(notice: ParentNotice): { title: string; body: string; actor
     case "access_request": return { title: `${notice.requesterName} asked to open ${notice.parentTitle}`, body: notice.message ?? "", actorName: notice.requesterName };
     case "access_granted": return { title: `${notice.deciderName} let you into ${notice.parentTitle}`, body: "", actorName: notice.deciderName };
     case "access_denied": return { title: `${notice.deciderName} declined your request to open a Canvas`, body: "", actorName: notice.deciderName };
+    case "source_request": return { title: `${notice.requesterName} asked for your ${notice.connectorName} to start ${notice.parentTitle}`,
+      body: sourceNoticeText(notice), actorName: notice.requesterName };
+    case "source_approved": return { title: `${notice.personName} approved their ${notice.connectorName} for ${notice.parentTitle}`,
+      body: sourceNoticeText(notice), actorName: notice.personName };
+    case "source_declined": return { title: `${notice.personName} declined their ${notice.connectorName} for ${notice.parentTitle}`,
+      body: sourceNoticeText(notice), actorName: notice.personName };
+  }
+}
+
+/** A Sidekick source request and its two answers: the notices that name a Sidekick to someone who need not be able to open it. */
+function aboutSource(notice: ParentNotice): boolean {
+  return notice.kind === "source_request" || notice.kind === "source_approved" || notice.kind === "source_declined";
+}
+
+/**
+ * The Approve and Decline links a source request's email carries. Without a
+ * browser origin configured there is nowhere for them to open, so the notice
+ * goes with its one link and the reason is logged by name.
+ */
+async function sourceRequestActions(env: Env, row: WorkspaceNotificationIntentDelivery, requestId: string): Promise<Pick<Notice, "actions">> {
+  try {
+    return { actions: await sourceDecisionActions(env, { workspaceId: row.workspaceId, sidekickId: row.workstreamId, requestId,
+      userId: row.recipientUserId }) };
+  } catch (error) {
+    const refused = asApiError(error);
+    if (!refused) throw error;
+    logWarn(env, "source_decision_link_unavailable", { intent_id: row.intentId, code: refused.code });
+    return {};
   }
 }
 
 /**
  * A reply, a pinned Canvas's new version, an access request, its grant or its
- * denial, rendered from the notice its parent captured. A new version opens
- * its Canvas onto that artifact.
+ * denial, a Sidekick source request or its answer, rendered from the notice
+ * its parent captured. A new version opens its Canvas onto that artifact; a
+ * source request carries the links that answer it.
  */
 async function parentNoticeWords(env: Env, workspace: WorkspaceStub, row: WorkspaceNotificationIntentDelivery): Promise<NoticeWords | Exclude<NoticeRendering, { outcome: "ready" }>> {
   const notice = ParentNoticeSchema.parse(JSON.parse(row.payloadJson));
-  const refused = await recipientRefused(env, workspace, row, { unlisted: notice.kind === "access_denied" });
+  const refused = await recipientRefused(env, workspace, row, { unlisted: notice.kind === "access_denied" || aboutSource(notice) });
   if (refused) return refused;
   const words = parentWords(notice);
   return {
     intentId: row.intentId,
     kind: notice.kind,
     title: words.title,
-    body: rewriteMessageAsPlainText(words.body, { sources: "none" }),
+    // What a source request asks is quoted as it was written: the condition is what the person
+    // agrees to and what the classifier judges, and a rewrite that drops a footnote or a link's
+    // target would have them approve words they never saw.
+    body: aboutSource(notice) ? words.body : rewriteMessageAsPlainText(words.body, { sources: "none" }),
     actorName: words.actorName,
-    parentId: row.workstreamId,
+    // A source request opens the Canvas it was asked in, where its card is:
+    // the Sidekick is closed to the person asked until they approve.
+    parentId: notice.kind === "source_request" && notice.placeCanvasId ? notice.placeCanvasId : row.workstreamId,
     substreamId: notice.kind === "new_message" ? "0" : null,
     ...(notice.kind === "artifact_updated" ? { artifactId: notice.resourceId } : {}),
     ...(notice.kind === "new_message" ? messagePosition(notice.messageId, notice.messageSequence) : {}),
+    ...(notice.kind === "source_request" ? await sourceRequestActions(env, row, notice.requestId) : {}),
   };
 }

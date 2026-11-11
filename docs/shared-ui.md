@@ -60,6 +60,75 @@ field. Names reuse the delegation query already mounted by the Sidekick screen;
 an unavailable historical identity retains its ID. Operation-account details
 remain in private receipt storage for debugging and are absent from app activity.
 
+## Sidekick sources
+
+A source is one person's permission for events from one of their accounts to
+start a Sidekick; [`sidekick-sources.md`](sidekick-sources.md) owns the record
+and the request that asks for one. `components/sidekick-sources.tsx` is how
+people read and answer them, on three surfaces that share one component:
+
+- **`SourceDecisionButtons`** is Decline and Approve for one request, drawn
+  in that order, and it
+  is the request's state as much as its controls. While nobody has chosen,
+  both are outlines. Once the person asked chooses, their choice is filled
+  (Approve green, Decline red) and the other stays an outline. Only the person
+  asked is handed `onDecide`; everyone else sees the same two buttons and
+  cannot press them. So `disabled` on this pair means "not yours" or
+  "answered", and it is never dimmed: a rule that dims every disabled button
+  would wash out a filled choice. Because the pair is never dimmed, a press
+  in flight says so in words: the pressed button reads "Declining…" or
+  "Approving…" until the answer is acknowledged. The chosen Approve is a `success.strong`
+  fill under `sys.color.success.on` (`#ffffff` light, `#08150e` dark), and
+  the chosen Decline is `danger.base` under `danger.on`. The fill is `strong`
+  and not `base` because white on light `success.base` is 4.41:1, under the
+  4.5:1 button text needs; on `strong` it is 6.16:1. The outlines mix the hue
+  towards transparent, because `success.edge` and `danger.edge` vanish on the
+  dark elevated card.
+- **`SidekickSourceRequestCardView`** is the card an ask draws in the
+  conversation it was made from: the Sidekick, the connector and events in
+  words, the condition quoted, who asked, and one row per person asked with
+  their avatar and the pair. A request replaced by a newer ask reads
+  "Replaced by a newer request" with no buttons.
+- **`SidekickSourcesList`** is the Sidekick panel's Sources section, above
+  delegation: each source (the person, the connection's name, what it lets
+  in, its condition, Unavailable while the person is out of the
+  Organization), under an **Asked** label each pending or declined request
+  (who was asked, by whom, for what, where it stands), and one line when
+  nothing lets events in. The
+  viewer's own source has **Stop allowing**; their own pending request has the
+  pair. Delegation's explanation now ends by pointing at Sources, because the
+  two lists sit together and name some of the same people.
+
+The desktop adapter (`apps/desktop/src/renderer/components/sidekick-sources.tsx`)
+owns the reads and the two writes for the Mac app and the browser alike. The
+panel reads `GET /sidekicks/:id/sources` under `['automation', id, 'sources']`.
+A card reads `POST /sidekicks/source-requests/read` by the request ids its tool
+call answered, under the same key with `requests` and the ids appended, and
+never takes a state from the tool's output: that output is the asker's view at
+the moment of asking. It paints that output first so the feed does not jump,
+with `yours` worked out from who is viewing and nothing pressable, then the
+live read. Both sit under the Sidekick's own key on purpose, so three things
+that already happen re-read them: the Sidekicks list push moving that
+Sidekick's row, the `automations` sync topic, and an Activity push that moves
+one of this viewer's source rows (`invalidateMovedSourceRequests`, called
+where the workspace socket applies an Activity page). They also re-read on
+window focus and reconnect.
+
+An answer is acknowledged, never optimistic: the response is the request as it
+now stands, written into every open read that holds it
+(`applyDecidedSourceRequest`), then the Sidekick's sources are re-read for
+what an approval added. Both writes use `networkMode: 'always'`, so a press
+while offline fails at once instead of being held and sent on reconnect. A
+refusal is an acknowledged popup in the contract's own words
+(`SIDEKICK_SOURCE_ERRORS`); an approval with nothing connected names the
+account to connect. A card's failed read is not a popup: it is a stored row,
+so it offers Details.
+
+The connector and events are worded by the host and handed in (`SourceWords`):
+the connector by `connectorPresentation`, with Google named by the product its
+events belong to (Gmail, Google Calendar, Google Drive), and an event type by
+the rule a connector manifest's default label follows ("Email received").
+
 ## Error popups
 
 Operational failures across Electron and browser are acknowledged popups with

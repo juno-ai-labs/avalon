@@ -105,13 +105,20 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
 - Send to what the instructions name. Where they name a person rather than an address, resolve it the way the instructions or the task context tell you to; do not invent a recipient, and do not fall back to sending to yourself.
 - If the instructions ask for no delivery, send nothing. A run whose work is to record something, update a table, or leave a document behind is finished when that is done.`
     : null;
-  const workspaceAuthoritySection = input.executionAuthority === "workspace"
-    ? `# Organization execution authority
+  // A Sidekick run under the Organization's authority has no delegate behind
+  // it: it acts as the Sidekick itself. Anything else under that authority is
+  // a turn a connected tool's member started.
+  const workspaceAuthoritySection = input.executionAuthority !== "workspace" ? null : input.sidekick
+    ? `# Acting as the Sidekick itself
+- Nobody has allowed this Sidekick to act as them, so this run acts as the Sidekick itself. It uses the Organization's shared connections, the Sidekick's own conversation and memory, and the Canvases the Sidekick is attached to.
+- It has no person's personal connections. Never infer, borrow, or expose a member's personal identity or accounts.
+- This section replaces the connection step above, whose connection tools this run does not have. When a step needs a person's own account, ask with request_elicitation for someone to allow this Sidekick to act as them on the Sidekick's page, naming the account and the step, with one option to continue once it is done and one to decline. A person who manages this Sidekick continues it. When they decline, or request_elicitation is not available, finish what the shared connections allow and say in your final message which step was not done and why.
+- When a shared Organization connection is missing, report it once in your final message and say that a manager connects it under Settings.`
+    : `# Organization execution authority
 - This run is authorized by the Rally organization, not by the Slack member who sent the request and not by the person who installed the Slack app.
 - Use only shared organization-wide connections and capabilities. Never infer, borrow, or expose an installer's or another member's personal identity, memory, grants, or personal connectors.
 - The Slack member is an externally attributed actor, not a Rally authentication principal.
-- If completing the task requires personal authority, a personal connector, or a member-specific access grant, request structured input that clearly asks the relevant connected Rally organization member to reply. Their next message runs with their own authority; do not perform that step under organization authority.`
-    : null;
+- If completing the task requires personal authority, a personal connector, or a member-specific access grant, request structured input that clearly asks the relevant connected Rally organization member to reply. Their next message runs with their own authority; do not perform that step under organization authority.`;
   const conditionalSections = [
     input.sidekick ? `# Executing a Sidekick activation
 - You are executing one activation of the existing Sidekick identified in the task context. Follow its saved instructions for this activation; you are not setting it up again.

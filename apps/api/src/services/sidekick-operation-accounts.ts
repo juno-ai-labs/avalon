@@ -56,7 +56,7 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   // Only recovery of this exact effect retains its account: its provider write
   // may already have landed. Separate reads, replies and pages have no binding.
   const pinned = prior && prior.phase !== "refused" ? prior.account : null;
-  if (pinned && !grants.has(pinned.delegatedUserId)) {
+  if (pinned && pinned.delegatedUserId !== null && !grants.has(pinned.delegatedUserId)) {
     throw unavailable("The originating delegate is unavailable. Restore their delegation before reconciling this operation's uncertain outcome.");
   }
   const seen = new Set<string>();
@@ -64,9 +64,12 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
     if (seen.has(connection.connectionId)) return false;
     seen.add(connection.connectionId);
     if (pinned && connection.connectionId !== pinned.connectionId) return false;
+    // A person's connection is a delegate's to lend. The Organization's is
+    // the Sidekick's own: a run with no delegate behind it still uses it, and
+    // only a run somebody asked for under their own access loses it with them.
     return connection.scope === "personal"
       ? connection.ownerUserId !== null && grants.has(asUserId(connection.ownerUserId))
-      : grants.size > 0;
+      : grants.size > 0 || !authority.requesterUserId;
   });
   const rank = (connection: C): number[] => [
     connection.connectionId === options.requested.connectionId ? 0 : 1,
@@ -94,14 +97,17 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   for (const connection of eligible) {
     context.signal.throwIfAborted();
     const delegate = connection.scope === "personal" ? connection.ownerUserId
-      : pinned?.delegatedUserId ?? (options.coordinatorUserId && grants.has(asUserId(options.coordinatorUserId))
-        ? options.coordinatorUserId : authority.delegates[0]!.userId);
-    const grant = grants.get(asUserId(delegate!))!;
+      // A pinned account keeps who it was served for, the Sidekick itself (null) included:
+      // recovery records the same account or is refused as a change of identity.
+      : pinned ? pinned.delegatedUserId : (options.coordinatorUserId && grants.has(asUserId(options.coordinatorUserId))
+        ? options.coordinatorUserId : authority.delegates[0]?.userId ?? null);
+    // No delegate: an Organization connection served as the Sidekick itself.
+    const grant = delegate === null ? null : grants.get(asUserId(delegate))!;
     const account: ToolExecutionAccount = {
       sidekickId: authority.sidekickId, connectionId: connection.connectionId,
-      delegatedUserId: grant.userId, grantGeneration: grant.generation,
+      delegatedUserId: grant?.userId ?? null, grantGeneration: grant?.generation ?? 0,
       principal: connection.scope === "workspace" ? { type: "workspace", workspaceId: options.workspaceId }
-        : { type: "user", userId: grant.userId },
+        : { type: "user", userId: grant!.userId },
     };
     const record = (phase: "selected" | "refused" | "served") => receipts.recordExecutionAccount({
       effectIntentId: effectIntentId!, fence: options.fence, now: Date.now(), phase, account,

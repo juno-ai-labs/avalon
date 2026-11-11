@@ -9,13 +9,32 @@ import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { SidekickDelegationService } from "./sidekick-delegation-service";
 
-export function sidekickDelegationGuidance(): string {
+/**
+ * Whether a loop may change who a Sidekick acts as. A Sidekick run may not,
+ * and neither may a background worker rooted in one (`automationDelegation`,
+ * which the host derives from the worker's root, so a worker's own worker
+ * carries it too). A run is handed the content of the event that started it,
+ * an outside email among it, its workers read the same content, and
+ * enrolling a member's accounts is not something that content may bring
+ * about. The owner's decisions of 2026-11-11. Every other loop a person is
+ * behind may, a background agent of a conversation among them.
+ */
+export function setsDelegation(input: Pick<WorkstreamWorkflowInput, "automationRun" | "automationDelegation">): boolean {
+  return !input.automationRun && !input.automationDelegation;
+}
+
+export function sidekickDelegationGuidance(sets = true): string {
   const name = (local: string) => `sidekick_${local}`;
-  return `Use ${name("delegates_list")} to inspect a Sidekick's allowed users. Use ${name("set_delegation")} with a Sidekick ID and an Organization userId to add or withdraw that user's delegation. This is available during autonomous work too. For your own withdrawal after access loss, use ${name("my_delegations_list")} or a known Sidekick ID. Changing delegation starts no run. The harness handles eligible-account fallback after definite access refusals.`;
+  const inspect = `Use ${name("delegates_list")} to inspect a Sidekick's allowed users.`;
+  if (!sets) {
+    return `${inspect} This run cannot change delegation. When it needs an account nobody lends, say which account and why in your reply, so a person who manages the Sidekick can add a delegate. The harness handles eligible-account fallback after definite access refusals.`;
+  }
+  return `${inspect} Use ${name("set_delegation")} with a Sidekick ID and an Organization userId to add or withdraw that user's delegation. A background agent of this conversation may use it too; a Sidekick run and its workers may not. For your own withdrawal after access loss, use ${name("my_delegations_list")} or a known Sidekick ID. Changing delegation starts no run. The harness handles eligible-account fallback after definite access refusals.`;
 }
 
 /** The execution user supplies authority; the tool selects an Organization user. */
-export function sidekickDelegationTools(env: Env, input: WorkstreamWorkflowInput, userId: UserId, room: boolean): HarnessTool[] {
+export function sidekickDelegationTools(env: Env, input: WorkstreamWorkflowInput, userId: UserId, room: boolean,
+  sets = setsDelegation(input)): HarnessTool[] {
   const service = new SidekickDelegationService(env, input.workspaceId, userId);
   const name = (local: string) => room ? `sidekick_${local}` : local;
   const definitions = [
@@ -33,12 +52,12 @@ export function sidekickDelegationTools(env: Env, input: WorkstreamWorkflowInput
     },
     {
       name: name("set_delegation"),
-      description: "Add or withdraw delegation for an Organization user. Supply their userId and the Sidekick ID. Available in direct conversations and autonomous runs; starts no run. Use sidekick_my_delegations_list to find your own grants after losing Sidekick access.",
+      description: "Add or withdraw delegation for an Organization user. Supply their userId and the Sidekick ID. Starts no run. Use sidekick_my_delegations_list to find your own grants after losing Sidekick access.",
       capability: "rally.sidekick.delegation.set", mode: "write" as const, idempotency: "record_before_execute" as const,
       inputSchema: z.toJSONSchema(SidekickSetDelegationInputSchema),
     },
   ];
-  return [{
+  const tools: HarnessTool[] = [{
     definition: definitions[0]!,
     validateInput: (raw) => SidekickMyDelegationsInputSchema.safeParse(raw).error ?? null,
     execute: async (raw) => {
@@ -77,4 +96,5 @@ export function sidekickDelegationTools(env: Env, input: WorkstreamWorkflowInput
         summary: args.allowed ? "Allowed this Sidekick to act as the selected user" : "Withdrew delegation for the selected user" };
     },
   }];
+  return sets ? tools : tools.filter((tool) => tool.definition.capability !== "rally.sidekick.delegation.set");
 }

@@ -30,11 +30,16 @@ export type ClientRequestHeaders = (name: string) => string | undefined;
  * Reached from the one surface the sidebar travels on, the workspace socket
  * ticket, rather than from a middleware: a build that cannot render the
  * sidebar can still be signed in and still reach the updater.
+ *
+ * Answers the contract the admitted build declared, null for a client that
+ * declares none: the ticket carries it to the Organization object, which
+ * leaves out of that socket's payload what a served build older than a
+ * feature's contract cannot parse (`SOURCE_ACTIVITY_CLIENT_CONTRACT`).
  */
-export function requireCurrentClientContract(header: ClientRequestHeaders): void {
+export function requireCurrentClientContract(header: ClientRequestHeaders): number | null {
   const declared = readRallyHeader(header, RALLY_HEADERS.CLIENT_CONTRACT);
   if (declared === undefined) {
-    if (header("origin") === undefined) return;
+    if (header("origin") === undefined) return null;
     throw clientUpdateRequired();
   }
   if (!/^\d+$/u.test(declared)) throw clientUpdateRequired();
@@ -42,6 +47,7 @@ export function requireCurrentClientContract(header: ClientRequestHeaders): void
   if (!Number.isSafeInteger(version) || version < MINIMUM_SERVED_CLIENT_CONTRACT) {
     throw clientUpdateRequired();
   }
+  return version;
 }
 
 function clientUpdateRequired(): ApiError {

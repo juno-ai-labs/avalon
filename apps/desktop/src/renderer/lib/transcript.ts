@@ -5,6 +5,7 @@ import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
 import { resolveMentionPayload } from './mention-draft';
 import { connectorConnectionCardDisplayInputFromToolEvent } from './connector-connection-card';
+import { sidekickSourceRequestCardFromToolEvent } from './sidekick-source-request-card';
 import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkSpan, WorkTotal, WorkspaceMember } from './types';
 import {
   AGENT_MESSAGES_INBOUND_GROUP,
@@ -1548,6 +1549,9 @@ function continuesPluginActivityRun(message: Message): boolean {
   // told the person three times to press a button that was not there.
   if (isConnectorConnectionCardWireName(message.toolEvent?.name)) return false;
   if (connectorResourceAuthorizationRequestFromToolEvent(message.toolEvent)) return false;
+  // An ask for a Sidekick source is answered on its card, by the people it
+  // names; folded into the Sidekicks row there would be nothing to press.
+  if (sidekickSourceRequestCardFromToolEvent(message.toolEvent)) return false;
   return message.messageType === 'tool_event'
     || message.messageType === 'plugin_activity'
     || message.messageType === 'thought';

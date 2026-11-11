@@ -49,3 +49,42 @@ export const EmailLoginRedeemSchema = z.strictObject({
   method: z.enum(["magic", "otp"]), credential: z.string().min(1),
 });
 export const EmailLoginStartedSchema = z.strictObject({ challengeId: IdSchema, expiresAt: z.number().int() });
+
+/**
+ * The page on the browser host that an emailed Approve or Decline link for a
+ * Sidekick source request opens. The link's fragment carries the region and
+ * the fields below; the page posts them back and shows the answer.
+ * `docs/sidekick-sources.md` owns the request.
+ */
+export const SOURCE_DECISION_PATH = "/app/source-requests/decision";
+/**
+ * One emailed decision: the request, the person asked, what they chose, and
+ * the signature that binds the four to each other and to the Organization and
+ * Sidekick. It names no session: holding the link sent to the person's own
+ * mailbox is the proof.
+ */
+export const SourceDecisionLinkSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  sidekickId: IdSchema,
+  requestId: IdSchema,
+  userId: IdSchema,
+  decision: z.enum(["approve", "decline"]),
+  token: z.string().min(1).max(200),
+});
+export type SourceDecisionLink = z.infer<typeof SourceDecisionLinkSchema>;
+/**
+ * Where the request stands once the link was opened. `applied` says whether
+ * that is what this link asked for: the first opening and every later one of
+ * the same link. It is false when the request was already answered the other
+ * way, or replaced by a newer ask, before this link was opened.
+ */
+export const SourceDecisionResultSchema = z.object({
+  state: z.enum(["pending", "approved", "declined", "cancelled"]),
+  applied: z.boolean(),
+  sidekickName: z.string(),
+  requestedByName: z.string(),
+  connectorName: z.string(),
+  eventLabels: z.array(z.string()),
+  condition: z.string().nullable(),
+});
+export type SourceDecisionResult = z.infer<typeof SourceDecisionResultSchema>;

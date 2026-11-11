@@ -1,10 +1,11 @@
 import { BUILDING_LIVE_SITES_SKILL } from "./building-live-sites-skill";
+import { SETTING_UP_A_FILTERED_TRIGGER_SKILL } from "./filtered-trigger-skill";
 import { TASK_SKILLS } from "./task-skills";
 import { TRACKING_SEEN_OR_DONE_ITEMS_SKILL } from "./tracking-seen-or-done-items-skill";
 import { USING_EXTERNAL_STRUCTURED_DATA_SKILL } from "./using-external-structured-data-skill";
 import type { HarnessSkill } from "./index";
 
-export { BUILDING_LIVE_SITES_SKILL, TRACKING_SEEN_OR_DONE_ITEMS_SKILL, USING_EXTERNAL_STRUCTURED_DATA_SKILL };
+export { BUILDING_LIVE_SITES_SKILL, SETTING_UP_A_FILTERED_TRIGGER_SKILL, TRACKING_SEEN_OR_DONE_ITEMS_SKILL, USING_EXTERNAL_STRUCTURED_DATA_SKILL };
 
 /**
  * Skills the harness ships with, for a host that has no library of its own yet.
@@ -403,7 +404,12 @@ Follow the branch that matches the request:
 
 For a supported event, use a \`connector_activity\` trigger when its filter
 fields can express the requested match. Use \`semantic_activity\` when each event
-also needs to be checked against a written condition. Use \`webhook\` when the
+also needs to be checked against a written condition, and the account watched
+is the person's you are working for or an Organization connection. When
+another person's own account should start the Sidekick, load
+\`setting-up-a-filtered-trigger\` as well: the topic goes in that person's
+source filter, which they approve, and the trigger stays a plain
+\`connector_activity\` one. Use \`webhook\` when the
 event belongs to a webhook connection the Organization has already set up.
 Inspect which resource types and filter fields the event supports.
 
@@ -558,6 +564,9 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   // the whole procedure is drafting one, and an automation occurrence is
   // deliberately never given the drafting tools.
   POLLING_FOR_EVENTS_SKILL,
+  // Also the Sidekicks plugin's: whose events start a Sidekick, and each
+  // person's own filter on them.
+  SETTING_UP_A_FILTERED_TRIGGER_SKILL,
   // Available during authoring and execution wherever durable Tables are in scope.
   TRACKING_SEEN_OR_DONE_ITEMS_SKILL,
   // Offered only where the Terminal plugin is in scope, by its `ownerPlugin`:
