@@ -579,10 +579,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install Linux packaging and smoke dependencies
         run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libsecret-1-0 libfuse2t64
-      # Ubuntu 24.04's AppArmor blocks unprivileged user namespaces, so Chromium
-      # falls back to the setuid chrome-sandbox helper, which is not root-owned
-      # in node_modules or an extracted AppImage, and aborts. Lifting the runner's
-      # restriction keeps every smoke launch sandboxed (see docs/linux-desktop.md).
+      # Ubuntu 24.04 AppArmor blocks Chromium's userns sandbox; see docs/linux-desktop.md.
       - name: Allow Chromium's user-namespace sandbox on the runner
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Exercise real Linux updater checksum rejection and installation
