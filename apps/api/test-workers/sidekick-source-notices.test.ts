@@ -333,6 +333,31 @@ describe("what a Sidekick source request tells people", () => {
     expect(await requestStates()).toMatchObject([{ state: "approved" }]);
   });
 
+  it("leads each person asked to the Canvas the request was asked in only if they can open it, and otherwise to the Sidekick", async () => {
+    // A Canvas the manager made and shared with Pat. Robin cannot open it.
+    const canvasId = crypto.randomUUID();
+    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId, title: "Pipeline", createdByUserId: MANAGER, authorityGeneration: 1 });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: MANAGER, actorRole: "member" },
+      update: { visibility: "participants", userIds: [OTHER] } });
+    const { requests } = await workspace().sidekickRequestSources({
+      workspaceId: WORKSPACE_ID, automationId: SIDEKICK_ID, actor: manager, actorName: "Avery",
+      ask: { userIds: [PERSON, OTHER], connectorType: "google", eventTypes: ["email.received"], condition: CONDITION,
+        place: { parentKind: "canvas", parentId: canvasId } },
+    });
+    const opens = async (userId: string) => {
+      const requestId = requests.find((request) => request.person.userId === userId)!.requestId;
+      const sink = vi.fn<(env: unknown, notice: Notice) => Promise<{ outcome: "sent" }>>(async () => ({ outcome: "sent" }));
+      expect(await deliverPush(env, { region: "global", workspaceId: WORKSPACE_ID, recipientUserId: userId,
+        intentId: `source_request:${requestId}`, channel: "email" }, undefined, undefined, sink)).toBe(true);
+      const notice = sink.mock.calls[0]![1];
+      // A canonical link's path says what it opens: `/cv/` a Canvas, `/sk/` a Sidekick.
+      return { parentId: notice.parentId, opens: /\/(cv|sk)\//.exec(new URL(notice.url).pathname)?.[1] };
+    };
+    expect(await opens(OTHER)).toEqual({ parentId: canvasId, opens: "cv" });
+    // A link into a Canvas closed to them would open nothing: theirs names the Sidekick, as a request asked in no Canvas does.
+    expect(await opens(PERSON)).toEqual({ parentId: SIDEKICK_ID, opens: "sk" });
+  });
+
   it("sends a build older than the source kinds its Activity without them, row and count alike", async () => {
     // A mention the older build does read, beside the request it does not.
     await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(

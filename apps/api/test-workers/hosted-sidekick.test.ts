@@ -1320,8 +1320,11 @@ describe("a hosted Sidekick", () => {
       // workerd's own alarm runs the provisioning, and `runDurableObjectAlarm` does not wait for it.
       await expect.poll(async () => (await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId }))?.state,
         { timeout: RUN_SETTLE_TIMEOUT_MS }).not.toBe("pending");
-      expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND && alarm.alarm_key === started.runId))
-        .toEqual([]);
+      // The run reports in from inside the alarm's own send, so its state moves before the alarm
+      // settles its entry. Wait for the entry to go: a resend wrongly armed stays and fails this,
+      // and an alarm that is only slow to finish does not.
+      await expect.poll(async () => (await alarms()).filter((alarm) => alarm.kind === AUTOMATION_RUN_ALARM_KIND
+        && alarm.alarm_key === started.runId), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([]);
     } finally {
       send.mockRestore();
     }

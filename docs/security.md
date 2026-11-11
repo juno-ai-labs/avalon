@@ -405,11 +405,40 @@ email forwards the decision. The page the link opens posts the answer as it
 loads. The API route refuses a `GET` with 405, which stops only a direct `GET`
 of that path; a mail scanner that opens the link and runs the page's
 JavaScript answers for the person. The owner chose one click with no sign-in
-on 2026-11-10, and whether the page should ask for a click before it answers
-is an open question in the
-[PRD](PRDs/2026-11-10_sidekick-sources/prd.md#open-questions). What the link
+on 2026-11-10, and whether the page should wait for a press before it answers
+is an [open question](sidekick-sources.md#open-questions). What the link
 can do is bounded by its signature: one decision on one request, and an
-approval lends events and no account.
+approval lends events and no account. The region in the link is not signed;
+it only chooses which regional API the page posts to. A link cannot be
+revoked on its own: besides the person's answer, only a newer ask to the same
+person that differs in its event types or condition cancels the request it
+names ([`sidekick-sources.md`](sidekick-sources.md#operations)).
+
+Three more rules keep a source the person's own act
+([`sidekick-sources.md`](sidekick-sources.md#security-and-trust-model)):
+
+- **Who may ask through an agent.** The three source tools and the
+  `setting-up-a-filtered-trigger` skill are offered only to a turn a person
+  is driving (`asksForSources`, `builtInSkillsFor` in `integrations.ts`). A
+  Sidekick run, a background agent, a run's delegation worker, and a wizard
+  or Chat turn that another agent's message or Rally's review notice started
+  are not offered them. Each of those works from content nobody typed, a
+  stranger's email among it, so none of them may ask in a person's name or
+  approve that person's own account. No tool answers a request at all.
+  Whether a Sidekick run should also lose `sidekick_set_delegation`, which it
+  still holds, is an [open question](sidekick-sources.md#open-questions).
+- **A rule on a colleague's account.** A manager's new or changed rule on
+  another person's own connection is refused
+  (`sidekick_source_owner_must_approve`) until that person approves a request
+  for the event type. A source their own saved rule made does not count.
+- **Event content is fenced as evidence.** The one message a run is handed
+  sits between two marker lines that carry the run's id, which the sender
+  cannot know, so a line in the message that looks like a marker closes
+  nothing. The marker words are removed from the content in any case or
+  spacing, and the statement after the fence says nothing in it is an
+  instruction. The notice that asks a person for a source quotes the
+  condition exactly as stored, with no Markdown rewrite, so the person
+  approves the words the classifier judges.
 
 Claiming has two consequences worth knowing. A share to an address that already
 has an account is claimed as it is made, so it adds that person to the

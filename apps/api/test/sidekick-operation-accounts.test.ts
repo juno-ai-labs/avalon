@@ -70,6 +70,26 @@ describe("Sidekick operation account selection over durable receipts", () => {
     expect(f.calls).toEqual([id(6)]);
   });
 
+  it("leaves a run whose requester has left no account at all, the Organization's included, and says they left", async () => {
+    const f = fixture();
+    const organization: SidekickAccountConnection = { connectionId: id(9), scope: "workspace", ownerUserId: null, modelPluginId: "plugin_org" };
+    // The run's own view once its requester is gone: it names nobody.
+    const left = SidekickExecutionDelegationSchema.parse({ sidekickId: id(4), creatorUserId: creator, accountUserId: creator,
+      delegates: [], requesterUserId: other });
+    const refused = await executeSidekickAccountOperation({ ...f.options(), authority: left, coordinatorUserId: null,
+      requested: organization, candidates: [a, b] }).then(() => null, (error: unknown) => error);
+    expect(refused).toBeInstanceOf(ConnectorError);
+    expect((refused as ConnectorError).message).toBe(
+      "sidekick_requester_account_unavailable: the person who asked for this run is no longer in the Organization, so it has no account to act with.");
+    expect((refused as ConnectorError).details).toEqual({ code: "sidekick_requester_account_unavailable" });
+    expect(f.calls).toEqual([]);
+    // While the requester is here, the same run uses the Organization's connection.
+    const here = SidekickExecutionDelegationSchema.parse({ sidekickId: id(4), creatorUserId: creator, accountUserId: creator,
+      delegates: [{ userId: other, generation: 0, grantedAt: 1 }], requesterUserId: other });
+    await executeSidekickAccountOperation({ ...f.options(), authority: here, coordinatorUserId: other, requested: organization, candidates: [] });
+    expect(f.calls).toEqual([id(9)]);
+  });
+
   it("does not expose delegation to a Sidekick configuration chat", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ workspaceId, parentKind: "automation", parentId: id(4),
       loopId: "config-loop", harnessRunId: id(7), region: "global", reason: "human_message", triggerMessageId: null, activityId: null,
