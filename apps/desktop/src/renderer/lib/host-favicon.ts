@@ -26,13 +26,9 @@ export function httpHostname(href: string | undefined): string | null {
 }
 
 /**
- * True inside markup whose text is still arriving: a streaming body's open
- * tail. A link there can name a hostname that is only part-typed — GFM
- * autolinks `www.alph` on its way to `www.alphamountain.ai` — and every prefix
- * is a distinct host to the endpoint, so asking for each one spends a provider
- * discovery per character and logs a `favicon_unavailable` 502 for hosts that
- * never existed. Held links draw their no-icon state; the icon arrives when the
- * line settles into a segment, which is a fresh mount and so a fresh request.
+ * True inside a streaming body's open tail, whose links may name a part-typed
+ * host; `useHostFavicon` asks for nothing there, and the icon arrives when the
+ * block settles or the stream ends.
  */
 export const HostFaviconHold = createContext(false);
 

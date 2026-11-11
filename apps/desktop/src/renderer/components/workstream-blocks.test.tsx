@@ -1214,7 +1214,7 @@ describe('MessageBlock markdown', () => {
     expect(getFavicon).toHaveBeenCalledWith('docs.example.com');
   });
 
-  it('asks for no favicon while a streaming link is still being typed, and asks once the line settles', async () => {
+  it('asks for no favicon while a streaming link is still being typed, and asks once its block settles', async () => {
     const getFavicon = vi.fn<(hostname: string) => Promise<Blob | null>>(async () => null);
     optionalAppSession.mockReturnValue({ api: { getFavicon } });
 

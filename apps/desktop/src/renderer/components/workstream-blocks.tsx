@@ -1590,8 +1590,8 @@ export function MarkdownBody({
               />
             );
           })}
-          {/* Only here is the source's last line still arriving, so only
-              here can a link's hostname be a prefix of the one being typed. */}
+          {/* Only here is the source still arriving, so only here can a
+              link's hostname be a prefix of the one being typed. */}
           <HostFaviconHold.Provider value={true}>
             {renderMarkdown(tail, extra, tailRemarkPlugins)}
           </HostFaviconHold.Provider>
