@@ -21,6 +21,8 @@ export interface AutomationHeaderProps {
   automation: AutomationDetail;
   delegateNames?: ReadonlyMap<string, string>;
   delegation?: ReactNode;
+  /** Whose events may start it (`docs/sidekick-sources.md`), drawn beside delegation and apart from it. */
+  sources?: ReactNode;
   /**
    * Every run the automation has, newest first, from `GET /automations/:id/runs`.
    * `undefined` while loading, in which case the detail's recent runs stand in.
@@ -121,6 +123,7 @@ export function AutomationHeader({
   automation,
   delegateNames,
   delegation,
+  sources,
   runs,
   runsError,
   pending = null,
@@ -279,6 +282,8 @@ export function AutomationHeader({
         </section>
         {/* Who it may act as is a question for a Sidekick that runs; a draft has nobody to ask yet. */}
         {!isDraft && automation.delegationAttention && <p role="status">{automation.delegationAttention.message}</p>}
+        {/* What starts it, then who it acts as: two questions with two owners, never one list. */}
+        {!isDraft && sources}
         {!isDraft && delegation}
         {customTools.length > 0 && <section className="sidekick-profile-section sidekick-tools-section">
           <h2>Tools</h2>

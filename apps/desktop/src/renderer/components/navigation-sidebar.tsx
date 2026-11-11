@@ -14,6 +14,7 @@ import { useUiStore, type SidebarSection } from '../lib/ui-store';
 import { useCanvasList } from '../lib/canvases';
 import { useDockBadge } from '../lib/dock-badge';
 import type { ActivityList } from '../lib/sidebar-list-store';
+import { useSidekickList } from '../lib/sidekicks';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { ActivitySection, activityRoute, useActivityList } from './activity-sidebar-section';
 import { CanvasPinDragProvider } from './canvas-pin-drag';
@@ -201,9 +202,14 @@ export function NavigationSidebar({
   const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
   const workspaceSocket = useOptionalWorkspaceSocket();
+  const sidekickRows = useSidekickList();
   const openActivityDestination = useCallback((list: ActivityList, replace: boolean): void => {
     const top = list.items[0];
-    const target = top ? activityRoute(top) : '/activity';
+    // A source request about a Sidekick this person cannot open yet has no
+    // conversation to land in; it leads to the Activity home (`activityRoute`).
+    const target = top
+      ? activityRoute(top, top.parentKind !== 'automation' || (sidekickRows ?? []).some((row) => row.id === top.parentId))
+      : '/activity';
     if (target === address) {
       // A rail pick can reveal the empty page without a route change.
       if (!top && !replace) setSidebarOpen(false);
@@ -212,7 +218,7 @@ export function NavigationSidebar({
     const { sidebarOpen: sheetOpen, setSheetAfterNavigation } = useUiStore.getState();
     if (sheetOpen && top && target.split('?')[0] !== pathname) setSheetAfterNavigation(true);
     void navigate(target, { replace });
-  }, [address, navigate, pathname, setSidebarOpen]);
+  }, [address, navigate, pathname, setSidebarOpen, sidekickRows]);
   // A rail click opens the top row or the empty page, with one Back step.
   // A launch may replace a dashboard or the Activity home restored from
   // storage. Opening /activity directly or through history selects the list.

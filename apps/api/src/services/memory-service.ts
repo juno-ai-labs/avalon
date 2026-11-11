@@ -211,7 +211,10 @@ export async function resolveMemoryAccess(
     memberRole = member.role;
   }
 
-  const workspaceWritable = input.executionPrincipal.type === "workspace"
+  // A Sidekick run with no delegate behind it carries the Organization's
+  // principal without an administrator's standing: it writes its Sidekick's
+  // memory, never the Organization's.
+  const workspaceWritable = (input.executionPrincipal.type === "workspace" && input.parentKind !== "automation")
     || memberRole === "owner"
     || memberRole === "admin";
   const scopes: MemoryScope[] = [

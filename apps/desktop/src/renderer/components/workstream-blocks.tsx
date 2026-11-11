@@ -65,6 +65,8 @@ import {
   connectorResourceAuthorizationRequest,
 } from './connector-mentions';
 import { isUnrecognizedConnectorConnectionCard } from '../lib/connector-connection-card';
+import { sidekickSourceRequestCardFromToolEvent } from '../lib/sidekick-source-request-card';
+import { SidekickSourceRequestCard } from './sidekick-sources';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import { elicitationAnswerLabel } from '@rally/contracts/text';
@@ -2812,7 +2814,11 @@ interface MessageBlockProps {
   onAcceptDraft?: (automationId: string) => void;
   acceptingDraftFor?: string | null;
   acceptDraftFailureFor?: string | null;
-  /** Main-feed opt-in; other transcript hosts keep core tools as neutral rows. */
+  /**
+   * Main-feed opt-in for the tool rows that are cards a person acts on (a
+   * connection to make, a resource to authorize, a Sidekick source to
+   * answer); other transcript hosts keep them as neutral rows.
+   */
   connectorConnectionCards?: boolean;
   connectedConnectorSelections?: ReadonlySet<string>;
   onConnectorConnected?: (selectionKey: string) => void;
@@ -2870,6 +2876,8 @@ export function MessageBlock({
       : null;
     const connectionCard = connectorConnectionCards ? connectorConnectionCardInput(message) : null;
     const connectionCardProvider = connectionCard ? connectorConnectionCardProvider(connectionCard) : null;
+    // Under the same opt-in: a card people answer belongs to the main feed.
+    const sourceRequestCard = connectorConnectionCards ? sidekickSourceRequestCardFromToolEvent(message.toolEvent) : null;
     return (
       <div className="transcript-event" id={`message-${message.id}`}>
         {resourceAuthorization ? (
@@ -2888,6 +2896,8 @@ export function MessageBlock({
           />
         ) : connectorConnectionCards && isUnrecognizedConnectorConnectionCard(message) ? (
           <ConnectorConnectionUpdateCard />
+        ) : sourceRequestCard ? (
+          <SidekickSourceRequestCard card={sourceRequestCard} />
         ) : <ToolBlock message={message} />}
       </div>
     );

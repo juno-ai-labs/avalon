@@ -79,6 +79,8 @@ interface WorkspaceSocketClaims {
   expiresAt: number;
   /** The staff member behind a support session (`docs/impersonation.md`). */
   impersonatorUserId?: UserId;
+  /** The client contract the ticket's request declared (`CLIENT_CONTRACT_VERSION`); absent when it declared none. */
+  clientContract?: number;
 }
 
 export interface TranscriptionSocketClaims {
@@ -168,6 +170,8 @@ export async function issueSocketTicket(
 export async function issueWorkspaceSocketTicket(
   env: Env,
   auth: AuthContext,
+  /** The client contract the ticket's request declared; null for a client that declares none. */
+  clientContract: number | null = null,
 ): Promise<string> {
   assertSessionPrincipal(auth);
   const now = Math.floor(Date.now() / 1_000);
@@ -177,6 +181,7 @@ export async function issueWorkspaceSocketTicket(
     wid: auth.workspaceId,
     region: auth.region,
     ...(auth.impersonatorUserId ? { imp: auth.impersonatorUserId } : {}),
+    ...(clientContract === null ? {} : { cc: clientContract }),
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(auth.userId)
@@ -273,6 +278,7 @@ export async function verifyWorkspaceSocketTicket(
       ticketId: payload.jti,
       expiresAt: payload.exp,
       ...(typeof payload.imp === "string" ? { impersonatorUserId: asUserId(payload.imp) } : {}),
+      ...(typeof payload.cc === "number" && Number.isSafeInteger(payload.cc) && payload.cc >= 0 ? { clientContract: payload.cc } : {}),
     };
   } catch {
     throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
@@ -590,6 +596,9 @@ export class WorkspaceSocketService {
     headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
     for (const name of rallyHeaderAliases(RALLY_HEADERS.SOCKET_IMPERSONATOR_ID)) headers.delete(name);
     if (claims.impersonatorUserId) headers.set(RALLY_HEADERS.SOCKET_IMPERSONATOR_ID, claims.impersonatorUserId);
+    // Only the signed ticket says which contract the build speaks.
+    for (const name of rallyHeaderAliases(RALLY_HEADERS.SOCKET_CLIENT_CONTRACT)) headers.delete(name);
+    if (claims.clientContract !== undefined) headers.set(RALLY_HEADERS.SOCKET_CLIENT_CONTRACT, String(claims.clientContract));
     const response = await stub.fetch(
       new Request("https://workspace.internal/socket", { method: "GET", headers }),
     );

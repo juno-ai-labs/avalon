@@ -1,6 +1,7 @@
 import { AGENT_MODEL_OVERRIDES } from "./runtime-config";
 export * from './artifact-picker';
 export * from "./sidekick-delegation";
+export * from "./sidekick-sources";
 import { AnnotationsSchema, validateAnnotationAttachments } from './artifact-annotations';
 export * from './artifact-annotations';
 import { ExternalPeopleSchema } from "./external-people";
@@ -1804,10 +1805,10 @@ export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
  * record still names but this list does not (the Thread-era `newThreads`,
  * `newBreakouts` and `merges`) is stripped on read.
  */
-export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests"]);
+export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests", "sourceRequests"]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
 /** The kinds Settings offers, in its order: each one a real producer records. */
-export const OFFERED_NOTIFICATION_KINDS = ["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests"] as const satisfies readonly NotificationKind[];
+export const OFFERED_NOTIFICATION_KINDS = ["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests", "sourceRequests"] as const satisfies readonly NotificationKind[];
 export type OfferedNotificationKind = (typeof OFFERED_NOTIFICATION_KINDS)[number];
 /**
  * Lenient on read: a channel this build does not know (a newer server's, or
@@ -1830,6 +1831,13 @@ export const NotificationChannelsSchema = z.object({
   artifactUpdates: NotificationChannelListSchema.default(["push"]),
   /** Defaulted: a server older than Canvas access requests does not send it. */
   accessRequests: NotificationChannelListSchema.default(["push"]),
+  /**
+   * Being asked to let one's events start a Sidekick, and the answer to one's
+   * own ask. Defaulted for a server or a stored record older than it, and to
+   * both channels: the request is answered from the email itself
+   * (docs/sidekick-sources.md).
+   */
+  sourceRequests: NotificationChannelListSchema.default(["push", "email"]),
 });
 export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
 /**
@@ -1842,6 +1850,7 @@ export const NotificationChannelsChoiceSchema = NotificationChannelsSchema
     newMessages: NotificationChannelsSchema.shape.newMessages.unwrap(),
     artifactUpdates: NotificationChannelsSchema.shape.artifactUpdates.unwrap(),
     accessRequests: NotificationChannelsSchema.shape.accessRequests.unwrap(),
+    sourceRequests: NotificationChannelsSchema.shape.sourceRequests.unwrap(),
   })
   .partial();
 export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
@@ -1851,6 +1860,7 @@ export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
   runFinished: ["push"],
   artifactUpdates: ["push"],
   accessRequests: ["push"],
+  sourceRequests: ["push", "email"],
 };
 export const MemberPreferencesSchema = z.object({
   /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */
@@ -2807,7 +2817,11 @@ export const ToolExecutionAccountSchema = z.strictObject({
   sidekickId: IdSchema,
   connectionId: IdSchema,
   principal: ExecutionPrincipalSchema,
-  delegatedUserId: UserIdSchema,
+  /**
+   * Whose delegation served the operation. Null when nobody's did: an
+   * Organization connection used by a run that acts as the Sidekick itself.
+   */
+  delegatedUserId: UserIdSchema.nullable(),
   grantGeneration: z.number().int().nonnegative(),
 }).refine((account) => account.principal.type !== "user" || account.principal.userId === account.delegatedUserId, {
   path: ["delegatedUserId"], message: "A personal operation's delegate must match its serving principal",

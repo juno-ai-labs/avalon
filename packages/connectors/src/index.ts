@@ -2669,6 +2669,33 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     resourceRegistrationCapability: "drive.read",
     isPortableActivityResource: isPortableGoogleActivityResource,
 
+    // New mail's content is the one message the event names: its headers, its
+    // text and its attachments' names. Never the thread, never a search.
+    async readActivityContent(connection, activity, signal) {
+      const messageId = activity.eventType === "email.received" ? activity.subject.messageId : null;
+      if (typeof messageId !== "string" || !connection.grantedScopes.includes("gmail.read")) return null;
+      const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`);
+      url.searchParams.set("format", "full");
+      url.searchParams.set("fields", "id,threadId,labelIds,snippet,historyId,internalDate,payload(mimeType,filename,headers,body,parts)");
+      const response = await api(connection, url.toString(), { signal }, [404]);
+      if (!response.ok) return null;
+      const message = sanitizeGmailMessageForTool(await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES), GOOGLE_TOOL_TEXT_BYTES);
+      const header = (label: string, key: string) => typeof message[key] === "string" && message[key] ? [`${label}: ${message[key]}`] : [];
+      const attachments = Array.isArray(message.attachments)
+        ? message.attachments.flatMap((attachment) => typeof (attachment as { filename?: unknown }).filename === "string"
+          ? [(attachment as { filename: string }).filename] : [])
+        : [];
+      return {
+        text: [
+          ...header("From", "from"), ...header("To", "to"), ...header("Cc", "cc"), ...header("Date", "date"), ...header("Subject", "subject"),
+          "",
+          typeof message.textContent === "string" ? message.textContent : "",
+          ...(attachments.length > 0 ? ["", `Attachments (names only): ${attachments.join(", ")}`] : []),
+        ].join("\n"),
+        truncated: message.textTruncated === true,
+      };
+    },
+
     async probeResourceAccess(connection, reference, signal): Promise<ConnectorResourceAccess> {
       const fileId = googleDriveFileIdFromReference(reference);
       if (!fileId) return { access: "unrecognized" };

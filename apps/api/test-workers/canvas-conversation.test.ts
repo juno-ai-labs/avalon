@@ -1035,6 +1035,22 @@ describe("a Canvas's artifacts", () => {
     await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: home!.parentId })).rejects.toMatchObject({ code: "canvas_archived" });
   });
 
+  it("makes the Canvas of a run that acts as the Sidekick itself as the Sidekick's author, and refuses by name with nobody to make it as", async () => {
+    const sidekickId = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    // A run with no delegate behind it executes under the Organization's authority: no person to create as.
+    const itself = (parentId: string) => ({ workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId,
+      substreamId: asSubstreamId(crypto.randomUUID()), executionPrincipal: { type: "workspace" as const, workspaceId: WORKSPACE_ID } });
+    const home = (await resolveTerminalPublicationHome(TEST_ENV, itself(sidekickId), { title: "Digest" }))!;
+    expect(home.substreamId).toBe("0");
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `SELECT created_by_user_id, writer_sidekick_id, title FROM canvas_directory WHERE canvas_id = ?`, home.parentId).toArray()))
+      .toEqual([{ created_by_user_id: CREATOR, writer_sidekick_id: sidekickId, title: "Digest" }]);
+    // A Sidekick the Organization holds no row for has no author either.
+    await expect(resolveTerminalPublicationHome(TEST_ENV, itself(crypto.randomUUID()), { title: "Digest" }))
+      .rejects.toMatchObject({ code: "canvas_creator_unavailable", details: { field: "canvas" } });
+  });
+
   it("publishes a Sidekick run into a Canvas it makes, open to whoever the Sidekick is shared with", async () => {
     const sidekickId = crypto.randomUUID();
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });

@@ -13,9 +13,12 @@ import { IdSchema, SubstreamIdSchema } from "./identifiers";
  * What happened: a mention of me, me being added, a run that needs my input,
  * a run I asked for finished, a person's reply in a conversation I am in, a
  * new version in a Canvas I pinned, somebody asking to open a Canvas I
- * decide on, my own request being let in, and my own request being declined.
+ * decide on, my own request being let in, my own request being declined,
+ * somebody asking me to let my events start a Sidekick (`source_request`), and
+ * the person I asked approving or declining (`source_approved`,
+ * `source_declined`).
  */
-export const ActivityKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished", "new_message", "artifact_updated", "access_request", "access_granted", "access_denied"]);
+export const ActivityKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished", "new_message", "artifact_updated", "access_request", "access_granted", "access_denied", "source_request", "source_approved", "source_declined"]);
 export type ActivityKind = z.infer<typeof ActivityKindSchema>;
 
 /** Where it happened: a Canvas, or a Sidekick (`automation`, its storage name). */
@@ -72,6 +75,22 @@ export const ActivityItemSchema = z.object({
     state: z.enum(["pending", "approved", "denied"]),
     decidedByName: z.string().nullable(),
     decidedByUserId: IdSchema.nullable().optional(),
+  }).nullable().optional(),
+  /**
+   * For `source_request`, `source_approved` and `source_declined`: the
+   * request, where it stands now, and what was asked. The asked person's
+   * `source_request` row is its actions while `state` is `pending`, and reads
+   * as seen once it is not. `docs/sidekick-sources.md` owns the request.
+   */
+  sourceRequest: z.object({
+    requestId: IdSchema,
+    state: z.enum(["pending", "approved", "declined", "cancelled"]),
+    connectorType: z.string(),
+    eventTypes: z.array(z.string()),
+    condition: z.string().nullable(),
+    requestedByName: z.string(),
+    /** The person asked, as the requester reads them. */
+    personName: z.string().nullable(),
   }).nullable().optional(),
   /** For `artifact_updated`: the artifact the newest version is of, which the row opens the Canvas onto. */
   artifact: z.object({ resourceId: IdSchema, title: z.string() }).nullable().optional(),

@@ -18,8 +18,22 @@ import {
   SidekickReviewNoticeV1Schema, type SidekickReviewNoticeV1,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
+import { SidekickSourceStorage, sidekickSourceError } from "./sidekick-source-storage";
+import {
+  enqueueSourceNotices, prepareSourceAnswerNotice, prepareSourceRequestNotices, recordSourceRequestAsked, recordSourceRequestSettled,
+  type RecordedSourceNotice,
+} from "./sidekick-source-notices";
+import {
+  SidekickSourceAskRequestSchema, SidekickSourceDecisionRequestSchema, SidekickSourceRequestReadSchema,
+  SidekickSourceWithdrawRequestSchema,
+} from "./automation-do-protocol";
 import { canvasReaderAllows, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
+import {
+  SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourcesResultSchema,
+  type SidekickSource, type SidekickSourceRequest, type SidekickSourceRequestResult,
+  type SidekickSourceRequestView, type SidekickSourcesResult,
+} from "@rally/contracts";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
   SidekickPrepareDelegationRequestSchema, SidekickSetDelegationRequestSchema, SidekickReadDelegationReceiptRequestSchema,
@@ -348,10 +362,18 @@ export interface SidekickRunProvisioning {
   automationId: string;
   runId: string;
   harnessRunId: string;
-  runAsUserId: string;
+  /** Who the run acts as; null when it acts as the Sidekick itself. */
+  runAsUserId: string | null;
   modelOverride: string | null;
   definitionRevision: number;
   definition: AutomationRunDefinitionV1;
+  /**
+   * The event that started the run and the connection it came from, when the
+   * host may read what the event is about (for new mail, that one message)
+   * and hand it to the run. Null for every other run, and once the person
+   * whose connection it is no longer lets that event in.
+   */
+  eventContent: { connectionId: string; connectorType: string; eventType: string; subject: Record<string, unknown> } | null;
 }
 
 /** What a review's delivery needs, read once by the Queue consumer that wakes the wizard. */
@@ -363,6 +385,9 @@ export interface SidekickReviewDelivery {
   coordinatorUserId: string;
   notice: SidekickReviewNoticeV1;
 }
+
+/** One request's reads of who is in the Organization, shared across the sources it checks. */
+export type SidekickSourceRelationships = Map<string, Promise<WorkspaceRelationship | null>>;
 
 /** What `WorkspaceDO` lends a hosted Sidekick. */
 export interface HostedSidekickHost {
@@ -422,6 +447,9 @@ export interface HostedSidekickHost {
   /** Hand a review to the activity Queue, whose consumer wakes the wizard with it. */
   sendReview(message: { workspaceId: string; automationId: string; reviewId: string }): Promise<void>;
 }
+
+/** What a run says when the person who asked for it under their own access has left the Organization. */
+const SIDEKICK_RUN_REQUESTER_LEFT = "Needs attention: the person who asked for this run is no longer in the Organization";
 
 /**
  * A run's stored trigger, parsed rather than cast: a row an older or newer
@@ -664,6 +692,34 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     return new SidekickDelegationStorage(this.storage);
   }
 
+  private sources(): SidekickSourceStorage {
+    return new SidekickSourceStorage(this.storage);
+  }
+
+  /**
+   * Whether a source is still its person's to give: they are in the
+   * Organization, in the membership they gave it under. Reading the Sidekick
+   * is not asked for, unlike a delegate: a person's events keep arriving
+   * after they stop looking, until they take the source back.
+   */
+  async sourceEligible(source: SidekickSource, relationships: SidekickSourceRelationships = new Map()): Promise<boolean> {
+    const row = this.row();
+    if (!row || row.lifecycle === "deleted") return false;
+    let pending = relationships.get(source.userId);
+    if (!pending) {
+      pending = this.host.readRelationship(row.workspace_id, source.userId);
+      relationships.set(source.userId, pending);
+    }
+    const relationship = await pending;
+    return relationship?.status === "active" && relationship.incarnation === source.membershipIncarnation;
+  }
+
+  private async eligibleSources(relationships: SidekickSourceRelationships = new Map()): Promise<SidekickSource[]> {
+    const sources = this.sources().forSidekick(this.sidekickId);
+    const eligible = await Promise.all(sources.map((source) => this.sourceEligible(source, relationships)));
+    return sources.filter((_source, index) => eligible[index]);
+  }
+
   /** Enroll missing legacy creators and retain the previous task account's grant. */
   private async migrateDelegation(): Promise<void> {
     const row = this.row();
@@ -685,7 +741,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         }
       }
       this.sql.exec("UPDATE automation_directory SET delegation_migrated=1 WHERE automation_id=?", this.sidekickId);
-      this.scheduleSourceReconciliation();
     });
   }
 
@@ -763,37 +818,81 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     return grants.find((_grant, index) => available[index])?.userId ?? null;
   }
 
-  /** Matching shares eligibility only within its request; delivery checks afresh. */
-  async eventCoordinator(event: WorkspaceExternalEvent, registrationId: string, eligibility?: Map<string, Promise<boolean>>): Promise<string | null> {
+  /**
+   * Whether an event may start this Sidekick, and under whose filter.
+   *
+   * An event the whole Organization can see needs nobody: the Sidekick
+   * watches an Organization connection as itself. An event limited to an
+   * audience (a person's own connection, or a private place on an
+   * Organization connection) enters only through the source of somebody in
+   * that audience, for that connection and that event type. Null refuses it.
+   *
+   * `conditions` is empty when a source lets the event in unfiltered; otherwise
+   * it holds each source's written condition, any one of which admits.
+   * Delegation is not read. Matching shares the relationship reads of one
+   * request; delivery checks afresh.
+   *
+   * `audience` is whose event it is, for choosing who the run acts as: the
+   * owner of a person's connection, the people a private place is limited
+   * to, or null for an event the whole Organization can see.
+   */
+  async eventSource(
+    event: WorkspaceExternalEvent, registrationId: string, relationships: SidekickSourceRelationships = new Map(),
+  ): Promise<{ conditions: string[]; connectorType: string | null; audience: string[] | null } | null> {
     const stored = this.sql.exec<{
-      connection_scope: string; connection_owner_user_id: string | null; target_user_ids_json: string; visibility_json: string;
-    }>("SELECT connection_scope,connection_owner_user_id,target_user_ids_json,visibility_json FROM workspace_connector_events WHERE event_id=?", event.id).toArray()[0];
-    const source = this.sql.exec<{ scope: string; owner_user_id: string | null }>(
-      `SELECT connection.scope,connection.owner_user_id FROM workspace_external_event_registrations registration
-       JOIN connector_connections connection ON connection.id=registration.connection_id
-       WHERE registration.registration_id=? AND registration.automation_id=?`, registrationId, this.sidekickId,
+      connection_id: string; connector_type: string; connection_scope: string; connection_owner_user_id: string | null;
+      target_user_ids_json: string; visibility_json: string;
+    }>(`SELECT connection_id,connector_type,connection_scope,connection_owner_user_id,target_user_ids_json,visibility_json
+          FROM workspace_connector_events WHERE event_id=?`, event.id).toArray()[0];
+    const registered = this.sql.exec<{ connection_id: string; connector_type: string; scope: string; owner_user_id: string | null }>(
+      `SELECT registration.connection_id,registration.connector_type,connection.scope,connection.owner_user_id
+         FROM workspace_external_event_registrations registration
+         JOIN connector_connections connection ON connection.id=registration.connection_id
+        WHERE registration.registration_id=? AND registration.automation_id=?`, registrationId, this.sidekickId,
     ).toArray()[0];
-    const personal = (stored?.connection_scope ?? source?.scope ?? event.sourceConnectionScope) === "personal";
-    const owner = stored?.connection_owner_user_id ?? source?.owner_user_id ?? event.sourceConnectionOwnerUserId ?? null;
-    const audience = stored ? restrictedActivityUserIds(stored)
+    const connectionId = stored?.connection_id ?? registered?.connection_id ?? event.sourceConnectionId ?? null;
+    const connectorType = stored?.connector_type ?? registered?.connector_type ?? null;
+    const personal = (stored?.connection_scope ?? registered?.scope ?? event.sourceConnectionScope) === "personal";
+    const owner = stored?.connection_owner_user_id ?? registered?.owner_user_id ?? event.sourceConnectionOwnerUserId ?? null;
+    const restricted = stored ? restrictedActivityUserIds(stored)
       : event.audienceKind === "restricted" ? event.audienceUserIds : null;
-    if (personal) {
-      if (!owner || (audience !== null && !audience.includes(owner))) return null;
-      return this.coordinator(owner, [owner], false, eligibility);
-    }
-    return this.coordinator(null, audience, false, eligibility);
+    if (!personal && restricted === null) return { conditions: [], connectorType, audience: null };
+    if (personal && (!owner || (restricted !== null && !restricted.includes(owner)))) return null;
+    const audience = personal ? [owner!] : restricted!;
+    if (connectionId === null) return null;
+    const candidates = this.sources().forSidekick(this.sidekickId).filter((source) => source.connectionId === connectionId
+      && audience.includes(source.userId) && source.eventType === event.eventType);
+    const eligible = await Promise.all(candidates.map((source) => this.sourceEligible(source, relationships)));
+    const admitting = candidates.filter((_source, index) => eligible[index]);
+    if (admitting.length === 0) return null;
+    // One person letting it in unfiltered is enough: their filter is theirs
+    // alone, and nobody else's narrows it.
+    const conditions = admitting.some((source) => source.condition === null) ? []
+      : [...new Set(admitting.map((source) => source.condition!))];
+    return { conditions, connectorType, audience };
   }
 
   private delegationError(code: keyof typeof SIDEKICK_DELEGATION_ERRORS): ApiError {
     return new ApiError(code === "sidekick_not_found" ? 404 : 409, code, SIDEKICK_DELEGATION_ERRORS[code]);
   }
 
-  /** Safe failure state, with no event payload or provider error retained in the directory. */
+  /**
+   * Safe failure state, with no event payload or provider error retained in
+   * the directory.
+   *
+   * `no_eligible_delegate` is also what keeps a Sidekick stopped
+   * (`admitOccurrence`), so no other warning replaces it: only clearing it
+   * does, which a delegate's run or a resume is what does. A warning that
+   * could overwrite it would start the Sidekick with nobody's act.
+   */
   noteDelegationAttention(code: SidekickDelegationAttentionCode | null): void {
     this.storage.transactionSync(() => {
       const changed = this.sql.exec(
-        "UPDATE automation_directory SET delegation_attention_code=? WHERE automation_id=? AND delegation_attention_code IS NOT ? RETURNING automation_id",
-        code, this.sidekickId, code,
+        `UPDATE automation_directory SET delegation_attention_code=?1
+          WHERE automation_id=?2 AND delegation_attention_code IS NOT ?1
+            AND (?1 IS NULL OR delegation_attention_code IS NOT 'no_eligible_delegate')
+          RETURNING automation_id`,
+        code, this.sidekickId,
       ).toArray().length > 0;
       if (changed) this.touchDirectory(Date.now());
     });
@@ -844,7 +943,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         label: enrollment?.row.title || "Unavailable Sidekick",
       });
       if (this.row()) this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
-      this.scheduleSourceReconciliation();
       return result;
     });
   }
@@ -893,6 +991,393 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       creator: identity(row.author_user_id),
       you: { userId: request.actor.userId, allowed: this.delegations().read(this.sidekickId, request.actor.userId)?.allowed ?? false },
       delegates: grants.map((grant, index) => ({ ...identity(grant.userId), eligible: availability[index]! })),
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sources: whose events may start this Sidekick. docs/sidekick-sources.md.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Names and faces for the people a source or a request names, in one read.
+   * A stored presentation this build cannot read is left out and the person
+   * is drawn by their name: a face is not worth refusing somebody their own
+   * request over.
+   */
+  async sourcePeople(userIds: readonly string[]): Promise<(userId: string) => SidekickSourceRequestView["person"]> {
+    const unique = [...new Set(userIds)];
+    const people = unique.length === 0 ? [] : (await this.env.DB.prepare(
+      "SELECT id,name,avatar_url,presentation_json FROM users WHERE id IN (SELECT value FROM json_each(?))",
+    ).bind(JSON.stringify(unique)).all<{ id: string; name: string | null; avatar_url: string | null; presentation_json: string | null }>()).results;
+    const identities = new Map(people.map((person) => {
+      let raw: unknown;
+      try { raw = person.presentation_json ? JSON.parse(person.presentation_json) : null; } catch { raw = null; }
+      const parsed = PersonalPresentationSchema.nullable().safeParse(raw);
+      return [person.id, { userId: asUserId(person.id), displayName: person.name || "Rally user", avatarUrl: person.avatar_url,
+        presentation: parsed.success ? parsed.data : null }];
+    }));
+    return (userId) => identities.get(userId) ?? { userId: asUserId(userId), displayName: "Rally user", avatarUrl: null, presentation: null };
+  }
+
+  private sourceRequestView(
+    row: HostedSidekickRow, request: SidekickSourceRequest, viewerUserId: string, person: SidekickSourceRequestView["person"],
+  ): SidekickSourceRequestView {
+    return SidekickSourceRequestViewSchema.parse({
+      requestId: request.requestId, sidekickId: this.sidekickId, sidekickName: row.title || "Sidekick",
+      person, connectorType: request.connectorType, eventTypes: request.eventTypes, condition: request.condition,
+      state: request.state, requestedByName: request.requestedByName, yours: request.userId === viewerUserId,
+      createdAt: request.createdAt, decidedAt: request.decidedAt,
+    });
+  }
+
+  /**
+   * Whether a person may see a request: the person asked, whoever asked,
+   * anyone who reads or manages the Sidekick, and anyone who can open the
+   * Canvas it was asked in, since its card is drawn there for all of them.
+   */
+  private async sourceRequestVisible(row: HostedSidekickRow, request: SidekickSourceRequest, actor: AutomationActor): Promise<boolean> {
+    if (request.userId === actor.userId || request.requestedByUserId === actor.userId) return true;
+    if (sidekickReaderAllows(row, { userId: actor.userId, actorRole: actor.actorRole ?? null }, this.sql)) return true;
+    if (await this.managerAllows(row, actor)) return true;
+    if (request.place?.parentKind !== "canvas") return false;
+    return this.canvasOpenTo(row.workspace_id, request.place.parentId, actor);
+  }
+
+  /** Whether a person can open a Canvas now: where a request was asked, and where its notice may lead. */
+  private canvasOpenTo(workspaceId: string, canvasId: string, actor: { userId: string; actorRole?: AutomationActor["actorRole"] | null | undefined }): boolean {
+    const canvas = first(this.sql.exec<{
+      canvas_id: string; created_by_user_id: string; writer_sidekick_id: string | null; visibility: string; archived_at: number | null;
+    }>(`SELECT canvas_id, created_by_user_id, writer_sidekick_id, visibility, archived_at
+          FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, canvasId, workspaceId));
+    return canvas !== null && canvasReaderAllows(canvas, { userId: actor.userId, actorRole: actor.actorRole ?? null }, this.sql);
+  }
+
+  /** Who lets events in, and who has been asked. Read by whoever reads or manages the Sidekick. */
+  async readSources(input: AutomationActorRequest): Promise<SidekickSourcesResult> {
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "sidekick_sources_read");
+    const row = this.row();
+    if (!row || row.workspace_id !== request.workspaceId || row.lifecycle === "deleted") throw forbidden();
+    const relationship = await this.host.readRelationship(request.workspaceId, request.actor.userId);
+    const actor = { ...request.actor, actorRole: relationship?.status === "active" ? relationship.role : null };
+    if (relationship?.status !== "active"
+      || !(sidekickReaderAllows(row, { userId: actor.userId, actorRole: actor.actorRole ?? null }, this.sql) || await this.managerAllows(row, actor))) {
+      throw forbidden();
+    }
+    const sources = this.sources().forSidekick(this.sidekickId);
+    const requests = this.sources().requestsForSidekick(this.sidekickId).filter((entry) => entry.state === "pending" || entry.state === "declined");
+    const relationships: SidekickSourceRelationships = new Map();
+    const [person, available] = await Promise.all([
+      this.sourcePeople([...sources.map((source) => source.userId), ...requests.map((entry) => entry.userId)]),
+      Promise.all(sources.map((source) => this.sourceEligible(source, relationships))),
+    ]);
+    const connections = new Map(this.sql.exec<{ id: string; display_name: string }>(
+      `SELECT id, display_name FROM connector_connections WHERE workspace_id = ?`, row.workspace_id,
+    ).toArray().map((connection) => [connection.id, connection.display_name]));
+    // A person reads what they let in from a connection as one line per filter: the event
+    // types that share a condition, together.
+    const listed = new Map<string, { source: SidekickSource; eventTypes: string[]; available: boolean }>();
+    for (const [index, source] of sources.entries()) {
+      const key = JSON.stringify([source.userId, source.connectionId, source.condition]);
+      const entry = listed.get(key) ?? { source, eventTypes: [], available: available[index]! };
+      entry.eventTypes.push(source.eventType);
+      listed.set(key, entry);
+    }
+    return SidekickSourcesResultSchema.parse({
+      sidekickId: this.sidekickId,
+      sources: [...listed.values()].map(({ source, eventTypes, available: stillTheirs }) => ({
+        person: person(source.userId), connectionId: source.connectionId,
+        connectionName: connections.get(source.connectionId) ?? "", connectorType: source.connectorType,
+        eventTypes: eventTypes.sort(), condition: source.condition, available: stillTheirs,
+        yours: source.userId === actor.userId,
+      })),
+      requests: requests.map((entry) => this.sourceRequestView(row, entry, actor.userId, person(entry.userId))),
+    });
+  }
+
+  /**
+   * One request as one person may see it, for its card; null when they may
+   * not. `people` is a lookup the caller already made for several requests.
+   */
+  async readSourceRequest(input: z.input<typeof SidekickSourceRequestReadSchema>,
+    people?: (userId: string) => SidekickSourceRequestView["person"]): Promise<SidekickSourceRequestView | null> {
+    const request = parseRpcInput(SidekickSourceRequestReadSchema, input, "sidekick_source_request_read");
+    const row = this.row();
+    const stored = this.sources().readRequest(request.requestId);
+    if (!row || row.workspace_id !== request.workspaceId || !stored || stored.sidekickId !== this.sidekickId) return null;
+    const relationship = await this.host.readRelationship(request.workspaceId, request.actor.userId);
+    if (relationship?.status !== "active") return null;
+    if (!await this.sourceRequestVisible(row, stored, { ...request.actor, actorRole: relationship.role })) return null;
+    return this.sourceRequestView(row, stored, request.actor.userId, (people ?? await this.sourcePeople([stored.userId]))(stored.userId));
+  }
+
+  /**
+   * The saver's own sources for the rules this save adds, inside the save's
+   * transaction. An event type they already let in from that connection is
+   * left exactly as it is, its condition and its request with it: saving a
+   * definition never narrows, clears or widens what a person agreed to.
+   */
+  private putOwnSources(workspaceId: string, userId: string, incarnation: string, evaluators: readonly unknown[],
+    previous: readonly unknown[], now: number): void {
+    const key = (evaluator: z.infer<typeof ExternalEventEvaluatorV1Schema>) => `${evaluator.source.connectionId}\n${evaluator.source.eventType}`;
+    // Only a rule this save adds is this saver's act. A save that changes
+    // something else (the instructions, a schedule) lends nothing of theirs.
+    const before = new Set(z.array(ExternalEventEvaluatorV1Schema).parse(previous).map(key));
+    const added = new Map(z.array(ExternalEventEvaluatorV1Schema).parse(evaluators)
+      .filter((evaluator) => !before.has(key(evaluator))).map((evaluator) => [key(evaluator), evaluator.source]));
+    for (const { connectionId, eventType } of added.values()) {
+      const connection = first(this.sql.exec<{ connector_type: string; scope: string; owner_user_id: string | null }>(
+        `SELECT connector_type, scope, owner_user_id FROM connector_connections WHERE id = ? AND workspace_id = ?`,
+        connectionId, workspaceId,
+      ));
+      if (!connection || (connection.scope === "personal" && connection.owner_user_id !== userId)) continue;
+      if (this.sources().read(this.sidekickId, userId, connectionId, eventType)) continue;
+      this.sources().put({
+        sidekickId: this.sidekickId, userId, connectionId, connectorType: connection.connector_type, eventType,
+        condition: null, membershipIncarnation: incarnation, requestId: null,
+      }, now);
+    }
+  }
+
+  /**
+   * A rule on another person's own connection needs that person's answer.
+   *
+   * A manager may configure a rule on a colleague's connection only for an
+   * event type that colleague approved a request for. A source the
+   * colleague's own saved rule made, or the migration made from one, stands
+   * for that one rule: it keeps a rule that is unchanged from the revision
+   * before, and lets no new or widened rule onto their account. Without this
+   * a rule about one thread could be replaced by a rule about all their mail
+   * with no act of theirs. Runs in the save's transaction.
+   */
+  private assertRulesHaveTheirOwners(workspaceId: string, saverUserId: string, evaluators: readonly unknown[],
+    previous: readonly unknown[]): void {
+    const same = (evaluator: z.infer<typeof ExternalEventEvaluatorV1Schema>) =>
+      JSON.stringify([evaluator.source.connectionId, evaluator.source.eventType, evaluator.source.resourceId ?? null]);
+    const unchanged = new Set(z.array(ExternalEventEvaluatorV1Schema).parse(previous).map(same));
+    for (const evaluator of z.array(ExternalEventEvaluatorV1Schema).parse(evaluators)) {
+      if (unchanged.has(same(evaluator))) continue;
+      const connection = first(this.sql.exec<{ scope: string; owner_user_id: string | null }>(
+        `SELECT scope, owner_user_id FROM connector_connections WHERE id = ? AND workspace_id = ?`,
+        evaluator.source.connectionId, workspaceId,
+      ));
+      if (!connection || connection.scope !== "personal" || connection.owner_user_id === saverUserId) continue;
+      const approved = connection.owner_user_id === null ? null
+        : this.sources().read(this.sidekickId, connection.owner_user_id, evaluator.source.connectionId, evaluator.source.eventType);
+      if (!approved || approved.requestId === null) throw sidekickSourceError("sidekick_source_owner_must_approve");
+    }
+  }
+
+  /**
+   * The connections of one connector a person's source covers: their own,
+   * and the Organization's, where a source lets in the events limited to an
+   * audience they are in. What approving a request lets in.
+   */
+  private sourceConnections(workspaceId: string, userId: string, connectorType: string): { id: string }[] {
+    return this.sql.exec<{ id: string }>(
+      `SELECT id FROM connector_connections
+        WHERE workspace_id = ?1 AND connector_type = ?3 AND status <> 'disabled'
+          AND ((scope = 'personal' AND owner_user_id = ?2) OR scope = 'workspace')
+        ORDER BY id`, workspaceId, userId, connectorType,
+    ).toArray();
+  }
+
+  /** The event types a connector's connections in this Organization announce, a webhook's configured ones among them. */
+  private announcedEventTypes(workspaceId: string, connectorType: string): Set<string> {
+    const adapter = connectorRegistryForEnv(this.env).get(connectorType);
+    const announced = new Set(adapter.manifest.activityTriggers.map((trigger) => trigger.eventType));
+    for (const connection of this.sql.exec<{ scope: string; granted_scopes_json: string; config_json: string | null }>(
+      `SELECT scope, granted_scopes_json, config_json FROM connector_connections
+        WHERE workspace_id = ? AND connector_type = ? AND status <> 'disabled'`, workspaceId, connectorType,
+    )) {
+      for (const descriptor of connectorActivityTriggerDescriptors(adapter, connection.config_json,
+        storedConnectionScope(connection.scope), JSON.parse(connection.granted_scopes_json) as string[])) {
+        announced.add(descriptor.eventType);
+      }
+    }
+    return announced;
+  }
+
+  /** Let the person read the Sidekick their events now start. Not required for the source to keep letting them in. */
+  private addSourceViewer(row: HostedSidekickRow, userId: string, actorRole: "owner" | "admin" | "member" | null, now: number): void {
+    if (sidekickReaderAllows(row, { userId, actorRole }, this.sql)) return;
+    this.sql.exec(`INSERT OR IGNORE INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, ?)`, this.sidekickId, userId, now);
+  }
+
+  /**
+   * A manager asks people to let events from one of their connectors start
+   * this Sidekick, with an optional condition each person's events must meet.
+   *
+   * Everyone asked decides for themselves, the asker included: an agent
+   * writes the ask and its filter, and nothing it does stands in for the
+   * person's answer, their own account's no less than a colleague's. The
+   * asker is told nothing about their own request: its card is in the
+   * conversation they asked from, and it is listed under Sources. Asking
+   * again for the same thing answers with the request already waiting.
+   */
+  async requestSources(input: z.input<typeof SidekickSourceAskRequestSchema>): Promise<SidekickSourceRequestResult> {
+    const request = parseRpcInput(SidekickSourceAskRequestSchema, input, "sidekick_source_ask");
+    const initial = this.assertSidekick(request.workspaceId, request.automationId);
+    if (initial.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+    // Who manages is the stored relationship's answer, whoever calls: the
+    // route knows the role and an agent's tool does not, and both ask here.
+    const asker = await this.host.readRelationship(request.workspaceId, request.actor.userId);
+    const actor = { ...request.actor, actorRole: asker?.status === "active" && asker.accessClass === "member" ? asker.role ?? "member" : null };
+    if (asker?.status !== "active" || !await this.managerAllows(initial, actor)) {
+      throw sidekickSourceError("sidekick_source_request_requires_manager");
+    }
+    // A retried call answers with what it already asked, whatever has been
+    // answered and whoever has left since: asking again is a new operation's to do.
+    const replayed = request.ask.operationId ? this.sources().requestsForOperation(this.sidekickId, request.ask.operationId) : [];
+    if (replayed.length > 0) {
+      const people = await this.sourcePeople(replayed.map((entry) => entry.userId));
+      return SidekickSourceRequestResultSchema.parse({
+        sidekickId: this.sidekickId,
+        requests: replayed.map((entry) => this.sourceRequestView(initial, entry, request.actor.userId, people(entry.userId))),
+      });
+    }
+    const registry = connectorRegistryForEnv(this.env);
+    if (!registry.list().some((candidate) => candidate.type === request.ask.connectorType)) {
+      throw new ApiError(422, "sidekick_source_connector_unknown", "No connector has that type");
+    }
+    const declared = this.announcedEventTypes(request.workspaceId, request.ask.connectorType);
+    const unknown = request.ask.eventTypes.find((eventType) => !declared.has(eventType));
+    if (unknown) throw new ApiError(422, "sidekick_source_event_unknown", `That connector has no event named ${unknown}`);
+    const userIds = [...new Set(request.ask.userIds)];
+    const relationships = await Promise.all(userIds.map((userId) => this.host.readRelationship(request.workspaceId, userId)));
+    if (relationships.some((relationship) => relationship?.status !== "active")) throw sidekickSourceError("sidekick_source_person_unavailable");
+    const condition = request.ask.condition ?? null;
+    const eventTypes = [...new Set(request.ask.eventTypes)].sort();
+    const now = Date.now();
+    // Each request's id and its notice are made before the transaction: a notice is hashed, which yields.
+    const requestIds = userIds.map((_, index) => uuidV7(now + index));
+    // The place is where the request's card is drawn for everybody who can open it, so it is one
+    // the asker can open. A person asked from a Canvas closed to them is led to Activity, not to it.
+    const placeCanvasId = request.ask.place?.parentKind === "canvas" ? request.ask.place.parentId : null;
+    if (placeCanvasId !== null && !this.canvasOpenTo(request.workspaceId, placeCanvasId, actor)) {
+      throw new ApiError(403, "sidekick_source_place_denied", "You cannot open the Canvas this was asked in");
+    }
+    const placeCanvasIds = new Map(placeCanvasId === null ? [] : userIds.flatMap((userId, index) => {
+      const asked = relationships[index]!;
+      return this.canvasOpenTo(request.workspaceId, placeCanvasId, { userId,
+        actorRole: asked.accessClass === "member" ? asked.role ?? "member" : null }) ? [[requestIds[index]!, placeCanvasId] as const] : [];
+    }));
+    const askNotices = await prepareSourceRequestNotices(this.env, { sidekickId: this.sidekickId, sidekickName: initial.title || "Sidekick",
+      connectorType: request.ask.connectorType, eventTypes, condition, requesterName: request.actorName, requestIds, placeCanvasIds });
+    const asked = this.storage.transactionSync(() => {
+      const row = this.assertSidekick(request.workspaceId, request.automationId);
+      if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+      const notices: RecordedSourceNotice[] = [];
+      // Two calls of one operation racing here: the second answers as the first did.
+      const already = request.ask.operationId ? this.sources().requestsForOperation(this.sidekickId, request.ask.operationId) : [];
+      if (already.length > 0) return { row, requests: already, notices };
+      const requests: SidekickSourceRequest[] = [];
+      for (const [index, userId] of userIds.entries()) {
+        const waiting = this.sources().requestsForSidekick(this.sidekickId).find((entry) => entry.state === "pending"
+          && entry.userId === userId && entry.connectorType === request.ask.connectorType
+          && entry.condition === condition && JSON.stringify(entry.eventTypes) === JSON.stringify(eventTypes));
+        if (waiting) {
+          requests.push(waiting);
+          continue;
+        }
+        const own = userId === request.actor.userId;
+        // The asker is here to be told now that they have nothing to approve; anybody else finds out when they answer.
+        if (own && this.sourceConnections(row.workspace_id, userId, request.ask.connectorType).length === 0) {
+          throw sidekickSourceError("sidekick_source_connection_missing");
+        }
+        const { request: created, replaced } = this.sources().ask({
+          requestId: requestIds[index]!, sidekickId: this.sidekickId, userId, connectorType: request.ask.connectorType,
+          eventTypes, condition, requestedByUserId: request.actor.userId, requestedByName: request.actorName,
+          place: request.ask.place ?? null,
+        }, now);
+        // A newer ask replaced it: a cancel settles the asked person's row and tells nobody.
+        if (replaced) recordSourceRequestSettled(this.host, { workspaceId: row.workspace_id, generation: row.authority_generation,
+          request: replaced, answer: null, now });
+        if (!own) {
+          notices.push(...recordSourceRequestAsked(this.host, { workspaceId: row.workspace_id, generation: row.authority_generation,
+            request: created, notice: askNotices.get(created.requestId)!, now }));
+        }
+        requests.push(created);
+      }
+      // The whole answer, a waiting request this call found among it.
+      if (request.ask.operationId) this.sources().recordOperation(this.sidekickId, request.ask.operationId, requests.map((entry) => entry.requestId));
+      this.touchDirectory(now);
+      return { row, requests, notices };
+    });
+    await enqueueSourceNotices(this.host, asked.row.workspace_id, asked.notices);
+    const person = await this.sourcePeople(asked.requests.map((entry) => entry.userId));
+    return SidekickSourceRequestResultSchema.parse({
+      sidekickId: this.sidekickId,
+      requests: asked.requests.map((entry) => this.sourceRequestView(asked.row, entry, request.actor.userId, person(entry.userId))),
+    });
+  }
+
+  /**
+   * The person asked answers, and only they can. Approving lets events in from
+   * every connection of that connector they own now, under the condition that
+   * was asked, and adds them to the Sidekick's readers. An answer already
+   * given reads back as it stands, so a link opened twice says the same thing.
+   */
+  async decideSourceRequest(input: z.input<typeof SidekickSourceDecisionRequestSchema>): Promise<SidekickSourceRequestView> {
+    const request = parseRpcInput(SidekickSourceDecisionRequestSchema, input, "sidekick_source_decide");
+    const initial = this.row();
+    const stored = this.sources().readRequest(request.requestId);
+    if (!initial || initial.workspace_id !== request.workspaceId || request.automationId !== this.sidekickId
+      || !stored || stored.sidekickId !== this.sidekickId) throw sidekickSourceError("sidekick_source_request_not_found");
+    if (stored.userId !== request.userId) throw sidekickSourceError("sidekick_source_request_not_yours");
+    const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
+    const person = await this.sourcePeople([stored.userId]);
+    const state = request.decision === "approve" ? "approved" as const : "declined" as const;
+    const now = Date.now();
+    // What whoever asked is told, made before the transaction: a notice is hashed, which yields.
+    const personName = person(stored.userId).displayName;
+    const answer = { personName, notice: await prepareSourceAnswerNotice(this.env, { request: stored,
+      sidekickName: initial.title || "Sidekick", state, personName }) };
+    const settled = this.storage.transactionSync(() => {
+      const row = this.row();
+      const current = this.sources().readRequest(request.requestId);
+      if (!row || !current) throw sidekickSourceError("sidekick_source_request_not_found");
+      if (current.state === state) return { row, request: current, notices: [] };
+      if (current.state !== "pending") throw sidekickSourceError("sidekick_source_request_settled");
+      if (state === "approved") {
+        if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+        if (relationship?.status !== "active") throw sidekickSourceError("sidekick_source_membership_unavailable");
+        const connections = this.sourceConnections(row.workspace_id, current.userId, current.connectorType);
+        if (connections.length === 0) throw sidekickSourceError("sidekick_source_connection_missing");
+        for (const connection of connections) {
+          for (const eventType of current.eventTypes) {
+            this.sources().put({ sidekickId: this.sidekickId, userId: current.userId, connectionId: connection.id,
+              connectorType: current.connectorType, eventType, condition: current.condition,
+              membershipIncarnation: relationship.incarnation, requestId: current.requestId }, now);
+          }
+        }
+        this.addSourceViewer(row, current.userId, relationship.role, now);
+        this.scheduleSourceReconciliation();
+      }
+      const decided = this.sources().settle(current.requestId, state, now);
+      if (!decided) throw sidekickSourceError("sidekick_source_request_settled");
+      const notices = recordSourceRequestSettled(this.host, { workspaceId: row.workspace_id, generation: row.authority_generation,
+        request: decided, answer, now });
+      this.touchDirectory(now);
+      return { row, request: decided, notices };
+    });
+    await enqueueSourceNotices(this.host, settled.row.workspace_id, settled.notices);
+    return this.sourceRequestView(settled.row, settled.request, request.userId, person(settled.request.userId));
+  }
+
+  /**
+   * A person takes back what they let in from one connection. Asked of nobody
+   * and open to them whatever they can still read: a source is theirs to end.
+   */
+  withdrawSource(input: z.input<typeof SidekickSourceWithdrawRequestSchema>): { withdrawn: boolean } {
+    const request = parseRpcInput(SidekickSourceWithdrawRequestSchema, input, "sidekick_source_withdraw");
+    if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
+    return this.storage.transactionSync(() => {
+      const withdrawn = this.sources().remove(this.sidekickId, request.userId, request.connectionId);
+      if (withdrawn && this.row()) {
+        this.scheduleSourceReconciliation();
+        this.touchDirectory(Date.now());
+      }
+      return { withdrawn };
     });
   }
 
@@ -1051,6 +1536,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       ? { selections: { defaultPluginIds: [], activitySourcePluginIds: {} }, connectorBindings: {}, evaluators: [], schedules: [] }
       : await this.prepareApplication(row, revision, definition, request.actor.userId);
     const memory = await this.prepareMemoryTables(row, revision.definition_revision, definition);
+    // Saving a trigger on one's own connection is one's own act: it lets that
+    // connection's events in. On an Organization connection it lets in the
+    // events limited to an audience the saver is in. Nobody else's is touched.
+    const saver = prepared.evaluators.length === 0 ? null : await this.host.readRelationship(row.workspace_id, request.actor.userId);
     const now = Date.now();
     this.storage.transactionSync(() => {
       const current = this.row();
@@ -1086,6 +1575,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         now,
         this.sidekickId,
       );
+      const previousEvaluators = JSON.parse(current.evaluator_projection_json) as unknown[];
+      this.assertRulesHaveTheirOwners(row.workspace_id, request.actor.userId, prepared.evaluators, previousEvaluators);
+      if (saver?.status === "active") {
+        this.putOwnSources(row.workspace_id, request.actor.userId, saver.incarnation, prepared.evaluators, previousEvaluators, now);
+      }
       const effectiveAfter = this.writeRegistrations(paused ? [] : prepared.evaluators);
       if (!paused) this.scheduleSourceReconciliation();
       this.touchDirectory(now, effectiveAfter);
@@ -1373,37 +1867,74 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       : { kind: "admit" };
   }
 
-  /** Admit one matched external event, once. */
+  /**
+   * Admit one matched external event, once.
+   *
+   * Two filters stand between an event and a run, and each belongs to
+   * somebody different. The source's condition is the person's whose events
+   * these are: it is their permission, and no edit to the Sidekick widens it.
+   * The trigger's condition is the Sidekick's own interest. An event enters
+   * only when both hold, and a filter that arrives without a verdict is
+   * refused with what there is to judge.
+   */
   async admitExternalEvent(input: AutomationExternalEventAdmission): Promise<{
     admitted: boolean;
     outcomeCode: string;
-    judge?: { conditions: string[]; connectorType: string | null };
+    judge?: { conditions: string[]; sourceConditions: string[]; connectorType: string | null };
   }> {
     const request = parseRpcInput(AutomationExternalEventAdmissionSchema, input, "admit_external_event");
     const initial = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
     const initialPlan = this.externalEventPlan(request, initial);
     if (initialPlan.kind === "refuse") return { admitted: false, outcomeCode: initialPlan.outcomeCode };
-    const coordinator = await this.eventCoordinator(request.event, request.registrationId);
+    const source = await this.eventSource(request.event, request.registrationId);
+    // Who the run acts as follows whose event it is. An event that belongs
+    // to somebody (a person's mail, a private place) starts a run that acts
+    // as one of them when they are a delegate, so a reply goes through their
+    // mailbox, and as the Sidekick itself when none of them is: a person who
+    // let their events in lent no account, and their mail is not acted on
+    // with a third person's. An event the whole Organization can see is
+    // anybody's, so any delegate serves it, and with none the Sidekick itself.
+    const coordinator = source === null ? null
+      : source.audience === null ? await this.coordinator() : await this.coordinator(null, source.audience, false);
     const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
     const plan = this.externalEventPlan(request, row);
     if (plan.kind === "refuse") return { admitted: false, outcomeCode: plan.outcomeCode };
-    if (coordinator === null) {
+    if (source === null) {
       this.noteDelegationAttention("event_no_eligible_delegate");
-      return { admitted: false, outcomeCode: "sidekick_no_eligible_delegate" };
+      return { admitted: false, outcomeCode: "sidekick_source_not_permitted" };
     }
-    if (plan.kind === "judge") {
-      // The condition the member wrote is the gate: a delivery that did not
-      // bring a verdict is refused, and both halves of a verdict must agree.
-      // The refusal carries the conditions, so the caller can judge them and
-      // ask again without a separate planning call.
-      const verdict = request.conditionVerdict;
-      if (!verdict) {
-        return {
-          admitted: false,
-          outcomeCode: "sidekick_semantic_condition_unjudged",
-          judge: { conditions: plan.conditions, connectorType: plan.connectorType },
-        };
+    const conditions = plan.kind === "judge" ? plan.conditions : [];
+    const unjudged = (conditions.length > 0 && !request.conditionVerdict)
+      || (source.conditions.length > 0 && !request.sourceVerdict);
+    if (unjudged) {
+      // The refusal carries what to judge, so the caller needs no separate
+      // planning call and cannot admit by not asking.
+      return {
+        admitted: false,
+        outcomeCode: source.conditions.length > 0 && !request.sourceVerdict
+          ? "sidekick_source_condition_unjudged" : "sidekick_semantic_condition_unjudged",
+        judge: {
+          conditions,
+          sourceConditions: source.conditions,
+          connectorType: (plan.kind === "judge" ? plan.connectorType : null) ?? source.connectorType,
+        },
+      };
+    }
+    // The person's permission is checked first: an event their filter keeps
+    // out is not the Sidekick's to weigh.
+    if (source.conditions.length > 0) {
+      const verdict = request.sourceVerdict!;
+      // A verdict answers for the filter it judged. One that changed while
+      // the classifier ran was not judged, and the event is refused.
+      if (JSON.stringify([...verdict.conditions].sort()) !== JSON.stringify([...source.conditions].sort())) {
+        return { admitted: false, outcomeCode: "sidekick_source_condition_changed" };
       }
+      if (!verdict.admit || verdict.code !== "condition_met") {
+        return { admitted: false, outcomeCode: `sidekick_source_${verdict.code}` };
+      }
+    }
+    if (conditions.length > 0) {
+      const verdict = request.conditionVerdict!;
       if (!verdict.admit || verdict.code !== "condition_met") {
         return { admitted: false, outcomeCode: `sidekick_semantic_${verdict.code}` };
       }
@@ -1516,14 +2047,27 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     run: { requester_user_id: string | null },
     sender: SidekickRunContinuationSender,
     principal: string | null,
-  ): Promise<"run_continuation_requires_requester" | "run_continuation_requires_delegate" | "run_continuation_requires_rally_user" | null> {
-    // Every run acts as somebody, so an agent acting for nobody continues
-    // none. Outside text is not screened: it arrives only through a binding
+  ): Promise<"run_continuation_requires_requester" | "run_continuation_requires_delegate" | "run_continuation_requires_manager"
+    | "run_continuation_requires_rally_user" | null> {
+    // A run nobody is behind acts as the Sidekick itself: nobody's access is
+    // lent by continuing it, so an agent acting for nobody may, and of people
+    // the ones who manage the Sidekick may.
+    const itself = principal === null && run.requester_user_id === null;
+    // An agent acting for nobody continues no run that acts as somebody.
+    // Outside text is not screened: it arrives only through a binding
     // the run's own outbound message made, as the answer the run asked for.
-    if (sender.kind === "unattributed") return "run_continuation_requires_rally_user";
+    if (sender.kind === "unattributed") return itself ? null : "run_continuation_requires_rally_user";
     if (sender.kind !== "person") return null;
     if (run.requester_user_id !== null) {
       return sender.userId === run.requester_user_id ? null : "run_continuation_requires_requester";
+    }
+    if (itself) {
+      const row = this.row();
+      const relationship = row ? await this.host.readRelationship(row.workspace_id, sender.userId) : null;
+      return row && relationship?.status === "active" && await this.managerAllows(row, {
+        userId: sender.userId, actorRole: relationship.accessClass === "guest" ? null : relationship.role,
+        participantOfOwningWorkstream: false,
+      }) ? null : "run_continuation_requires_manager";
     }
     if (sender.userId === principal) return null;
     return await this.coordinator(sender.userId, [sender.userId], false) === sender.userId
@@ -1580,7 +2124,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (!run || sidekick.lifecycle !== "active" || sidekick.accepted_definition_revision === null) {
       return { outcome: "refused", code: "run_not_found" };
     }
-    if (coordinator === null) return { outcome: "refused", code: "run_no_eligible_delegate" };
+    // Only a run somebody asked for under their own access has nobody to act
+    // as once they are gone; any other goes on as the Sidekick itself.
+    if (coordinator === null && run.requester_user_id !== null) return { outcome: "refused", code: "run_no_eligible_delegate" };
     if (senderRefusal) return { outcome: "refused", code: senderRefusal };
     if (coordinator !== run.coordinator_user_id) {
       this.sql.exec("UPDATE sidekick_runs SET coordinator_user_id=?,updated_at=? WHERE sidekick_id=? AND run_id=?",
@@ -1595,7 +2141,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         definitionRevision: sidekick.accepted_definition_revision,
         trigger: storedRunTrigger(run.trigger_json),
       },
-      executionPrincipal: { type: "user", userId: asUserId(coordinator) },
+      executionPrincipal: coordinator === null
+        ? { type: "workspace", workspaceId: asWorkspaceId(sidekick.workspace_id) }
+        : { type: "user", userId: asUserId(coordinator) },
       stopGeneration: sidekick.stop_generation,
     });
   }
@@ -2366,7 +2914,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (acceptedRevision === null) {
       throw new ApiError(409, "sidekick_not_active", "The Sidekick has no accepted definition");
     }
-    if (this.row()?.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
+    const sidekick = this.row();
+    if (sidekick?.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
+    // A Sidekick that had already stopped for want of a delegate stays
+    // stopped: people withdrew to stop it, and running as itself is not
+    // something they agreed to by a deploy. Lending it an account again, or
+    // pausing and resuming it, is the act that starts it (`resumeFromPause`).
+    const stopped = coordinatorUserId === null && sidekick.delegation_attention_code === "no_eligible_delegate";
     const now = Date.now();
     const runId = uuidV7(now);
     // One statement either way: a new occurrence returns the run it made, a
@@ -2386,9 +2940,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       JSON.stringify(trigger),
       acceptedRevision,
       uuidV7(now + 1),
-      coordinatorUserId === null ? "needs_input" : "pending",
-      coordinatorUserId === null ? "Needs attention: no delegated user is available" : null,
-      opening && coordinatorUserId !== null ? JSON.stringify(opening) : null,
+      // A run nobody is behind is not blocked: it acts as the Sidekick itself,
+      // with the Organization's connections and its attached Canvases, and a
+      // delegate's accounts are what it lacks (docs/automation-lifecycle.md,
+      // "Who a run acts as").
+      stopped ? "needs_input" : "pending",
+      stopped ? SIDEKICK_DELEGATION_ATTENTION_MESSAGES.no_eligible_delegate : null,
+      opening ? JSON.stringify(opening) : null,
       now,
       now,
       coordinatorUserId,
@@ -2397,13 +2955,18 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (!run) throw new Error("sidekick_occurrence_missing");
     // A new run is the Sidekick's newest, Working or waiting: its row moves.
     if (run.run_id === runId) this.host.noteDirectoryChanged(this.sidekickId, false, now);
-    if (coordinatorUserId === null) this.noteDelegationAttention("no_eligible_delegate");
-    else if (this.row()?.delegation_attention_code !== "event_no_eligible_delegate") this.noteDelegationAttention(null);
+    // An admission clears every warning but a source's, which only its source
+    // coming back clears, and the stop above. A delegate's run clears the stop:
+    // somebody lends the Sidekick an account again. A run a person asked for
+    // under their own access does not: they lent it nothing, and clearing it
+    // would start the Sidekick's schedules as itself on a passer-by's message.
+    const attention = this.row()?.delegation_attention_code ?? null;
+    const keepsStop = stopped || (requesterUserId !== null && attention === "no_eligible_delegate");
+    if (!keepsStop && attention !== "event_no_eligible_delegate") this.noteDelegationAttention(null);
     if (run.state === "pending") this.armRunStart(run.run_id, now);
-    // Admitted waiting on input, with no delegate to act as: that is a Needs
-    // input the managers hear about, as a run that later asks is.
+    // Admitted stopped: a Needs input the managers hear about, as a run that later asks is.
     else if (run.state === "needs_input" && run.run_id === runId) {
-      this.armRunNotice(run.run_id, "needs_input", "needs_input", "Needs attention: no delegated user is available", now);
+      this.armRunNotice(run.run_id, "needs_input", "needs_input", SIDEKICK_DELEGATION_ATTENTION_MESSAGES.no_eligible_delegate, now);
     }
     return { runId: run.run_id, reused: run.run_id !== runId };
   }
@@ -2438,11 +3001,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       return { progressed: true };
     }
     const coordinator = await this.runPrincipal(run);
-    if (coordinator === null) {
+    // Only a run somebody asked for under their own access needs that person:
+    // once they have left it has nobody to act as. Every other run with no
+    // delegate goes on as the Sidekick itself.
+    if (coordinator === null && run.requester_user_id !== null) {
       this.sql.exec("UPDATE sidekick_runs SET state='needs_input',summary=?,updated_at=? WHERE sidekick_id=? AND run_id=? AND state='pending'",
-        SIDEKICK_DELEGATION_ATTENTION_MESSAGES.no_eligible_delegate, now, this.sidekickId, runId);
+        SIDEKICK_RUN_REQUESTER_LEFT, now, this.sidekickId, runId);
+      // This run's own trouble, and not the Sidekick's: `no_eligible_delegate`
+      // on the Sidekick is what keeps one stopped (`admitOccurrence`).
       this.touchDirectory(now);
-      this.noteDelegationAttention("no_eligible_delegate");
       return { progressed: true };
     }
     if (this.row()?.lifecycle !== "active") return { progressed: true };
@@ -2482,7 +3049,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (!run || run.state !== "pending" || sidekick.lifecycle !== "active") return null;
     const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId,
       runId: request.runId });
-    if (!run.coordinator_user_id || !authority.delegates.some((grant) => grant.userId === run.coordinator_user_id)) return null;
+    // A run acting as a person waits until that person may be acted as; a run
+    // acting as the Sidekick itself (no coordinator, nobody's request) waits on nobody.
+    if (run.coordinator_user_id ? !authority.delegates.some((grant) => grant.userId === run.coordinator_user_id)
+      : run.requester_user_id !== null) return null;
     return {
       region: sidekick.region,
       workspaceId: sidekick.workspace_id,
@@ -2493,7 +3063,43 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       modelOverride: sidekick.model_override,
       definitionRevision: run.definition_revision,
       definition: this.runDefinition(view),
+      eventContent: await this.runEventContent(storedRunTrigger(run.trigger_json)),
     };
+  }
+
+  /**
+   * Which event's content the host may read for a run, checked again here
+   * rather than trusted from admission: a person's connection is read only
+   * while its owner's source still lets that event in, so a source taken back
+   * between admission and provisioning hands the run the event's summary and
+   * nothing more. An Organization connection is the Sidekick's own.
+   */
+  private async runEventContent(trigger: AutomationRunTriggerV1): Promise<SidekickRunProvisioning["eventContent"]> {
+    if (trigger.kind !== "external_event") return null;
+    const event = first(this.sql.exec<{
+      connection_id: string; connector_type: string; event_type: string; subject_json: string;
+      connection_scope: string; connection_owner_user_id: string | null;
+      target_user_ids_json: string; visibility_json: string;
+    }>(`SELECT connection_id, connector_type, event_type, subject_json, connection_scope, connection_owner_user_id,
+               target_user_ids_json, visibility_json
+          FROM workspace_connector_events WHERE event_id = ?`, trigger.workspaceEventId));
+    if (!event) return null;
+    // The same rule as admission (`eventSource`): an event limited to an
+    // audience is read only while somebody in that audience still lets it in.
+    const audience = event.connection_scope === "personal"
+      ? (event.connection_owner_user_id === null ? [] : [event.connection_owner_user_id])
+      : restrictedActivityUserIds(event);
+    if (audience !== null) {
+      const candidates = this.sources().forSidekick(this.sidekickId).filter((source) => source.connectionId === event.connection_id
+        && audience.includes(source.userId) && source.eventType === event.event_type);
+      const eligible = await Promise.all(candidates.map((source) => this.sourceEligible(source)));
+      if (!eligible.some(Boolean)) return null;
+    }
+    let subject: unknown;
+    try { subject = JSON.parse(event.subject_json); } catch { return null; }
+    if (typeof subject !== "object" || subject === null || Array.isArray(subject)) return null;
+    return { connectionId: event.connection_id, connectorType: event.connector_type, eventType: event.event_type,
+      subject: subject as Record<string, unknown> };
   }
 
   /** The provisioning consumer started the run's loop: mark it running and settle its entry. */
@@ -2614,8 +3220,12 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       now, this.sidekickId, JSON.stringify(due),
     );
     this.scheduleEntries(due, now);
+    // Resuming is a person's act: a Sidekick that had stopped for want of a
+    // delegate runs from here on as itself (`admitOccurrence`).
     const resumed = first(this.sql.exec<{ evaluator_projection_json: string }>(
-      `UPDATE automation_directory SET lifecycle = 'active', paused_by = NULL, updated_at = ?
+      `UPDATE automation_directory SET lifecycle = 'active', paused_by = NULL, updated_at = ?,
+              delegation_attention_code = CASE WHEN delegation_attention_code = 'no_eligible_delegate' THEN NULL
+                                               ELSE delegation_attention_code END
         WHERE automation_id = ? RETURNING evaluator_projection_json`,
       now, this.sidekickId,
     ));
@@ -2699,15 +3309,14 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   private async reconcileSourceRegistrations(): Promise<void> {
     const initial = this.row();
     if (!initial || initial.lifecycle !== "active") return;
-    const authority = await this.readExecutionDelegation({ workspaceId: initial.workspace_id, automationId: this.sidekickId });
+    const sources = await this.eligibleSources();
     const expanded = this.storage.transactionSync(() => {
       const current = this.row();
       if (!current || current.lifecycle !== "active" || current.accepted_definition_revision !== initial.accepted_definition_revision) return null;
       const configured = z.array(ExternalEventEvaluatorV1Schema).parse(JSON.parse(current.evaluator_projection_json));
       const evaluators = sidekickSourceRegistrations({ storage: this.storage, workspaceId: current.workspace_id,
         sidekickId: this.sidekickId, registry: connectorRegistryForEnv(this.env),
-        eligibleUserIds: new Set(authority.delegates.map((grant) => grant.userId)),
-        evaluators: configured });
+        sources, evaluators: configured });
       this.host.reconcileRegistrations(this.sidekickId, evaluators);
       const covered = new Set(evaluators.map((evaluator) => evaluator.sourceEvaluatorId ?? evaluator.evaluatorId));
       if (configured.some((evaluator) => !covered.has(evaluator.evaluatorId))) {
@@ -2743,8 +3352,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       ...selections.defaultPluginIds,
       ...Object.values(selections.activitySourcePluginIds),
     ])];
-    const authority = await this.readExecutionDelegation({ workspaceId: row.workspace_id, automationId: this.sidekickId });
-    const eligibleUsers = new Set<string>(authority.delegates.map((grant) => grant.userId));
+    // A person's connection can be configured by them, or by a manager once
+    // that person let its events in. Delegation is not asked: it lends
+    // accounts to tools, not events to triggers.
+    const sourced = new Set((await this.eligibleSources()).map((source) => source.connectionId));
     const existingBindings = JSON.parse(row.connector_bindings_json) as Record<string, string>;
     // This Organization's own rows, read with `sql.exec` rather than the
     // runtime database adapter, which parses each statement and does a
@@ -2758,7 +3369,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       row.workspace_id,
     ).toArray();
     const connectionsByPlugin = new Map(connections.filter((connection) => connection.scope === "workspace"
-      || connection.owner_user_id === actorUserId || (connection.owner_user_id !== null && eligibleUsers.has(connection.owner_user_id))
+      || connection.owner_user_id === actorUserId || sourced.has(connection.id)
       || Object.values(existingBindings).includes(connection.id)).flatMap((connection) => connectorPluginBindingViews(
       connection.connector_type, connection.model_plugin_id, JSON.parse(connection.granted_scopes_json) as string[], connection.display_name,
     ).map((view) => [view.modelPluginId, { ...connection, grantedScopes: view.grantedScopes }] as const)));
@@ -2766,8 +3377,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     for (const pluginId of selectedPluginIds) {
       const connection = connectionsByPlugin.get(pluginId);
       if (!connection) throw new ApiError(422, "sidekick_plugin_unavailable", `No connection is available for ${pluginId}`);
-      // Binding records configured work, not authority to execute it. Keep an
-      // existing source while its delegate is unavailable; admission checks consent.
+      // Binding records configured work, not permission for its events. Keep an
+      // existing source while its person is unavailable; admission checks it.
       connectorBindings[pluginId] = connection.id;
     }
 

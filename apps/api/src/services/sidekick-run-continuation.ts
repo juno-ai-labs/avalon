@@ -72,7 +72,8 @@ const UserPrincipalSchema = z.looseObject({ type: z.literal("user"), userId: z.s
  *   answer to a run's change request is the run's own principal, so that
  *   answer continues the run and a wizard turn someone else drove does not.
  *   An agent acting for nobody (an Organization-authority turn) is
- *   `unattributed`, and refused;
+ *   `unattributed`: it continues only a run that itself acts for nobody, the
+ *   Sidekick's own, and is refused everywhere else;
  * - anything else is Rally's own (`system`).
  */
 export function continuationSender(
@@ -133,6 +134,7 @@ export const SIDEKICK_RUN_REFUSAL_TEXT: Record<SidekickRunContinuationRefusalCod
   run_no_eligible_delegate: "This message did not continue the run because no delegated user is available. Add a delegate with access to continue.",
   run_continuation_requires_requester: "This message did not continue the run because the run acts for the person who started it, and only they can continue it.",
   run_continuation_requires_delegate: "This message did not continue the run because it acts with access shared with this Sidekick, and only people who share theirs can continue it.",
+  run_continuation_requires_manager: "This message did not continue the run because it acts as the Sidekick itself, and only the people who manage this Sidekick can continue it.",
   run_continuation_requires_rally_user: "This message did not continue the run because the agent that sent it acts for nobody in Rally who may continue it.",
 };
 

@@ -26,6 +26,7 @@ const api = vi.hoisted(() => ({
   reorderCanvasPins: vi.fn(async () => undefined),
   setSidekickPinned: vi.fn(),
   decideCanvasAccess: vi.fn(),
+  decideSidekickSourceRequest: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 /** The workspace socket the sidebar sends Mark all seen on; only its command is used. */
@@ -751,6 +752,82 @@ describe('the Activity section', () => {
       expect(rows[0]!.querySelector('.activity-row-tile .activity-row-glyph.is-access_granted svg')).toHaveClass('tabler-icon-lock-open');
       expect(rows[0]!.querySelector('.activity-row-tile .identity-tile-badge')).not.toBeNull();
       expect(rows[0]).toHaveAttribute('href', `/canvases/${CANVAS}`);
+    });
+
+    describe('a Sidekick source', () => {
+      const REQUEST = '00000000-0000-7000-8000-0000000000e1';
+      const PRIYA = '00000000-0000-7000-8000-0000000000b3';
+      const source = (state: 'pending' | 'approved' | 'declined' | 'cancelled', personName: string | null = null) => ({
+        requestId: REQUEST, state, connectorType: 'google', eventTypes: ['email.received'],
+        condition: 'it is about a pre-seed round', requestedByName: 'Avery', personName,
+      });
+      // The asked person's row: about a Sidekick their list does not hold, since approving is what lets them in.
+      const asked = (overrides: Partial<ActivityList['items'][number]> = {}): ActivityList['items'][number] => item({
+        id: 's1', kind: 'source_request', parentKind: 'automation', parentId: SIDEKICK, parentTitle: 'Deals',
+        preview: 'Events: Email received. Only when: it is about a pre-seed round', sourceRequest: source('pending'), ...overrides,
+      });
+
+      it('is its Approve and Decline while it waits, sends my answer, and opens nothing while I cannot open the Sidekick', async () => {
+        api.decideSidekickSourceRequest.mockResolvedValue({
+          requestId: REQUEST, sidekickId: SIDEKICK, sidekickName: 'Deals', person: { userId: ME, displayName: 'Me' }, connectorType: 'google',
+          eventTypes: ['email.received'], condition: 'it is about a pre-seed round', state: 'approved', requestedByName: 'Avery', yours: true,
+          createdAt: 1, decidedAt: 2,
+        });
+        const rows = await rowsOf([asked()]);
+        expect(rows[0]).toHaveAttribute('title', 'Avery asked for your Gmail to start Deals');
+        expect(rows[0]).toHaveTextContent('Events: Email received. Only when: it is about a pre-seed round');
+        expect(rows[0]!.querySelector('.activity-row-glyph.is-source_request svg')).toHaveClass('tabler-icon-bolt');
+        // The Sidekick would refuse this person: the row leads to the Activity home, and is never drawn open.
+        expect(rows[0]).toHaveAttribute('href', '/activity');
+        expect(rows[0]).not.toHaveAttribute('aria-current');
+        expect(within(rows[0]!).queryByRole('button')).toBeNull();
+        // The Sidekick is the last, bold thing in the sentence, where the two-line cut spares it.
+        expect([...rows[0]!.querySelectorAll('.activity-row-text strong')].map((strong) => strong.textContent)).toEqual(['Avery', 'Deals']);
+        expect(rows[0]!.querySelector('.activity-row-text')?.textContent?.endsWith('Deals')).toBe(true);
+        // The whole condition, above the buttons: the preview line cuts it.
+        expect(rows[0]!.closest('.activity-row-group')?.querySelector('.activity-row-actions')).toHaveTextContent('Only when “it is about a pre-seed round”');
+        const approve = screen.getByRole('button', { name: 'Approve your Gmail for Deals' });
+        const decline = screen.getByRole('button', { name: 'Decline your Gmail for Deals' });
+        expect([approve, decline].map((button) => button.getAttribute('aria-pressed'))).toEqual(['false', 'false']);
+        fireEvent.click(approve);
+        await waitFor(() => expect(api.decideSidekickSourceRequest).toHaveBeenCalledWith(SIDEKICK, REQUEST, 'approve'));
+        // Acknowledged: my choice is filled and held until the push settles the row.
+        await waitFor(() => expect(approve).toHaveAttribute('aria-pressed', 'true'));
+        expect([approve, decline].map((button) => (button as HTMLButtonElement).disabled)).toEqual([true, true]);
+        expect(api.decideSidekickSourceRequest).toHaveBeenCalledTimes(1);
+      });
+
+      it('reads a settled request as how I answered, or as replaced, with nothing left to press', async () => {
+        const rows = await rowsOf([
+          asked({ id: 's2', seen: true, sourceRequest: source('approved', 'Me') }),
+          asked({ id: 's3', seen: true, sourceRequest: source('declined', 'Me') }),
+          asked({ id: 's4', seen: true, sourceRequest: source('cancelled') }),
+        ]);
+        expect(rows.map((row) => row.closest('.activity-row-group')?.querySelector('.activity-row-actions')?.textContent))
+          .toEqual(['You approved', 'You declined', 'Replaced by a newer request']);
+        expect(screen.queryByRole('button', { name: /^(Approve|Decline) / })).toBeNull();
+      });
+
+      it('opens the Sidekick once it is in my list, and tells whoever asked how the person answered', async () => {
+        const mine = { parentId: 'triage', parentTitle: 'Incident triage', preview: null };
+        const rows = await rowsOf([
+          asked({ ...mine, id: 's5' }),
+          asked({ ...mine, id: 's6', kind: 'source_approved', actor: { kind: 'person', id: MAYA }, sourceRequest: source('approved', 'Maya Chen') }),
+          // Somebody the directory cannot name: the request kept their name.
+          asked({ ...mine, id: 's7', kind: 'source_declined', actor: { kind: 'person', id: PRIYA }, sourceRequest: source('declined', 'Priya Shah') }),
+        ]);
+        // The directory's name once it has loaded; until then, and for a
+        // person it does not hold, the name the request kept.
+        await waitFor(() => expect(rows.map((row) => row.getAttribute('title'))).toEqual([
+          'Avery asked for your Gmail to start Incident triage',
+          'Maya approved their Gmail for Incident triage',
+          'Priya Shah declined their Gmail for Incident triage',
+        ]));
+        expect(rows.map((row) => row.getAttribute('href'))).toEqual(['/sidekicks/triage', '/sidekicks/triage', '/sidekicks/triage']);
+        // The requester's rows are plain: only the asked person's has actions.
+        expect(rows.map((row) => row.closest('.activity-row-group') !== null)).toEqual([true, false, false]);
+        expect(rows[2]!.querySelector('.activity-row-glyph.is-source_declined svg')).toHaveClass('tabler-icon-bolt-off');
+      });
     });
   });
 

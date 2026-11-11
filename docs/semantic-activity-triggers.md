@@ -63,6 +63,20 @@ What changed is what happens between the match and the run.
    requires a verdict that admits. The occurrence key
    is unchanged, so a redelivery still answers from the run it already made.
 
+The same judge and the same two calls carry a second filter, which this
+document does not own: the **source's condition**, the written filter of the
+person whose events these are ([`sidekick-sources.md`](sidekick-sources.md#two-filters-two-owners)).
+`admitExternalEvent`'s unjudged refusal carries both lists
+(`judge: { conditions, sourceConditions, connectorType }`), the delivery
+judges the source's first and does not ask the trigger's question of an event
+the person's filter kept out, and the second call carries `sourceVerdict`
+beside `conditionVerdict`. The source verdict names the conditions it judged
+(`sourceVerdict.conditions`). If the person's filter differs when the object
+admits, the verdict answered for another filter and the event is refused
+`sidekick_source_condition_changed`. An event enters only when both hold. The
+trigger's condition is the Sidekick's own interest and any manager can change
+it; the source's is a person's permission and only they can.
+
 The question itself is three named outcomes over two named pieces of state, and
 the state carries the trust boundary in its shape: `authorized_condition` is the
 criterion, `candidate_event` is untrusted third-party text. There is no
@@ -171,6 +185,7 @@ selected, and TypeSafe.
 | No `TYPESAFE_API_KEY` | Refused as unavailable. Hosted regions always have one (`assertEnvContract` requires it), so this is local development, where refusing is honest and admitting would reproduce the defect. |
 | A gated delivery with no verdict | Refused, `sidekick_semantic_condition_unjudged`, carrying the conditions; the gated path judges them and asks again, and a caller that never judges never admits. During a rolling deploy the reverse is also possible — a new consumer calling an object that does not know the field — and there the RPC throws, the delivery retries, and the retry succeeds once the deploy completes. |
 | Several conditions on one Sidekick | Judged in order, stopping at the first met. One condition costs one call. |
+| The event's source carries a condition | Judged first, with the same question. A refusal is `sidekick_source_condition_not_met`, `_not_judgeable`, `_confidence_below_threshold` or `_classifier_unavailable`, and the trigger's own condition is then not judged. Without a source verdict the refusal is `sidekick_source_condition_unjudged`. A verdict for a filter that changed while the classifier ran is refused `sidekick_source_condition_changed`. |
 
 Two numbers, and only one of them is chosen:
 
@@ -297,6 +312,22 @@ aggregation by taking the last refusal rather than the first outage.
   line. Telling the Sidekick's author would need a surface that does not exist.
 
 ## Changelog
+
+### 2026-11-10 — The judge also tests a person's own filter
+
+**What changed:** The delivery's two calls carry a second list of conditions,
+a source's, with its own verdict (`sourceVerdict`) and refusal codes
+(`sidekick_source_*`). Both must hold. The question, its criteria and the
+`0.5` threshold are shared unchanged.
+
+**Why:** A person's filter must be one no manager can widen, and a second
+classifier asking the same question would be a second thing to measure.
+[`sidekick-sources.md`](sidekick-sources.md#changelog) holds the reasoning.
+
+**Consequences:** The two verdicts stay separate fields. Merged into one
+list, a manager's edit to the trigger would change what a person's permission
+admits. The shared threshold was measured for the opposite cost; a threshold
+of its own is the team's number to set.
 
 ### 2026-09-18 — A written condition is tested before it starts a run
 

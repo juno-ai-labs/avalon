@@ -12,8 +12,10 @@ import { PUSH_BODY_PREVIEW_CHARACTERS } from "@rally/contracts/push-notification
  * id as its own, so a replayed effect or a retried alarm converges on one
  * row. The intents' reaper never touches it. Its kinds are the intents' own
  * (migration 138); `subject_id` names what a row is about beyond its parent:
- * an artifact's resource id for `artifact_updated`, or the access request's
- * id for the three access kinds.
+ * an artifact's resource id for `artifact_updated`, the access request's id
+ * for the three access kinds, or the Sidekick source request's id for the
+ * three source kinds, which migration 146 admits
+ * (`SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS`).
  *
  * Seen is derived, never written per row: a row is seen once the recipient's
  * read cursor on its parent (`sidekick_viewer_reads`, the same projection the
@@ -84,7 +86,7 @@ export interface ActivityItemInput {
    * write time, for the kinds whose event names no message of its own.
    */
   attentionOrdinal?: number | null;
-  /** What the row is about beyond its parent: an artifact's resource id, an access request's id. */
+  /** What the row is about beyond its parent: an artifact's resource id, an access or source request's id. */
   subjectId?: string | null;
 }
 
@@ -197,6 +199,11 @@ export function recordCollapsedActivityItem(sql: SqlStorage, item: ActivityItemI
  * (`access_request`) stores no ordinal, so no read clears it: it is seen once
  * it is settled, by anyone. A declined request (`access_denied`) is seen
  * once its requester asks again: they have read the answer and acted on it.
+ * A request for a Sidekick source (`source_request`) is its asked person's
+ * actions and stores no ordinal either: it is seen once the request is
+ * settled, by their answer or by a newer ask replacing it. Its answer
+ * (`source_approved`, `source_declined`) clears as a grant does, on a read of
+ * the Sidekick after it.
  * Any row clears when Mark all seen came after it. One expression for the page
  * and the count, so the two cannot disagree.
  */
@@ -211,6 +218,8 @@ const ACTIVITY_SEEN_SQL = `(
   OR (item.kind = 'access_denied' AND EXISTS (
       SELECT 1 FROM canvas_access_requests later WHERE later.canvas_id = item.parent_id
          AND later.user_id = item.recipient_user_id AND later.created_at > item.created_at))
+  OR (item.kind = 'source_request' AND EXISTS (
+      SELECT 1 FROM sidekick_source_requests asked WHERE asked.request_id = item.subject_id AND asked.state <> 'pending'))
   OR (item.attention_ordinal IS NOT NULL AND reads.user_id IS NOT NULL
       AND reads.seen_attention_ordinal >= item.attention_ordinal
       AND (item.kind IN ('mention', 'new_message') OR reads.updated_at >= item.created_at))
@@ -224,7 +233,13 @@ interface ActivityRow extends Record<string, SqlStorageValue> {
   parent_title: string | null; subject_id: string | null; artifact_title: string | null;
   request_state: "pending" | "approved" | "denied" | null; request_decided_by_name: string | null;
   request_decided_by_user_id: string | null;
+  source_state: "pending" | "approved" | "declined" | "cancelled" | null; source_connector_type: string | null;
+  source_event_types_json: string | null; source_condition: string | null; source_requested_by_name: string | null;
+  source_person_name: string | null;
 }
+
+/** The kinds a Sidekick source request writes: the ask, and its two answers. */
+const SOURCE_KINDS_SQL = `('source_request', 'source_approved', 'source_declined')`;
 
 /** Who a page is read for: their id, their Organization, and whether they are a member rather than a guest. */
 export interface ActivityViewer {
@@ -236,8 +251,9 @@ export interface ActivityViewer {
 /**
  * The rows this viewer may open the parent of, with whether each is seen: the
  * one filter the page and the counts read, so they cannot disagree. Binds
- * `?1` the user, `?2` the Organization, `?3` member (1) or guest (0) and `?5`
- * the admitting writer Sidekicks (JSON).
+ * `?1` the user, `?2` the Organization, `?3` member (1) or guest (0), `?5`
+ * the admitting writer Sidekicks (JSON) and `?6` whether the Sidekick source
+ * kinds list (1) or are left out for a build that cannot parse them (0).
  */
 function listedSql(sidekickListedSql: string): string {
   return `WITH mine AS (
@@ -256,6 +272,13 @@ function listedSql(sidekickListedSql: string): string {
                 -- A declined request is about a Canvas its recipient may not
                 -- open: it lists while the Canvas exists, naming it by id only.
                 WHEN mine.kind = 'access_denied' THEN canvas.canvas_id IS NOT NULL AND canvas.archived_at IS NULL
+                -- A source request names its Sidekick to a person who usually
+                -- cannot open it, on purpose, and its answer goes to whoever
+                -- asked about that Sidekick by name: each lists while the
+                -- Sidekick exists, whoever its readers are now.
+                -- Left out whole for a build that cannot parse these kinds (?6).
+                WHEN mine.kind IN ${SOURCE_KINDS_SQL} THEN ?6 = 1 AND directory.automation_id IS NOT NULL
+                  AND directory.workspace_id = ?2 AND directory.lifecycle <> 'deleted'
                 WHEN canvas.canvas_id IS NOT NULL THEN canvas.archived_at IS NULL AND (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
                   OR (?3 = 1 AND canvas.visibility = 'workspace')
                   -- An owner or administrator may open every Canvas, so a row
@@ -270,11 +293,34 @@ function listedSql(sidekickListedSql: string): string {
      )`;
 }
 
+/**
+ * A request's stored event types. The column's CHECK holds it to valid JSON;
+ * anything in it that is not a string is left out rather than failing the
+ * person's whole page.
+ */
+function sourceEventTypes(json: string | null): string[] {
+  const value: unknown = JSON.parse(json ?? "[]");
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
 /** Writer Sidekicks whose audience admits this viewer to the Canvases they write (`writerAdmits`, asked once per writer). */
 function admittingWriters(sql: SqlStorage, writerAdmits: (sidekickId: string) => boolean): string[] {
   return sql.exec<{ writer_sidekick_id: string }>(
     `SELECT DISTINCT writer_sidekick_id FROM canvas_directory WHERE writer_sidekick_id IS NOT NULL`,
   ).toArray().map((row) => row.writer_sidekick_id).filter((sidekickId) => writerAdmits(sidekickId));
+}
+
+/**
+ * What the build a page is read for can parse. `ActivityKindSchema` is a
+ * closed enum inside the workspace socket's strict sync event, so one row of
+ * a kind a build does not know fails its parse of the whole subscribe answer.
+ * A kind newer than the oldest served build is therefore left out, row and
+ * count alike, for a socket whose ticket declared an older contract
+ * (`SOURCE_ACTIVITY_CLIENT_CONTRACT`).
+ */
+export interface ActivityReads {
+  /** The three kinds a Sidekick source request writes. */
+  sourceKinds: boolean;
 }
 
 /**
@@ -297,6 +343,7 @@ export function activityPage(
   limit: number,
   sidekickListedSql: string,
   writerAdmits: (sidekickId: string) => boolean,
+  reads: ActivityReads,
 ): { unseenCount: number; items: ActivityItem[] } {
   const writers = admittingWriters(sql, writerAdmits);
   const rows = sql.exec<ActivityRow>(
@@ -306,13 +353,17 @@ export function activityPage(
             listed.actor_kind, listed.actor_id, listed.preview, listed.created_at, listed.seen,
             SUM(1 - listed.seen) OVER () AS unseen_count, listed.parent_title, listed.subject_id,
             artifact.title AS artifact_title, request.state AS request_state, request.decided_by_name AS request_decided_by_name,
-            request.decided_by_user_id AS request_decided_by_user_id
+            request.decided_by_user_id AS request_decided_by_user_id,
+            source.state AS source_state, source.connector_type AS source_connector_type,
+            source.event_types_json AS source_event_types_json, source.condition AS source_condition,
+            source.requested_by_name AS source_requested_by_name, source.person_name AS source_person_name
        FROM listed
        LEFT JOIN resources artifact ON listed.kind = 'artifact_updated' AND artifact.id = listed.subject_id
        LEFT JOIN canvas_access_requests request ON listed.kind IN ('access_request', 'access_denied') AND request.request_id = listed.subject_id
+       LEFT JOIN sidekick_source_requests source ON listed.kind IN ${SOURCE_KINDS_SQL} AND source.request_id = listed.subject_id
       ORDER BY listed.created_at DESC, listed.item_id DESC
       LIMIT ?4`,
-    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(writers),
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(writers), reads.sourceKinds ? 1 : 0,
   ).toArray();
   return {
     unseenCount: rows[0]?.unseen_count ?? 0,
@@ -338,6 +389,13 @@ export function activityPage(
             state: row.request_state, decidedByName: row.request_decided_by_name, decidedByUserId: row.request_decided_by_user_id,
           } }
         : {}),
+      ...(row.kind === "source_request" || row.kind === "source_approved" || row.kind === "source_declined"
+        ? { sourceRequest: row.subject_id === null || row.source_state === null ? null : {
+            requestId: row.subject_id, state: row.source_state, connectorType: row.source_connector_type ?? "",
+            eventTypes: sourceEventTypes(row.source_event_types_json), condition: row.source_condition,
+            requestedByName: row.source_requested_by_name ?? "", personName: row.source_person_name,
+          } }
+        : {}),
     } as ActivityItem)),
   };
 }
@@ -359,7 +417,8 @@ export function activityCounts(
      SELECT SUM(1 - seen) AS unseen, SUM(CASE WHEN kind = 'needs_input' THEN 1 - seen ELSE 0 END) AS unseen_needs_input,
             SUM(CASE WHEN kind = 'mention' THEN 1 - seen ELSE 0 END) AS unseen_mentions
        FROM listed`,
-    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, null, JSON.stringify(admittingWriters(sql, writerAdmits)),
+    // Every kind: this count is the person's, whatever build asks for it.
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, null, JSON.stringify(admittingWriters(sql, writerAdmits)), 1,
   ).toArray()[0];
   return { unseen: row?.unseen ?? 0, unseenNeedsInput: row?.unseen_needs_input ?? 0, unseenMentions: row?.unseen_mentions ?? 0 };
 }

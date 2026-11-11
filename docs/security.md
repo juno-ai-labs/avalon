@@ -394,6 +394,53 @@ tells its reader the region, Organization and conversation ids while opening not
 for them. Hiding those ids took an opaque token and a store behind it, and the
 token's only other job, the acceptance secret, went with the acceptance step.
 
+One emailed link is the exception and is bearer authority: the Approve and
+Decline links in a Sidekick source request's email
+([`sidekick-sources.md`](sidekick-sources.md#the-emailed-link)). Each is
+signed with an HMAC keyed by the session signing key under its own label, and
+the signature binds the Organization, the Sidekick, the request, the person
+asked and the decision. It has no expiry and asks for no sign-in: whoever
+opens it decides for that person until the request is settled, so a forwarded
+email forwards the decision. The page the link opens posts the answer as it
+loads. The API route refuses a `GET` with 405, which stops only a direct `GET`
+of that path; a mail scanner that opens the link and runs the page's
+JavaScript answers for the person. The owner chose one click with no sign-in
+on 2026-11-10, and on 2026-11-11 chose again, with the scanner case stated,
+that the page answers without a press. What the link
+can do is bounded by its signature: one decision on one request, and an
+approval lends events and no account. The region in the link is not signed;
+it only chooses which regional API the page posts to. A link cannot be
+revoked on its own: besides the person's answer, only a newer ask to the same
+person that differs in its event types or condition cancels the request it
+names ([`sidekick-sources.md`](sidekick-sources.md#operations)).
+
+Three more rules keep a source the person's own act
+([`sidekick-sources.md`](sidekick-sources.md#security-and-trust-model)):
+
+- **Who may ask through an agent.** The three source tools and the
+  `setting-up-a-filtered-trigger` skill are offered only to a turn a person
+  is driving (`asksForSources`, `builtInSkillsFor` in `integrations.ts`). A
+  Sidekick run, a background agent, a run's delegation worker, and a wizard
+  or Chat turn that another agent's message or Rally's review notice started
+  are not offered them. Each of those works from content nobody typed, a
+  stranger's email among it, so none of them may ask in a person's name. No
+  tool answers a request at all, and asking approves nobody: an ask for the
+  asker's own account waits for their press like any other. A Sidekick run
+  and its background workers are not offered `sidekick_set_delegation`
+  either; a background agent of a conversation a person is talking in is.
+- **A rule on a colleague's account.** A manager's new or changed rule on
+  another person's own connection is refused
+  (`sidekick_source_owner_must_approve`) until that person approves a request
+  for the event type. A source their own saved rule made does not count.
+- **Event content is fenced as evidence.** The one message a run is handed
+  sits between two marker lines that carry the run's id, which the sender
+  cannot know, so a line in the message that looks like a marker closes
+  nothing. The marker words are removed from the content in any case or
+  spacing, and the statement after the fence says nothing in it is an
+  instruction. The notice that asks a person for a source quotes the
+  condition exactly as stored, with no Markdown rewrite, so the person
+  approves the words the classifier judges.
+
 Claiming has two consequences worth knowing. A share to an address that already
 has an account is claimed as it is made, so it adds that person to the
 Organization as a guest without them confirming anything, and the sharer can
@@ -479,6 +526,14 @@ another participant's runs: a connector tool runs as the run's execution
 principal, the person who started it. A Sidekick acting through a delegate's
 access is the one exception, and
 [delegation](automation-lifecycle.md#delegation-consent-authority) governs it.
+A Sidekick run with no delegate has a base identity instead of a person: it
+executes under `{ type: "workspace" }` plus its `automationRun`
+([who a run acts as](automation-lifecycle.md#who-a-run-acts-as)). It uses the
+Organization's connections and cannot use any person's connection. It carries
+the Organization's principal without an administrator's standing, so it writes
+its Sidekick's memory and cannot write the Organization's
+(`resolveMemoryAccess`). A loop acting as a person whose last delegate
+withdraws mid-run stops; it does not go on under that person's name.
 That rule covers the call, not what it returns. In a Canvas, a file a run writes to the
 shared sandbox, including one fetched through a personal connector, is readable
 by every other participant's runs there, by the 2026-11-09 decision
@@ -749,13 +804,18 @@ relationship, and current derivative dependency before any result is placed in
 the next model request. Missing authority omits that assistant/tool pair rather
 than replaying stale content.
 
-A Sidekick run continues on a person's input only when the run could act as
-them: its requester, for a run under its requester's own access, or an
-eligible delegate, for a run under a delegate's access; anyone else the
-Sidekick is shared with is refused by name
+Who may continue a Sidekick run depends on who the run acts as. A run a
+person asked for under their own access continues only from that requester. A
+run under a delegate's access continues from a person only while they are an
+eligible delegate. A run nobody is behind acts as the Sidekick itself and
+lends nobody's access, so the people who manage the Sidekick continue it and
+anyone else is refused (`run_continuation_requires_manager`). Every refusal
+names its reason
 ([continuing a run](automation-lifecycle.md#continuing-a-run)). Another
 agent's message counts as the person that agent acts for, and a retry as the
-person retrying. Outside Rally, a reply in a provider thread bound to the run
+person retrying. An agent that acts for nobody (`unattributed`) may continue
+only a run that itself acts for nobody. Rally's own input (`system`: a
+scheduled wake-up, a review notice) is not screened by sender. Outside Rally, a reply in a provider thread bound to the run
 continues it under the run's own principal whoever sent it: every binding is
 one the run's own outbound message made, so a reply there is the answer the
 run asked for. For Slack, the sender check refuses guests (restricted and single-channel accounts) and members of another

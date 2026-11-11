@@ -51,6 +51,8 @@ function workspace() {
 
 async function seed(): Promise<void> {
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, sessionId: SESSION_ID });
+  // This suite's D1 starts with no schema: a source request's view reads each person's presentation.
+  await env.DB.exec("ALTER TABLE users ADD COLUMN presentation_json TEXT");
   await env.DB.batch([
     env.DB.prepare("INSERT INTO users(id,name) VALUES (?,'Other member')").bind(OTHER_MEMBER_ID),
     env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status) VALUES (?,?,'member','active')")
@@ -322,9 +324,23 @@ describe("external event rules across connectors", () => {
     expect(await destinationsFor(failed)).toEqual([AUTOMATIONS.slowDeploys]);
   });
 
-  it("names people by id, and keeps a restricted event away from an automation its audience cannot read", async () => {
+  it("names people by id, and keeps a restricted event away from a Sidekick nobody in its audience let it into", async () => {
+    // A task page in the Organization's Notion. A source is asked for by
+    // connector, and Notion is one this suite's Worker has configured; GitHub
+    // is not, so nobody here could let a GitHub event in.
+    const connector = "notion", assigned = "notion.page.properties_updated";
+    /** One person lets what they see of the Organization's Notion start a Sidekick they manage: their own source. */
+    const letIn = async (automationId: string, userId: typeof AUTHOR_ID) => {
+      const asked = await workspace().sidekickRequestSources({ workspaceId: WORKSPACE_ID, automationId,
+        actor: { userId, actorRole: "member", participantOfOwningWorkstream: false }, actorName: "Member",
+        ask: { userIds: [userId], connectorType: connector, eventTypes: [assigned] } });
+      // Their own source waits for their own answer, like anybody's.
+      expect(asked.requests.map((request) => request.state)).toEqual(["pending"]);
+      await workspace().sidekickDecideSourceRequest({ workspaceId: WORKSPACE_ID, automationId,
+        requestId: asked.requests[0]!.requestId, userId, decision: "approve" });
+    };
     await register(AUTOMATIONS.assignedToAuthor, [
-      rule(AUTOMATIONS.assignedToAuthor, 1, "github", "github.issue.assigned", {
+      rule(AUTOMATIONS.assignedToAuthor, 1, connector, assigned, {
         kind: "all",
         allOf: [
           { kind: "person_id", attribute: "assigneePersonId", operator: "equals", value: AUTHOR_ID },
@@ -333,30 +349,38 @@ describe("external event rules across connectors", () => {
       }),
     ]);
     await register(AUTOMATIONS.personalOfOther, [
-      rule(AUTOMATIONS.personalOfOther, 1, "github", "github.issue.assigned", { kind: "always" }),
+      rule(AUTOMATIONS.personalOfOther, 1, connector, assigned, { kind: "always" }),
     ]);
     await register(AUTOMATIONS.workspaceWide, [
-      rule(AUTOMATIONS.workspaceWide, 1, "github", "github.issue.assigned", { kind: "always" }),
+      rule(AUTOMATIONS.workspaceWide, 1, connector, assigned, { kind: "always" }),
     ]);
 
-    const toAuthor = await ingest("github", "github.issue.assigned", {
+    const toAuthor = await ingest(connector, assigned, {
       metadata: { assigneePersonId: AUTHOR_ID, reviewerPersonIds: [] },
     });
-    const reviewedByOther = await ingest("github", "github.issue.assigned", {
+    const reviewedByOther = await ingest(connector, assigned, {
       metadata: { assigneePersonId: AUTHOR_ID, reviewerPersonIds: [OTHER_MEMBER_ID] },
     });
-    // Restricted events require an eligible delegate in their actual audience,
-    // for both personal and Organization-owned Sidekicks.
-    const restrictedToAuthor = await ingest("github", "github.issue.assigned", {
+    // A restricted event enters only through the source of somebody in its
+    // actual audience, for a personal and an Organization-owned Sidekick alike.
+    const restrictedToAuthor = await ingest(connector, assigned, {
       metadata: { assigneePersonId: AUTHOR_ID, reviewerPersonIds: [] },
       visibility: { kind: "restricted" },
       targetUserIds: [AUTHOR_ID],
     });
 
+    // An event the whole Organization sees needs nobody's source.
     expect(await destinationsFor(toAuthor))
       .toEqual([AUTOMATIONS.assignedToAuthor, AUTOMATIONS.personalOfOther, AUTOMATIONS.workspaceWide].sort());
     expect(await destinationsFor(reviewedByOther))
       .toEqual([AUTOMATIONS.personalOfOther, AUTOMATIONS.workspaceWide].sort());
+    // Creating a Sidekick, and so being its delegate, lets nothing in.
+    expect(await destinationsFor(restrictedToAuthor)).toEqual([]);
+    await letIn(AUTOMATIONS.assignedToAuthor, AUTHOR_ID);
+    // The other member's source reaches what they can see, and this event is not that.
+    await letIn(AUTOMATIONS.personalOfOther, OTHER_MEMBER_ID);
+    expect(await destinationsFor(restrictedToAuthor)).toEqual([AUTOMATIONS.assignedToAuthor]);
+    await letIn(AUTOMATIONS.workspaceWide, AUTHOR_ID);
     expect(await destinationsFor(restrictedToAuthor)).toEqual([AUTOMATIONS.assignedToAuthor, AUTOMATIONS.workspaceWide].sort());
   });
 

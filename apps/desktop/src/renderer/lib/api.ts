@@ -1,6 +1,10 @@
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
+import {
+  SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourcesResultSchema,
+  type SidekickSourceRequestInput, type SidekickSourceRequestResult, type SidekickSourceRequestView, type SidekickSourcesResult,
+} from '@rally/contracts';
 
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
@@ -1168,6 +1172,42 @@ export class RallyApi {
     return this.request(`/sidekicks/${encodeURIComponent(id)}/delegation`, {
       method: 'POST', body: { allowed, operationId }, schema: SidekickDelegationMutationResultSchema,
     });
+  }
+
+  // Sources: whose events may start a Sidekick (docs/sidekick-sources.md).
+
+  /** Who lets events in, and who has been asked; anyone who reads or manages the Sidekick. */
+  getSidekickSources(id: string, signal?: AbortSignal): Promise<SidekickSourcesResult> {
+    return this.request(`/sidekicks/${encodeURIComponent(id)}/sources`, { schema: SidekickSourcesResultSchema, signal });
+  }
+
+  /** A manager asks people for a source; each person asked gets a request only they answer. */
+  requestSidekickSources(id: string, ask: SidekickSourceRequestInput): Promise<SidekickSourceRequestResult> {
+    return this.request(`/sidekicks/${encodeURIComponent(id)}/source-requests`, {
+      method: 'POST', body: ask, schema: SidekickSourceRequestResultSchema,
+    });
+  }
+
+  /** The asked person's own answer, answering the request as it now stands. */
+  decideSidekickSourceRequest(id: string, requestId: string, decision: 'approve' | 'decline'): Promise<SidekickSourceRequestView> {
+    return this.request(`/sidekicks/${encodeURIComponent(id)}/source-requests/${encodeURIComponent(requestId)}/decision`, {
+      method: 'POST', body: { decision }, schema: SidekickSourceRequestViewSchema,
+    });
+  }
+
+  /** A person takes their own source back. */
+  withdrawSidekickSource(id: string, connectionId: string): Promise<{ withdrawn: boolean }> {
+    return this.request(`/sidekicks/${encodeURIComponent(id)}/sources/withdraw`, {
+      method: 'POST', body: { connectionId }, schema: z.object({ withdrawn: z.boolean() }),
+    });
+  }
+
+  /** Requests by id, each only if this reader may see it: what a conversation's card reads. */
+  async readSidekickSourceRequests(requestIds: readonly string[], signal?: AbortSignal): Promise<SidekickSourceRequestView[]> {
+    const result = await this.request('/sidekicks/source-requests/read', {
+      method: 'POST', body: { requestIds }, schema: z.object({ requests: z.array(SidekickSourceRequestViewSchema) }), signal,
+    });
+    return result.requests;
   }
 
   async acceptAutomation(id: string): Promise<AutomationDetail> {

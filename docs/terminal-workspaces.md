@@ -78,8 +78,14 @@ correct object. Overlapping tool mutations contend for the existing lease;
 sharing a sandbox does not make a whole multi-tool workflow atomic.
 The plugin loads Sidekick delegation with its tool inventory and reuses that
 snapshot for preparation and tool calls, including cached reads. Continuations
-and later runs rebuild the inventory; a stale snapshot may finish work. Only eligible delegates can
-use its files; management rights alone do not grant Terminal access. The
+and later runs rebuild the inventory; a stale snapshot may finish work. A person uses its files only
+as an eligible delegate; management rights alone do not grant Terminal access. A run with no
+delegate acts as the Sidekick itself, under the Organization's principal, and uses the shared files
+as the Sidekick's own; a repository checkout still needs a person. A run a non-delegate asked for
+gets no Terminal. A run a schedule or an event started publishes into any attached Canvas that is
+not archived; a run a person asked for, and a background agent's conversation, which is no run,
+publish only where their person can open the Canvas (`canvas_access_denied`;
+[who a run acts as](automation-lifecycle.md#who-a-run-acts-as)). The
 Sidekick retains a stable file identity across coordinating users, using its
 preserved legacy account identity (or creator for a new Sidekick) to keep
 existing sandbox fingerprints compatible. This identifier confers no execution

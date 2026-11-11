@@ -10,6 +10,8 @@ import { createRoot } from "react-dom/client";
 import { BrowserBoot, BrowserEntry } from "./entry";
 import { ConnectionComplete } from "./connection-complete";
 import { MCP_CONSENT_PATH, McpConsent } from "./mcp-consent";
+import { SOURCE_DECISION_PATH } from "@rally/contracts/browser-session";
+import { SourceDecision } from "./source-decision";
 import { installNotificationOpen } from "./notification-open";
 import "./styles.css";
 import '@rally/ui/styles/app.css';
@@ -35,5 +37,7 @@ createRoot(root).render(<ErrorNoticeProvider><AppErrorBoundary onError={(error) 
     ? <ConnectionComplete />
     : location.pathname === MCP_CONSENT_PATH
     ? <McpConsent />
+    : location.pathname === SOURCE_DECISION_PATH
+    ? <SourceDecision />
     : <BrowserEntry renderCollaboration={(region, session, onSignOut, onRevalidate) => <BrowserCollaboration onSignOut={onSignOut} onRevalidate={onRevalidate} key={`${region}:${session.user.id}:${session.workspace?.id}:${session.workspace?.accessClass ?? "member"}`} region={region} session={session} />} />}
 </AppErrorBoundary></ErrorNoticeProvider>);

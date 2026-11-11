@@ -70,6 +70,26 @@ describe("Sidekick operation account selection over durable receipts", () => {
     expect(f.calls).toEqual([id(6)]);
   });
 
+  it("leaves a run whose requester has left no account at all, the Organization's included, and says they left", async () => {
+    const f = fixture();
+    const organization: SidekickAccountConnection = { connectionId: id(9), scope: "workspace", ownerUserId: null, modelPluginId: "plugin_org" };
+    // The run's own view once its requester is gone: it names nobody.
+    const left = SidekickExecutionDelegationSchema.parse({ sidekickId: id(4), creatorUserId: creator, accountUserId: creator,
+      delegates: [], requesterUserId: other });
+    const refused = await executeSidekickAccountOperation({ ...f.options(), authority: left, coordinatorUserId: null,
+      requested: organization, candidates: [a, b] }).then(() => null, (error: unknown) => error);
+    expect(refused).toBeInstanceOf(ConnectorError);
+    expect((refused as ConnectorError).message).toBe(
+      "sidekick_requester_account_unavailable: the person who asked for this run is no longer in the Organization, so it has no account to act with.");
+    expect((refused as ConnectorError).details).toEqual({ code: "sidekick_requester_account_unavailable" });
+    expect(f.calls).toEqual([]);
+    // While the requester is here, the same run uses the Organization's connection.
+    const here = SidekickExecutionDelegationSchema.parse({ sidekickId: id(4), creatorUserId: creator, accountUserId: creator,
+      delegates: [{ userId: other, generation: 0, grantedAt: 1 }], requesterUserId: other });
+    await executeSidekickAccountOperation({ ...f.options(), authority: here, coordinatorUserId: other, requested: organization, candidates: [] });
+    expect(f.calls).toEqual([id(9)]);
+  });
+
   it("does not expose delegation to a Sidekick configuration chat", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ workspaceId, parentKind: "automation", parentId: id(4),
       loopId: "config-loop", harnessRunId: id(7), region: "global", reason: "human_message", triggerMessageId: null, activityId: null,
@@ -166,5 +186,25 @@ describe("Sidekick operation account selection over durable receipts", () => {
     expect(await f.receipts.executionAccount({ runId: call.harnessRunId, effectIntentId: call.effectIntentId! }))
       .toMatchObject({ originalAccount: { delegatedUserId: creator, grantGeneration: 7 },
         account: { delegatedUserId: creator, grantGeneration: 11 } });
+  });
+
+  it("serves a run with no delegate the Organization's connection and nobody's own, and recovers its uncertain write as the Sidekick itself after a delegate opts in", async () => {
+    const f = fixture(), call = f.context("write");
+    const organization: SidekickAccountConnection = { connectionId: id(9), scope: "workspace", ownerUserId: null, modelPluginId: "plugin_org" };
+    const itself = SidekickExecutionDelegationSchema.parse({ sidekickId: id(4), creatorUserId: creator, accountUserId: creator, delegates: [] });
+    // A person's own account is a delegate's to lend, and nobody lent one.
+    await expect(executeSidekickAccountOperation({ ...f.options(), authority: itself, coordinatorUserId: null, requested: a, candidates: [b] }))
+      .rejects.toThrow("No eligible delegated account is available");
+    const options = { ...f.options(call), authority: itself, coordinatorUserId: null, requested: organization, candidates: [] };
+    await expect(executeSidekickAccountOperation({ ...options, execute: async () => {
+      throw new TypeError("Response lost");
+    } })).rejects.toThrow("Response lost");
+    expect(await f.receipts.executionAccount({ runId: call.harnessRunId, effectIntentId: call.effectIntentId! }))
+      .toMatchObject({ account: { delegatedUserId: null, grantGeneration: 0, principal: { type: "workspace", workspaceId: id(1) } } });
+    // Someone opts in before the write is reconciled. The same account is recorded, not theirs.
+    await executeSidekickAccountOperation({ ...options, authority: authority(), coordinatorUserId: creator });
+    expect(f.calls).toEqual([id(9)]);
+    expect(await f.receipts.executionAccount({ runId: call.harnessRunId, effectIntentId: call.effectIntentId! }))
+      .toMatchObject({ originalAccount: { delegatedUserId: null }, account: { delegatedUserId: null, grantGeneration: 0 } });
   });
 });

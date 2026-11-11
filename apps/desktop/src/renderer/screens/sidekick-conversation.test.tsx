@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   getWorkspace: vi.fn(async () => ({ id: "w", name: "Team", region: "global", timezone: "UTC", modelSelectorVisible: false, currentUser: { id: "viewer", name: "Viewer", email: "viewer@example.test", timezone: "UTC" } })),
   getAutomationRuns: vi.fn(async () => []),
   getSidekickDelegates: vi.fn(),
+  getSidekickSources: vi.fn(),
   getWorkspaceMembers: vi.fn(async () => []),
   getConnections: vi.fn(async () => []),
   recordActivityEvents: vi.fn(async () => undefined),
@@ -147,6 +148,7 @@ describe("a Sidekick's shared conversation", () => {
     createMessage.mockResolvedValue({ turnId: 'turn', clientMessageId: 'message', createdAt: '2026-11-07T09:01:00.000Z', deliveryState: 'queued' });
     api.getAutomation.mockResolvedValue(sidekick());
     api.getSidekickDelegates.mockResolvedValue({ sidekickId: SIDEKICK, creatorUserId: AUTHOR, you: { userId: AUTHOR, allowed: false }, delegates: [] });
+    api.getSidekickSources.mockResolvedValue({ sidekickId: SIDEKICK, sources: [], requests: [] });
   });
   afterEach(() => { vi.unstubAllGlobals(); });
 

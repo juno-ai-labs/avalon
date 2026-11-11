@@ -132,6 +132,37 @@ describe('MessageBlock model timing', () => {
     expect(screen.queryByText('show_connector_connection')).not.toBeInTheDocument();
   });
 
+  it('draws a completed ask for a Sidekick source as its card in the main feed, read live, and as a tool row elsewhere', async () => {
+    const SIDEKICK = '00000000-0000-7000-8000-0000000000d1';
+    const REQUEST = '00000000-0000-7000-8000-0000000000e1';
+    const MAYA = '00000000-0000-7000-8000-0000000000a3';
+    const message: Message = { ...baseMessage, id: 'ask', authorType: 'agent', author: undefined, messageType: 'tool_event',
+      toolEvent: { id: 'ask', name: 'sidekick_request_source', wireName: 'sidekick_request_source', status: 'completed',
+        output: { sidekickId: SIDEKICK, requests: [{ requestId: REQUEST }] } } };
+    const readSidekickSourceRequests = vi.fn<(requestIds: readonly string[]) => Promise<unknown[]>>(async () => [{
+      requestId: REQUEST, sidekickId: SIDEKICK, sidekickName: 'Deals', person: { userId: MAYA, displayName: 'Maya' },
+      connectorType: 'google', eventTypes: ['email.received'], condition: null, state: 'declined', requestedByName: 'Adam',
+      yours: false, createdAt: 1, decidedAt: 2,
+    }]);
+    const mount = (cards: boolean) => render(
+      <CollaborationSessionProvider api={{ readSidekickSourceRequests } as never} session={{ user: { id: 'user-adam' } } as never}>
+        <QueryClientProvider client={new QueryClient()}>
+          <MessageBlock {...actions} message={message} {...(cards ? { connectorConnectionCards: true } : {})} />
+        </QueryClientProvider>
+      </CollaborationSessionProvider>,
+    );
+    const feed = mount(true);
+    const card = await screen.findByRole('article', { name: 'Source request for Deals' });
+    expect(readSidekickSourceRequests.mock.calls.map(([ids]) => ids)).toEqual([[REQUEST]]);
+    expect(within(card).getByRole('button', { name: 'Decline Maya’s Gmail for Deals' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText('sidekick_request_source')).not.toBeInTheDocument();
+    feed.unmount();
+    // A host that did not opt in gets no control people can press.
+    mount(false);
+    expect(screen.getByText('sidekick_request_source')).toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: /Source request/u })).not.toBeInTheDocument();
+  });
+
   it('live-counts an active provider stream and settles its wording when complete', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-05T12:00:00.000Z'));

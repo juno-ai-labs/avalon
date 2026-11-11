@@ -655,6 +655,16 @@ namespace helper.
   (`WorkspaceUpdateNotice`), since a returning person's lists paint from the
   device cache and an empty-list notice would never show. That helps only builds that carry it, so the
   next raise of the minimum is the first one that tells anyone.
+- **A served build older than one payload** — the workspace socket's ticket
+  also carries the contract its request declared (claim `cc`), and the edge
+  forwards it to WorkspaceDO as `x-rally-socket-client-contract`, set from the
+  ticket alone after stripping any inbound spelling. The object keeps it on
+  the socket's attachment and leaves out what that build cannot parse: today
+  the Activity rows of the Sidekick source kinds, below
+  `SOURCE_ACTIVITY_CLIENT_CONTRACT` (14;
+  [`activity.md`](activity.md#failure-modes-and-limits)). A ticket that names
+  no contract, and a socket attached before the field existed, read as older
+  than every such payload.
 - **A write on a conversation whose parent is archived** (the object answers
   409 `conversation_parent_archived` on the socket; the read side stays open).
 - **Disallowed origin** — 403 `socket_origin_forbidden`.

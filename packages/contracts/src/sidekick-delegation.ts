@@ -85,8 +85,10 @@ export type SidekickExecutionDelegation = z.infer<typeof SidekickExecutionDelega
 export const SidekickDelegationAttentionCodeSchema = z.enum(["no_eligible_delegate", "event_no_eligible_delegate", "permission_report_unavailable"]);
 export type SidekickDelegationAttentionCode = z.infer<typeof SidekickDelegationAttentionCodeSchema>;
 export const SIDEKICK_DELEGATION_ATTENTION_MESSAGES: Record<SidekickDelegationAttentionCode, string> = {
-  no_eligible_delegate: "Needs attention: no delegated user is available",
-  event_no_eligible_delegate: "Needs attention: a configured source has no eligible delegated account. Opt in with an account that has access to that source.",
+  no_eligible_delegate: "Needs attention: nobody lends this Sidekick an account. Add a delegate, or pause and resume it to run with the Organization's connections alone.",
+  // The code predates sources and is stored and on the wire; what it says is theirs:
+  // a watched account whose owner does not let its events in (docs/sidekick-sources.md).
+  event_no_eligible_delegate: "Needs attention: an account this Sidekick watches does not let its events start it. Ask its owner for that again in a conversation with Rally.",
   permission_report_unavailable: "Needs attention: a message could not reach its destination. Restore conversation access and rerun the blocked work; no delivery was confirmed.",
 };
 

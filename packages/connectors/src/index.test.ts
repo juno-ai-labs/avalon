@@ -1285,6 +1285,61 @@ describe("connectors", () => {
     expect(driveMetadataFields).toContain("capabilities(canEdit,canDownload)");
   });
 
+  it("reads the one message a new-mail activity is about, and nothing for any other activity", async () => {
+    const requested: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      requested.push(url.pathname);
+      if (url.pathname.endsWith("/messages/message-1")) {
+        return googleJson({
+          id: "message-1", threadId: "thread-1", labelIds: ["INBOX"], snippet: "Preview",
+          payload: {
+            mimeType: "multipart/mixed",
+            headers: [
+              { name: "From", value: "Founder <founder@example.com>" },
+              { name: "To", value: "Jane <jane@example.com>" },
+              { name: "Subject", value: "Pre-seed round" },
+            ],
+            parts: [
+              { mimeType: "text/plain", body: { data: base64UrlText("We are raising a pre-seed round.") } },
+              { mimeType: "application/pdf", filename: "deck.pdf", body: { attachmentId: "attachment-1", size: 2_000_000 } },
+            ],
+          },
+        });
+      }
+      if (url.pathname.endsWith("/messages/gone")) return new Response("{}", { status: 404 });
+      throw new Error(`Unexpected Google fetch: ${url}`);
+    };
+    const adapter = googleAdapter(fetcher);
+    const connection = googleConnection(["gmail.read"]);
+    const read = (eventType: string, subject: Record<string, unknown>, from = connection) =>
+      adapter.readActivityContent!(from, { eventType, subject }, neverAborts());
+
+    expect(await read("email.received", { messageId: "message-1", threadId: "thread-1" })).toEqual({
+      text: [
+        "From: Founder <founder@example.com>",
+        "To: Jane <jane@example.com>",
+        "Subject: Pre-seed round",
+        "",
+        "We are raising a pre-seed round.",
+        "",
+        "Attachments (names only): deck.pdf",
+      ].join("\n"),
+      truncated: false,
+    });
+    // The message only: never its thread, and never a search.
+    expect(requested).toEqual(["/gmail/v1/users/me/messages/message-1"]);
+
+    expect(await read("email.received", { messageId: "gone" })).toBeNull();
+    const before = requested.length;
+    // A label change is not new mail, a subject with no message names nothing,
+    // and a connection that may not read mail reads none.
+    expect(await read("email.updated", { messageId: "message-1" })).toBeNull();
+    expect(await read("email.received", {})).toBeNull();
+    expect(await read("email.received", { messageId: "message-1" }, googleConnection(["drive.read"]))).toBeNull();
+    expect(requested).toHaveLength(before);
+  });
+
   it("exposes bounded scoped read tools without raw Gmail parts or PDF base64", async () => {
     const requested: URL[] = [];
     const fetcher: typeof fetch = async (input) => {
