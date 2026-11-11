@@ -470,12 +470,21 @@ message before capturing or clicking the row.
   `components/workstream-composer-dictation.test.tsx`, which drives the hook
   through a double; those states are asserted there rather than in a window,
   for the reason the entry below gives.
-- **A real streaming turn, and anything a run has to produce.** `.env.local`
+- **A real streaming turn, and anything a run has to produce, with no key set.** `.env.local`
   ships `OPENROUTER_API_KEY` empty, so a run reaches the provider and fails —
   `harness_execution_failed`, with `Cannot read properties of undefined
   (reading 'trim')` in the Worker log where the key is read. Nothing a model
   decides can be staged here: no streaming tokens, and no elicitation, which
   means no answered question and no pending answer either.
+- **Unless keys are set: a real run, and the Terminal tools.** With
+  `OPENROUTER_API_KEY` in `.env.local` (then `pnpm env:sync` and a Worker
+  restart) a run completes, and the data tools of a live site work against
+  local storage. The Terminal tools need more: `DAYTONA_API_KEY`,
+  `DAYTONA_TARGET`, a snapshot the key's organization holds, and
+  `TERMINAL_REGION_CAPABILITY=supported`. Without all four the region stays
+  `unsupported` and Rally says it cannot import, edit or publish a site. With
+  them, a run creates a real sandbox on that Daytona organization, which
+  stopping the local Worker does not delete.
 - **Playing frames into the live screen from the CDP side.** This does not work
   and the recipe that said to wrap `window.WebSocket` in the renderer was
   wrong: the renderer opens no sockets. The Node main process owns them and

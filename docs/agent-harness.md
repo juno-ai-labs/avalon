@@ -370,7 +370,7 @@ A message that invokes nothing is still a turn the model reads. The conversation
 
 In a Sidekick's own conversation (substream `"0"` under the Sidekick) the classifier's answer decides only whether an agent answers. Which agent is the Sidekick's to say when the loop takes the message: a message its sender marked as a wizard edit (`intent: "edit_sidekick"`), or an answer to what the wizard asked, is the wizard's when the sender manages the Sidekick and is refused otherwise; every other message addressed there starts a run under the Sidekick's definition with the message as its opening, from a manager as much as from anyone, and the run answers in its own conversation ([`automation-lifecycle.md`](automation-lifecycle.md#the-shared-conversation)). A marked edit needs no classifier: the mark addresses it. The conversation's own loop therefore runs only the wizard, only for a manager, and a message there always queues rather than steering.
 
-A record-only message from the engineering bridge ([`engineering-mcp.md`](engineering-mcp.md#messages-and-text-reads)) never reaches either classifier: it starts no run whatever the room's size.
+A record-only message, from the engineering bridge ([`engineering-mcp.md`](engineering-mcp.md#messages-and-text-reads)) or a Canvas seed recording its creator's request ([`canvas-seeds.md`](canvas-seeds.md)), never reaches either classifier: it starts no run whatever the room's size.
 
 A separate continuation classifier handles information supplied for earlier work.
 `classifyMessageAdmission` composes it with ordinary addressing without changing
