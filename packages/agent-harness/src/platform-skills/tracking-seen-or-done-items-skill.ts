@@ -1,4 +1,4 @@
-import type { HarnessSkill } from "./index";
+import type { HarnessSkill } from "../index";
 
 /** Shared by independent runs that have authorized durable Tables access. */
 export const TRACKING_SEEN_OR_DONE_ITEMS_SKILL: HarnessSkill = {

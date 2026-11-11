@@ -545,6 +545,9 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@rally/skills':
+        specifier: workspace:*
+        version: link:../skills
       eventsource-parser:
         specifier: latest
         version: 4.1.0
@@ -674,6 +677,16 @@ importers:
       vitest:
         specifier: 'catalog:'
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/skills:
+    dependencies:
+      '@rally/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
 
   packages/ui:
     dependencies:

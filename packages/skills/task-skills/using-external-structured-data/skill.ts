@@ -1,4 +1,4 @@
-import type { HarnessSkill } from "./index";
+import type { HarnessSkill } from "../../types";
 
 /** Provider-independent data handling; local-file steps require Terminal separately. */
 export const USING_EXTERNAL_STRUCTURED_DATA_SKILL: HarnessSkill = {
