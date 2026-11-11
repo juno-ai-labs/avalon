@@ -179,16 +179,25 @@ describe('CanvasesHomeScreen', () => {
       canvas('00000000-0000-7000-8000-0000000000c2', 'Launch plan', { visibility: 'workspace', lastEditor: { kind: 'rally', id: null } }),
       canvas('00000000-0000-7000-8000-0000000000c3', 'Shared plan', { visibility: 'participants', presentUserIds: [MAYA] }),
       canvas('00000000-0000-7000-8000-0000000000c4', 'Private plan'),
+      canvas('00000000-0000-7000-8000-0000000000c5', 'My digest', { writerSidekickId: sidekickId }),
+      canvas('00000000-0000-7000-8000-0000000000c6', 'Shared digest', { visibility: 'participants', writerSidekickId: sidekickId }),
+      canvas('00000000-0000-7000-8000-0000000000c7', 'Organization digest', { visibility: 'workspace', writerSidekickId: sidekickId }),
+      canvas('00000000-0000-7000-8000-0000000000c8', 'Another private plan', { createdByUserId: MAYA }),
     ]));
     const card = (title: string): HTMLElement => screen.getByRole('link', { name: title }).closest('li')!;
     for (const [title, label, icon] of [
-      ['Weekly digest', 'Only the creator', 'lock'],
+      ['Weekly digest', "Creator and the Sidekick's audience", 'users'],
       ['Launch plan', 'Everyone in the Organization', 'building'],
       ['Shared plan', 'Specific people', 'users'],
       ['Private plan', 'Only you', 'lock'],
+      ['My digest', "You and the Sidekick's audience", 'users'],
+      ['Shared digest', "Specific people and the Sidekick's audience", 'users'],
+      ['Organization digest', 'Everyone in the Organization', 'building'],
+      ['Another private plan', 'Only the creator', 'lock'],
     ] as const) {
       const status = within(card(title)).getByText(label);
-      expect(status.previousElementSibling).toHaveClass(`tabler-icon-${icon}`);
+      expect(status.closest('.canvas-sharing-status')).toHaveAttribute('title', label);
+      expect(status.closest('.canvas-sharing-status')?.querySelector('svg')).toHaveClass(`tabler-icon-${icon}`);
     }
   });
 
