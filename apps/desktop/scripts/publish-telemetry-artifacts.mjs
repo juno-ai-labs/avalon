@@ -151,17 +151,14 @@ async function uploadAndVerify(
   });
   const putBody = await put.json().catch(() => null);
   if (!put.ok || putBody?.success !== true) {
-    const codes = Array.isArray(putBody?.errors)
-      ? putBody.errors.map((error) => error?.code).filter((code) => Number.isInteger(code)).slice(0, 5)
-      : [];
     const detail = putBody === null
       ? 'invalid JSON response'
       : putBody?.success === false
         ? 'success=false'
         : 'missing success=true';
-    const codeDetail = codes.length > 0 ? `; error codes ${codes.join(',')}` : '';
     throw new Error(
-      `Could not upload r2://${target}: Cloudflare returned HTTP ${put.status} (${detail}${codeDetail})`,
+      `Could not upload r2://${target}: Cloudflare returned HTTP ${put.status}`
+        + ` (${detail}; codes: ${cloudflareErrorCodes(putBody)})`,
     );
   }
   const uploaded = putBody.result;
@@ -193,15 +190,13 @@ async function uploadAndVerify(
       },
     });
     // 5xx and 403: the PUT just above succeeded with this same token, so a
-    // 403 on the read that follows it is the provider's, not a revoked or
-    // under-scoped token (v1.716.0 aborted on one). Never 429: the account
-    // API rate limit blocks for five minutes, which this backoff cannot outlast.
+    // 403 on the read that follows it cannot be a revoked token. Never 429:
+    // the account API rate limit blocks for five minutes, which this backoff
+    // cannot outlast.
     if (inventory.status < 500 && inventory.status !== 403) break;
     if (attempt < INVENTORY_ATTEMPTS - 1) await discardBody(inventory);
   }
   if (!inventory.ok) {
-    // Name Cloudflare's error codes, as the PUT path does: a bare status was
-    // all v1.716.0's failure left to diagnose.
     const failureBody = await inventory.json().catch(() => null);
     throw new Error(
       `Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`

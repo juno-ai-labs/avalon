@@ -865,30 +865,21 @@ local-first disable, offline sync, and crash handling remain unchanged.
 
 ### 2026-11-11 — Artifact inventory verification retries a 403 and names Cloudflare's error codes
 
-**What changed:** The post-upload inventory read now retries an HTTP 403 as
-well as a 5xx, with the same seven attempts and 500 ms doubling backoff. When
-the final response still fails, the error names Cloudflare's numeric error
-codes from its body (`HTTP 403; codes: 10000`), never the provider's message.
+**What changed:** The post-upload inventory read retries HTTP 403 as well as
+5xx, on the same backoff. A final failure, on this read or on the PUT, names
+Cloudflare's numeric error codes through the shared `cloudflareErrorCodes`,
+never the provider's message.
 
-**Why:** Release v1.716.0 built, signed and notarized, then aborted before
-distribution when one inventory read, for one renderer source map, returned
-HTTP 403. Every earlier upload and inventory read in that run had succeeded
-with the same token, and the PUT for that very object had just succeeded. The
-error carried only the status, so the provider's reason was lost. The previous
-entry rejected retrying a 403 because a revoked token would then wait half a
-minute before failing. That case cannot reach this read: the inventory read
-runs only after a PUT that succeeded with the same token, so a revoked token
-fails on the PUT, on its first response. A token that can write but cannot list
-would still fail, after roughly 31 seconds, on the first artifact.
+**Why:** Release v1.716.0 aborted when an inventory read returned 403 right
+after its PUT succeeded, and the error carried only the status. The entry below
+rejected retrying 403 for fear of a revoked token, but this read runs only
+after a PUT that succeeded with the same token, so a revoked token fails there
+first. A token that can write but cannot list still fails here, after roughly
+31 seconds.
 
-**Considered and rejected:** Retrying 403 only for a specific Cloudflare error
-code, because the code of v1.716.0's 403 was not recorded. Naming the codes is
-what lets a later change narrow the retry if one turns out to be permanent.
-Retrying 429 is still rejected, for the reason in the entry below.
-
-**Consequences:** Any recurrence of a non-OK inventory read now reaches the
-log with its Cloudflare error codes. A future change that narrows the retry
-should start from those codes.
+**Consequences:** The 403's error code was not recorded, so the retry is not
+narrowed to one. The logged codes are what a later change should narrow it by.
+429 is still refused on the first response.
 
 ### 2026-11-10 — Artifact inventory verification retries transient Cloudflare failures
 
