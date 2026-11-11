@@ -5,7 +5,7 @@ import { expect, it, vi } from 'vitest';
 it('hands an X ad click id to the pixel before the URL is cleaned, and reports download and sign-up clicks to X', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
   document.body.innerHTML = '<a data-site-action="download-hero" href="#">Download the macOS app</a>'
-    + '<a data-site-action="download-linux-hero" href="https://downloads.rallywith.ai/stable/linux/x64/Rally.AppImage">Download for Linux</a>'
+    + '<a data-site-action="download-linux-hero" href="https://downloads.rallywith.ai/stable/linux/x64/Rally.deb">Download for Linux</a>'
     + '<a data-site-action="web-app-hero" href="https://app.rallywith.ai/">Sign up now</a>'
     + '<a data-site-action="sign-in-header" href="https://app.rallywith.ai/">Sign in</a>';
   // jsdom cannot follow a link to another origin.

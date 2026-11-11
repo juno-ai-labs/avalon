@@ -98,7 +98,7 @@ ends with the `.closer` plate and the footer, whose oversized italic
 wordmark closes the page.
 
 The hero stacks three equal-width actions vertically: web entry, macOS download,
-then Linux x64 AppImage download. The group is rendered by
+then Linux x64 Debian download, labeled Linux (.deb). The group is rendered by
 `rally:desktop-downloads` on both `/` and `/start-fast/`. At narrower widths the
 hero columns stack and the buttons fill the available width on small screens; touch-only devices retain the web
 entry as their action.

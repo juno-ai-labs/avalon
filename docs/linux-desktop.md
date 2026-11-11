@@ -3,7 +3,7 @@
 Rally ships the same Electron application on macOS arm64 and Linux x64. Linux
 uses AppImage and Debian packages, microphone dictation, and the existing
 Stable/Faster update controls. The browser remains a separate deployment. The landing page and `/start-fast/`
-link directly to `Rally.AppImage` below the macOS download.
+link directly to `Rally.deb` below the macOS download, labeled Linux (.deb).
 
 ## Where the code lives
 
@@ -31,6 +31,14 @@ run's verified artifacts rather than rebuilding them. A Linux failure does not
 block Mac shipping. Both platforms use the
 existing packaged session key. Local Linux directory builds use the development
 key and must never be distributed as releases.
+
+Before launching Electron, the Ubuntu 24.04 build job sets
+`kernel.apparmor_restrict_unprivileged_userns=0` on its disposable runner. This
+allows Chromium's user-namespace sandbox for the non-root updater fixture and
+both packaged smoke tests. Without it, Electron can fall back to an unconfigured
+setuid helper and abort with the `chrome-sandbox` ownership/mode error. The
+setting lasts for that runner; these checks establish startup with permitted user
+namespaces, not compatibility with stock Ubuntu's AppArmor policy.
 
 Linux publishes under `stable/linux/x64/`. The immutable AppImage, Debian package,
 optional blockmaps, versioned SHA256SUMS, and versioned release receipt are
@@ -75,6 +83,7 @@ video and display capture remain denied. No Linux native audio addon is required
   `system-key-storage.test.ts` guards Lockdown availability and encryption.
 - Shipped windows keep Chromium sandboxing enabled. The smoke's root-only
   `--no-sandbox` exception belongs to an isolated test launch, never the package.
+  Sandbox acceptance requires a non-root launch.
 
 ## Boundary
 
@@ -97,6 +106,16 @@ standalone `pkexec` package or the older `policykit-1` package; this does not cl
 support for Debian 11 or Ubuntu 20.04 without testing their runtime libraries.
 AppImages need a user-writable location and FUSE support or extraction mode.
 Debian installation needs a desktop privilege agent and package manager.
+
+The AppImage requires permission to create user namespaces. Stock
+Ubuntu 24.04 restricts them through AppArmor, so the AppImage can abort with the
+`chrome-sandbox` ownership/mode error unless a host AppArmor profile grants
+`userns` for the executable or the host otherwise permits those namespaces.
+The CI sysctl does not fix that user-facing limitation, so the public landing
+pages offer the Debian package. Debian installation runs
+electron-builder's AppArmor-profile setup; the extracted-deb smoke does not run
+that installation hook. Stock Ubuntu AppImage startup and installed-deb sandbox
+setup remain unverified platform acceptance checks.
 
 If Linux publication fails after Mac succeeds, rerun the failed publish job using
 the same Actions artifact within its seven-day retention window. Preserve that
