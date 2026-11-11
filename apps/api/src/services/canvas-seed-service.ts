@@ -140,9 +140,18 @@ export async function seedCanvas(env: Env, input: { workspaceId: string; creator
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, workspaceId));
   await workspace.canvasUpdate({ workspaceId, canvasId, actor, appearance: seed.appearance });
-  await recordSeedRequest(env, { workspaceId, canvasId, creatorUserId: input.creatorUserId }, seed);
   await publishSeedSite(env, { workspaceId, canvasId, seedKey: seed.key, title: seed.title }, seed.site);
   await workspace.canvasSetAudience({ workspaceId, canvasId, actor, update: { visibility: "workspace", userIds: [] } });
+  // Beside Rally's answer, so a seed that stops earlier leaves no request
+  // standing alone in the Chat. It decorates the guide and never holds it
+  // up: the site and the answer are owed whether or not it was recorded.
+  await recordSeedRequest(env, { workspaceId, canvasId, creatorUserId: input.creatorUserId }, seed).catch((error: unknown) => {
+    logError(env, "canvas_seed_request_failed", {
+      workspace_id: workspaceId,
+      seed_key: seed.key,
+      error_code: diagnosticErrorCode(error, "canvas_seed_request_failed"),
+    });
+  });
   // Rally's words, with no run behind them: the same append a scheduled
   // wake-up's notice makes, authored as the agent.
   await messages.appendMessage({
@@ -169,14 +178,17 @@ export async function seedCanvas(env: Env, input: { workspaceId: string; creator
  * every non-session principal is, so a job replayed after they left writes no
  * request and the Chat opens on Rally's message instead.
  *
- * Looked up before it is sent: a replay with the same id and other words is
- * refused as an idempotency conflict, and a deploy between two attempts
- * changes the words.
+ * Written only into an empty Chat. A request that already exists is left as
+ * it is: a resend under the same id with other words is refused, and a deploy
+ * between two attempts changes the words. And once anyone has written here it
+ * would no longer open the Chat, and could queue behind their message and
+ * land after Rally's answer.
  */
 async function recordSeedRequest(env: Env, target: { workspaceId: WorkspaceId; canvasId: string; creatorUserId: string }, seed: CanvasSeed): Promise<void> {
   const { workspaceId, canvasId } = target;
   const clientMessageId = requestMessageKey(seed.key);
-  if (await createMessageObjectPort(env, workspaceId, canvasId).messageByClientId({ clientMessageId })) return;
+  const messages = createMessageObjectPort(env, workspaceId, canvasId);
+  if ((await messages.messagesAfter({ afterSequence: 0, limit: 1 })).length > 0) return;
   const member = await env.DB.prepare(
     `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
   ).bind(workspaceId, target.creatorUserId).first<{ role: AuthContext["role"] }>();
