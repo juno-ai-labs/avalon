@@ -102,8 +102,13 @@ export async function sendNoticeEmail(env: Env, notice: Notice, send?: (message:
   return { outcome };
 }
 
-/** Under a notice's own actions: each link records the answer when it is opened, with no second step. */
-const ACTIONS_NOTE = "Opening a button records your answer. You can also answer in Rally, under Activity.";
+/**
+ * Under a notice's own actions, which today are a source request's: what an
+ * approval shares and what it does not, and that each link records the
+ * answer when it is opened, with no second step.
+ */
+const ACTIONS_NOTE = "Approving lets each matching event start this Sidekick, which reads that event's content and nothing else in your account. "
+  + "Either button answers at once. You can also answer in Rally, under Activity.";
 
 function excerptOf(body: string): string {
   const normalized = singleLine(body);

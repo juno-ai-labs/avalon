@@ -259,8 +259,12 @@ export function recordSourceRequestSettled(host: SidekickSourceNoticeHost, input
   answer: { notice: PreparedSourceNotice; personName: string } | null; now: number;
 }): RecordedSourceNotice[] {
   const { request, answer } = input;
+  // The request's one row is the asked person's, under the Sidekick: named so the read seeks the
+  // parent index and does not scan every Activity row in the Organization.
   for (const row of host.storage.sql.exec<{ recipient_user_id: string }>(
-    `SELECT recipient_user_id FROM workspace_activity_items WHERE kind = 'source_request' AND subject_id = ?`, request.requestId,
+    `SELECT recipient_user_id FROM workspace_activity_items
+      WHERE recipient_user_id = ? AND parent_id = ? AND kind = 'source_request' AND subject_id = ?`,
+    request.userId, request.sidekickId, request.requestId,
   ).toArray()) host.noteActivityChanged(row.recipient_user_id);
   if (answer === null) return [];
   host.storage.sql.exec(`UPDATE sidekick_source_requests SET person_name = ? WHERE request_id = ?`,

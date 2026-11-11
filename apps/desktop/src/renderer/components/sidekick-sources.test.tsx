@@ -124,6 +124,21 @@ describe('the source request card in a conversation', () => {
     expect(pair('Maya').map((button) => button.pressed)).toEqual(['false', 'false']);
   });
 
+  it('says a press is being sent while the answer is out, since the pair is never dimmed', async () => {
+    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me')]);
+    // The answer never comes back.
+    api.decideSidekickSourceRequest.mockImplementation(() => new Promise(() => {}));
+    mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve your Gmail for Deals' }));
+    const approve = await screen.findByRole('button', { name: 'Approve your Gmail for Deals', busy: true });
+    expect(approve).toHaveTextContent('Approving…');
+    expect(approve).toBeDisabled();
+    // The other answer holds too, and says nothing of its own.
+    const decline = screen.getByRole('button', { name: 'Decline your Gmail for Deals' });
+    expect(decline).toHaveTextContent('Decline');
+    expect(decline).toBeDisabled();
+  });
+
   it('tells a person who approves with nothing connected which account to connect, in a popup, and leaves the request waiting', async () => {
     api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me')]);
     api.decideSidekickSourceRequest.mockRejectedValue(new ApiError('Connect that account first.', 409, 'sidekick_source_connection_missing'));
