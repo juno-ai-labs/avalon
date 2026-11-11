@@ -57,12 +57,12 @@ On the Canvases dashboard, members can open **Marketplace** from the right end
 of the filter row, including before they have made a Canvas. A second row picks
 from **Developers**, **Product managers**, **Parents**, and **Recruiters**.
 It starts on **Developers** and shows that category's templates in place of
-the Canvas list. Selecting a Canvas filter returns to the list.
+the Canvas list. Closing Marketplace restores the previous filter and any
+unsent **Start from a prompt** text. Selecting a filter switches to its list.
 `apps/desktop/src/renderer/lib/canvas-templates.ts` orders the catalog. Each
-Markdown file in the adjacent `canvas-template-prompts/` directory supplies
-its card's `name` and `description` in YAML frontmatter, and `tags` determines
-which categories show it. Each starter is tagged with its own directory.
-The desktop and web builds compile the metadata with `canvas-template-plugin.ts`.
+Markdown file in `canvas-template-prompts/` supplies its card's `name`,
+`description`, and category `tags`. The builds check tags against
+`canvas-template-categories.ts`. Each starter is tagged with its own directory.
 Selecting a template creates and opens a Canvas with the Markdown body sent
 as the creator's first Chat message through the **Start from a prompt** flow.
 

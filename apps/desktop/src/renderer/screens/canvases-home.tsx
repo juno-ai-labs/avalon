@@ -11,7 +11,8 @@ import { AvatarStack, Button, EmptyState, ErrorNotice, TitleSkeleton } from '../
 import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
-import { CANVAS_TEMPLATE_CATEGORIES } from '../lib/canvas-templates';
+import { CANVAS_TEMPLATE_CATEGORIES } from '../lib/canvas-template-categories';
+import { CANVAS_TEMPLATES } from '../lib/canvas-templates';
 import { canvasNaming, canvasRoute, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useDocumentTitle } from '../lib/document-title';
@@ -58,6 +59,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<CanvasFilter>('all');
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  const [draftPrompt, setDraftPrompt] = useState('');
   const showMarketplace = !guest && marketplaceOpen;
   const create = useCreateCanvas();
   const [creating, setCreating] = useState(false);
@@ -119,13 +121,13 @@ export function CanvasesHomeScreen(): React.JSX.Element {
         setFilter(value);
         setMarketplaceOpen(false);
       }} type="button">{label}</button>)}
-      {!guest && <button aria-controls={showMarketplace ? 'canvas-marketplace' : undefined} aria-expanded={showMarketplace} className="canvas-marketplace-toggle" onClick={() => setMarketplaceOpen((open) => !open)} type="button">
+      {!guest && <button aria-pressed={showMarketplace} className="canvas-marketplace-toggle" onClick={() => setMarketplaceOpen((open) => !open)} type="button">
         <Store aria-hidden="true" size={16} />Marketplace
       </button>}
     </div>}
     {showMarketplace ? <CanvasMarketplace creating={creating} onStart={start} />
       : rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
-      : rows.length === 0 ? <CanvasesEmptyState creating={creating} guest={guest} onStart={start} />
+      : rows.length === 0 ? <CanvasesEmptyState creating={creating} guest={guest} onPromptChange={setDraftPrompt} onStart={start} prompt={draftPrompt} />
         : <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
           <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${shown.length} ${shown.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
           {shown.length === 0
@@ -136,13 +138,14 @@ export function CanvasesHomeScreen(): React.JSX.Element {
 }
 
 function CanvasMarketplace({ creating, onStart }: { creating: boolean; onStart: (prompt: string) => void }): React.JSX.Element {
-  const [category, setCategory] = useState<(typeof CANVAS_TEMPLATE_CATEGORIES)[number]>(CANVAS_TEMPLATE_CATEGORIES[0]);
-  return <section aria-label="Canvas templates" className="canvas-marketplace" id="canvas-marketplace">
+  const [category, setCategory] = useState<(typeof CANVAS_TEMPLATE_CATEGORIES)[number]['tag']>(CANVAS_TEMPLATE_CATEGORIES[0].tag);
+  const templates = CANVAS_TEMPLATES.filter((template) => template.tags.includes(category));
+  return <section aria-label="Canvas templates" className="canvas-marketplace">
     <div aria-label="Template category" className="sidekick-filters canvas-template-categories" role="group">
-      {CANVAS_TEMPLATE_CATEGORIES.map((item) => <button aria-pressed={category === item} key={item.label} onClick={() => setCategory(item)} type="button">{item.label}</button>)}
+      {CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => <button aria-pressed={category === tag} key={tag} onClick={() => setCategory(tag)} type="button">{label}</button>)}
     </div>
     <ul className="dashboard-grid">
-      {category.templates.map((template) => <li key={template.name}>
+      {templates.map((template) => <li key={template.name}>
         <button className="dashboard-card canvas-template-card" disabled={creating} onClick={() => onStart(template.prompt)} type="button">
           <span className="canvas-template-title">{template.name}</span>
           <ArrowUpRight aria-hidden="true" size={16} />
@@ -158,12 +161,13 @@ function CanvasMarketplace({ creating, onStart }: { creating: boolean; onStart: 
  * A first-run Canvases page: New Canvas, and a card that starts one from a
  * prompt, which becomes the Chat's first message.
  */
-function CanvasesEmptyState({ creating, guest, onStart }: {
+function CanvasesEmptyState({ creating, guest, onPromptChange, onStart, prompt }: {
   creating: boolean;
   guest: boolean;
+  onPromptChange: (prompt: string) => void;
   onStart: (prompt?: string) => void;
+  prompt: string;
 }): React.JSX.Element {
-  const [prompt, setPrompt] = useState('');
   if (guest) return <EmptyState description="A Canvas someone shares with you appears here." title="No Canvases yet" />;
   return <section aria-label="Start from a prompt" className="canvas-prompt-card">
     <h2><Sparkles aria-hidden="true" size={16} />Start from a prompt</h2>
@@ -172,7 +176,7 @@ function CanvasesEmptyState({ creating, guest, onStart }: {
       event.preventDefault();
       if (prompt.trim()) onStart(prompt);
     }}>
-      <textarea aria-label="Prompt" disabled={creating} onChange={(event) => setPrompt(event.target.value)} placeholder="A tracker for our Q1 hiring plan" rows={3} value={prompt} />
+      <textarea aria-label="Prompt" disabled={creating} onChange={(event) => onPromptChange(event.target.value)} placeholder="A tracker for our Q1 hiring plan" rows={3} value={prompt} />
       <Button className="button-primary" disabled={creating || !prompt.trim()} type="submit">{creating ? 'Starting…' : 'Start'}</Button>
     </form>
   </section>;
