@@ -37,7 +37,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; guests invited by email on Save. |
 | `apps/desktop/src/renderer/components/canvas-mark.tsx` | `CanvasMark` and `canvasMark`: the chosen icon and colour, else the kind's glyph and `canvasHue`, field by field. |
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx` | The Canvases sidebar section: a Pinned group and every Canvas by recent activity. |
-| `apps/desktop/src/renderer/lib/canvases.ts` | The list as the socket keeps it (`useCanvasList`), the routes, a row's second line, and creating a Canvas. |
+| `apps/desktop/src/renderer/lib/canvases.ts` | The list as the socket keeps it (`useCanvasList`), the routes, and creating a Canvas. Sharing labels and icons live in `lib/canvas-sharing.ts` and `components/canvas-sharing-status.tsx`. |
 
 ## How it works
 
@@ -529,8 +529,9 @@ whose publish made the newest version (`sidekickId`, `runId`, its
 `runNumber` counted as the run's own row counts it, oldest first, and the
 Sidekick's `sidekickName`), null when the newest version is no run's or its
 Sidekick was deleted, and absent from an older Worker. Deleting a Sidekick
-moves only the Sidekick list's waterline, so a connected client keeps
-"<Sidekick> · run #N" on the card until its next Canvas list frame. It is read by joining
+moves only the Sidekick list's waterline, so the cached run attribution remains
+until the next Canvas list frame; list rows display sharing rather than attribution.
+It is read by joining
 `sidekick_runs` on its primary key, so the list pays one probe per Canvas a
 run wrote last. The list holds every Canvas the viewer may open as its creator, a
 participant, a member of an Organization-wide one or someone its writer
@@ -585,11 +586,14 @@ card grid with Sidekicks; the shared layout is described in
   `useSocketOwnedList`; there is no list route. The home page keeps activity
   order and filters client-side from the row's own fields: Live uses the same
   active automatic-trigger rule as the **Live updating** badge, Data is `hasStoredData`,
-  Made by me `createdByUserId`, and Shared with me `sharedWithMe`. A home card whose
-  newest version a run wrote names that run, "<Sidekick> · run #N"
-  (`canvasWrittenByRun`), and opens the Sidekick's conversation at it
-  (`?run=`); the link carries the run's number in its route state, so the run's
-  pill is numbered before the shared conversation has loaded. Viewer presence
+  Made by me `createdByUserId`, and Shared with me `sharedWithMe`. The second
+  line of both sidebar rows and home cards shows the configured
+  sharing setting using the Share panel's labels and icons: **Only you** (or
+  **Only the creator** for another viewer) with a lock, **Specific people** with
+  a people icon, or **Everyone in the Organization** with a building icon.
+  Presence, edit attribution and the last writing run do not replace that
+  setting. Home cards retain viewer presence in their preview facepiles, and
+  timestamps remain alongside the sharing line. Viewer presence
   is shown separately from **Data backed**, which means the Canvas holds a
   listed database-backed artifact. **Live updating** means an active attached
   Sidekick has a schedule or event trigger; manual-only, paused and draft
