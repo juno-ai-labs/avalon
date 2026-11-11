@@ -96,16 +96,16 @@ describe("a Sidekick a Canvas's Chat made", () => {
   it("is attached to that Canvas as it is made, and the Canvas names it to everyone in it", async () => {
     const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(PARTICIPANT) });
     // The participant sees it and cannot open it; its creator can.
-    expect(detail.sidekicks).toEqual([{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true, canOpen: false }]);
+    expect(detail.sidekicks).toEqual([{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true, triggerKinds: [], canOpen: false }]);
     expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) })).sidekicks)
-      .toEqual([{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true, canOpen: true }]);
+      .toEqual([{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true, triggerKinds: [], canOpen: true }]);
     // The other Canvas made nothing and holds nothing.
     expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: OTHER_CANVAS_ID, actor: member(CREATOR) })).sidekicks)
       .toEqual([]);
     // The Canvas list carries them too, for the home card's Sidekick facepile.
     const listed = await workspace().canvasListFor({ workspaceId: WORKSPACE_ID, userId: PARTICIPANT, accessClass: "member" });
     expect(listed.map((row) => [row.title, row.sidekicks]))
-      .toEqual([["Inbox", [{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true, canOpen: false }]]]);
+      .toEqual([["Inbox", [{ id: MADE_HERE, name: "New Sidekick", status: "draft", madeHere: true, triggerKinds: [], canOpen: false }]]]);
     expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE,
       actor: { ...member(CREATOR), participantOfOwningWorkstream: false } })).toMatchObject({ madeInCanvasId: CANVAS_ID });
     // And the Sidekick's own row names the Canvas, for its dashboard card's link.
@@ -114,6 +114,29 @@ describe("a Sidekick a Canvas's Chat made", () => {
     expect(library.items.map((item) => [item.id, item.attachedCanvases])).toEqual(expect.arrayContaining([
       [MADE_HERE, [{ id: CANVAS_ID, title: "Inbox", artifactKind: null, appearance: { icon: null, color: null } }]], [MADE_ELSEWHERE, []],
     ]));
+  });
+
+  it("carries attached trigger kinds to Canvas readers and refreshes the list after a trigger-only edit", async () => {
+    const addressed = { workspaceId: WORKSPACE_ID, automationId: MADE_HERE };
+    const actor = { ...member(CREATOR), participantOfOwningWorkstream: false };
+    const draft = {
+      definitionVersion: 2 as const, name: "Inbox filler", description: "Files new email", overview: "Keeps the inbox Canvas current",
+      instructions: "Add a row for each new email.", requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {},
+      recommendedPlugins: [], memoryTables: [], customTools: [], suggestedScope: "personal" as const, followUpQuestion: null, elicitation: null, ready: true,
+    };
+    const waterline = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ waterline: number }>(
+      "SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'canvases'").one().waterline);
+    const attached = async () => (await workspace().canvasListFor({ workspaceId: WORKSPACE_ID, userId: PARTICIPANT, accessClass: "member" }))[0]!.sidekicks![0]!;
+    await workspace().sidekickSaveDefinition({ ...addressed, actor, evaluatorRules: null, submittedByRunId: null,
+      draft: { ...draft, triggers: [{ type: "manual" }] } });
+    expect.soft(await attached()).toMatchObject({ triggerKinds: ["manual"], canOpen: false });
+    const before = await waterline();
+    await workspace().sidekickSaveDefinition({ ...addressed, actor, evaluatorRules: null, submittedByRunId: null,
+      draft: { ...draft, triggers: [{ type: "interval", intervalSeconds: 3600, summary: "Every hour" }] } });
+    expect.soft(await attached()).toMatchObject({ triggerKinds: ["schedule"], status: "active", canOpen: false });
+    expect.soft(await waterline()).toBeGreaterThan(before);
+    const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(PARTICIPANT) });
+    expect.soft(detail.sidekicks?.[0]?.triggerKinds).toEqual(["schedule"]);
   });
 
   it("carries the actual Canvas mark beyond the sidebar page and refreshes it after appearance and artifact changes", async () => {
