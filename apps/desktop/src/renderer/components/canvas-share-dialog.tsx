@@ -1,10 +1,11 @@
 import { asUserId, type CanvasDetail, type CanvasVisibility } from '@rally/contracts';
 import { CreateScopeInvitationsSchema } from '@rally/contracts/scope-grants';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { IconBuilding, IconChevronRight, IconLock, IconUsers } from '@tabler/icons-react';
+import { IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import { canvasDetailQueryKey, useCanvasNameSources } from '../lib/canvases';
+import { CANVAS_VISIBILITY_OPTIONS as VISIBILITY_OPTIONS } from '../lib/canvas-sharing';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import type { WorkspaceMember } from '../lib/types';
 import { AccessDecisionActions } from './canvas-access-request';
@@ -13,11 +14,6 @@ import { RelativeTime } from './relative-time';
 import { useScopeInvitations } from './scope-sharing-panel';
 import { SidebarSearch } from './sidebar-search';
 
-const VISIBILITY_OPTIONS = {
-  creator: { icon: IconLock, label: 'Only the creator', description: 'Nobody else can open it.' },
-  participants: { icon: IconUsers, label: 'Specific people', description: 'The people chosen below, guests among them.' },
-  workspace: { icon: IconBuilding, label: 'Everyone in the Organization', description: 'Every member can open it, and any guests you add.' },
-} satisfies Record<CanvasVisibility, { icon: typeof IconLock; label: string; description: string }>;
 const VISIBILITY_VALUES = ['creator', 'participants', 'workspace'] as const;
 
 /**

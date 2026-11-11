@@ -5,12 +5,13 @@ import { ArrowDownUp } from 'lucide-react';
 import { useMemo, useRef, useState, type RefObject } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
-import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, RENAME_CANVAS_STATE, SHARE_CANVAS_STATE, useCanvasNameSources } from '../lib/canvases';
+import { canvasNaming, canvasRoute, RENAME_CANVAS_STATE, SHARE_CANVAS_STATE } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { useCanvasPinDrag } from './canvas-pin-drag';
 import { CanvasMark } from './canvas-mark';
+import { CanvasSharingStatus } from './canvas-sharing-status';
 import { DropdownSelect, ErrorNotice, TitleSkeleton } from './primitives';
 import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, usePinWrite, useSectionMotion } from './navigation-rows';
 import { SidebarListDown, usePushedListsDown } from './pushed-list-pending';
@@ -24,8 +25,8 @@ const CANVAS_ORDERS = [{ value: 'recent', label: 'Recent' }, { value: 'name', la
 
 /**
  * The Canvases section: a Pinned group, then every Canvas by recent activity.
- * A row is the Canvas's mark and name, and a second line naming who is in it
- * now beside a green dot, or else who last changed it; an unread row is bold
+ * A row is the Canvas's mark and name, and a second line showing its sharing
+ * setting with the Share panel's icon; an unread row is bold
  * with a red dot. A row dragged into Pinned is pinned (`POST /canvases/:id/pin`);
  * its menu's Rename… opens the Canvas with its title pill being edited.
  */
@@ -35,7 +36,6 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const { rows, pinned, rest, over, dragging, sourceProps, targetProps } = useCanvasPinDrag();
   // A socket that cannot open would leave the placeholders up for ever.
   const down = usePushedListsDown() && rows === undefined;
-  const { membersById, sidekicksById } = useCanvasNameSources(api);
   const { error: pinError, setPinned } = usePinWrite(api ? (id, next) => api.setCanvasPinned(id, next) : undefined, 'Canvas');
   useSectionMotion(scroll, undefined);
   const [order, setOrder] = useState<CanvasOrder>('recent');
@@ -46,11 +46,10 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const inserted = useInsertedRows(rows);
   const open = matchPath('/canvases/:id', useLocation().pathname)?.params.id;
   const row = (canvas: CanvasSidebarRow, position?: string): React.JSX.Element => {
-    const live = othersPresent(canvas, currentUserId).length > 0;
     return <PinnableRow
       active={canvas.id === open}
       className={`navigation-canvas-row${over === canvas.id ? ' navigation-pin-drop-before' : ''}`}
-      detail={<>{live && <span aria-label="People are here" className="navigation-row-live-dot" role="img" />}{canvasRowDetail(canvas, membersById, sidekicksById, currentUserId)}</>}
+      detail={<CanvasSharingStatus canvas={canvas} currentUserId={currentUserId} />}
       drag={{ ...sourceProps(canvas.id), ...(position !== undefined ? targetProps(canvas.id) : {}) }}
       key={canvas.id}
       motionKey={`canvas:${canvas.id}`}

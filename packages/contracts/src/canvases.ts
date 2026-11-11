@@ -162,10 +162,9 @@ export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
   /** Holds a listed artifact with its own database. Absent from an older Worker. */
   hasStoredData: z.boolean().optional(),
   /**
-   * The Sidekick run whose publish made the Canvas's newest version, so the
-   * home card names it ("Weekly digest · run #3") and opens the run; null
-   * when the newest version is not a run's (its Chat's, a person's). Absent
-   * from an older Worker.
+   * Attribution for the Sidekick run whose publish made the Canvas's newest
+   * version; null when the newest version is not a run's (its Chat's, a
+   * person's). Absent from an older Worker. List rows show the sharing setting.
    */
   lastWrittenBy: z.object({
     sidekickId: IdSchema,
