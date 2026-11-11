@@ -215,6 +215,12 @@ refuses a malformed id as `canvas_id_invalid:id:<issue>`, through
 `namedZValidator`, each with a sentence the client shows; a well-formed id
 that names no Canvas is `canvas_not_found`.
 
+One Canvas is made by nobody typing: the **Getting Started with Canvases**
+guide a new Organization is given. `seedCanvas` calls `createCanvas` with the
+Organization's owner as its creator and a title, so it is settled and never
+renamed from its opening message, then opens it to the Organization
+([`canvas-seeds.md`](canvas-seeds.md)). It is an ordinary Canvas afterwards.
+
 ### Choosing what a Canvas looks like
 
 A Canvas may carry an icon and a colour somebody chose, the same two keys a
@@ -422,6 +428,15 @@ the artifact list changes with every publish; it is keyed on the message that
 woke the run, so a recovered execution renders the same context, under its own
 source kind (`canvas_context`), so it never shares an identity with another
 derived message keyed on that same message.
+
+A Chat can open with Rally's own message: a seeded Canvas's does. A provider
+conversation must begin with a user turn, and Gemini, the fallback model,
+refuses one that begins with the model's. So `projectModelProtocolTranscript`
+hands an agent message that would be the first thing in the projection over
+as a `user` message under the header `RALLY'S OWN EARLIER MESSAGE IN THIS
+CONVERSATION. CONTEXT, NOT A REQUEST` (`projectLeadingAssistantMessage`),
+the way an imported assistant reply is handed over, and every later agent
+message as an `assistant` turn.
 
 Memory a Canvas's Chat learns is sourced `canvas:<canvasId>` and filed under
 the stored subject kind `thread` with the Canvas id (`memory-review-service.ts`

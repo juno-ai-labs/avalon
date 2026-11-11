@@ -242,7 +242,9 @@ changed arguments is not a new creation.
 the existing regional users become initial members, without invitations.
 `RegionalOnboardingService.createWorkspaceForMember` accepts the initial member
 list, validates it before creation, and commits those memberships alongside the
-owner in the shared onboarding batch. A new Organization holds no Canvas.
+owner in the shared onboarding batch. A new Organization is given one Canvas,
+the Getting Started guide, by a queued job the creation sends
+([`canvas-seeds.md`](canvas-seeds.md)); it holds none until that job runs.
 The MCP adapter writes no membership rows of its own.
 
 The private `engineering` principal lets the regional bridge enter existing
