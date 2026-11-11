@@ -155,7 +155,8 @@ joins later a Canvas of their own.
 - **The creator left before the job ran:** no request is recorded, and the
   Chat opens on Rally's message alone.
 - **Rally never reads the README:** steps 2 and 4 still tick; step 3 ticks if
-  Rally follows the request, and by hand if not.
+  Rally follows the request, and by hand if not. In every local run that
+  edited the page, Rally read it.
 - **A long Chat is compacted:** the request is summarised with the rest of the
   early transcript, and Rally is back to the README and the page's comments.
 - **Every member sees the request under the creator's name.** They did not
@@ -172,17 +173,25 @@ joins later a Canvas of their own.
   `workspace_identity_mismatch`.
 - `apps/api/test/regional-workspace-create.test.ts` covers the send, the
   replay and a refused send.
-- With `OPENROUTER_API_KEY` set, a real run works on the local stack, and
-  step 2 was checked that way: a new Organization, the step's prompt sent to
-  `POST /conversations/:id/substreams/0/messages`, and the rows read back from
-  the site's local storage. Rally wrote five cards with `asked_by_id` set, did
-  not publish, and answered in one line. The Chat's stored model payloads
-  showed the request as a user turn carrying the creator's `rally_author`
-  tag, and Rally's answer as an assistant turn.
-- Not runnable here: steps 3 and 4 with a model, because editing a page needs
-  the Terminal's Daytona sandbox, so Rally reading the README is still
-  unproved; Rally staying quiet between two people, because the local stack
-  signs in one person; and a live site inside the artifact panel
+- With `OPENROUTER_API_KEY` and the Daytona settings in `.env.local`, real
+  runs work on the local stack, and steps 2, 3 and 4 were checked that way in
+  new Organizations: each step's prompt sent to
+  `POST /conversations/:id/substreams/0/messages` (step 3 as a Comment mode
+  annotation on `#wall-title`), then the Chat's tool calls and the site's rows
+  read from local storage.
+  - Step 2: five cards with `asked_by_id` set, no publish, a one-line reply.
+  - Step 3: Rally imported the site, read `README.md`, changed only the
+    title, published version 2, and wrote the `comment` row with the README's
+    statement.
+  - Step 4: Rally read the README, put the team's name in the heading, added
+    a section with its own new table, kept `data-greeting`, `id="wall-title"`
+    and the step ids, added no `private_to_viewer` column, published version
+    3 to the same path, and wrote the `make_it_yours` row.
+  - The Chat's stored model payloads showed the request as a user turn
+    carrying the creator's `rally_author` tag, and Rally's answer as an
+    assistant turn.
+- Not runnable here: Rally staying quiet between two people, because the
+  local stack signs in one person; and a live site inside the artifact panel
   ([`dev-environment.md`](dev-environment.md#what-cannot-be-verified-in-a-sandbox)).
 
 ## Open questions
@@ -194,8 +203,12 @@ joins later a Canvas of their own.
   answer (a site's instruction file, or an artifact's description in the
   Canvas context) would outlast compaction and serve every site.
 - **Whether the request earns its place.** In one local run each, Rally did
-  step 2 correctly with and without it; with it the reply was one line, not a
-  list. Steps 3 and 4, where it should matter most, are unmeasured.
+  steps 2 and 3 correctly with and without it. Without it, Rally still found
+  the README through the comment at the top of `index.html`, and still wrote
+  the `comment` row. The one difference seen was step 2's reply: one line
+  with the request, a list of the ideas without. One run each is not a
+  measurement; if the request is ever dropped, the page's comments are what
+  carry Rally to the README.
 
 ## Changelog
 
@@ -223,6 +236,12 @@ the page. On step 2, which changes no page, Rally tried to read the site with
 "Attachment content unverified" notice, though the cards had been written.
 The request now ties the README to editing the page and says step 2 needs
 only the data tools.
+
+The same runs showed the request is not what makes the guide work. Seeded
+without it, Rally did steps 2 and 3 correctly and found the README from the
+comment at the top of `index.html`. The request was kept because the owner
+asked for the Canvas to read as one a person asked for; do not credit it with
+the steps working.
 
 ### 2026-11-10 — The guide, and seeding it into every new Organization
 
