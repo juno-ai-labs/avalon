@@ -11,6 +11,7 @@ const contractDirectory = join(repositoryDirectory, 'packages/contracts');
 // from the production desktop import graph below instead of copied by hand.
 export const FIXED_DESKTOP_RELEASE_INPUTS = Object.freeze([
   'apps/desktop/**',
+  'packages/skills/marketplace-skills/**',
   'packages/ui/**',
   'packages/contracts/package.json',
   'package.json',
