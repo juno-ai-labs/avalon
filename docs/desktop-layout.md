@@ -19,7 +19,7 @@ the device remembers only the view the person chose.
 ## How it works
 
 The renderer keeps the sidebar's width and its open section
-(`rally.sidebar-section`: `canvases`, `sidekicks` or `activity`) in local storage. Keys
+(`rally.sidebar-section`: `canvases` or `activity`; a retired `sidekicks` value falls back to `canvases`) in local storage. Keys
 written before the 2026-11 cutover are no longer read: the Threads and Channels
 sorts (`rally.sidebar-thread-sort`, `rally.sidebar-channel-sort`), the Space
 filter (`rally.sidebar-space-filter`), and the widths of a thread beside its
@@ -31,7 +31,7 @@ panel is scoped to a conversation (`artifact-panel:<parent>:<substream>`, for
 a Canvas its Chat, `artifact-panel:<canvas>:0`); its resource is looked up in the freshly loaded conversation before the
 panel is drawn.
 
-Every attachment and artifact opens its panel at an even split with the
+Every attachment, artifact and Canvas-hosted Sidekick opens its panel at an even split with the
 conversation (`openRailAtEvenSplit`, called from `openPanel`). **No panel
 resizes the window**: the panel and the conversation share the main pane, and
 the split is half of it, in the desktop app and a browser tab alike.

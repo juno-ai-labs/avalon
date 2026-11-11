@@ -156,14 +156,16 @@ function handledElsewhere(target: EventTarget | null): boolean {
  * otherwise go nowhere — while the same screenshot dragged onto the same screen
  * attaches. Anything with its own paste behavior is left alone.
  */
-export function useWindowFilePaste(onFiles: (files: File[]) => void, disabled = false): void {
+export function useWindowFilePaste(onFiles: (files: File[]) => void, disabled = false, acceptsTarget?: (target: EventTarget | null) => boolean): void {
   const nextOrdinal = useNameSequence();
   const latest = useRef(onFiles);
   latest.current = onFiles;
+  const targetFilter = useRef(acceptsTarget);
+  targetFilter.current = acceptsTarget;
   useEffect(() => {
     if (disabled) return;
     const listener = (event: ClipboardEvent): void => {
-      if (event.defaultPrevented || handledElsewhere(event.target)) return;
+      if (event.defaultPrevented || handledElsewhere(event.target) || targetFilter.current?.(event.target) === false) return;
       // Text with no field to land in is left alone, however long.
       claimPaste(event, latest.current, nextOrdinal, false);
     };

@@ -112,6 +112,17 @@ beforeEach(() => {
 });
 
 describe('opening a Sidekick the list already holds', () => {
+  it('owns the standalone window title while opening and after a failed read', async () => {
+    let reject!: (cause: Error) => void;
+    getAutomation.mockReturnValue(new Promise((_resolve, refuse) => { reject = refuse; }));
+    document.title = 'Previous Canvas · Rally';
+    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    expect(document.title).toBe('Rally');
+    await act(async () => reject(new Error('Unavailable')));
+    await screen.findByText('Try opening your Sidekick again.');
+    expect(document.title).toBe('Rally');
+  });
+
   it('mounts its conversation from the list row before the detail read answers, and fills the details in after', async () => {
     let answer!: (value: AutomationDetail) => void;
     getAutomation.mockReturnValue(new Promise<AutomationDetail>((resolve) => { answer = resolve; }));

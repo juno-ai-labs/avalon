@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AutomationDetail, WorkstreamBoot } from '../lib/types';
@@ -33,6 +33,8 @@ const api = vi.hoisted(() => ({
 const session = vi.hoisted(() => ({ current: null as unknown }));
 const createMessage = vi.hoisted(() => vi.fn());
 const addFiles = vi.hoisted(() => vi.fn());
+const canvasFiles = vi.hoisted(() => vi.fn());
+const loadTranscriptRange = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('../lib/collaboration-session', () => ({
   useOptionalCollaborationSession: () => null,
   useCollaborationSession: () => ({ api, session: session.current }),
@@ -43,7 +45,7 @@ vi.mock('../lib/use-workstream-socket', async (importOriginal) => ({
   ...await importOriginal<typeof UseWorkstreamSocketModule>(),
   useWorkstreamSocket: () => ({
     activeCompaction: null, activeInferenceDelays: [], createMessage,
-    requestSnapshot: vi.fn(), retryOpening: vi.fn(),
+    requestSnapshot: vi.fn(), retryOpening: vi.fn(), loadTranscriptRange,
     sendReady: true, state: 'connected', workspaceSocketState: 'connected',
   }),
 }));
@@ -52,8 +54,8 @@ vi.mock('../lib/workspace-socket', () => ({
   useOptionalWorkspaceSocket: () => null,
 }));
 vi.mock('../lib/use-file-attachments', () => ({
-  useFileAttachments: () => ({
-    addFiles, attachments: [], consume: vi.fn(),
+  useFileAttachments: (_api: unknown, draftKey: string) => ({
+    addFiles: draftKey.includes('00000000-0000-7000-8000-000000000c51') ? canvasFiles : addFiles, attachments: [], consume: vi.fn(),
     leaseReady: vi.fn(async () => ({ leaseId: 'lease', attachments: [] })),
     commitLease: vi.fn(), restoreLease: vi.fn(), error: undefined, ready: [],
     removeAttachment: vi.fn(), retryAttachment: vi.fn(), uploading: false,
@@ -67,7 +69,10 @@ vi.mock('../lib/use-transcript-follow', () => ({
   }),
 }));
 
-import { AutomationScreen } from './automation';
+import { AutomationScreen, SidekickPanel } from './automation';
+import { ConversationSurface } from './conversation-surface';
+import { useUiStore } from '../lib/ui-store';
+import { layoutKey, writeLayout } from '../lib/desktop-layout';
 
 function sidekick(overrides: Partial<AutomationDetail> = {}): AutomationDetail {
   return {
@@ -94,7 +99,7 @@ function boot(): WorkstreamBoot {
   } as WorkstreamBoot;
 }
 
-function renderSidekick(viewerId: string, search = ''): QueryClient {
+function renderSidekick(viewerId: string, search = '', inCanvas = false): QueryClient {
   session.current = { user: { id: viewerId, name: 'Viewer', email: 'viewer@example.test' }, workspace: { id: 'w', region: 'global', role: 'member' } };
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const conversation = boot();
@@ -102,12 +107,25 @@ function renderSidekick(viewerId: string, search = ''): QueryClient {
   queryClient.setQueryData(['ordered-transcript', SIDEKICK], conversation.transcript);
   queryClient.setQueryData(['substream-workstream', SIDEKICK, 'run-1'], conversation);
   queryClient.setQueryData(['substream-ordered-transcript', SIDEKICK, 'run-1'], conversation.transcript);
+  const canvasId = '00000000-0000-7000-8000-000000000c51';
+  queryClient.setQueryData(['workstream', canvasId], { ...conversation, id: canvasId, title: 'Launch plan' });
+  queryClient.setQueryData(['ordered-transcript', canvasId], conversation.transcript);
   render(<Tooltip.Provider><QueryClientProvider client={queryClient}>
-    <MemoryRouter initialEntries={[`/sidekicks/${SIDEKICK}${search}`]}>
-      <Routes><Route element={<AutomationScreen />} path="/sidekicks/:id" /></Routes>
+    <MemoryRouter initialEntries={[inCanvas ? `/canvases/${canvasId}${search}` : `/sidekicks/${SIDEKICK}${search}`]}>
+      <CurrentLocation />
+      <Routes><Route element={<AutomationScreen />} path="/sidekicks/:id" />
+        <Route path="/canvases/:id" element={<ConversationSurface parentId={canvasId} parentKind="canvas" substreamId="0" renderHeader={({ openPanel }) => <button onClick={() => openPanel({
+          key: `sidekick:${SIDEKICK}`, label: 'Sidekick: Incident triage',
+          render: (controls) => <SidekickPanel id={SIDEKICK} controls={controls} />,
+        })}>Open attached Sidekick</button>} />} />
+      </Routes>
     </MemoryRouter>
   </QueryClientProvider></Tooltip.Provider>);
   return queryClient;
+}
+
+function CurrentLocation(): React.JSX.Element {
+  return <output data-testid="location">{useLocation().search}</output>;
 }
 
 async function send(text: string): Promise<void> {
@@ -125,6 +143,7 @@ describe("a Sidekick's shared conversation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    useUiStore.setState({ railOpen: false, railScope: null, railExpanded: false, railLeaving: false });
     vi.stubGlobal('ResizeObserver', class { observe(): void {} unobserve(): void {} disconnect(): void {} });
     createMessage.mockResolvedValue({ turnId: 'turn', clientMessageId: 'message', createdAt: '2026-11-07T09:01:00.000Z', deliveryState: 'queued' });
     api.getAutomation.mockResolvedValue(sidekick());
@@ -132,6 +151,83 @@ describe("a Sidekick's shared conversation", () => {
     api.getSidekickSources.mockResolvedValue({ sidekickId: SIDEKICK, sources: [], requests: [] });
   });
   afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('opens the real Sidekick in the Canvas panel, preserves the Canvas draft and releases only its own slot', async () => {
+    writeLayout(layoutKey('w', AUTHOR, `artifact-panel:${SIDEKICK}:0`), JSON.stringify({ resourceId: 'old-sidekick-artifact', workstreamScoped: false }));
+    renderSidekick(AUTHOR, '', true);
+    const canvasComposer = await screen.findByRole('textbox', { name: 'Ask Rally or the people here' });
+    fireEvent.change(canvasComposer, { target: { value: 'Keep this Canvas draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
+    const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
+    await within(panel).findByRole('textbox', { name: 'Message Incident triage and the team' });
+    expect(canvasComposer).toHaveValue('Keep this Canvas draft');
+    expect(useUiStore.getState().railScope).toBe('00000000-0000-7000-8000-000000000c51');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Sidekick details' }));
+    expect(within(panel).getByRole('complementary', { name: 'Sidekick details' })).not.toHaveAttribute('inert');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close panel' }));
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Sidekick: Incident triage' })).toBeNull());
+    expect(canvasComposer).toHaveValue('Keep this Canvas draft');
+    expect(useUiStore.getState().railOpen).toBe(false);
+  });
+
+  it.each(['frame', 'header'])('pastes files into the Sidekick from its %s, and into the Canvas from its own composer', async (target) => {
+    renderSidekick(AUTHOR, '', true);
+    fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
+    const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
+    await within(panel).findByRole('textbox', { name: 'Message Incident triage and the team' });
+    const header = within(panel).getByRole('button', { name: 'Sidekick details' });
+    const element = target === 'frame' ? panel : header;
+    const clipboardData = { files: [new File(['png'], 'screenshot.png', { type: 'image/png' })], types: ['Files'], getData: () => '' };
+    fireEvent.paste(element, { clipboardData });
+    expect(addFiles).toHaveBeenCalledOnce();
+    expect(addFiles).toHaveBeenCalledWith([expect.objectContaining({ name: 'screenshot.png', type: 'image/png' })]);
+    expect(canvasFiles).not.toHaveBeenCalled();
+    fireEvent.paste(screen.getByRole('textbox', { name: 'Ask Rally or the people here' }), { clipboardData });
+    expect(canvasFiles).toHaveBeenCalledOnce();
+    expect(canvasFiles).toHaveBeenCalledWith([expect.objectContaining({ name: 'screenshot.png', type: 'image/png' })]);
+    expect(addFiles).toHaveBeenCalledOnce();
+  });
+
+  it('does not attach a paste to either conversation while Sidekick Details hides its composer', async () => {
+    renderSidekick(AUTHOR, '', true);
+    fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
+    const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
+    await within(panel).findByRole('textbox', { name: 'Message Incident triage and the team' });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Sidekick details' }));
+    fireEvent.paste(within(panel).getByRole('complementary', { name: 'Sidekick details' }), {
+      clipboardData: { files: [new File(['png'], 'screenshot.png', { type: 'image/png' })], types: ['Files'], getData: () => '' },
+    });
+    expect(addFiles).not.toHaveBeenCalled();
+    expect(canvasFiles).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Sidekick open when a new Canvas artifact arrives', async () => {
+    const client = renderSidekick(AUTHOR, '', true);
+    fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
+    const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
+    await within(panel).findByRole('textbox', { name: 'Message Incident triage and the team' });
+    await act(async () => client.setQueryData<WorkstreamBoot>(['workstream', '00000000-0000-7000-8000-000000000c51'], (current) => ({
+      ...current!, resources: [{ id: 'new-artifact', direction: 'artifact', title: 'Report', resourceType: 'file', mimeType: 'text/plain', refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', currentVersion: 1, relationshipType: 'generated' }],
+    })));
+    expect(screen.getByRole('complementary', { name: 'Sidekick: Incident triage' })).toBe(panel);
+  });
+
+  it('leaves a pending Canvas message jump to the Canvas even when the Sidekick covers that sequence', async () => {
+    const client = renderSidekick(AUTHOR, '?turn=canvas-turn&sequence=5', true);
+    await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledWith({
+      snapshotId: '00000000-0000-7000-8000-000000000a59',
+      range: { startInclusive: 5, endExclusive: 6 }, resumeAfterEventSequence: 0,
+    }));
+    await act(async () => client.setQueryData(['ordered-transcript', SIDEKICK], {
+      ...boot().transcript, ranges: [{ covered: { startInclusive: 1, endExclusive: 10 }, turns: [] }],
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open attached Sidekick' }));
+    const panel = await screen.findByRole('complementary', { name: 'Sidekick: Incident triage' });
+    await within(panel).findByPlaceholderText('Message Incident triage and the team…');
+    expect(screen.getByTestId('location')).toHaveTextContent('?turn=canvas-turn&sequence=5');
+    expect(screen.queryByText('The matching message is no longer available.')).toBeNull();
+    expect(loadTranscriptRange).toHaveBeenCalledOnce();
+  });
 
   it("sends a manager's message as a wizard edit once Edit Sidekick is on", async () => {
     renderSidekick(AUTHOR);

@@ -277,6 +277,25 @@ describe('useWindowFilePaste', () => {
     expect(onFiles).not.toHaveBeenCalled();
   });
 
+  it('routes a paste to the conversation owning its target when two are mounted', () => {
+    const canvas = document.createElement('div');
+    const sidekick = document.createElement('div');
+    canvas.append(sidekick);
+    document.body.append(canvas);
+    const canvasFiles = vi.fn();
+    const sidekickFiles = vi.fn();
+    renderHook(() => {
+      useWindowFilePaste(canvasFiles, false, (target) => target === canvas);
+      useWindowFilePaste(sidekickFiles, false, (target) => target === sidekick);
+    });
+    dispatchPaste(sidekick, [new File(['notes'], 'notes.txt', { type: 'text/plain' })]);
+    expect(sidekickFiles).toHaveBeenCalledOnce();
+    expect(canvasFiles).not.toHaveBeenCalled();
+    dispatchPaste(canvas, [new File(['notes'], 'notes.txt', { type: 'text/plain' })]);
+    expect(canvasFiles).toHaveBeenCalledOnce();
+    expect(sidekickFiles).toHaveBeenCalledOnce();
+  });
+
   it('stops listening once the screen unmounts', () => {
     const onFiles = vi.fn();
     const { unmount } = renderHook(() => useWindowFilePaste(onFiles));
