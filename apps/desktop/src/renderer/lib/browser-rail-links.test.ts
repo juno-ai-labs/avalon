@@ -126,6 +126,20 @@ describe('openLink with two hosts on screen', () => {
     expect(breakout.mock.calls).toEqual([['https://example.com/portal'], ['https://example.com/no-origin']]);
   });
 
+  it.each([true, false])('opens hosted conversation links externally with a containing host (%s)', async (containsHost) => {
+    const canvas = pane();
+    const host = vi.fn();
+    const sidekick = document.createElement('aside');
+    sidekick.className = 'conversation-host-panel';
+    (containsHost ? canvas : document.body).append(sidekick);
+    const link = anchor('https://example.com/sidekick');
+    sidekick.append(link);
+    cleanups.push(registerBrowserRailHost(host, () => canvas), captureLinkClicks(document));
+    link.click();
+    expect(host).not.toHaveBeenCalled();
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/sidekick');
+  });
+
   it('falls back to the remaining host once the newest unregisters', async () => {
     const main = vi.fn();
     const breakout = vi.fn();

@@ -27,8 +27,8 @@ routes the shell serves, or who owns the right panel.
 | `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Activity), the account menu under it, the list's header and its actions, and the phone sheet; `useSectionCounts`, the rail's counts, and `useRailDockBadge`, which sends Activity's unseen count (`dockBadgeCount`) to the dock. |
-| `apps/desktop/src/common/sidebar-attention.ts` | `canvasNeedsAttention` and `sidekickNeedsAttention`: what counts as needing attention, shared by `useSectionCounts` and the menu bar ([`menu-bar.md`](menu-bar.md)). |
-| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx`, `activity-sidebar-section.tsx` | `CanvasesSection` and `ActivitySection` (with `useActivityList`), the two visible lists; `useSidekickList` still supplies live Sidekick data to menus and screens. |
+| `apps/desktop/src/common/sidebar-attention.ts` | `canvasNeedsAttention` and `sidekickNeedsAttention`: what counts as needing attention; Canvas counts serve `useSectionCounts` and both predicates serve the menu bar ([`menu-bar.md`](menu-bar.md)). |
+| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `activity-sidebar-section.tsx` | `CanvasesSection` and `ActivitySection` (with `useActivityList`), the two visible lists; `lib/sidekicks.ts` supplies live Sidekick data through `useSidekickList` to menus and screens. |
 | `apps/desktop/src/renderer/components/navigation-rows.tsx` | The row primitives both lists draw: `RowLayout`, `SectionHeading`, `PinnedSection`, `useSectionMotion`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the rail, the account menu's trigger included. |
 | `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#in-the-client)). |
@@ -472,7 +472,11 @@ would duplicate its conversation, lifecycle and details controls.
 
 **Consequences:** Hosts can supply content to the conversation's panel primitive.
 Embedded conversations keep preview state local and never claim the outer
-rail. Standalone links, Activity destinations and the account-menu library
+rail or consume the Canvas’s message-search URL. The host boundary owns file
+pastes and external links; automatic Canvas artifacts leave an open Sidekick
+in place. Nested previews return focus to their surviving host, and IME
+Escape never closes it. The phone library header still names Sidekicks and
+offers New Sidekick without reinstating a sidebar section. Standalone links, Activity destinations and the account-menu library
 remain available.
 
 

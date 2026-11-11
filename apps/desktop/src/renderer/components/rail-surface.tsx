@@ -1,6 +1,8 @@
 import clsx from 'clsx';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 
+import { isComposingKeyEvent } from '../lib/ime';
+
 import { RailResizeHandle, type RailResize } from './rail-resize-handle';
 
 /**
@@ -103,6 +105,7 @@ export function RailSurface({
     if (arrivedLeaving.current || !arrivedFocusOnOpen.current) return;
     previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const arrivedFocus = document.activeElement;
+    const parentSurface = surfaceRef.current?.parentElement?.closest<HTMLElement>('.rail-surface');
     const frame = requestAnimationFrame(() => {
       // The person can open a portalled menu before this frame. Do not steal
       // its focus and dismiss it when the panel's deferred arrival runs.
@@ -113,7 +116,13 @@ export function RailSurface({
       // A panel fading out unmounts well after it stopped holding the slot, so
       // it hands focus back only when the sidebar is gone rather than in other
       // hands — where the panel that took it has already claimed focus.
-      if (!document.querySelector('.rail-surface:not(.is-leaving)')) previousFocus.current?.focus();
+      const remaining = [...document.querySelectorAll('.rail-surface:not(.is-leaving)')];
+      // A surviving ancestor is still our conversation; a sibling is a
+      // replacement panel and owns focus now.
+      if (remaining.every((surface) => parentSurface && (surface === parentSurface || surface.contains(parentSurface)))) {
+        const opener = previousFocus.current;
+        (opener?.isConnected ? opener : parentSurface)?.focus();
+      }
     };
   }, []);
 
@@ -134,8 +143,8 @@ export function RailSurface({
           // inside the visible sidebar reach the panel or close it.
           if (!event.currentTarget.contains(event.target as Node)) return;
           onKeyDown?.(event);
-          if (event.key === 'Escape' && !event.defaultPrevented) {
-            event.stopPropagation();
+          if (event.key === 'Escape' && !event.defaultPrevented && !isComposingKeyEvent(event.nativeEvent)) {
+            event.preventDefault();
             onClose();
           }
         }}

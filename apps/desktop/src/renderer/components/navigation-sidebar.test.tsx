@@ -287,6 +287,21 @@ describe('the Canvases navigation', () => {
     }
   });
 
+  it.each(['/sidekicks', '/automations'])('names the Sidekicks library in the shut phone header at %s', (route) => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('max-width'), media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    try {
+      renderSidebar(workspace, route);
+      expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Canvas dashboard' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'New Canvas' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'New Sidekick' }));
+      expect(screen.getByTestId('location')).toHaveTextContent('/sidekicks/new');
+      expect(useUiStore.getState().sidebarSection).toBe('canvases');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('keeps the section left open across a launch the landing redirects to the Canvases home', () => {
     useUiStore.getState().setSidebarSection('activity');
     renderSidebar(workspace, '/', undefined, true, true);
