@@ -7,7 +7,7 @@ import { getAuth, refuseSupportSession, requireWorkspaceAdmin } from '../middlew
 import { zValidator } from '../middleware/validation';
 import { ApiError } from '../lib/api-error';
 import { billingConfig } from '../services/billing-config';
-import { billingAccount, createBillingPortal, createCheckout, syncSubscription } from '../services/billing';
+import { refreshBillingAccount, hasLiveSubscription, createBillingPortal, createCheckout, syncSubscription } from '../services/billing';
 import { verifyStripeSignature } from '../services/stripe';
 
 export const billingRoutes = new Hono<HonoAppEnv>();
@@ -15,10 +15,10 @@ billingRoutes.use('*', refuseSupportSession);
 billingRoutes.use('*', async (c, next) => { requireWorkspaceAdmin(c); await next(); });
 billingRoutes.get('/', async (c) => {
   if (!c.env.BILLING_CONFIG) return c.json({ enabled: false });
-  const account = await billingAccount(c.env, getAuth(c).workspaceId);
+  const account = await refreshBillingAccount(c.env, getAuth(c).workspaceId);
   const config = billingConfig(c.env);
-  return c.json(BillingStatusSchema.parse({ enabled: true, status: account.status, subscribed: account.subscription_id !== null,
-    trialEndsAt: new Date(account.trial_ends_at * 1000).toISOString(), overageEnabled: Boolean(account.overage_enabled),
+  return c.json(BillingStatusSchema.parse({ enabled: true, status: account.status, subscribed: hasLiveSubscription(account),
+    trialEndsAt: new Date(account.trial_ends_at * 1000).toISOString(), overageEnabled: account.overage_enabled === 1 && account.status === 'active' && account.overage_started_at !== null,
     offers: config.offers.filter((o) => o.enabled).map((o) => ({ id: o.id, name: o.name, plan: o.plan, currencies: o.currencies, overageAvailable: Boolean(o.overagePriceId) })),
   }));
 });

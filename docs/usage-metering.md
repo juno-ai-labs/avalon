@@ -313,12 +313,14 @@ An uncertain write may have committed: inspect before retrying.
 
 ## Changelog
 
-### 2026-11-11 — Billing controls self-service plan changes
+### 2026-11-11 — Read usage through a cancellation cutoff
 
-When Stripe billing is configured, direct member plan changes are refused. Verified
-subscription updates use the existing plan writer and meter publisher instead, so
-checkout cannot be bypassed. The engineering override remains available. Overage
-settlement reads closed ledger periods without changing quota arithmetic.
+Billing can request a historical cutoff with the quota captured before downgrade.
+The cutoff week's costs come from retained usage events, excluding work performed
+after cancellation; older weeks retain their rollups. The reader refuses an expired
+history window rather than invoice later activity. Paid plan transitions still use
+the existing plan writer/publisher; direct member changes are refused while Stripe
+is configured. [Stripe billing](stripe-billing.md) owns charging and receipts.
 
 ### 2026-11-07 — Index the ledger by Sidekick
 

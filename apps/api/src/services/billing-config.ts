@@ -8,6 +8,7 @@ import type { Env } from '../env';
 // Stripe Prices own amounts, intervals, currency options and tax behavior.
 export const BillingConfigSchema = z.strictObject({
   returnUrl: HttpUrlSchema.refine((url) => new URL(url).protocol === 'https:'),
+  unpaidPlan: PlanIdSchema.default('starter'),
   automaticTax: z.boolean().default(true),
   settlementDelayDays: z.number().int().nonnegative().default(14),
   trialDays: z.number().int().nonnegative().default(14),

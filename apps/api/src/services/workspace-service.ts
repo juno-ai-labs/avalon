@@ -1,3 +1,4 @@
+import { withOrganizationBillingClosure } from './billing';
 import { resolveModelSelectorVisibleForNewOrgs } from "./client-feature-flags";
 import { promoteWorkspaceGuest } from "./workspace-relationship-service";
 import type { Region } from "@rally/contracts/regions";
@@ -833,49 +834,51 @@ export class WorkspaceService {
    */
   async leaveWorkspace(expectedOutcome: "left" | "abandoned"): Promise<{ outcome: "left" | "abandoned" }> {
     if (expectedOutcome === "abandoned") {
-      const at = nowIso();
-      const abandonment = await this.env.DB.batch([
-      this.env.DB.prepare(
-        `UPDATE workspaces SET abandoned_at = ?, updated_at = ?
-         WHERE id = ? AND abandoned_at IS NULL
-           AND EXISTS (
-             SELECT 1 FROM workspace_members actor
-             WHERE actor.workspace_id = workspaces.id AND actor.user_id = ?
-               AND actor.status = 'active'
-           )
-           AND 1 = (
-             SELECT COUNT(*) FROM workspace_members active_member
-             WHERE active_member.workspace_id = workspaces.id
-               AND active_member.status = 'active'
-           )`,
-      ).bind(at, at, this.auth.workspaceId, this.auth.userId),
-      this.env.DB.prepare(
-        `UPDATE workspace_members SET status = 'suspended'
-         WHERE workspace_id = ? AND user_id = ? AND status = 'active'
-           AND EXISTS (
-             SELECT 1 FROM workspaces
-             WHERE id = ? AND abandoned_at = ?
-           )`,
-      ).bind(this.auth.workspaceId, this.auth.userId, this.auth.workspaceId, at),
-      this.env.DB.prepare(
-        `UPDATE workspace_invitations SET revoked_at = ?
-         WHERE workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL
-           AND EXISTS (
-             SELECT 1 FROM workspaces
-             WHERE id = ? AND abandoned_at = ?
-           )`,
-      ).bind(at, this.auth.workspaceId, this.auth.workspaceId, at),
-      ]);
-      const abandoned = Number(abandonment[0]?.meta?.changes ?? 0) === 1;
-      if (abandoned) {
-        await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId: this.auth.userId });
-        return { outcome: "abandoned" };
-      }
-      throw new ApiError(
-        409,
-        "membership_changed",
-        "The workspace membership changed while closing it. Check it and try again.",
-      );
+      return withOrganizationBillingClosure(this.env, this.auth.workspaceId, async () => {
+        const at = nowIso();
+        const abandonment = await this.env.DB.batch([
+        this.env.DB.prepare(
+          `UPDATE workspaces SET abandoned_at = ?, updated_at = ?
+           WHERE id = ? AND abandoned_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM workspace_members actor
+               WHERE actor.workspace_id = workspaces.id AND actor.user_id = ?
+                 AND actor.status = 'active'
+             )
+             AND 1 = (
+               SELECT COUNT(*) FROM workspace_members active_member
+               WHERE active_member.workspace_id = workspaces.id
+                 AND active_member.status = 'active'
+             )`,
+        ).bind(at, at, this.auth.workspaceId, this.auth.userId),
+        this.env.DB.prepare(
+          `UPDATE workspace_members SET status = 'suspended'
+           WHERE workspace_id = ? AND user_id = ? AND status = 'active'
+             AND EXISTS (
+               SELECT 1 FROM workspaces
+               WHERE id = ? AND abandoned_at = ?
+             )`,
+        ).bind(this.auth.workspaceId, this.auth.userId, this.auth.workspaceId, at),
+        this.env.DB.prepare(
+          `UPDATE workspace_invitations SET revoked_at = ?
+           WHERE workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM workspaces
+               WHERE id = ? AND abandoned_at = ?
+             )`,
+        ).bind(at, this.auth.workspaceId, this.auth.workspaceId, at),
+        ]);
+        const abandoned = Number(abandonment[0]?.meta?.changes ?? 0) === 1;
+        if (abandoned) {
+          await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId: this.auth.userId });
+          return { outcome: "abandoned" as const };
+        }
+        throw new ApiError(
+          409,
+          "membership_changed",
+          "The workspace membership changed while closing it. Check it and try again.",
+        );
+      });
     }
 
     const departure = await this.env.DB.prepare(
