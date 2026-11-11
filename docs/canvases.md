@@ -566,7 +566,7 @@ card grid with Sidekicks; the shared layout is described in
   its trigger kinds change, including draft changes; instruction-only edits
   do not refresh it.
   The attached Sidekick facepile names each mark on hover and lists hidden
-  names on its overflow count. Clicking it opens the Canvas; the title link's
+  names on its hexagonal overflow count. Clicking it opens the Canvas; the title link's
   accessible description carries the indicators and stack name.
 - **The mark** (`CanvasMark`) holds the chosen icon, else the row's
   `artifactKind` glyph, in a pastel pair through `markColors`: the chosen
