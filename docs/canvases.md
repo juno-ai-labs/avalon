@@ -557,30 +557,17 @@ card grid with Sidekicks; the shared layout is described in
   (`canvasWrittenByRun`), and opens the Sidekick's conversation at it
   (`?run=`); the link carries the run's number in its route state, so the run's
   pill is numbered before the shared conversation has loaded. Viewer presence
-  is a facepile at the preview's top left; the independent **Data backed** badge at
-  its top right uses the Stored data pop-out row's `IconDatabase` and means
-  the Canvas holds a listed database-backed artifact.
-  An active attached Sidekick with a schedule or event trigger adds a
-  **Live updating** pill with the Tabler bolt above the other indicators.
-  Manual-only, paused and draft Sidekicks do not make a Canvas live updating.
-  Trigger kinds travel in the attached Sidekick projection, using the same
-  definition query as the Sidekick directory; this works even when the Canvas
-  reader cannot open the Sidekick. Accepting a new definition refreshes the
-  Canvas list even if the Sidekick name, state and mark stayed the same.
-  A static site has no Data backed badge. Both indicators can appear together. The
-  Canvas's attached Sidekicks are a **Sidekick facepile** (`SidekickStack`,
-  `@rally/ui`): overlapping hexagons inside a pill led by Tabler's `hexagon`
-  icon at the preview's right, under the status
-  pills when the card has them and in their place when it has none, the first
-  four and then a count, as `AvatarStack` cuts people off. The stack is named
-  as a whole ("Sidekicks: Launch tracker; Digest") and the card's link is
-  described by it beside the status pills. Hovering each visible Sidekick mark
-  shows its name through the shared `Tip` primitive. The facepile link sits
-  above the card's stretched link so each mark receives pointer events; it
-  opens the same Canvas and adds no separate keyboard stop. The
-  preview is decorative; the link describes its status pills for assistive
-  technology, and the metadata names current viewers. Clicking a face opens
-  the same Canvas as the rest of the card.
+  is shown separately from **Data backed**, which means the Canvas holds a
+  listed database-backed artifact. **Live updating** means an active attached
+  Sidekick has a schedule or event trigger; manual-only, paused and draft
+  Sidekicks do not qualify. Trigger kinds travel in the Canvas projection so
+  readers who cannot open the Sidekick still see this state. The projection
+  uses the same definition query as the Sidekick directory, and refreshes when
+  its trigger kinds change, including draft changes; instruction-only edits
+  do not refresh it.
+  The attached Sidekick facepile names each mark on hover and lists hidden
+  names on its overflow count. Clicking it opens the Canvas; the title link's
+  accessible description carries the indicators and stack name.
 - **The mark** (`CanvasMark`) holds the chosen icon, else the row's
   `artifactKind` glyph, in a pastel pair through `markColors`: the chosen
   colour, else a hue stable for the id (`canvasHue`). The home card's preview
@@ -911,15 +898,12 @@ why the refresh lease shares the owning object's transaction.
 
 ### 2026-11-10 — Explain a card's Sidekicks and automatic updates
 
-Canvas cards place their Sidekick facepile in a pill with a hexagon icon,
-show each Sidekick's name on hover, call database-backed artifacts
-**Data backed**, and show **Live updating** for active attached Sidekicks with
-schedule or event triggers. Trigger kinds are included in the Canvas projection
-and accepted definition changes refresh it. Looking up only the viewer's
-Sidekick list would miss attached Sidekicks whose own page they cannot open;
-reusing the directory's trigger query keeps the two surfaces consistent without
-extra client requests. Facepile hover targets sit above the stretched card link
-and still open that same Canvas.
+Canvas cards now identify attached Sidekicks and distinguish automatic updates
+from data-backed content. Trigger kinds travel in the Canvas projection because
+a second client lookup would miss Sidekicks whose own page the Canvas reader
+cannot open. The shared trigger query also drives refresh detection, keeping
+draft projections current without publishing unchanged cards after
+instruction-only edits.
 
 ### 2026-11-10 — Keep delegated work visible in a Canvas
 
