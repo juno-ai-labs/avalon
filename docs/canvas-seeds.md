@@ -57,7 +57,8 @@ has:
 3. **Its site.** `publishSeedSite`: the files, the manifest, the public
    hostname, the resource row, the registry row and the serving pointer, in the
    order every site publish uses, then attached to the Chat and noted on the
-   Canvas as Rally's.
+   Canvas as Rally's. The artifact carries the Canvas's title, not its
+   directory's name, and keeps it when Rally republishes without naming one.
 4. **Its audience.** `canvasSetAudience`, to the whole Organization.
 5. **Rally's opening message.** The message port's `appendMessage`, authored as
    the agent with no run, the append a scheduled wake-up's notice makes.
@@ -221,6 +222,11 @@ per Organization and later members find it in the list.
   message is handed over as context and a later one as an assistant turn.
 - Nothing can run a model here, so Rally following the README in a real Chat
   is unproved by any test.
+- Verified in a real window on the local stack: an Organization created
+  through `POST /onboarding/workspace` shows the guide on its Canvases home,
+  unread, with its icon, and the Canvas opens to Rally's message. The site
+  inside the panel cannot be drawn locally
+  ([`dev-environment.md`](dev-environment.md#what-cannot-be-verified-in-a-sandbox)).
 
 ## Open questions
 
