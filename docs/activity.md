@@ -7,8 +7,8 @@ needs their input, a run they asked for finished, somebody else replied in
 a conversation they are in, somebody published a new version in a Canvas
 they pinned, somebody asked to open a Canvas they decide on, their own
 request to open one was approved, somebody asked to let their events start a
-Sidekick, or the person they asked answered. It is the third section of
-the rail, beside Canvases and Sidekicks, in the Mac app and the browser alike.
+Sidekick, or the person they asked answered. It is the second section of
+the rail, beside Canvases, in the Mac app and the browser alike.
 
 The feed is the push's own source. Each event that records a push
 notification intent writes the recipient's Activity row in the same
