@@ -27,6 +27,7 @@ import {
   Menu,
   MonitorCog,
   Bell,
+  Brain,
   ChevronRight,
   Ellipsis,
   Plug,
@@ -407,7 +408,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
     items: [
       { id: 'account', label: 'Account', icon: UserRound },
       { id: 'preferences', label: 'Preferences', icon: MonitorCog, child: true },
-      { id: 'memories', label: 'Memories', icon: UserRound },
+      { id: 'memories', label: 'Memories', icon: Brain },
       { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'workspace', label: 'Organization', icon: Users },
       // Its own page beneath Organization: the roster, guests and invitations
@@ -1570,8 +1571,7 @@ export function WorkspaceSettingsScreen({
                     aria-label="Product analytics"
                     checked={applicationSettings?.productAnalyticsEnabled ?? true}
                     disabled={
-                    applicationSettings?.productAnalyticsAvailable === false
-                    || applicationSettings === null
+                    applicationSettings === null
                     || updateProductAnalytics.isPending
                     }
                     onChange={(event) => updateProductAnalytics.mutate(event.currentTarget.checked)}
@@ -1639,7 +1639,6 @@ export function WorkspaceSettingsScreen({
                   </label>
                 </div>
                 {updateUserTimezone.error && <ErrorNotice occurrence={updateUserTimezone.error}>{updateUserTimezone.error.message}</ErrorNotice>}
-
                 </>}
                 {/* Members and guests alike: either can connect an app. A
                     support session is refused, since the list spans the

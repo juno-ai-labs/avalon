@@ -1,13 +1,13 @@
 import { useLayoutEffect } from 'react';
-import { readDevicePreferences } from '../lib/device-preferences';
-import { useUiStore } from '../lib/ui-store';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 
 import { OpeningState } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { useConversationAdmission } from '../lib/conversation-admission';
 import { layoutKey, readLayout } from '../lib/desktop-layout';
-import { LANDING_ROUTE, RESTORED_ROUTE, restorableRoute } from '../lib/landing';
+import { readDevicePreferences } from '../lib/device-preferences';
+import { LANDING_ROUTE, RESTORED_ROUTE, isRestoredRoute, restorableRoute } from '../lib/landing';
+import { useUiStore } from '../lib/ui-store';
 
 /**
  * The root route opens the Canvases home by default. Last Opened opts this
@@ -21,7 +21,8 @@ import { LANDING_ROUTE, RESTORED_ROUTE, restorableRoute } from '../lib/landing';
  */
 export function LandingScreen(): React.JSX.Element {
   const { session } = useAppSession();
-  const restore = readDevicePreferences().startupPage === 'last-opened';
+  const location = useLocation();
+  const restore = isRestoredRoute(location.state) || readDevicePreferences().startupPage === 'last-opened';
   const admitted = useConversationAdmission();
   useLayoutEffect(() => {
     if (admitted && !restore) useUiStore.getState().setSidebarSection('canvases');

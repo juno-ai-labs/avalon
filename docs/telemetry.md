@@ -46,20 +46,16 @@ For the implementation checklist, see
 
 ## Account preference in the web app
 
-The shared `common/product-analytics-preference.ts` client owns the endpoint,
-GET/PATCH payloads, response schema and version-conflict recovery for both hosts.
-Electron supplies its authenticated native transport; the browser supplies the
-shared `RallyApi` cookie transport. Neither host implements its own conflict retry.
-The desktop controller still owns local consent enforcement, pending offline
-writes, spool purging and native crash generation invalidation.
-
-Settings → Account → Preferences offers the same account-level Product analytics
-preference on web and desktop. Web reads and PATCHes `/telemetry/preference`
-through the identity-only browser cookie adapter; cookies remain HttpOnly.
-The server's version guards writes, and a conflict reads the newer preference
-without retrying the stale choice. Browser saves are online and acknowledge the
-server value, while desktop retains its local-first disable and offline sync.
-No browser telemetry collector or new event producer is introduced.
+Settings → Account → Preferences edits the same account-level Product analytics
+consent on both hosts. `common/product-analytics-preference.ts` owns the
+`/telemetry/preference` GET/PATCH protocol, response schema and version guard;
+a 409 re-reads the canonical value without replaying the stale choice. Electron
+supplies its native authenticated transport; web reuses the browser shell's
+identity-scoped `RallyApi` and HttpOnly cookies. Browser saves require a connection
+and display the acknowledged value; failures show an error and re-read the
+account. Desktop retains local-first disable, pending offline writes, spool
+purging and native crash generation invalidation. This introduces no browser
+telemetry collector or event producer.
 
 ## Storage and background writes
 

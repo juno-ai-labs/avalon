@@ -1,4 +1,6 @@
 import { useCallback } from 'react';
+import { navigateAppRoute } from './app-navigation';
+import { RESTORED_ROUTE } from './landing';
 import { useShellCapabilities } from './collaboration-session';
 
 /**
@@ -19,7 +21,8 @@ export function isWindowSurfaceRoute(pathname: string): boolean {
 export function useCloseWindowSurface(): () => void {
   const { host } = useShellCapabilities();
   return useCallback(() => {
-    if (host === 'browser') window.location.hash = '#/';
+    // Closing Settings resumes the current visit; it is not a fresh launch.
+    if (host === 'browser') navigateAppRoute('/', RESTORED_ROUTE);
     else window.close();
   }, [host]);
 }
