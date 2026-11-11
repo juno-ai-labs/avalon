@@ -184,9 +184,6 @@ export function parseUpdateFeed(text, manifestName = 'latest-mac.yml') {
   return { version, files, file: files[0] };
 }
 
-// Compatibility entry point for the existing Mac release pipeline.
-export const parseMacUpdateFeed = parseUpdateFeed;
-
 export async function sha512File(filePath) {
   const hash = createHash('sha512');
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
@@ -204,7 +201,7 @@ export async function loadReleaseDirectory(directory) {
   }
   const manifestPath = join(directory, manifestNames[0]);
   const manifestBytes = await readFile(manifestPath);
-  const feed = parseMacUpdateFeed(manifestBytes.toString('utf8'));
+  const feed = parseUpdateFeed(manifestBytes.toString('utf8'));
   const artifactNames = names.filter((name) => /\.(?:dmg|zip|blockmap)$/u.test(name));
   for (const file of feed.files) {
     if (!artifactNames.includes(file.url)) {
@@ -249,6 +246,7 @@ export function normalizeReleasePrefix(prefix = DEFAULT_RELEASE_PREFIX) {
 }
 
 export function releaseContentType(name) {
+  if (name.endsWith('.json')) return 'application/json';
   if (name.endsWith('.dmg')) return 'application/x-apple-diskimage';
   if (name.endsWith('.zip')) return 'application/zip';
   if (name.endsWith('.yml')) return 'application/yaml; charset=utf-8';

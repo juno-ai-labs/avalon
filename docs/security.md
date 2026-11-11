@@ -361,13 +361,8 @@ destination.
 
 ### Linux distribution and keystore
 
-Linux x64 uses a separate pinned HTTPS update feed and SHA-512 payload checks,
-without the Apple signature verifier. AppImage updates replace the user-owned
-file; Debian updates use the system privilege agent on explicit restart.
-Linux Lockdown requires a libsecret or KWallet backend; `basic_text` and unknown
-backends are unavailable. The existing trusted-renderer audio-only permission
-policy also owns Linux microphone capture. See [Linux desktop](linux-desktop.md)
-for the complete release and trust boundaries.
+[Linux desktop](linux-desktop.md) owns Linux update trust, OS-keystore requirements,
+and the shared microphone permission boundary.
 
 ### Authentication and authorization
 

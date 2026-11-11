@@ -1,8 +1,8 @@
-import { parseLinuxFeed } from './linux-release.mjs';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 import { isEntryPoint } from './entry-point.mjs';
-import { normalizeReleasePrefix, parseMacUpdateFeed } from './release-lib.mjs';
+import { LINUX_RELEASE_PREFIX, parseLinuxFeed } from './linux-release.mjs';
+import { normalizeReleasePrefix, parseUpdateFeed } from './release-lib.mjs';
 import { purgeCloudflareUrls } from './release-cache.mjs';
 import {
   createR2ReleaseLockClient,
@@ -85,7 +85,7 @@ function parseReceiptBytes(bytes) {
  */
 export async function promoteScheduledStableChannel({
   fasterManifestBytes,
-  parseFeed = (bytes) => parseMacUpdateFeed(bytes.toString('utf8')),
+  parseFeed = (bytes) => parseUpdateFeed(bytes.toString('utf8')),
   now = Date.now,
   publishStableManifest,
   publishStableReceipt,
@@ -173,8 +173,9 @@ export async function runScheduledStablePromotion({
   const origin = releaseOrigin(required('RALLY_RELEASE_BASE_URL', environment));
   const apiToken = required('CLOUDFLARE_API_TOKEN', environment);
   const zoneId = required('CLOUDFLARE_ZONE_ID', environment);
-  const stableManifest = prefix === 'stable/linux/x64' ? 'stable-linux.yml' : STABLE_RELEASE_MANIFEST;
-  const fasterManifest = prefix === 'stable/linux/x64' ? 'faster-linux.yml' : FASTER_RELEASE_MANIFEST;
+  const linux = prefix === LINUX_RELEASE_PREFIX;
+  const stableManifest = linux ? 'stable-linux.yml' : STABLE_RELEASE_MANIFEST;
+  const fasterManifest = linux ? 'faster-linux.yml' : FASTER_RELEASE_MANIFEST;
   const key = (name) => `${prefix}/${name}`;
   const publicStableUrl = new URL(
     [...prefix.split('/'), stableManifest].map(encodeURIComponent).join('/'),
@@ -182,7 +183,7 @@ export async function runScheduledStablePromotion({
   ).toString();
 
   const result = await promoteScheduledStableChannel({
-    ...(prefix === 'stable/linux/x64' ? { parseFeed: parseLinuxFeed } : {}),
+    ...(linux ? { parseFeed: parseLinuxFeed } : {}),
     fasterManifestBytes: await readR2Object(client, bucket, key(fasterManifest)),
     stableManifestBytes: await readR2Object(client, bucket, key(stableManifest)),
     stableReceiptBytes: await readR2Object(client, bucket, key(STABLE_CHANNEL_RECEIPT)),

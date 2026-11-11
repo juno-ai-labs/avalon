@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { createR2ReleaseLockClient, withR2ReleaseLock } from './release-r2-lock.mjs';
 import { purgeCloudflareUrls, verifyPublicReleaseArtifactHash } from './release-cache.mjs';
 import { LINUX_RELEASE_PREFIX, loadLinuxRelease, publishLinuxRelease } from './linux-release.mjs';
+import { releaseContentType } from './release-lib.mjs';
 
 function required(name) {
   const value = process.env[name]?.trim();
@@ -34,7 +35,7 @@ try {
         await client.send(new PutObjectCommand({ Bucket: bucket, Key: key(name), Body: bytes,
           ...(immutable ? { IfNoneMatch: '*' } : {}),
           CacheControl: immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=0, must-revalidate',
-          ContentType: name.endsWith('.yml') ? 'application/yaml' : 'application/octet-stream' }));
+          ContentType: releaseContentType(name) }));
         if (!(await read(name))?.equals(bytes)) throw new Error(`Linux R2 verification failed: ${name}`);
       },
       verifyPublic: async (name, expectedHash) => {

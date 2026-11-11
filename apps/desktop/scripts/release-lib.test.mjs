@@ -11,7 +11,7 @@ import {
   assertReleaseTag,
   compareVersions,
   normalizeReleasePrefix,
-  parseMacUpdateFeed,
+  parseUpdateFeed,
   reconcileImmutableReleaseObject,
   releaseContentType,
   sha512File,
@@ -134,14 +134,14 @@ test('an object named by the live manifest cannot be replaced by the next releas
 });
 
 test('mac update feed parser requires a local checksummed artifact', () => {
-  const feed = parseMacUpdateFeed(`version: 1.2.3\nfiles:\n  - url: Rally-1.2.3-mac-arm64.zip\n    sha512: YWJjZA==\n    size: 42\npath: Rally-1.2.3-mac-arm64.zip\n`);
+  const feed = parseUpdateFeed(`version: 1.2.3\nfiles:\n  - url: Rally-1.2.3-mac-arm64.zip\n    sha512: YWJjZA==\n    size: 42\npath: Rally-1.2.3-mac-arm64.zip\n`);
   assert.deepEqual(feed, {
     version: '1.2.3',
     files: [{ url: 'Rally-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 }],
     file: { url: 'Rally-1.2.3-mac-arm64.zip', sha512: 'YWJjZA==', size: 42 },
   });
   assert.throws(
-    () => parseMacUpdateFeed(`version: 1.2.3\nfiles:\n  - url: https://elsewhere.invalid/a.zip\n    sha512: YWJjZA==\n    size: 42\n`),
+    () => parseUpdateFeed(`version: 1.2.3\nfiles:\n  - url: https://elsewhere.invalid/a.zip\n    sha512: YWJjZA==\n    size: 42\n`),
     /sibling artifact/u,
   );
 });
@@ -178,4 +178,6 @@ test('release prefixes and content types are deterministic', () => {
   assert.throws(() => normalizeReleasePrefix('../stable'), /Invalid release prefix/u);
   assert.equal(releaseContentType('Rally.dmg'), 'application/x-apple-diskimage');
   assert.equal(releaseContentType('latest-mac.yml'), 'application/yaml; charset=utf-8');
+  assert.equal(releaseContentType('Rally-1.2.0-linux-x64.release.json'), 'application/json');
+  assert.equal(releaseContentType('stable-channel.json'), 'application/json');
 });
