@@ -88,7 +88,7 @@ export const SIDEKICK_DELEGATION_ATTENTION_MESSAGES: Record<SidekickDelegationAt
   no_eligible_delegate: "Needs attention: nobody lends this Sidekick an account. Add a delegate, or pause and resume it to run with the Organization's connections alone.",
   // The code predates sources and is stored and on the wire; what it says is theirs:
   // a watched account whose owner does not let its events in (docs/sidekick-sources.md).
-  event_no_eligible_delegate: "Needs attention: an account this Sidekick watches is not allowed to start it. Its owner can allow it under Sources.",
+  event_no_eligible_delegate: "Needs attention: an account this Sidekick watches does not let its events start it. Ask its owner for that again in a conversation with Rally.",
   permission_report_unavailable: "Needs attention: a message could not reach its destination. Restore conversation access and rerun the blocked work; no delivery was confirmed.",
 };
 

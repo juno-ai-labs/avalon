@@ -57,20 +57,23 @@ export function SourceDecisionButtons({ state, subject, onDecide, deciding = nul
   waitingFor?: string | undefined;
 }): React.JSX.Element {
   const live = state === 'pending' && onDecide !== undefined;
-  const button = (decision: SourceDecision, label: string, chosen: boolean): React.JSX.Element => <Button
+  // The pair is never dimmed, so a press in flight says so in words: without them nothing on
+  // screen shows the answer was taken.
+  const button = (decision: SourceDecision, label: string, sending: string, chosen: boolean): React.JSX.Element => <Button
+    aria-busy={deciding === decision || undefined}
     aria-label={`${label} ${subject}`}
     aria-pressed={chosen}
     className={clsx('source-decision-button', `is-${decision}`, chosen && 'is-chosen')}
     disabled={!live || deciding !== null}
     onClick={() => onDecide?.(decision)}
-  >{label}</Button>;
+  >{deciding === decision ? sending : label}</Button>;
   return <div
     className={clsx('source-decision', live && 'is-live')}
     data-state={state}
     title={state === 'pending' && !live && waitingFor ? `Only ${waitingFor} can answer` : undefined}
   >
-    {button('decline', 'Decline', state === 'declined')}
-    {button('approve', 'Approve', state === 'approved')}
+    {button('decline', 'Decline', 'Declining…', state === 'declined')}
+    {button('approve', 'Approve', 'Approving…', state === 'approved')}
   </div>;
 }
 
@@ -137,7 +140,7 @@ export function SidekickSourceRequestCardView({ requests, words, live = true, on
             onDecide={live && request.yours && onDecide ? (decision) => onDecide(request, decision) : undefined}
             state={request.state}
             subject={subjectOf(request, connector)}
-            waitingFor={request.person.displayName}
+            waitingFor={request.yours ? undefined : request.person.displayName}
           />}
       </li>)}
     </ul>

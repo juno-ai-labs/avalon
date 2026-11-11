@@ -68,8 +68,6 @@ export const SIDEKICK_SOURCE_SCHEMA_STATEMENTS = [
   `CREATE UNIQUE INDEX sidekick_source_requests_pending ON sidekick_source_requests(sidekick_id, user_id, connector_type)
      WHERE state = 'pending'`,
   `CREATE INDEX sidekick_source_requests_by_sidekick ON sidekick_source_requests(sidekick_id, created_at)`,
-  `CREATE INDEX sidekick_source_requests_by_place ON sidekick_source_requests(place_parent_kind, place_parent_id)
-     WHERE place_parent_id IS NOT NULL`,
   // What one asking operation answered with, in order: the requests it made
   // and the waiting ones it found. A retried ask reads its answer back here.
   `CREATE TABLE sidekick_source_request_operations (

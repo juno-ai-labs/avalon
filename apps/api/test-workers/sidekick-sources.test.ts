@@ -4,9 +4,12 @@ import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:tes
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   AutomationSetEvaluatorRulesInputV1Schema, SidekickExecutionDelegationSchema, SidekickSourcesResultSchema,
-  asUserId, asWorkspaceId, type AutomationDraft, WorkspaceExternalEventMatchResultSchema,
+  WorkstreamWorkflowInputSchema, asUserId, asWorkspaceId, type AutomationDraft, WorkspaceExternalEventMatchResultSchema,
 } from "@rally/contracts";
-import { workspaceDOName } from "../src/durable-objects/names";
+import type { HarnessToolContext } from "@rally/agent-harness";
+import type { Env } from "../src/env";
+import { substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
+import { sidekickSourceTools } from "../src/services/sidekick-source-tools";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { changeRelationships } from "./helpers/workspace-relationship-events";
@@ -369,6 +372,51 @@ describe("Sidekick sources", () => {
   });
 });
 
+describe("trying a draft filter", () => {
+  const sample = async (userId: string, limit: number) => (await stub().sidekickSourceSampleEvents({
+    workspaceId, userId, connectorType: "google", eventType, limit,
+  })).events.map((event) => event.title);
+
+  /** The tool as a person's turn in the Sidekick's own conversation holds it. */
+  function trying(runtimeEnv: Env, userId: typeof creator) {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId, parentKind: "automation", parentId: automationId,
+      substreamId: "0", loopId: substreamLoopId(automationId), harnessRunId: crypto.randomUUID(), triggerMessageId: null,
+      activityId: null, executionPrincipal: { type: "user", userId }, reason: "test" });
+    const tool = sidekickSourceTools(runtimeEnv, input, userId, false).find((candidate) => candidate.definition.name === "test_source_condition")!;
+    const context: HarnessToolContext = { workspaceId, workstreamId: automationId, harnessRunId: input.harnessRunId,
+      effectIntentId: crypto.randomUUID(), toolCallId: "try-filter", executionPrincipal: input.executionPrincipal,
+      signal: new AbortController().signal };
+    return async (type: string) => (await tool.execute({ connectorType: "google", eventType: type, condition: FILTER }, context)).output;
+  }
+
+  it("reads the asking person's own most recent mail and nobody else's", async () => {
+    await watchingMail();
+    await mail(creatorMail, creator, "First");
+    await mail(janeMail, jane, "Jane's own");
+    await mail(creatorMail, creator, "Second");
+    await mail(creatorMail, creator, "Third");
+    // Newest first, and no more than was asked for.
+    expect(await sample(creator, 2)).toEqual(["New email: Third", "New email: Second"]);
+    expect(await sample(creator, 10)).toEqual(["New email: Third", "New email: Second", "New email: First"]);
+    // Jane's mailbox is hers alone to try a filter on, and a member with no mailbox has nothing.
+    expect(await sample(jane, 10)).toEqual(["New email: Jane's own"]);
+    expect(await sample(outsider, 10)).toEqual([]);
+  });
+
+  it("says it judged nothing where the classifier is not configured, and where the person has no such events", async () => {
+    await watchingMail();
+    await mail(creatorMail, creator, "Term sheet");
+    // This Worker's test configuration names no classifier key.
+    expect(await trying({ ...env, TYPESAFE_API_KEY: undefined }, creator)(eventType))
+      .toEqual({ judged: false, reason: "The filter's classifier is not configured here.", events: [] });
+    // With one, an event type the person has none of is said to be that, not a filter that kept everything out.
+    expect(await trying({ ...env, TYPESAFE_API_KEY: "typesafe-test-key" }, creator)("email.updated")).toEqual({ judged: false, events: [],
+      reason: "Your own google account has no recent email.updated events to try the filter on. Check the event type against the connector's declared events; if it is right, rely on the filter's wording." });
+    // Jane's one email is not the creator's to judge: the outsider, who has no mailbox, is told the same.
+    expect(await trying({ ...env, TYPESAFE_API_KEY: "typesafe-test-key" }, outsider)(eventType)).toMatchObject({ judged: false, events: [] });
+  });
+});
+
 describe("a run nobody is behind", () => {
   it("starts as the Sidekick itself and is continued by the people who manage it", async () => {
     await watchingMail();
@@ -392,6 +440,24 @@ describe("a run nobody is behind", () => {
       .toMatchObject({ outcome: "continue", executionPrincipal: { type: "workspace", workspaceId } });
     expect(await stub().sidekickContinueRun({ ...address, runId: run!.run_id, sender: sender(outsider) }))
       .toEqual({ outcome: "refused", code: "run_continuation_requires_manager" });
+    // An agent acting for nobody (another run of a Sidekick with no delegate) continues a run nobody is behind.
+    expect(await stub().sidekickContinueRun({ ...address, runId: run!.run_id, sender: { kind: "unattributed" } }))
+      .toMatchObject({ outcome: "continue", executionPrincipal: { type: "workspace", workspaceId } });
+  });
+
+  it("refuses an agent acting for nobody a run a delegate is behind", async () => {
+    await watchingMail();
+    const delivery = (await mail(creatorMail, creator, "Term sheet"))[0]!;
+    expect(await admit(delivery)).toMatchObject({ admitted: true });
+    const [run] = await runs();
+    expect(run).toMatchObject({ coordinator_user_id: creator });
+    await runDurableObjectAlarm(stub());
+    await stub().sidekickRunProvisioning({ ...address, runId: run!.run_id });
+    expect(await stub().sidekickContinueRun({ ...address, runId: run!.run_id, sender: { kind: "unattributed" } }))
+      .toEqual({ outcome: "refused", code: "run_continuation_requires_rally_user" });
+    // Its own delegate still continues it.
+    expect(await stub().sidekickContinueRun({ ...address, runId: run!.run_id, sender: { kind: "person", userId: creator } }))
+      .toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: creator } });
   });
 
   it("stays stopped where it had already stopped for want of a delegate, until somebody resumes it", async () => {
