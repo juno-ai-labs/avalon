@@ -17,6 +17,12 @@ export const BillingConfigSchema = z.strictObject({
   // Applied once per Organization, on its first paid subscription. Stripe owns
   // the percentage and duration; omit to stop offering the pilot to new buyers.
   pilotCouponId: z.string().min(1).optional(),
+  // Dedicated zero-price trial record and reporting-only hourly meters.
+  synchronization: z.strictObject({
+    freePriceId: z.string().startsWith('price_'),
+    organizationMeterId: z.string().startsWith('mtr_'),
+    rallyMeterId: z.string().startsWith('mtr_'),
+  }).optional(),
   offers: z.array(z.strictObject({
     id: z.string().regex(/^[a-z0-9_-]+$/),
     name: z.string().min(1),
@@ -31,6 +37,9 @@ export const BillingConfigSchema = z.strictObject({
 }).superRefine((config, ctx) => {
   if (new Set(config.offers.map((o) => o.id)).size !== config.offers.length) {
     ctx.addIssue({ code: 'custom', path: ['offers'], message: 'Duplicate offer IDs' });
+  }
+  if (config.synchronization && config.synchronization.organizationMeterId === config.synchronization.rallyMeterId) {
+    ctx.addIssue({ code: 'custom', path: ['synchronization', 'rallyMeterId'], message: 'Payers require separate meters' });
   }
 });
 export function billingConfig(env: Pick<Env, 'BILLING_CONFIG'>) {

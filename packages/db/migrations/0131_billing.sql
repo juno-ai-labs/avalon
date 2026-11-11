@@ -3,6 +3,8 @@ CREATE TABLE billing_accounts (
   workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
   customer_id TEXT UNIQUE,
   subscription_id TEXT UNIQUE,
+  free_subscription_id TEXT UNIQUE,
+  trial_award_synced_end INTEGER,
   checkout_generation TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'none',
   offer_id TEXT,
