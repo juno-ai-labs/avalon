@@ -25,6 +25,15 @@ import { artifactIsolateId } from "@rally/contracts";
 export const ASSET_SHIM_MODULE = "__rally_assets.js";
 
 export const ASSET_SHIM_SOURCE = `
+export function wrapSidekicks(binding) {
+  return new Proxy(Object.create(null), {
+    get(_target, name) {
+      if (typeof name !== "string") return undefined;
+      return { send(input) { return binding.send(name, input); } };
+    },
+  });
+}
+
 export function wrapAssets(binding) {
   return {
     fetch(request) {
@@ -54,11 +63,11 @@ export const LOADER_ENTRY_MODULE = "__rally_entry.js";
  */
 export const LOADER_ENTRY_SOURCE = `
 import handler from "./index.js";
-import { wrapAssets } from "./${ASSET_SHIM_MODULE}";
+import { wrapAssets, wrapSidekicks } from "./${ASSET_SHIM_MODULE}";
 
 export default {
   fetch(request, env, ctx) {
-    return handler.fetch(request, { ...env, ASSETS: wrapAssets(env.ASSETS) }, ctx);
+    return handler.fetch(request, { ASSETS: wrapAssets(env.ASSETS), SIDEKICKS: wrapSidekicks(env.SIDEKICKS) }, ctx);
   },
 };
 `;

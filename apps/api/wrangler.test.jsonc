@@ -69,6 +69,7 @@
   // The facet proofs need a real loader: a stateful artifact's class is loaded
   // into the facet through it, and a double would prove nothing about the
   // mechanism the whole stateful design rests on.
+  "services": [{ "binding": "ARTIFACT_SIDEKICKS", "service": "avalon-do-runtime-tests", "entrypoint": "ArtifactSidekickDispatcher" }],
   "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }, { "binding": "CODE_LOADER" }],
   "durable_objects": {
     "bindings": [

@@ -1,9 +1,10 @@
+export { ArtifactSidekickLoopback as ArtifactSidekickForwarder } from "../../src/artifacts/sidekick-forwarder";
 // The pool discovers loopback entrypoints from named exports; export * does
 // not expose ArtifactAssetLoopback (or the regional bridges) to ctx.exports.
 export {
   default,
   AshbyRegionalBridge, AshbyRoutingBridge, AgentLoopDO, MigrationProbeDO,
-  WorkspaceDO, CrashSymbolicatorContainer, ArtifactHostDO, ArtifactAssetLoopback,
+  WorkspaceDO, CrashSymbolicatorContainer, ArtifactHostDO, ArtifactAssetLoopback, ArtifactSidekickLoopback, ArtifactSidekickDispatcher,
   ConnectorPollWorkflow, ConnectorEventWorkflow, RegionalIdentityBridge,
   GitHubRegionalBridge, GitHubRoutingBridge, LinearRegionalBridge, LinearRoutingBridge,
   NotionRegionalBridge, NotionRoutingBridge, SlackRegionalBridge, SlackRoutingBridge,

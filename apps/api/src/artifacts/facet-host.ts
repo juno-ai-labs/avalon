@@ -63,7 +63,7 @@ export const DATA_PAGE_ROWS = 200;
 export const FACET_HOST_MODULE_SOURCE = `
 import { DurableObject } from "cloudflare:workers";
 import { SiteData } from "./index.js";
-import { wrapAssets } from "./__rally_assets.js";
+import { wrapAssets, wrapSidekicks } from "./__rally_assets.js";
 
 /**
  * The tables Rally will never report or export.
@@ -84,10 +84,10 @@ export class ${FACET_HOST_CLASS} extends DurableObject {
     // The model's class is *instantiated and held*, never inherited from. It
     // receives the same ctx, so both objects address one database while living
     // on separate prototype chains — and an env of Rally's construction that
-    // carries the wrapped asset reader and nothing else. The loopback stub the
+    // carries the asset reader and app-scoped Sidekick invocation capability. The loopback stub the
     // supervisor injected stays in this module's scope, which \`SiteData\`
     // holds no reference to.
-    this.site = new SiteData(ctx, { ASSETS: wrapAssets(env.RALLY_ASSETS) });
+    this.site = new SiteData(ctx, { ASSETS: wrapAssets(env.RALLY_ASSETS), SIDEKICKS: wrapSidekicks(env.RALLY_SIDEKICKS) });
   }
 
   /** Every request for this artifact, served by the model's own handler. */

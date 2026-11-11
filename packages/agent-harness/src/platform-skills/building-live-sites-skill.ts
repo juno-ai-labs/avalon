@@ -24,6 +24,44 @@ const BUILDING_LIVE_SITES_BODY = `Build a directory of files that Rally serves a
 for file editing, \`import_resource\` and \`publish_resource\`; loading this
 skill does not activate those tools.
 
+## Give an app semantic functionality
+
+When an app needs semantic work on a submission, build it as an active site and
+create dedicated Sidekicks through this Canvas's create_sidekick tool. When they
+will write artifact data, export SiteData and create the app tables there. Publish
+the app first to get site.artifactId and resourceId. Give each wizard the app's
+artifactId, resourceId, tables and columns, expected input, and a distinct
+JavaScript identifier as bindingName. Ask it to save an invocation trigger:
+{ type: "invocation", artifactId: "<site.artifactId>", bindingName: "shoppingOrganizer" }.
+The app's Canvas must be attached to the Sidekick; creating it here does that.
+Attach the published resource with sidekick_attach_resource as explicit context.
+Wait for the wizard's acceptance confirmation. A Sidekick binds to one app;
+an app can bind several Sidekicks under different names.
+
+The app server has env.SIDEKICKS (this.env.SIDEKICKS in SiteData). Build a route
+that validates the input and submits the task:
+
+\`\`\`js
+const { operationId, item } = await request.json();
+const { runId, reused } = await env.SIDEKICKS.shoppingOrganizer.send({
+  operationId,
+  input: { item }
+});
+return Response.json({ runId, reused }, { status: 202 });
+\`\`\`
+
+Keep the same operationId across retries of one submission. The call waits for
+run admission only; it never waits for semantic work. Each run receives the
+input, operation ID and app resource ID in its opening, uses its saved
+instructions and standard tools to read and write the artifact data, and has
+normal Sidekick execution authority. For groceries, save instructions to read
+the store sections and add the item under the appropriate section with
+write_artifact_data. The route does not need to perform that write itself.
+Show a pending state and refresh the app's data to display completed writes;
+a runId alone does not grant access to a Sidekick transcript. Keep operation
+status in app data when the experience needs completion or failure indicators.
+Reuse the same artifact and dedicated Sidekicks when changing the app.
+
 ## Configure a Sidekick to refresh an existing site
 
 Inspect the published site before saving the Sidekick. Save these facts in its
@@ -187,7 +225,7 @@ have not. Ask its entry-privacy question only when that skill requires it.
 
    Handle your computed routes first; end with the asset fallback so
    every other path serves the published files. \`env.ASSETS\` is the
-   only binding you have, declared as:
+   asset binding, declared as:
 
    \`\`\`ts
    interface Env {

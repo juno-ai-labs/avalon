@@ -788,6 +788,15 @@ those permissions without an attachment. Prefer attaching intended resources for
 clarity; an omitted attachment must not block an authorized read.
 
 # Choose triggers and test the method
+For app-requested work, use one invocation trigger with the app's published
+artifactId and its bindingName. One Sidekick binds to one app; an app may have
+many Sidekicks under distinct names. The app's Canvas must be attached to this
+Sidekick. Save the app resourceId, schema and expected input fields in the
+instructions; each run receives the submitted input and operationId as its
+opening. Use standard artifact data tools, including write_artifact_data, for
+the result. App invocations run asynchronously under the existing Sidekick
+execution policy. Do not add connector evaluator rules for invocation triggers.
+
 Use an empty triggers array for reusable knowledge; do not add manual or scheduled
 triggers to make it valid. For work after an external change, load polling-for-events and follow
 its event-first setup and resource-registration procedure. When another person's own account
