@@ -358,14 +358,9 @@ export async function runRetention(
   const report = baseReport(initial.plan, options.dryRun);
   if (initial.plan.candidateKeys.length === 0 || options.dryRun) return report;
 
-  // Each old version is archived as its own transaction, oldest first: copy and
-  // verify its five objects, prove the active inventory is exactly what this run
-  // expects, delete those five, and prove they are gone and archived. A run the
-  // platform cuts short (Cron wall time, the subrequest budget) therefore keeps
-  // every version it finished, and the next night resumes from the oldest one
-  // left. One transaction over the whole backlog could not finish once the
-  // bucket held hundreds of old versions: a single delete takes at most 1,000
-  // keys, and every key costs about six R2 calls.
+  // Each old version is archived as its own transaction, oldest first, so a run
+  // the platform cuts short keeps every version it finished and the next night
+  // resumes. Why: docs/runbook.md § Desktop release retention.
   const activeByKey = new Map(initialObjects.map((object) => [object.key, object]));
   let expectedObjects = initialObjects;
   for (const [index, version] of initial.plan.archiveVersions.entries()) {
