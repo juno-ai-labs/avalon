@@ -17,6 +17,7 @@ import { sha256Hex } from "../src/lib/crypto";
 import { consumeActivityQueue } from "../src/queues/activity-consumer";
 import { createMessageObjectPort } from "../src/runtime/message-port";
 import { CanvasService } from "../src/services/canvas-service";
+import { ConversationService } from "../src/services/conversation-service";
 import { seedCanvas, seededCanvasId } from "../src/services/canvas-seed-service";
 import { existingArtifactForResource, publishSiteVersion } from "../src/services/terminal/site-resource-bridge";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
@@ -251,9 +252,8 @@ describe("seeding the Getting Started guide into an Organization", () => {
     const [artifact] = await registeredArtifacts(canvasId);
     expect((await artifactHost(artifact!.artifact_id).fetchThroughFacet(viewerRequest("/", { id: OWNER, name: "Ada" }))).status).toBe(404);
 
-    // A deploy lands between the attempts and changes one of the seed's files,
-    // and the words of the request the first attempt already recorded.
-    const redeployed = { ...GETTING_STARTED_WITH_CANVASES, request: `${GETTING_STARTED_WITH_CANVASES.request}\nA later line.`, site: { ...GETTING_STARTED_WITH_CANVASES.site,
+    // A deploy lands between the attempts and changes one of the seed's files.
+    const redeployed = { ...GETTING_STARTED_WITH_CANVASES, site: { ...GETTING_STARTED_WITH_CANVASES.site,
       files: GETTING_STARTED_WITH_CANVASES.site.files.map((file) => file.path === "README.md" ? { ...file, text: `${file.text}\nA later edit.\n` } : file) } };
     expect(await seedCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: OWNER }, redeployed)).toEqual({ canvasId, seeded: true });
 
@@ -278,6 +278,46 @@ describe("seeding the Getting Started guide into an Organization", () => {
     expect((await owner.list()).map((row) => row.title)).toEqual(["Getting Started with Canvases"]);
     const said = await createMessageObjectPort(TEST_ENV, WORKSPACE_ID, canvasId).messagesAfter({ afterSequence: 0, limit: 10 });
     expect(said.map((message) => message.author_type)).toEqual(["human", "agent"]);
+  });
+
+  it("records no request once someone has written in the Chat", async () => {
+    // The first attempt makes the Canvas and stops at the publish.
+    const unreachable = new Proxy(env.ARTIFACT_HOSTS, {
+      get(target, property) {
+        if (property === "get") return () => { throw new Error("artifact_host_unreachable"); };
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    await expect(seedCanvas({ ...TEST_ENV, ARTIFACT_HOSTS: unreachable }, { workspaceId: WORKSPACE_ID, creatorUserId: OWNER },
+      GETTING_STARTED_WITH_CANVASES)).rejects.toThrow("artifact_host_unreachable");
+    const canvasId = await seededCanvasId(WORKSPACE_ID, SEED_KEY);
+    // Its creator finds it and writes to a teammate before the retry.
+    const member = await env.DB.prepare(`SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
+      .bind(WORKSPACE_ID, OWNER).first<{ role: AuthContext["role"] }>();
+    const chatClient = await new ConversationService(TEST_ENV, { ...auth(OWNER, member!.role), principal: "engineering" }).writableClient(canvasId);
+    await chatClient.createMessage({ text: "Is this the guide?", clientMessageId: "owner-first", recordOnly: true,
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+
+    expect(await deliverSeedJob()).toEqual([]);
+
+    const said = await createMessageObjectPort(TEST_ENV, WORKSPACE_ID, canvasId).messagesAfter({ afterSequence: 0, limit: 10 });
+    expect(said.map((message) => [message.author_type, message.text_content])).toEqual([
+      ["human", "Is this the guide?"],
+      ["agent", GETTING_STARTED_WITH_CANVASES.openingMessage],
+    ]);
+  });
+
+  it("finishes the guide when the request cannot be recorded", async () => {
+    // The message path refuses an author it cannot name.
+    await env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(OWNER).run();
+
+    expect(await deliverSeedJob()).toEqual([]);
+
+    const canvasId = await seededCanvasId(WORKSPACE_ID, SEED_KEY);
+    expect((await registeredArtifacts(canvasId)).map((row) => row.current_version)).toEqual([1]);
+    const said = await createMessageObjectPort(TEST_ENV, WORKSPACE_ID, canvasId).messagesAfter({ afterSequence: 0, limit: 10 });
+    expect(said.map((message) => message.author_type)).toEqual(["agent"]);
   });
 
   it("opens the Chat on Rally's message alone when the creator has left before the job runs", async () => {

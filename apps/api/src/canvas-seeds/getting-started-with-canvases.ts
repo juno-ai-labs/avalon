@@ -17,17 +17,16 @@ export const GETTING_STARTED_WITH_CANVASES: CanvasSeed = {
   key: "getting-started-with-canvases",
   title: "Getting Started with Canvases",
   appearance: { icon: "graduation-cap", color: "blue" },
-  // Shown to the whole Organization under its creator's name, and read by
-  // Rally on every run. It says in a person's words what the site's README
-  // says in full, because the transcript is all Rally is sure to have read.
+  // Plain words only: no tool, table or column is named here, because these
+  // words stay in every guide's Chat for good. The site's README has the names.
   request: [
     "Make my team a Getting Started guide as a live page in this Canvas: six things to try, beside a wall where anyone can add an idea and vote. Then help us through it from this Chat:",
     [
       "- We are new to Rally. Keep replies short and plain. Each step asks for one small thing, so do that thing and stop.",
-      "- When someone asks for ideas, add them to the wall as cards: one row each in `wall_cards` with `write_artifact_data`, setting only `text` and `asked_by_id`, the id of whoever asked. The data tools are all that needs. Do not read, open or publish the page for it.",
-      "- When someone comments on the page, such as to rename the wall, make that one change and publish the page again. Then add a row for them to `guide_steps_done` with the step `comment`.",
+      "- When someone asks for ideas, add them to the wall as cards in the page's data, each marked with who asked. Do not read, open or publish the page for that.",
+      "- When someone comments on the page, such as to rename the wall, make that one change and publish the page again. Then mark their comment step as done.",
       "- When someone gives you their team's name and asks for a section, put the name at the top, add the section, and publish again.",
-      "- Only when you have to change the page itself: import the site into your terminal workspace and read its `README.md` before you edit. It has the exact statements and what has to stay as it is.",
+      "- Whenever you change the page itself, read its README first. It says what each step needs from you and what has to stay as it is.",
       "- All of us share this Chat. Answer when a message is meant for you, and stay out of it when we talk to each other.",
     ].join("\n"),
   ].join("\n\n"),
