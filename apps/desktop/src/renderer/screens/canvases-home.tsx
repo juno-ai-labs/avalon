@@ -15,30 +15,35 @@ import { useCollaborationSession, useShellCapabilities } from '../lib/collaborat
 import { useDocumentTitle } from '../lib/document-title';
 import { formatSidebarActivityTime } from '../lib/format';
 
-type CanvasFilter = 'all' | 'data' | 'mine' | 'shared' | 'sidekicks';
+type CanvasFilter = 'all' | 'live' | 'data' | 'mine' | 'shared';
 
 const FILTERS: ReadonlyArray<readonly [CanvasFilter, string]> = [
   ['all', 'All'],
+  ['live', 'Live'],
   ['data', 'Data backed'],
   ['mine', 'Made by me'],
   ['shared', 'Shared with me'],
-  ['sidekicks', 'From Sidekicks'],
 ];
+
+function isLiveUpdating(canvas: CanvasSidebarRow): boolean {
+  return canvas.sidekicks?.some((sidekick) => sidekick.status === 'active'
+    && sidekick.triggerKinds?.some((kind) => kind !== 'manual')) ?? false;
+}
 
 function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserId: string | undefined): boolean {
   switch (filter) {
     case 'all': return true;
+    case 'live': return isLiveUpdating(row);
     case 'data': return row.hasStoredData === true;
     case 'mine': return row.createdByUserId === currentUserId;
     case 'shared': return row.sharedWithMe;
-    case 'sidekicks': return row.writerSidekickId !== null;
   }
 }
 
 /**
  * `/canvases`: every Canvas this person can open, the list the workspace
  * socket keeps (`workspace_canvas_list`), laid out as the Sidekicks library is.
- * Canvases stay in activity order; Data filters to database-backed artifacts.
+ * Canvases stay in activity order; Live and Data match their card badges.
  * With none at all, the page is only how to make one.
  */
 export function CanvasesHomeScreen(): React.JSX.Element {
@@ -70,8 +75,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     const run = canvasWrittenByRun(canvas, sidekicksById, currentUserId);
     // A server older than attaching sends none.
     const attachedSidekicks = canvas.sidekicks ?? [];
-    const liveUpdating = attachedSidekicks.some((sidekick) => sidekick.status === 'active'
-      && sidekick.triggerKinds?.some((kind) => kind !== 'manual'));
+    const liveUpdating = isLiveUpdating(canvas);
     const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.artifactKind, canvas.appearance);
     return <li className="dashboard-card" key={canvas.id}>
       <div aria-hidden="true" className="dashboard-card-preview" style={{ background: tint }}>

@@ -135,7 +135,7 @@ describe('CanvasesHomeScreen', () => {
     expect(card('Older').querySelector('.canvas-card-sidekicks')).toBeNull();
   });
 
-  it('labels live updating only for active attached Sidekicks with automatic triggers', () => {
+  it('labels and filters live updating only for active attached Sidekicks with automatic triggers', () => {
     const sidekick = (triggerKinds: ('manual' | 'schedule' | 'external_event')[], status: 'active' | 'paused' | 'draft' = 'active') => ({
       id: `updater-${triggerKinds.join('-')}-${status}`, name: 'Updater', madeHere: true, status, triggerKinds,
     });
@@ -145,11 +145,29 @@ describe('CanvasesHomeScreen', () => {
       canvas('manual', 'Manual only', { sidekicks: [sidekick(['manual'])] }),
       canvas('paused', 'Paused', { sidekicks: [sidekick(['schedule'], 'paused')] }),
       canvas('draft', 'Draft', { sidekicks: [sidekick(['schedule'], 'draft')] }),
+      canvas('empty', 'No triggers', { sidekicks: [sidekick([])] }),
+      canvas('older', 'Older Sidekick', { sidekicks: [{ id: 'older', name: 'Older', madeHere: true, status: 'active' }] }),
       canvas('none', 'No Sidekicks'),
     ]));
     expect(screen.getAllByText('Live updating')).toHaveLength(2);
     expect(screen.getByRole('link', { name: 'Scheduled' })).toHaveAccessibleDescription('Live updating Data backed Sidekicks: Updater; Updater');
     expect(screen.getByRole('link', { name: 'Event driven' })).toHaveAccessibleDescription('Live updating Sidekicks: Updater');
+    const live = screen.getByRole('button', { name: 'Live' });
+    fireEvent.click(live);
+    expect(live).toHaveAttribute('aria-pressed', 'true');
+    const recent = screen.getByRole('region', { name: 'Recent' });
+    expect(within(recent).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent))
+      .toEqual(['Scheduled', 'Event driven']);
+    expect(recent).toHaveTextContent('2 Canvases');
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search Canvases' }), { target: { value: 'event' } });
+    expect(screen.getByRole('region', { name: 'Search results' })).toHaveTextContent('1 Canvas');
+    expect(screen.queryByRole('link', { name: 'Scheduled' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Event driven' })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search Canvases' }), { target: { value: 'manual' } });
+    expect(screen.getByText('No matching Canvases')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    expect(live).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('link', { name: 'Manual only' })).toBeInTheDocument();
   });
 
   it("names the run that wrote a card's newest version and opens the Sidekick's conversation at it", async () => {
@@ -168,7 +186,7 @@ describe('CanvasesHomeScreen', () => {
     expect(within(recent).getAllByRole('link', { name: /run #/ })).toHaveLength(1);
   });
 
-  it('orders All and Data first and filters by database-backed artifacts, authorship and search', () => {
+  it('orders All, Live and Data first and filters by database-backed artifacts, authorship and search', () => {
     renderHome(clientWith([
       canvas('00000000-0000-7000-8000-0000000000c1', 'Mine'),
       canvas('00000000-0000-7000-8000-0000000000c2', 'Shared plan', { hasStoredData: true, createdByUserId: MAYA, sharedWithMe: true }),
@@ -176,7 +194,7 @@ describe('CanvasesHomeScreen', () => {
     ]));
     const filters = screen.getByRole('group', { name: 'Canvas filter' });
     expect(within(filters).getAllByRole('button').map((button) => button.textContent))
-      .toEqual(['All', 'Data backed', 'Made by me', 'Shared with me', 'From Sidekicks']);
+      .toEqual(['All', 'Live', 'Data backed', 'Made by me', 'Shared with me']);
     fireEvent.click(within(filters).getByRole('button', { name: 'Data backed' }));
     expect(screen.getByRole('link', { name: 'Shared plan' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Recent' })).toHaveTextContent('1 Canvas');
@@ -189,9 +207,6 @@ describe('CanvasesHomeScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Shared with me' }));
     expect(screen.getByRole('link', { name: 'Shared plan' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Mine' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'From Sidekicks' }));
-    expect(screen.getByRole('link', { name: 'Weekly changelog' })).toBeInTheDocument();
-    expect(screen.getByText(/Made by a Sidekick/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Made by me' }));
     expect(screen.getByRole('link', { name: 'Mine' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'All' }));
