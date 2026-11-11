@@ -212,7 +212,7 @@ async function workspacePlan(
  * starts (a week that straddles the boundary) up to now.
  */
 export async function readOrganizationUsage(
-  env: Pick<Env, "DB" | "USAGE_DB">,
+  env: Pick<Env, "DB" | "USAGE_DB" | "BILLING_CONFIG">,
   workspaceId: string,
   nowMs: number,
 ): Promise<OrganizationUsage | null> {
@@ -224,7 +224,7 @@ export async function readOrganizationUsage(
        FROM usage_rollups WHERE workspace_id = ? AND week_start >= ?`,
   ).bind(workspaceId, new Date(period.start - WEEK_MS).toISOString())
     .all<{ week_start: string; period_start: string; quota_microusd: number; organization_microusd: number }>();
-  return deriveOrganizationUsage({
+  const result = deriveOrganizationUsage({
     plan: workspace.plan,
     createdAtMs: workspace.createdAtMs,
     nowMs,
@@ -235,6 +235,10 @@ export async function readOrganizationUsage(
       organizationMicrousd: row.organization_microusd,
     })),
   });
+  const billing = env.BILLING_CONFIG ? await env.DB.prepare('SELECT overage_enabled FROM billing_accounts WHERE workspace_id = ?')
+    .bind(workspaceId).first<{ overage_enabled: number }>() : null;
+  if (billing) result.overage.billingEnabled = billing.overage_enabled === 1;
+  return result;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { billClosedOverage } from './services/billing';
 import { purgeExpiredPasswordLoginAttempts } from './services/password-login-service';
 import { purgeExpiredEmailLoginChallenges } from "./services/auth-service";
 import { recoverEmailLoginDeliveries } from "./services/email-login-service";
@@ -196,6 +197,11 @@ export default {
         purgeExpiredEmailLoginChallenges(env),
         purgeExpiredPasswordLoginAttempts(env),
         pruneUsageEvents(env, Date.now()),
+        (async () => {
+          if (!env.BILLING_CONFIG) return;
+          const accounts = await env.DB.prepare("SELECT workspace_id FROM billing_accounts WHERE overage_enabled = 1 AND status = 'active'").all<{ workspace_id: string }>();
+          for (const account of accounts.results) await billClosedOverage(env, account.workspace_id);
+        })(),
         processTelemetry(env),
       ]);
     })());
