@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
+import { WorkspaceService } from "../src/services/workspace-service";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { readOrganizationSettings, updateOrganizationSettings } from "../src/services/organization-settings";
 import { AuthService, DEVELOPMENT_USER_ID } from "../src/services/auth-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -9,6 +12,31 @@ describe("development authentication", () => {
 
   afterEach(() => {
     for (const database of databases.splice(0)) database.close();
+  });
+
+  it.each([false, true])("seeds visibility once and retains operator changes across new defaults: %s", async (initial) => {
+    const database = migratedSqliteDatabase();
+    databases.push(database);
+    const env = createTestEnv({ APP_ENV: "development", RALLY_DEV_AUTH: "true", AVALON_REGION: "global",
+      DB: sqliteD1(database), PUBLIC_API_BASE_URL: "http://127.0.0.1:8787", FEATURE_FLAG_MODEL_SELECTOR_VISIBLE_FOR_NEW_ORGS: initial });
+    const service = new AuthService(env);
+    const session = await service.createDevelopmentSession();
+    const orgId = asWorkspaceId(session.workspace!.id);
+    expect(await readOrganizationSettings(env, orgId)).toMatchObject({ modelSelectorVisible: initial });
+    await updateOrganizationSettings(env, orgId, !initial);
+    const profile = new WorkspaceService(env, { sessionId: "test", userId: asUserId(session.user.id), workspaceId: orgId, region: "global", role: "owner" });
+    expect(await profile.getWorkspace()).toMatchObject({ modelSelectorVisible: !initial });
+    expect(await readOrganizationSettings(env, orgId)).toMatchObject({ modelSelectorVisible: !initial });
+    await service.createDevelopmentSession();
+    expect(await readOrganizationSettings(env, orgId)).toMatchObject({ modelSelectorVisible: !initial });
+    env.FEATURE_FLAG_MODEL_SELECTOR_VISIBLE_FOR_NEW_ORGS = !initial;
+    await updateOrganizationSettings(env, orgId, initial);
+    await service.createDevelopmentSession();
+    expect(await readOrganizationSettings(env, orgId)).toMatchObject({ modelSelectorVisible: initial });
+    env.AVALON_REGION = "enterprise";
+    await expect(updateOrganizationSettings(env, orgId, !initial)).rejects.toThrow("engineering_organization_not_found");
+    expect(database.prepare("SELECT model_selector_visible FROM workspaces WHERE id = ?").get(orgId))
+      .toEqual({ model_selector_visible: Number(initial) });
   });
 
   it("retains an identity session beside the seeded workspace session", async () => {

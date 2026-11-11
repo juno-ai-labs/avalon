@@ -59,6 +59,7 @@ export interface MessageAuthor {
 }
 
 export interface Workspace {
+  modelSelectorVisible?: boolean;
   id: string;
   name: string;
   region: Region;

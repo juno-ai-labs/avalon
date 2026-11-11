@@ -1,3 +1,4 @@
+import { resolveModelSelectorVisibleForNewOrgs } from "./client-feature-flags";
 import { promoteWorkspaceGuest } from "./workspace-relationship-service";
 import type { Region } from "@rally/contracts/regions";
 import { MemberPreferencesSchema, PersonalPresentationSchema, type MemberPreferencesUpdate, type UserTimezone } from '@rally/contracts';
@@ -403,7 +404,7 @@ export class WorkspaceService {
    */
   async getWorkspace() {
     const row = await this.env.DB.prepare(
-      `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at, m.role, m.access_class
+      `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.model_selector_visible, w.created_at, m.role, m.access_class
        FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id
        WHERE w.id = ? AND m.user_id = ? AND m.status = 'active'
          AND w.abandoned_at IS NULL`,
@@ -417,6 +418,7 @@ export class WorkspaceService {
       slug: String(row.slug),
       region: String(row.region),
       timezone: String(row.timezone),
+      modelSelectorVisible: row.model_selector_visible === 1,
       role: row.role == null ? null : String(row.role),
       ...(row.access_class === "guest" ? { accessClass: "guest" as const } : {}),
       createdAt: String(row.created_at),
@@ -1152,8 +1154,8 @@ export class WorkspaceOnboardingService {
     const at = nowIso();
     await this.env.DB.batch([
       this.env.DB.prepare(
-        `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at, model_selector_visible)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         workspaceId,
         normalized,
@@ -1163,6 +1165,7 @@ export class WorkspaceOnboardingService {
         this.auth.userId,
         at,
         at,
+        Number(resolveModelSelectorVisibleForNewOrgs(this.env)),
       ),
       this.env.DB.prepare(
         `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)

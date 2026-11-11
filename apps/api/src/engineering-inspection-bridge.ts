@@ -1,12 +1,18 @@
+import { readOrganizationSettings, updateOrganizationSettings } from "./services/organization-settings";
+import { publishWorkspaceSync } from "./services/workspace-realtime-service";
 import { readOrganizationUsage, setWorkspacePlan, publishOrganizationUsage } from "./services/usage-metering";
 import { provisionUserPassword, revokeUserPassword } from "./services/password-login-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
+  InspectEngineeringOrgSettingsInputSchema,
+  UpdateEngineeringOrgSettingsInputSchema,
+  EngineeringOrgSettingsResultSchema,
   InspectEngineeringUsageInputSchema,
   ChangeEngineeringPlanInputSchema,
   EngineeringUsageResultSchema,
   type EngineeringUsageResult,
+  type EngineeringOrgSettingsResult,
   EngineeringPasswordUserInputSchema,
   EngineeringProvisionPasswordResultSchema,
   EngineeringRevokePasswordResultSchema,
@@ -276,6 +282,27 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         representedUserId: request.userId, operationId: crypto.randomUUID(), sidekickId: request.sidekickId,
       }, async () => ArchiveEngineeringSidekickResultSchema.parse(await archiveEngineeringSidekick(this.env, request)),
       (result) => ({ lifecycle: result.lifecycle }));
+    });
+  }
+
+  async inspectOrganizationSettings(input: unknown): Promise<EngineeringOrgSettingsResult> {
+    return this.productOperation("inspectOrganizationSettings", async () => {
+      const { orgId } = InspectEngineeringOrgSettingsInputSchema.parse(input);
+      return EngineeringOrgSettingsResultSchema.parse(await readOrganizationSettings(this.env, orgId));
+    });
+  }
+
+  async updateOrganizationSettings(input: unknown, operator: unknown): Promise<EngineeringOrgSettingsResult> {
+    return this.productOperation("updateOrganizationSettings", async () => {
+      const request = UpdateEngineeringOrgSettingsInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "update_org_settings", orgId: request.orgId, operationId: crypto.randomUUID(),
+      }, async () => {
+        const result = await updateOrganizationSettings(this.env, request.orgId, request.modelSelectorVisible);
+        // Publish even on an idempotent retry, repairing a previous uncertain publication.
+        await publishWorkspaceSync(this.env, request.orgId, ["workspace_profile"]);
+        return EngineeringOrgSettingsResultSchema.parse(result);
+      }, () => ({ modelSelectorVisible: request.modelSelectorVisible }));
     });
   }
 

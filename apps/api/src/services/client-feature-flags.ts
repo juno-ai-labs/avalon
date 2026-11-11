@@ -8,7 +8,7 @@ interface ClientFeatureFlagSubject {
   workspaceId?: string | null;
 }
 
-function resolveBooleanFlag(env: Env, key: keyof ClientFeatureFlags): boolean {
+function resolveBooleanFlag(env: Env, key: keyof typeof FEATURE_FLAGS): boolean {
   const variable = FEATURE_FLAG_ENV_KEYS[key];
   const raw = env[variable];
   if (raw === undefined || raw === null) return FEATURE_FLAGS[key];
@@ -46,4 +46,9 @@ export async function resolveClientFeatureFlagsForSubject(
 export async function resolvePushNotificationsEnabled(env: Env, subject: ClientFeatureFlagSubject): Promise<boolean> {
   void subject;
   return resolveBooleanFlag(env, "pushNotificationsEnabled");
+}
+
+/** Creation-time seed only; existing Organizations keep their stored setting. */
+export function resolveModelSelectorVisibleForNewOrgs(env: Env): boolean {
+  return resolveBooleanFlag(env, "modelSelectorVisibleForNewOrgs");
 }
