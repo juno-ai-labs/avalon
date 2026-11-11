@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
 import { ConversationAdmissionProvider } from '../lib/conversation-admission';
+import { setDeviceStartupPage } from '../lib/device-preferences';
 import { layoutKey } from '../lib/desktop-layout';
 import { AutomationScreen } from './automation';
 import { LandingScreen } from './landing';
@@ -47,22 +48,30 @@ describe('the landing route', () => {
     expect(open()).toBe('/canvases');
   });
 
-  it('reopens the Canvas or Sidekick last open on this device', () => {
+  it('reopens the Canvas or Sidekick when Last Opened is selected', () => {
+    setDeviceStartupPage('last-opened');
     localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/sidekicks/00000000-0000-7000-8000-000000000a51');
     expect(open()).toBe('/sidekicks/00000000-0000-7000-8000-000000000a51');
   });
 
+  it('ignores a saved page by default', () => {
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/sidekicks/00000000-0000-7000-8000-000000000a51');
+    expect(open()).toBe('/canvases');
+  });
+
   it('does not reopen New Sidekick, which would create one on every launch', () => {
+    setDeviceStartupPage('last-opened');
     localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/sidekicks/new');
     expect(open()).toBe('/canvases');
   });
 
   it('opens the Canvases home where a Channel or Thread route was saved before the cutover', () => {
+    setDeviceStartupPage('last-opened');
     localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/channels/general/threads/launch');
     expect(open()).toBe('/canvases');
   });
 
-  it('restores nothing while onboarding is pending, and the stored route once it is done', () => {
+  it('waits for onboarding before opening the Canvases homepage', () => {
     localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/sidekicks/00000000-0000-7000-8000-000000000a51');
     const tree = (admitted: boolean) => <MemoryRouter initialEntries={['/']}><ConversationAdmissionProvider allowed={admitted}><Routes>
       <Route element={<LandingScreen />} path="/" />
@@ -72,7 +81,7 @@ describe('the landing route', () => {
     expect(screen.queryByTestId('destination')).toBeNull();
     expect(screen.getByText('Opening…')).toBeInTheDocument();
     rerender(tree(true));
-    expect(screen.getByTestId('destination').textContent).toBe('/sidekicks/00000000-0000-7000-8000-000000000a51');
+    expect(screen.getByTestId('destination').textContent).toBe('/canvases');
   });
 });
 
@@ -90,6 +99,7 @@ describe('a restored route whose object is gone', () => {
   }
 
   it('lands on the Sidekicks home with no dialog when the stored Sidekick does not exist', async () => {
+    setDeviceStartupPage('last-opened');
     localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/sidekicks/00000000-0000-7000-8000-000000000a51');
     getAutomation.mockRejectedValue(new ApiError('This Sidekick does not exist', 404, 'sidekick_not_found'));
     launch('/');

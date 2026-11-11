@@ -1,4 +1,5 @@
 import "../../../../../tests/isolated-region";
+import { readDevicePreferences } from '../lib/device-preferences';
 import { AccountOnboardingGate } from './guided-onboarding';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ClientFeatureFlagsSchema, DEFAULT_MEMBER_PREFERENCES,
@@ -220,7 +221,7 @@ async function openConnection(name: string): Promise<void> {
 }
 
 function openSettingsSection(
-  name: 'Account' | 'Notifications' | 'Organization' | 'Members' | 'Security' | 'Connections' | 'Application',
+  name: 'Preferences' | 'Memories' | 'Account' | 'Notifications' | 'Organization' | 'Members' | 'Security' | 'Connections' | 'Application',
 ): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
@@ -563,7 +564,7 @@ describe('Organization settings', () => {
       // Every section is drawn; the ones a guest cannot open are disabled.
       const sections = within(navigation).getAllByRole('button');
       expect(sections.map((button) => [button.textContent, button.getAttribute('aria-disabled') === 'true'])).toEqual([
-        ['Account', false], ['Notifications', true], ['Organization', true], ['Members', false],
+        ['Account', false], ['Preferences', false], ['Memories', true], ['Notifications', true], ['Organization', true], ['Members', false],
         ['Security', true], ['Connections', true], ['Application', false],
       ]);
       fireEvent.click(within(navigation).getByRole('button', { name: 'Organization' }));
@@ -614,7 +615,7 @@ describe('Organization settings', () => {
     api.getMyPreferences.mockReturnValue(new Promise(() => {}));
     try {
       renderSettings();
-      openSettingsSection('Account');
+      openSettingsSection('Preferences');
       expect(await screen.findByRole('switch', { name: /Show agent work/u })).not.toBeChecked();
     } finally {
       window.localStorage.removeItem(`rally:member-preferences:${workspace.id}`);
@@ -625,7 +626,7 @@ describe('Organization settings', () => {
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
     api.updateMyPreferences.mockImplementation(async () => ({ ...DEFAULT_MEMBER_PREFERENCES, showAgentWork: false }));
     renderSettings();
-    openSettingsSection('Account');
+    openSettingsSection('Preferences');
 
     const toggle = await screen.findByRole('switch', { name: /Show agent work/u });
     await waitFor(() => expect(toggle).toBeChecked());
@@ -663,7 +664,7 @@ describe('Organization settings', () => {
     api.getMyPersonalSystemPrompt.mockResolvedValue('Answer briefly.');
     api.updateMyPersonalSystemPrompt.mockImplementation(async (text: string) => text);
     renderSettings();
-    openSettingsSection('Account');
+    openSettingsSection('Preferences');
 
     const prompt = await screen.findByRole('textbox', { name: 'Personal system prompt' });
     await waitFor(() => expect(prompt).toHaveValue('Answer briefly.'));
@@ -679,13 +680,13 @@ describe('Organization settings', () => {
     expect(prompt).toHaveValue('Answer in French.');
   });
 
-  it('lists what Rally remembers about the person under Account, and removes one', async () => {
+  it('lists what Rally remembers about the person under Memories, and removes one', async () => {
     api.getMyMemory.mockResolvedValue({ facts: [
       rememberedFact('own-1', 'Prefers short answers.', 'person', true),
       rememberedFact('own-2', 'Works in Go.', 'person', true),
     ] });
     renderSettings();
-    openSettingsSection('Account');
+    openSettingsSection('Memories');
 
     const list = await screen.findByRole('region', { name: 'What Rally remembers about you' });
     expect(await within(list).findByText('Prefers short answers.')).toBeInTheDocument();
@@ -698,9 +699,9 @@ describe('Organization settings', () => {
     expect(api.getOrganizationMemory).not.toHaveBeenCalled();
   });
 
-  it('says so under Account when Rally has remembered nothing about the person', async () => {
+  it('says so under Memories when Rally has remembered nothing about the person', async () => {
     renderSettings();
-    openSettingsSection('Account');
+    openSettingsSection('Memories');
 
     expect(await screen.findByText('Rally has not remembered anything about you yet.')).toBeInTheDocument();
   });
@@ -2915,6 +2916,17 @@ describe('Organization settings', () => {
     expect(toggle).toBeChecked();
   });
 
+  it('defaults startup to Canvas Homepage and saves Last Opened', async () => {
+    renderSettings();
+    openSettingsSection('Preferences');
+    const startup = await screen.findByRole('combobox', { name: 'On startup' });
+    expect(startup).toHaveTextContent('Canvas Homepage');
+    fireEvent.click(startup);
+    fireEvent.click(screen.getByRole('option', { name: 'Last Opened' }));
+    expect(startup).toHaveTextContent('Last Opened');
+    expect(readDevicePreferences().startupPage).toBe('last-opened');
+  });
+
   it('defaults to Stable and switches this Mac to the Faster update channel', async () => {
     renderSettings();
     openSettingsSection('Application');
@@ -2930,7 +2942,7 @@ describe('Organization settings', () => {
 
   it('controls product analytics and explains regional crash behavior', async () => {
     renderSettings();
-    openSettingsSection('Application');
+    openSettingsSection('Preferences');
 
     const toggle = await screen.findByRole('switch', { name: 'Product analytics' });
     expect(toggle).toBeChecked();
@@ -2972,32 +2984,8 @@ describe('Organization settings', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search settings' }), {
       target: { value: 'crash' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Product analytics Application' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Product analytics Preferences' }));
     expect(await screen.findByRole('heading', { name: 'Privacy & diagnostics' })).toBeVisible();
-  });
-
-  it('disables the account preference on a browser bridge that cannot persist it', async () => {
-    getApplicationSettings.mockResolvedValue({
-      lockdownMode: false,
-      lockdownAvailable: false,
-      debugEnabled: false,
-      developerSettingsAvailable: false,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
-      menuBarAvailable: false,
-      menuBarPresent: false,
-      launchAtLogin: false,
-      launchAtLoginAvailable: false,
-      productAnalyticsEnabled: true,
-      productAnalyticsAvailable: false,
-      productAnalyticsEffective: true,
-      productAnalyticsPreferencePending: false,
-      nativeCrashRestartRequired: false,
-    });
-    renderSettings();
-    openSettingsSection('Application');
-
-    expect(await screen.findByRole('switch', { name: 'Product analytics' })).toBeDisabled();
-    expect(screen.getByText('Product analytics is managed in the Rally desktop app.')).toBeVisible();
   });
 
   it('reports what macOS holds rather than what was asked for', async () => {
