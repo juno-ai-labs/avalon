@@ -255,11 +255,52 @@ describe("Sidekick sources", () => {
     expect(await registered()).toEqual([creatorMail, janeMail]);
     // The same source as the migration made it from a delegate's own rule: it stands for that rule
     // and does not turn the creator's rule into all of Jane's mail.
-    await stored("UPDATE sidekick_sources SET origin = 'migration', request_id = NULL WHERE user_id = ?", jane);
+    await stored("UPDATE sidekick_sources SET request_id = NULL WHERE user_id = ?", jane);
     expect(await registered()).toEqual([creatorMail]);
     expect(await mail(janeMail, jane, "Seed round intro")).toEqual([]);
-    await stored("UPDATE sidekick_sources SET origin = 'own_definition' WHERE user_id = ?", jane);
+  });
+
+  it("leaves what a person already let in alone when they answer a request about another kind of event", async () => {
+    await watchingMail();
+    // The creator's own rule lets their new mail in, unfiltered. They then approve an ask about label changes, filtered.
+    const asked = await stub().sidekickRequestSources({ ...address, actor: actor(), actorName: "Adam",
+      ask: { userIds: [creator], connectorType: "google", eventTypes: ["email.updated"], condition: FILTER } });
+    expect(asked.requests.map((request) => request.state)).toEqual(["approved"]);
+    await reconciled();
+    const listed = SidekickSourcesResultSchema.parse(await stub().sidekickReadSources({ ...address, actor: actor() }));
+    expect(listed.sources.map((source) => ({ events: source.eventTypes, condition: source.condition }))).toEqual([
+      { events: ["email.received"], condition: null },
+      { events: ["email.updated"], condition: FILTER },
+    ]);
+    // New mail still needs no verdict: the filter is the other event type's.
     expect(await registered()).toEqual([creatorMail]);
+    expect(await admit((await mail(creatorMail, creator, "Lunch on Friday?"))[0]!)).toMatchObject({ admitted: true });
+  });
+
+  it("refuses a rule on another person's account that they did not approve a request for", async () => {
+    await watchingMail();
+    const onJanesMail = () => stub().sidekickSubmitDefinition({ ...address, submittedByRunId: null,
+      draft: { ...definition, triggers: [{ type: "connector_activity", connectorType: "google", sourceBindingKey: "mail",
+        suggestedSourcePluginId: "plugin_google_2", eventTypes: [eventType], deterministicFilters: {} }] },
+      evaluatorRules: AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [{ evaluatorKey: "received",
+        source: { sourceBindingKey: "mail", suggestedSourcePluginId: "plugin_google_2", event: { kind: "event_type", eventType } },
+        when: { kind: "always" } }] }) });
+    const saved = () => runInDurableObject(stub(), (instance) => instance.sidekickApply({ ...address, actor: actor() })
+      .then(() => "saved", (error: { code?: string }) => error.code));
+    const asked = await ask([jane]);
+    await stub().sidekickDecideSourceRequest({ ...address, requestId: asked.requests[0]!.requestId, userId: jane, decision: "approve" });
+    await reconciled();
+    // Jane's source as her own saved rule, or the migration, would have left it: it stands for that
+    // rule alone. A manager cannot put a rule about her whole mailbox on her account with it.
+    await stored("UPDATE sidekick_sources SET request_id = NULL WHERE user_id = ?", jane);
+    await onJanesMail();
+    expect(await saved()).toBe("sidekick_source_owner_must_approve");
+    expect(await registered()).toEqual([creatorMail]);
+    // Once she has approved a request for that event, the same save goes through.
+    await stored("UPDATE sidekick_sources SET request_id = ? WHERE user_id = ?", asked.requests[0]!.requestId, jane);
+    expect(await saved()).toBe("saved");
+    await reconciled();
+    expect(await registered()).toEqual([janeMail]);
   });
 
   it("acts as the person whose mail started the run when they are a delegate, and as another delegate when they are not", async () => {
@@ -365,6 +406,18 @@ describe("a run nobody is behind", () => {
       expect(await admit(delivery)).toMatchObject({ admitted: true });
       return (await runs()).at(-1)!.state;
     };
+    expect(await started()).toBe("needs_input");
+    // Another warning does not take the stop away. An event refused for want of a source, and the
+    // reconciliation a source's return runs, would each write their own; the Sidekick stays stopped.
+    const matched = (await mail(creatorMail, creator, "Follow-up"))[0]!;
+    await stub().sidekickWithdrawSource({ ...address, userId: creator, connectionId: creatorMail });
+    expect(await admit(matched)).toEqual({ admitted: false, outcomeCode: "sidekick_source_not_permitted" });
+    await reconciled();
+    expect((await ask([creator])).requests.map((request) => request.state)).toEqual(["approved"]);
+    await reconciled();
+    expect(await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ code: string | null }>(
+      "SELECT delegation_attention_code AS code FROM automation_directory WHERE automation_id = ?", automationId).one().code))
+      .toBe("no_eligible_delegate");
     expect(await started()).toBe("needs_input");
     await stub().sidekickPause({ ...address, actor: actor() });
     await stub().sidekickResume({ ...address, actor: actor() });

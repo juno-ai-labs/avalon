@@ -36,13 +36,14 @@ export const SIDEKICK_SOURCE_CONNECTION_SCHEMA_STATEMENTS = [
 export interface EligibleSidekickSource {
   userId: string;
   connectionId: string;
-  eventTypes: readonly string[];
+  eventType: string;
   /**
-   * How the person came to let events in. Only `request` is an answer to
-   * "may events from your account start this Sidekick": a source a saved rule
-   * or the migration made stands for the rule it came from and no other.
+   * The request the person approved for this event type, if they did. Only
+   * that is an answer to "may events from your account start this Sidekick":
+   * a source a saved rule or the migration made stands for the rule it came
+   * from and no other.
    */
-  origin: "own_definition" | "request" | "migration";
+  requestId: string | null;
 }
 
 /**
@@ -60,7 +61,9 @@ export interface EligibleSidekickSource {
  * Only a requested source carries a whole-account rule to another account. A
  * source a person's own saved rule made, or the migration made from one,
  * records that rule's event type and not its scope: read as account-wide it
- * would turn somebody's rule about one thread into all of their mail.
+ * would turn somebody's rule about one thread into all of their mail. Each
+ * event type is its own source, so a request approved for one never lends
+ * that standing to another.
  *
  * Delegation is not consulted: who a run may act as says nothing about whose
  * events may start it.
@@ -86,7 +89,7 @@ export function sidekickSourceRegistrations(input: {
   const letsIn = (connection: { id: string; owner_user_id: string | null }, eventType: string, requested = false) =>
     connection.owner_user_id !== null
     && input.sources.some((source) => source.userId === connection.owner_user_id && source.connectionId === connection.id
-      && source.eventTypes.includes(eventType) && (!requested || source.origin === "request"));
+      && source.eventType === eventType && (!requested || source.requestId !== null));
   const expanded: ExternalEventEvaluatorV1[] = [];
   for (const evaluator of input.evaluators) {
     if (!registeredTypes.has(evaluator.source.connectorType)) continue;

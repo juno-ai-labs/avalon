@@ -110,9 +110,10 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
   // a turn a connected tool's member started.
   const workspaceAuthoritySection = input.executionAuthority !== "workspace" ? null : input.sidekick
     ? `# Acting as the Sidekick itself
-- Nobody has allowed this Sidekick to act as them, so this run acts as the Sidekick itself. It uses the organization's shared connections, the Sidekick's own conversation and memory, and the Canvases the Sidekick is attached to.
+- Nobody has allowed this Sidekick to act as them, so this run acts as the Sidekick itself. It uses the Organization's shared connections, the Sidekick's own conversation and memory, and the Canvases the Sidekick is attached to.
 - It has no person's personal connections. Never infer, borrow, or expose a member's personal identity or accounts.
-- When a step needs a personal account, ask with request_elicitation for someone to allow this Sidekick to act as them on the Sidekick's page, naming the account and the step, with one option to continue once it is done and one to decline. When they decline, finish what the shared connections allow and say in your final message which step was not done and why.`
+- This section replaces the connection step above, whose connection tools this run does not have. When a step needs a person's own account, ask with request_elicitation for someone to allow this Sidekick to act as them on the Sidekick's page, naming the account and the step, with one option to continue once it is done and one to decline. A person who manages this Sidekick continues it. When they decline, or request_elicitation is not available, finish what the shared connections allow and say in your final message which step was not done and why.
+- When a shared Organization connection is missing, report it once in your final message and say that a manager connects it under Settings.`
     : `# Organization execution authority
 - This run is authorized by the Rally organization, not by the Slack member who sent the request and not by the person who installed the Slack app.
 - Use only shared organization-wide connections and capabilities. Never infer, borrow, or expose an installer's or another member's personal identity, memory, grants, or personal connectors.

@@ -225,7 +225,10 @@ async function parentNoticeWords(env: Env, workspace: WorkspaceStub, row: Worksp
     intentId: row.intentId,
     kind: notice.kind,
     title: words.title,
-    body: rewriteMessageAsPlainText(words.body, { sources: "none" }),
+    // What a source request asks is quoted as it was written: the condition is what the person
+    // agrees to and what the classifier judges, and a rewrite that drops a footnote or a link's
+    // target would have them approve words they never saw.
+    body: aboutSource(notice) ? words.body : rewriteMessageAsPlainText(words.body, { sources: "none" }),
     actorName: words.actorName,
     // A source request opens the Canvas it was asked in, where its card is:
     // the Sidekick is closed to the person asked until they approve.

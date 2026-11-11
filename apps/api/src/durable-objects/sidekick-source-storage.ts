@@ -37,15 +37,14 @@ export const SIDEKICK_SOURCE_SCHEMA_STATEMENTS = [
     sidekick_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     connection_id TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK (length(event_type) > 0),
     connector_type TEXT NOT NULL,
-    event_types_json TEXT NOT NULL CHECK (json_valid(event_types_json)),
     condition TEXT CHECK (condition IS NULL OR length(condition) > 0),
     membership_incarnation TEXT NOT NULL,
-    origin TEXT NOT NULL CHECK (origin IN ('own_definition', 'request', 'migration')),
     request_id TEXT,
     approved_at INTEGER NOT NULL CHECK (approved_at >= 0),
     updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
-    PRIMARY KEY (sidekick_id, user_id, connection_id)
+    PRIMARY KEY (sidekick_id, user_id, connection_id, event_type)
   ) STRICT`,
   `CREATE INDEX sidekick_sources_by_user ON sidekick_sources(user_id, sidekick_id)`,
   `CREATE TABLE sidekick_source_requests (
@@ -81,11 +80,10 @@ export const SIDEKICK_SOURCE_SCHEMA_STATEMENTS = [
     PRIMARY KEY (sidekick_id, operation_id, position)
   ) STRICT`,
   `INSERT INTO sidekick_sources
-     (sidekick_id, user_id, connection_id, connector_type, event_types_json, condition, membership_incarnation,
-      origin, request_id, approved_at, updated_at)
-   SELECT watched.sidekick_id, watched.user_id, watched.connection_id, watched.connector_type,
-          json_group_array(DISTINCT watched.event_type), NULL,
-          json_extract(delegation.grant_json, '$.membershipIncarnation'), 'migration', NULL,
+     (sidekick_id, user_id, connection_id, event_type, connector_type, condition, membership_incarnation,
+      request_id, approved_at, updated_at)
+   SELECT watched.sidekick_id, watched.user_id, watched.connection_id, watched.event_type, watched.connector_type, NULL,
+          json_extract(delegation.grant_json, '$.membershipIncarnation'), NULL,
           unixepoch() * 1000, unixepoch() * 1000
      FROM (
        SELECT directory.automation_id AS sidekick_id, connection.owner_user_id AS user_id, connection.id AS connection_id,
@@ -112,7 +110,21 @@ export const SIDEKICK_SOURCE_SCHEMA_STATEMENTS = [
     WHERE json_extract(delegation.grant_json, '$.allowed') = 1
       AND json_extract(delegation.grant_json, '$.membershipIncarnation') IS NOT NULL
       AND watched.event_type IS NOT NULL
-    GROUP BY watched.sidekick_id, watched.user_id, watched.connection_id`,
+    GROUP BY watched.sidekick_id, watched.user_id, watched.connection_id, watched.event_type`,
+  // A Sidekick nobody lends an account to did not run before this migration:
+  // its schedules stopped at Needs input and its events were refused. People
+  // withdrew to stop one. From here such a Sidekick runs as itself, so each
+  // one that is in that state now is marked stopped, whatever warning it
+  // carried, and stays so until a delegate's run or a resume clears the mark
+  // (`HostedSidekick.admitOccurrence`). One whose creator is not enrolled yet
+  // (`delegation_migrated = 0`) gets its delegate on first use and is left.
+  `UPDATE automation_directory SET delegation_attention_code = 'no_eligible_delegate'
+    WHERE lifecycle = 'active' AND delegation_migrated = 1
+      AND (evaluator_projection_json <> '[]'
+        OR EXISTS (SELECT 1 FROM sidekick_schedules schedule WHERE schedule.sidekick_id = automation_directory.automation_id))
+      AND NOT EXISTS (SELECT 1 FROM sidekick_delegations delegation
+        WHERE delegation.sidekick_id = automation_directory.automation_id
+          AND json_extract(delegation.grant_json, '$.allowed') = 1)`,
 ] as const;
 
 export interface SidekickSourceWrite {
@@ -120,10 +132,9 @@ export interface SidekickSourceWrite {
   userId: string;
   connectionId: string;
   connectorType: string;
-  eventTypes: readonly string[];
+  eventType: string;
   condition: string | null;
   membershipIncarnation: string;
-  origin: SidekickSource["origin"];
   requestId: string | null;
 }
 
@@ -140,8 +151,8 @@ export interface SidekickSourceRequestWrite {
 }
 
 type SourceRow = {
-  sidekick_id: string; user_id: string; connection_id: string; connector_type: string; event_types_json: string;
-  condition: string | null; membership_incarnation: string; origin: string; request_id: string | null; approved_at: number; updated_at: number;
+  sidekick_id: string; user_id: string; connection_id: string; event_type: string; connector_type: string;
+  condition: string | null; membership_incarnation: string; request_id: string | null; approved_at: number; updated_at: number;
 };
 type RequestRow = {
   request_id: string; sidekick_id: string; user_id: string; connector_type: string; event_types_json: string;
@@ -149,16 +160,16 @@ type RequestRow = {
   place_parent_kind: string | null; place_parent_id: string | null; created_at: number; decided_at: number | null;
 };
 
-const SOURCE_COLUMNS = `sidekick_id, user_id, connection_id, connector_type, event_types_json, condition, membership_incarnation,
-  origin, request_id, approved_at, updated_at`;
+const SOURCE_COLUMNS = `sidekick_id, user_id, connection_id, event_type, connector_type, condition, membership_incarnation,
+  request_id, approved_at, updated_at`;
 const REQUEST_COLUMNS = `request_id, sidekick_id, user_id, connector_type, event_types_json, condition, state,
   requested_by_user_id, requested_by_name, place_parent_kind, place_parent_id, created_at, decided_at`;
 
 function source(row: SourceRow): SidekickSource {
   return SidekickSourceSchema.parse({
     sidekickId: row.sidekick_id, userId: row.user_id, connectionId: row.connection_id, connectorType: row.connector_type,
-    eventTypes: JSON.parse(row.event_types_json), condition: row.condition,
-    membershipIncarnation: row.membership_incarnation, origin: row.origin, requestId: row.request_id,
+    eventType: row.event_type, condition: row.condition,
+    membershipIncarnation: row.membership_incarnation, requestId: row.request_id,
     approvedAt: row.approved_at, updatedAt: row.updated_at,
   });
 }
@@ -190,35 +201,38 @@ export class SidekickSourceStorage {
 
   forSidekick(sidekickId: string): SidekickSource[] {
     return this.storage.sql.exec<SourceRow>(
-      `SELECT ${SOURCE_COLUMNS} FROM sidekick_sources WHERE sidekick_id = ? ORDER BY approved_at, user_id, connection_id`,
+      `SELECT ${SOURCE_COLUMNS} FROM sidekick_sources WHERE sidekick_id = ?
+        ORDER BY approved_at, user_id, connection_id, event_type`,
       sidekickId,
     ).toArray().map(source);
   }
 
-  read(sidekickId: string, userId: string, connectionId: string): SidekickSource | null {
+  read(sidekickId: string, userId: string, connectionId: string, eventType: string): SidekickSource | null {
     const row = this.storage.sql.exec<SourceRow>(
-      `SELECT ${SOURCE_COLUMNS} FROM sidekick_sources WHERE sidekick_id = ? AND user_id = ? AND connection_id = ?`,
-      sidekickId, userId, connectionId,
+      `SELECT ${SOURCE_COLUMNS} FROM sidekick_sources
+        WHERE sidekick_id = ? AND user_id = ? AND connection_id = ? AND event_type = ?`,
+      sidekickId, userId, connectionId, eventType,
     ).toArray()[0];
     return row ? source(row) : null;
   }
 
-  /** Replace what one person lets in from one connection. The caller holds their consent. */
+  /**
+   * Replace what one person lets in from one connection for one event type,
+   * and nothing else of theirs. The caller holds their consent.
+   */
   put(write: SidekickSourceWrite, now: number): SidekickSource {
-    const eventTypes = [...new Set(write.eventTypes)].sort();
     return source(this.storage.sql.exec<SourceRow>(
-      `INSERT INTO sidekick_sources (${SOURCE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(sidekick_id, user_id, connection_id) DO UPDATE SET
-         event_types_json = excluded.event_types_json, condition = excluded.condition,
-         membership_incarnation = excluded.membership_incarnation, origin = excluded.origin,
+      `INSERT INTO sidekick_sources (${SOURCE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(sidekick_id, user_id, connection_id, event_type) DO UPDATE SET
+         condition = excluded.condition, membership_incarnation = excluded.membership_incarnation,
          request_id = excluded.request_id, updated_at = excluded.updated_at
        RETURNING ${SOURCE_COLUMNS}`,
-      write.sidekickId, write.userId, write.connectionId, write.connectorType, JSON.stringify(eventTypes), write.condition,
-      write.membershipIncarnation, write.origin, write.requestId, now, now,
+      write.sidekickId, write.userId, write.connectionId, write.eventType, write.connectorType, write.condition,
+      write.membershipIncarnation, write.requestId, now, now,
     ).one());
   }
 
-  /** Whether a row went: the returned key is the witness. */
+  /** Everything one person lets in from one connection goes. Whether any row went: the returned key is the witness. */
   remove(sidekickId: string, userId: string, connectionId: string): boolean {
     return this.storage.sql.exec(
       `DELETE FROM sidekick_sources WHERE sidekick_id = ? AND user_id = ? AND connection_id = ? RETURNING user_id`,

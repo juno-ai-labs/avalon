@@ -60,7 +60,7 @@ export function sidekickSourceRequestCard(event: { pluginId?: string | undefined
 const TEST_SAMPLE_EVENTS = 10;
 
 export function sidekickSourceGuidance(): string {
-  return "A Sidekick's sources are whose events may start it, separate from delegation: sidekick_sources_list shows them, and sidekick_request_source asks people to let events from one of their accounts in, optionally only those meeting a written filter. Only the person asked can approve; an ask is not an approval. Load the setting-up-a-filtered-trigger skill before writing a filter.";
+  return "A Sidekick's sources are whose events may start it, separate from delegation: sidekick_sources_list shows them, and sidekick_request_source asks people to let events from one of their accounts in, optionally only those meeting a written filter. Only the person asked can approve; an ask is not an approval. To let someone's events in, ask for a source, never for delegation. Load the setting-up-a-filtered-trigger skill before asking for a source.";
 }
 
 export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, userId: UserId, room: boolean): HarnessTool[] {
@@ -131,6 +131,12 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
       });
       if (!env.TYPESAFE_API_KEY) {
         return { output: { judged: false, reason: "The filter's classifier is not configured here.", events: [] }, summary: "Could not test the filter" };
+      }
+      // Nothing to judge is not a filter that refuses everything: say which it is.
+      if (events.length === 0) {
+        return { output: { judged: false, events: [],
+          reason: `Your own ${args.connectorType} account has no recent ${args.eventType} events to try the filter on. Check the event type against the connector's declared events; if it is right, rely on the filter's wording.` },
+        summary: "No recent events to test the filter on" };
       }
       const traceId = crypto.randomUUID();
       const results = await Promise.all(events.map(async (event) => {

@@ -62,8 +62,8 @@ That is all the evidence there is, so write a filter this evidence can settle:
   makes likely.
 - Use the words the mail itself would use. Senders, company names, and subject
   phrases the person mentioned are strong evidence; include them.
-- Keep it to one topic. Two topics are two asks, or one filter that names both
-  plainly.
+- Keep it to one topic. Two topics for one person go in one filter that names
+  both plainly: a second ask to the same person replaces the first.
 - Leave out what one event cannot show: what happens later, how important it
   is to someone, how many there have been. Those belong in the Sidekick's
   instructions, which run after the event is let in.
@@ -71,7 +71,8 @@ That is all the evidence there is, so write a filter this evidence can settle:
 The filter is also what the person reads when they are asked. Write it so a
 person would recognise it as what they agreed to share, in ordinary words,
 with no instructions to a model in it. When the request leaves real doubt
-about how wide the person means, ask them before writing it wider.
+about how wide it means, ask the person you are working for before writing it
+wider.
 
 ## 3. Try it before asking anyone
 
@@ -80,24 +81,32 @@ the account of the person you are working for. Read the result as evidence:
 
 - An event that should get through and did not: find what in its subject or
   snippet the filter failed to name, and name it.
-- An event that got through and should not have: add it to what does not
-  count.
+- An event that got through and should not have: add the kind of event to
+  what does not count (a newsletter, an automated receipt), never its
+  subject, its sender or its words. The filter is read by the people you ask
+  and by everyone in the conversation, and those events are private mail.
 - Too few recent events to tell, or none on topic: say so, and rely on the
   wording. Do not loosen the filter to make the numbers look better.
-- An event marked \`condition_not_judgeable\` or
-  \`confidence_below_threshold\` was kept out because its subject and snippet
-  did not settle the claim: the filter leans on something an event does not
-  show. \`classifier_unavailable\` says nothing about the filter; try again
-  later.
-- No events at all usually means the event type is misspelled or that account
-  has had none: check the type against the connector's declared events.
+- An event marked \`condition_not_judgeable\` was kept out because the filter
+  asks what one event cannot show (the last point of step 2): rewrite the
+  filter around a subject, a sender and a first line.
+- An event marked \`confidence_below_threshold\` leaned towards the filter on
+  thin words. If it should get through, name the words such an event does
+  carry.
+- \`classifier_unavailable\`, or a result that says the filter was not judged,
+  says nothing about the filter. Say so and rely on the wording.
+- A result with no events means that account has had none of that type, or the
+  type is misspelled: check it against the connector's declared events. It
+  does not mean the filter refuses everything.
 
 The events are the person's own mail. Report what you learned as counts and
-your reading of them. Do not quote subjects, senders or snippets into a
-conversation other people can read.
+kinds. Never quote an event's subject, sender or snippet in a reply or in a
+filter.
 
 Revise and try again until the events it lets in are the ones the request
-means. A filter is a person's permission, so when a choice is close, prefer
+means; stop when a revision no longer changes which events get in.
+
+A filter is a person's permission, so when a choice is close, prefer
 the narrower wording: a missed event can be widened later by asking again,
 and an event that should not have been shared cannot be taken back.
 
@@ -109,13 +118,17 @@ and an event that should not have been shared cannot be taken back.
    person's filter already decides what gets through, and a second copy only
    judges the same event twice.
 2. Ask with \`sidekick_request_source\`: the people, the connector, the event
-   types, and the filter. Include the person you are working for when their
-   own events should be filtered too; theirs is approved at once. Use one ask
-   per filter.
-3. Tell the person what happens next, plainly: who was asked, that each of
-   them decides in Rally or from the email they were sent, and that a person's
-   events start arriving only after they approve. An ask is not an approval;
-   never report one as the other.
+   types, and the filter. Use one ask per filter.
+3. Settle the events of the person you are working for. Saving the trigger in
+   step 1 let every one of their own events of that type in, unfiltered. When
+   theirs should be filtered too, include them in the ask with the filter;
+   theirs is approved at once. When theirs should not start the Sidekick at
+   all, tell them, and tell them they can stop their own under Sources on the
+   Sidekick's page.
+4. Tell the person what happens next, plainly: who was asked, that each of
+   them decides in Rally, or from the email when they get one, and that a
+   person's events start arriving only after they approve.
+   An ask is not an approval; never report one as the other.
 
 \`sidekick_sources_list\` shows who has approved and who has not.
 
@@ -151,9 +164,9 @@ trigger never changes anyone's filter.
 export const SETTING_UP_A_FILTERED_TRIGGER_SKILL: HarnessSkill = {
   name: "setting-up-a-filtered-trigger",
   description:
-    "How to make a Sidekick start on events from people's own accounts, such as new mail in several inboxes, with a written filter each person approves so only matching events get through: write the filter, try it on real events, and ask each person.",
+    "How to make a Sidekick start on events from other people's own accounts, such as new mail in several inboxes, with a written filter each person approves so only matching events get through: write the filter, try it on real events, and ask each person.",
   whenToUse:
-    "When a request names another person's own account as what should start a Sidekick, for example a dashboard fed by two people's email about one subject. Not for a topic filter on only your own account or an Organization connection: that is a semantic_activity trigger (polling-for-events).",
+    "When a request names another person's own account as what should start a Sidekick, for example a dashboard fed by two people's email about one subject. Not for a topic filter on only the requester's own account or an Organization connection: that is a semantic_activity trigger (polling-for-events).",
   body: SETTING_UP_A_FILTERED_TRIGGER_BODY,
   // Spelled out rather than imported, as `polling-for-events` does: the
   // drafting tools import from `./index`, which imports the skill list.

@@ -407,7 +407,7 @@ fields can express the requested match. Use \`semantic_activity\` when each even
 also needs to be checked against a written condition, and the account watched
 is the person's you are working for or an Organization connection. When
 another person's own account should start the Sidekick, load
-\`setting-up-a-filtered-trigger\` instead: the topic goes in that person's
+\`setting-up-a-filtered-trigger\` as well: the topic goes in that person's
 source filter, which they approve, and the trigger stays a plain
 \`connector_activity\` one. Use \`webhook\` when the
 event belongs to a webhook connection the Organization has already set up.
