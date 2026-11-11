@@ -179,11 +179,11 @@ function parentWords(notice: ParentNotice): { title: string; body: string; actor
     case "access_request": return { title: `${notice.requesterName} asked to open ${notice.parentTitle}`, body: notice.message ?? "", actorName: notice.requesterName };
     case "access_granted": return { title: `${notice.deciderName} let you into ${notice.parentTitle}`, body: "", actorName: notice.deciderName };
     case "access_denied": return { title: `${notice.deciderName} declined your request to open a Canvas`, body: "", actorName: notice.deciderName };
-    case "source_request": return { title: `${notice.requesterName} asked to use your ${notice.connectorName} for ${notice.parentTitle}`,
+    case "source_request": return { title: `${notice.requesterName} asked for your ${notice.connectorName} to start ${notice.parentTitle}`,
       body: sourceNoticeText(notice), actorName: notice.requesterName };
-    case "source_approved": return { title: `${notice.personName} approved ${notice.parentTitle}'s use of their ${notice.connectorName}`,
+    case "source_approved": return { title: `${notice.personName} approved their ${notice.connectorName} for ${notice.parentTitle}`,
       body: sourceNoticeText(notice), actorName: notice.personName };
-    case "source_declined": return { title: `${notice.personName} declined ${notice.parentTitle}'s use of their ${notice.connectorName}`,
+    case "source_declined": return { title: `${notice.personName} declined their ${notice.connectorName} for ${notice.parentTitle}`,
       body: sourceNoticeText(notice), actorName: notice.personName };
   }
 }

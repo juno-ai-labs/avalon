@@ -1,4 +1,4 @@
-import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { agentIdForAddress, asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type {
   AutomationDetail,
   AutomationDraft,
@@ -746,6 +746,29 @@ describe("connector tools selected for harness runs", () => {
     expect(authoring.plugins.map((plugin) => plugin.canonicalId)).toContain("rally:sidekicks");
     expect(room.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));
+  });
+
+  it("offers the source tools to the wizard on a person's turn and to no run, agent's message or review", async () => {
+    const runtimeEnv = env(new ToolSelectionDatabase([]));
+    const sourceTools = async (input: WorkstreamWorkflowInput) =>
+      (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
+        .filter((plugin) => plugin.canonicalId === "rally:sidekicks")
+        .flatMap((plugin) => plugin.tools.map((tool) => tool.definition.name))
+        .filter((name) => ["sources_list", "request_source", "test_source_condition"].includes(name));
+    const wizard = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
+
+    expect(await sourceTools(automationConversationInput()))
+      .toEqual(["sources_list", "request_source", "test_source_condition"]);
+    // A run reads the event that started it, so nothing it reads may ask or approve.
+    expect(await sourceTools(automationRunInput())).toEqual([]);
+    // Nobody typed a turn another agent's message or Rally's review notice started.
+    expect(await sourceTools({ ...automationConversationInput(),
+      agentExchange: { teamId: wizard, senderAgentId: wizard, messageId: "00000000-0000-7000-8000-00000000e001" } })).toEqual([]);
+    expect(await sourceTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual([]);
+    // The same two turns in a Canvas's Chat, where the tools are otherwise offered.
+    expect(await sourceTools(workflowInput())).toEqual(["sources_list", "request_source", "test_source_condition"]);
+    expect(await sourceTools({ ...workflowInput(),
+      agentExchange: { teamId: wizard, senderAgentId: wizard, messageId: "00000000-0000-7000-8000-00000000e001" } })).toEqual([]);
   });
 
   it("skips a connection whose connector this deployment does not configure, rather than failing the run", async () => {
