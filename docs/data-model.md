@@ -72,6 +72,10 @@ SHA-256 digest and random credential generation per existing user, and
 Only Global uses these tables. Neither table grants membership or verifies an
 email; [password sign-in](password-login.md) owns their lifecycle.
 
+D1 migration `0130_model_selector_visibility.sql` adds the Organization profile
+Boolean `workspaces.model_selector_visible` (`0`/`1`, default `0`); see
+[feature flags](feature-flags.md#organization-model-selector-visibility).
+
 ## Message issue reports
 
 [Message issues](message-issues.md) owns the separate `MESSAGE_ISSUES_DB` schema

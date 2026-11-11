@@ -1,3 +1,4 @@
+import { resolveModelSelectorVisibleForNewOrgs } from "./client-feature-flags";
 import { RegionSchema } from "@rally/contracts/regions";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import { regionalBindings } from "../lib/regional-bindings";
@@ -500,8 +501,8 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       this.env.DB.prepare(
         `INSERT INTO workspaces
          (id, name, slug, region, timezone, placement_affinity,
-          created_by_user_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          created_by_user_id, created_at, updated_at, model_selector_visible)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         input.workspaceId,
         input.name,
@@ -512,6 +513,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
         userId,
         at,
         at,
+        Number(resolveModelSelectorVisibleForNewOrgs(this.env)),
       ),
       this.env.DB.prepare(
         `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)

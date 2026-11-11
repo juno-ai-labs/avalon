@@ -64,6 +64,7 @@ export interface Workspace {
   name: string;
   region: Region;
   timezone: string;
+  modelSelectorVisible?: boolean;
   currentUser: WorkspaceMember;
 }
 
