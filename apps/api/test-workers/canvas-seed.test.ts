@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asArtifactId, asUserId, asWorkspaceId } from "@rally/contracts";
 
 import type { ArtifactHostDO } from "../src/durable-objects/artifact-host-do";
-import { artifactHostDOName, workspaceDOName } from "../src/durable-objects/names";
+import { artifactHostDOName, conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { AuthContext, Env } from "../src/env";
 import { GETTING_STARTED_WITH_CANVASES } from "../src/canvas-seeds/getting-started-with-canvases";
@@ -36,6 +36,11 @@ function auth(userId: string, role: AuthContext["role"] = "member"): AuthContext
 
 function workspace(): DurableObjectStub<WorkspaceDO> {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName(env.AVALON_REGION, WORKSPACE_ID)));
+}
+
+/** The object behind a Canvas's Chat. */
+function chat(canvasId: string) {
+  return env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, canvasId));
 }
 
 /** Deliver one `canvas_seed` job to the real consumer, and answer what it asked to retry. */
@@ -138,7 +143,7 @@ beforeEach(async () => {
 });
 
 describe("seeding the Getting Started guide into an Organization", () => {
-  it("makes one Canvas every member can open, with the site as its first version and Rally's opening message", async () => {
+  it("makes one Canvas every member can open, with the site as its first version and a Chat that opens on the owner's request and Rally's answer", async () => {
     expect(await deliverSeedJob()).toEqual([]);
 
     const canvasId = await seededCanvasId(WORKSPACE_ID, SEED_KEY);
@@ -156,11 +161,17 @@ describe("seeding the Getting Started guide into an Organization", () => {
     expect((await registeredArtifacts(canvasId)).map((row) => [row.mode, row.stateful, row.current_version]))
       .toEqual([["active", 1, 1]]);
 
-    const opening = await createMessageObjectPort(TEST_ENV, WORKSPACE_ID, canvasId)
-      .messageByClientId({ clientMessageId: `canvas-seed:${SEED_KEY}:opening` });
-    expect([opening?.author_type, opening?.message_type, opening?.harness_run_id]).toEqual(["agent", "text", null]);
-    // The seed's own words, whatever they are: what is proved is that they arrived.
-    expect(opening?.text_content).toBe(GETTING_STARTED_WITH_CANVASES.openingMessage);
+    // The seed's own words, whatever they are: what is proved is who said
+    // them, in what order, and that no run stands behind either.
+    const said = await createMessageObjectPort(TEST_ENV, WORKSPACE_ID, canvasId).messagesAfter({ afterSequence: 0, limit: 10 });
+    expect(said.map((message) => [message.author_type, message.author_user_id, message.message_type, message.harness_run_id, message.text_content])).toEqual([
+      ["human", OWNER, "text", null, GETTING_STARTED_WITH_CANVASES.request],
+      ["agent", null, "text", null, GETTING_STARTED_WITH_CANVASES.openingMessage],
+    ]);
+    // Recorded, not asked: nothing was queued for Rally to answer.
+    expect(await runInDurableObject(chat(canvasId), (_instance, state) => state.storage.sql.exec(
+      "SELECT (SELECT COUNT(*) FROM runs) AS runs, (SELECT COUNT(*) FROM pending_loop_inputs) AS waiting",
+    ).one())).toEqual({ runs: 0, waiting: 0 });
   });
 
   it("serves the guide's own page and data behind Rally's artifact host", async () => {
@@ -240,8 +251,9 @@ describe("seeding the Getting Started guide into an Organization", () => {
     const [artifact] = await registeredArtifacts(canvasId);
     expect((await artifactHost(artifact!.artifact_id).fetchThroughFacet(viewerRequest("/", { id: OWNER, name: "Ada" }))).status).toBe(404);
 
-    // A deploy lands between the attempts and changes one of the seed's files.
-    const redeployed = { ...GETTING_STARTED_WITH_CANVASES, site: { ...GETTING_STARTED_WITH_CANVASES.site,
+    // A deploy lands between the attempts and changes one of the seed's files,
+    // and the words of the request the first attempt already recorded.
+    const redeployed = { ...GETTING_STARTED_WITH_CANVASES, request: `${GETTING_STARTED_WITH_CANVASES.request}\nA later line.`, site: { ...GETTING_STARTED_WITH_CANVASES.site,
       files: GETTING_STARTED_WITH_CANVASES.site.files.map((file) => file.path === "README.md" ? { ...file, text: `${file.text}\nA later edit.\n` } : file) } };
     expect(await seedCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: OWNER }, redeployed)).toEqual({ canvasId, seeded: true });
 
@@ -264,6 +276,17 @@ describe("seeding the Getting Started guide into an Organization", () => {
     expect([detail.visibility, detail.appearance, detail.artifacts.map((artifact) => artifact.version)])
       .toEqual(["creator", { icon: "rocket", color: "blue" }, [1]]);
     expect((await owner.list()).map((row) => row.title)).toEqual(["Getting Started with Canvases"]);
+    const said = await createMessageObjectPort(TEST_ENV, WORKSPACE_ID, canvasId).messagesAfter({ afterSequence: 0, limit: 10 });
+    expect(said.map((message) => message.author_type)).toEqual(["human", "agent"]);
+  });
+
+  it("opens the Chat on Rally's message alone when the creator has left before the job runs", async () => {
+    await env.DB.prepare(`UPDATE workspace_members SET status = 'removed' WHERE workspace_id = ? AND user_id = ?`)
+      .bind(WORKSPACE_ID, OWNER).run();
+
+    expect(await deliverSeedJob()).toEqual([]);
+
+    const canvasId = await seededCanvasId(WORKSPACE_ID, SEED_KEY);
     const said = await createMessageObjectPort(TEST_ENV, WORKSPACE_ID, canvasId).messagesAfter({ afterSequence: 0, limit: 10 });
     expect(said.map((message) => message.author_type)).toEqual(["agent"]);
   });

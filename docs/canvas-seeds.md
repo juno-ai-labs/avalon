@@ -1,8 +1,8 @@
 # Canvas seeds
 
 A **Canvas seed** is a Canvas Rally copies into an Organization rather than a
-person starting it: a title and a look, the first message of its Chat, and one
-site. There is one, **Getting Started with Canvases**, the guide every new
+person starting it: a title and a look, the two messages that open its Chat,
+and one site. There is one, **Getting Started with Canvases**, the guide every new
 Organization is given.
 
 A seed is data, and copying it is the product's own paths called in order. A
@@ -15,7 +15,7 @@ guide, adding a seed, or changing what a new Organization starts with.
 | --- | --- |
 | `canvas-seeds/getting-started-with-canvases/site/` | The guide's site, as it is published. The single copy of its files; `README.md` there is written for Rally. |
 | `canvas-seeds/getting-started-with-canvases/preview/` | A local Worker that hosts the site: `pnpm preview:canvas-guide`, then `/__preview`. Ships nowhere. |
-| `apps/api/src/canvas-seeds/` | The seed (the site's files as text, the title, the look, Rally's opening message) and the registry of seeds. |
+| `apps/api/src/canvas-seeds/` | The seed (the site's files as text, the title, the look, the creator's request, Rally's answer) and the registry of seeds. |
 | `apps/api/src/services/canvas-seed-service.ts` | `CanvasSeed`, the `canvas_seed` job, and `seedCanvas`. The one implementation of the copy. |
 | `apps/api/src/services/platform-onboarding-service.ts` | `seedNewOrganization`: where creating an Organization asks for its seeds. |
 | `apps/api/src/queues/activity-consumer.ts` | The `canvas_seed` branch of the activity queue's consumer. |
@@ -32,11 +32,23 @@ Organization must not wait on a Canvas, a publish and a message
 
 **Copying.** `seedCanvas` calls, in order: `createCanvas` (the owner as
 creator, an id named from the Organization and the seed), `canvasUpdate` (icon
-and colour), `publishSeedSite`, `canvasSetAudience` (the whole Organization),
-and the message port's `appendMessage` (Rally's opening message, authored as
-the agent with no run). The audience follows the site so no member opens a
-Canvas with no artifact. The message is last because it marks the seed as
-finished.
+and colour), `recordSeedRequest` (the creator's request), `publishSeedSite`,
+`canvasSetAudience` (the whole Organization), and the message port's
+`appendMessage` (Rally's answer, authored as the agent with no run). The
+audience follows the site so no member opens a Canvas with no artifact.
+Rally's message is last because it marks the seed as finished.
+
+**The request.** The Chat opens on a message recorded as the creator's own:
+what they would have asked Rally for to get this Canvas, and how Rally should
+help people through it. It is how a seed tells Rally what its site is for. The
+transcript is the one thing every run reads, so the request reaches the model
+as an ordinary user turn; a file in the site reaches it only if Rally opens
+it. `recordSeedRequest` sends it down the path a person's message takes
+(`ConversationService.writableClient`, then `createMessage`) with
+`recordOnly`, so no run starts and no classifier is asked. The author is the
+creator under the `canvas_seed` principal, which the Chat's object checks
+against current membership like every non-session principal; a non-session
+principal also sends no `message sent` analytics event.
 
 **Publishing with no sandbox.** Rally's own publish reads a site out of a
 Canvas's sandbox, and a person's publish is refused an `index.js`. A seed's
@@ -72,17 +84,29 @@ page the site first ran with, the wall's title aside (`pageWasRemade`). Anyone
 can tick any step by hand. The page cannot post to the Chat, so each Chat step
 shows a prompt with a copy button.
 
-**Rally's side** is the site's `README.md` and three comments in `index.html`
-that point to it from the places Rally must edit. Nothing in the product hands
-either to the model: an instruction file is not looked for under
-`.rally-output`, where an imported site lives. That is why no step depends on
-Rally having read them, except step 3's tick.
+**Rally's side** is the request, then the site's `README.md` and three
+comments in `index.html` that point to it from the places Rally must edit. The
+request says in a person's words what each Chat step asks of Rally, and sends
+it to the README before it edits the page. Nothing in the product hands the
+README or the comments to the model: an instruction file is not looked for
+under `.rally-output`, where an imported site lives. So the request is what
+Rally is sure to have read, the README is the full and lasting copy, and no
+step depends on either except step 3's tick.
 
 ## Invariants
 
 - **A seed job is safe to run any number of times.** Every id is named from
   the Organization and the seed, and each step answers a replay with what it
   made. Guard: `test-workers/canvas-seed.test.ts`.
+- **The request is recorded, never asked.** It starts no run and queues
+  nothing: Rally's answer is the seed's own. Guard: the same test.
+- **The request is looked up before it is sent.** A resend under the same id
+  with other words is refused as an idempotency conflict, and a deploy between
+  two attempts changes the words. Guard: the same test.
+- **The request asks for no read of the page on a data-only step.** A run in
+  which `read_resource` fails has its whole reply replaced by an "Attachment
+  content unverified" notice, and `read_resource` cannot read a site. No
+  automated guard; see the changelog.
 - **A finished seed is never reapplied.** `seedCanvas` returns when the
   opening message exists. Without that, a job replayed from the dead-letter
   queue weeks later would reopen a Canvas its owner had closed. Guard: the
@@ -128,8 +152,14 @@ joins later a Canvas of their own.
   thrown so a retry reaches a version that has it.
 - **The Organization was retired first, or the guide was archived:**
   acknowledged, not retried. An archived guide is a finished seed.
-- **Rally never reads the README:** steps 2 and 4 still tick; step 3 is ticked
-  by hand.
+- **The creator left before the job ran:** no request is recorded, and the
+  Chat opens on Rally's message alone.
+- **Rally never reads the README:** steps 2 and 4 still tick; step 3 ticks if
+  Rally follows the request, and by hand if not.
+- **A long Chat is compacted:** the request is summarised with the rest of the
+  early transcript, and Rally is back to the README and the page's comments.
+- **Every member sees the request under the creator's name.** They did not
+  type it. The feed folds it behind "Show more".
 - The guide polls every 4 seconds and stops on 401 or 403, so its own
   refusals never use 403. A card has no length cap and the wall no card cap.
 
@@ -142,19 +172,57 @@ joins later a Canvas of their own.
   `workspace_identity_mismatch`.
 - `apps/api/test/regional-workspace-create.test.ts` covers the send, the
   replay and a refused send.
-- Not runnable here: a model, so Rally following the README is unproved; and
-  a live site inside the artifact panel
+- With `OPENROUTER_API_KEY` set, a real run works on the local stack, and
+  step 2 was checked that way: a new Organization, the step's prompt sent to
+  `POST /conversations/:id/substreams/0/messages`, and the rows read back from
+  the site's local storage. Rally wrote five cards with `asked_by_id` set, did
+  not publish, and answered in one line. The Chat's stored model payloads
+  showed the request as a user turn carrying the creator's `rally_author`
+  tag, and Rally's answer as an assistant turn.
+- Not runnable here: steps 3 and 4 with a model, because editing a page needs
+  the Terminal's Daytona sandbox, so Rally reading the README is still
+  unproved; Rally staying quiet between two people, because the local stack
+  signs in one person; and a live site inside the artifact panel
   ([`dev-environment.md`](dev-environment.md#what-cannot-be-verified-in-a-sandbox)).
 
 ## Open questions
 
 - **Organizations that already exist** have no guide. A `canvas_seed` job for
   each would do it; nobody has decided to.
-- **Getting a site's README to Rally.** Nothing hands it over. A general
+- **Getting a site's README to Rally.** Nothing hands it over; the request
+  stands in for it in this one Canvas, until the Chat is compacted. A general
   answer (a site's instruction file, or an artifact's description in the
-  Canvas context) would let step 3 tick on its own and serves every site.
+  Canvas context) would outlast compaction and serve every site.
+- **Whether the request earns its place.** In one local run each, Rally did
+  step 2 correctly with and without it; with it the reply was one line, not a
+  list. Steps 3 and 4, where it should matter most, are unmeasured.
 
 ## Changelog
+
+### 2026-11-11 — The Chat opens on the creator's request
+
+After the guide shipped, the owner asked why the instructions for Rally were
+not part of a seeded message from the user, so the Canvas reads as one a
+person asked for and Rally sees its instructions without choosing to open a
+file. The README could not do that: nothing hands a site's files to the model.
+
+The request is the creator's own message, the owner's choice over the
+"Opening instructions" row an agent message gets, which would have named
+nobody. The cost was accepted knowingly: every member sees words under the
+creator's name that the creator did not type. It goes through the path a
+person's message takes, marked record-only, because the message port refuses
+a human author and a second way to write a person's message would have to
+repeat that path's participation, attention and projection writes.
+`canvas_seed` was added as a principal because none of the four that existed
+describes Rally acting with no person behind it.
+
+One thing was learned from a real model and a future edit of the words has to
+respect it. The first wording told Rally to read `README.md` before changing
+the page. On step 2, which changes no page, Rally tried to read the site with
+`read_resource`, that failed, and the host replaced its whole reply with an
+"Attachment content unverified" notice, though the cards had been written.
+The request now ties the README to editing the page and says step 2 needs
+only the data tools.
 
 ### 2026-11-10 — The guide, and seeding it into every new Organization
 

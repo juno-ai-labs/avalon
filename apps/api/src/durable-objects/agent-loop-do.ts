@@ -460,7 +460,7 @@ const ProductAuthSchema = z.strictObject({
   // uses `"resource_authorization"` after its state and grant are verified.
   // These are constructed only by server code; `IdentityAuthContext.principal`
   // says why.
-  principal: z.enum(["connector", "impersonation", "resource_authorization", "engineering"]).optional(),
+  principal: z.enum(["connector", "impersonation", "resource_authorization", "engineering", "canvas_seed"]).optional(),
 });
 /**
  * One product operation, with the two fields every one of them carries.
