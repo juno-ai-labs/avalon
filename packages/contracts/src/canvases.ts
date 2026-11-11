@@ -49,8 +49,16 @@ export type CanvasAudienceUpdate = z.infer<typeof CanvasAudienceUpdateSchema>;
 
 const TimestampSchema = z.string().datetime({ offset: true });
 
+export const CanvasRunningActivitySchema = z.object({
+  backgroundAgents: z.number().int().nonnegative(),
+  sidekicks: z.number().int().nonnegative(),
+});
+export type CanvasRunningActivity = z.infer<typeof CanvasRunningActivitySchema>;
+
 /** One Canvas's directory row, as every reader of it sees it. */
 export const CanvasSummarySchema = z.object({
+  /** Live child execution counts; absent from older servers. Never inferred from Sidekick lifecycle. */
+  runningActivity: CanvasRunningActivitySchema.optional(),
   id: CanvasIdSchema,
   title: z.string().max(300),
   createdByUserId: UserIdSchema,

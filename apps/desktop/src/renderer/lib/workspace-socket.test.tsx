@@ -9,12 +9,14 @@ import {
 } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { onlineManager, QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode, useEffect, type JSX } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
 import { ApiError, mapAutomationSummary } from './api';
 import { SIDEBAR_LIST_QUERY_KEYS } from './sidebar-list-store';
+import { ComposerAgentActivity } from '../components/composer-agent-activity';
+import { useCanvasList } from './canvases';
 import { PushedListPending } from '../components/pushed-list-pending';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
@@ -183,6 +185,66 @@ function initialSidebarFrame() {
 }
 
 describe('WorkspaceSocketProvider', () => {
+  it('renders live Canvas helper counts from pushes and hides them until reconnect has a fresh snapshot', async () => {
+    const queryClient = new QueryClient();
+    const id = '00000000-0000-7000-8000-000000000020';
+    const row = (backgroundAgents: number, sidekicks: number) => ({
+      id, title: 'Dashboard', createdByUserId: '00000000-0000-7000-8000-000000000011',
+      createdAt: '2026-11-10T12:00:00.000Z', updatedAt: '2026-11-10T12:00:00.000Z',
+      lastEditor: null, writerSidekickId: null, visibility: 'creator', artifactKind: null,
+      unread: false, presentUserIds: [], pinnedPosition: null, sharedWithMe: false,
+      runningActivity: { backgroundAgents, sidekicks },
+    });
+    function Probe(): JSX.Element {
+      const socket = useWorkspaceSocket();
+      const canvas = useCanvasList()?.find((item) => item.id === id);
+      return <ComposerAgentActivity activity={socket.state === 'connected' && socket.sidebarReady ? canvas?.runningActivity : undefined} />;
+    }
+    queryClient.setQueryData(['canvases'], [row(9, 9)]);
+    const rendered = render(<QueryClientProvider client={queryClient}><WorkspaceSocketProvider
+      region="global" workspaceId="00000000-0000-7000-8000-000000000001"
+      api={{ getWorkspaceSocketTicket: async () => ({ url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+        ticket: 'workspace-ticket', protocols: socketTicketProtocols('workspace-ticket') }) }}><Probe />
+    </WorkspaceSocketProvider></QueryClientProvider>);
+    await flushPromises();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    act(() => socket.open());
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    act(() => socket.message({ ...initialSidebarFrame(), sidebar: {
+      automations: { waterline: 0, items: [] }, canvases: { waterline: 1, items: [row(2, 1)] },
+    } }));
+    await flushPromises();
+    expect(screen.getByRole('status')).toHaveTextContent('2 background agents running · 1 Sidekick running');
+    act(() => socket.message({ type: 'workspace_canvas_list', occurredAt: '2026-11-10T12:01:00.000Z',
+      waterline: 3, items: [row(1, 0)] }));
+    await flushPromises();
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 background agent running'));
+    // A late frame cannot resurrect the Sidekick or a finished worker.
+    act(() => socket.message({ type: 'workspace_canvas_list', occurredAt: '2026-11-10T12:00:00.000Z',
+      waterline: 2, items: [row(2, 1)] }));
+    await flushPromises();
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 background agent running'));
+    act(() => window.dispatchEvent(new Event('offline')));
+    await flushPromises();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    act(() => window.dispatchEvent(new Event('online')));
+    await flushPromises();
+    const resumed = FakeWebSocket.instances.at(-1)!;
+    act(() => resumed.open());
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    act(() => resumed.message({ ...initialSidebarFrame(), sidebar: {
+      automations: { waterline: 0, items: [] }, canvases: { waterline: 4, items: [row(0, 2)] },
+    } }));
+    await flushPromises();
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('2 Sidekicks running'));
+    act(() => resumed.message({ type: 'workspace_canvas_list', occurredAt: '2026-11-10T12:02:00.000Z',
+      waterline: 5, items: [row(0, 0)] }));
+    await flushPromises();
+    await waitFor(() => expect(screen.getByRole('status')).toBeEmptyDOMElement());
+    rendered.unmount();
+    queryClient.clear();
+  });
+
   it('relays consumer previews, retries on publisher handover, and cancels obsolete requests', async () => {
     const workspaceId = '00000000-0000-7000-8000-000000000001';
     const parentId = '00000000-0000-7000-8000-000000000020';

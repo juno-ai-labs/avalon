@@ -206,12 +206,9 @@ distinguish an idle worker from one with queued work without resuming it;
 its reply is still the thing to wait for. A stopped background agent reports
 no pending work until an explicit continuation resumes it.
 
-Background identity travels in the existing child common-state projection,
-with the agent's root conversation beside the flag. No composer shows a running
-background-agent count any longer: the count rode the Channel row's
-`backgroundAgentCounts`, which went with Channels, and
-[`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
-records where one would come from.
+Background identity and its root conversation travel in the child common-state
+projection; [`canvases.md`](canvases.md#running-helpers-above-the-composer) owns
+the composer counts derived from them.
 
 Agent tools are preloaded through the existing persisted plugin-activation path,
 so they are available on the first model call. Bind still validates live execution
