@@ -72,6 +72,17 @@ afterEach(() => {
 });
 
 describe('site telemetry reporter', () => {
+  it('reports Linux download intent without changing the direct AppImage link', async () => {
+    const api = stubApi();
+    await start('<a data-site-action="download-linux-hero" href="https://downloads.rallywith.ai/stable/linux/x64/Rally.AppImage" download>Download for Linux</a>');
+    const link = document.querySelector<HTMLAnchorElement>('a')!;
+    link.addEventListener('click', (event) => event.preventDefault());
+    link.click();
+    await vi.waitFor(() => expect(api.clicks()).toHaveLength(1));
+    expect(api.clicks()[0]?.properties).toEqual({ page: 'landing', pathname: '/', action: 'download', placement: 'hero' });
+    expect(link.href).toBe('https://downloads.rallywith.ai/stable/linux/x64/Rally.AppImage');
+  });
+
   it('joins the web CTA to its destination flow without changing the direct Mac download', async () => {
     const api = stubApi();
     await start('<a id="web" data-site-action="web-app-hero" href="https://app.rallywith.ai">Use the web app</a><a id="mac" data-site-action="download-hero" href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg" download>Download the macOS beta</a>');

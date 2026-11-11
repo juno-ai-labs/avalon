@@ -60,7 +60,7 @@ import {
   nativeTheme,
   powerMonitor,
   protocol,
-  safeStorage,
+  safeStorage as electronSafeStorage,
   screen as electronScreen,
   session as electronSession,
   shell,
@@ -68,7 +68,7 @@ import {
   WebContentsView,
 } from 'electron';
 import { execFile } from 'node:child_process';
-import { existsSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve, sep } from 'node:path';
@@ -304,6 +304,8 @@ import {
   initializeAutoUpdate,
   type AutoUpdateController,
 } from './updater';
+import { systemKeyStorage } from './system-key-storage';
+import { updatePolicy } from './update-policy';
 import {
   supersededUserDataDirectories,
   userDataDirectoryForLaunch,
@@ -1076,6 +1078,19 @@ function activeSessionEncryptionMode(): SessionEncryptionMode {
   return lockdownModeController.encryptionMode();
 }
 
+const safeStorage = systemKeyStorage(process.platform, electronSafeStorage);
+const linuxPackageType = process.platform === 'linux' && existsSync(join(process.resourcesPath, 'package-type'))
+  ? readFileSync(join(process.resourcesPath, 'package-type'), 'utf8').trim() : undefined;
+const desktopUpdateRuntime = {
+  isPackaged: app.isPackaged,
+  platform: process.platform,
+  arch: process.arch,
+  env: process.env,
+  linuxPackageType,
+};
+const releaseChannelAvailable = (process.platform === 'darwin' && process.arch === 'arm64')
+  || updatePolicy(desktopUpdateRuntime).kind === 'enabled';
+
 function encryptStoredSessionValue(value: string): Buffer {
   return encryptSessionValue(value, activeSessionEncryptionMode(), safeStorage);
 }
@@ -1508,7 +1523,7 @@ function desktopApplicationSettings(
     ...lockdown,
     ...desktopPush.state(),
     releaseChannel: desktopReleaseChannel,
-    releaseChannelAvailable: process.platform === 'darwin' && process.arch === 'arm64',
+    releaseChannelAvailable,
     developerSettingsAvailable,
     // The effective preference, not the stored one. Debug enabled is a
     // per-device choice inside a section the service decides exists at all, so
@@ -5195,7 +5210,7 @@ async function createMainWindow(): Promise<void> {
     show: false,
     backgroundColor: windowBackgroundColor(),
     title: 'Rally',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     // Centered over the 76px section switcher: macOS 26 draws a 60pt group
     // (14pt buttons on a 23pt pitch), earlier versions 52pt (12pt on 20pt).
     trafficLightPosition: { x: macosMajorVersion(process.getSystemVersion()) >= 26 ? 8 : 12, y: 17 },
@@ -5462,10 +5477,7 @@ if (!singleInstanceLock) {
     registerIpc();
     resolveMainWindowStartup();
     autoUpdateController = initializeAutoUpdate({
-      isPackaged: app.isPackaged,
-      platform: process.platform,
-      arch: process.arch,
-      env: process.env,
+      ...desktopUpdateRuntime,
       currentVersion: app.getVersion(),
       // Stamped by electron.vite.config.ts; absent where no build ran (unit tests).
       currentBuildTime: typeof __RALLY_BUILD_TIME__ === 'string' ? Date.parse(__RALLY_BUILD_TIME__) : undefined,
@@ -5499,7 +5511,7 @@ if (!singleInstanceLock) {
     // menu bar with nothing on screen, and a click on the icon still opens it.
     const openedAtLogin = launchedAtLogin({
       platform: process.platform,
-      loginItemState: app.getLoginItemSettings(),
+      loginItemState: process.platform === 'darwin' ? app.getLoginItemSettings() : { openAtLogin: false, wasOpenedAtLogin: false },
       argv: process.argv,
     });
     const initialDeepLink = process.argv.find((argument) => acceptedDeepLink(argument) !== null);

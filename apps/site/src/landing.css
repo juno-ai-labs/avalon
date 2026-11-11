@@ -121,10 +121,11 @@ h1,h2,h3,p{margin:0}
 .hero-title em{color:var(--accent)}
 .hero-side{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:24px 48px;align-items:end;margin-top:clamp(36px,5vw,64px);padding-top:24px;border-top:1px solid var(--text)}
 .intro{max-width:36rem;color:var(--text-2);font-size:clamp(17px,1.5vw,20px);line-height:1.5;text-wrap:pretty}
-.hero-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px}
+.hero-actions{display:grid;grid-template-columns:max-content;justify-content:end;gap:10px}
+.hero-desktop-downloads{display:flex;flex-direction:column;gap:10px}
 .hero-note{grid-column:2;justify-self:end;font-family:var(--mono);font-size:12px;color:var(--text-3)}
-/* A touch-only device (phone, tablet) cannot run the Mac app: offer the web app as the one primary action. */
-@media (hover:none) and (pointer:coarse){.hero-download{display:none}}
+/* Touch-only devices keep the web app as their primary action. */
+@media (hover:none) and (pointer:coarse){.hero-download,.hero-desktop-downloads{display:none}}
 .hero-stage{max-width:calc(var(--max) - 2 * var(--gutter));margin:clamp(56px,7vw,96px) auto 0}
 
 /* ---------------------------------------------------------------- Figure 1: the Canvas demo */
@@ -733,12 +734,12 @@ main{counter-reset:fig}
 .signal::before{display:none}
 }
 @media(max-width:860px){
+.hero-side{grid-template-columns:minmax(0,1fr)}
+.hero-actions{justify-content:start}
+.hero-note{grid-column:1;justify-self:start}
 .site-header nav{gap:18px}
 .header-link{display:none}
 .hero::before{display:none}
-.hero-side{grid-template-columns:minmax(0,1fr)}
-.hero-actions{justify-content:flex-start}
-.hero-note{grid-column:1;justify-self:start}
 .band-head,.statement,.logos,.callout{grid-template-columns:minmax(0,1fr)}
 .essay{margin-left:0}
 .band-head>.eyebrow{grid-row:auto;margin-bottom:20px}
@@ -768,6 +769,7 @@ main{counter-reset:fig}
 @media(max-width:640px){
 .bento,.timeline,.tech-layers,.signals{grid-template-columns:minmax(0,1fr)}
 .cell-wide{grid-column:auto}
+.hero-actions{grid-template-columns:minmax(0,1fr)}
 .hero-actions .button{width:100%}
 .demo-bar{gap:8px;padding:0 12px}
 .demo-lights,.demo-share,.demo-audience{display:none}

@@ -1,8 +1,8 @@
 # Public-site telemetry
 
-The landing links directly to the canonical macOS installer and collects no email.
+The landing links directly to the canonical macOS and Linux installers and collects no email.
 `/download/` deliberately skips telemetry initialization so its bearer fragment cannot reach analytics.
-The Download for Mac action is a plain installer link. What the landing reports, and the checklist a redesign must keep, is in [`landing-page-tracking.md`](landing-page-tracking.md). Existing page telemetry remains; no form or dialog is initialized on the homepage.
+Desktop download actions are plain installer links. What the landing reports, and the checklist a redesign must keep, is in [`landing-page-tracking.md`](landing-page-tracking.md). Existing page telemetry remains; no form or dialog is initialized on the homepage.
 
 Help center pages under `/help/` report as the `support` page class; [`help-center.md`](help-center.md) owns them.
 
@@ -50,9 +50,9 @@ support pages (`/download/` initializes no telemetry). A link opts in with a `da
 `SITE_ACTION_LINKS` in `telemetry.ts` maps each id to a closed action, placement
 and, for pricing actions, plan. One capture-phase click listener reads the id
 and ignores any id not in that table, so markup chooses a combination but never
-supplies a value. Every installer link has its own id (`download-hero`,
-`download-pricing-start|grow`), which is how the landing
-dashboard tells the three identical DMG links apart. The event shares the page
+supplies a value. Installer links have registered ids (`download-hero`, `download-linux-hero`,
+`download-pricing-start|grow`). Hero Mac/Linux clicks share the existing
+`download · hero` event; pricing clicks also carry their plan. The event shares the page
 view's anonymous `distinct_id`, so its referrer and campaign come from joining
 to that visit's `$pageview` rather than being copied onto the click. The click
 does carry its own `pathname`, which Global maps to `$pathname` as it does for
