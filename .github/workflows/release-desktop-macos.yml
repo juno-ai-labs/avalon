@@ -580,9 +580,7 @@ jobs:
       - name: Install Linux packaging and smoke dependencies
         run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libsecret-1-0 libfuse2t64
       - name: Allow Chromium user namespaces on the CI runner
-        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
-        # Allow them on this disposable runner so both Electron fixtures and
-        # packaged smoke tests run as the runner user with sandboxing enabled.
+        # Runner-only policy and AppImage host limits: docs/linux-desktop.md.
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Exercise real Linux updater checksum rejection and installation
         run: xvfb-run -a pnpm --filter @rally/desktop test:linux-updater
