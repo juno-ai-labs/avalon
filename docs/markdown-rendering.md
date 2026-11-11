@@ -295,14 +295,12 @@ unmounts. A missing or failed favicon changes nothing about the link. Glances
 remain inert text and synchronous still exports do not start asynchronous
 decoration.
 
-A streaming body's open tail asks for nothing. Its last line is still arriving,
-so a link there can name a prefix of the host being typed — GFM autolinks
-`www.alph` on the way to `www.alphamountain.ai` — and each prefix would be its
-own Firecrawl discovery and, when the provider rejects it, its own
-`favicon_unavailable` 502. `renderStreaming` wraps the tail in
+A streaming body's open tail asks for nothing: a link there can name a prefix
+of the host still being typed. `renderStreaming` wraps the tail in
 `HostFaviconHold`, which `useHostFavicon` reads as "no hostname", so a held link
-or marker draws its no-icon state and gets its icon when its line settles into a
-segment or the stream ends, both of which are fresh mounts.
+or marker draws its no-icon state until its block — the whole paragraph, list
+item or table — settles into a segment or the stream ends, both of which are
+fresh mounts that ask again.
 
 Markers are requesters in their own right, not free riders on the links: a
 lifted definition's link is never rendered, so before markers wore icons those
@@ -1022,7 +1020,7 @@ refetched. A host that cannot open a browser or read a link should omit
 
 **What changed:** Links and footnote markers in a streaming body's open tail no
 longer request a favicon; `HostFaviconHold` turns the request off for that
-subtree, and the icon arrives when the line settles.
+subtree, and the icon arrives when the block settles.
 
 **Why:** Production logs on 2026-11-11 showed bursts of
 `favicon_unavailable:firecrawl_parse_200` and `firecrawl_http_400` 502s, logged
