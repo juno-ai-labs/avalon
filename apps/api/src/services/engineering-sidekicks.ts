@@ -31,10 +31,12 @@ export async function setEngineeringSidekickPaused(
  * Archive a Sidekick as a selected user, through the service the app's
  * Archive action calls, so its manager check, run stop, alarm cancellation,
  * registration clearing and list refresh all apply. There is no undo.
+ * It is the one tool that also acts in an abandoned Organization.
  */
 export async function archiveEngineeringSidekick(
   env: Env, input: ArchiveEngineeringSidekickInput,
 ): Promise<ArchiveEngineeringSidekickResult> {
-  await new AutomationService(env, await engineeringUserAuth(env, input.orgId, input.userId)).archive(input.sidekickId);
+  const auth = await engineeringUserAuth(env, input.orgId, input.userId, { abandoned: "admit" });
+  await new AutomationService(env, auth).archive(input.sidekickId);
   return { region: env.AVALON_REGION, orgId: input.orgId, sidekickId: input.sidekickId, lifecycle: "deleted" };
 }

@@ -11926,6 +11926,10 @@ applyRetirementGate(WorkspaceDO, {
     // with this object; its conversations are still separate objects the walk
     // has to find and close.
     "childrenForRetirement",
+    // `archive_sidekick`, for the Sidekicks a closed Organization still lists.
+    // It writes only this object's own storage; `docs/workspace-retirement.md`
+    // says what has to stay true for that.
+    "sidekickRemove",
   ],
   drop: {
     // A conversation's effects for a hosted parent, handed to the Queue before
