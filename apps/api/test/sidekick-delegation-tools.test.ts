@@ -28,7 +28,7 @@ describe("Sidekick delegation plugin presentations", () => {
     // Whose accounts a run may use, then whose events may start it: two sets of tools for two records.
     expect(authoring.tools.slice(-6).map((tool) => tool.definition.name))
       .toEqual(["my_delegations_list", "delegates_list", "set_delegation", "sources_list", "request_source", "test_source_condition"]);
-    expect(authoring.systemMessage).toContain("A background agent may use it too; a Sidekick run may not.");
+    expect(authoring.systemMessage).toContain("A background agent of this conversation may use it too; a Sidekick run and its workers may not.");
     expect(authoring.systemMessage).toContain("sidekick_set_delegation");
     expect(authoring.systemMessage).toContain("sidekick_delegates_list");
     expect(authoring.systemMessage).toContain("sidekick_sources_list");
