@@ -718,9 +718,8 @@ describe("connector tools selected for harness runs", () => {
         "start_agent", "list_agents", "send_message", "reply_to_message", "stop_agent",
       ]));
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
-      ?.tools.map((tool) => tool.definition.name)).toEqual([
-        "my_delegations_list", "delegates_list", "set_delegation",
-        "sources_list", "request_source", "test_source_condition"]);
+      // A background agent works from content, so it is not offered the tools that ask people for a source.
+      ?.tools.map((tool) => tool.definition.name)).toEqual(["my_delegations_list", "delegates_list", "set_delegation"]);
     expect(selected.tools.some((tool) => tool.definition.name === "run_subagent")).toBe(false);
   });
 
@@ -737,14 +736,13 @@ describe("connector tools selected for harness runs", () => {
         "my_delegations_list", "delegates_list", "set_delegation",
         "sources_list", "request_source", "test_source_condition"]);
     // The wizard's background agent reads runs for it; a run's delegation worker does not.
+    // Neither asks people for a source: only a conversation a person is talking in does.
     const sidekicks = child.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     expect(sidekicks?.tools.map((tool) => tool.definition.name))
-      .toEqual(["runs_list", "runs_list_next", "runs_read", "runs_read_next", "my_delegations_list", "delegates_list", "set_delegation",
-        "sources_list", "request_source", "test_source_condition"]);
+      .toEqual(["runs_list", "runs_list_next", "runs_read", "runs_read_next", "my_delegations_list", "delegates_list", "set_delegation"]);
     expect(sidekicks?.preload).toBe(true);
     expect(worker.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")?.tools.map((tool) => tool.definition.name))
-      .toEqual(["my_delegations_list", "delegates_list", "set_delegation",
-        "sources_list", "request_source", "test_source_condition"]);
+      .toEqual(["my_delegations_list", "delegates_list", "set_delegation"]);
     expect(authoring.plugins.map((plugin) => plugin.canonicalId)).toContain("rally:sidekicks");
     expect(room.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));

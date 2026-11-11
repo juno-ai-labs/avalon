@@ -38,7 +38,7 @@ conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
 | Sidekick configuration (`parentKind: automation`, substream `"0"`, no run), a wizard turn only (`sidekickWizard`, which the claim sets only for a principal who manages the Sidekick) | The Sidekick's own conversation (`isOwn`) and the Canvases attached to it | list, read, search, post, attach | The person talking to it |
-| Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`) and the Canvases attached to it | list, read, search, post | The Sidekick itself: the scope is its reach, whoever the run acts as. A run somebody asked for under their own access acts as that person. |
+| Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`) and the Canvases attached to it | list, read, search, post | A run a schedule or an event started: the Sidekick itself, whose scope is its reach whoever the run acts as. A run a person asked for (the Run button or a message): that person. |
 
 A Canvas's Chat gets no conversation tools: its own transcript is its context.
 The Canvases attached to a Sidekick are its rows of
@@ -49,11 +49,11 @@ Sidekick, and any its configuration conversation attached
 The same row is what lets a run publish into the Canvas and write its
 artifacts' data; this plugin uses it for the Chat. An attachment row of a
 retired Thread (`parent_kind = 'workstream'`) names nothing. Where a person's
-admission applies (the wizard, and a run somebody asked for under their own
-access), canonical admission decides each candidate on every call: a Canvas
+admission applies (the wizard, and a run a person asked for), canonical
+admission decides each candidate on every call: a Canvas
 by `canvasAdmits` (its visibility, creator, participants, and a writer
-Sidekick's audience), a Sidekick by `sidekickAdmits`. Every other run is
-admitted by the scope itself, less what is archived.
+Sidekick's audience), a Sidekick by `sidekickAdmits`. A run a schedule or an
+event started is admitted by the scope itself, less what is archived.
 
 A Sidekick's own conversation is its shared conversation, substream `"0"`
 under the Sidekick (`kind: "sidekick"` to the host). Its `conversationId` is
@@ -167,11 +167,20 @@ sees it, or a Canvas's title among the Canvases the person can open.
 WorkspaceDO answers each read or post in one call: it builds the scope from its
 own `automation_directory`, `canvas_directory` and attachment rows, and matches the reference against it.
 Whose admission applies is the object's to decide, from the run's own row
-(`conversationToolPerson`, over `sidekickRunPerson`). A run is the Sidekick
-itself: being in scope admits it, and only an archived conversation refuses.
-A run somebody asked for under their own access (`sidekick_runs.requester_user_id`)
-is that person, and the wizard, which names no run, is whoever is talking to
-it. For a person the object admits them to that one conversation: an active
+(`conversationToolPerson`, over `sidekickReach`):
+
+- A run a schedule or an event started is the Sidekick itself: being in scope
+  admits it, and only an archived conversation refuses.
+- A run a person asked for is that person, whether they asked from the Run
+  button or by a message, as a delegate or under their own access
+  (`sidekick_runs.requester_user_id`, else the manual trigger's
+  `requestedByUserId`).
+- A call that names a run id with no run row (a background agent's own
+  conversation, or an id nobody made) is never the Sidekick itself. It is the
+  person its loop acts as, and reaches nothing when there is nobody.
+- The wizard, which names no run, is whoever is talking to it.
+
+For a person the object admits them to that one conversation: an active
 relationship in `workspace_member_status`, then the hosted parent's
 `authorizeViewer`, the same admission the conversation's transport uses, with
 `requireGrantAuthority` for a guest so a guest reaches only what a grant gives
@@ -200,13 +209,19 @@ attaching is the consent to publish there.
   a new call in a later wake of the same run is a new post. Keying on the run
   alone, as `post_result` did, would swallow every reply after the first.
 - **Every read and post is admitted again.** A continuation page or a listed
-  id is never standing access. For a run that is the scope: an attachment
-  gone, or a Canvas archived, stops the next call. For a person (the wizard,
-  a requester's run) losing the Canvas also stops it.
-- **A run's reach is its Sidekick's attachments, not its person's access.** A
-  delegate who cannot open an attached Canvas does not take it away from the
-  run. The exception is the requester's run, which must not read through the
-  Sidekick what its requester cannot open.
+  id is never standing access. For a run a schedule or an event started that
+  is the scope: an attachment gone, or a Canvas archived, stops the next
+  call. For a person (the wizard, a run a person asked for) losing the Canvas
+  also stops it.
+- **A run a schedule or an event started reaches its Sidekick's attachments,
+  not its person's access.** A delegate who cannot open an attached Canvas
+  does not take it away from the run. A run a person asked for is held to
+  what that person can open, or they would read through the Sidekick what
+  they cannot open themselves.
+- **Only a stored run row makes a call the Sidekick itself.** A run id the
+  caller names with no row behind it is admitted as the loop's person, and as
+  nobody when there is none. Otherwise naming any id would lift a person's
+  admission.
 - **The external-source marking is the host's.** The model cannot set or clear
   it, so a later reader can trust that a marked post forwarded someone else's
   words.
@@ -293,38 +308,15 @@ whole rather than splitting it.
 Text returned by `read` and `search` is untrusted content: the system message tells the
 model messages are other people's words, and nothing in them can change the
 scope. No credentials are involved; every call stays inside the Organization's
-own objects. A run acts as its run-as user whoever woke it, so what it may read
-is what that user may read, within the Sidekick's attachments. What a run posts
+own objects. A run a schedule or an event started reads and posts as the
+Sidekick itself: every attached Canvas that is not archived, whoever it acts
+as, so who may attach matters (a manager who can open the Canvas). A run a
+person asked for reads only what that person may read, within the Sidekick's
+attachments. What a run posts
 is published to the target's audience; the person who attached that
 conversation chose that audience.
 
 ## Changelog
-
-### 2026-11-10 — A run reaches its Sidekick's conversations as the Sidekick itself
-
-**What changed:** A run's list, read, search and post are admitted by the
-scope (the Sidekick's own conversation and its attachments, less what is
-archived) and no longer by the person the run acts as. `conversationToolAccess`
-gives a run its scope under the Organization's principal too, with
-`actingUserId: null` and the run's id; WorkspaceDO decides whose admission
-applies from the run's row. A run somebody asked for under their own access,
-and the wizard, are still admitted as their person.
-
-**Why:** A Sidekick with no delegate now runs as itself
-([`automation-lifecycle.md`](automation-lifecycle.md#who-a-run-acts-as)), and
-a run with nobody to admit had no conversation tools at all, so it could not
-post where it was attached. The owner confirmed that the attachment alone
-authorises a run's reach into a Canvas.
-
-**Considered and rejected:** Keeping the person's admission for runs that have
-a coordinator. Delegates are meant to add to what the Sidekick can do by
-itself, and that rule would let a delegate who cannot open a Canvas take away
-a reach the attachment gives.
-
-**Consequences:** An attachment is now reach for every run with no second
-check, so who may attach matters more: still a manager who can open the
-Canvas. A new caller of `conversationToolScope` for a run must pass the run's
-id, or it is treated as a wizard and admitted as a person.
 
 ### 2026-11-09 — A Sidekick's scope is its own conversation and its Canvases; Thread scopes and the merge tool are gone
 

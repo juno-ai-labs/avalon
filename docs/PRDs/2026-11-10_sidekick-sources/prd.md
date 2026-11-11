@@ -29,21 +29,12 @@ delegates add their personal accounts on top.
 ## Motivation
 
 The owner raised it on 2026-11-10 with the deal dashboard as the example. No
-support thread or usage number is recorded.
-
-Reading the code against the request showed three problems:
-
-1. A delegation grant was one boolean per person. It both let that person's
-   events start the Sidekick and lent every tool on every personal connection
-   they had. There was no way to share mail on one topic without lending the
-   whole account.
-2. An agent could enroll another member as a delegate with no act of theirs
-   (`sidekick_set_delegation`, a 2026-10-23 decision). So the path to "Jane's
-   mail feeds this" was to enroll Jane, silently, for everything.
-3. The only filter was the trigger's written condition, which lives on the
-   Sidekick's definition. Any manager can edit that, and for a Sidekick a
-   Canvas made, everyone in the Canvas is a manager. A filter there is a
-   preference, not something Jane agreed to.
+support thread or usage number is recorded. A delegation grant was one boolean
+per person: it both let that person's events start the Sidekick and lent every
+tool on every personal connection they had, and an agent could enroll a member
+with no act of theirs. The only filter was the trigger's written condition,
+which any manager can edit, so it was a preference and not something the
+person agreed to.
 
 ## Goals
 
@@ -85,41 +76,12 @@ Reading the code against the request showed three problems:
 
 ## Product behavior
 
-- **Asking.** In a Canvas's Chat or a Sidekick's conversation a manager asks
-  for other people's events to start the Sidekick, optionally about a topic.
-  Rally writes the filter, tries it on the manager's own recent events, saves
-  the trigger, and asks each person. It says who was asked and that their
-  events arrive only after they approve.
-- **The card.** The request is a card in that conversation. It says what is
-  asked (the Sidekick, the account, the events, the filter in quotes) and
-  lists each person with **Approve** and **Decline**. The person asked can
-  press theirs. Everyone else sees both as outlines while it waits, and the
-  chosen one filled once answered: Approve green, Decline red. A manager's own
-  row is already approved.
-- **Activity.** The person asked has a row that is its actions. Once answered
-  it reads as settled. The manager gets a row saying how each person answered.
-- **Email.** The person asked gets an email with **Approve** and **Decline**.
-  One click records the answer and shows the result. No sign-in and no second
-  click.
-- **The Sidekick's panel.** A **Sources** section lists each person, their
-  account, what it lets in and their filter, and each request still waiting or
-  declined. A person can stop their own. **Delegation** stays beside it and
-  says the other thing: who the Sidekick may act as.
-- **Approving** adds the person to the Sidekick's readers so they can see what
-  their events are used for. The source keeps working if they are later
-  removed, until they stop it.
-- **A run** started by mail opens with the event and the full text of that one
-  message.
-- **No delegate.** The Sidekick still runs. A run that needs a personal
-  account nobody lent asks for it in the run, where the people who manage the
-  Sidekick can answer.
-- **Empty, loading, error, offline.** The Sources section says nothing lets
-  events in from a person's account when that is so. Actions go through the
-  acknowledged error popups. Approving before connecting the account is
-  refused with "connect that account first", and the request keeps waiting.
-
-Platforms: macOS and web, which share the renderer. The email page is the
-browser's.
+[`sidekick-sources.md`](../../sidekick-sources.md) describes what shipped: the
+request and its card, Activity row and email, the Sources section of the
+Sidekick's panel, and what a run is handed.
+[`automation-lifecycle.md`](../../automation-lifecycle.md#who-a-run-acts-as)
+describes a run with no delegate. Platforms: macOS and web, which share the
+renderer. The email page is the browser's.
 
 ## Impact on the product contract
 
@@ -129,152 +91,28 @@ Three clauses of earlier PRDs move.
   eligible grant". It now requires that person's source. Delegation no longer
   decides anything about a trigger.
 - Sidekick delegation said runnable work with no eligible delegate shows
-  "Needs attention: no delegated user is available". Such work now runs as
-  the Sidekick itself.
+  "Needs attention: no delegated user is available". A run a schedule or an
+  event starts now runs as the Sidekick itself. A Sidekick that had already
+  stopped that way stays stopped until a person acts.
 - Sidekicks attached to Canvases said "every write admits the acting person
-  again; losing the Canvas stops it". The attachment alone now authorises a
-  run's reach into a Canvas. The exception is a run somebody asked for under
-  their own access, which is held to what that person can open.
+  again; losing the Canvas stops it". For a run a schedule or an event starts,
+  the attachment alone now authorises its reach into a Canvas. A run a person
+  asked for is still held to what that person can open.
 
 The tool execution policy is unchanged: a source is asked for once, and its
 filter then runs on each event without asking anybody.
 
 ## Decision log
 
-### 2026-11-10 — Delegation and triggers are split completely
-
-**Decided:** Whose events start a Sidekick is its own record, the source.
-Registration, matching and admission read sources and nothing about a trigger
-reads delegation.
-
-**Why:** The owner's call, replacing the first proposal of one grant with a
-scope field covering both. Two consents a person may want to give separately
-should not share a prompt or a record.
-
-**Changes:** Goals 1 and 2. Later work on scoped delegation touches tools
-alone.
-
-### 2026-11-10 — The message alone, fetched by the host
-
-**Decided:** A run started by new mail is handed that one message. Not its
-thread.
-
-**Why:** The owner's call. The event carries no body, and without this a run
-would need the mailbox's tools, which is delegation.
-
-**Changes:** Goal 5; non-goal 3.
-
-### 2026-11-10 — A Sidekick has a base identity; delegates add to it
-
-**Decided:** A run with no delegate acts as the Sidekick itself, with the
-Organization's connections and its own reach. The attachment alone authorises
-a run's reach into a Canvas.
-
-**Why:** The owner's call: "Delegates should provide extra permissions on top
-of a base set of permissions". The alternative was to keep such runs waiting
-in Needs input.
-
-**Changes:** Goal 6, and the two contract clauses above.
-
-### 2026-11-10 — Approving adds the person as a reader, and does not depend on it
-
-**Decided:** Approving adds the person to the Sidekick's readers. The source
-keeps letting events in if they are removed later.
-
-**Why:** The owner's call. They should be able to see what their events are
-used for, and a trigger should not stop because of who can read a page.
-
-**Changes:** Product behavior. A source's eligibility asks for membership
-only, where a delegate's also asks for reader access.
-
-### 2026-11-10 — One PR for the split and the base identity
-
-**Decided:** Both ship together.
-
-**Why:** The owner's call, against building the split first and keeping Needs
-input for the no-delegate case in between.
-
-**Changes:** Rollout.
-
-### 2026-11-10 — One click in the email decides
-
-**Decided:** The email's Approve and Decline each decide with one click, with
-no sign-in and no confirmation.
-
-**Why:** The owner's call, against opening Rally signed in with the choice
-highlighted. The cost was stated and accepted: anybody holding the email can
-answer for that person until the request is settled.
-
-**Changes:** Goal 4. The link is signed and bound to one request, person and
-answer.
-
-### 2026-11-10 — The wizard writes the filter, with a way to try it
-
-**Decided:** A new skill, `setting-up-a-filtered-trigger`, and a tool that
-tries a draft filter on real recent events.
-
-**Why:** The owner's call: the wizard should have "latitude and agency to set
-up a great prompt". A fixed template would not fit the range of topics, and a
-filter nobody tried is a guess.
-
-**Changes:** Agent behavior.
-
-## Data model
-
-`WorkspaceDO` migration 145: `sidekick_sources` (keyed by Sidekick, person and
-connection) and `sidekick_source_requests`. A backfill gives every person
-whose delegation admitted a configured rule's events a source for exactly
-those. [`sidekick-sources.md`](../../sidekick-sources.md) owns both.
-
-## Regional impact
-
-None. Every row is in the Organization's own `WorkspaceDO`. The email link
-names its region, as the sign-in link does.
-
-## Security and trust model
-
-- A source lends events and nothing else. A run reads the admitted message
-  through the host and holds no tool on that account.
-- Only the person asked answers. Who answers comes from their session or the
-  signed link, never from a tool argument.
-- The filter is a classifier's judgement on a subject, a sender and a
-  snippet. It is not a hard boundary: it can let in mail the person would not
-  have chosen, and the request's words are what they agreed to, not a
-  guarantee.
-- The emailed link decides for whoever opens it. Forwarding the email forwards
-  the decision.
-- A source names a Sidekick. A manager who attaches the Sidekick to another
-  Canvas sends admitted events' results there too.
-- A run nobody is behind uses the Organization's connections, which were
-  usable only with a delegate before. It writes its Sidekick's memory and not
-  the Organization's.
-- An agent can still enroll a member as a delegate without their act
-  (non-goal 2).
-
-## Agent behavior
-
-The durable contracts are in [`sidekick-sources.md`](../../sidekick-sources.md#agent-tools).
-In short, the `rally:sidekicks` plugin (wire prefix `sidekick_`) gains three
-tools wherever its delegation tools are offered:
-
-- `sidekick_sources_list({ sidekickId })`, `read`.
-- `sidekick_request_source({ sidekickId, userIds, connectorType, eventTypes, condition? })`,
-  `write`, `record_before_execute`, re-entered on its receipt. It asks and
-  never waits; its output is the card.
-- `sidekick_test_source_condition({ connectorType, eventType, condition })`,
-  `read`. It judges the acting person's own ten most recent events.
-
-No tool answers a request. The skill `setting-up-a-filtered-trigger` is the
-procedure. A run with no delegate is told so in a prompt section and asks, in
-the run, for someone to let the Sidekick act as them when a step needs it.
-
-Evaluations on the medium fallback model have not been run.
+The decisions taken during the build, and why, are recorded once, in the
+changelogs of [`sidekick-sources.md`](../../sidekick-sources.md#changelog) and
+[`automation-lifecycle.md`](../../automation-lifecycle.md#changelog).
 
 ## Rollout
 
-Ships to everyone on merge, with no flag. The migration adds two tables and
-rows. Regional Workers deploy before Global; during a deploy a new consumer
-calling an older object fails its delivery, which the Queue retries.
+Ships to everyone on merge, with no flag. WorkspaceDO migration 145 adds the
+tables and backfills a source for every person whose delegation admitted a
+configured rule's events.
 
 ## Open questions
 
@@ -283,3 +121,7 @@ calling an older object fails its delivery, which the Queue retries.
    `0.5`, which was measured for the opposite cost: there a missed run is
    worse than a wasted one, and here a wrongly admitted message is worse.
 3. Should a source be pinned to the Canvas it was asked for? (Non-goal 5.)
+4. Should the emailed page ask for one click before it answers, since a mail
+   scanner that runs JavaScript can otherwise answer?
+5. Should an agent's ask for the asker's own account stay pending until they
+   click, instead of being approved at once?

@@ -192,12 +192,16 @@ function asked(env: Env, ask: SourceNoticeAsk, requestId: string) {
  * yields and a transaction may not.
  */
 export async function prepareSourceRequestNotices(env: Env, ask: SourceNoticeAsk & {
-  requesterName: string; requestIds: readonly string[]; placeCanvasId?: string | undefined;
+  requesterName: string; requestIds: readonly string[];
+  /** By request id, the Canvas the ask was made in, for a person who can open it: where their notice leads. */
+  placeCanvasIds?: ReadonlyMap<string, string> | undefined;
 }): Promise<Map<string, PreparedSourceNotice>> {
   const requesterName = truncateUtf16Safe(ask.requesterName, NAME_SNAPSHOT_CHARACTERS);
-  return new Map(await Promise.all(ask.requestIds.map(async (requestId) =>
-    [requestId, await prepare({ kind: "source_request", ...asked(env, ask, requestId), requesterName,
-      ...(ask.placeCanvasId ? { placeCanvasId: ask.placeCanvasId } : {}) })] as const)));
+  return new Map(await Promise.all(ask.requestIds.map(async (requestId) => {
+    const placeCanvasId = ask.placeCanvasIds?.get(requestId);
+    return [requestId, await prepare({ kind: "source_request", ...asked(env, ask, requestId), requesterName,
+      ...(placeCanvasId ? { placeCanvasId } : {}) })] as const;
+  })));
 }
 
 /**

@@ -14,10 +14,13 @@ import type { HarnessSkill } from "./index";
  * `ownerPlugin` is the Sidekicks plugin: every step uses its tools, which is
  * also why the skill may name them.
  */
-const SETTING_UP_A_FILTERED_TRIGGER_BODY = `Use this when a Sidekick should start on events from **people's own accounts**
-(new mail in two people's inboxes, for example), especially when only events
-about one topic should get through. Two records make this work, and they are
-separate on purpose:
+const SETTING_UP_A_FILTERED_TRIGGER_BODY = `Use this when a Sidekick should start on events from **another person's own
+account** (new mail in two people's inboxes, for example), especially when
+only events about one topic should get through.
+
+When **another person's account** should start the Sidekick, the topic goes in that person's source filter and the trigger stays a plain \`connector_activity\` one. When only the account of the person you are working for, or an Organization connection, is watched, nobody else's permission is involved: use a \`semantic_activity\` trigger with a written condition, as \`polling-for-events\` describes, and ask nobody.
+
+Two records make this work, and they are separate on purpose:
 
 - The Sidekick's **trigger** says which kind of event starts it. It is part of
   the Sidekick's definition, and anyone who manages the Sidekick can change it.
@@ -81,6 +84,17 @@ the account of the person you are working for. Read the result as evidence:
   count.
 - Too few recent events to tell, or none on topic: say so, and rely on the
   wording. Do not loosen the filter to make the numbers look better.
+- An event marked \`condition_not_judgeable\` or
+  \`confidence_below_threshold\` was kept out because its subject and snippet
+  did not settle the claim: the filter leans on something an event does not
+  show. \`classifier_unavailable\` says nothing about the filter; try again
+  later.
+- No events at all usually means the event type is misspelled or that account
+  has had none: check the type against the connector's declared events.
+
+The events are the person's own mail. Report what you learned as counts and
+your reading of them. Do not quote subjects, senders or snippets into a
+conversation other people can read.
 
 Revise and try again until the events it lets in are the ones the request
 means. A filter is a person's permission, so when a choice is close, prefer
@@ -139,7 +153,7 @@ export const SETTING_UP_A_FILTERED_TRIGGER_SKILL: HarnessSkill = {
   description:
     "How to make a Sidekick start on events from people's own accounts, such as new mail in several inboxes, with a written filter each person approves so only matching events get through: write the filter, try it on real events, and ask each person.",
   whenToUse:
-    "When a request names another person's account as what should start a Sidekick, or asks for only events about a topic to get through, for example a dashboard fed by two people's email about one subject.",
+    "When a request names another person's own account as what should start a Sidekick, for example a dashboard fed by two people's email about one subject. Not for a topic filter on only your own account or an Organization connection: that is a semantic_activity trigger (polling-for-events).",
   body: SETTING_UP_A_FILTERED_TRIGGER_BODY,
   // Spelled out rather than imported, as `polling-for-events` does: the
   // drafting tools import from `./index`, which imports the skill list.

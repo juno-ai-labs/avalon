@@ -9,6 +9,7 @@ import {
 import { workspaceDOName } from "../src/durable-objects/names";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { changeRelationships } from "./helpers/workspace-relationship-events";
 
 /**
  * Sources against real workerd: whose events may start a Sidekick is the
@@ -93,10 +94,21 @@ const ask = (userIds: string[], condition?: string) => stub().sidekickRequestSou
   ask: { userIds, connectorType: "google", eventTypes: [eventType], ...(condition ? { condition } : {}) },
 });
 
-async function withdrawDelegation(userId: typeof creator) {
-  const request = { ...address, userId, allowed: false, operationId: crypto.randomUUID() };
+async function setDelegation(userId: typeof creator, allowed: boolean) {
+  const request = { ...address, userId, allowed, operationId: crypto.randomUUID() };
   const prepared = await stub().sidekickPrepareMyDelegation(request);
   await stub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+}
+const withdrawDelegation = (userId: typeof creator) => setDelegation(userId, false);
+
+/** Rewrite stored rows the way an older build or the migration left them, then let the registrations follow. */
+async function stored(statement: string, ...bindings: (string | null)[]) {
+  await runInDurableObject(stub(), (_instance, state) => {
+    state.storage.sql.exec(statement, ...bindings);
+    // Any change of a connection's authority wakes the Sidekick's source reconciliation.
+    state.storage.sql.exec("UPDATE connector_connections SET config_json = json_object('touched', hex(randomblob(4))) WHERE id = ?", janeMail);
+  });
+  await reconciled();
 }
 
 /** New mail arriving on one person's connection, matched to this Sidekick's deliveries. */
@@ -118,8 +130,9 @@ const admit = (delivery: Awaited<ReturnType<typeof mail>>[number], verdicts: Rec
   stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId, event: delivery.event,
     payloadHash: delivery.payloadHash, ...verdicts });
 
-const met = { admit: true, code: "condition_met" as const, confidence: 0.9, model: "jev-test" };
-const notMet = { admit: false, code: "condition_not_met" as const, confidence: 0.9, model: "jev-test" };
+const FILTER = "The email is about a pre-seed investment round.";
+const met = { admit: true, code: "condition_met" as const, confidence: 0.9, model: "jev-test", conditions: [FILTER] };
+const notMet = { admit: false, code: "condition_not_met" as const, confidence: 0.9, model: "jev-test", conditions: [FILTER] };
 
 describe("Sidekick sources", () => {
   it("starts a Sidekick on a person's mail through that person's source, whether or not they are a delegate", async () => {
@@ -185,15 +198,18 @@ describe("Sidekick sources", () => {
 
   it("holds a person's events to the filter they approved, and nobody else's", async () => {
     await watchingMail();
-    const asked = await ask([jane], "The email is about a pre-seed investment round.");
+    const asked = await ask([jane], FILTER);
     await stub().sidekickDecideSourceRequest({ ...address, requestId: asked.requests[0]!.requestId, userId: jane, decision: "approve" });
     await reconciled();
 
     const fromJane = (await mail(janeMail, jane, "Lunch on Friday?"))[0]!;
     // No verdict: refused, with the filter to judge.
     expect(await admit(fromJane)).toEqual({ admitted: false, outcomeCode: "sidekick_source_condition_unjudged",
-      judge: { conditions: [], sourceConditions: ["The email is about a pre-seed investment round."], connectorType: "google" } });
+      judge: { conditions: [], sourceConditions: [FILTER], connectorType: "google" } });
     expect(await admit(fromJane, { sourceVerdict: notMet })).toEqual({ admitted: false, outcomeCode: "sidekick_source_condition_not_met" });
+    // A verdict on a filter that is not hers now, as when she approved another while the classifier ran, admits nothing.
+    expect(await admit(fromJane, { sourceVerdict: { ...met, conditions: ["The email mentions money."] } }))
+      .toEqual({ admitted: false, outcomeCode: "sidekick_source_condition_changed" });
     expect(await runs()).toEqual([]);
     expect(await admit(fromJane, { sourceVerdict: met })).toMatchObject({ admitted: true });
 
@@ -206,15 +222,79 @@ describe("Sidekick sources", () => {
   it("keeps a person's own filter when the definition is saved again", async () => {
     await watchingMail();
     // Asking for one's own account is approved by the act of asking.
-    const own = await ask([creator], "The email is about a pre-seed investment round.");
+    const own = await ask([creator], FILTER);
     expect(own.requests.map((request) => request.state)).toEqual(["approved"]);
     await stub().sidekickSubmitDefinition({ ...address, draft: { ...definition, instructions: "Update the dashboard, briefly." },
       evaluatorRules: rules, submittedByRunId: null });
     await stub().sidekickApply({ ...address, actor: actor() });
     const listed = SidekickSourcesResultSchema.parse(await stub().sidekickReadSources({ ...address, actor: actor() }));
     expect(listed.sources.map((source) => ({ connection: source.connectionId, condition: source.condition }))).toEqual([
-      { connection: creatorMail, condition: "The email is about a pre-seed investment round." },
+      { connection: creatorMail, condition: FILTER },
     ]);
+  });
+
+  it("adds nothing of a saver's when a save adds no rule", async () => {
+    await watchingMail();
+    await stub().sidekickWithdrawSource({ ...address, userId: creator, connectionId: creatorMail });
+    await reconciled();
+    expect(await registered()).toEqual([]);
+    // The same rule, other words in the instructions: no rule is new, so the saver's mailbox is not let back in.
+    await stub().sidekickSubmitDefinition({ ...address, draft: { ...definition, instructions: "Update the dashboard, briefly." },
+      evaluatorRules: rules, submittedByRunId: null });
+    await stub().sidekickApply({ ...address, actor: actor() });
+    await reconciled();
+    expect(SidekickSourcesResultSchema.parse(await stub().sidekickReadSources({ ...address, actor: actor() })).sources).toEqual([]);
+    expect(await registered()).toEqual([]);
+  });
+
+  it("carries a rule about a whole account only to an account whose owner approved a request", async () => {
+    await watchingMail();
+    const asked = await ask([jane]);
+    await stub().sidekickDecideSourceRequest({ ...address, requestId: asked.requests[0]!.requestId, userId: jane, decision: "approve" });
+    await reconciled();
+    expect(await registered()).toEqual([creatorMail, janeMail]);
+    // The same source as the migration made it from a delegate's own rule: it stands for that rule
+    // and does not turn the creator's rule into all of Jane's mail.
+    await stored("UPDATE sidekick_sources SET origin = 'migration', request_id = NULL WHERE user_id = ?", jane);
+    expect(await registered()).toEqual([creatorMail]);
+    expect(await mail(janeMail, jane, "Seed round intro")).toEqual([]);
+    await stored("UPDATE sidekick_sources SET origin = 'own_definition' WHERE user_id = ?", jane);
+    expect(await registered()).toEqual([creatorMail]);
+  });
+
+  it("acts as the person whose mail started the run when they are a delegate, and as another delegate when they are not", async () => {
+    await watchingMail();
+    const asked = await ask([jane]);
+    await stub().sidekickDecideSourceRequest({ ...address, requestId: asked.requests[0]!.requestId, userId: jane, decision: "approve" });
+    await reconciled();
+    const acting = async (connectionId: string, owner: string) => {
+      const delivery = (await mail(connectionId, owner, "Term sheet"))[0]!;
+      expect(await admit(delivery)).toMatchObject({ admitted: true });
+      return (await runs()).at(-1)!.coordinator_user_id;
+    };
+    // Jane lends events and no account: her mail's run acts as the one delegate there is.
+    expect(await acting(janeMail, jane)).toBe(creator);
+    // Approving made her a reader, so she can lend her accounts too. Her mail's run then acts as her.
+    await setDelegation(jane, true);
+    expect(await acting(janeMail, jane)).toBe(jane);
+    expect(await acting(creatorMail, creator)).toBe(creator);
+  });
+
+  it("decides who may ask from the stored role, whatever role the caller names", async () => {
+    await watchingMail();
+    // An Organization Sidekick somebody else made: its managers are its author and the Organization's admins.
+    const shared = "00000000-0000-7000-8000-00000000ce07";
+    await env.DB.prepare("UPDATE workspace_members SET role='admin' WHERE workspace_id=? AND user_id=?").bind(workspaceId, outsider).run();
+    await stub().sidekickCreate({ workspaceId, automationId: shared, authorUserId: creator, scope: "workspace", authorityGeneration: 1 });
+    const asking = (userId: typeof creator, actorRole: "admin" | "member" | null) => runInDurableObject(stub(), (instance) =>
+      instance.sidekickRequestSources({ workspaceId, automationId: shared, actorName: "Somebody",
+        actor: { userId, actorRole, participantOfOwningWorkstream: false },
+        ask: { userIds: [creator], connectorType: "google", eventTypes: [eventType] } })
+        .then((result) => result.requests.map((request) => request.state), (error: { code?: string }) => error.code));
+    // An agent's tool knows no role: the admin is still an admin.
+    expect(await asking(outsider, null)).toEqual(["pending"]);
+    // A member is not made an admin by saying so.
+    expect(await asking(jane, "admin")).toBe("sidekick_source_request_requires_manager");
   });
 
   it("answers a repeated ask with the requests it already made, even after they were answered", async () => {
@@ -227,6 +307,24 @@ describe("Sidekick sources", () => {
     const again = await repeatable();
     expect(again.requests.map((request) => ({ id: request.requestId, state: request.state })))
       .toEqual([{ id: first.requests[0]!.requestId, state: "declined" }]);
+  });
+
+  it("answers a repeated ask with a request that was already waiting when it asked, and after the person has left", async () => {
+    await watchingMail();
+    const waiting = (await ask([jane])).requests[0]!.requestId;
+    const operationId = crypto.randomUUID();
+    const repeatable = () => stub().sidekickRequestSources({ ...address, actor: actor(), actorName: "Adam",
+      ask: { userIds: [jane], connectorType: "google", eventTypes: [eventType], operationId } });
+    // The same thing asked again finds the request that is waiting and makes no second one.
+    expect((await repeatable()).requests.map((request) => request.requestId)).toEqual([waiting]);
+    await stub().sidekickDecideSourceRequest({ ...address, requestId: waiting, userId: jane, decision: "approve" });
+    // Jane leaves, as the Organization learns it: the row goes and the relationship event follows.
+    await changeRelationships(env, workspaceId, [jane],
+      env.DB.prepare("DELETE FROM workspace_members WHERE workspace_id=? AND user_id=?").bind(workspaceId, jane));
+    expect((await repeatable()).requests.map((request) => ({ id: request.requestId, state: request.state })))
+      .toEqual([{ id: waiting, state: "approved" }]);
+    expect(await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      "SELECT count(*) AS count FROM sidekick_source_requests WHERE sidekick_id = ?", automationId).one().count)).toBe(1);
   });
 });
 
@@ -253,6 +351,25 @@ describe("a run nobody is behind", () => {
       .toMatchObject({ outcome: "continue", executionPrincipal: { type: "workspace", workspaceId } });
     expect(await stub().sidekickContinueRun({ ...address, runId: run!.run_id, sender: sender(outsider) }))
       .toEqual({ outcome: "refused", code: "run_continuation_requires_manager" });
+  });
+
+  it("stays stopped where it had already stopped for want of a delegate, until somebody resumes it", async () => {
+    await watchingMail();
+    await withdrawDelegation(creator);
+    // As an earlier build left a Sidekick whose last delegate withdrew.
+    await runInDurableObject(stub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE automation_directory SET delegation_attention_code = 'no_eligible_delegate' WHERE automation_id = ?", automationId);
+    });
+    const started = async () => {
+      const delivery = (await mail(creatorMail, creator, "Term sheet"))[0]!;
+      expect(await admit(delivery)).toMatchObject({ admitted: true });
+      return (await runs()).at(-1)!.state;
+    };
+    expect(await started()).toBe("needs_input");
+    await stub().sidekickPause({ ...address, actor: actor() });
+    await stub().sidekickResume({ ...address, actor: actor() });
+    await reconciled();
+    expect(await started()).toBe("pending");
   });
 
   it("is handed no event content once the person's source is gone", async () => {

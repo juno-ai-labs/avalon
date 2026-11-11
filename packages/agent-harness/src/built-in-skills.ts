@@ -404,7 +404,12 @@ Follow the branch that matches the request:
 
 For a supported event, use a \`connector_activity\` trigger when its filter
 fields can express the requested match. Use \`semantic_activity\` when each event
-also needs to be checked against a written condition. Use \`webhook\` when the
+also needs to be checked against a written condition, and the account watched
+is the person's you are working for or an Organization connection. When
+another person's own account should start the Sidekick, load
+\`setting-up-a-filtered-trigger\` instead: the topic goes in that person's
+source filter, which they approve, and the trigger stays a plain
+\`connector_activity\` one. Use \`webhook\` when the
 event belongs to a webhook connection the Organization has already set up.
 Inspect which resource types and filter fields the event supports.
 

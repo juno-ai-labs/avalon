@@ -61,7 +61,6 @@ export const SIDEKICK_SOURCE_SCHEMA_STATEMENTS = [
     person_name TEXT,
     place_parent_kind TEXT CHECK (place_parent_kind IS NULL OR place_parent_kind IN ('canvas', 'automation')),
     place_parent_id TEXT,
-    operation_id TEXT,
     created_at INTEGER NOT NULL CHECK (created_at >= 0),
     decided_at INTEGER CHECK (decided_at IS NULL OR decided_at >= 0),
     CHECK ((place_parent_kind IS NULL) = (place_parent_id IS NULL))
@@ -72,9 +71,15 @@ export const SIDEKICK_SOURCE_SCHEMA_STATEMENTS = [
   `CREATE INDEX sidekick_source_requests_by_sidekick ON sidekick_source_requests(sidekick_id, created_at)`,
   `CREATE INDEX sidekick_source_requests_by_place ON sidekick_source_requests(place_parent_kind, place_parent_id)
      WHERE place_parent_id IS NOT NULL`,
-  // A retried ask finds what it already asked by its operation.
-  `CREATE INDEX sidekick_source_requests_by_operation ON sidekick_source_requests(sidekick_id, operation_id)
-     WHERE operation_id IS NOT NULL`,
+  // What one asking operation answered with, in order: the requests it made
+  // and the waiting ones it found. A retried ask reads its answer back here.
+  `CREATE TABLE sidekick_source_request_operations (
+    sidekick_id TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    request_id TEXT NOT NULL,
+    PRIMARY KEY (sidekick_id, operation_id, position)
+  ) STRICT`,
   `INSERT INTO sidekick_sources
      (sidekick_id, user_id, connection_id, connector_type, event_types_json, condition, membership_incarnation,
       origin, request_id, approved_at, updated_at)
@@ -132,7 +137,6 @@ export interface SidekickSourceRequestWrite {
   requestedByUserId: string;
   requestedByName: string;
   place: { parentKind: "canvas" | "automation"; parentId: string } | null;
-  operationId: string | null;
 }
 
 type SourceRow = {
@@ -149,7 +153,6 @@ const SOURCE_COLUMNS = `sidekick_id, user_id, connection_id, connector_type, eve
   origin, request_id, approved_at, updated_at`;
 const REQUEST_COLUMNS = `request_id, sidekick_id, user_id, connector_type, event_types_json, condition, state,
   requested_by_user_id, requested_by_name, place_parent_kind, place_parent_id, created_at, decided_at`;
-const REQUEST_INSERT_COLUMNS = `${REQUEST_COLUMNS}, operation_id`;
 
 function source(row: SourceRow): SidekickSource {
   return SidekickSourceSchema.parse({
@@ -230,12 +233,24 @@ export class SidekickSourceStorage {
     ).toArray().map(request);
   }
 
-  /** What one asking operation already asked, in the order it asked. */
+  /** What one asking operation already answered with, in the order it asked. */
   requestsForOperation(sidekickId: string, operationId: string): SidekickSourceRequest[] {
     return this.storage.sql.exec<RequestRow>(
-      `SELECT ${REQUEST_COLUMNS} FROM sidekick_source_requests WHERE sidekick_id = ? AND operation_id = ?
-        ORDER BY created_at, request_id`, sidekickId, operationId,
+      `SELECT ${REQUEST_COLUMNS.split(",").map((column) => `asked.${column.trim()}`).join(", ")}
+         FROM sidekick_source_request_operations operation
+         JOIN sidekick_source_requests asked ON asked.request_id = operation.request_id
+        WHERE operation.sidekick_id = ? AND operation.operation_id = ? ORDER BY operation.position`, sidekickId, operationId,
     ).toArray().map(request);
+  }
+
+  /** Keep an asking operation's whole answer, the waiting requests it found included. */
+  recordOperation(sidekickId: string, operationId: string, requestIds: readonly string[]): void {
+    for (const [position, requestId] of requestIds.entries()) {
+      this.storage.sql.exec(
+        `INSERT INTO sidekick_source_request_operations (sidekick_id, operation_id, position, request_id) VALUES (?, ?, ?, ?)`,
+        sidekickId, operationId, position, requestId,
+      );
+    }
   }
 
   readRequest(requestId: string): SidekickSourceRequest | null {
@@ -259,12 +274,11 @@ export class SidekickSourceStorage {
       now, write.sidekickId, write.userId, write.connectorType,
     ).toArray()[0];
     const created = this.storage.sql.exec<RequestRow>(
-      `INSERT INTO sidekick_source_requests (${REQUEST_INSERT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, NULL, ?)
+      `INSERT INTO sidekick_source_requests (${REQUEST_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, NULL)
        RETURNING ${REQUEST_COLUMNS}`,
       write.requestId, write.sidekickId, write.userId, write.connectorType,
       JSON.stringify([...new Set(write.eventTypes)].sort()), write.condition,
       write.requestedByUserId, write.requestedByName, write.place?.parentKind ?? null, write.place?.parentId ?? null, now,
-      write.operationId,
     ).one();
     return { request: request(created), replaced: replaced ? request(replaced) : null };
   }

@@ -249,33 +249,6 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
-### 2026-11-10 — `sys.color.success.on` is the ink over a solid success fill
-
-**What changed:** `sys.color.success.on` is new: `#ffffff` in light and
-`#08150e` in dark, read over a `success.strong` fill. Its first reader is the
-chosen Approve of a Sidekick source request
-([`shared-ui.md`](shared-ui.md#sidekick-sources)); the chosen Decline is
-`danger.base` under the existing `danger.on`.
-
-**Why:** The owner asked for a filled green Approve beside a filled red
-Decline. Danger already had a solid pair; success had no ink. Its `fill` and
-`fill-edge` are a pale filled control, which beside a solid red reads as the
-weaker of two equal choices. The fill is `strong`, not `base`: white on light
-`base` (`#4f8271`) is 4.41:1, under 4.5:1 for button text, where on `strong`
-it is 6.16:1, and the dark ink on dark `strong` is 9.89:1.
-
-**Considered and rejected:** `sys.color.text.on-inverse`, whose two values
-would have worked. It names text on an inverted surface and moves with the
-neutral ramp, not with the success hue. A pale Decline to match the pale
-`success.fill`: there is no `danger.fill`, and two washes lose the "filled
-means chosen" reading against the outlines.
-
-**Consequences:** A solid positive fill is `success.strong` under
-`success.on`. `base` under `on` fails contrast in light, so do not pair them.
-The pair's outlines mix the hue towards transparent rather than naming
-`edge`, because `success.edge` and `danger.edge` vanish against the dark
-elevated card the request is drawn on.
-
 ### 2026-10-18 — A dark phone no longer opens the Home Screen app on white
 
 **What changed:** `apps/browser/index.html` carries an inline rule that paints

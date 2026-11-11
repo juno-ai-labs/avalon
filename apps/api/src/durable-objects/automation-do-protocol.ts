@@ -205,7 +205,14 @@ export const AutomationExternalEventAdmissionSchema = z.strictObject({
    * condition, and separate from `conditionVerdict` because the two filters
    * have different owners and both must hold.
    */
-  sourceVerdict: AutomationSemanticConditionVerdictSchema.optional(),
+  sourceVerdict: AutomationSemanticConditionVerdictSchema.extend({
+    /**
+     * The conditions this verdict judged, as the first call returned them. A
+     * person's filter can change while the classifier runs; a verdict on a
+     * filter that is no longer theirs admits nothing.
+     */
+    conditions: z.array(z.string()),
+  }).optional(),
 });
 export type AutomationExternalEventAdmission = z.infer<typeof AutomationExternalEventAdmissionSchema>;
 

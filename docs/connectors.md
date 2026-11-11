@@ -197,19 +197,23 @@ tools are opted in explicitly, while hosted MCP schemas/results remain untouched
 
 - A personal connection can be used only by its owner principal.
 - A workspace connection is an organization capability: every ordinary conversation in that Organization (a Canvas's Chat, a Sidekick's) receives all tools granted to the connection. Those tool calls execute as the workspace principal, even when the run was started by a member.
-- Sidekicks retain configured source bindings; delegation and the selected operation identity govern their use independently of ownership scope.
+- Sidekicks retain configured source bindings. Whose events may start a Sidekick is its sources' answer; delegation and the selected operation identity govern which accounts a run's tools use, independently of ownership scope.
 - A conversation participant does not expose their personal connections by joining.
 - Tools require both a manifest capability and a capability recorded on the connection.
 - Credentials are decrypted only for the duration of a backend operation.
 
-Sidekick event matching and delivery use that owner's eligible consent rather
-than the Sidekick's ownership scope. An Organization-owned Sidekick (or one that a retired Thread owned)
-can receive a personal event only while the owner is an eligible delegate;
-restricted workspace events require an eligible delegate inside the real
-audience. This standing consent covers the Sidekick's configured sharing and
-existing shared history. It does not widen ordinary conversation attachments or
-connector event visibility. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
-owns the common admission policy, coordinator identity and migration.
+Sidekick event matching and delivery read the Sidekick's **sources**, never
+its delegation and never its ownership scope. A personal event enters only
+while the connection's owner holds an eligible source for that connection and
+event type; an event restricted to an audience on an Organization connection
+needs the eligible source of somebody in that audience; an event the whole
+Organization can see needs none. A source lends events and no account: it
+does not widen ordinary conversation attachments, connector event visibility
+or what a run's tools may use.
+[`sidekick-sources.md`](sidekick-sources.md#whether-an-event-may-enter) owns
+the rule. Delegation decides only who a run acts as and whose personal
+connections its tools may use
+([Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)).
 
 Hosted MCP personal connections add one more layer without weakening those
 rules. Their static connector descriptor supplies trusted catalog prose and
@@ -1651,29 +1655,18 @@ surface that tells somebody about connector activity reads
 
 **What changed:** Adapters gain an optional `readActivityContent`, and Google
 implements it for new mail: the one message an `email.received` activity
-names. The Sidekick run provisioning consumer calls it and puts the result in
-the run's opening. Sidekick events are also admitted through sources now
-rather than delegation, which
-[`sidekick-sources.md`](sidekick-sources.md) owns; the 2026-10-22 entry below
-describes the rule it replaced.
+names. Sidekick events are now admitted through sources, not delegation; the
+2026-10-22 entry below describes the rule this replaced.
 
-**Why:** A person can now let their mail start a shared Sidekick without
-lending it their account
-([`sidekick-sources.md`](sidekick-sources.md)). A mail event has no body, so
-such a run would have had only a subject and a line of text, and the mailbox's
-read tools are exactly what the person did not lend.
-
-**Considered and rejected:** Putting the body in the event at ingest. Every
-message in every connected mailbox would then be fetched and stored for 90
-days whether or not anything was watching it, where this reads one message for
-one admitted event. Also rejected: a read tool limited to the admitted
-message. It would put an account's tool in the run's inventory and a
-per-argument check behind it, for content the host can simply hand over.
+**Why:** A person can let their mail start a Sidekick without lending their
+account, and a mail event carries no body.
+[`sidekick-sources.md`](sidekick-sources.md#changelog) holds the reasoning
+and what was rejected.
 
 **Consequences:** The method is the host's, never the model's. An adapter
-that implements it must read only what the activity's own `subject` names: a
-version that searched or widened to a thread would turn a person's filtered
-permission into access to their account.
+that implements it reads only what the activity's own `subject` names: one
+that searched or widened to a thread would turn a filtered permission into
+access to the account.
 
 ### 2026-11-09 — Provider webhooks run only on WorkspaceDO authority
 
