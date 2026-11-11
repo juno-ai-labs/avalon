@@ -3206,12 +3206,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       this.sidekickId,
     ));
     if (readers) this.host.noteWriterReaders(this.sidekickId, readers.readers);
-    // A Canvas it is attached to shows its name, state and mark, on its card
+    // A Canvas it is attached to shows its name, state, mark and triggers, on its card
     // and in its menu. Read here for the reason above; the host pushes the
     // Canvas list only when these differ from what it last saw, so a run's
     // own touches cost nothing.
     const face = first(this.sql.exec<{ face: string }>(
-      `SELECT directory.title || '|' || directory.lifecycle || '|' || COALESCE(directory.appearance_json, '') AS face
+      `SELECT directory.title || '|' || directory.lifecycle || '|' || COALESCE(directory.appearance_json, '') || '|'
+              || COALESCE(directory.accepted_definition_revision, '') AS face
          FROM automation_directory directory
         WHERE directory.automation_id = ?1
           AND EXISTS (SELECT 1 FROM sidekick_conversation_attachments

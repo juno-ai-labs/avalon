@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { IdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema, type AutomationSummary, type WorkstreamAppearance } from "@rally/contracts";
 import { logWarn } from "../observability/logger";
-import { parsedAppearance } from "./sidekick-directory-sql";
+import { AUTOMATION_TRIGGER_KINDS_SQL, parsedAppearance } from "./sidekick-directory-sql";
 import {
   CanvasAccessDecisionRequestSchema,
   CanvasAccessDecisionSchema,
@@ -558,10 +558,10 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   sidekicks(viewer?: CanvasActor): CanvasSidekick[] {
     return this.sql.exec<{
       automation_id: string; title: string; lifecycle: "draft" | "active" | "paused"; appearance_json: string | null; made_here: number;
-      scope: string; author_user_id: string; run_as_user_id: string | null;
+      scope: string; author_user_id: string; run_as_user_id: string | null; trigger_kinds: string;
     }>(
       `SELECT directory.automation_id, directory.title, directory.lifecycle, directory.appearance_json, attachment.made_here,
-              directory.scope, directory.author_user_id, directory.run_as_user_id
+              directory.scope, directory.author_user_id, directory.run_as_user_id, ${AUTOMATION_TRIGGER_KINDS_SQL}
          FROM sidekick_conversation_attachments attachment
          JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
         WHERE attachment.parent_kind = 'canvas' AND attachment.parent_id = ? AND attachment.substream_id = '0'
@@ -572,7 +572,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       const appearance = parsedAppearance(row.appearance_json, "automation_appearance", (code) =>
         logWarn(this.host.env, "automation_directory_appearance_invalid", { automation_id: row.automation_id, code }));
       return CanvasSidekickSchema.parse({
-        id: row.automation_id, name: row.title || "New Sidekick", status: row.lifecycle,
+        id: row.automation_id, name: row.title || "New Sidekick", status: row.lifecycle, triggerKinds: JSON.parse(row.trigger_kinds),
         ...(appearance ? { appearance } : {}), madeHere: row.made_here === 1,
         ...(viewer ? { canOpen: sidekickReaderAllows(row, viewer, this.sql) } : {}),
       });
@@ -941,10 +941,10 @@ export function canvasSidebarRows(
   const reader = { userId: viewer.userId, actorRole: viewer.member ? "member" as const : null };
   for (const sidekick of sql.exec<{
     canvas_id: string; automation_id: string; title: string; lifecycle: string; appearance_json: string | null; made_here: number;
-    scope: string; author_user_id: string; run_as_user_id: string | null;
+    scope: string; author_user_id: string; run_as_user_id: string | null; trigger_kinds: string;
   }>(
     `SELECT attachment.parent_id AS canvas_id, directory.automation_id, directory.title, directory.lifecycle,
-            directory.appearance_json, attachment.made_here, directory.scope, directory.author_user_id, directory.run_as_user_id
+            directory.appearance_json, attachment.made_here, directory.scope, directory.author_user_id, directory.run_as_user_id, ${AUTOMATION_TRIGGER_KINDS_SQL}
        FROM sidekick_conversation_attachments attachment
        JOIN automation_directory directory ON directory.automation_id = attachment.automation_id
       WHERE attachment.parent_kind = 'canvas' AND attachment.parent_id IN (SELECT value FROM json_each(?))
@@ -954,7 +954,7 @@ export function canvasSidebarRows(
   ).toArray()) {
     const appearance = parsedAppearance(sidekick.appearance_json, "automation_appearance", () => undefined);
     const held = attached.get(sidekick.canvas_id) ?? [];
-    held.push(CanvasSidekickSchema.parse({ id: sidekick.automation_id, name: sidekick.title || "New Sidekick", status: sidekick.lifecycle,
+    held.push(CanvasSidekickSchema.parse({ id: sidekick.automation_id, name: sidekick.title || "New Sidekick", status: sidekick.lifecycle, triggerKinds: JSON.parse(sidekick.trigger_kinds),
       ...(appearance ? { appearance } : {}), madeHere: sidekick.made_here === 1,
       canOpen: sidekickReaderAllows(sidekick, reader, sql) }));
     attached.set(sidekick.canvas_id, held);

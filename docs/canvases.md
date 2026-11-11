@@ -557,19 +557,30 @@ card grid with Sidekicks; the shared layout is described in
   (`canvasWrittenByRun`), and opens the Sidekick's conversation at it
   (`?run=`); the link carries the run's number in its route state, so the run's
   pill is numbered before the shared conversation has loaded. Viewer presence
-  is a facepile at the preview's top left; the independent **Data** badge at
+  is a facepile at the preview's top left; the independent **Data backed** badge at
   its top right uses the Stored data pop-out row's `IconDatabase` and means
   the Canvas holds a listed database-backed artifact.
-  A static site has no Data badge. Both indicators can appear together. The
+  An active attached Sidekick with a schedule or event trigger adds a
+  **Live updating** pill with the Tabler bolt above the other indicators.
+  Manual-only, paused and draft Sidekicks do not make a Canvas live updating.
+  Trigger kinds travel in the attached Sidekick projection, using the same
+  definition query as the Sidekick directory; this works even when the Canvas
+  reader cannot open the Sidekick. Accepting a new definition refreshes the
+  Canvas list even if the Sidekick name, state and mark stayed the same.
+  A static site has no Data backed badge. Both indicators can appear together. The
   Canvas's attached Sidekicks are a **Sidekick facepile** (`SidekickStack`,
-  `@rally/ui`): overlapping hexagons at the preview's right, under the Data
-  badge when the card has one and in its place when it has none, the first
+  `@rally/ui`): overlapping hexagons inside a pill led by Tabler's `hexagon`
+  icon at the preview's right, under the status
+  pills when the card has them and in their place when it has none, the first
   four and then a count, as `AvatarStack` cuts people off. The stack is named
   as a whole ("Sidekicks: Launch tracker; Digest") and the card's link is
-  described by it beside the Data badge. The
-  preview is decorative; the link describes its Data badge for assistive
+  described by it beside the status pills. Hovering each visible Sidekick mark
+  shows its name through the shared `Tip` primitive. The facepile link sits
+  above the card's stretched link so each mark receives pointer events; it
+  opens the same Canvas and adds no separate keyboard stop. The
+  preview is decorative; the link describes its status pills for assistive
   technology, and the metadata names current viewers. Clicking a face opens
-  the Canvas through the same stretched link as the rest of the card.
+  the same Canvas as the rest of the card.
 - **The mark** (`CanvasMark`) holds the chosen icon, else the row's
   `artifactKind` glyph, in a pastel pair through `markColors`: the chosen
   colour, else a hue stable for the id (`canvasHue`). The home card's preview
@@ -897,6 +908,18 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-10 — Explain a card's Sidekicks and automatic updates
+
+Canvas cards place their Sidekick facepile in a pill with a hexagon icon,
+show each Sidekick's name on hover, call database-backed artifacts
+**Data backed**, and show **Live updating** for active attached Sidekicks with
+schedule or event triggers. Trigger kinds are included in the Canvas projection
+and accepted definition changes refresh it. Looking up only the viewer's
+Sidekick list would miss attached Sidekicks whose own page they cannot open;
+reusing the directory's trigger query keeps the two surfaces consistent without
+extra client requests. Facepile hover targets sit above the stretched card link
+and still open that same Canvas.
 
 ### 2026-11-10 — Keep delegated work visible in a Canvas
 
