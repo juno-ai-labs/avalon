@@ -14,7 +14,7 @@ import { ConversationService } from "./conversation-service";
 
 export async function sendEngineeringMessage(env: Env, input: SendEngineeringMessageInput): Promise<SendEngineeringMessageResult> {
   const message = CreateMessageRequestSchema.parse({ ...input, clientMessageId: input.operationId });
-  const auth = await engineeringUserAuth(env, input.orgId, input.userId, input.operationId);
+  const auth = await engineeringUserAuth(env, input.orgId, input.userId, { operationId: input.operationId });
   // A Canvas id reaches its Chat and a Sidekick id its shared conversation:
   // the parent resolves the kind, and authorizes this user, as the app does.
   const client = await new ConversationService(env, auth).writableClient(input.conversationId);

@@ -1199,7 +1199,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
 
   async remove(input: AutomationActorRequest): Promise<void> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "remove");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
+    // The one call that reads a never-imported row: archiving is how an
+    // operator clears it, and every step below is keyed on the Sidekick's id.
+    const row = this.assertIdentity(this.storedRow(), request.workspaceId, request.automationId);
     await this.assertManager(row, request.actor);
     if (row.lifecycle === "deleted") return;
     this.storage.transactionSync(() => this.archive(Date.now()));
@@ -2937,13 +2939,24 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   /**
    * The Sidekick's row. `region` is set on every row a hosted Sidekick wrote;
    * a row without it is one a retired Organization never imported, and reads
-   * as no Sidekick.
+   * as no Sidekick to everything but `remove`.
    */
   row(): HostedSidekickRow | null {
     const row = first(this.sql.exec<HostedSidekickRow>(
       `SELECT * FROM automation_directory WHERE automation_id = ? AND region IS NOT NULL`, this.sidekickId,
     ));
     return row;
+  }
+
+  /**
+   * The row as stored, imported or not. A never-imported row holds only what
+   * the directory projection carried (most hosted columns are NULL), so read
+   * nothing from it but who may manage it and its lifecycle.
+   */
+  private storedRow(): HostedSidekickRow | null {
+    return first(this.sql.exec<HostedSidekickRow>(
+      `SELECT * FROM automation_directory WHERE automation_id = ?`, this.sidekickId,
+    ));
   }
 
   private assertSidekick(workspaceId: string, automationId: string): HostedSidekickRow {
