@@ -985,6 +985,8 @@ export interface ConversationSurfaceProps {
   conversationName?: string;
   /** A line just over the composer for a mode the host has put it in, such as editing a Sidekick. */
   composerNotice?: React.ReactNode;
+  /** Work delegated by this conversation, supplied by its host's live projection. */
+  composerActivity?: React.ReactNode;
   /** Escape in an empty composer leaves that mode. */
   onComposerCancel?: () => void;
   /**
@@ -1021,6 +1023,7 @@ function ConversationSurfaceContent({
   composerMenuActions: hostMenuActions,
   composerPlaceholder,
   composerNotice,
+  composerActivity,
   conversationName,
   onComposerCancel,
   withoutComposer = false,
@@ -2564,6 +2567,7 @@ function ConversationSurfaceContent({
           {/* Over the composer rather than inside it: the capsule's grid has
               no row for a line of its own. */}
           {!withoutComposer && composerNotice && <div className="composer-mode-notice">{composerNotice}</div>}
+          {!withoutComposer && composerActivity}
           {!withoutComposer && <WorkstreamComposer
             {...(onComposerCancel ? { onCancel: onComposerCancel } : {})}
             api={api ?? undefined}
