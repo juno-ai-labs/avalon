@@ -215,6 +215,7 @@ export async function readOrganizationUsage(
   env: Pick<Env, "DB" | "USAGE_DB" | "BILLING_CONFIG">,
   workspaceId: string,
   nowMs: number,
+  cutoff?: { at: number; quotaMicrousd: number },
 ): Promise<OrganizationUsage | null> {
   const workspace = await workspacePlan(env, workspaceId);
   if (!workspace) return null;
@@ -224,6 +225,25 @@ export async function readOrganizationUsage(
        FROM usage_rollups WHERE workspace_id = ? AND week_start >= ?`,
   ).bind(workspaceId, new Date(period.start - WEEK_MS).toISOString())
     .all<{ week_start: string; period_start: string; quota_microusd: number; organization_microusd: number }>();
+  if (cutoff) {
+    const cutoffWeek = usageWeekStart(workspace.createdAtMs, cutoff.at - 1);
+    if (cutoffWeek < Date.now() - USAGE_EVENTS_D1_RETENTION_DAYS * 24 * 60 * 60 * 1000) {
+      throw new Error('billing_cutoff_history_expired');
+    }
+    for (const row of rows.results) {
+      const weekStart = Date.parse(row.week_start);
+      if (weekStart > cutoffWeek) { row.organization_microusd = 0; continue; }
+      if (weekStart === cutoffWeek) {
+        const partStart = Math.max(weekStart, Date.parse(row.period_start));
+        const partEnd = Math.min(cutoff.at, usagePeriod(workspace.createdAtMs, Date.parse(row.period_start)).end);
+        const sum = await env.USAGE_DB.prepare(`SELECT COALESCE(SUM(cost_microusd), 0) AS total FROM usage_events
+          WHERE workspace_id = ? AND organization_pays = 1 AND occurred_at >= ? AND occurred_at < ?`)
+          .bind(workspaceId, new Date(partStart).toISOString(), new Date(partEnd).toISOString()).first<{ total: number }>();
+        row.organization_microusd = sum!.total;
+        row.quota_microusd = cutoff.quotaMicrousd;
+      }
+    }
+  }
   const result = deriveOrganizationUsage({
     plan: workspace.plan,
     createdAtMs: workspace.createdAtMs,
@@ -235,9 +255,9 @@ export async function readOrganizationUsage(
       organizationMicrousd: row.organization_microusd,
     })),
   });
-  const billing = env.BILLING_CONFIG ? await env.DB.prepare('SELECT overage_enabled FROM billing_accounts WHERE workspace_id = ?')
-    .bind(workspaceId).first<{ overage_enabled: number }>() : null;
-  if (billing) result.overage.billingEnabled = billing.overage_enabled === 1;
+  const billing = env.BILLING_CONFIG ? await env.DB.prepare('SELECT overage_enabled, status, overage_started_at FROM billing_accounts WHERE workspace_id = ?')
+    .bind(workspaceId).first<{ overage_enabled: number; status: string; overage_started_at: number | null }>() : null;
+  if (billing) result.overage.billingEnabled = billing.overage_enabled === 1 && billing.status === 'active' && billing.overage_started_at !== null;
   return result;
 }
 

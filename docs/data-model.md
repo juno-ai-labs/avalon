@@ -105,8 +105,8 @@ D1 migration `0130_model_selector_visibility.sql` adds the Organization profile
 Boolean `workspaces.model_selector_visible` (`0`/`1`, default `0`); see
 [feature flags](feature-flags.md#organization-model-selector-visibility).
 
-D1 migration `0131_billing.sql` adds Organization billing accounts and permanent
-overage settlement receipts. [Stripe billing](stripe-billing.md) owns their lifecycle.
+D1 migration `0131_billing.sql` adds Organization billing accounts, per-subscription
+paid terms, membership-triggered trial awards and permanent overage receipts. [Stripe billing](stripe-billing.md) owns their lifecycle.
 
 ## Message issue reports
 

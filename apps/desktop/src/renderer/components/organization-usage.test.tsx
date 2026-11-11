@@ -356,3 +356,24 @@ describe('Usage in the Organization menu', () => {
     expect(screen.queryAllByRole('menuitem')).toHaveLength(1);
   });
 });
+
+it('keeps the legacy plan picker available when billing status fails', async () => {
+  const api: OrganizationPlanApi = { ...apiAnswering(usage(72)), getBillingStatus: vi.fn(async () => { throw new Error('Billing read failed'); }) };
+  renderSection(api);
+  expect(await screen.findByText(/Billing could not be loaded/)).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+  expect(screen.getByRole('combobox', { name: 'Plan' })).not.toBeDisabled();
+});
+
+it('refreshes billing after returning from hosted checkout while Settings stays mounted', async () => {
+  let subscribed = false;
+  const api: OrganizationPlanApi = { ...apiAnswering(usage(72)), getBillingStatus: vi.fn(async () => ({ enabled: true as const, status: subscribed ? 'active' : 'none', subscribed,
+    trialEndsAt: '2020-01-01T00:00:00Z', overageEnabled: false, offers: [{ id: 'start', name: 'Start', plan: 'starter' as const, currencies: ['usd'], overageAvailable: false }] })) };
+  renderSection(api);
+  expect(await screen.findByText('Continue to checkout')).toBeVisible();
+  expect(screen.getByText(/Starter plan. Trial ended/)).toBeVisible();
+  subscribed = true;
+  fireEvent(window, new Event('focus'));
+  expect(await screen.findByText('Manage billing')).toBeVisible();
+  expect(screen.getByText(/Starter plan · Subscription: active/)).toBeVisible();
+});
