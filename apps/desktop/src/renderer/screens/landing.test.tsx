@@ -60,11 +60,13 @@ describe('the landing route', () => {
   });
 
   it('does not reopen New Sidekick, which would create one on every launch', () => {
+    setDeviceStartupPage('last-opened');
     localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/sidekicks/new');
     expect(open()).toBe('/canvases');
   });
 
   it('opens the Canvases home where a Channel or Thread route was saved before the cutover', () => {
+    setDeviceStartupPage('last-opened');
     localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/channels/general/threads/launch');
     expect(open()).toBe('/canvases');
   });

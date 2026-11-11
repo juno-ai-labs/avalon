@@ -41,11 +41,9 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   // toggle is offered where it could not work.
   launchAtLogin: false,
   launchAtLoginAvailable: false,
-  // Browser development follows the account-level default. There is no
-  // Electron main process here to persist an offline mutation, so the browser
-  // bridge exposes the state but declines writes below.
+  // Native telemetry has no browser runtime. Account consent is read and
+  // saved through the browser shell's identity API instead of this bridge.
   productAnalyticsEnabled: true,
-  productAnalyticsAvailable: false,
   productAnalyticsEffective: true,
   productAnalyticsPreferencePending: false,
   nativeCrashRestartRequired: false,

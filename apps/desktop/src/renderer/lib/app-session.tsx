@@ -113,6 +113,8 @@ export interface AppSessionValue {
   /** A desktop bearer session, or the browser's credential-free cookie session. */
   session: ClientSession | null;
   api: RallyApi | null;
+  /** Browser account API, owned and refreshed by the browser shell. */
+  identityApi?: RallyApi;
   invitationApi: RallyApi | null;
   deepLinkError: string | null;
   exchangingTicket: boolean;

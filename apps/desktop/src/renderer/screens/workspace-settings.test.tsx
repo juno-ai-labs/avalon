@@ -1,4 +1,5 @@
 import "../../../../../tests/isolated-region";
+import { readDevicePreferences } from '../lib/device-preferences';
 import { AccountOnboardingGate } from './guided-onboarding';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { ClientFeatureFlagsSchema, DEFAULT_MEMBER_PREFERENCES,
@@ -2923,6 +2924,7 @@ describe('Organization settings', () => {
     fireEvent.click(startup);
     fireEvent.click(screen.getByRole('option', { name: 'Last Opened' }));
     expect(startup).toHaveTextContent('Last Opened');
+    expect(readDevicePreferences().startupPage).toBe('last-opened');
   });
 
   it('defaults to Stable and switches this Mac to the Faster update channel', async () => {
@@ -2984,30 +2986,6 @@ describe('Organization settings', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Product analytics Preferences' }));
     expect(await screen.findByRole('heading', { name: 'Privacy & diagnostics' })).toBeVisible();
-  });
-
-  it('disables the account preference on a browser bridge that cannot persist it', async () => {
-    getApplicationSettings.mockResolvedValue({
-      lockdownMode: false,
-      lockdownAvailable: false,
-      debugEnabled: false,
-      developerSettingsAvailable: false,
-      pushNotificationsEnabled: true, pushNotificationStatus: "unavailable", notificationBadgeStatus: "unknown", menuBarEnabled: true,
-      menuBarAvailable: false,
-      menuBarPresent: false,
-      launchAtLogin: false,
-      launchAtLoginAvailable: false,
-      productAnalyticsEnabled: true,
-      productAnalyticsAvailable: false,
-      productAnalyticsEffective: true,
-      productAnalyticsPreferencePending: false,
-      nativeCrashRestartRequired: false,
-    });
-    renderSettings();
-    openSettingsSection('Preferences');
-
-    expect(await screen.findByRole('switch', { name: 'Product analytics' })).toBeDisabled();
-    expect(screen.queryByText('Product analytics is managed in the Rally desktop app.')).toBeNull();
   });
 
   it('reports what macOS holds rather than what was asked for', async () => {

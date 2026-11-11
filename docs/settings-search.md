@@ -36,9 +36,8 @@ Account has a **Preferences** child page on web and desktop. **On startup**
 offers **Canvas Homepage** (default) and **Last Opened**, saved per device.
 The Agent section follows with **Show agent work** above **Personal system prompt**.
 **Privacy & diagnostics** sits at the bottom. Its Product analytics toggle saves
-account consent on both web and desktop. Web uses the identity cookie API and
-shows the acknowledged value; failed saves show an error, and version conflicts
-adopt the newer account preference. It requires a connection to save.
+account consent on both web and desktop; [telemetry](telemetry.md#account-preference-in-the-web-app)
+owns persistence and conflict handling. Search targets these controls on Preferences.
 Personal memory review is a separate top-level **Memories** page for members.
 
 The Application page's **Update channel** is a device-local desktop preference.
