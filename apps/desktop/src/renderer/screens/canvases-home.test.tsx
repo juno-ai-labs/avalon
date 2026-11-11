@@ -86,7 +86,7 @@ describe('CanvasesHomeScreen', () => {
       .toEqual(['Q4 revenue review', 'Launch plan', 'Hiring pipeline']);
     expect(within(recent).getByRole('link', { name: 'Launch plan' })).toHaveAccessibleDescription('Data backed');
     expect(within(recent).getByRole('link', { name: 'Q4 revenue review' })).toHaveAccessibleDescription('');
-    expect(await within(recent).findByText(/Maya and Theo are here/)).toBeInTheDocument();
+    expect(within(recent).getAllByText('Only you')).toHaveLength(3);
     // Older rows with no artifact state also stay in Recent.
     expect(within(recent).getByRole('link', { name: 'Hiring pipeline' })).toBeInTheDocument();
     expect(within(recent).getByText('3 Canvases')).toBeInTheDocument();
@@ -170,20 +170,26 @@ describe('CanvasesHomeScreen', () => {
     expect(screen.getByRole('link', { name: 'Manual only' })).toBeInTheDocument();
   });
 
-  it("names the run that wrote a card's newest version and opens the Sidekick's conversation at it", async () => {
+  it('shows the sharing setting and matching icon even when a run wrote the Canvas', () => {
     const sidekickId = '00000000-0000-7000-8000-0000000000e1';
     const runId = '00000000-0000-7000-8000-0000000000f3';
     renderHome(clientWith([
       canvas('00000000-0000-7000-8000-0000000000c1', 'Weekly digest', { createdByUserId: MAYA, writerSidekickId: sidekickId,
         lastEditor: { kind: 'sidekick', id: sidekickId }, lastWrittenBy: { sidekickId, runId, runNumber: 3, sidekickName: 'Digest writer' } }),
-      canvas('00000000-0000-7000-8000-0000000000c2', 'Launch plan', { lastEditor: { kind: 'rally', id: null }, lastWrittenBy: null }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Launch plan', { visibility: 'workspace', lastEditor: { kind: 'rally', id: null } }),
+      canvas('00000000-0000-7000-8000-0000000000c3', 'Shared plan', { visibility: 'participants', presentUserIds: [MAYA] }),
+      canvas('00000000-0000-7000-8000-0000000000c4', 'Private plan'),
     ]));
-    const recent = screen.getByRole('region', { name: 'Recent' });
-    const run = within(recent).getByRole('link', { name: 'Digest writer · run #3' });
-    expect(run).toHaveAttribute('href', `/sidekicks/${sidekickId}?run=${runId}`);
-    // A version no run made keeps the editor's line, with no run to open.
-    expect(within(recent).getByText(/Edited by Rally/)).toBeInTheDocument();
-    expect(within(recent).getAllByRole('link', { name: /run #/ })).toHaveLength(1);
+    const card = (title: string): HTMLElement => screen.getByRole('link', { name: title }).closest('li')!;
+    for (const [title, label, icon] of [
+      ['Weekly digest', 'Only the creator', 'lock'],
+      ['Launch plan', 'Everyone in the Organization', 'building'],
+      ['Shared plan', 'Specific people', 'users'],
+      ['Private plan', 'Only you', 'lock'],
+    ] as const) {
+      const status = within(card(title)).getByText(label);
+      expect(status.previousElementSibling).toHaveClass(`tabler-icon-${icon}`);
+    }
   });
 
   it('orders All, Live and Data first and filters by database-backed artifacts, authorship and search', () => {

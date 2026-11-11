@@ -6949,8 +6949,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-card-body h3 > a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-card-body small { color: var(--av-sys-color-text-muted); display: flex; font-size: 12.5px; gap: 8px; justify-content: space-between; margin-top: 4px; min-width: 0; white-space: nowrap; }
 .canvas-card-body small > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.canvas-card-run { color: inherit; position: relative; text-decoration: none; z-index: 1; }
-.canvas-card-run:hover { color: var(--av-sys-color-text-default); text-decoration: underline; }
+.canvas-sharing-status { align-items: center; display: inline-flex; gap: 5px; max-width: 100%; min-width: 0; vertical-align: top; }
+.canvas-sharing-status > svg { flex-shrink: 0; }
+.canvas-sharing-status > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Sidekicks use the Canvas card shell, carrying their own identity and facts. */
 .sidekick-card-glyph { height: 72px; width: 72px; }
 .sidekick-card-status { position: absolute; right: 12px; top: 12px; }
