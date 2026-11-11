@@ -3,7 +3,7 @@
 Rally ships the same Electron application on macOS arm64 and Linux x64. Linux
 uses AppImage and Debian packages, microphone dictation, and the existing
 Stable/Faster update controls. The browser remains a separate deployment. The landing page and `/start-fast/`
-link directly to `Rally.AppImage` below the macOS download.
+link directly to `Rally.deb` below the macOS download, labeled Linux (.deb).
 
 ## Where the code lives
 
@@ -107,11 +107,12 @@ support for Debian 11 or Ubuntu 20.04 without testing their runtime libraries.
 AppImages need a user-writable location and FUSE support or extraction mode.
 Debian installation needs a desktop privilege agent and package manager.
 
-The landing-page AppImage requires permission to create user namespaces. Stock
+The AppImage requires permission to create user namespaces. Stock
 Ubuntu 24.04 restricts them through AppArmor, so the AppImage can abort with the
 `chrome-sandbox` ownership/mode error unless a host AppArmor profile grants
 `userns` for the executable or the host otherwise permits those namespaces.
-The CI sysctl does not fix that user-facing limitation. Debian installation runs
+The CI sysctl does not fix that user-facing limitation, so the public landing
+pages offer the Debian package. Debian installation runs
 electron-builder's AppArmor-profile setup; the extracted-deb smoke does not run
 that installation hook. Stock Ubuntu AppImage startup and installed-deb sandbox
 setup remain unverified platform acceptance checks.
