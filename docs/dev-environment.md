@@ -497,6 +497,15 @@ message before capturing or clicking the row.
   that a `--hidden` launch still loads the menu's content in the main process,
   and that a deep link delivered to that instance opens the Canvas. See
   [`menu-bar.md`](menu-bar.md).
+- **A live site drawn in the artifact panel.** A site's origin is
+  `https://<stub>-<region>.rallyusercontent.localhost`, and nothing local
+  answers it: the dev runner starts the API, document, Terminal and telemetry
+  Workers, not the artifact-serving one, and there is no local TLS for that
+  name. The panel opens, names the site, and says **Preview unavailable
+  here**, for every site. What a site serves is checked instead through
+  `ArtifactHostDO.fetchThroughFacet` in `test-workers/`, and the Getting
+  Started guide's page with `pnpm preview:canvas-guide`
+  ([`canvas-seeds.md`](canvas-seeds.md)).
 - **macOS packaging, signing, notarization, and Gatekeeper checks.**
   `package:desktop`, `start:desktop:packaged`, and the release publisher are
   macOS-only and must run on a Mac.
@@ -521,6 +530,7 @@ streams.
 | Start the configured Workers (workstation) | `pnpm dev:api` |
 | Global health | `curl -s http://127.0.0.1:8787/health` |
 | Desktop client, headless | see [§4](#4-run-the-desktop-client-headlessly) |
+| Preview the Getting Started guide's site | `pnpm preview:canvas-guide`, then open `http://localhost:8795/__preview` ([`canvas-seeds.md`](canvas-seeds.md)) |
 | Lint / typecheck / test | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
 | Lint, ignoring the cache | `pnpm lint:fresh` |
 

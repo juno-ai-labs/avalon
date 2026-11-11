@@ -49,8 +49,13 @@ agent run is created by onboarding. The unshipped starter columns and removed fi
 
 Joining an organization, as its creator or an invited member, seats the person
 nowhere: General and the Personal Channel went with Channels. The journey ends
-on the Canvases home, whose empty state is **Start from a prompt**, and a
-person's first Canvas is the one they start there.
+on the Canvases home. Creating the Organization asks for one Canvas, the
+**Getting Started with Canvases** guide, which a queued job makes with the
+creator as its owner and the whole Organization as its audience
+([`canvas-seeds.md`](canvas-seeds.md)); it is in the list, unread, by the time
+the journey ends, and people open it themselves. The home's empty state,
+**Start from a prompt**, is therefore what an Organization shows only until
+that job lands, or when the guide is archived and nothing else exists.
 
 Creating an organization prefills its name. `GET /onboarding/organization-suggestion`
 takes the domain of the signed-in person's email and fetches `https://<domain>/`,
@@ -99,7 +104,7 @@ invited and otherwise stays open holding the addresses that failed.
   create sets it again, so a write that failed the first time is repaired.
 - The workspace object owns progress. Generic SQL cannot address its typed-only
   onboarding table.
-- Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt.
+- Finishing onboarding saves completion before opening New; it never creates a workstream or sends an agent prompt. The guide Canvas is asked for by creating the Organization, not by the journey, and no model runs to make it.
 - The visible email list and invitation action authorize sending through the existing workspace service.
 - `connectors` stays in the stage enum, the table's check and the contract, and
   `connectorIds` stays on the journey, because rows written before the step was
