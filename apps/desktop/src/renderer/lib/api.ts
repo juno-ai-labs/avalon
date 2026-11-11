@@ -835,6 +835,7 @@ export class RallyApi {
       name: raw.name,
       region: raw.region,
       timezone: raw.timezone,
+      modelSelectorVisible: raw.modelSelectorVisible ?? false,
       currentUser,
     };
   }
