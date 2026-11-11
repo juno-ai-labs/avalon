@@ -491,6 +491,8 @@ that ask for the inputs each workflow needs.
 inherit its retry behavior. The catalog can be browsed while the Canvas list
 loads because it ships with the renderer.
 
+Pull request [#1560](https://github.com/juno-ai-labs/avalon/pull/1560).
+
 ### 2026-11-11 — Default launches to the Canvas homepage
 
 **What changed:** New launches open Canvases and select its sidebar section.
