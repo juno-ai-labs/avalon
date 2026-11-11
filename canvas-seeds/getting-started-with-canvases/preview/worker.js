@@ -33,7 +33,10 @@ const RALLY_IDEAS = [
 export class PreviewHost extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    this.site = new SiteData(ctx, { ASSETS: env.ASSETS });
+    // Rally's asset reader takes a path as well as a request, as the site's
+    // skill teaches; the local binding wants a whole URL.
+    const assets = (input) => env.ASSETS.fetch(typeof input === "string" ? new Request(`https://site.invalid${input}`) : input);
+    this.site = new SiteData(ctx, { ASSETS: { fetch: assets } });
   }
 
   fetch(request) {

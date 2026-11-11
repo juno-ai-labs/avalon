@@ -11,7 +11,13 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!--
+    For Rally, when you change this site: read README.md in this directory
+    first. This page is the Getting Started guide of a new Organization, and
+    the README says what each of its steps asks of you and what must be kept.
+  -->
   <main class="page">
+    <!-- Rally: putting a team's name here and adding their section is step 4. See "We are …" in README.md. -->
     <header class="intro">
       <p class="eyebrow">Getting started</p>
       <h1><span data-greeting>Welcome.</span> This is a Canvas.</h1>
@@ -38,6 +44,7 @@
           <li class="step" data-step="use_the_page">
             <button type="button" class="step-head" aria-expanded="false">
               <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
               <span class="step-title">Use the page</span>
               <span class="step-where">On this page</span>
             </button>
@@ -57,6 +64,7 @@
           <li class="step" data-step="ask_rally">
             <button type="button" class="step-head" aria-expanded="false">
               <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
               <span class="step-title">Ask Rally to add ideas</span>
               <span class="step-where">In the Chat</span>
             </button>
@@ -81,6 +89,7 @@
           <li class="step" data-step="comment">
             <button type="button" class="step-head" aria-expanded="false">
               <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
               <span class="step-title">Point at something and ask</span>
               <span class="step-where">On this page, then the Chat</span>
             </button>
@@ -100,6 +109,7 @@
           <li class="step" data-step="make_it_yours">
             <button type="button" class="step-head" aria-expanded="false">
               <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
               <span class="step-title">Make this page your team's</span>
               <span class="step-where">In the Chat</span>
             </button>
@@ -128,6 +138,7 @@
           <li class="step" data-step="teammate">
             <button type="button" class="step-head" aria-expanded="false">
               <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
               <span class="step-title">Bring in a teammate</span>
               <span class="step-where">Together</span>
             </button>
@@ -151,6 +162,7 @@
           <li class="step" data-step="own_canvas">
             <button type="button" class="step-head" aria-expanded="false">
               <span class="step-mark" aria-hidden="true"></span>
+              <span class="visually-hidden" data-step-state></span>
               <span class="step-title">Start a Canvas of your own</span>
               <span class="step-where">In Canvases</span>
             </button>
@@ -176,6 +188,7 @@
       </section>
 
       <section class="wall" id="wall" aria-labelledby="wall-title">
+        <!-- Rally: a comment asking to rename this title is step 3. After you publish, record it: see "A comment on the page" in README.md. -->
         <h2 id="wall-title" class="wall-title">Team wall</h2>
         <p class="wall-sub">What should we build first? Add an idea, then vote for the ones you like.</p>
         <form class="add-card" data-add-card>
