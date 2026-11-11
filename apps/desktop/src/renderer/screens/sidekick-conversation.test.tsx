@@ -193,14 +193,12 @@ describe("a Sidekick's shared conversation", () => {
     await waitFor(() => expect(createMessage).toHaveBeenCalled());
     expect(createMessage.mock.calls[0]![0]).not.toHaveProperty('intent');
   });
-  it.each([false, true])('uses the Organization model visibility setting: %s', async (visible) => {
-    api.getWorkspace.mockResolvedValueOnce({ id: 'w', name: 'Team', region: 'global', timezone: 'UTC', modelSelectorVisible: visible,
+  it('shows the model control when the Organization enables it', async () => {
+    api.getWorkspace.mockResolvedValueOnce({ id: 'w', name: 'Team', region: 'global', timezone: 'UTC', modelSelectorVisible: true,
       currentUser: { id: AUTHOR, name: 'Viewer', email: 'viewer@example.test', timezone: 'UTC' } });
     renderSidekick(AUTHOR);
     await screen.findByRole('textbox', { name: 'Message Incident triage and the team' });
-    await waitFor(() => expect(api.getWorkspace).toHaveBeenCalled());
-    if (visible) expect(await screen.findByRole('button', { name: /^Model:/u })).toBeDisabled();
-    else expect(screen.queryByRole('button', { name: /^Model:/u })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^Model:/u })).toBeDisabled();
   });
 
   it('hides the model control when the refreshed Organization setting turns off', async () => {

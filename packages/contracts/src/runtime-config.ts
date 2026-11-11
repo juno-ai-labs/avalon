@@ -6,6 +6,7 @@ export const FEATURE_FLAGS = {
   developerSettings: false,
   multipleWorkspacesEnabled: true,
   pushNotificationsEnabled: true,
+  // Server-only creation default; never published as a client feature flag.
   modelSelectorVisibleForNewOrgs: false,
 } as const satisfies ClientFeatureFlags & { modelSelectorVisibleForNewOrgs: boolean };
 

@@ -59,11 +59,11 @@ export interface MessageAuthor {
 }
 
 export interface Workspace {
-  modelSelectorVisible?: boolean;
   id: string;
   name: string;
   region: Region;
   timezone: string;
+  modelSelectorVisible?: boolean;
   currentUser: WorkspaceMember;
 }
 

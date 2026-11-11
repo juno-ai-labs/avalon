@@ -74,7 +74,7 @@ The regional bridge uses D1 only for identity and routing:
 
 | Tool | Route lookup | Authoritative read or write |
 | --- | --- | --- |
-| `inspect_org_settings`, `update_org_settings` | Resolve the Organization in exactly one region | Regional D1 `workspaces.model_selector_visible`; an audited, idempotent write publishes `workspace_profile` to refresh clients |
+| `inspect_org_settings`, `update_org_settings` | Resolve the Organization in exactly one region | Regional D1 [Organization presentation settings](feature-flags.md#organization-model-selector-visibility) |
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick`, `archive_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause, resume or archive, which call HostedSidekick in WorkspaceDO |
