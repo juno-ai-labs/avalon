@@ -1636,14 +1636,18 @@ export function MarkdownBody({
           return (
             <MarkdownCollapseSection
               heading={(
-                <SettledMarkdownSegment
-                  components={headingComponents}
-                  rehypePlugins={rehypePlugins}
-                  rehypeOptions={rehypeOptions}
-                  remarkPlugins={remarkPlugins}
-                  source={part.heading}
-                  urlTransform={urlTransform}
-                />
+                // A streaming section with no body yet is still typing its
+                // heading, which can hold a link to a part-typed host.
+                <HostFaviconHold.Provider value={streamThis && part.body.trim() === ''}>
+                  <SettledMarkdownSegment
+                    components={headingComponents}
+                    rehypePlugins={rehypePlugins}
+                    rehypeOptions={rehypeOptions}
+                    remarkPlugins={remarkPlugins}
+                    source={part.heading}
+                    urlTransform={urlTransform}
+                  />
+                </HostFaviconHold.Provider>
               )}
               id={part.id}
               key={part.id}
