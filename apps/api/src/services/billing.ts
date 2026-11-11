@@ -6,17 +6,23 @@ import { diagnosticErrorCode, logWarn } from '../observability/logger';
 import { billingConfig } from './billing-config';
 import { stripe, StripeIdSchema, StripeUrlSchema } from './stripe';
 import { publishOrganizationUsage, readOrganizationUsage, setWorkspacePlan } from './usage-metering';
+import { ensureStripeCustomer, synchronizeStripeProfile, synchronizeStripeUsage } from './stripe-billing-sync';
 
 export interface BillingAccount {
   workspace_id: string;
   customer_id: string | null;
   subscription_id: string | null;
+  free_subscription_id: string | null;
+  trial_award_synced_end: number | null;
   checkout_generation: string;
   status: string;
   offer_id: string | null;
   currency: string | null;
   trial_started_at: number;
   trial_ends_at: number;
+  trial_base_ends_at: number;
+  team_trial_ends_at: number;
+  team_trial_members: number;
   trial_extended: number;
   overage_enabled: number;
   overage_started_at: number | null;
@@ -111,11 +117,11 @@ async function subscriptionHistory(env: Env, customerId: string) {
   do {
     const page = await stripe(env, `subscriptions?customer=${customerId}&status=all&limit=100${after ? `&starting_after=${after}` : ''}`,
       z.object({ has_more: z.boolean(), data: z.array(SubscriptionSchema) }));
-    const live = page.data.find((item) => !['canceled', 'incomplete_expired'].includes(item.status));
+    const live = page.data.find((item) => item.metadata.billing_role !== 'free_record' && !['canceled', 'incomplete_expired'].includes(item.status));
     // A canceled pilot still counts, including its zero-dollar invoices. An
     // expired incomplete payment never activated a subscription. Unknown retired
     // prices count as paid; keep their catalog entries for reconciliation.
-    hasPaidSubscription ||= page.data.some((item) => item.status !== 'incomplete_expired' && (
+    hasPaidSubscription ||= page.data.some((item) => item.metadata.billing_role !== 'free_record' && item.status !== 'incomplete_expired' && (
       Boolean(item.metadata.pilot_coupon_id) || item.metadata.paid_subscription === 'true' ||
       item.items.data.some(({ price }) => price.unit_amount === 0 ? false : price.unit_amount != null ? true :
         !config.offers.some((offer) => offer.priceId === price.id && offer.plan === 'starter'))));
@@ -126,12 +132,15 @@ async function subscriptionHistory(env: Env, customerId: string) {
 }
 
 async function refreshUnderLock(env: Env, account: BillingAccount) {
+  if (billingConfig(env).synchronization) account = { ...account, customer_id: await ensureStripeCustomer(env, account) };
   if (!account.customer_id) return { ...account, hasPaidSubscription: false };
   const { live, hasPaidSubscription } = await subscriptionHistory(env, account.customer_id);
   if (live) await reconcileSubscription(env, account, live);
   else if (hasLiveSubscription(account)) {
     await reconcileSubscription(env, account, await stripe(env, `subscriptions/${account.subscription_id}`, SubscriptionSchema));
   }
+  const refreshed = await billingAccount(env, account.workspace_id);
+  await synchronizeStripeProfile(env, refreshed);
   return { ...await billingAccount(env, account.workspace_id), hasPaidSubscription };
 }
 
@@ -231,6 +240,10 @@ export async function syncSubscription(env: Env, customerId: string, subscriptio
   await withBillingLock(env, account.workspace_id, async () => {
     const current = await billingAccount(env, account.workspace_id);
     const subscription = await stripe(env, `subscriptions/${subscriptionId}`, SubscriptionSchema);
+    if (subscription.metadata.billing_role === 'free_record') {
+      await synchronizeStripeProfile(env, current);
+      return;
+    }
     if (current.subscription_id && current.subscription_id !== subscriptionId) {
       // Old cancellation deliveries must not downgrade a later subscription.
       if (hasLiveSubscription(current) || ['canceled', 'incomplete_expired'].includes(subscription.status)) return;
@@ -348,8 +361,23 @@ async function finalizeCanceledOverage(env: Env, term: BillingTerm) {
 
 export async function settleBillingAccounts(env: Env) {
   if (!env.BILLING_CONFIG) return;
-  const accounts = await env.DB.prepare('SELECT DISTINCT workspace_id FROM billing_terms').all<{ workspace_id: string }>();
+  const synchronization = billingConfig(env).synchronization;
+  const accounts = synchronization
+    ? await env.DB.prepare(`SELECT w.id AS workspace_id FROM workspaces w LEFT JOIN billing_accounts b ON b.workspace_id = w.id
+        WHERE w.region = ? AND (w.abandoned_at IS NULL OR b.customer_id IS NOT NULL)`).bind(env.AVALON_REGION).all<{ workspace_id: string }>()
+    : await env.DB.prepare('SELECT DISTINCT workspace_id FROM billing_terms').all<{ workspace_id: string }>();
   for (const account of accounts.results) {
+    if (synchronization) {
+      try {
+        await billingAccount(env, account.workspace_id);
+        await withBillingLock(env, account.workspace_id, async () => {
+          const refreshed = await refreshUnderLock(env, await billingAccount(env, account.workspace_id));
+          await synchronizeStripeUsage(env, refreshed);
+        });
+      } catch (error) {
+        logWarn(env, 'billing_synchronization_failed', { workspace_id: account.workspace_id, error_code: diagnosticErrorCode(error, 'billing_synchronization_failed') });
+      }
+    }
     try { await billClosedOverage(env, account.workspace_id); }
     catch (error) {
       logWarn(env, 'billing_settlement_failed', { workspace_id: account.workspace_id, error_code: diagnosticErrorCode(error, 'billing_settlement_failed') });

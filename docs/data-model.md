@@ -106,7 +106,9 @@ Boolean `workspaces.model_selector_visible` (`0`/`1`, default `0`); see
 [feature flags](feature-flags.md#organization-model-selector-visibility).
 
 D1 migration `0131_billing.sql` adds Organization billing accounts, per-subscription
-paid terms, membership-triggered trial awards and permanent overage receipts. [Stripe billing](stripe-billing.md) owns their lifecycle.
+paid terms, membership-triggered trial awards and permanent overage receipts.
+Accounts also retain the zero-price Stripe trial-record ID and last synchronized
+award deadline. [Stripe billing](stripe-billing.md) owns their lifecycle.
 
 ## Message issue reports
 
@@ -1062,6 +1064,10 @@ one row per workspace per quota week and monthly period, kept for good. Every
 event is also in the Iceberg table `avalon.usage_events` in R2. Overage is not
 stored; it is derived on read. Usage migration 0003 rebuilds `usage_plan_changes`
 without the old two-plan CHECK constraints, preserving its rows and primary key.
+Usage migration 0004 creates `billing_usage_hours`, keyed by Organization, UTC hour
+and payer, backfills retained events, and maintains totals/revisions with an insert
+trigger. Sent/confirmed revisions and provider diagnostics survive raw-event
+retention and support replay of absolute hourly totals.
 See [usage metering](usage-metering.md).
 
 ## Push devices

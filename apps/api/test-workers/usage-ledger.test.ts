@@ -3,6 +3,7 @@ import { reset } from "cloudflare:test";
 import { beforeEach, expect, it } from "vitest";
 import type { UsageEvent } from "@rally/contracts/usage";
 import usageLedgerMigration from "../../../packages/db/usage-migrations/0001_usage_ledger.sql?raw";
+import stripeUsageMigration from "../../../packages/db/usage-migrations/0004_stripe_usage_sync.sql?raw";
 import { applyUsageBatch } from "../src/services/usage-metering";
 
 /**
@@ -24,6 +25,7 @@ function event(eventId: string): UsageEvent {
 beforeEach(async () => {
   await reset();
   await env.USAGE_DB.exec(usageLedgerMigration.replace(/--[^\n]*\n/g, "").replace(/\s*\n\s*/g, " "));
+  await env.USAGE_DB.exec(stripeUsageMigration.replace(/--[^\n]*\n/g, "").replace(/\s*\n\s*/g, " "));
   await env.DB.batch([
     env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, plan TEXT NOT NULL DEFAULT 'starter', created_at TEXT NOT NULL)"),
     env.DB.prepare("INSERT INTO workspaces (id, created_at) VALUES (?, ?)").bind(WORKSPACE, CREATED),
@@ -38,4 +40,6 @@ it("counts an event once when two batches carrying it overlap", async () => {
 
   const rows = await env.USAGE_DB.prepare("SELECT quota_microusd, organization_microusd FROM usage_rollups").all();
   expect(rows.results).toEqual([{ quota_microusd: 10_000_000, organization_microusd: 3_000_000 }]);
+  const outbox = await env.USAGE_DB.prepare('SELECT amount_microusd, revision, sent_revision FROM billing_usage_hours').all();
+  expect(outbox.results).toEqual([{ amount_microusd: 3_000_000, revision: 3, sent_revision: 0 }]);
 });
