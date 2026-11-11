@@ -212,8 +212,10 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
 /**
  * The supported OpenRouter conversation pins, ordered for model catalogs.
  *
- * **Each vendor's models are ordered newest first.** A new model goes at the
- * top of its family rather than the end of the list. The "orders each vendor's models newest first" test holds
+ * **Each vendor's models are ordered newest first.** Catalogs group by vendor,
+ * so the model somebody is most likely to want appears without scrolling.
+ * A new model therefore goes at the top of its family rather than the end of
+ * the list. The "orders each vendor's models newest first" test holds
  * the half of this a machine can check — a family whose ids carry comparable
  * version numbers must not ascend — which is every family except the two whose
  * members share a version (`gpt-5.6-*`, `deepseek-v4-*`) and are ordered by
@@ -287,8 +289,6 @@ export const UserSchema = z.object({
 });
 
 export const WorkspaceSchema = z.object({
-  // Older servers omit this presentation setting; clients treat absence as hidden.
-  modelSelectorVisible: z.boolean().optional(),
   id: IdSchema,
   name: z.string().min(1).max(120),
   slug: z.string().min(2).max(80),
@@ -297,6 +297,8 @@ export const WorkspaceSchema = z.object({
   accessClass: z.enum(["member", "guest"]).optional(),
   role: MemberRoleSchema.nullable(),
   timezone: IanaTimezoneSchema,
+  // Older servers omit this presentation setting; clients treat absence as hidden.
+  modelSelectorVisible: z.boolean().optional(),
   createdAt: TimestampSchema
 }).refine((workspace) => workspace.accessClass === "guest"
   ? workspace.role === null : workspace.role !== null,
