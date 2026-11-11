@@ -32,7 +32,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
 | `apps/api/src/services/authorization-service.ts` | A Canvas conversation's and its artifacts' canonical read decision, from `hostedConversationAuthorizationFacts`. |
-| `apps/desktop/src/renderer/screens/canvases-home.tsx` | `/canvases`: the home page — New Canvas, search, the Data and authorship filters, the Recent list, and the first-run "Start from a prompt" card. |
+| `apps/desktop/src/renderer/screens/canvases-home.tsx` | `/canvases`: the home page — New Canvas, search, the Live, Data and authorship filters, the Recent list, and the first-run "Start from a prompt" card. |
 | `apps/desktop/src/renderer/screens/canvas.tsx` | `/canvases/:id`: the Chat as a `canvas` conversation in `ConversationSurface`, its header (pill, people present, Share, menu), and opening the newest artifact in the right rail. |
 | `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; guests invited by email on Save. |
 | `apps/desktop/src/renderer/components/canvas-mark.tsx` | `CanvasMark` and `canvasMark`: the chosen icon and colour, else the kind's glyph and `canvasHue`, field by field. |
@@ -555,9 +555,9 @@ card grid with Sidekicks; the shared layout is described in
 - **The list** is the `canvases` query the workspace socket fills
   (`workspace_canvas_list`, `applyVersionedSidebarList`), read with
   `useSocketOwnedList`; there is no list route. The home page keeps activity
-  order and filters client-side from the row's own fields: Data is `hasStoredData`,
-  Made by me `createdByUserId`, Shared with me `sharedWithMe`, From Sidekicks
-  `writerSidekickId`. A home card whose
+  order and filters client-side from the row's own fields: Live uses the same
+  active automatic-trigger rule as the **Live updating** badge, Data is `hasStoredData`,
+  Made by me `createdByUserId`, and Shared with me `sharedWithMe`. A home card whose
   newest version a run wrote names that run, "<Sidekick> · run #N"
   (`canvasWrittenByRun`), and opens the Sidekick's conversation at it
   (`?run=`); the link carries the run's number in its route state, so the run's
@@ -900,6 +900,26 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-10 — Find Canvases by automatic upkeep
+
+**What changed:** The home page's Live filter replaces From Sidekicks and
+selects Canvases marked **Live updating**.
+
+**Why:** Sidekick authorship identifies who made a Canvas, but does not tell
+someone whether it continues to update automatically. A Canvas made by a person
+can have an active scheduled or event-driven Sidekick, while a Sidekick-made
+Canvas can have no automatic updates.
+
+**Considered and rejected:** Keeping From Sidekicks as another filter. The
+requested filter set removes authorship by a Sidekick in favour of automatic
+upkeep; Made by me and Shared with me remain.
+
+**Consequences:** The filter and badge share `isLiveUpdating`; future changes
+must keep their eligibility identical. Manual-only, paused and draft Sidekicks
+do not qualify.
+
+Pull request [#1553](https://github.com/juno-ai-labs/avalon/pull/1553).
 
 ### 2026-11-10 — Explain a card's Sidekicks and automatic updates
 
