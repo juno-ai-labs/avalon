@@ -476,6 +476,10 @@ message before capturing or clicking the row.
   (reading 'trim')` in the Worker log where the key is read. Nothing a model
   decides can be staged here: no streaming tokens, and no elicitation, which
   means no answered question and no pending answer either.
+  With a key in `.env.local` (then `pnpm env:sync` and a Worker restart) a
+  run does complete, and the data tools of a live site work against local
+  storage. The Terminal tools still do not: they need a Daytona sandbox, so
+  nothing that imports, edits or publishes a site from the Chat can be staged.
 - **Playing frames into the live screen from the CDP side.** This does not work
   and the recipe that said to wrap `window.WebSocket` in the renderer was
   wrong: the renderer opens no sockets. The Node main process owns them and
