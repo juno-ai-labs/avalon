@@ -5,7 +5,7 @@
   "compatibility_flags": ["nodejs_compat"],
   // A `.py` import is the file's text (`src/types/text-modules.d.ts`); the
   // Terminal runtime carries a vendored Python applier into the sandbox that way.
-  "rules": [{ "type": "Text", "globs": ["**/*.py", "**/*.sandbox.mjs"], "fallthrough": true }],
+  "rules": [{ "type": "Text", "globs": ["**/*.py", "**/*.sandbox.mjs", "**/canvas-seeds/*/site/*"], "fallthrough": true }],
   "vars": {
     "APP_ENV": "test",
     "APP_VERSION": "workerd-test",
