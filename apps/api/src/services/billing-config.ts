@@ -14,6 +14,9 @@ export const BillingConfigSchema = z.strictObject({
   trialDays: z.number().int().nonnegative().default(14),
   teamTrialDays: z.number().int().nonnegative().default(60),
   teamTrialMembers: z.number().int().positive().default(3),
+  // Applied once per Organization, on its first paid subscription. Stripe owns
+  // the percentage and duration; omit to stop offering the pilot to new buyers.
+  pilotCouponId: z.string().min(1).optional(),
   offers: z.array(z.strictObject({
     id: z.string().regex(/^[a-z0-9_-]+$/),
     name: z.string().min(1),

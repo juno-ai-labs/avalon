@@ -111,6 +111,7 @@ it('settles closed opted-in periods once and excludes usage before consent', asy
   await billClosedOverage(env, workspace, Date.parse('2027-01-30'));
   expect(writes).toHaveLength(1);
   expect(writes[0]!.get('quantity')).toBe('100000000');
+  expect(writes[0]!.get('discountable')).toBe('false');
   expect(db.prepare('SELECT period_start, invoice_item_id FROM billing_overages').all()).toEqual([
     { period_start: '2026-12-10T00:00:00.000Z', invoice_item_id: 'ii_1' },
   ]);
@@ -164,6 +165,144 @@ async function accountFixture() {
   fixture.db.prepare("UPDATE billing_accounts SET customer_id = 'cus_1' WHERE workspace_id = ?").run(workspace);
   return fixture;
 }
+
+async function pilotFixture() {
+  const fixture = await accountFixture();
+  const config = JSON.parse(fixture.env.BILLING_CONFIG!);
+  config.pilotCouponId = 'pilot_two_months';
+  config.offers[1].couponId = 'ordinary_discount';
+  fixture.env.BILLING_CONFIG = JSON.stringify(config);
+  return fixture;
+}
+
+it('automatically discounts the first paid subscription without stacking trials or other discounts', async () => {
+  const { db, env } = await pilotFixture();
+  addTeam(db);
+  let checkout = new URLSearchParams();
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/subscriptions?')) return Response.json({ data: [], has_more: false });
+    if (url.includes('/checkout/sessions?')) return Response.json({ data: [] });
+    if (url.includes('/prices/')) return Response.json({ recurring: { interval: 'month', interval_count: 1 } });
+    checkout = new URLSearchParams(String(init?.body));
+    return Response.json({ id: 'cs_pilot', url: 'https://checkout.stripe.com/pilot' });
+  }));
+  await createCheckout(env, workspace, 'grow', 'usd', true);
+  expect(checkout.get('discounts[0][coupon]')).toBe('pilot_two_months');
+  expect(checkout.get('subscription_data[metadata][pilot_coupon_id]')).toBe('pilot_two_months');
+  expect(checkout.get('subscription_data[metadata][overage_enabled]')).toBe('true');
+  expect(checkout.get('subscription_data[trial_end]')).toBeNull();
+  expect(checkout.get('subscription_data[trial_period_days]')).toBeNull();
+  expect(checkout.get('allow_promotion_codes')).toBeNull();
+  expect(checkout.get('payment_method_collection')).toBe('always');
+});
+
+it.each(['canceled', 'incomplete_expired'])('uses paginated Stripe history after lost webhooks to handle a previous %s subscription', async (status) => {
+  const { db, env } = await pilotFixture();
+  let checkout = new URLSearchParams();
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/subscriptions?')) return Response.json(url.includes('starting_after=')
+      ? { data: [subscription({ status })], has_more: false }
+      : { data: [subscription({ id: 'sub_free', status: 'canceled', items: { data: [{ price: { id: 'price_start', unit_amount: 0 } }] } })], has_more: true });
+    if (url.includes('/checkout/sessions?')) return Response.json({ data: [] });
+    if (url.includes('/prices/')) return Response.json({ recurring: { interval: 'month', interval_count: 1 } });
+    checkout = new URLSearchParams(String(init?.body));
+    return Response.json({ id: 'cs_new', url: 'https://checkout.stripe.com/new' });
+  }));
+  expect(db.prepare('SELECT subscription_id FROM billing_accounts').get()).toEqual({ subscription_id: null });
+  await createCheckout(env, workspace, 'grow', 'usd', false);
+  expect(checkout.get('discounts[0][coupon]')).toBe(status === 'canceled' ? 'ordinary_discount' : 'pilot_two_months');
+  expect(checkout.get('subscription_data[trial_end]')).toBeNull();
+});
+
+it('reuses a pending pilot checkout after a team trial award without delaying the discount', async () => {
+  const { db, env } = await pilotFixture(); addTeam(db);
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') throw new Error('An existing pilot checkout must be reused');
+    return Response.json(url.includes('/subscriptions?') ? { data: [], has_more: false } : { data: [{ id: 'cs_pilot', url: 'https://checkout.stripe.com/pilot', currency: 'usd',
+      metadata: { offer_id: 'grow', overage_enabled: 'false', trial_ends_at: '0', pilot_coupon_id: 'pilot_two_months' } }] });
+  }));
+  expect(await createCheckout(env, workspace, 'grow', 'usd', false)).toEqual({ url: 'https://checkout.stripe.com/pilot' });
+});
+
+it('keeps a canceled pilot redeemed after its subscription price was changed to free', async () => {
+  const { env } = await pilotFixture();
+  let checkout = new URLSearchParams();
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/subscriptions?')) return Response.json({ data: [subscription({ status: 'canceled',
+      metadata: { pilot_coupon_id: 'pilot_two_months' }, items: { data: [{ price: { id: 'price_start', unit_amount: 0 } }] },
+    })], has_more: false });
+    if (url.includes('/checkout/sessions?')) return Response.json({ data: [] });
+    if (url.includes('/prices/')) throw new Error('A redeemed pilot must not be offered again');
+    checkout = new URLSearchParams(String(init?.body));
+    return Response.json({ id: 'cs_again', url: 'https://checkout.stripe.com/again' });
+  }));
+  await createCheckout(env, workspace, 'grow', 'usd', false);
+  expect(checkout.get('discounts[0][coupon]')).toBe('ordinary_discount');
+});
+
+it('replaces an open pilot checkout when the campaign is disabled', async () => {
+  const { env } = await accountFixture();
+  const writes: { url: string; body: URLSearchParams }[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/subscriptions?')) return Response.json({ data: [], has_more: false });
+    if (url.includes('/checkout/sessions?')) return Response.json({ data: [{ id: 'cs_pilot', url: 'https://checkout.stripe.com/pilot', currency: 'usd',
+      metadata: { offer_id: 'grow', overage_enabled: 'false', trial_ends_at: '0', pilot_coupon_id: 'pilot_two_months' } }] });
+    writes.push({ url, body: new URLSearchParams(String(init?.body)) });
+    return Response.json({ id: 'cs_regular', url: 'https://checkout.stripe.com/regular' });
+  }));
+  await createCheckout(env, workspace, 'grow', 'usd', false);
+  expect(writes[0]!.url).toContain('/cs_pilot/expire');
+  expect(writes[1]!.body.get('discounts[0][coupon]')).toBeNull();
+  expect(writes[1]!.body.get('subscription_data[trial_end]')).toBe(String(Date.parse('2026-11-24T00:00:00Z') / 1000));
+});
+
+it('rejects an annual pilot price before creating a discounted annual invoice', async () => {
+  const { env } = await pilotFixture();
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') throw new Error('An annual pilot checkout must not be created');
+    if (url.includes('/subscriptions?')) return Response.json({ data: [], has_more: false });
+    if (url.includes('/checkout/sessions?')) return Response.json({ data: [] });
+    return Response.json({ recurring: { interval: 'year', interval_count: 1 } });
+  }));
+  await expect(createCheckout(env, workspace, 'grow', 'usd', false)).rejects.toMatchObject({ code: 'billing_pilot_requires_monthly_price' });
+});
+
+it('preserves included usage and begins pilot overage terms without waiting for the no-card trial', async () => {
+  const { db, env } = await pilotFixture(); addTeam(db);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(subscription({
+    metadata: { offer_id: 'grow', overage_enabled: 'true', pilot_coupon_id: 'pilot_two_months' },
+  }))));
+  await syncSubscription(env, 'cus_1', 'sub_1');
+  expect(db.prepare('SELECT plan FROM workspaces').get()).toEqual({ plan: 'growth' });
+  expect(db.prepare('SELECT starts_at FROM billing_terms').get()).toEqual({ starts_at: Date.parse('2026-11-11T00:00:00Z') / 1000 });
+});
+
+it('does not extend a pilot subscription with the team trial after the campaign is disabled', async () => {
+  const { db, env } = await accountFixture(); addTeam(db);
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') throw new Error('Pilot subscriptions must not gain an extra trial');
+    return Response.json(subscription({ status: 'trialing', trial_end: Date.parse('2026-11-24') / 1000,
+      metadata: { offer_id: 'grow', overage_enabled: 'false', pilot_coupon_id: 'pilot_two_months' },
+    }));
+  }));
+  await syncSubscription(env, 'cus_1', 'sub_1');
+  expect(db.prepare('SELECT plan FROM workspaces').get()).toEqual({ plan: 'growth' });
+});
+
+it('does not apply the pilot to a free Start checkout', async () => {
+  const { env } = await pilotFixture();
+  let checkout = new URLSearchParams();
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/subscriptions?')) return Response.json({ data: [], has_more: false });
+    if (url.includes('/checkout/sessions?')) return Response.json({ data: [] });
+    if (url.includes('/prices/')) throw new Error('A free Start checkout must not claim the pilot');
+    checkout = new URLSearchParams(String(init?.body));
+    return Response.json({ id: 'cs_start', url: 'https://checkout.stripe.com/start' });
+  }));
+  await createCheckout(env, workspace, 'start', 'usd', false);
+  expect(checkout.get('discounts[0][coupon]')).toBeNull();
+  expect(checkout.get('subscription_data[metadata][pilot_coupon_id]')).toBeNull();
+});
 function addTeam(db: DatabaseSync, joined = '2026-11-23T00:00:00Z') {
   for (const id of ['two', 'three']) {
     db.prepare("INSERT INTO users(id,google_subject,email,name,created_at,updated_at) VALUES (?,?,?,?,?,?)").run(id,id,`${id}@example.test`,id,joined,joined);
