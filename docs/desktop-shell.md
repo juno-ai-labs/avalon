@@ -60,7 +60,7 @@ It starts on **Developers** and shows that category's templates in place of
 the Canvas list. Closing Marketplace restores the previous filter and any
 unsent **Start from a prompt** text. Selecting a filter switches to its list.
 `apps/desktop/src/renderer/lib/canvas-templates.ts` orders the catalog. Each
-Markdown file in `canvas-template-prompts/` supplies its card's `name`,
+Markdown file in `packages/skills/marketplace-skills/` supplies its card's `name`,
 `description`, and category `tags`. The builds check tags against
 `canvas-template-categories.ts`. Each starter is tagged with its own directory.
 Selecting a template creates and opens a Canvas with the Markdown body sent

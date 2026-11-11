@@ -24,6 +24,7 @@ on:
       - 'config/regions.json'
       - 'apps/desktop/**'
       - 'packages/contracts/**'
+      - 'packages/skills/marketplace-skills/**'
       - 'packages/ui/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
