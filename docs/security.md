@@ -359,6 +359,11 @@ update check as the application menu. Its argument-free `update:check` handler
 checks the IPC sender and accepts no feed URL, version, or connector-supplied
 destination.
 
+### Linux distribution and keystore
+
+[Linux desktop](linux-desktop.md) owns Linux update trust, OS-keystore requirements,
+and the shared microphone permission boundary.
+
 ### Authentication and authorization
 
 [Email sign-in](email-login.md) owns the configured passwordless challenge and

@@ -66,8 +66,8 @@ describe('invitationAccountMismatch', () => {
 
 describe('windowControlsShellClass', () => {
   // The main window asks `hiddenInset` of darwin, which paints the traffic
-  // lights over the page. Everywhere else it asks `hidden`, and the buttons are
-  // in the window manager's frame or not drawn at all.
+  // lights over the page. Everywhere else it asks `default`, and the buttons
+  // belong to the window manager's frame.
   it('names the class on macOS and nothing anywhere else', () => {
     expect(windowControlsShellClass('darwin')).toBe('has-overlay-window-controls');
     expect(windowControlsShellClass('win32')).toBe('');

@@ -1,7 +1,8 @@
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 import { isEntryPoint } from './entry-point.mjs';
-import { normalizeReleasePrefix, parseMacUpdateFeed } from './release-lib.mjs';
+import { LINUX_RELEASE_PREFIX, parseLinuxFeed } from './linux-release.mjs';
+import { normalizeReleasePrefix, parseUpdateFeed } from './release-lib.mjs';
 import { purgeCloudflareUrls } from './release-cache.mjs';
 import {
   createR2ReleaseLockClient,
@@ -84,6 +85,7 @@ function parseReceiptBytes(bytes) {
  */
 export async function promoteScheduledStableChannel({
   fasterManifestBytes,
+  parseFeed = (bytes) => parseUpdateFeed(bytes.toString('utf8')),
   now = Date.now,
   publishStableManifest,
   publishStableReceipt,
@@ -100,8 +102,8 @@ export async function promoteScheduledStableChannel({
     throw new Error('Stable and Faster manifests must either both exist or both be absent');
   }
 
-  const stableFeed = parseMacUpdateFeed(stableManifestBytes.toString('utf8'));
-  const fasterFeed = parseMacUpdateFeed(fasterManifestBytes.toString('utf8'));
+  const stableFeed = parseFeed(stableManifestBytes);
+  const fasterFeed = parseFeed(fasterManifestBytes);
   if (stableFeed.version === fasterFeed.version && !stableManifestBytes.equals(fasterManifestBytes)) {
     throw new Error(`Stable and Faster have different manifest bytes for Rally ${stableFeed.version}`);
   }
@@ -171,19 +173,23 @@ export async function runScheduledStablePromotion({
   const origin = releaseOrigin(required('RALLY_RELEASE_BASE_URL', environment));
   const apiToken = required('CLOUDFLARE_API_TOKEN', environment);
   const zoneId = required('CLOUDFLARE_ZONE_ID', environment);
+  const linux = prefix === LINUX_RELEASE_PREFIX;
+  const stableManifest = linux ? 'stable-linux.yml' : STABLE_RELEASE_MANIFEST;
+  const fasterManifest = linux ? 'faster-linux.yml' : FASTER_RELEASE_MANIFEST;
   const key = (name) => `${prefix}/${name}`;
   const publicStableUrl = new URL(
-    [...prefix.split('/'), STABLE_RELEASE_MANIFEST].map(encodeURIComponent).join('/'),
+    [...prefix.split('/'), stableManifest].map(encodeURIComponent).join('/'),
     `${origin}/`,
   ).toString();
 
   const result = await promoteScheduledStableChannel({
-    fasterManifestBytes: await readR2Object(client, bucket, key(FASTER_RELEASE_MANIFEST)),
-    stableManifestBytes: await readR2Object(client, bucket, key(STABLE_RELEASE_MANIFEST)),
+    ...(linux ? { parseFeed: parseLinuxFeed } : {}),
+    fasterManifestBytes: await readR2Object(client, bucket, key(fasterManifest)),
+    stableManifestBytes: await readR2Object(client, bucket, key(stableManifest)),
     stableReceiptBytes: await readR2Object(client, bucket, key(STABLE_CHANNEL_RECEIPT)),
     now,
     publishStableManifest: async (bytes) => {
-      await writeR2Object(client, bucket, key(STABLE_RELEASE_MANIFEST), bytes, {
+      await writeR2Object(client, bucket, key(stableManifest), bytes, {
         cacheControl: 'public, max-age=0, must-revalidate',
         contentType: 'application/yaml; charset=utf-8',
       });
