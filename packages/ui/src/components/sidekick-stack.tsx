@@ -1,3 +1,4 @@
+import { Tip } from './primitives';
 import { AutomationGlyph } from './workstream-glyph';
 
 /** A Sidekick as a stack draws it: its mark and its name. */
@@ -29,9 +30,11 @@ export function SidekickStack({ sidekicks, limit = 4, id }: {
   // points here reads content, and an `aria-label` alone describes nothing.
   return <span aria-label={label} className="sidekick-stack" id={id} role="img">
     <span className="sr-only">{label}</span>
-    {visible.map((sidekick) => <span aria-hidden="true" className="sidekick-stack-item" key={sidekick.id}>
-      <AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} />
-    </span>)}
+    {visible.map((sidekick) => <Tip key={sidekick.id} label={sidekick.name}>
+      <span aria-hidden="true" className="sidekick-stack-item">
+        <AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} />
+      </span>
+    </Tip>)}
     {overflow > 0 && <span aria-hidden="true" className="avatar-overflow sidekick-stack-overflow">+{overflow}</span>}
   </span>;
 }
