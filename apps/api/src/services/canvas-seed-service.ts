@@ -4,19 +4,21 @@ import {
   SITE_MANIFEST_MIME_TYPE,
   asUserId,
   asWorkspaceId,
+  type WorkspaceId,
   type WorkstreamAppearance,
 } from "@rally/contracts";
 import { nowIso } from "@rally/db";
 import { z } from "zod";
 
 import { workspaceDOName } from "../durable-objects/names";
-import type { Env } from "../env";
+import type { AuthContext, Env } from "../env";
 import { asApiError } from "../lib/api-error";
 import { sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logError } from "../observability/logger";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { createCanvas } from "./canvas-service";
+import { ConversationService } from "./conversation-service";
 import { insertPublishedResource, publicationIdentity, publishedRowByIdentity } from "./resource-publication";
 import { allocateResourceSlugBesideCreation } from "./resource-slug";
 import { declaresStorageClass } from "./terminal/site-publish";
@@ -26,7 +28,7 @@ import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 /**
  * A Canvas Rally makes for an Organization rather than a person starting it:
- * its title and look, the first message of its Chat, and one site.
+ * its title and look, the two messages that open its Chat, and one site.
  *
  * A seed is data. Everything that makes it a Canvas is the product's own
  * creation, publication and message path, called in order by
@@ -38,7 +40,15 @@ export interface CanvasSeed {
   key: string;
   title: string;
   appearance: WorkstreamAppearance;
-  /** What Rally says first, written to the Chat without a run. */
+  /**
+   * What the Canvas's creator is recorded as having asked Rally for, which
+   * opens the Chat. It is how a seed tells Rally what its site is for: the
+   * transcript is the one thing every run reads, where a file in the site is
+   * read only if Rally opens it. Every member sees it under the creator's
+   * name, so it is written as that person would ask.
+   */
+  request: string;
+  /** What Rally answers, written to the Chat without a run. */
   openingMessage: string;
   site: {
     /** The path Rally's own publish would name, so a later republish from the Chat is this artifact's next version. */
@@ -95,6 +105,10 @@ function openingMessageKey(seedKey: string): string {
   return `canvas-seed:${seedKey}:opening`;
 }
 
+function requestMessageKey(seedKey: string): string {
+  return `canvas-seed:${seedKey}:request`;
+}
+
 /**
  * Copy a seed into an Organization as one Canvas, with `creatorUserId` as its
  * creator, open to every member.
@@ -128,6 +142,16 @@ export async function seedCanvas(env: Env, input: { workspaceId: string; creator
   await workspace.canvasUpdate({ workspaceId, canvasId, actor, appearance: seed.appearance });
   await publishSeedSite(env, { workspaceId, canvasId, seedKey: seed.key, title: seed.title }, seed.site);
   await workspace.canvasSetAudience({ workspaceId, canvasId, actor, update: { visibility: "workspace", userIds: [] } });
+  // Beside Rally's answer, so a seed that stops earlier leaves no request
+  // standing alone in the Chat. It decorates the guide and never holds it
+  // up: the site and the answer are owed whether or not it was recorded.
+  await recordSeedRequest(env, { workspaceId, canvasId, creatorUserId: input.creatorUserId }, seed).catch((error: unknown) => {
+    logError(env, "canvas_seed_request_failed", {
+      workspace_id: workspaceId,
+      seed_key: seed.key,
+      error_code: diagnosticErrorCode(error, "canvas_seed_request_failed"),
+    });
+  });
   // Rally's words, with no run behind them: the same append a scheduled
   // wake-up's notice makes, authored as the agent.
   await messages.appendMessage({
@@ -143,6 +167,41 @@ export async function seedCanvas(env: Env, input: { workspaceId: string; creator
     now: Date.now(),
   });
   return { canvasId, seeded: true };
+}
+
+/**
+ * Record the seed's request in the Chat as the creator's own message.
+ *
+ * Through the path a person's message takes, marked record-only so no run
+ * starts: the creator asked for nothing just now, and Rally's answer is the
+ * seed's opening message. The creator is checked as a current member, as
+ * every non-session principal is, so a job replayed after they left writes no
+ * request and the Chat opens on Rally's message instead.
+ *
+ * Written only into an empty Chat. A request that already exists is left as
+ * it is: a resend under the same id with other words is refused, and a deploy
+ * between two attempts changes the words. And once anyone has written here it
+ * would no longer open the Chat, and could queue behind their message and
+ * land after Rally's answer.
+ */
+async function recordSeedRequest(env: Env, target: { workspaceId: WorkspaceId; canvasId: string; creatorUserId: string }, seed: CanvasSeed): Promise<void> {
+  const { workspaceId, canvasId } = target;
+  const clientMessageId = requestMessageKey(seed.key);
+  const messages = createMessageObjectPort(env, workspaceId, canvasId);
+  if ((await messages.messagesAfter({ afterSequence: 0, limit: 1 })).length > 0) return;
+  const member = await env.DB.prepare(
+    `SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+  ).bind(workspaceId, target.creatorUserId).first<{ role: AuthContext["role"] }>();
+  if (!member) return;
+  const auth: AuthContext = {
+    sessionId: clientMessageId, workspaceId, userId: asUserId(target.creatorUserId),
+    region: env.AVALON_REGION, role: member.role, principal: "canvas_seed",
+  };
+  const chat = await new ConversationService(env, auth).writableClient(canvasId);
+  await chat.createMessage({
+    text: seed.request, clientMessageId, recordOnly: true,
+    mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+  });
 }
 
 /**

@@ -176,8 +176,8 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   /**
    * A message posted for the conversation's readers that starts no run,
    * whatever addressing would decide. Sent only by the engineering bridge's
-   * `sendMessage`; the message route's request schema has no such
-   * field.
+   * `sendMessage` and by a Canvas seed recording its creator's request; the
+   * message route's request schema has no such field.
    */
   recordOnly: z.literal(true).optional(),
 }).superRefine(validateAnnotationAttachments).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((a) => a.comment.trim()), {

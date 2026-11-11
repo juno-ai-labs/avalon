@@ -303,11 +303,15 @@ export interface IdentityAuthContext {
    * names an existing active member or guest without minting a session, and
    * product objects re-check that person's current regional relationship.
    *
+   * `"canvas_seed"` is Rally recording a Canvas seed's request as the
+   * Canvas's creator (`docs/canvas-seeds.md`). No person is acting, and the
+   * creator's current membership is re-checked like any other.
+   *
    * Only server code constructs these values. The auth middleware builds its
    * context from verified token claims and never sets it, so a client cannot
    * claim a non-session path from outside.
    */
-  principal?: "connector" | "impersonation" | "resource_authorization" | "engineering";
+  principal?: "connector" | "impersonation" | "resource_authorization" | "engineering" | "canvas_seed";
   /**
    * Set on a support session: the Rally staff member actually acting as
    * `userId`, read from `sessions.impersonator_user_id` with the same query that
