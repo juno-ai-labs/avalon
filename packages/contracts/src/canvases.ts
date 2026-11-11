@@ -112,6 +112,8 @@ export const CanvasSidekickSchema = z.object({
   status: z.enum(["draft", "active", "paused"]),
   appearance: WorkstreamAppearanceSchema.optional(),
   madeHere: z.boolean(),
+  /** What wakes it; absent from an older Worker. Manual alone is not live updating. */
+  triggerKinds: z.array(z.enum(["manual", "schedule", "external_event"])).optional(),
   /**
    * Whether the reader may open the Sidekick's own page: its audience, which
    * the Canvas does not decide. Present on a read made for a viewer (the
@@ -175,7 +177,7 @@ export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
    * The Sidekicks attached to it, in the order they were attached, exactly as
    * its detail lists them. The row is what the socket keeps current, so the
    * home card's Sidekick facepile and an open Canvas's menu both read it
-   * here: a Sidekick made, renamed, paused or archived while the Canvas is
+   * here: a Sidekick made, renamed, reconfigured, paused or archived while the Canvas is
    * open arrives with the next list frame. Absent from an older Worker.
    */
   sidekicks: z.array(CanvasSidekickSchema).optional(),
