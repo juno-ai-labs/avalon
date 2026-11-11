@@ -99,8 +99,9 @@ const storedRequests = () => runInDurableObject(workspace(), (_instance, state) 
 }>(`SELECT user_id, state, requested_by_user_id FROM sidekick_source_requests ORDER BY created_at, request_id`).toArray());
 
 const storedSources = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
-  user_id: string; connection_id: string; condition: string | null; origin: string;
-}>(`SELECT user_id, connection_id, condition, origin FROM sidekick_sources WHERE sidekick_id = ? ORDER BY user_id`, SIDEKICK_ID).toArray());
+  user_id: string; connection_id: string; condition: string | null; requested: number;
+}>(`SELECT user_id, connection_id, condition, request_id IS NOT NULL AS requested
+      FROM sidekick_sources WHERE sidekick_id = ? ORDER BY user_id`, SIDEKICK_ID).toArray());
 
 /** A person's own Google connection, held by the Organization object as production holds it. */
 async function connectGoogle(userId: string, displayName: string): Promise<string> {
@@ -258,7 +259,7 @@ describe("the Sidekick source routes, for a signed-in person", () => {
       .map((entry) => ({ requestId: entry.requestId, state: entry.state }))).toEqual([{ requestId: second, state: "declined" }]);
     expect((await storedRequests()).map((entry) => entry.state)).toEqual(["approved", "declined"]);
     // The decline wrote nothing: the one source is still the one the approval gave.
-    expect(await storedSources()).toEqual([{ user_id: PERSON, connection_id: PERSON_MAIL, condition: CONDITION, origin: "request" }]);
+    expect(await storedSources()).toEqual([{ user_id: PERSON, connection_id: PERSON_MAIL, condition: CONDITION, requested: 1 }]);
   });
 
   it("reads a request's card for whoever asked and for the person asked, and as an empty list for a member it does not concern", async () => {
@@ -289,7 +290,7 @@ describe("the Sidekick source routes, for a signed-in person", () => {
   it("takes a person's own source back once, says so when there is nothing left to take, and takes back nobody else's", async () => {
     const requestId = await asked();
     expect((await as(PERSON, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
-    expect(await storedSources()).toEqual([{ user_id: PERSON, connection_id: PERSON_MAIL, condition: CONDITION, origin: "request" }]);
+    expect(await storedSources()).toEqual([{ user_id: PERSON, connection_id: PERSON_MAIL, condition: CONDITION, requested: 1 }]);
 
     // The manager names the person's connection: whose source it is comes from the session, so nothing is theirs to take.
     const byManager = await as(MANAGER, "POST", withdraw(), { connectionId: PERSON_MAIL });
@@ -333,7 +334,7 @@ describe("POST /browser/source-requests/decision, the emailed link", () => {
     expect(answer.body).toEqual({ state: "approved", applied: true, sidekickName: "Deals", requestedByName: "Avery", connectorName: "Gmail",
       eventLabels: ["Email received"], condition: CONDITION });
     expect(answer.headers.get("cache-control")).toBe("no-store");
-    expect(await storedSources()).toEqual([{ user_id: PERSON, connection_id: PERSON_MAIL, condition: CONDITION, origin: "request" }]);
+    expect(await storedSources()).toEqual([{ user_id: PERSON, connection_id: PERSON_MAIL, condition: CONDITION, requested: 1 }]);
   });
 
   it("answers a signed link for a person who has since left the Organization as a request that does not exist, and decides nothing", async () => {

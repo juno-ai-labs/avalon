@@ -69,14 +69,17 @@ function registration(database: DatabaseSync, sidekickId: string, connectionId: 
 }
 
 interface SourceRow {
-  sidekick_id: string; user_id: string; connection_id: string; connector_type: string; event_types_json: string[];
-  condition: string | null; membership_incarnation: string; origin: string;
+  sidekick_id: string; user_id: string; connection_id: string; event_type: string; connector_type: string;
+  condition: string | null; membership_incarnation: string; request_id: string | null;
 }
-const sources = (database: DatabaseSync): SourceRow[] => (database.prepare(
-  `SELECT sidekick_id, user_id, connection_id, connector_type, event_types_json, condition, membership_incarnation, origin
-     FROM sidekick_sources ORDER BY sidekick_id, user_id, connection_id`,
-).all() as unknown as (Omit<SourceRow, "event_types_json"> & { event_types_json: string })[])
-  .map((row) => ({ ...row, event_types_json: (JSON.parse(row.event_types_json) as string[]).sort() }));
+const sources = (database: DatabaseSync): SourceRow[] => database.prepare(
+  `SELECT sidekick_id, user_id, connection_id, event_type, connector_type, condition, membership_incarnation, request_id
+     FROM sidekick_sources ORDER BY sidekick_id, user_id, connection_id, event_type`,
+).all() as unknown as SourceRow[];
+
+const attention = (database: DatabaseSync): Record<string, string | null> => Object.fromEntries((database.prepare(
+  "SELECT automation_id, delegation_attention_code FROM automation_directory ORDER BY automation_id",
+).all() as { automation_id: string; delegation_attention_code: string | null }[]).map((row) => [row.automation_id, row.delegation_attention_code]));
 
 describe("WorkspaceDO migration 146: sources backfilled from delegation", () => {
   it("gives a delegate a source for each connection of theirs a rule is configured or registered on, and nobody else one", () => {
@@ -103,11 +106,12 @@ describe("WorkspaceDO migration 146: sources backfilled from delegation", () => 
 
     upgrade(database);
 
+    // One source for each event type, none of them an answer to a request.
+    const made = (user: string, connectionId: string, eventType: string) => ({ sidekick_id: "deals", user_id: user, connection_id: connectionId,
+      event_type: eventType, connector_type: "google", condition: null, membership_incarnation: `${user}-membership`, request_id: null });
     expect(sources(database)).toEqual([
-      { sidekick_id: "deals", user_id: "adam", connection_id: "adam-mail", connector_type: "google",
-        event_types_json: ["email.received", "email.updated"], condition: null, membership_incarnation: "adam-membership", origin: "migration" },
-      { sidekick_id: "deals", user_id: "maya", connection_id: "maya-drive", connector_type: "google",
-        event_types_json: ["sheets.spreadsheet_changed"], condition: null, membership_incarnation: "maya-membership", origin: "migration" },
+      made("adam", "adam-mail", "email.received"), made("adam", "adam-mail", "email.updated"),
+      made("maya", "maya-drive", "sheets.spreadsheet_changed"),
     ]);
   });
 
@@ -123,9 +127,36 @@ describe("WorkspaceDO migration 146: sources backfilled from delegation", () => 
 
     // An event there limited to an audience was admitted through a delegate
     // inside it; each delegate keeps letting in what they could see.
-    expect(sources(database).map((row) => [row.user_id, row.connection_id, row.event_types_json])).toEqual([
-      ["adam", "shared", ["email.received"]],
-      ["maya", "shared", ["email.received"]],
+    expect(sources(database).map((row) => [row.user_id, row.connection_id, row.event_type])).toEqual([
+      ["adam", "shared", "email.received"],
+      ["maya", "shared", "email.received"],
     ]);
+  });
+
+  it("marks stopped every Sidekick with a trigger that nobody lends an account to, whatever it said before, and no other", () => {
+    const database = migratedTo(VERSION - 1);
+    connection(database, "shared", "workspace", null);
+    const migrated = (id: string, code: string | null, enrolled = 1) => database.prepare(
+      "UPDATE automation_directory SET delegation_migrated = ?, delegation_attention_code = ? WHERE automation_id = ?").run(enrolled, code, id);
+    // Its last delegate withdrew: before this migration its events were refused under the other warning.
+    sidekick(database, "withdrawn-from", [evaluator("shared", "email.received")]);
+    delegation(database, "withdrawn-from", "adam", false, "adam-membership");
+    migrated("withdrawn-from", "event_no_eligible_delegate");
+    // Somebody lends it an account: it goes on as it did.
+    sidekick(database, "lent", [evaluator("shared", "email.received")]);
+    delegation(database, "lent", "adam", true, "adam-membership");
+    migrated("lent", null);
+    // Nothing starts it by itself, so there is nothing to stop.
+    sidekick(database, "knowledge", []);
+    migrated("knowledge", null);
+    // Its creator is enrolled on first use, which has not happened yet.
+    sidekick(database, "not-yet-enrolled", [evaluator("shared", "email.received")]);
+    migrated("not-yet-enrolled", null, 0);
+
+    upgrade(database);
+
+    expect(attention(database)).toEqual({
+      "knowledge": null, "lent": null, "not-yet-enrolled": null, "withdrawn-from": "no_eligible_delegate",
+    });
   });
 });

@@ -15,18 +15,23 @@ const EventTypesSchema = z.array(z.string().min(1)).min(1);
 /** The person's own filter: an event enters only when this sentence holds for it. */
 const SourceConditionSchema = z.string().trim().min(1).nullable();
 
-export const SidekickSourceOriginSchema = z.enum(["own_definition", "request", "migration"]);
-
-/** Internal record. Membership incarnation and provenance never reach a tool or a client. */
+/**
+ * Internal record: one person, one connection, one event type. Each event
+ * type carries its own condition and its own provenance, so answering a
+ * request about one kind of event changes nothing the person let in before.
+ * `requestId` is set when the person approved a request for this event type:
+ * the only way a source answers "may events from your account start this
+ * Sidekick", where a source a saved rule made stands for that rule alone.
+ * Membership incarnation and provenance never reach a tool or a client.
+ */
 export const SidekickSourceSchema = z.strictObject({
   sidekickId: IdSchema,
   userId: UserIdSchema,
   connectionId: IdSchema,
   connectorType: ConnectorTypeNameSchema,
-  eventTypes: EventTypesSchema,
+  eventType: z.string().min(1),
   condition: SourceConditionSchema,
   membershipIncarnation: z.string().min(1),
-  origin: SidekickSourceOriginSchema,
   requestId: IdSchema.nullable(),
   approvedAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
@@ -146,6 +151,8 @@ export const SIDEKICK_SOURCE_ERRORS = {
   sidekick_source_request_requires_manager: "Only the people who manage this Sidekick can ask for a source.",
   sidekick_source_person_unavailable: "That person is not an active member of this Organization.",
   sidekick_source_membership_unavailable: "Your Organization membership is unavailable, so this cannot be approved.",
+  sidekick_source_owner_must_approve:
+    "A rule on another person's own account needs that person's approval for that event. Ask them with a source request, and save again once they approve.",
   sidekick_source_connection_missing: "Connect that account first. There is nothing to allow until it is connected.",
 } as const;
 export type SidekickSourceErrorCode = keyof typeof SIDEKICK_SOURCE_ERRORS;

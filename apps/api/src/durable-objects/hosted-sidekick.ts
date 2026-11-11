@@ -861,7 +861,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const audience = personal ? [owner!] : restricted!;
     if (connectionId === null) return null;
     const candidates = this.sources().forSidekick(this.sidekickId).filter((source) => source.connectionId === connectionId
-      && audience.includes(source.userId) && source.eventTypes.includes(event.eventType));
+      && audience.includes(source.userId) && source.eventType === event.eventType);
     const eligible = await Promise.all(candidates.map((source) => this.sourceEligible(source, relationships)));
     const admitting = candidates.filter((_source, index) => eligible[index]);
     if (admitting.length === 0) return null;
@@ -876,12 +876,23 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     return new ApiError(code === "sidekick_not_found" ? 404 : 409, code, SIDEKICK_DELEGATION_ERRORS[code]);
   }
 
-  /** Safe failure state, with no event payload or provider error retained in the directory. */
+  /**
+   * Safe failure state, with no event payload or provider error retained in
+   * the directory.
+   *
+   * `no_eligible_delegate` is also what keeps a Sidekick stopped
+   * (`admitOccurrence`), so no other warning replaces it: only clearing it
+   * does, which a delegate's run or a resume is what does. A warning that
+   * could overwrite it would start the Sidekick with nobody's act.
+   */
   noteDelegationAttention(code: SidekickDelegationAttentionCode | null): void {
     this.storage.transactionSync(() => {
       const changed = this.sql.exec(
-        "UPDATE automation_directory SET delegation_attention_code=? WHERE automation_id=? AND delegation_attention_code IS NOT ? RETURNING automation_id",
-        code, this.sidekickId, code,
+        `UPDATE automation_directory SET delegation_attention_code=?1
+          WHERE automation_id=?2 AND delegation_attention_code IS NOT ?1
+            AND (?1 IS NULL OR delegation_attention_code IS NOT 'no_eligible_delegate')
+          RETURNING automation_id`,
+        code, this.sidekickId,
       ).toArray().length > 0;
       if (changed) this.touchDirectory(Date.now());
     });
@@ -1062,12 +1073,21 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const connections = new Map(this.sql.exec<{ id: string; display_name: string }>(
       `SELECT id, display_name FROM connector_connections WHERE workspace_id = ?`, row.workspace_id,
     ).toArray().map((connection) => [connection.id, connection.display_name]));
+    // A person reads what they let in from a connection as one line per filter: the event
+    // types that share a condition, together.
+    const listed = new Map<string, { source: SidekickSource; eventTypes: string[]; available: boolean }>();
+    for (const [index, source] of sources.entries()) {
+      const key = JSON.stringify([source.userId, source.connectionId, source.condition]);
+      const entry = listed.get(key) ?? { source, eventTypes: [], available: available[index]! };
+      entry.eventTypes.push(source.eventType);
+      listed.set(key, entry);
+    }
     return SidekickSourcesResultSchema.parse({
       sidekickId: this.sidekickId,
-      sources: sources.map((source, index) => ({
+      sources: [...listed.values()].map(({ source, eventTypes, available: stillTheirs }) => ({
         person: person(source.userId), connectionId: source.connectionId,
         connectionName: connections.get(source.connectionId) ?? "", connectorType: source.connectorType,
-        eventTypes: source.eventTypes, condition: source.condition, available: available[index]!,
+        eventTypes: eventTypes.sort(), condition: source.condition, available: stillTheirs,
         yours: source.userId === actor.userId,
       })),
       requests: requests.map((entry) => this.sourceRequestView(row, entry, actor.userId, person(entry.userId))),
@@ -1091,10 +1111,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   /**
-   * The saver's own sources for the rules they just saved, inside the save's
-   * transaction. Event types are added to what they already let in from a
-   * connection and a condition they set is kept: saving a definition never
-   * narrows or clears a person's own filter.
+   * The saver's own sources for the rules this save adds, inside the save's
+   * transaction. An event type they already let in from that connection is
+   * left exactly as it is, its condition and its request with it: saving a
+   * definition never narrows, clears or widens what a person agreed to.
    */
   private putOwnSources(workspaceId: string, userId: string, incarnation: string, evaluators: readonly unknown[],
     previous: readonly unknown[], now: number): void {
@@ -1102,26 +1122,48 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     // Only a rule this save adds is this saver's act. A save that changes
     // something else (the instructions, a schedule) lends nothing of theirs.
     const before = new Set(z.array(ExternalEventEvaluatorV1Schema).parse(previous).map(key));
-    const wanted = new Map<string, Set<string>>();
-    for (const evaluator of z.array(ExternalEventEvaluatorV1Schema).parse(evaluators)) {
-      if (before.has(key(evaluator))) continue;
-      const eventTypes = wanted.get(evaluator.source.connectionId) ?? new Set<string>();
-      eventTypes.add(evaluator.source.eventType);
-      wanted.set(evaluator.source.connectionId, eventTypes);
-    }
-    for (const [connectionId, eventTypes] of wanted) {
+    const added = new Map(z.array(ExternalEventEvaluatorV1Schema).parse(evaluators)
+      .filter((evaluator) => !before.has(key(evaluator))).map((evaluator) => [key(evaluator), evaluator.source]));
+    for (const { connectionId, eventType } of added.values()) {
       const connection = first(this.sql.exec<{ connector_type: string; scope: string; owner_user_id: string | null }>(
         `SELECT connector_type, scope, owner_user_id FROM connector_connections WHERE id = ? AND workspace_id = ?`,
         connectionId, workspaceId,
       ));
       if (!connection || (connection.scope === "personal" && connection.owner_user_id !== userId)) continue;
-      const existing = this.sources().read(this.sidekickId, userId, connectionId);
+      if (this.sources().read(this.sidekickId, userId, connectionId, eventType)) continue;
       this.sources().put({
-        sidekickId: this.sidekickId, userId, connectionId, connectorType: connection.connector_type,
-        eventTypes: [...new Set([...(existing?.eventTypes ?? []), ...eventTypes])],
-        condition: existing?.condition ?? null, membershipIncarnation: incarnation,
-        origin: existing?.origin ?? "own_definition", requestId: existing?.requestId ?? null,
+        sidekickId: this.sidekickId, userId, connectionId, connectorType: connection.connector_type, eventType,
+        condition: null, membershipIncarnation: incarnation, requestId: null,
       }, now);
+    }
+  }
+
+  /**
+   * A rule on another person's own connection needs that person's answer.
+   *
+   * A manager may configure a rule on a colleague's connection only for an
+   * event type that colleague approved a request for. A source the
+   * colleague's own saved rule made, or the migration made from one, stands
+   * for that one rule: it keeps a rule that is unchanged from the revision
+   * before, and lets no new or widened rule onto their account. Without this
+   * a rule about one thread could be replaced by a rule about all their mail
+   * with no act of theirs. Runs in the save's transaction.
+   */
+  private assertRulesHaveTheirOwners(workspaceId: string, saverUserId: string, evaluators: readonly unknown[],
+    previous: readonly unknown[]): void {
+    const same = (evaluator: z.infer<typeof ExternalEventEvaluatorV1Schema>) =>
+      JSON.stringify([evaluator.source.connectionId, evaluator.source.eventType, evaluator.source.resourceId ?? null]);
+    const unchanged = new Set(z.array(ExternalEventEvaluatorV1Schema).parse(previous).map(same));
+    for (const evaluator of z.array(ExternalEventEvaluatorV1Schema).parse(evaluators)) {
+      if (unchanged.has(same(evaluator))) continue;
+      const connection = first(this.sql.exec<{ scope: string; owner_user_id: string | null }>(
+        `SELECT scope, owner_user_id FROM connector_connections WHERE id = ? AND workspace_id = ?`,
+        evaluator.source.connectionId, workspaceId,
+      ));
+      if (!connection || connection.scope !== "personal" || connection.owner_user_id === saverUserId) continue;
+      const approved = connection.owner_user_id === null ? null
+        : this.sources().read(this.sidekickId, connection.owner_user_id, evaluator.source.connectionId, evaluator.source.eventType);
+      if (!approved || approved.requestId === null) throw sidekickSourceError("sidekick_source_owner_must_approve");
     }
   }
 
@@ -1255,8 +1297,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
           continue;
         }
         for (const connection of connections) {
-          this.sources().put({ sidekickId: this.sidekickId, userId, connectionId: connection.id, connectorType: request.ask.connectorType,
-            eventTypes, condition, membershipIncarnation: relationship!.incarnation, origin: "request", requestId: created.requestId }, now);
+          for (const eventType of eventTypes) {
+            this.sources().put({ sidekickId: this.sidekickId, userId, connectionId: connection.id, connectorType: request.ask.connectorType,
+              eventType, condition, membershipIncarnation: relationship!.incarnation, requestId: created.requestId }, now);
+          }
         }
         requests.push(this.sources().settle(created.requestId, "approved", now)!);
         sourcesMoved = true;
@@ -1308,9 +1352,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         const connections = this.sourceConnections(row.workspace_id, current.userId, current.connectorType);
         if (connections.length === 0) throw sidekickSourceError("sidekick_source_connection_missing");
         for (const connection of connections) {
-          this.sources().put({ sidekickId: this.sidekickId, userId: current.userId, connectionId: connection.id,
-            connectorType: current.connectorType, eventTypes: current.eventTypes, condition: current.condition,
-            membershipIncarnation: relationship.incarnation, origin: "request", requestId: current.requestId }, now);
+          for (const eventType of current.eventTypes) {
+            this.sources().put({ sidekickId: this.sidekickId, userId: current.userId, connectionId: connection.id,
+              connectorType: current.connectorType, eventType, condition: current.condition,
+              membershipIncarnation: relationship.incarnation, requestId: current.requestId }, now);
+          }
         }
         this.addSourceViewer(row, current.userId, relationship.role, now);
         this.scheduleSourceReconciliation();
@@ -1537,9 +1583,10 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         now,
         this.sidekickId,
       );
+      const previousEvaluators = JSON.parse(current.evaluator_projection_json) as unknown[];
+      this.assertRulesHaveTheirOwners(row.workspace_id, request.actor.userId, prepared.evaluators, previousEvaluators);
       if (saver?.status === "active") {
-        this.putOwnSources(row.workspace_id, request.actor.userId, saver.incarnation, prepared.evaluators,
-          JSON.parse(current.evaluator_projection_json) as unknown[], now);
+        this.putOwnSources(row.workspace_id, request.actor.userId, saver.incarnation, prepared.evaluators, previousEvaluators, now);
       }
       const effectiveAfter = this.writeRegistrations(paused ? [] : prepared.evaluators);
       if (!paused) this.scheduleSourceReconciliation();
@@ -3044,7 +3091,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       : restrictedActivityUserIds(event);
     if (audience !== null) {
       const candidates = this.sources().forSidekick(this.sidekickId).filter((source) => source.connectionId === event.connection_id
-        && audience.includes(source.userId) && source.eventTypes.includes(event.event_type));
+        && audience.includes(source.userId) && source.eventType === event.event_type);
       const eligible = await Promise.all(candidates.map((source) => this.sourceEligible(source)));
       if (!eligible.some(Boolean)) return null;
     }
