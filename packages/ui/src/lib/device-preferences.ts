@@ -8,6 +8,7 @@ const LEGACY_WORKSPACE_NAME_STORAGE_KEY = 'rally:workspace-name';
 
 export interface DevicePreferences {
   version: 1;
+  startupPage?: 'canvas-homepage' | 'last-opened';
   selectedRegion?: Region;
   workspaceName?: string;
   microphoneDeviceId?: string;
@@ -32,6 +33,7 @@ function parsedPreferences(value: string | null): DevicePreferences | null {
     if (microphoneDeviceId !== undefined && typeof microphoneDeviceId !== 'string') return null;
     return {
       version: 1,
+      ...(candidate['startupPage'] === 'last-opened' ? { startupPage: 'last-opened' as const } : {}),
       ...(isConfiguredRegion(selectedRegion) ? { selectedRegion } : {}),
       ...(typeof workspaceName === 'string' ? { workspaceName: workspaceName.trim() } : {}),
       ...(typeof microphoneDeviceId === 'string' && microphoneDeviceId.trim()
@@ -92,5 +94,12 @@ export function setDeviceTheme(theme: ThemeChoice): void {
 export function setDeviceMicrophoneId(microphoneDeviceId: string): void {
   const preferences = readDevicePreferences();
   preferences.microphoneDeviceId = microphoneDeviceId.trim() || 'default';
+  writeDevicePreferences(preferences);
+}
+
+/** Startup is local to this device, like the page and layout it can restore. */
+export function setDeviceStartupPage(startupPage: 'canvas-homepage' | 'last-opened'): void {
+  const preferences = readDevicePreferences();
+  preferences.startupPage = startupPage;
   writeDevicePreferences(preferences);
 }

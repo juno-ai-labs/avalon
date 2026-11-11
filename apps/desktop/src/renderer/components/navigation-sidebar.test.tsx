@@ -3,12 +3,13 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, createEvent, fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
-import { Link, MemoryRouter, Navigate, Route, Routes, useLocation, useNavigate, useNavigationType, type InitialEntry } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate, useNavigationType, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
 import { applyVersionedSidebarList, type ActivityList } from '../lib/sidebar-list-store';
 import type { AutomationSummary, Workspace } from '../lib/types';
+import { LandingScreen } from '../screens/landing';
 import { RESTORED_ROUTE } from '../lib/landing';
 import { useUiStore } from '../lib/ui-store';
 import { ActivityHomeScreen } from '../screens/activity-home';
@@ -86,7 +87,7 @@ function renderSidebar(person: Workspace = workspace, route: InitialEntry = '/',
         />
         <Routes>
           {/* The app's landing: a launch starts at "/" and is sent to the Canvases home. */}
-          {landing && <Route element={<Navigate replace to="/canvases" />} path="/" />}
+          {landing && <Route element={<LandingScreen />} path="/" />}
           <Route element={<><ActivityHomeScreen /><Location /></>} path="/activity" />
           <Route element={<Location />} path="*" />
         </Routes>
@@ -303,11 +304,11 @@ describe('the Canvases navigation', () => {
     }
   });
 
-  it('keeps the section left open across a launch the landing redirects to the Canvases home', () => {
+  it('selects Canvases on launch even when Activity was left open', () => {
     useUiStore.getState().setSidebarSection('activity');
     renderSidebar(workspace, '/', undefined, true, true);
     expect(screen.getByTestId('location')).toHaveTextContent('/canvases');
-    expect(useUiStore.getState().sidebarSection).toBe('activity');
+    expect(useUiStore.getState().sidebarSection).toBe('canvases');
   });
 
   it('keeps Canvases selected when a Canvas opens', () => {
@@ -439,12 +440,12 @@ describe('the Activity section', () => {
       expect(useUiStore.getState().sidebarSection).toBe('activity');
     });
 
-    it('at launch with Activity stored, replaces the landing with the top row once the list arrives, and not before', async () => {
+    it('keeps the homepage when Activity arrives after launch', async () => {
       useUiStore.getState().setSidebarSection('activity');
       const client = renderSidebar(workspace, '/', undefined, true, true);
       expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
       await act(async () => { applyVersionedSidebarList(client, 'activity', 1, page); });
-      await waitFor(() => expect(screen.getByTestId('address')).toHaveTextContent(TOP));
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
       expect(screen.getByTestId('location')).toHaveAttribute('data-navigation', 'REPLACE');
     });
 
@@ -481,11 +482,11 @@ describe('the Activity section', () => {
       expect(screen.getByTestId('address')).toHaveTextContent(canvasWithArtifact);
     });
 
-    it('opens the Activity page when the first list on a default landing is empty', async () => {
+    it('keeps the homepage when Activity is empty', async () => {
       useUiStore.getState().setSidebarSection('activity');
       const client = renderSidebar(workspace, '/', undefined, true, true);
       await act(async () => { applyVersionedSidebarList(client, 'activity', 1, { unseenCount: 0, items: [] }); });
-      expect(await screen.findByText('No activity yet')).toBeInTheDocument();
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
       expect(screen.getByTestId('location')).toHaveAttribute('data-navigation', 'REPLACE');
     });
 

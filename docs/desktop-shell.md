@@ -23,7 +23,7 @@ routes the shell serves, or who owns the right panel.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/activity`, `/settings` (reached only in the browser; on the desktop Settings renders in its own window), `/opening`, and the redirects of the removed routes. |
-| `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: the restorable `last-route`, else `/canvases`, once onboarding is finished. `LANDING_ROUTE`, `restorableRoute`, `RESTORED_ROUTE`, `useRestoredRouteFallback`, `useOpenLanding`. |
+| `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: `/canvases` by default, or the restorable `last-route` with Last Opened selected, once onboarding is finished. `LANDING_ROUTE`, `restorableRoute`, `RESTORED_ROUTE`, `useRestoredRouteFallback`, `useOpenLanding`. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Activity), the account menu under it, the list's header and its actions, and the phone sheet; `useSectionCounts`, the rail's counts, and `useRailDockBadge`, which sends Activity's unseen count (`dockBadgeCount`) to the dock. |
@@ -108,7 +108,7 @@ It holds two columns:
   shows a pin drop hint, highlighted throughout a Canvas drag. The choice is a device preference
   (`rally.sidebar-section`, default `canvases`); a value stored before the
   cutover (`channels`, `threads`, `pinned`, `artifacts`, `sidekicks`) reads as the default,
-  and `activity` opens Activity again. Arriving at a Canvas or a standalone Sidekick selects
+  and `activity` opens Activity again when Last Opened is selected. Arriving at a Canvas or a standalone Sidekick selects
   Canvases (Activity excepted: once open, only a rail pick
   leaves it, whatever the pane opens and however, a row, a link inside the
   pane, a push or a deep link, and closing the phone sheet over it keeps it).
@@ -117,8 +117,8 @@ It holds two columns:
   available with Canvases beside them (or Activity if it was selected).
   The window's landing is its
   first route that belongs to a section, so a launch's redirect from `/` to
-  `/canvases` is the landing and not a navigation. Landing on a dashboard
-  keeps the stored choice. Landing on `/activity` selects Activity.
+  `/canvases` is the landing and not a navigation. With Last Opened selected, landing on a dashboard
+  keeps the stored choice; the default root landing selects Canvases. Landing on `/activity` selects Activity.
   Clicking **Canvases** always opens `/canvases`, including when a Canvas is
   already open and its rail entry is selected. The list header's **Canvas
   dashboard** home icon, immediately before New Canvas, uses the same action.
@@ -128,8 +128,8 @@ It holds two columns:
   Entering Activity opens its top row (the first the list draws) in the pane,
   as a mail client opens a folder's first message, and draws that row open:
   the rail's button pushes the row's route, so Back returns to what was open;
-  a launch with Activity stored replaces the landing with it once the first
-  list arrives, so Back does not return to the Canvases home, but only when
+  a launch with Last Opened selected and Activity stored replaces the landing
+  with it once the first list arrives, so Back does not return to the Canvases home, but only when
   the landing is a section home: a Canvas or Sidekick the window lands on,
   restored from this device or opened by a link, is kept, and so is anything
   navigated to before the list arrived; a link that names Activity
@@ -201,8 +201,11 @@ reappearing there; [`list-motion.md`](list-motion.md) owns the motion.
 
 ### The landing and the routes
 
-`/` is the landing (`LandingScreen`). It reopens the route this person last had
-open on this device, `rally.desktop-layout:<organization>:<user>:last-route`,
+`/` is the landing (`LandingScreen`). It defaults to `/canvases` and resets
+the sidebar to Canvases before navigation so saved Activity cannot redirect it.
+Account → Preferences → On startup can opt this device into **Last Opened**.
+Explicit links keep their destination. With Last Opened selected, it reopens the
+route this person last had open on this device, `rally.desktop-layout:<organization>:<user>:last-route`,
 when that is a Canvas, a Sidekick or a section home (`restorableRoute`), and
 otherwise opens `/canvases`. The app shell writes `last-route` on every
 navigation to such a route. A screen that leaves because what it showed is gone

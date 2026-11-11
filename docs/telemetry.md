@@ -44,6 +44,23 @@ the implementation that future changes must preserve.
 For the implementation checklist, see
 [`adding-new-instrumented-event.md`](adding-new-instrumented-event.md).
 
+## Account preference in the web app
+
+The shared `common/product-analytics-preference.ts` client owns the endpoint,
+GET/PATCH payloads, response schema and version-conflict recovery for both hosts.
+Electron supplies its authenticated native transport; the browser supplies the
+shared `RallyApi` cookie transport. Neither host implements its own conflict retry.
+The desktop controller still owns local consent enforcement, pending offline
+writes, spool purging and native crash generation invalidation.
+
+Settings → Account → Preferences offers the same account-level Product analytics
+preference on web and desktop. Web reads and PATCHes `/telemetry/preference`
+through the identity-only browser cookie adapter; cookies remain HttpOnly.
+The server's version guards writes, and a conflict reads the newer preference
+without retrying the stale choice. Browser saves are online and acknowledge the
+server value, while desktop retains its local-first disable and offline sync.
+No browser telemetry collector or new event producer is introduced.
+
 ## Storage and background writes
 
 `TELEMETRY_DB` owns accepted events, delivery receipts, and replay audit rows.
@@ -837,6 +854,16 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-11-11 — Save account analytics consent from the web app
+
+**What changed:** Preferences reads and updates account consent through a single
+shared client on web and desktop, with version conflicts adopting the newer value.
+Web uses the existing identity cookie adapter; desktop uses native bearer transport.
+**Why:** The account-level preference was exposed as a disabled desktop-only
+control in the browser. A local browser switch would not change server consent.
+**Consequences:** Web saves require a successful server acknowledgement; desktop
+local-first disable, offline sync, and crash handling remain unchanged.
 
 ### 2026-11-10 — Artifact inventory verification retries transient Cloudflare failures
 

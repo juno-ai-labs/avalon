@@ -37,6 +37,17 @@ The browser shell lives in the browser package and declares its own UI dependenc
 Both hosts reuse application recovery and query defaults. Initial session restoration
 shows a loading state before offering sign-in.
 
+## Account privacy preference
+
+Preferences reads and saves Product analytics through the identity-scoped cookie
+adapter (`/regional/<region>/browser/api/_/telemetry/preference`). The shared
+account-preference client used by Electron also sends this PATCH with the last
+read version; `RallyApi` supplies the browser cookie transport.
+A 409 adopts the current account preference rather than overwriting a newer
+choice from another device. A failed save shows an error and re-reads the
+account; no browser-local consent value is treated as authoritative.
+This changes account consent, not browser telemetry collection.
+
 ## How it works
 
 Vite builds the client and content-addressed assets. The Worker reads the built

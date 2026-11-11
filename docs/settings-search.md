@@ -32,6 +32,15 @@ and mutation hook beside it. Options can come from the same option data the
 control renders. Optional aliases describe genuine synonyms, not a parallel
 search catalogue.
 
+Account has a **Preferences** child page on web and desktop. **On startup**
+offers **Canvas Homepage** (default) and **Last Opened**, saved per device.
+The Agent section follows with **Show agent work** above **Personal system prompt**.
+**Privacy & diagnostics** sits at the bottom. Its Product analytics toggle saves
+account consent on both web and desktop. Web uses the identity cookie API and
+shows the acknowledged value; failed saves show an error, and version conflicts
+adopt the newer account preference. It requires a connection to save.
+Personal memory review is a separate top-level **Memories** page for members.
+
 The Application page's **Update channel** is a device-local desktop preference.
 It renders through the shared dropdown and is indexed from the same Stable and
 Faster option labels. Browser fallback surfaces omit it because they cannot
