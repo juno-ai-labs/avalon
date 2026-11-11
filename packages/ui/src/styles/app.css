@@ -4285,7 +4285,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .app-shell .elicitation-option:has(> .elicitation-chosen) { grid-template-columns: auto minmax(0, 1fr) auto; }
 .app-shell .elicitation-chosen { color: var(--av-sys-color-accent-base); display: inline-flex; grid-column: 3; grid-row: 1; }
 .app-shell .elicitation-option.is-selected > kbd { background: var(--av-sys-color-accent-base); border-color: var(--av-sys-color-accent-base); color: var(--av-sys-color-accent-on); }
-.app-shell .elicitation-option:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-text-default); outline-offset: -2px; }
+.app-shell .elicitation-option:has(> input:focus-visible) { outline: 2px solid var(--av-sys-color-text-default); outline-offset: -2px; }
 .app-shell .elicitation-option-copy { grid-column: 2; grid-row: 1; }
 .app-shell .elicitation-option-copy strong { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 400; line-height: 20px; overflow-wrap: anywhere; }
 .app-shell .elicitation-option > kbd { align-items: center; background: var(--av-cmp-keycap-background); border: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); border-radius: 4px; display: inline-flex; font-size: 11px; grid-column: 1; grid-row: 1; justify-content: center; line-height: 16px; margin: 0; min-width: 18px; padding: 1px 4px; }
@@ -4339,6 +4339,32 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .elicitation-submit:disabled { background: var(--av-ref-color-neutral-4); color: var(--av-ref-color-neutral-8); }
 .elicitation-submit:disabled kbd { color: var(--av-ref-color-neutral-7); }
 .elicitation-resolved-answer { color: var(--av-ref-color-neutral-13); font-size: 14px; line-height: 1.45; }
+.elicitation-cancelled { color: var(--av-sys-color-text-subtle); font-size: 12px; line-height: 20px; }
+.elicitation-cancelled summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  list-style: none;
+  min-height: 24px;
+  position: relative;
+  width: fit-content;
+}
+.elicitation-cancelled summary::-webkit-details-marker { display: none; }
+.elicitation-cancelled summary:hover { color: var(--av-sys-color-text-default); }
+.elicitation-cancelled summary:focus-visible {
+  border-radius: var(--av-sys-size-radius-sm);
+}
+/* Use the same icon gutter as the work accordion; the label stays on the
+   transcript's text edge. */
+.elicitation-cancelled summary svg { left: -20px; position: absolute; }
+.elicitation-cancelled[open] summary svg { transform: rotate(90deg); }
+.elicitation-cancelled-content {
+  border-left: 1px solid var(--av-sys-color-border-default);
+  margin: var(--space-1) 0 0 var(--space-1);
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+}
+.elicitation-cancelled-content p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.elicitation-cancelled-content .elicitation-cancelled-note { margin-top: var(--space-2); }
 .elicitation-collapsed-bar { align-items: center; color: var(--av-ref-color-neutral-11); display: grid; gap: var(--space-2); grid-template-columns: auto minmax(0, 1fr) auto; min-height: 48px; padding: var(--space-2) var(--space-3); text-align: left; }
 .elicitation-collapsed-bar:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 6%, var(--av-sys-color-surface-raised)); border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 34%, var(--av-ref-color-line-5)); }
 .elicitation-collapsed-bar span { color: var(--av-sys-color-brand-ink); font-size: 9px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
@@ -6910,10 +6936,10 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .dashboard-card:has(.dashboard-card-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .dashboard-card-preview { border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; display: grid; height: 150px; overflow: hidden; place-items: center; position: relative; }
 .canvas-card-presence { left: 12px; pointer-events: none; position: absolute; top: 12px; }
-.canvas-card-data { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 4px; padding: 4px 8px; position: absolute; right: 12px; top: 12px; }
-/* The Sidekick facepile: top right, moved under the Data badge when the card has one. */
-.canvas-card-sidekicks { pointer-events: none; position: absolute; right: 12px; top: 12px; }
-.canvas-card-sidekicks.is-below-data { top: 44px; }
+.canvas-card-indicators { align-items: flex-end; display: flex; flex-direction: column; gap: 8px; position: absolute; right: 12px; top: 12px; }
+.canvas-card-badge { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 4px; padding: 4px 8px; }
+/* Keep the Sidekick hover targets above the card’s stretched title link. */
+.canvas-card-sidekicks { color: inherit; position: relative; text-decoration: none; z-index: 1; }
 .sidekick-stack { align-items: center; display: inline-flex; }
 .sidekick-stack-item { display: inline-flex; height: 26px; width: 26px; }
 .sidekick-stack-item + .sidekick-stack-item, .sidekick-stack .sidekick-stack-overflow { margin-left: -6px; }
@@ -7057,6 +7083,43 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-editing-badge { align-items: center; background: var(--av-sys-color-surface-raised-hover); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: inline-flex; font-size: 12px; font-weight: 500; gap: var(--av-ref-space-unit); padding: var(--av-ref-space-unit) var(--av-ref-space-unit) var(--av-ref-space-unit) calc(var(--av-ref-space-unit) * 2.5); }
 .sidekick-editing-close { align-items: center; background: none; border: 0; border-radius: 999px; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-flex; padding: calc(var(--av-ref-space-unit) / 2); }
 .sidekick-editing-close:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
+/* Live helpers share the original directional number wheel on desktop and web. */
+.composer-agent-activity { color: var(--av-sys-color-text-muted); font-size: 12px; line-height: 18px; padding-inline: 16px; }
+.background-agent-shimmer {
+  animation: background-agent-shimmer 2.8s linear infinite;
+  background: linear-gradient(105deg, var(--av-sys-color-text-muted) 35%, var(--av-sys-color-text-default) 50%, var(--av-sys-color-text-muted) 65%) 100% 0 / 250% 100%;
+  background-clip: text;
+  color: transparent;
+}
+.background-agent-wheel {
+  --wheel-travel: 100%;
+  display: inline-grid;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  perspective: 80px;
+  vertical-align: bottom;
+}
+.background-agent-wheel[data-direction="down"] { --wheel-travel: -100%; }
+.background-agent-digit { grid-area: 1 / 1; text-align: center; }
+.background-agent-digit-in { animation: background-agent-digit-in 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+.background-agent-digit-out { animation: background-agent-digit-out 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
+@keyframes background-agent-shimmer { to { background-position: -100% 0; } }
+@keyframes background-agent-digit-in {
+  from { opacity: 0; transform: translateY(var(--wheel-travel)) rotateX(-55deg); }
+  to { opacity: 1; transform: translateY(0) rotateX(0); }
+}
+@keyframes background-agent-digit-out {
+  from { opacity: 1; transform: translateY(0) rotateX(0); }
+  to { opacity: 0; transform: translateY(calc(-1 * var(--wheel-travel))) rotateX(55deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .background-agent-shimmer, .background-agent-digit { animation: none; }
+  .background-agent-digit-out { display: none; }
+}
+@media (forced-colors: active) {
+  .background-agent-shimmer { background: none; color: CanvasText; }
+}
+
 /* A composer mode's line, just over the composer it applies to. */
 /* Two space units each way: inset to clear the capsule's rounded end, and apart from it. */
 .composer-mode-notice { display: flex; margin-bottom: calc(var(--av-ref-space-unit) * 2); padding: 0 calc(var(--av-ref-space-unit) * 2); }

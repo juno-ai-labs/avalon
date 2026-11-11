@@ -37,6 +37,7 @@ interface InspectorRailProps {
   children?: React.ReactNode;
   panel?: {
     detached?: boolean;
+    focusOnOpen?: boolean;
     commentDisabledReason?: string;
     resourceId: string;
     onClose: () => void;
@@ -1075,5 +1076,5 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     </>
   );
   if (props.panel?.detached) return <section className="resource-panel artifact-window-panel">{content}</section>;
-  return <RailSurface className={props.panel ? 'inspector-rail resource-panel' : 'inspector-rail'} dropTarget={props.dropTarget} label={props.panel ? `Resource: ${headerTitle}` : inspector ? 'Inspector detail' : railTitle[railVariant]} leaving={props.leaving} onClose={closeRail} onResize={setRailWidth} resizeLabel="Resize inspector" width={railWidth}>{content}</RailSurface>;
+  return <RailSurface className={props.panel ? 'inspector-rail resource-panel' : 'inspector-rail'} dropTarget={props.dropTarget} focusOnOpen={props.panel?.focusOnOpen} label={props.panel ? `Resource: ${headerTitle}` : inspector ? 'Inspector detail' : railTitle[railVariant]} leaving={props.leaving} onClose={closeRail} onResize={setRailWidth} resizeLabel="Resize inspector" width={railWidth}>{content}</RailSurface>;
 }

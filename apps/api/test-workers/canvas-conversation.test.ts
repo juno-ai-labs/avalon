@@ -281,7 +281,7 @@ describe("a Canvas's Chat", () => {
     expect(retried).toEqual(first);
     expect(first.sidekickId).toBe(sidekickId);
     expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).sidekicks)
-      .toEqual([{ id: sidekickId, name: "New Sidekick", status: "draft", madeHere: true, canOpen: true }]);
+      .toEqual([{ id: sidekickId, name: "New Sidekick", status: "draft", madeHere: true, triggerKinds: [], canOpen: true }]);
     // The instructions are the author's message in the Sidekick's own conversation, once.
     const wizard = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, sidekickId)));
     expect(await runInDurableObject(wizard, (_instance, state) => state.storage.sql.exec<{ n: number }>(

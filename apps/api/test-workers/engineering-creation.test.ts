@@ -104,6 +104,7 @@ beforeEach(async () => {
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN created_by_user_id TEXT"),
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN created_at TEXT"),
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN updated_at TEXT"),
+    env.DB.prepare("ALTER TABLE workspaces ADD COLUMN model_selector_visible INTEGER NOT NULL DEFAULT 0"),
     env.DB.prepare(`CREATE TABLE regional_onboarding_operations (
       operation_id TEXT PRIMARY KEY, platform_user_id TEXT NOT NULL, action TEXT NOT NULL,
       workspace_id TEXT NOT NULL, invitation_id TEXT, completed_at TEXT, created_at TEXT NOT NULL
@@ -113,6 +114,33 @@ beforeEach(async () => {
 });
 
 describe("engineering Organization creation", () => {
+  it("seeds, edits, audits and publishes Organization model visibility without resetting it on creation replay", async () => {
+    const original = env.FEATURE_FLAG_MODEL_SELECTOR_VISIBLE_FOR_NEW_ORGS;
+    try {
+      env.FEATURE_FLAG_MODEL_SELECTOR_VISIBLE_FOR_NEW_ORGS = "true";
+      const bridge = new EngineeringInspectionBridge(executionContext(), creationEnv());
+      await createOrg(bridge);
+      expect(await bridge.inspectOrganizationSettings({ orgId: ORG })).toEqual({ orgId: ORG, region: "global", modelSelectorVisible: true });
+      await bridge.updateOrganizationSettings({ orgId: ORG, modelSelectorVisible: false }, OPERATOR);
+      await createOrg(bridge);
+      expect(await bridge.inspectOrganizationSettings({ orgId: ORG })).toMatchObject({ modelSelectorVisible: false });
+      await runInDurableObject(workspace(), async (_instance, state) => {
+        const row = state.storage.sql.exec<{ topics_json: string }>("SELECT topics_json FROM workspace_sync_events ORDER BY waterline DESC LIMIT 1").one();
+        expect(JSON.parse(row.topics_json)).toEqual(["workspace_profile"]);
+      });
+      const audit = await env.AUDIT_DB.prepare("SELECT action, metadata_json FROM audit_events WHERE workspace_id = ? AND action LIKE 'engineering.update_org_settings.%' ORDER BY action")
+        .bind(ORG).all<{ action: string; metadata_json: string }>();
+      expect(audit.results.map((row) => row.action)).toEqual(["engineering.update_org_settings.attempt", "engineering.update_org_settings.result"]);
+      expect(JSON.parse(audit.results[1]!.metadata_json)).toMatchObject({ operator: OPERATOR, modelSelectorVisible: false, outcome: "admitted" });
+      await expect(bridge.updateOrganizationSettings({ orgId: ORG, modelSelectorVisible: "yes" }, OPERATOR)).rejects.toThrow(/modelSelectorVisible/);
+      await expect(bridge.updateOrganizationSettings({ orgId: ORG, modelSelectorVisible: true }, undefined)).rejects.toThrow();
+      await env.DB.prepare("UPDATE workspaces SET abandoned_at = ? WHERE id = ?").bind("2026-11-10T00:00:00Z", ORG).run();
+      await expect(bridge.updateOrganizationSettings({ orgId: ORG, modelSelectorVisible: true }, OPERATOR)).rejects.toThrow(/organization_not_found/);
+    } finally {
+      env.FEATURE_FLAG_MODEL_SELECTOR_VISIBLE_FOR_NEW_ORGS = original;
+    }
+  });
+
   it("creates an Organization with its owner and members, seats them, and resumes without duplicates", async () => {
     const bridge = new EngineeringInspectionBridge(executionContext(), creationEnv());
     await createOrg(bridge);

@@ -10,6 +10,7 @@ import {
   pollAttemptFailure,
   PollResultSchema,
   terminalPollFailure,
+  terminalPollFailureLevel,
 } from "../src/workflows/connector-poll-result";
 
 /** A degraded stream, shaped as the connector layer returns it. */
@@ -84,5 +85,19 @@ describe("the stored terminal poll reason", () => {
       code: "provider_error:http_403", message: "Connector poll failed after retries: provider_error:http_403",
     });
     expect(terminalPollFailure(new DOMException("private", "TimeoutError"))).toEqual({ code: "connector_poll_timeout", message: "Connector poll timed out" });
+  });
+});
+
+describe("terminalPollFailureLevel", () => {
+  it("logs a refused grant as a warning, even after the step boundary", () => {
+    const refused = new ConnectorError("unauthorized", "revoked", { status: 400 });
+    const crossed = pollAttemptFailure(refused, pollAttemptErrorCode(refused));
+    expect(terminalPollFailureLevel(crossed)).toBe("warn");
+  });
+
+  it("keeps provider faults and unknown failures at error", () => {
+    const fault = new ConnectorError("provider_error", "down", { status: 500 });
+    expect(terminalPollFailureLevel(pollAttemptFailure(fault, pollAttemptErrorCode(fault)))).toBe("error");
+    expect(terminalPollFailureLevel(new Error("boom"))).toBe("error");
   });
 });

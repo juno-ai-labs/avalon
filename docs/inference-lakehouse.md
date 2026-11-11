@@ -15,7 +15,7 @@ product authority, and a capture failure does not change the inference outcome.
 | Path | Responsibility |
 | --- | --- |
 | `packages/agent-harness/src/index.ts`, `bind-runtime.ts` | Emit one exact request event and one terminal attempt event for each structured or streaming provider call. |
-| `apps/api/src/queues/inference-lakehouse-consumer.ts` | Validate the pointer and archived bytes, enforce the regional boundary, fit the row to Pipeline's request limit, and send it through `INFERENCE_LAKEHOUSE`. |
+| `apps/api/src/queues/inference-lakehouse-consumer.ts` | Validate the pointer and archived bytes, enforce the regional boundary, fit the row to Pipeline's per-record limit, and send it through `INFERENCE_LAKEHOUSE`. |
 | `config/inference-lakehouse.json` | Source of truth for the Global bucket, stream, pinned stream ID, sink, pipeline, namespace, table, and binding name. |
 | `config/inference-lakehouse-stream-schema.json` | Immutable structured-stream schema and analytical column contract. |
 | `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Locally materializes pinned bindings for application deploys; explicit modes check or reconcile every Global lakehouse (inference, analytics events and usage). |
@@ -97,8 +97,11 @@ consumer rejects a pointer for another region, loads Global's `PAYLOADS` binding
 the exact byte count and SHA-256, parses the schema again, and sends a one-row
 array through the Global `INFERENCE_LAKEHOUSE` Pipeline binding.
 
-Pipeline ingestion requests have a 5,000,000-byte ceiling. When the array-wrapped
-record would exceed it, the consumer removes only the full `request` and
+The Pipeline binding refuses any single record above 1 MB
+(`CF_PIPELINE_MESSAGE_TOO_LARGE`), well below the published 5 MB
+ingestion-request ceiling, and every row is sent alone, so the per-record limit
+is the one that binds. When the archived record exceeds 1,000,000 bytes
+(`PIPELINE_MESSAGE_BYTES`), the consumer removes only the full `request` and
 `response` JSON from the analytical row and adds `payload_object_key`,
 `payload_sha256`, and `payload_bytes`. Every queryable dimension, failure, usage,
 and metadata field still lands in the analytical projection, while the exact
@@ -218,7 +221,7 @@ from `config/usage-lakehouse.json`. See [usage metering](usage-metering.md).
 - Invalid or cross-region pointers are poison: the consumer logs and acknowledges
   them so they cannot retry forever. Missing, corrupt, or schema-invalid archived
   bytes and Pipeline failures retry and eventually reach the Global DLQ.
-- A Pipeline record above 5,000,000 bytes becomes a pointer-backed analytical row;
+- A Pipeline record above 1,000,000 bytes becomes a pointer-backed analytical row;
   its exact record remains in Global R2. Queue messages remain far below the
   Queue's 128 KB message limit because they contain no inference JSON.
 - The consumer uses Cloudflare's defaults of 10 messages, a 5-second batch
@@ -322,6 +325,30 @@ delivery alarm. `inference_lakehouse_delivered` includes only identifiers,
 source, event type, and whether the row used the oversized fallback.
 
 ## Changelog
+
+### 2026-11-10 — Overflow at the Pipeline's 1 MB per-record limit, not the 5 MB request limit
+
+**What changed:** The consumer switches to the pointer-backed analytical row
+when the archived record exceeds 1,000,000 bytes (`PIPELINE_MESSAGE_BYTES`),
+replacing the 5,000,000-byte `PIPELINE_INGEST_REQUEST_BYTES` threshold. The
+overflow row's `metadata.overflow.reason` is now `pipeline_message_limit`;
+rows written before this change carry `pipeline_ingest_request_limit`.
+
+**Why:** The binding refuses any one record above 1 MB with
+`CF_PIPELINE_MESSAGE_TOO_LARGE: Individual message must not exceed 1 MB`, a
+limit the published limits page does not list. Every record between 1 MB and
+5 MB therefore failed identically on each retry and dead-lettered — hundreds
+of distinct records over the week before this change. The full records were
+never lost — they stay in Global R2 — but their analytical rows were.
+
+**Rejected:** Reading 1 MB as 1,048,576 bytes would admit a few more rows
+whole, but a wrong guess sends that record to the dead-letter queue, whereas
+the decimal reading only sends it down the lossless pointer path.
+
+**Consequences:** If Cloudflare raises the per-record limit, raise the
+constant; the pointer path costs a reader one R2 read, not data.
+
+Shipped in #1534.
 
 ### 2026-10-09 — A streaming request row carries one of two body shapes
 

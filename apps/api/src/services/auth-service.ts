@@ -1,3 +1,4 @@
+import { resolveModelSelectorVisibleForNewOrgs } from "./client-feature-flags";
 import { observeSignup, observeAuthenticationCompleted, type SignupFlow, type SignupPlatform } from '../telemetry/signup';
 import { openEmailLoginSecret } from "./email-login-service";
 import { isConfiguredRegion } from "@rally/contracts/regions";
@@ -454,8 +455,8 @@ export class AuthService {
       // onboarding name) and a bare POST (which takes this default) no longer
       // rename the Organization under each other's members.
       this.env.DB.prepare(
-        `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at)
-         VALUES (?, ?, 'avalon-development', ?, ?, ?, ?, ?)
+        `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at, model_selector_visible)
+         VALUES (?, ?, 'avalon-development', ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            updated_at = excluded.updated_at, abandoned_at = NULL`,
       ).bind(
@@ -466,6 +467,7 @@ export class AuthService {
         DEVELOPMENT_USER_ID,
         at,
         at,
+        Number(resolveModelSelectorVisibleForNewOrgs(this.env)),
       ),
       this.env.DB.prepare(
         `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)

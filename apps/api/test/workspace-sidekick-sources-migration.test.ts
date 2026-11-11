@@ -1,5 +1,5 @@
 /**
- * WorkspaceDO migration 145 takes "whose events may start this Sidekick" out
+ * WorkspaceDO migration 146 takes "whose events may start this Sidekick" out
  * of delegation and into `sidekick_sources`. Its backfill is what keeps every
  * Sidekick firing as it did: a person whose delegation admitted a rule's
  * events gets a source for exactly those events on that connection, and
@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
-const VERSION = 145;
+const VERSION = 146;
 const openDatabases: DatabaseSync[] = [];
 
 function migratedTo(version: number): DatabaseSync {
@@ -78,7 +78,7 @@ const sources = (database: DatabaseSync): SourceRow[] => (database.prepare(
 ).all() as unknown as (Omit<SourceRow, "event_types_json"> & { event_types_json: string })[])
   .map((row) => ({ ...row, event_types_json: (JSON.parse(row.event_types_json) as string[]).sort() }));
 
-describe("WorkspaceDO migration 145: sources backfilled from delegation", () => {
+describe("WorkspaceDO migration 146: sources backfilled from delegation", () => {
   it("gives a delegate a source for each connection of theirs a rule is configured or registered on, and nobody else one", () => {
     const database = migratedTo(VERSION - 1);
     connection(database, "adam-mail", "personal", "adam");

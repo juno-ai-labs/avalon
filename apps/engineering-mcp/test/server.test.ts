@@ -20,10 +20,13 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     provisionUserPassword: vi.fn<EngineeringInspectionRpcBinding["provisionUserPassword"]>(),
     revokeUserPassword: vi.fn<EngineeringInspectionRpcBinding["revokeUserPassword"]>(),
     createOrg: vi.fn<EngineeringInspectionRpcBinding["createOrg"]>(),
+    inspectOrganizationSettings: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationSettings"]>(),
+    updateOrganizationSettings: vi.fn<EngineeringInspectionRpcBinding["updateOrganizationSettings"]>(),
     inspectOrganizationUsage: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationUsage"]>(),
     changeOrganizationPlan: vi.fn<EngineeringInspectionRpcBinding["changeOrganizationPlan"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
+    archiveSidekick: vi.fn<EngineeringInspectionRpcBinding["archiveSidekick"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
     listWorkspaces: vi.fn<EngineeringInspectionRpcBinding["listWorkspaces"]>(
@@ -196,6 +199,21 @@ describe("Rally engineering MCP tools", () => {
     expect(global.setSidekickPaused).not.toHaveBeenCalled();
   });
 
+  it("routes archive_sidekick to the Organization's region as the trusted operator", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
+    const sidekickId = asAutomationId("00000000-0000-7000-8000-000000000ef6");
+    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
+    vi.mocked(enterprise.archiveSidekick).mockResolvedValue({ region: "enterprise", orgId, sidekickId, lifecycle: "deleted" });
+    const request = { orgId, userId: asUserId("00000000-0000-7000-8000-000000000ef2"), sidekickId };
+    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name: "archive_sidekick", arguments: request });
+    expect(response.result).not.toHaveProperty("isError", true);
+    expect(response.result).toMatchObject({ content: [{ type: "text", text: expect.stringContaining('"lifecycle": "deleted"') }] });
+    expect(enterprise.archiveSidekick).toHaveBeenCalledExactlyOnceWith(request, principal);
+    expect(global.archiveSidekick).not.toHaveBeenCalled();
+  });
+
   it("retires an Organization only in the region that owns it, as the trusted operator", async () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
@@ -265,6 +283,7 @@ describe("Rally engineering MCP tools", () => {
       "send_message",
       "pause_sidekick",
       "resume_sidekick",
+      "archive_sidekick",
       "retire_org",
       "read_canvas_chat",
       "read_sidekick_conversation",
@@ -284,14 +303,16 @@ describe("Rally engineering MCP tools", () => {
       "query_worker_observability",
       "inspect_queues",
       "inspect_dead_letters",
+      "inspect_org_settings",
+      "update_org_settings",
       "inspect_usage_plan",
       "change_usage_plan",
       "inspect_migration_progress",
     ]);
-    for (const tool of result.tools.filter((item) => /^(run|update)_/.test(item.name))) {
+    for (const tool of result.tools.filter((item) => /^run_.*_sql$/.test(item.name))) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     }
-    for (const tool of result.tools.filter((item) => /^create_/.test(item.name))) {
+    for (const tool of result.tools.filter((item) => /^create_/.test(item.name) || item.name === "update_org_settings")) {
       expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
     }
   });
@@ -985,6 +1006,23 @@ describe("operations tools", () => {
     expect(JSON.stringify(await rpc(env, "tools/call", { name: "inspect_dead_letters", arguments: { queueId: "dead" } }))).toContain("failed-1");
     expect((await rpc(env, "tools/call", { name: "inspect_dead_letters", arguments: { queueId: "source" } })).result).toMatchObject({ isError: true });
     expect(calls.filter((c) => c.method === "POST")).toEqual([{ url: "https://api.cloudflare.com/client/v4/accounts/account-1/queues/dead/messages/peek", method: "POST" }]);
+  });
+
+  it("routes Organization settings to their owning region and propagates the Access actor", async () => {
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ac1");
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "global", authorityGeneration: 1 } });
+    vi.mocked(global.inspectOrganizationSettings).mockResolvedValue({ orgId, region: "global", modelSelectorVisible: false });
+    vi.mocked(global.updateOrganizationSettings).mockResolvedValue({ orgId, region: "global", modelSelectorVisible: true });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+    expect((await rpc(env, "tools/call", { name: "inspect_org_settings", arguments: { orgId } })).result).not.toHaveProperty("isError", true);
+    expect((await rpc(env, "tools/call", { name: "update_org_settings", arguments: { orgId, modelSelectorVisible: true } })).result).not.toHaveProperty("isError", true);
+    expect(global.inspectOrganizationSettings).toHaveBeenCalledWith({ orgId });
+    expect(global.updateOrganizationSettings).toHaveBeenCalledWith({ orgId, modelSelectorVisible: true }, principal);
+    expect(enterprise.updateOrganizationSettings).not.toHaveBeenCalled();
+    expect((await rpc(env, "tools/call", { name: "update_org_settings", arguments: { orgId, modelSelectorVisible: "true" } })).result).toMatchObject({ isError: true });
+    expect(global.updateOrganizationSettings).toHaveBeenCalledTimes(1);
   });
 
   it("routes usage and plan changes to the owning region with the Access actor", async () => {
