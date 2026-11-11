@@ -79,7 +79,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
         {present.length > 0 && <span className="canvas-card-presence"><AvatarStack currentUserId={currentUserId} members={present} nameTooltip={false} presentUserIds={canvas.presentUserIds} showTooltip={false} /></span>}
         <span className="canvas-card-indicators">
           {liveUpdating && <span className="canvas-card-badge" id={`canvas-live-${canvas.id}`}><IconBolt aria-hidden="true" size={16} stroke={1.9} />Live updating</span>}
-          {canvas.hasStoredData && <span className="canvas-card-badge canvas-card-data" id={`canvas-data-${canvas.id}`}><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data backed</span>}
+          {canvas.hasStoredData && <span className="canvas-card-badge" id={`canvas-data-${canvas.id}`}><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data backed</span>}
           {attachedSidekicks.length > 0 && <Link className="canvas-card-badge canvas-card-sidekicks" tabIndex={-1} to={canvasRoute(canvas.id)}>
             <IconHexagon aria-hidden="true" size={16} stroke={1.9} />
             <SidekickStack id={`canvas-sidekicks-${canvas.id}`} sidekicks={attachedSidekicks} />
