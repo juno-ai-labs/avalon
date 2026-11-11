@@ -1,4 +1,5 @@
 import { artifactPickerPlugin } from './artifact-picker-plugin';
+import { canvasTemplatePlugin } from './canvas-template-plugin';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
@@ -73,7 +74,7 @@ export default defineConfig(({ mode }) => ({
         '@renderer': resolve('src/renderer'),
       },
     },
-    plugins: [rendererContentSecurityPolicy, artifactPickerPlugin(), react()],
+    plugins: [rendererContentSecurityPolicy, artifactPickerPlugin(), canvasTemplatePlugin(), react()],
     build: {
       sourcemap: true,
     },

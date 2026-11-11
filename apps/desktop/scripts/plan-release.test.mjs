@@ -14,6 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { desktopReleaseInputPaths } from './desktop-release-inputs.mjs';
 import {
   changedPathsSince,
   classifyReleaseInputs,
@@ -378,6 +379,15 @@ test('a classified-away change gets a distinct Ubuntu skip reason', () => {
   assert.equal(plan.shouldRelease, false);
   assert.match(plan.reason, /1 changed path\(s\).*outside desktop release inputs.*text\.ts/u);
   assert.doesNotMatch(plan.reason, /nothing but the release record/u);
+});
+
+test('a Marketplace prompt edit is a desktop release input', async () => {
+  const releaseInputs = await desktopReleaseInputPaths([
+    'packages/skills/marketplace-skills/developers/pr-dashboard.md',
+    'packages/skills/task-skills/deep-research/skill.ts',
+  ]);
+
+  assert.deepEqual(releaseInputs, ['packages/skills/marketplace-skills/developers/pr-dashboard.md']);
 });
 
 test('a classifier error fails open instead of retiring a desktop release', async () => {
