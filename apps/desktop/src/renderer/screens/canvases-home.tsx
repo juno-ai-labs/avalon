@@ -1,7 +1,7 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { IconBolt, IconDatabase, IconHexagon } from '@tabler/icons-react';
 import { SidekickStack } from '@rally/ui/components/sidekick-stack';
-import { Plus, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Plus, Sparkles, Store } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -11,6 +11,8 @@ import { AvatarStack, Button, EmptyState, ErrorNotice, TitleSkeleton } from '../
 import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
+import { CANVAS_TEMPLATE_CATEGORIES } from '../lib/canvas-template-categories';
+import { CANVAS_TEMPLATES } from '../lib/canvas-templates';
 import { canvasNaming, canvasRoute, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useDocumentTitle } from '../lib/document-title';
@@ -45,7 +47,7 @@ function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserI
  * `/canvases`: every Canvas this person can open, the list the workspace
  * socket keeps (`workspace_canvas_list`), laid out as the Sidekicks library is.
  * Canvases stay in activity order; Live and Data match their card badges.
- * With none at all, the page is only how to make one.
+ * Members can start a Canvas from the Marketplace even before their list arrives.
  */
 export function CanvasesHomeScreen(): React.JSX.Element {
   const { api, session } = useCollaborationSession();
@@ -56,6 +58,9 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const { membersById } = useCanvasNameSources(api);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<CanvasFilter>('all');
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  const [draftPrompt, setDraftPrompt] = useState('');
+  const showMarketplace = !guest && marketplaceOpen;
   const create = useCreateCanvas();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<Error | null>(null);
@@ -66,6 +71,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     create(prompt).catch((cause: unknown) => setCreateError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))).finally(() => setCreating(false));
   };
   const needle = search.trim().toLocaleLowerCase();
+  const hasCanvases = !!rows?.length;
   const shown = (rows ?? []).filter((row) => matchesFilter(row, filter, currentUserId)
     && (needle === '' || row.title.toLocaleLowerCase().includes(needle)));
   const row = (canvas: CanvasSidebarRow): React.JSX.Element => {
@@ -107,35 +113,61 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       <div className="sidekicks-library-actions window-no-drag">{newCanvas}</div>
     </header>
     {createError && <ErrorNotice occurrence={createError}>{createError.message}</ErrorNotice>}
-    {rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
-      : rows.length === 0 ? <CanvasesEmptyState creating={creating} guest={guest} onStart={start} />
-        : <>
-          <div className="sidekicks-library-controls">
-            <SidebarSearch aria-label="Search Canvases" mode="input" onChange={(event) => setSearch(event.target.value)} placeholder="Search Canvases" value={search} />
-          </div>
-          <div aria-label="Canvas filter" className="sidekick-filters" role="group">
-            {FILTERS.map(([value, label]) => <button aria-pressed={filter === value} key={value} onClick={() => setFilter(value)} type="button">{label}</button>)}
-          </div>
-          <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
-            <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${shown.length} ${shown.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
-            {shown.length === 0
-              ? <EmptyState description="Try a different search or filter." title="No matching Canvases" />
-              : <ul className="dashboard-grid">{shown.map(row)}</ul>}
-          </section>
-        </>}
+    {hasCanvases && !showMarketplace && <div className="sidekicks-library-controls">
+      <SidebarSearch aria-label="Search Canvases" mode="input" onChange={(event) => setSearch(event.target.value)} placeholder="Search Canvases" value={search} />
+    </div>}
+    {(hasCanvases || !guest) && <div aria-label="Canvas filter" className="sidekick-filters canvas-dashboard-filters" role="group">
+      {hasCanvases && FILTERS.map(([value, label]) => <button aria-pressed={!showMarketplace && filter === value} key={value} onClick={() => {
+        setFilter(value);
+        setMarketplaceOpen(false);
+      }} type="button">{label}</button>)}
+      {!guest && <button aria-pressed={showMarketplace} className="canvas-marketplace-toggle" onClick={() => setMarketplaceOpen((open) => !open)} type="button">
+        <Store aria-hidden="true" size={16} />Marketplace
+      </button>}
+    </div>}
+    {showMarketplace ? <CanvasMarketplace creating={creating} onStart={start} />
+      : rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
+      : rows.length === 0 ? <CanvasesEmptyState creating={creating} guest={guest} onPromptChange={setDraftPrompt} onStart={start} prompt={draftPrompt} />
+        : <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
+          <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${shown.length} ${shown.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
+          {shown.length === 0
+            ? <EmptyState description="Try a different search or filter." title="No matching Canvases" />
+            : <ul className="dashboard-grid">{shown.map(row)}</ul>}
+        </section>}
   </main>;
+}
+
+function CanvasMarketplace({ creating, onStart }: { creating: boolean; onStart: (prompt: string) => void }): React.JSX.Element {
+  const [category, setCategory] = useState<(typeof CANVAS_TEMPLATE_CATEGORIES)[number]['tag']>(CANVAS_TEMPLATE_CATEGORIES[0].tag);
+  const templates = CANVAS_TEMPLATES.filter((template) => template.tags.includes(category));
+  return <section aria-label="Canvas templates" className="canvas-marketplace">
+    <div aria-label="Template category" className="sidekick-filters canvas-template-categories" role="group">
+      {CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => <button aria-pressed={category === tag} key={tag} onClick={() => setCategory(tag)} type="button">{label}</button>)}
+    </div>
+    <ul className="dashboard-grid">
+      {templates.map((template) => <li key={template.name}>
+        <button className="dashboard-card canvas-template-card" disabled={creating} onClick={() => onStart(template.prompt)} type="button">
+          <span className="canvas-template-title">{template.name}</span>
+          <ArrowUpRight aria-hidden="true" size={16} />
+          <span className="canvas-template-description">{template.description}</span>
+        </button>
+      </li>)}
+    </ul>
+    {creating && <p role="status">Starting Canvas…</p>}
+  </section>;
 }
 
 /**
  * A first-run Canvases page: New Canvas, and a card that starts one from a
  * prompt, which becomes the Chat's first message.
  */
-function CanvasesEmptyState({ creating, guest, onStart }: {
+function CanvasesEmptyState({ creating, guest, onPromptChange, onStart, prompt }: {
   creating: boolean;
   guest: boolean;
+  onPromptChange: (prompt: string) => void;
   onStart: (prompt?: string) => void;
+  prompt: string;
 }): React.JSX.Element {
-  const [prompt, setPrompt] = useState('');
   if (guest) return <EmptyState description="A Canvas someone shares with you appears here." title="No Canvases yet" />;
   return <section aria-label="Start from a prompt" className="canvas-prompt-card">
     <h2><Sparkles aria-hidden="true" size={16} />Start from a prompt</h2>
@@ -144,7 +176,7 @@ function CanvasesEmptyState({ creating, guest, onStart }: {
       event.preventDefault();
       if (prompt.trim()) onStart(prompt);
     }}>
-      <textarea aria-label="Prompt" disabled={creating} onChange={(event) => setPrompt(event.target.value)} placeholder="A tracker for our Q1 hiring plan" rows={3} value={prompt} />
+      <textarea aria-label="Prompt" disabled={creating} onChange={(event) => onPromptChange(event.target.value)} placeholder="A tracker for our Q1 hiring plan" rows={3} value={prompt} />
       <Button className="button-primary" disabled={creating || !prompt.trim()} type="submit">{creating ? 'Starting…' : 'Start'}</Button>
     </form>
   </section>;

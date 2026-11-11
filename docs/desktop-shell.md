@@ -53,6 +53,19 @@ Each attached Canvas pill shows its actual icon and colour (`canvasMark`) from
 its attachment summary, with the full title on hover and in its accessible name;
 the visible title is truncated after 30 characters.
 
+On the Canvases dashboard, members can open **Marketplace** from the right end
+of the filter row, including before they have made a Canvas. A second row picks
+from **Developers**, **Product managers**, **Parents**, and **Recruiters**.
+It starts on **Developers** and shows that category's templates in place of
+the Canvas list. Closing Marketplace restores the previous filter and any
+unsent **Start from a prompt** text. Selecting a filter switches to its list.
+`apps/desktop/src/renderer/lib/canvas-templates.ts` orders the catalog. Each
+Markdown file in `packages/skills/marketplace-skills/` supplies its card's `name`,
+`description`, and category `tags`. The builds check tags against
+`canvas-template-categories.ts`. Each starter is tagged with its own directory.
+Selecting a template creates and opens a Canvas with the Markdown body sent
+as the creator's first Chat message through the **Start from a prompt** flow.
+
 ### Electron navigation history
 
 The leftmost visible pane header carries Back and Forward before its breadcrumb,
@@ -450,6 +463,8 @@ It does not own:
   covers routing pastes between mounted conversations. Run with
   `pnpm --filter @rally/desktop exec vitest run <path>`.
 - **A guest in the shell:** `lib/browser-collaboration.test.tsx`.
+- **Canvas dashboard:** `screens/canvases-home.test.tsx` covers list filtering,
+  Marketplace category selection, and template creation with the opening prompt.
 - **Panel focus:** `components/rail-surface.test.tsx` verifies explicit opens
   take and restore focus, while automatic reveals leave it alone on arrival
   and removal.
@@ -462,6 +477,21 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-11 — Start a Canvas from the Marketplace
+
+**What changed:** The Canvases dashboard offers a Marketplace with nine starter
+templates across four categories on desktop and web.
+
+**Why:** A first Canvas previously depended on the person supplying a prompt.
+The catalog gives members a starting point for common workflows, with prompts
+that ask for the inputs each workflow needs.
+
+**Consequences:** Templates use `useCreateCanvas` for the opening message and
+inherit its retry behavior. The catalog can be browsed while the Canvas list
+loads because it ships with the renderer.
+
+Pull request [#1560](https://github.com/juno-ai-labs/avalon/pull/1560).
 
 ### 2026-11-11 — Default launches to the Canvas homepage
 
