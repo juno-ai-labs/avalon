@@ -15,11 +15,11 @@ text in `@rally/agent-harness`: clarity, the right altitude, no internal
 contradictions, byte-stable in the cacheable prefix.
 
 The reference exemplar is `deep-research` in
-[`packages/agent-harness/src/built-in-skills.ts`](../packages/agent-harness/src/built-in-skills.ts).
+[`packages/skills/task-skills/deep-research/skill.ts`](../packages/skills/task-skills/deep-research/skill.ts).
 Read it before writing your own — most of what follows is distilled from it.
 
 `building-live-sites`
-([`building-live-sites-skill.ts`](../packages/agent-harness/src/building-live-sites-skill.ts))
+([`building-live-sites-skill.ts`](../packages/agent-harness/src/platform-skills/building-live-sites-skill.ts))
 is the exemplar for the other shape: a skill that exists **because** its
 material would not fit anywhere cheaper. Its standing policy carries six lines
 of trigger and manners; everything the model needs once it is actually writing
@@ -28,12 +28,14 @@ headers — is here, loaded at the moment it matters. Its `ownerPlugin` scopes i
 to runs that hold the Terminal plugin, because the whole procedure ends in
 publishing a directory from a sandbox.
 
-Skills named for an **outcome** a person asks for ("a report", "an app"),
-rather than a capability, are **task skills** and live one folder per skill in
-[`packages/agent-harness/src/task-skills/`](../packages/agent-harness/src/task-skills/index.ts).
-A task skill reads the request, settles what must be decided before work
-starts, and names the procedure skills that do the work; it does not repeat
-them.
+**Task skills** teach how to complete requested work — research, email, data
+processing, reports or apps — and live one folder per skill in
+[`packages/skills/task-skills/`](../packages/skills/task-skills/index.ts).
+**Platform skills** teach how to use Rally itself — Sidekicks, Tables, site
+publishing or the in-app browser — and live in
+[`platform-skills/`](../packages/agent-harness/src/platform-skills/README.md).
+An outcome skill can compose task and platform procedures instead of repeating
+them. Classify by what the skill teaches, not whether Rally ships it.
 
 ## The bar: a medium-sized model, at two moments
 
@@ -87,7 +89,8 @@ system message already covers, or for a capability that does not exist yet.
 ## Anatomy of a skill
 
 A skill is a `HarnessSkill` value
-([`packages/agent-harness/src/index.ts`](../packages/agent-harness/src/index.ts)):
+([`packages/skills/types.ts`](../packages/skills/types.ts)), re-exported by
+`@rally/agent-harness`:
 
 ```ts
 export const TRIAGE_SKILL: HarnessSkill = {
@@ -102,9 +105,12 @@ export const TRIAGE_SKILL: HarnessSkill = {
 
 Skills the package ships are authored in **TypeScript, not as `SKILL.md`
 files**, because the harness runs in `workerd` and has no filesystem to read
-them from at startup. A host that stores skills elsewhere can still author
-markdown: `parseSkillMarkdown` from `@juno-ai/bind/skills` parses a `SKILL.md`
-straight into this shape. Either way the same fields carry the same weight, and
+them from at startup. Each skill has its own file under the harness's
+`platform-skills/` or `packages/skills/task-skills/`; `built-in-skills.ts`
+collects and re-exports the skills.
+A host that stores skills elsewhere can still author markdown:
+`parseSkillMarkdown` from `@juno-ai/bind/skills` parses a `SKILL.md` straight
+into this shape. Either way the same fields carry the same weight, and
 everything below applies.
 
 A run's skills are **frozen with its scope** — resolved against the execution
@@ -346,6 +352,6 @@ provider's cached prefix survives. Two authoring rules follow:
   skill, and how to design one for a medium model.
 - [`writing-prompts.md`](writing-prompts.md) — when it belongs in standing
   *policy* rather than a loaded skill, and how that text is written.
-- [`built-in-skills.ts`](../packages/agent-harness/src/built-in-skills.ts) — the
+- [`deep-research/skill.ts`](../packages/skills/task-skills/deep-research/skill.ts) — the
   live exemplar.
 - [`security.md`](security.md) — the trust boundaries a skill body must respect.

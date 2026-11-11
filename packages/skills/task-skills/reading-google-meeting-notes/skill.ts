@@ -1,4 +1,4 @@
-import type { HarnessSkill } from "./index";
+import type { HarnessSkill } from "../../types";
 
 /** Bound by the host to one eligible Google connection in the frozen run scope. */
 export const READING_GOOGLE_MEETING_NOTES_SKILL: HarnessSkill = {

@@ -23,7 +23,8 @@ packages/
   ui/                      Shared collaboration components, display helpers, styles and appearance
   contracts/               Zod API, WebSocket, agent, connector contracts
   db/                      D1 migrations, repositories, region-aware queries
-  agent-harness/           Bind/OpenRouter adapter, prompts, skills, classifiers, tools
+  agent-harness/           Bind/OpenRouter adapter, prompts, platform skills, classifiers, tools
+  skills/                  Shared skill type and task procedures, consumed by agent-harness
   bind/                    Portable agent loop, model routing, and tool and skill primitives
   connectors/              Core adapters and credential-plugin descriptors
 docs/                      Product, architecture, security, setup, runbooks
@@ -44,6 +45,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
 | `packages/ui` | Shared collaboration presentation and browser-safe display/theme helpers, consumed by desktop and prepared for the browser host in #825. Owned by [`shared-ui.md`](shared-ui.md) and [`theming.md`](theming.md). |
+| `packages/skills` | The shared skill type and task procedures. Depends on contracts; the harness imports it and keeps Rally-specific platform skills. Owned by [`agent-harness.md`](agent-harness.md#skills). |
 | `packages/contracts` | Every runtime contract both ends share. A type that only exists at build time is not one of them. |
 | `packages/db` | Migrations and region-aware repositories. The migrations are authoritative for the schema. |
 | `scripts/eslint-rules/require-validated-response.mjs` | The lint rule that makes a route validate its own response. |

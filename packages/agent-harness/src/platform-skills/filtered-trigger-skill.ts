@@ -1,4 +1,4 @@
-import type { HarnessSkill } from "./index";
+import type { HarnessSkill } from "../index";
 
 /**
  * Setting up a Sidekick that starts on several people's events, each person's
@@ -170,6 +170,6 @@ export const SETTING_UP_A_FILTERED_TRIGGER_SKILL: HarnessSkill = {
     "When a request names another person's own account as what should start a Sidekick, for example a dashboard fed by two people's email about one subject. Not for a topic filter on only the requester's own account or an Organization connection: that is a semantic_activity trigger (polling-for-events).",
   body: SETTING_UP_A_FILTERED_TRIGGER_BODY,
   // Spelled out rather than imported, as `polling-for-events` does: the
-  // drafting tools import from `./index`, which imports the skill list.
+  // drafting tools import from `../index`, which imports the skill list.
   ownerPlugin: "rally:sidekicks",
 };
