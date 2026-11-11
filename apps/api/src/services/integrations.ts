@@ -9649,6 +9649,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  builtInSkillsFor,
   principalSystemSectionFor,
   executeAuthorizedConnectorTool,
   assertFrozenConnectionAuthorized,

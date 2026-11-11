@@ -48,6 +48,35 @@ owns the policy. The claim-access table from 129 and D1 migration 0124's
 `sidekick_delegation_locations` are unused; the applied migrations are retained
 without using either table for access or cross-Organization discovery.
 
+WorkspaceDO migration 146 separates whose events may start a Sidekick from
+whose accounts its runs may use. It adds three tables:
+
+- `sidekick_sources`, keyed `(sidekick_id, user_id, connection_id,
+  event_type)`: one person's permission for one kind of event on one
+  connection to start one Sidekick, with an optional `condition`, the
+  `membership_incarnation` it was given under and the `request_id` the person
+  approved for it, if they did.
+- `sidekick_source_requests`, keyed `request_id`: one ask of one person, with
+  its `state` (`pending`, `approved`, `declined`, `cancelled`), the
+  conversation it was asked in (`place_parent_kind`, `place_parent_id`) and
+  the asked person's name as it stood when they answered (`person_name`). A
+  partial unique index keeps one pending ask per person, Sidekick and
+  connector.
+- `sidekick_source_request_operations`, keyed `(sidekick_id, operation_id,
+  position)`: what one asking operation answered with, so a retried ask reads
+  its answer back.
+
+The same migration backfills a source for each connection and event type an
+allowed delegation grant had admitted, and rebuilds
+`workstream_notification_intents` and `workspace_activity_items` so their
+CHECKs admit the three kinds `source_request`, `source_approved` and
+`source_declined`: SQLite cannot alter a CHECK in place. Its last statement
+sets `automation_directory.delegation_attention_code` to
+`no_eligible_delegate` on every active Sidekick that has a trigger and no
+allowed delegate. Nothing about a trigger reads `sidekick_delegations` any
+more. [`sidekick-sources.md`](sidekick-sources.md#data-model) owns the tables
+and the policy.
+
 **Storage words and product words differ.** The product has two sections,
 Canvases and Sidekicks ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)).
 A conversation parent id is still a `WorkstreamId` and lands in
@@ -403,9 +432,10 @@ SQL joins.
   `workspace_pins` holds each person's Canvas and Sidekick pins
   ([`pinning.md`](pinning.md)).
 - Each person's Activity is `workspace_activity_items`, one row per mention,
-  add and Sidekick run notice they were sent, keyed by its notification
-  intent's id, and `workspace_activity_seen`, their Mark all seen, in
-  `WorkspaceDO` (migration 140, [`activity.md`](activity.md#data-model)).
+  add, Sidekick run notice and Sidekick source request or answer they were
+  sent, keyed by its notification intent's id, and `workspace_activity_seen`,
+  their Mark all seen, in `WorkspaceDO` (migration 140, rebuilt by 146 for
+  the source kinds; [`activity.md`](activity.md#data-model)).
 - The retired Thread, Channel and Breakout state is gone. Migration 64
   dropped the Project tables, 139 the Space ledgers, the Thread pins, order
   and access, and the batch dispatches, and 141 the directories and their
@@ -680,7 +710,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - WorkspaceDO `workstream_notification_intents` temporarily retains a bounded
   person-notification payload — a mention, or somebody added to the
   conversation — and the Sidekick run pushes (Needs input, finished;
-  migration 138). Delivery resolves current membership/profile state from D1
+  migration 138). Migration 146 rebuilds the table, and
+  `workspace_activity_items` with it, to admit a Sidekick source request and
+  its answer (`source_request`, `source_approved`, `source_declined`;
+  [`sidekick-sources.md`](sidekick-sources.md#data-model)). Delivery resolves current membership/profile state from D1
   and checks the recipient against the parent's own reader rule
   (`notificationDirectoryState`); terminal delivery or skip erases
   `payload_json` rather than retaining a second transcript. Effect receipts

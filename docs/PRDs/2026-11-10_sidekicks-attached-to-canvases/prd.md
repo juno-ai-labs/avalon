@@ -238,6 +238,32 @@ into the product, and this feature reachable from it at creation or after.
 recurring update. The MCP token's reach grows by one Canvas route; it still
 reaches no Sidekick route. Neither tool is an MCP task.
 
+### 2026-11-10 — A run's reach into an attached Canvas follows the run, not always a person
+
+**Decided:** Whose reach a run has in an attached Canvas is decided from the
+run's own row (`sidekickReach` in `WorkspaceDO`). A run a schedule or an
+event started reaches every attached Canvas that is not archived, by the
+attachment alone, whoever it acts as and when it acts as nobody. A run a
+person asked for, from the Run button or by a message, is held to what that
+person can open. A call that names a run id with no run row, such as a
+background agent's conversation, is held to the person its loop acts as.
+
+**Why:** [Sidekick sources](../2026-11-10_sidekick-sources/prd.md) lets a
+Sidekick with no delegate run as itself, so a run may have no acting person
+to admit. Checking the acting person on every write would also let a
+delegate who cannot open a Canvas take away a reach the Sidekick has by its
+own attachment. A run a person asked for keeps the check, so nobody reads
+through the Sidekick a Canvas they cannot open.
+
+**Changes:** Supersedes two points of Security and trust model. "Every write
+admits the acting person again; losing the Canvas stops it" now holds only
+for a run a person asked for. "A run acts as its run-as person with that
+person's connections" no longer holds for a run with no delegate, which acts
+as the Sidekick itself with the Organization's connections. The goals and
+Product behavior are unchanged.
+[`automation-lifecycle.md`](../../automation-lifecycle.md#who-a-run-acts-as)
+owns the rule as shipped.
+
 ## Data model
 
 `WorkspaceDO` migration 144: `sidekick_conversation_attachments.made_here`, an

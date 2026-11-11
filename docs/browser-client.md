@@ -425,7 +425,8 @@ A person asked for a Sidekick source
 **Source requests**, which defaults to push and email. Each
 links to `/app/source-requests/decision` (`SOURCE_DECISION_PATH`) on this
 host, with the decision in the fragment: `region`, `workspace`, `sidekick`,
-`request`, `person`, `decision` and `token`, the signature that binds them.
+`request`, `person`, `decision` and `token`, the signature that binds all of
+them but `region`, which only names the regional API the page posts to.
 `client.tsx` draws `SourceDecision` for that path, outside the entry: the page
 needs no session and reads no cookie.
 

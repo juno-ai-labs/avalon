@@ -164,8 +164,13 @@ audience: a guest reads them only from its `people` list.
 Guest admission observations are shared only within the current authorization
 batch, like other owner observations. Skill visibility alone does not expose a
 Sidekick's resources; existing member authorization remains on its original path.
-Sidekick resource inheritance follows current execution-user admission; see
-[`agent-attachments.md`](agent-attachments.md#authorized-conversation-discovery-and-text-hydration).
+Sidekick resource inheritance follows the run, not always a person. A run a
+schedule or an event started inherits from every attached Canvas that is not
+archived, by the attachment alone. A run a person asked for is held to what
+that person can open, and a child with no run row, such as a background
+agent's conversation, to the person its loop acts as
+([who a run acts as](automation-lifecycle.md#who-a-run-acts-as);
+[`agent-attachments.md`](agent-attachments.md#authorized-conversation-discovery-and-text-hydration)).
 
 Explicit resource refresh and artifact open/error/data routes also admit guests.
 Refresh runs the existing resource read proof before loading metadata or invoking

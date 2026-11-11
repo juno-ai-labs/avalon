@@ -384,6 +384,14 @@ button or by a message, publishes only where that person can open the Canvas
 now (`canvas_access_denied`), and so does a background agent's conversation,
 which is no run
 ([who a run acts as](automation-lifecycle.md#who-a-run-acts-as)).
+A run that acts as the Sidekick itself and has no Canvas of its own yet needs
+somebody to create one as. That is the Sidekick's author. When the Sidekick's
+directory row names no author, the first publish that names no `canvas` is
+refused `canvas_creator_unavailable`
+(`apps/api/src/services/terminal/authority.ts`), and the refusal tells the
+run to publish into a Canvas from `ATTACHED CANVASES` by naming it in
+`canvas`. A publish into an attached Canvas needs no creator and is not
+refused.
 The run's own conversation is attached too, so the run can read back what it
 published. "The Canvases it writes to" is `canvasesWrittenBy`, a join from the
 Sidekick's attachments to the directory, on the Sidekick's detail as

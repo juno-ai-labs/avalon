@@ -769,6 +769,14 @@ describe("connector tools selected for harness runs", () => {
     expect(await sourceTools(workflowInput())).toEqual(["sources_list", "request_source", "test_source_condition"]);
     expect(await sourceTools({ ...workflowInput(),
       agentExchange: { teamId: wizard, senderAgentId: wizard, messageId: "00000000-0000-7000-8000-00000000e001" } })).toEqual([]);
+
+    // The skill that says to call them is listed where they are, and nowhere else.
+    const listsTheSkill = async (input: WorkstreamWorkflowInput) =>
+      __integrationTesting.builtInSkillsFor((await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins)
+        .some((skill) => skill.name === "setting-up-a-filtered-trigger");
+    expect(await listsTheSkill(automationConversationInput())).toBe(true);
+    expect(await listsTheSkill(automationRunInput())).toBe(false);
+    expect(await listsTheSkill({ ...automationConversationInput(), reason: "sidekick_review" })).toBe(false);
   });
 
   it("skips a connection whose connector this deployment does not configure, rather than failing the run", async () => {

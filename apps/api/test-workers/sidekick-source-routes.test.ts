@@ -282,6 +282,14 @@ describe("the Sidekick source routes, for a signed-in person", () => {
     expect(person.body).toMatchObject({ requests: [{ requestId, state: "pending", yours: true }] });
     expect((person.body as { requests: unknown[] }).requests).toHaveLength(1);
 
+    // Its card is drawn in the Canvas it was asked in, so opening that Canvas to a member opens the card to them, and no more of it is theirs.
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: { userId: MANAGER, actorRole: "member" },
+      update: { visibility: "participants", userIds: [OTHER] } });
+    const reader = await read(OTHER);
+    expect(reader.status, JSON.stringify(reader.body)).toBe(200);
+    expect((reader.body as { requests: Array<{ requestId: string; yours: boolean }> }).requests
+      .map((entry) => ({ requestId: entry.requestId, yours: entry.yours }))).toEqual([{ requestId, yours: false }]);
+
     // An id no request has reads as nothing for anybody, beside one that exists.
     const mixed = await read(MANAGER, [UNKNOWN_ID, requestId]);
     expect((mixed.body as { requests: Array<{ requestId: string }> }).requests.map((entry) => entry.requestId)).toEqual([requestId]);
@@ -304,6 +312,66 @@ describe("the Sidekick source routes, for a signed-in person", () => {
     expect([again.status, again.body]).toEqual([200, { withdrawn: false }]);
     // What the manager now reads: nobody lets events in, and the answered request is not waiting.
     expect((await as(MANAGER, "GET", sources())).body).toEqual({ sidekickId: SIDEKICK_ID, sources: [], requests: [] });
+  });
+});
+
+describe("the Sidekick source routes' refusals, by name", () => {
+  /** A Canvas only Pat opens: the manager is a member like any other and was never added to it. */
+  async function canvasClosedToTheManager(): Promise<string> {
+    const canvasId = crypto.randomUUID();
+    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId, title: "Pat's own", createdByUserId: OTHER, authorityGeneration: 1 });
+    return canvasId;
+  }
+
+  it.each([
+    { what: "a connector this deployment does not have", status: 422, code: "sidekick_source_connector_unknown",
+      ask: async () => mail([PERSON], { connectorType: "carrier-pigeon" }) },
+    { what: "an event the connector does not declare", status: 422, code: "sidekick_source_event_unknown",
+      ask: async () => mail([PERSON], { eventTypes: ["email.received", "email.exploded"] }) },
+    { what: "somebody who is not in the Organization, beside somebody who is", status: 409, code: "sidekick_source_person_unavailable",
+      ask: async () => mail([PERSON, UNKNOWN_ID]) },
+    // Robin could be asked; the asker's own account is approved by asking, and there is none to approve.
+    { what: "the asker's own account with none connected, beside somebody who could be asked", status: 409, code: "sidekick_source_connection_missing",
+      ask: async () => mail([PERSON, MANAGER]) },
+    { what: "a card in a Canvas the asker cannot open", status: 403, code: "sidekick_source_place_denied",
+      ask: async () => mail([PERSON], { place: { parentKind: "canvas", parentId: await canvasClosedToTheManager() } }) },
+  ])("refuses an ask for $what with $status $code, and asks nobody", async ({ status, code, ask }) => {
+    const answer = await as(MANAGER, "POST", requests(), await ask());
+    expect([answer.status, answer.body]).toEqual([status, { error: expect.objectContaining({ code }) }]);
+    expect(await storedRequests()).toEqual([]);
+    expect(await storedSources()).toEqual([]);
+  });
+
+  it("names the event the connector does not declare", async () => {
+    const answer = await as(MANAGER, "POST", requests(), mail([PERSON], { eventTypes: ["email.exploded"] }));
+    expect(answer.body).toEqual({ error: expect.objectContaining({
+      code: "sidekick_source_event_unknown", message: "That connector has no event named email.exploded" }) });
+  });
+
+  it("refuses with 409 an approval by a person with no such account connected, and keeps the request waiting for when they have", async () => {
+    const requestId = await asked(OTHER);
+    const unconnected = await as(OTHER, "POST", decision(requestId), { decision: "approve" });
+    expect([unconnected.status, unconnected.body]).toEqual([409, { error: expect.objectContaining({ code: "sidekick_source_connection_missing" }) }]);
+    expect(await storedRequests()).toEqual([{ user_id: OTHER, state: "pending", requested_by_user_id: MANAGER }]);
+    expect(await storedSources()).toEqual([]);
+    // Nothing was approved in name only: Pat still cannot read the Sidekick.
+    expect((await as(OTHER, "GET", sources())).status).toBe(403);
+
+    const patsMail = await connectGoogle(OTHER, "pat@example.com");
+    expect((await as(OTHER, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
+    expect(await storedSources()).toEqual([{ user_id: OTHER, connection_id: patsMail, condition: CONDITION, requested: 1 }]);
+  });
+
+  it.each([
+    { first: "decline", then: "approve", left: "declined", sources: 0 },
+    { first: "approve", then: "decline", left: "approved", sources: 1 },
+  ] as const)("refuses with 409 to $then a request the person already chose to $first, and leaves it $left", async ({ first, then, left, sources: kept }) => {
+    const requestId = await asked();
+    expect((await as(PERSON, "POST", decision(requestId), { decision: first })).status).toBe(200);
+    const other = await as(PERSON, "POST", decision(requestId), { decision: then });
+    expect([other.status, other.body]).toEqual([409, { error: expect.objectContaining({ code: "sidekick_source_request_settled" }) }]);
+    expect(await storedRequests()).toEqual([{ user_id: PERSON, state: left, requested_by_user_id: MANAGER }]);
+    expect(await storedSources()).toHaveLength(kept);
   });
 });
 

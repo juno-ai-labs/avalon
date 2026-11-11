@@ -2961,8 +2961,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     // A new run is the Sidekick's newest, Working or waiting: its row moves.
     if (run.run_id === runId) this.host.noteDirectoryChanged(this.sidekickId, false, now);
     // An admission clears every warning but a source's, which only its source
-    // coming back clears, and the stop above, which a person's act clears.
-    if (!stopped && this.row()?.delegation_attention_code !== "event_no_eligible_delegate") this.noteDelegationAttention(null);
+    // coming back clears, and the stop above. A delegate's run clears the stop:
+    // somebody lends the Sidekick an account again. A run a person asked for
+    // under their own access does not: they lent it nothing, and clearing it
+    // would start the Sidekick's schedules as itself on a passer-by's message.
+    const attention = this.row()?.delegation_attention_code ?? null;
+    const keepsStop = stopped || (requesterUserId !== null && attention === "no_eligible_delegate");
+    if (!keepsStop && attention !== "event_no_eligible_delegate") this.noteDelegationAttention(null);
     if (run.state === "pending") this.armRunStart(run.run_id, now);
     // Admitted stopped: a Needs input the managers hear about, as a run that later asks is.
     else if (run.state === "needs_input" && run.run_id === runId) {
