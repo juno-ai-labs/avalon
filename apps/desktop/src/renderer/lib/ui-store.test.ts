@@ -115,15 +115,15 @@ describe('sidebar section', () => {
 
   it('comes back to the section chosen before a restart', async () => {
     const { useUiStore: first } = await import('./ui-store');
-    first.getState().setSidebarSection('sidekicks');
+    first.getState().setSidebarSection('activity');
 
     vi.resetModules();
     const { useUiStore: restarted } = await import('./ui-store');
-    expect(restarted.getState().sidebarSection).toBe('sidekicks');
+    expect(restarted.getState().sidebarSection).toBe('activity');
   });
 
-  it('opens on Canvases where a section the rail no longer has was stored', async () => {
-    window.localStorage.setItem('rally.sidebar-section', 'channels');
+  it.each(['channels', 'sidekicks'])('opens on Canvases when the retired %s section was stored', async (section) => {
+    window.localStorage.setItem('rally.sidebar-section', section);
     const { useUiStore: fresh } = await import('./ui-store');
     expect(fresh.getState().sidebarSection).toBe('canvases');
   });
