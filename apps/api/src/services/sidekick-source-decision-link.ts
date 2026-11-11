@@ -23,9 +23,11 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
  * decision, so a link cannot be edited into another person's answer or the
  * other decision; the request's own `pending` state is what makes it
  * single-use, and a request already answered or replaced reads back as it
- * stands. The fields ride in the fragment, which reaches no server, proxy log
- * or scanner GET; the page posts them. `docs/sidekick-sources.md` owns the
- * request.
+ * stands. The fields ride in the fragment, which reaches no server or proxy
+ * log; the page the link opens posts them as it loads. So the link is a
+ * bearer of the answer: whoever opens it answers, a mail scanner that runs
+ * the page's script included. `docs/sidekick-sources.md` owns the request and
+ * says what that costs.
  */
 export type SourceDecisionClaim = Omit<SourceDecisionLink, "token">;
 
@@ -37,7 +39,7 @@ function signature(env: Env, claim: SourceDecisionClaim): Promise<string> {
 /** The link that records this decision when it is opened, on the browser host. */
 export async function sourceDecisionUrl(env: Env, claim: SourceDecisionClaim): Promise<string> {
   const url = new URL(SOURCE_DECISION_PATH, browserOrigin(env));
-  // Fragments do not reach the HTTP server, proxy logs or scanner GETs.
+  // A fragment does not reach the HTTP server or a proxy's log.
   url.hash = new URLSearchParams({
     region: env.AVALON_REGION, workspace: claim.workspaceId, sidekick: claim.sidekickId, request: claim.requestId,
     person: claim.userId, decision: claim.decision, token: await signature(env, claim),
@@ -45,12 +47,12 @@ export async function sourceDecisionUrl(env: Env, claim: SourceDecisionClaim): P
   return url.toString();
 }
 
-/** The two buttons a `source_request` email carries, in the order they are drawn. */
+/** The two buttons a `source_request` email carries, in the order the app draws the same pair: Decline, then Approve. */
 export async function sourceDecisionActions(env: Env, request: Omit<SourceDecisionClaim, "decision">): Promise<{ label: string; url: string }[]> {
   const [approve, decline] = await Promise.all([
     sourceDecisionUrl(env, { ...request, decision: "approve" }), sourceDecisionUrl(env, { ...request, decision: "decline" }),
   ]);
-  return [{ label: "Approve", url: approve }, { label: "Decline", url: decline }];
+  return [{ label: "Decline", url: decline }, { label: "Approve", url: approve }];
 }
 
 const invalid = () => new ApiError(401, "sidekick_source_link_invalid", "This link is not valid. Open the request in Rally to answer it.");

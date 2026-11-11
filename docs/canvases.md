@@ -342,8 +342,8 @@ Canvas's own work.
 
 A Sidekick run (a child of the Sidekick, whose substream id is the run id)
 publishes into a Canvas, the Sidekick's output (`resolveTerminalPublicationHome`).
-Its first publish creates the run's Canvas: the run's principal is its
-creator, the Sidekick its writer, the publish's `displayName` its title, and
+Its first publish creates the run's Canvas: the person the run acts as is its
+creator, or the Sidekick's author when it acts as the Sidekick itself, the Sidekick its writer, the publish's `displayName` its title, and
 whoever the Sidekick is shared with can open it. Every later publish of the
 run finds that Canvas (`canvasForSidekickRun`; `HostedCanvas.create` answers a
 second create for the same run with the first Canvas), and the create attaches
@@ -351,6 +351,12 @@ the Canvas to the Sidekick. A run asked to update a
 Canvas names it with `publish_resource`'s `canvas` argument, which must be a
 Canvas attached to this Sidekick (`canvas_not_attached_to_sidekick` otherwise);
 anything but a Sidekick run naming one is refused (`canvas_argument_unsupported`).
+For a run a schedule or an event started the attachment is enough: it
+publishes as the Sidekick itself. A run a person asked for, from the Run
+button or by a message, publishes only where that person can open the Canvas
+now (`canvas_access_denied`), and so does a background agent's conversation,
+which is no run
+([who a run acts as](automation-lifecycle.md#who-a-run-acts-as)).
 The run's own conversation is attached too, so the run can read back what it
 published. "The Canvases it writes to" is `canvasesWrittenBy`, a join from the
 Sidekick's attachments to the directory, on the Sidekick's detail as

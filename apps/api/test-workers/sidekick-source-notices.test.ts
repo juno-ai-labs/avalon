@@ -286,7 +286,7 @@ describe("what a Sidekick source request tells people", () => {
       undefined, undefined, sink)).toBe(true);
     const notice = sink.mock.calls[0]![1];
     expect(notice).toMatchObject({ kind: "source_request", title: "Avery asked to use your Gmail for Deals", body: ASKED, actorName: "Avery" });
-    expect(notice.actions!.map((action) => action.label)).toEqual(["Approve", "Decline"]);
+    expect(notice.actions!.map((action) => action.label)).toEqual(["Decline", "Approve"]);
     const fields = (label: string) => {
       const url = new URL(notice.actions!.find((action) => action.label === label)!.url);
       expect(`${url.origin}${url.pathname}`).toBe("https://app.test/app/source-requests/decision");
@@ -305,7 +305,7 @@ describe("what a Sidekick source request tells people", () => {
     expect(await sendNoticeEmail(production, notice, send)).toEqual({ outcome: "sent" });
     expect(send.mock.calls[0]![0].text).toBe([
       "Hi Robin,", "", "Avery asked to use your Gmail for Deals.", "", `"${ASKED}"`, "",
-      `Approve: ${notice.actions![0]!.url}`, `Decline: ${notice.actions![1]!.url}`, "",
+      `Decline: ${notice.actions![0]!.url}`, `Approve: ${notice.actions![1]!.url}`, "",
       "Opening a button records your answer. You can also answer in Rally, under Activity.", "",
       "You get email for Source requests in Juno Labs. Change it in Rally under Settings, Notifications.",
     ].join("\n"));
@@ -361,7 +361,7 @@ describe("what a Sidekick source request tells people", () => {
     const sink = vi.fn<(env: unknown, notice: Notice) => Promise<{ outcome: "sent" }>>(async () => ({ outcome: "sent" }));
     await deliverPush(env, { region: "global", workspaceId: WORKSPACE_ID, recipientUserId: PERSON,
       intentId: `source_request:${first!.requestId}`, channel: "email" }, undefined, undefined, sink);
-    const fragment = new URLSearchParams(new URL(sink.mock.calls[0]![1].actions![0]!.url).hash.slice(1));
+    const fragment = new URLSearchParams(new URL(sink.mock.calls[0]![1].actions!.find((action) => action.label === "Approve")!.url).hash.slice(1));
     await ask([PERSON]);
     expect(await decideSourceRequestByLink(env, { workspaceId: fragment.get("workspace")!, sidekickId: fragment.get("sidekick")!,
       requestId: fragment.get("request")!, userId: fragment.get("person")!, decision: "approve", token: fragment.get("token")! }))

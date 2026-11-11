@@ -502,64 +502,22 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 ### 2026-11-10 — Sidekick source requests join the feed; their rows list for a person who cannot open the Sidekick, and open nothing until they can
 
-**What changed:** Activity records three more kinds: `source_request` for a
-person asked to let their events start a Sidekick, and `source_approved` or
-`source_declined` for whoever asked (WorkspaceDO migration 145 rebuilds
-`workspace_activity_items` and the intents to admit them). They list while the
-Sidekick exists, whether or not the recipient can open it, and carry
-`sourceRequest` read live from `sidekick_source_requests`. A `source_request`
-row is seen once its request is no longer pending. A socket whose ticket
-declares a client contract below 14 is sent its page and count without the
-three kinds.
+**What changed:** Activity records `source_request`, `source_approved` and
+`source_declined`. They list while the Sidekick exists, whether or not the
+recipient can open it, and a row opens the Sidekick only once the viewer's
+Sidekick list holds it. A socket below client contract 14 is sent its page
+and count without them.
 
-The client draws the three Sidekick source kinds. The asked
-person's `source_request` row is its Approve and Decline while pending and
-reads as settled afterwards. A source row links to its Sidekick only while
-the viewer's Sidekick list holds it; otherwise it links to the Activity home.
-An Activity push that moves a source row re-reads that Sidekick's sources, so
-an open card or Sources section follows it.
+**Why:** Approving is what makes the person asked a reader, so the rule that
+a row lists only while its parent opens would hide the request from the one
+person it asks. [`sidekick-sources.md`](sidekick-sources.md#changelog) holds
+the reasoning and what was rejected.
 
-**Why:** A source request names a Sidekick to a person who usually cannot
-open it: approving is what makes them a reader. Every other Sidekick row
-opens the Sidekick, and here that route answers "Sidekick could not be
-opened" with an error popup, for the one person the row exists to ask.
-
-The same fact is why the rows are exempt from the rule that a row lists only
-while its parent can be opened: under it the request would never reach the
-person it asks, and its push would be skipped `recipient_not_listable`. The
-answer rows are exempt too, because a Sidekick a Canvas made is managed by
-everyone in that Canvas, whom the Sidekick list does not hold, so the rule
-would hide the answer from the person who asked. The client-contract filter
-exists because `ActivityKindSchema` is a closed enum inside the strict
-`workspace_sync` event: one source row in an installed build's page fails its
-parse of the whole subscribe answer, and that person's sidebar stays empty on
-every reconnect until they update.
-
-**Considered and rejected:** Opening the conversation the request was asked
-from, where its card is. The row does not carry the request's `place`, and
-that conversation may be a Canvas the person is not in either. A row that is
-not a link at all: every row in the list is one, and the phone sheet, the
-keyboard path and entering the section all assume it. Reusing `access_request`
-with a Sidekick parent: an installed build would draw Canvas wording and an
-Approve that posts to the Canvas route. Raising
-`MINIMUM_SERVED_CLIENT_CONTRACT` to 14 instead of filtering: it refuses every
-installed build the socket until it updates, to protect only the people who
-are asked. Sending an older build the rows under a kind it knows: the row
-would be a lie about what happened.
-
-**Consequences:** `activityRoute` takes whether the Sidekick is listed, and
-both of its callers must pass it: the section, and the rail's "open the top
-row". A row whose route is `/activity` is never drawn open. If the item later
-carries the request's place, opening the card there is the better
-destination. [`shared-ui.md`](shared-ui.md#sidekick-sources) owns the pair.
-A source row's content must stay what its recipient may already know (the
-Sidekick's name and what was asked): the listing exemption is only safe while
-that holds. The next Activity kind needs its own contract gate
-(`ActivityReads`), or a raise of the minimum served contract; the gate and
-`SOURCE_ACTIVITY_CLIENT_CONTRACT` go when the minimum reaches 14. The push
-badge and the account menu count source rows for every build, so an older
-build's rail can read one lower than its badge.
-[`sidekick-sources.md`](sidekick-sources.md) owns the request.
+**Consequences:** A source row's content must stay what its recipient may
+already know (the Sidekick's name and what was asked): the listing exemption
+is safe only while that holds. `ActivityKindSchema` is a closed enum in a
+strict sync event, so the next kind needs its own contract gate or a raise of
+`MINIMUM_SERVED_CLIENT_CONTRACT`; this gate goes when the minimum reaches 14.
 
 ### 2026-11-09 — Remove archived Canvas Activity atomically
 

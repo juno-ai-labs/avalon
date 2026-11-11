@@ -67,9 +67,11 @@ export function conversationResourceLinksFrom(
   return conversationResourceLinks(
     resourcePort(workspaceId, workstreamId, substreamId),
     access ? async (context) => {
-      // A run reaches its Sidekick's conversations as the Sidekick itself,
-      // which the Organization decides from the run's row; the wizard reaches
-      // what its person can open, and with no person reaches nothing.
+      // Whose reach applies is the Organization's to decide, from the run's
+      // row (`sidekickReach`): the Sidekick's own for a run a schedule or an
+      // event started, the asker's for a run a person asked for. A child that
+      // is no run (a background agent, whose id names no run row) and the
+      // wizard reach what their person can open, and nothing with no person.
       const runId = context.substreamId !== "0" ? context.substreamId : undefined;
       if (userId === null && runId === undefined) return [];
       const workspace = await durableObjectStubForWorkspace(access.env, access.env.WORKSPACE_DOS,

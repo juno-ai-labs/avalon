@@ -173,7 +173,10 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
   // An emailed Approve or Decline for a Sidekick source request
   // (docs/sidekick-sources.md). It reads no cookie: the signed link sent to the
   // asked person's own mailbox is the proof, and one POST records the answer.
-  // Loading the link, as a mail scanner does, never answers.
+  // A GET of this path answers nothing. The emailed link opens the browser
+  // client's page, which sends the POST when it loads: something that only
+  // fetches the link does not answer, and something that runs the page, as
+  // some mail scanners do, does.
   routes.get("/source-requests/decision",(c) => { c.header("Allow","POST");return c.body(null,405); });
   routes.post("/source-requests/decision",authBodyLimit,zValidator("json",SourceDecisionLinkSchema),async (c) =>
     c.json(SourceDecisionResultSchema.parse(await decideSourceRequestByLink(c.env,c.req.valid("json")))));

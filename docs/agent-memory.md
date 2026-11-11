@@ -475,6 +475,16 @@ nine items in one Organization and none to one elsewhere when this shipped.
   migrations and are not edited. Guard: migration hashes.
 - **Forgetting is authorized apart from seeing.** Guard:
   `test/memory-facts-tools.test.ts` ("lets a member forget their own facts…").
+- **A Sidekick run with no delegate writes only its Sidekick's memory, never
+  the Organization's.** Such a run carries the Organization's principal
+  (`{ type: "workspace" }`) because it acts as the Sidekick itself
+  ([`automation-lifecycle.md`](automation-lifecycle.md#who-a-run-acts-as)),
+  and it has no administrator's standing. `resolveMemoryAccess` makes the
+  Organization scope writable for that principal only outside a Sidekick
+  (`parentKind` other than `automation`). Breaking it lets any event that
+  starts a Sidekick write facts every member's runs then read. Guard:
+  `test/scoped-memory.test.ts` ("lets a run nobody is behind write its
+  Sidekick's memory and never the Organization's").
 - **A run reads its digest from its own object and nothing else.** No
   `WorkspaceDO` call sits on the run path; the copy is refreshed after the run,
   by the sweep, by a forget, and by the copy-sync lane. Breaking it puts a

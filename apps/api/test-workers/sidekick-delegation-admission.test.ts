@@ -629,8 +629,8 @@ describe("shared Sidekick delegation admission", () => {
     expect(await runs()).toEqual([]);
     await letIn(other, "generic_webhook", "deploy.finished");
     expect(await stub().sidekickAdmitExternalEvent(request)).toMatchObject({ admitted: true });
-    // Whose event it was does not pick who the run acts as: of the two delegates that is the creator.
-    expect(await runs()).toEqual([{ run_id: expect.any(String), coordinator_user_id: creator, state: "pending",
+    // Of the two delegates the run acts as the one whose event it is: the only one in its audience.
+    expect(await runs()).toEqual([{ run_id: expect.any(String), coordinator_user_id: other, state: "pending",
       summary: null, opening_json: expect.stringContaining("Private deploy details") }]);
   });
 

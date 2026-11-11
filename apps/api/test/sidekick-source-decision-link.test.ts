@@ -57,8 +57,8 @@ describe("a source request's emailed decision link", () => {
     const actions = await sourceDecisionActions(bindings(), { workspaceId: CLAIM.workspaceId, sidekickId: CLAIM.sidekickId,
       requestId: CLAIM.requestId, userId: CLAIM.userId });
     expect(actions.map((action) => [action.label, fragment(action.url).decision, fragment(action.url).token])).toEqual([
-      ["Approve", "approve", expectedToken(CLAIM)],
       ["Decline", "decline", expectedToken({ ...CLAIM, decision: "decline" })],
+      ["Approve", "approve", expectedToken(CLAIM)],
     ]);
   });
 
@@ -81,7 +81,7 @@ describe("POST /browser/source-requests/decision", () => {
     method: "POST", headers: { "Content-Type": "application/json", origin }, body: JSON.stringify(body),
   }, bindings());
 
-  it("answers a loaded link with 405, so a mail scanner's GET decides nothing", async () => {
+  it("answers a GET of the decision path with 405: only a POST decides", async () => {
     const response = await createApp().request("/browser/source-requests/decision", { method: "GET" }, bindings());
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("POST");

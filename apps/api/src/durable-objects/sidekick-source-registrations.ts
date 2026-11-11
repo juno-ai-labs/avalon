@@ -37,6 +37,12 @@ export interface EligibleSidekickSource {
   userId: string;
   connectionId: string;
   eventTypes: readonly string[];
+  /**
+   * How the person came to let events in. Only `request` is an answer to
+   * "may events from your account start this Sidekick": a source a saved rule
+   * or the migration made stands for the rule it came from and no other.
+   */
+  origin: "own_definition" | "request" | "migration";
 }
 
 /**
@@ -46,10 +52,15 @@ export interface EligibleSidekickSource {
  * A person's connection needs that person's source for the event type, and a
  * source is what extends a rule beyond the connection it was configured on: a
  * rule about a whole account reaches every person's connection of that
- * connector whose owner let the event in, and a rule about one globally
- * addressed resource (a Google file) reaches every connection that can open
- * it. A rule about an account-relative resource (a mail thread) stays on its
- * own connection.
+ * connector whose owner approved a request for the event, and a rule about
+ * one globally addressed resource (a Google file) reaches every connection
+ * that can open it. A rule about an account-relative resource (a mail thread)
+ * stays on its own connection.
+ *
+ * Only a requested source carries a whole-account rule to another account. A
+ * source a person's own saved rule made, or the migration made from one,
+ * records that rule's event type and not its scope: read as account-wide it
+ * would turn somebody's rule about one thread into all of their mail.
  *
  * Delegation is not consulted: who a run may act as says nothing about whose
  * events may start it.
@@ -72,9 +83,10 @@ export function sidekickSourceRegistrations(input: {
       WHERE automation_id=? ORDER BY state='active' DESC,updated_at DESC,registration_id`, sidekickId,
   ).toArray().map((row) => ({ id: row.registration_id, evaluator: ExternalEventEvaluatorV1Schema.parse(JSON.parse(row.evaluator_json)) }));
   const registeredTypes = new Set(registry.list().map((manifest) => manifest.type));
-  const letsIn = (connection: { id: string; owner_user_id: string | null }, eventType: string) => connection.owner_user_id !== null
+  const letsIn = (connection: { id: string; owner_user_id: string | null }, eventType: string, requested = false) =>
+    connection.owner_user_id !== null
     && input.sources.some((source) => source.userId === connection.owner_user_id && source.connectionId === connection.id
-      && source.eventTypes.includes(eventType));
+      && source.eventTypes.includes(eventType) && (!requested || source.origin === "request"));
   const expanded: ExternalEventEvaluatorV1[] = [];
   for (const evaluator of input.evaluators) {
     if (!registeredTypes.has(evaluator.source.connectorType)) continue;
@@ -97,7 +109,7 @@ export function sidekickSourceRegistrations(input: {
       // Beyond its own connection a rule reaches a person's account when it is
       // about the whole account, and any connection when its resource is the
       // same thing everywhere.
-      if (!configured && !portable && !(personal && !resource)) continue;
+      if (!configured && !portable && !(personal && !resource && letsIn(connection, evaluator.source.eventType, true))) continue;
       const capabilities = JSON.parse(connection.granted_scopes_json) as string[];
       const descriptor = connectorActivityTriggerDescriptors(adapter, connection.config_json, storedConnectionScope(connection.scope), capabilities)
         .find((candidate) => candidate.eventType === evaluator.source.eventType);

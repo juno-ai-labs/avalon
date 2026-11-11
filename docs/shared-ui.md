@@ -73,7 +73,14 @@ people read and answer them, on three surfaces that share one component:
   (Approve green, Decline red) and the other stays an outline. Only the person
   asked is handed `onDecide`; everyone else sees the same two buttons and
   cannot press them. So `disabled` on this pair means "not yours" or
-  "answered", and it is never dimmed.
+  "answered", and it is never dimmed: a rule that dims every disabled button
+  would wash out a filled choice. The chosen Approve is a `success.strong`
+  fill under `sys.color.success.on` (`#ffffff` light, `#08150e` dark), and
+  the chosen Decline is `danger.base` under `danger.on`. The fill is `strong`
+  and not `base` because white on light `success.base` is 4.41:1, under the
+  4.5:1 button text needs; on `strong` it is 6.16:1. The outlines mix the hue
+  towards transparent, because `success.edge` and `danger.edge` vanish on the
+  dark elevated card.
 - **`SidekickSourceRequestCardView`** is the card an ask draws in the
   conversation it was made from: the Sidekick, the connector and events in
   words, the condition quoted, who asked, and one row per person asked with
@@ -296,44 +303,6 @@ surfaces in Electron, and in Chrome for the browser host; no second component
 test runner is needed for the same implementations.
 
 ## Changelog
-
-### 2026-11-10 — One Approve and Decline pair shows a source request's state to everyone
-
-**What changed:** `SourceDecisionButtons`, the conversation card
-(`SidekickSourceRequestCardView`) and the Sidekick panel's Sources section
-(`SidekickSourcesList`) are new, with a desktop adapter that reads and
-answers. The pair is drawn for every reader of a request, pressable only by
-the person asked, and filled with their choice once made. Delegation's
-explanation names Sources.
-
-**Why:** A source is asked of several people at once, in a conversation
-everyone there can read. The owner asked that everyone see the prompt, that
-only the person concerned can act, and that the others see the choice as a
-filled button, green for Approve and red for Decline, "so people know the
-current state of it". Sources were split from delegation the same day
-([`sidekick-sources.md`](sidekick-sources.md)), so the panel needed a second
-list that could not be mistaken for the first.
-
-**Considered and rejected:** Drawing the pair only for the person asked and a
-line of text for everyone else, as the Canvas access request does. That shows
-two different objects for one request and loses the at-a-glance state the
-owner asked for. Reusing `AccessDecisionActions`: it is one decider's two
-commands and has no state to show. Taking each row's state from the tool
-call's output: it is the asker's view (`yours` is theirs) and is stale from
-the moment anyone answers. A timer to keep a bystander's card fresh: nothing
-here polls, and the three pushes plus focus cover the people a request
-concerns.
-
-**Consequences:** A disabled button in this pair is state, not unavailability,
-so it must stay undimmed; a rule that dims every disabled button would wash
-out a filled choice. A reader the request does not concern, who also does not
-list the Sidekick, hears no push when it is answered: their card re-reads on
-focus. The `/sidekicks` writes publish no `automations` sync topic (the map
-keys on `/automations`), which is why that topic does not cover them. A new
-surface that shows a request mounts the pair and reads under the Sidekick's
-sources key, or it will not hear the invalidations. Event labels a connector
-overrides in its manifest read differently here until the contract carries
-the label.
 
 ### 2026-11-09 — Explain unavailable title-menu tiles through the shared menu item
 
