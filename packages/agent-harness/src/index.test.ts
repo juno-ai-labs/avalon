@@ -1867,6 +1867,25 @@ describe("agent harness", () => {
     expect(uncommittedFetch).not.toHaveBeenCalled();
   });
 
+  it("names what a failed port threw, not only which port failed", async () => {
+    const fetcher = vi.fn(async () => streamResponse([])) as typeof fetch;
+    const result = await runHarness({
+      ...runInput(fetcher),
+      onLiveness: async () => { throw new Error("usage_allowance_exhausted"); },
+      describeFailureCause: (cause) => cause instanceof Error ? cause.message : "not_an_error",
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      failure: {
+        code: "run_state_persistence_failed",
+        message: "Run liveness renewal failed",
+        causeCode: "usage_allowance_exhausted",
+      },
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("reports startup waits before provider dispatch without letting diagnostics stop the turn", async () => {
     const phases: string[] = [];
     const durations: number[] = [];
