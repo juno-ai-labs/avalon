@@ -1,4 +1,5 @@
 import { renderCanvasTitleMessages } from "@rally/agent-harness";
+import { PickableWorkstreamIconKeySchema, WORKSTREAM_ICON_KEYS, type PickableWorkstreamIconKey } from "@rally/contracts";
 import { z } from "zod";
 
 import type { Env } from "../env";
@@ -9,27 +10,31 @@ import { runStructuredInference } from "./structured-inference";
 /** A Canvas title's own bound (`canvas_directory.title`). */
 const TITLE_MAX_CHARACTERS = 300;
 
-const CanvasTitleSchema = z.strictObject({ title: z.string() });
+// A key off the menu costs the icon, never the title beside it.
+const CanvasTitleSchema = z.strictObject({ title: z.string(), icon: PickableWorkstreamIconKeySchema.nullable().catch(null) });
 
 const titleJsonSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["title"],
-  properties: { title: { type: "string" } },
+  required: ["title", "icon"],
+  properties: { title: { type: "string" }, icon: { type: "string", enum: WORKSTREAM_ICON_KEYS } },
 } as const;
 
+/** What the naming pass gives a Canvas: each field null when the model gave nothing usable for it. */
+export type CanvasNaming = { title: string | null; icon: PickableWorkstreamIconKey | null };
+
 /**
- * A Canvas's title from the message that opened its Chat, on the
+ * A Canvas's title and icon from the message that opened its Chat, on the
  * `resource_naming` role with reasoning off, the way a Thread was named
- * from its opening message. `null` when there is no model or it answers
- * nothing usable: the Canvas then keeps the title it has. Never throws.
+ * from its opening message. `null` when there is no model or the call fails:
+ * the Canvas then keeps the title and icon it has. Never throws.
  */
 export async function canvasTitleFromOpening(env: Env, input: {
   workspaceId: string;
   canvasId: string;
   userId: string | null;
   opening: string;
-}): Promise<string | null> {
+}): Promise<CanvasNaming | null> {
   if (!env.OPENROUTER_API_KEY) return null;
   // The policy is the harness prompt (`prompts/canvas-title.ts`), with its
   // golden hash; the opening message is its user-role message.
@@ -47,7 +52,7 @@ export async function canvasTitleFromOpening(env: Env, input: {
     });
     const title = truncateUtf16Safe(result.title.replace(/\s+/gu, " ").trim().replace(/^["'“”‘’]+|["'“”‘’.]+$/gu, "").trim(),
       TITLE_MAX_CHARACTERS);
-    return title.length > 0 ? title : null;
+    return { title: title.length > 0 ? title : null, icon: result.icon };
   } catch (error) {
     logWarn(env, "canvas_naming_failed", {
       workspace_id: input.workspaceId,

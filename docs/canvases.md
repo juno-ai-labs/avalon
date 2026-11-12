@@ -234,12 +234,16 @@ not come; and the provisioning projection of an empty Chat (no ordinal before,
 The entry's handler,
 `HostedCanvas.nameFromOpening`, reads the oldest text message a person sent
 in the Chat through the message port (`saidMessages`, `peopleOnly`), asks `canvasTitleFromOpening` (the `resource_naming` role,
-reasoning off, metered as `channel_naming`) and writes the title in one
+reasoning off, metered as `channel_naming`) for a title and an icon from the
+shared catalog, and writes the title in one
 statement guarded by `title_status = 'naming'`, which also settles it, so the
 list and the detail move as a retitle moves them. A retitle settles the row
 first, so a person's title always wins over a pass still in flight; a model
 that fails or answers nothing settles the row as it is, logged
-`canvas_naming_failed` with its code. A Canvas a Sidekick run makes, or one
+`canvas_naming_failed` with its code. In the same transaction the chosen icon
+fills `appearance_json.icon` only while it is still null, read after the
+model's await, so an icon a person picked in the meantime stands; the colour is
+left alone. A key off the menu drops the icon and keeps the title. A Canvas a Sidekick run makes, or one
 made with a title, is never `naming`. A first message that carries
 only attachments has no text to read, so the Canvas stays `naming` until a
 person's text message arrives, which arms the entry again.
@@ -957,6 +961,18 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-12 — The naming pass chooses a Canvas's icon again
+
+Every Canvas showed the same layout glyph, in its id's hue, because nothing
+ever set its icon: Thread naming chose one beside the name, and the Canvas
+titling that replaced it carried the title forward and dropped the icon. The
+title call now also returns a key from the shared icon catalog, and the pass
+writes it only when the icon is unchosen. It rides the same model call rather
+than a second one, since one more key costs no latency. The colour stays the
+id-derived default, so two Canvases with the same icon still differ. A future
+change must keep the write conditional on an unchosen icon, so the pass never
+overrides a person's pick.
 
 ### 2026-11-11 — App invocation does not imply automatic upkeep
 

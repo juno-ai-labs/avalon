@@ -181,7 +181,7 @@ describe("prompt renderers", () => {
       },
       canvasTitle: {
         actual: renderCanvasTitleMessages("Can you draft a launch plan for the Oslo coffee pop-up next month?"),
-        hash: "790870b4ee99de6d3523b313f5636fa60b43636031868cd469e2b33608043bbe",
+        hash: "46867a4a12471e49d34ce70b2b59ec926fe22b17056ddccc7222a8dbc6ce1b3a",
       },
       compactionCheckpoint: {
         actual: renderCompactionCheckpointContent(
@@ -470,6 +470,9 @@ describe("prompt renderers", () => {
     expect(system!.content).toContain("Use sentence case");
     expect(system!.content).toContain("Never capitalize every word");
     expect(system!.content).toContain("never add a specific the message does not contain");
+    // The icon is chosen from the shared catalog, with the shared fallback.
+    expect(system!.content).toContain("- rocket: ");
+    expect(system!.content).toContain("When none suits it, choose circle-dot.");
     // The cut lands on a whole code point: the first emoji survives, the second does not.
     expect(JSON.parse(opening!.content)).toEqual({ openingMessage: `${"a".repeat(CANVAS_TITLE_OPENING_CHARACTERS - 1)}😀` });
   });
