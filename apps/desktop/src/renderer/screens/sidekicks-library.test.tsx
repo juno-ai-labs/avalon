@@ -260,7 +260,7 @@ describe('the Sidekicks home', () => {
     render(<QueryClientProvider client={client}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
     const chosen = await screen.findByRole('link', { name: 'Canvas: Release notes' });
     expect(chosen.querySelector('.lucide-flag')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Canvas: Dashboard' }).querySelector('.lucide-globe')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Canvas: Dashboard' }).querySelector('.lucide-panels-top-left')).toBeInTheDocument();
     act(() => { applyVersionedSidebarList(client, 'automations', 2, [{ ...item, attachedCanvases: [
       { id: 'custom', title: 'Updated notes', artifactKind: null, appearance: { icon: 'star', color: 'blue' } },
     ] }]); });
