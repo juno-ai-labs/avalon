@@ -43,6 +43,7 @@ import type { SubstreamInitialContext } from '@rally/contracts/substream-creatio
 import type { ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
+import type { ArtifactAudienceControl, ArtifactCardControls } from '../components/artifact-card-tools';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { conversationAnnotationScope, conversationDraftKey } from '../lib/draft-keys';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
@@ -1023,6 +1024,11 @@ export interface ConversationSurfaceProps {
    * answer form, since answering it is how a waiting run continues.
    */
   withoutComposer?: boolean;
+  /**
+   * Who can open the parent's artifacts, for their cards in the feed. Only a
+   * Canvas has the setting; without it the cards offer only link and browser.
+   */
+  artifactAudience?: ArtifactAudienceControl | undefined;
 }
 
 /**
@@ -1060,6 +1066,7 @@ function ConversationSurfaceContent({
   onComposerCancel,
   withoutComposer = false,
   embedded = false,
+  artifactAudience,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
@@ -1386,7 +1393,29 @@ function ConversationSurfaceContent({
   // which keeps the identity stable while there is nothing loaded. It is
   // declared after the preview read because it now takes it: the embed card's
   // excerpt is the same derivative the rail's panel shows.
+  // A generated artifact is a Canvas publication with a stable link; an
+  // attached file is not, so its card keeps no tools. The link never changes,
+  // so it is read once per artifact and shared with the Share panel's.
+  // Keyed on the ids, not the array: socket snapshots replace the array when
+  // nothing about it changed, and a new set would re-render every card.
+  const generatedArtifactKey = (routedDetail?.resources ?? NO_RESOURCES)
+    .filter((resource) => resource.direction === 'artifact').map((resource) => resource.id).join(' ');
+  const generatedArtifactIds = useMemo(() => new Set(generatedArtifactKey.split(' ')), [generatedArtifactKey]);
+  const artifactControls = useCallback((resourceId: string): ArtifactCardControls | undefined => {
+    if (!api || !generatedArtifactIds.has(resourceId)) return undefined;
+    return {
+      link: async () => (await queryClient.fetchQuery({
+        queryKey: ['artifact-link', resourceId],
+        queryFn: () => api.artifactLink(resourceId),
+        staleTime: Infinity,
+      })).canonicalUrl,
+      // A fresh single-use code per navigation, as the site viewer's own button mints.
+      openInBrowser: async () => { await desktopBridge().openExternal((await api.openArtifact(resourceId)).openUrl); },
+      audience: artifactAudience,
+    };
+  }, [api, artifactAudience, generatedArtifactIds, queryClient]);
   const citations = useCitations({
+    artifact: artifactControls,
     loadResourceContent,
     onOpenPreview: openAttachment,
     onOpenResourceDetails: openResourceDetails,
