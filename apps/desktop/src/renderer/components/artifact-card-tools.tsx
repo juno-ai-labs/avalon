@@ -53,8 +53,10 @@ function AudienceMenu({ audience, title }: { audience: ArtifactAudienceControl; 
     );
   }
   const choose = (value: string): void => {
-    if (saving) return;
-    if (value === 'participants') { audience.choosePeople(); return; }
+    // Specific people is handled by its item's own select, below: it must
+    // reopen the picker even when it is already the value, which a radio
+    // group's change never reports.
+    if (saving || value === 'participants') return;
     const next = value as Exclude<CanvasArtifactVisibility, 'participants'>;
     setSaving(next);
     void audience.change(next).catch(() => undefined).finally(() => setSaving(null));
@@ -81,7 +83,12 @@ function AudienceMenu({ audience, title }: { audience: ArtifactAudienceControl; 
               const option = ARTIFACT_VISIBILITY_OPTIONS[value];
               const OptionIcon = option.icon;
               return (
-                <DropdownMenu.RadioItem className="menu-item" key={value} value={value}>
+                <DropdownMenu.RadioItem
+                  className="menu-item"
+                  key={value}
+                  onSelect={value === 'participants' ? () => audience.choosePeople() : undefined}
+                  value={value}
+                >
                   <OptionIcon aria-hidden="true" size={15} stroke={1.8} />
                   <span className="artifact-audience-option">{value === 'participants' ? `${option.label}…` : option.label}</span>
                   <DropdownMenu.ItemIndicator className="artifact-audience-check">
