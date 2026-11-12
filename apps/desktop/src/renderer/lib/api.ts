@@ -1274,8 +1274,10 @@ export class RallyApi {
   }
 
   /** Delete a Canvas this person made and left blank; the server judges blank, so this may delete nothing. */
-  async discardBlankCanvas(id: string): Promise<void> {
-    await this.requestVoid(`/canvases/${encodeURIComponent(id)}/discard`, { method: 'POST' });
+  async discardBlankCanvas(id: string, leavingTicketId: string | null): Promise<void> {
+    await this.requestVoid(`/canvases/${encodeURIComponent(id)}/discard`, {
+      method: 'POST', body: leavingTicketId ? { leavingTicketId } : {},
+    });
   }
 
   async archiveCanvas(id: string): Promise<void> {

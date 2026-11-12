@@ -483,7 +483,6 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
                OR EXISTS (SELECT 1 FROM canvas_participants WHERE canvas_id = ?1 AND user_id <> ?2)
                OR EXISTS (SELECT 1 FROM sidekick_conversation_attachments WHERE parent_kind = 'canvas' AND parent_id = ?1)
                OR EXISTS (SELECT 1 FROM workspace_pins WHERE item_kind = 'canvas' AND item_id = ?1)
-               OR EXISTS (SELECT 1 FROM workspace_activity_items WHERE parent_kind = 'canvas' AND parent_id = ?1)
                OR EXISTS (SELECT 1 FROM parent_invitations WHERE parent_id = ?1)
                OR EXISTS (SELECT 1 FROM canvas_access_requests WHERE canvas_id = ?1) AS used`,
           this.canvasId, row.created_by_user_id,

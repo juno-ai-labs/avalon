@@ -933,8 +933,10 @@ the saved attachments have all loaded.
 projection of the Chat can lag a message the Chat already holds:
 
 1. The Organization object judges the Canvas, deleting nothing.
-2. The Chat seals itself against new messages if it holds none
-   (`AgentLoopDO.sealBlankConversation`).
+2. The Chat seals itself against new messages if it holds none and no other
+   client has it open (`AgentLoopDO.sealBlankConversation`). The leaving
+   client names its own socket by the ticket it opened with, since that socket
+   may still be closing.
 3. The Organization object judges again and deletes its rows. That commit is
    the delete. If the Canvas changed in between, the Chat is reopened.
 4. The Chat erases its storage; it refuses if it is not sealed.
@@ -1000,8 +1002,8 @@ nothing worth keeping.
 
 **Considered and rejected:** Archiving it: it kept a tombstone and a Chat
 object for every abandoned click. Judging blank on the client alone, or from
-the parent's projection alone: both miss a message the Chat already holds, for
-example one sent from a second window, and a delete that removes real content
+the parent's projection alone: both miss a message the Chat already holds, or
+a second window still open on it, and a delete that removes real content
 is a failure nobody would notice. Deferring creation until the first message:
 it puts creation latency back before the first keystroke, which the 2026-11-11
 entry removed. Deleting the D1 anchor too: migration 0079 fences anchors

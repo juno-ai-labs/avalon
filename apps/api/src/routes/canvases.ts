@@ -7,6 +7,7 @@ import {
   CanvasAccessDecisionSchema,
   CanvasAccessRequestResultSchema,
   CanvasAccessRequestSchema,
+  DiscardCanvasRequestSchema,
   CanvasAccessSchema,
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
@@ -122,8 +123,9 @@ canvasRoutes.post("/:id/archive", canvasIdParam, async (c) => {
 });
 
 // See `CanvasService.discardIfBlank`.
-canvasRoutes.post("/:id/discard", canvasIdParam, async (c) => {
-  await new CanvasService(c.env, getWorkspaceAuth(c)).discardIfBlank(c.req.valid("param").id);
+canvasRoutes.post("/:id/discard", canvasIdParam, namedZValidator("canvas_discard",
+  "A discard names at most the leaving socket's ticket")("json", DiscardCanvasRequestSchema), async (c) => {
+  await new CanvasService(c.env, getWorkspaceAuth(c)).discardIfBlank(c.req.valid("param").id, c.req.valid("json").leavingTicketId);
   return c.body(null, 204);
 });
 
