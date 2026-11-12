@@ -59,7 +59,7 @@ import {
   type CanvasAccessSubject,
 } from "./canvas-access-requests";
 import { attachSidekickConversation } from "./workspace-sidekick-conversation-storage";
-import { CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
+import { CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_DISCARD_ERASE_ALARM, CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
 import { CANVAS_ARTIFACT_ACCESS_ALARM } from "./canvas-artifact-access";
 import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -491,6 +491,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       for (const statement of CANVAS_DISCARD_STATEMENTS) this.sql.exec(statement, this.canvasId);
       this.host.alarms.cancel(CANVAS_NAMING_ALARM_KIND, this.canvasId);
       this.host.alarms.cancel(CANVAS_ARTIFACT_ACCESS_ALARM, this.canvasId);
+      // The Chat's erase commits with the delete and retries until it lands,
+      // so a failed or interrupted erase never leaves its storage for good.
+      this.host.alarms.schedule({ kind: CANVAS_DISCARD_ERASE_ALARM, key: this.canvasId, dueAt: Date.now() });
       this.host.noteCanvasDirectoryChanged(this.canvasId);
       return { discarded: true };
     });

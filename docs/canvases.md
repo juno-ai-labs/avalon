@@ -939,7 +939,11 @@ projection of the Chat can lag a message the Chat already holds:
    may still be closing.
 3. The Organization object judges again and deletes its rows. That commit is
    the delete. If the Canvas changed in between, the Chat is reopened.
-4. The Chat erases its storage; it refuses if it is not sealed.
+4. The Chat erases its storage; it refuses if it is not sealed. Step 3 commits
+   an alarm entry (`CANVAS_DISCARD_ERASE_ALARM`) that runs the erase and
+   retries it until it lands, so an interrupted erase never leaves the Chat's
+   storage for good. A retry after a success finds no identity and wipes the
+   empty schema it opened.
 
 Only the id stays, in D1's `workstreams` anchor and `workstream_authority_routes`
 row: migration 0079's `workstreams_reject_post_cutover_delete` trigger refuses
@@ -1013,7 +1017,9 @@ against deletion, and lifting that fence is a separate decision.
 must join the blank query, or leaving would delete it. A table that starts
 keeping a row per Canvas must join `CANVAS_DISCARD_STATEMENTS`. Treating a
 Chat effect for a missing Canvas as one for a deleted Canvas depends on
-`createCanvas` writing the row before bootstrapping the Chat.
+`createCanvas` writing the row before bootstrapping the Chat. The Chat's erase
+runs from an alarm entry the delete commits, so `eraseBlankConversation` must
+stay safe to run again on an object it already erased.
 
 ### 2026-11-12 — The naming pass chooses a Canvas's icon again
 

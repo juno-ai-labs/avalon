@@ -539,9 +539,11 @@ describe("the Canvas list", () => {
     await expect.poll(() => clientCanvasRows(creator.frames).map((row) => row.id).sort(), { timeout: waitBudget() })
       .toEqual([said, titled].sort());
     await expect(service.detail(blank)).rejects.toMatchObject({ code: "canvas_not_found" });
-    // Neither the Organization's object nor its Chat's still names it. The
-    // kept Canvas is the scan's control.
-    expect(await runInDurableObject(workspace(), (_instance, state) => tablesNaming(state.storage.sql, blank))).toEqual([]);
+    // Once its erase alarm has run, neither the Organization's object nor its
+    // Chat's still names it. The kept Canvas is the scan's control.
+    await runDurableObjectAlarm(workspace());
+    await expect.poll(() => runInDurableObject(workspace(), (_instance, state) => tablesNaming(state.storage.sql, blank)),
+      { timeout: waitBudget() }).toEqual([]);
     expect(await runInDurableObject(workspace(), (_instance, state) => tablesNaming(state.storage.sql, said))).toContain("canvas_directory");
     await expect.poll(() => runInDurableObject(chatOf(blank), (_instance, state) => tablesNaming(state.storage.sql, blank)),
       { timeout: waitBudget() }).toEqual([]);
@@ -607,6 +609,39 @@ describe("the Canvas list", () => {
     second.socket.close(1000, "left");
     await expect.poll(async () => (await service.discardIfBlank(canvasId, leaving)).discarded, { timeout: waitBudget() }).toBe(true);
     await expect(service.detail(canvasId)).rejects.toMatchObject({ code: "canvas_not_found" });
+  }));
+
+  it("erases a discarded Canvas's Chat from an alarm committed with the delete, once it can, and again harmlessly", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({});
+    // A fresh stub each time: one that saw the Chat reset is broken for good.
+    const chat = () => env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    // The erase cannot run yet: as if the Worker died after the delete committed.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`CREATE TRIGGER hold_canvas_discard_erase AFTER INSERT ON _internal_durable_alarms
+        WHEN NEW.kind = 'canvas_discard_erase' BEGIN
+        UPDATE _internal_durable_alarms SET retry_at = ${Date.now() + 60_000}
+         WHERE kind = NEW.kind AND alarm_key = NEW.alarm_key; END`);
+    });
+    expect(await service.discardIfBlank(canvasId)).toEqual({ discarded: true });
+    await expect(service.detail(canvasId)).rejects.toMatchObject({ code: "canvas_not_found" });
+    expect(await runInDurableObject(chat(), (_instance, state) => tablesNaming(state.storage.sql, canvasId))).not.toEqual([]);
+
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("DROP TRIGGER hold_canvas_discard_erase");
+      state.storage.sql.exec("UPDATE _internal_durable_alarms SET retry_at = 0 WHERE kind = 'canvas_discard_erase'");
+    });
+    await runDurableObjectAlarm(workspace());
+    await expect.poll(() => runInDurableObject(chat(), (_instance, state) => tablesNaming(state.storage.sql, canvasId)),
+      { timeout: waitBudget() }).toEqual([]);
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT 1 FROM _internal_durable_alarms WHERE kind = 'canvas_discard_erase'").toArray())).toEqual([]);
+    // A retry after the erase landed finds nothing to erase.
+    // Its reset can reach the caller before its answer, as the alarm allows for.
+    await chat().eraseBlankConversation({ workspaceId: WORKSPACE_ID, parentId: canvasId })
+      .catch((error: unknown) => { if (!String(error).includes("conversation_erased")) throw error; });
+    await expect.poll(() => runInDurableObject(chat(), (_instance, state) => tablesNaming(state.storage.sql, canvasId)),
+      { timeout: waitBudget() }).toEqual([]);
   }));
 
   it("lists a Canvas to whoever may open it, unread to a participant who has not opened it", async () => {
