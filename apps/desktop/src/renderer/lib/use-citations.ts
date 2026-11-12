@@ -53,9 +53,11 @@ function documentVerdict(error: unknown): boolean {
   return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
 }
 
-export function useCitations({ actions, loadResourceContent, onOpenPreview, onOpenResourceDetails, pinned, resources }: {
+export function useCitations({ actions, artifact, loadResourceContent, onOpenPreview, onOpenResourceDetails, pinned, resources }: {
   /** The host's right-click actions for a cited resource; absent offers none. */
   actions?: CitationContext['actions'];
+  /** The host's link, browser and audience controls for a published artifact's card. */
+  artifact?: CitationContext['artifact'];
   /** Whether this person pinned a cited resource; absent reads as none. */
   pinned?: CitationContext['pinned'];
   /**
@@ -279,6 +281,6 @@ export function useCitations({ actions, loadResourceContent, onOpenPreview, onOp
     openPreview(target.resourceId, document.activeElement instanceof HTMLElement ? document.activeElement : document.body);
   }, [openPreview]);
 
-  return useMemo(() => ({ open, openPreview, preview, resolve, loadContent, ...(actions ? { actions } : {}), ...(pinned ? { pinned } : {}) }),
-    [actions, open, openPreview, pinned, preview, resolve, loadContent]);
+  return useMemo(() => ({ open, openPreview, preview, resolve, loadContent, ...(actions ? { actions } : {}), ...(artifact ? { artifact } : {}), ...(pinned ? { pinned } : {}) }),
+    [actions, artifact, open, openPreview, pinned, preview, resolve, loadContent]);
 }

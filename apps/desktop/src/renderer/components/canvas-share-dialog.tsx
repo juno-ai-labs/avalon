@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { desktopBridge } from "../lib/platform";
 import { ApiError } from "../lib/api";
 import { canvasDetailQueryKey, useCanvasNameSources } from "../lib/canvases";
-import { CANVAS_VISIBILITY_OPTIONS } from "../lib/canvas-sharing";
+import { ARTIFACT_VISIBILITY_OPTIONS, CANVAS_VISIBILITY_OPTIONS, editorUserIds } from "../lib/canvas-sharing";
 import { useCollaborationSession } from "../lib/collaboration-session";
 import { AccessDecisionActions } from "./canvas-access-request";
 import {
@@ -75,12 +75,7 @@ function ConnectedCanvasSharingDialog({
   });
   if (!canvas.canManage) {
     const audience = CANVAS_VISIBILITY_OPTIONS[canvas.visibility].label;
-    const artifacts = {
-      editors: "Editors only",
-      participants: "Specific people",
-      workspace: "Everyone in the Organization",
-      public: "Anyone with the link",
-    }[canvas.artifactVisibility ?? "editors"];
+    const artifacts = ARTIFACT_VISIBILITY_OPTIONS[canvas.artifactVisibility ?? "editors"].label;
     return (
       <Modal
         open
@@ -132,17 +127,10 @@ function ConnectedCanvasSharingDialog({
     try {
       const updated = await api.setCanvasAudience(canvas.id, {
         visibility: selection.editors,
-        userIds:
-          selection.editors === "creator"
-            ? []
-            : selection.editorIds
-                .filter(
-                  (id) =>
-                    selection.editors !== "workspace" ||
-                    membersById.get(id) === undefined ||
-                    membersById.get(id)?.accessClass === "guest",
-                )
-                .map(asUserId),
+        userIds: editorUserIds(
+          { visibility: selection.editors, participantUserIds: selection.editorIds },
+          (id) => membersById.get(id) === undefined || membersById.get(id)?.accessClass === "guest",
+        ).map(asUserId),
         artifactVisibility: selection.artifacts,
         artifactUserIds:
           selection.artifacts === "participants" ||
