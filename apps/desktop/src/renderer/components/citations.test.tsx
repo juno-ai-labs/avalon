@@ -1036,7 +1036,7 @@ describe('a published artifact card', () => {
     expect(screen.queryByRole('button', { name: /Who can open/u })).toBeNull();
   });
 
-  it('keeps an attached file’s card free of artifact tools', () => {
+  it('draws no artifact tools for a resource the host gives none', () => {
     renderCard(undefined);
 
     expect(screen.getByRole('button', { name: 'Open Grocery list' })).toBeInTheDocument();

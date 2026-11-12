@@ -53,7 +53,7 @@ function AudienceMenu({ audience, title }: { audience: ArtifactAudienceControl; 
     );
   }
   const choose = (value: string): void => {
-    if (value === audience.value || saving) return;
+    if (saving) return;
     if (value === 'participants') { audience.choosePeople(); return; }
     const next = value as Exclude<CanvasArtifactVisibility, 'participants'>;
     setSaving(next);
@@ -103,19 +103,19 @@ function AudienceMenu({ audience, title }: { audience: ArtifactAudienceControl; 
  * rather than inside it, since a button cannot hold buttons.
  */
 export function ArtifactCardTools({ controls, title }: { controls: ArtifactCardControls; title: string }): React.JSX.Element {
-  const [openFailure, setOpenFailure] = useState<object | undefined>();
+  const [openFailure, setOpenFailure] = useState<{ message: string } | undefined>();
   return (
     <span className="artifact-card-tools">
       {controls.audience && <AudienceMenu audience={controls.audience} title={title} />}
       <CopyButton label="Copy link" size={15} tooltipSide="top" value={controls.link} />
       <IconButton
         label="Open in browser"
-        onClick={() => void controls.openInBrowser().then(() => setOpenFailure(undefined), () => setOpenFailure({}))}
+        onClick={() => void controls.openInBrowser().then(() => setOpenFailure(undefined), (cause: unknown) => setOpenFailure({ message: cause instanceof Error && cause.message ? cause.message : 'Try again.' }))}
         tooltipSide="top"
       >
         <IconExternalLink aria-hidden="true" size={15} stroke={1.8} />
       </IconButton>
-      {openFailure && <ErrorNotice occurrence={openFailure} title="The artifact could not be opened">{title} did not open in the browser. Try again.</ErrorNotice>}
+      {openFailure && <ErrorNotice occurrence={openFailure} title="The artifact could not be opened">{openFailure.message}</ErrorNotice>}
     </span>
   );
 }
