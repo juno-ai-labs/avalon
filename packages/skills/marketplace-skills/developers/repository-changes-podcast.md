@@ -7,7 +7,7 @@ tags:
   - developers
 ---
 
-Create a podcast feed in this Canvas with a short episode each morning about changes in my repositories. Use my timezone unless I name another. Ask only which repositories to cover. Create each new episode at 8 a.m. in my timezone. Cover changes that landed on each repository's default branch, grouping merged pull requests and their commits into a single item.
+Create a podcast feed in this Canvas with a short episode each morning about changes in my repositories. Create each new episode at 8 a.m. my time unless I say otherwise. Ask only which repositories to cover. Cover changes that landed on each repository's default branch, grouping merged pull requests and their commits into a single item.
 
 Use one episode per day of changes. Rank the changes by user impact, operational risk, and importance to the team. Start the audio with the biggest change, then explain what landed and why it matters. Put the ranked list and links to the source PRs or commits in the show notes.
 
