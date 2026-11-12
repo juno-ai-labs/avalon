@@ -9,6 +9,9 @@ import { loadBlogPosts, type BlogPost } from './blog-pages';
 import { escapeHtml as escape, loadComparisons, type Comparison } from './comparison-pages';
 import { renderLoopFigure, renderPeopleFigure } from './explorable-figures';
 import { renderLiveCarousel } from './live-examples';
+import { renderHomeIllustration } from './home-illustrations';
+import { renderHomePricing } from './home-pricing';
+import { externalArrow } from './site-icons';
 
 /** Every rival, read from `content/compare/*.md` and sorted by `order`. */
 export const comparisons: readonly Comparison[] = loadComparisons(new URL('../content/compare/', import.meta.url));
@@ -36,6 +39,13 @@ export function renderSiteNav(): string {
     // The web app signs in and signs up through one door, so the label rolls between the two.
     + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in to Rally or sign up for Rally">'
     + '<span class="header-sign-in-wheel" aria-hidden="true"><span>Sign in to Rally</span><span>Sign up for Rally</span></span></a></nav>';
+}
+
+/** A quiet header for the new reading pages; the earlier product pages keep their own nav. */
+function renderReadingNav(): string {
+  return '<nav class="reading-nav" aria-label="Primary"><a href="/canvases/">Canvases</a><a href="/sidekicks/">Sidekicks</a>'
+    + `<a href="/#pricing">Pricing</a><a href="/help/">The manual ${externalArrow}</a>`
+    + `<a class="header-login" data-site-action="sign-in-header" href="https://app.rallywith.ai">Open Rally ${externalArrow}</a></nav>`;
 }
 
 /** Shared downloads, with mono Apple/Linux artwork from @thesvg/react. */
@@ -156,6 +166,11 @@ function renderCanvasDemo(): string {
 }
 
 const markers: Record<string, () => string> = {
+  'reading-nav': renderReadingNav,
+  'home-pricing': renderHomePricing,
+  'home-illustration-canvas': () => renderHomeIllustration('canvas'),
+  'home-illustration-sidekick': () => renderHomeIllustration('sidekick'),
+  'home-illustration-together': () => renderHomeIllustration('together'),
   'site-nav': renderSiteNav,
   'desktop-downloads': renderDesktopDownloads,
   'landing-sections': renderLandingSections,
