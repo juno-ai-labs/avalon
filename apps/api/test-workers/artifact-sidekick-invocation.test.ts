@@ -123,6 +123,11 @@ async function publishApp(stateful: boolean, source: string) {
   await host().recordPublish({ artifactId, workspaceId, workstreamId: canvasId, resourceId, region: env.AVALON_REGION,
     manifest: { version: 1, artifactId, artifactVersion: 1, mode: "active", stateful, serverModuleSha256: "a".repeat(64),
       totalBytes: 0, publishedAt: NOW, assets: [] } });
+  await workspace().canvasSetAudience({ workspaceId, canvasId, actor: { userId: author, actorRole: "member" },
+    update: { visibility: "creator", userIds: [], artifactVisibility: "public" } });
+  const delivery = await workspace().canvasArtifactAccessDelivery({ workspaceId, canvasId });
+  if (!delivery) throw new Error("Published app must have a Canvas audience");
+  await host().applyAccessSnapshot(delivery.snapshot);
 }
 
 beforeEach(async () => {
