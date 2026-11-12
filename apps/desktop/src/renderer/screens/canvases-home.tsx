@@ -1,7 +1,7 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { IconBolt, IconDatabase, IconHexagon } from '@tabler/icons-react';
 import { SidekickStack } from '@rally/ui/components/sidekick-stack';
-import { ArrowUpRight, ChevronLeft, Plus, Sparkles, Store } from 'lucide-react';
+import { ArrowUp, ChevronLeft, Plus, Sparkles, Store } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -146,7 +146,7 @@ function CanvasMarketplace({ onStart }: { onStart: (prompt: string) => void }): 
       {templates.map((template) => <li key={template.name}>
         <button className="dashboard-card canvas-template-card" onClick={() => onStart(template.prompt)} type="button">
           <span className="canvas-template-title"><CanvasTemplateMark template={template} />{template.name}</span>
-          <ArrowUpRight aria-hidden="true" size={16} />
+          <ArrowUp aria-hidden="true" size={16} />
           <span className="canvas-template-description">{template.description}</span>
         </button>
       </li>)}
