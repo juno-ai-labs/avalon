@@ -17,9 +17,9 @@ image, and the same site-chrome markers supply the header and footer.
 | --- | --- |
 | `apps/site/content/blog/YYYY-MM-DD-<title>.md` | One post. The file name gives the date; front matter gives `slug`, `title`, `description` and `author`; the rest is the body. |
 | `apps/site/src/blog-pages.ts` | Loads and validates posts; renders the changelog index and each post. |
-| `apps/site/src/landing.css` | The `.changelog` index layout and the `.blog` post layout. |
+| `apps/site/src/reading.css`, `src/site-theme.css` | The pencil identity, `.changelog` index, `.blog` reading layout, and header/footer styles. |
 | `apps/site/src/site-chrome.ts` | `blogPosts`, the footer's Blog column, the blog sitemap, and the blog part of `llms.txt`. |
-| `apps/site/src/social-cards.ts` | `renderBlogCard`. |
+| `apps/site/src/social-cards.ts`, `src/reading-card.ts` | `renderBlogCard` delegates to the shared paper-and-pencil card renderer. |
 | `apps/site/vite.config.ts` | Registers the pages and emits each post's `social.png`, `index.md`, and `/blog/sitemap.xml`. |
 
 ## How it works
@@ -31,8 +31,10 @@ treats `blog/index.html` and each `blog/<slug>/index.html` as build inputs that
 exist only in memory, exactly as it does for the comparison pages, and the dev
 server renders the same HTML for the same paths. A post's body goes through
 `marked` with its default GitHub-flavored Markdown. The `/blog/` index is a
-changelog: each date sits right-aligned in a left column, then a dot on a rail
-that runs down the left edge of the posts. Dates stay sticky beside their post. The newest post shows in full; each older one shows its
+changelog: each date sits in a left column with a small sage dot beside the
+post. Dates stay sticky. A serif-and-pencil cover opens the index; individual
+posts use the same paper and type in a narrower reading column. The newest post
+shows in full; each older one shows its
 title, its first paragraph, and a Read more link. The index uses the home page's
 social card; each post gets its own. The header does not link to the blog; the
 footer does. The footer's Blog column links to the index and the newest

@@ -11,7 +11,7 @@ The displayed message keeps only the person's ordinary text.
 RPC schemas and allowed message origins. `workstream-object-product.ts` freezes
 instructions into the ordinary message text and refreshes the local copy in
 the background.
-`packages/agent-harness/src/prompts/personal.ts` renders the XML from the
+`packages/prompts/harness/personal.ts` renders the XML from the
 envelope strings in `packages/contracts/src/text.ts`, which also owns
 `stripPersonalSystemPrompt`, shared by desktop transcript display (settled and
 queued messages), outbound message reduction, and Activity/mention effect

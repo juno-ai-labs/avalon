@@ -8802,3 +8802,12 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   .workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters-groups { transform: translateY(4px); }
   .workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters .canvas-template-card { transform: translateY(6px); }
 }
+
+/* Keep billing rows in place while independent reads are loading. */
+.billing-skeleton { display: inline-block; min-width: 120px; max-width: 100%; }
+.billing-skeleton > .skeleton-bar { height: 12px; width: 100%; animation: skeleton-pulse 1.5s ease-in-out infinite; }
+.billing-disabled-control { display: inline-flex; align-items: center; }
+.billing-disabled-control > :disabled { pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .billing-skeleton > .skeleton-bar { animation: none; }
+}

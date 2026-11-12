@@ -694,3 +694,44 @@ it('recovers the exact uncertain checkout request before replacing it with diffe
   expect(writes[1]!.key).toBe(writes[0]!.key);
   expect(writes[2]!.key).not.toBe(writes[0]!.key);
 });
+
+
+it('lets members read billing status and credits while keeping every billing change administrator-only', async () => {
+  const { db, env } = seed();
+  await billingAccount(env, workspace);
+  db.prepare("UPDATE billing_accounts SET offer_id = 'start', currency = 'eur' WHERE workspace_id = ?").run(workspace);
+  const app = new Hono<HonoAppEnv>();
+  app.onError(errorHandler);
+  app.use('*', async (c, next) => {
+    c.set('auth', { sessionId: 'session', userId: asUserId('01900000-0000-7000-8000-000000000001'), workspaceId: asWorkspaceId(workspace), region: 'global', role: 'member' });
+    await next();
+  });
+  app.route('/billing', billingRoutes);
+  const status = await app.request('/billing', {}, env);
+  expect(status.status).toBe(200);
+  expect(await status.json()).toMatchObject({ enabled: true, subscribed: false, offerId: 'start', currency: 'eur' });
+  const credits = await app.request('/billing/credits', {}, env);
+  expect(credits.status).toBe(200);
+  expect(await credits.json()).toMatchObject({ availableCents: 0, grants: [] });
+  for (const path of ['checkout', 'portal', 'overages']) {
+    const response = await app.request(`/billing/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ offerId: 'start', currency: 'usd', overage: false, enabled: true }) }, env);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: { code: 'workspace_admin_required' } });
+  }
+});
+
+it('still refuses billing reads during support sessions', async () => {
+  const { env } = seed();
+  const app = new Hono<HonoAppEnv>();
+  app.onError(errorHandler);
+  app.use('*', async (c, next) => {
+    c.set('auth', { sessionId: 'session', userId: asUserId('01900000-0000-7000-8000-000000000001'), workspaceId: asWorkspaceId(workspace), region: 'global', role: 'owner', impersonatorUserId: asUserId('01900000-0000-7000-8000-000000000002') });
+    await next();
+  });
+  app.route('/billing', billingRoutes);
+  for (const path of ['/billing', '/billing/credits']) {
+    const response = await app.request(path, {}, env);
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: { code: 'support_session_not_allowed' } });
+  }
+});

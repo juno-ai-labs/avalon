@@ -1,6 +1,5 @@
 import { shouldNudge, type Answer, type EvalCase, type EvalResult } from "./evaluation";
 import { needsCompletionVerification } from "../../src/completion-verification";
-export { completionVerificationPrompt as verificationPrompt } from "../../src/completion-verification";
 
 export const policies = ["strict", "uncertainty_fallback", "verify_once"] as const;
 export type Policy = (typeof policies)[number];

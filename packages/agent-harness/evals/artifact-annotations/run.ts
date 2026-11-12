@@ -1,4 +1,5 @@
-import { renderAnnotations, type Annotation } from '@rally/contracts';
+import type { Annotation } from '@rally/contracts';
+import { renderAnnotations } from '@rally/prompts/contracts/artifact-annotations';
 const resourceId='00000000-0000-7000-8000-000000000001';
 const base:Annotation={target:{resourceId,version:4,locator:{type:'markdown',start:0,end:30,headingPath:['Plans']}},content:{exact:'**Starter**: $12, billed yearly.',source:'exact',before:'## Plans\n\n',after:'\n**Team**: $24.',truncated:false},comment:'Make this monthly'};
 const cases=[

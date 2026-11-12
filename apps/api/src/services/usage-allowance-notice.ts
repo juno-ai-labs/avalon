@@ -74,7 +74,7 @@ export function usageAllowanceEmail(
 ) {
   const workspaceName = singleLine(admin.workspace_name);
   const firstName = singleLine(admin.name ?? "").split(" ")[0] ?? "";
-  const target = addWorkspaceTarget(new URL("rallywithai://settings/workspace"), {
+  const target = addWorkspaceTarget(new URL("rallywithai://settings/billing"), {
     region: env.AVALON_REGION,
     workspaceId: input.workspaceId,
   });
@@ -85,7 +85,7 @@ export function usageAllowanceEmail(
   const paragraphs = [
     `${workspaceName} has used its included usage for this week, and overage billing is off.`,
     "Until that changes, Rally will not answer in Chats, and Sidekicks and background agents stop when they next need a model.",
-    `To keep working, turn on overage billing in Settings, Organization, Usage. Otherwise usage resumes when the allowance resets on ${resets}.`,
+    `To keep working, turn on overage billing in Settings, Organization, Billing. Otherwise usage resumes when the allowance resets on ${resets}.`,
   ];
   // `/open` hands off to the desktop app only. The browser app has no
   // Organization-addressed Settings URL, so its link opens Settings in
@@ -93,7 +93,7 @@ export function usageAllowanceEmail(
   const links = [
     { label: "Open usage settings in the Rally app", url: settingsUrl.toString() },
     ...(env.BROWSER_APP_ORIGIN
-      ? [{ label: "Open usage settings in your browser", url: new URL("/#/settings?section=workspace", env.BROWSER_APP_ORIGIN).toString() }]
+      ? [{ label: "Open usage settings in your browser", url: new URL("/#/settings?section=billing", env.BROWSER_APP_ORIGIN).toString() }]
       : []),
   ];
   const text = [firstName ? `Hi ${firstName},` : "Hi,", "", ...paragraphs.flatMap((line) => [line, ""]),

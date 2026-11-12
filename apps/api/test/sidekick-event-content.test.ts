@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { openingWithEventContent } from "@rally/prompts/api/sidekick-event-content";
 
-import { openingWithEventContent } from "../src/services/sidekick-event-content";
 
 const OPENING = "External event: New email: Pre-seed round\n\nThis event started this run.";
 

@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { assertProtectedEvaluationPaths, writePrivateFile } from "../addressing/secure-paths";
-import { caseSchema, choices } from "./evaluation";
-import { comparePolicies, sweepConfidence, verificationPrompt } from "./policies";
+import { caseSchema } from "./evaluation";
+import { choices } from "@rally/prompts/harness/completion-verification-question";
+import { comparePolicies, sweepConfidence } from "./policies";
+import { completionVerificationPrompt as verificationPrompt } from "@rally/prompts/harness/completion-verification-nudge";
 
 const [outputArg, ...reportArgs] = process.argv.slice(2);
 if (!outputArg || !reportArgs.length) throw new Error("Usage: compare-policies.ts <comparison.json> <saved-report.json> [...reports]");

@@ -6,7 +6,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { RunFailureNotice } from './conversation-surface';
 
-const usageMessage = "Your organization has used this week's included usage. An administrator can turn on overage billing in Organization settings, or usage resumes when the weekly allowance resets";
+const usageMessage = "Your organization has used this week's included usage. An administrator can turn on overage billing in Settings under Billing, or usage resumes when the weekly allowance resets";
 
 function renderNotice(code: string, message: string) {
   const onRetry = vi.fn();

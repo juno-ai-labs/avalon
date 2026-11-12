@@ -17,10 +17,11 @@ import { createMessageObjectPort } from "../runtime/message-port";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
 import { activateWorkstreamLoop } from "./integrations";
 import { refreshMemoryDigestCopy } from "./memory-digest-service";
-import { openingWithEventContent, readSidekickEventContent } from "./sidekick-event-content";
+import { readSidekickEventContent } from "./sidekick-event-content";
 import { logInfo } from "../observability/logger";
 
 import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
+import { openingWithEventContent } from "@rally/prompts/api/sidekick-event-content";
 
 /**
  * Open a hosted Sidekick's run conversation and start its loop.

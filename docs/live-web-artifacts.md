@@ -44,7 +44,7 @@ exists.
 | `apps/api/src/services/workstream-artifact-data-tools.ts` | The data tools' contract, three reads and `write_artifact_data`: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
 | `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, reaching the supervisor through the one supported resolver, and the write gate: which runs are offered the write tool (`artifactDataWriteAccess`) and which sites each may write (`resolveWritableArtifact`). |
 | `apps/api/src/durable-objects/workspace-artifact-data-write.ts` | WorkspaceDO's one read for the write gate (`artifactDataWriteFacts`): the artifact a resource is, its Canvas, whether that Canvas is archived, and whether it is attached to the Sidekick named. |
-| `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
+| `packages/prompts/harness/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
 | `packages/agent-harness/src/platform-skills/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions and lazy menu levels it contributes to its host, and the Stored data pop-out. |

@@ -6,8 +6,9 @@ import { z } from "zod";
 import { AddressingClassificationSchema } from "@rally/contracts";
 import type { AddressingClassification } from "@rally/contracts";
 import { AddressingEvaluationCaseSchema } from "../../src/addressing-evaluation";
-import { AzureOpenAIClient, renderAddressingMessages } from "../../src/index";
+import { AzureOpenAIClient } from "../../src/index";
 import { assertProtectedEvaluationPaths, writePrivateFile } from "./secure-paths";
+import { renderAddressingMessages } from "@rally/prompts/harness/addressing";
 
 const EvaluationReportSchema = z.object({
   datasetSha256: z.string().regex(/^[a-f0-9]{64}$/u),

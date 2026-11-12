@@ -49,6 +49,7 @@
     "./sidekick-source-words": "./src/sidekick-source-words.ts",
     "./client-session": "./src/client-session.ts",
     "./usage": "./src/usage.ts",
+    "./plans": "./src/plans.ts",
     "./message-issues": "./src/message-issues.ts",
     "./runtime-config": "./src/runtime-config.ts"
   },
