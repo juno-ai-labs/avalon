@@ -26,7 +26,7 @@ export const GrantOverageCreditSchema = z.strictObject({
   operationId: z.uuid().describe('A fresh UUID for this grant; reuse it and identical arguments after an uncertain outcome.'),
   amountCents: z.number().int().positive().describe('USD cents of promotional overage credit, not effective usage or plan allowance.'),
   reason: z.string().trim().min(1).max(500), // Stripe metadata value limit.
-  expiresAt: z.iso.datetime({ offset: true }).optional(),
+  expiresAt: z.iso.datetime({ offset: true }).describe('Required expiration in the future, at most two calendar years from grant creation (UTC).'),
 });
 export type GrantOverageCredit = z.infer<typeof GrantOverageCreditSchema>;
 
