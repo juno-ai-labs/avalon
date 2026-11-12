@@ -500,17 +500,17 @@ pre {
   padding: 3px;
 }
 
-.text-button:hover {
+.text-button:hover:not(:disabled) {
   color: var(--av-sys-color-text-default);
 }
 
-.billing-link {
+.external-link-button {
   color: var(--av-sys-color-accent-base);
   flex-shrink: 0;
   white-space: nowrap;
 }
 
-.billing-link:hover:not(:disabled) {
+.external-link-button:hover:not(:disabled) {
   color: var(--av-sys-color-accent-strong);
   text-decoration: underline;
   text-underline-offset: 3px;
