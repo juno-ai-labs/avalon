@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { billingConfig } from "./billing-config";
+import { billingConfig, resolveBillingEnvironment } from "./billing-config";
 import { stripe, StripeIdSchema } from "./stripe";
 
 const Meter = z.object({
@@ -18,6 +18,7 @@ const Subscription = z.object({
 });
 
 export async function validateOverageMeter(env: Env, priceId: string, meterId: string) {
+  env = await resolveBillingEnvironment(env);
   const reused = await env.DB.prepare("SELECT 1 FROM billing_overages WHERE meter_id = ? AND price_id <> ? LIMIT 1").bind(meterId, priceId).first();
   if (reused) throw new ApiError(503, "billing_overage_credit_meter_reused", "Use a separate meter when changing the overage price");
   const price = await stripe(env, `prices/${encodeURIComponent(priceId)}`, z.object({
@@ -91,6 +92,7 @@ async function overageSubscription(env: Env, workspaceId: string, customer: stri
 
 /** Only settled billable overages enter this meter. Full usage has separate meters. */
 export async function reportMeteredOverages(env: Env, workspaceId: string) {
+  env = await resolveBillingEnvironment(env);
   const pending = await env.DB.prepare(`SELECT o.*, t.customer_id FROM billing_overages o JOIN billing_terms t USING(subscription_id)
     WHERE o.workspace_id = ? AND o.meter_id IS NOT NULL AND o.invoice_item_id IS NULL`).bind(workspaceId).all<{
       subscription_id: string; customer_id: string; price_id: string; meter_id: string; period_start: string; meter_event_at: number | null;
@@ -136,6 +138,7 @@ export async function reportMeteredOverages(env: Env, workspaceId: string) {
 /** Once all consent terms finish, let Stripe invoice and cancel at period end.
  * Its normal automatic-finalization delay lets asynchronous meter events land. */
 export async function closeSettledOverageSubscriptions(env: Env, workspaceId: string) {
+  env = await resolveBillingEnvironment(env);
   const unfinished = await env.DB.prepare("SELECT 1 FROM billing_terms WHERE workspace_id = ? AND final_invoice_finalized = 0").bind(workspaceId).first();
   if (unfinished) return;
   const rows = await env.DB.prepare("SELECT price_id, subscription_id FROM billing_overage_subscriptions WHERE workspace_id = ? AND closed = 0 AND subscription_id IS NOT NULL")

@@ -1,3 +1,6 @@
+import { BillingAdminMutationSchema, BillingCatalogMutationSchema, InspectOrgBillingSchema, InspectBillingCatalogSchema, BillingMutationResultSchema } from "@rally/contracts/billing-admin";
+import { inspectOrgBilling } from "./services/billing-admin";
+import { readBillingCatalog } from "./services/billing-config";
 import { BillingCreditsSchema, OverageCreditSchema, TrialMonthsGrantSchema } from "@rally/contracts/billing";
 import { readOverageCredits } from "./services/overage-credits";
 import { grantOverageCredit, expireOverageCredit, grantTrialMonths } from "./services/billing-coordination";
@@ -253,6 +256,36 @@ async function resolveInspectionArtifactRoute(
  */
 export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
   implements EngineeringInspectionRpcBinding {
+
+  async inspectOrgBilling(input: unknown) {
+    return this.productOperation("inspectOrgBilling", async () => inspectOrgBilling(this.env, InspectOrgBillingSchema.parse(input)));
+  }
+  async administerOrgBilling(input: unknown, operator: unknown) {
+    return this.productOperation("administerOrgBilling", async () => {
+      const request = BillingAdminMutationSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "administer_billing", orgId: request.orgId, operationId: request.operationId,
+      }, async () => BillingMutationResultSchema.parse(await this.env.BILLING_COORDINATORS.getByName(`${this.env.AVALON_REGION}:billing:${request.orgId}`).administer(request.orgId, request)),
+      result => ({ resourceType: result.resourceType, resourceId: result.resourceId, status: result.status }));
+    });
+  }
+  async inspectBillingCatalog(input: unknown) {
+    return this.productOperation("inspectBillingCatalog", async () => {
+      const request = InspectBillingCatalogSchema.parse(input);
+      if (request.region !== this.env.AVALON_REGION) throw new Error("billing_region_mismatch");
+      return readBillingCatalog(this.env);
+    });
+  }
+  async administerBillingCatalog(input: unknown, operator: unknown) {
+    return this.productOperation("administerBillingCatalog", async () => {
+      const request = BillingCatalogMutationSchema.parse(input);
+      if (request.region !== this.env.AVALON_REGION) throw new Error("billing_region_mismatch");
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "configure_billing", operationId: request.operationId,
+      }, async () => BillingMutationResultSchema.parse(await this.env.BILLING_COORDINATORS.getByName(`${this.env.AVALON_REGION}:billing:catalog`).configure(request)),
+      result => ({ resourceType: result.resourceType, resourceId: result.resourceId, revision: result.revision }));
+    });
+  }
 
   async sendMessage(input: unknown, operator: unknown): Promise<SendEngineeringMessageResult> {
     return this.productOperation("sendMessage", async () => {

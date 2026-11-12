@@ -2,7 +2,7 @@ import { closeOrganizationBilling as closeWithoutBilling } from "./billing";
 import type { GrantOverageCredit, GrantTrialMonths } from "@rally/contracts/billing";
 import type { Env } from "../env";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
-import { billingConfig } from "./billing-config";
+import { billingConfig, resolveBillingEnvironment } from "./billing-config";
 
 const coordinator = (env: Env, workspaceId: string) =>
   env.BILLING_COORDINATORS.getByName(
@@ -64,6 +64,7 @@ export async function syncSubscription(
 }
 
 export async function billingAccountsToSettle(env: Env): Promise<string[]> {
+  env = await resolveBillingEnvironment(env);
   if (!env.BILLING_CONFIG) return [];
   const sync = billingConfig(env).synchronization;
   const accounts = await env.DB.prepare(

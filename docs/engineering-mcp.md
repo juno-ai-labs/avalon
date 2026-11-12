@@ -568,6 +568,8 @@ Access identity is never silently mapped to a product user.
 | `inspect_queues` | Lists account queue backlog metrics and active dead-letter relationships; `deadLettersOnly` restricts the result. |
 | `inspect_dead_letters` | Non-consuming peek of a queue ID returned by the queue list, after revalidating that a live consumer names it as a dead-letter queue. No acknowledge, pull, replay, or delete operation is exposed. |
 | `inspect_usage_plan` | Resolves an Organization to exactly one region and reads its authoritative plan, quota remaining, reset, and overage. |
+| `inspect_org_billing`, `change_subscription`, `refund_payment`, `correct_invoice` | Inspect provider billing, administer an existing paid subscription, refund owned payments, or correct invoices through native Stripe credit notes/voiding. Writes share the Organization billing actor, independent audit and permanent retry receipts. |
+| `inspect_billing_catalog`, `create_billing_price`, `create_billing_coupon`, `configure_billing_catalog` | Inspect and version regional commercial settings, create Stripe resources, and publish Checkout/Portal choices while retaining retired mappings. [Stripe billing](stripe-billing.md#billing-administration-through-engineering-mcp) owns financial semantics and recovery. |
 | `grant_trial_months` | Grants additional calendar months of base subscription-fee waiver through Stripe, after existing paid/trial/pilot coverage. Keeps plan allowance and opted-in metered overages active. Uses an immutable operation receipt and independent operator audit. |
 | `inspect_overage_credits`, `grant_overage_credit`, `expire_overage_credit` | Read Stripe credit balances, issue promotional USD credit scoped only to the overage price, or expire unused credit. Writes go through the Organization billing actor and independent operator audit; grant retries reuse their operation ID. [Stripe billing](stripe-billing.md#overage-credits) owns configuration and financial semantics. |
 | `change_usage_plan` | Uses the regional metering service, records an explicit override that Stripe reconciliation preserves, updates this week's quota and history, and publishes the new meter. |
@@ -746,14 +748,19 @@ the Worker. It does not create an Access app or import another app's policy.
 
 ## Changelog
 
-### 2026-11-12 — Administer overage credits in Stripe
+### 2026-11-12 — Administer billing in Stripe
 
 Added operator-only trial-month grants and overage-credit grant, inspect and expire tools, using the regional billing
 actor and independent attempt/result audit. Customer administrators can read
 balances but cannot issue their own credits. Stripe owns the financial ledger;
 Rally retains immutable operation receipts so retries cannot grant money twice.
 A separate customer-facing write route was rejected because Organization
-membership is not authority to issue promotional money.
+membership is not authority to issue promotional money. Subscription changes,
+refunds and invoice corrections now use that same boundary, with explicit resource
+ownership and immutable request receipts. Catalog writes route to a dedicated
+regional billing actor and require a revision, preserving retired mappings and
+keeping Portal choices aligned with Checkout. Raw Stripe proxy calls were rejected
+because they would bypass those ownership and recovery rules.
 
 ### 2026-11-10 — Archive in an abandoned Organization, and name its refusal
 
