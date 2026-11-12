@@ -1,10 +1,10 @@
 import { useLocalCacheScope } from '../lib/local-cache-scope';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { onlineManager, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BillingControl, BillingSkeleton, OrganizationBilling } from './organization-billing';
 import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { PLAN_IDS, PlanIdSchema } from '@rally/contracts/usage';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { settings } from '../settings/registry';
 import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import {
@@ -25,6 +25,8 @@ import {
 import { Badge, Button, DropdownSelect, Meter, Tip } from './primitives';
 
 const METER_LABEL = 'Weekly quota left';
+const subscribeOnline = (notify: () => void) => onlineManager.subscribe(notify);
+const readOnline = () => onlineManager.isOnline();
 const PLAN_OPTIONS = PLAN_IDS.map((plan) => ({
   value: plan,
   label: usagePlanLabel(plan),
@@ -45,6 +47,7 @@ export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, orga
   billingAccessReason?: string;
 }): React.JSX.Element {
   const state = useOrganizationUsage(api);
+  const online = useSyncExternalStore(subscribeOnline, readOnline);
   const { retry } = state;
   const scope = useLocalCacheScope();
   const queryClient = useQueryClient();
@@ -72,7 +75,7 @@ export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, orga
   }, [openRequest, retry, api, billingAccessReason, refreshBilling, queryClient, scope]);
   const reading = state.status === 'ready' ? state.reading : undefined;
   const usage = reading?.usage;
-  const offline = state.status === 'ready' && state.offline;
+  const offline = !online || (state.status === 'ready' && state.offline);
   const billingLoading = !billingAccessReason && billing.isPending && billing.isFetching;
   const billingDisabledReason = billingAccessReason ?? (offline ? 'Connect to the internet to change billing.'
     : billing.error ? 'Retry loading billing details first.' : undefined);
@@ -107,7 +110,7 @@ export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, orga
         {setPlan.error && <ErrorNotice>The plan could not be changed. {setPlan.error.message}</ErrorNotice>}
         {billing.error && !billingAccessReason && <div className="settings-preference-row">
           <span className="settings-row-copy"><strong>Billing unavailable</strong><small>{billing.error.message}</small></span>
-          <Button disabledReason={billing.isFetching ? 'Loading billing details…' : undefined} onClick={() => void refreshBilling()}>Retry billing</Button>
+          <Button disabledReason={offline ? 'Connect to the internet to retry billing.' : billing.isFetching ? 'Loading billing details…' : undefined} onClick={() => void refreshBilling()}>Retry billing</Button>
         </div>}
         <div className="settings-preference-row">
           <SettingCopy setting={settings.quota} description={usage
@@ -128,7 +131,7 @@ export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, orga
               </Tip></> : state.status === 'loading' ? <BillingSkeleton label="Loading monthly usage…" /> : <span>Unavailable</span>}
           </span>
         </div>
-        {state.status === 'error' && <div className="settings-preference-row"><span className="settings-row-copy"><strong>Usage isn't available right now.</strong></span><Button disabledReason={!api ? 'The organization is unavailable.' : undefined} onClick={retry}>Try again</Button></div>}
+        {state.status === 'error' && <div className="settings-preference-row"><span className="settings-row-copy"><strong>Usage isn't available right now.</strong></span><Button disabledReason={!api ? 'The organization is unavailable.' : offline ? 'Connect to the internet to retry usage.' : undefined} onClick={retry}>Try again</Button></div>}
       </div>
     </div>
   );
