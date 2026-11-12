@@ -304,6 +304,24 @@ describe("an app's dedicated Sidekicks", () => {
       draft: twoApps, evaluatorRules: null, submittedByRunId: null }))).toContain("triggers");
   });
 
+  it("refuses invocation after Canvas archive while an attached Sidekick remains active", async () => {
+    const attachedSidekickId = crypto.randomUUID();
+    await createAutomation(env, { workspaceId, authorUserId: author, scope: "personal", automationId: attachedSidekickId });
+    await workspace().attachSidekickConversation({ workspaceId, automationId: attachedSidekickId,
+      userId: author, reference: canvasId });
+    await save(attachedSidekickId, draft("attachedOrganizer"));
+    await workspace().canvasArchive({ workspaceId, canvasId, actor: { userId: author, actorRole: "member" } });
+
+    const lifecycle = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ lifecycle: string }>(
+      "SELECT lifecycle FROM automation_directory WHERE automation_id = ?", attachedSidekickId).one().lifecycle);
+    expect(lifecycle).toBe("active");
+    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation({ bindingName: "attachedOrganizer" }))))
+      .toBe("sidekick_invocation_artifact_unavailable");
+    const runs = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM sidekick_runs WHERE sidekick_id = ?", attachedSidekickId).one().count);
+    expect(runs).toBe(0);
+  });
+
   it("honors pause, unbinding and Canvas attachment while retaining version as provenance", async () => {
     expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation({ bindingName: "unknown" })))).toBe("sidekick_invocation_unbound");
     await workspace().sidekickPause({ workspaceId, automationId: sidekickId, actor });
