@@ -29,10 +29,10 @@ skill does not activate those tools.
 When an app needs semantic work on a submission, build it as an active site and
 create dedicated Sidekicks through this Canvas's create_sidekick tool. When they
 will write artifact data, export SiteData and create the app tables there. Publish
-the app first to get site.artifactId and resourceId. Give each wizard the app's
+the app first to get artifactId and resourceId. Give each wizard the app's
 artifactId, resourceId, tables and columns, expected input, and a distinct
 JavaScript identifier as bindingName. Ask it to save an invocation trigger:
-{ type: "invocation", artifactId: "<site.artifactId>", bindingName: "shoppingOrganizer" }.
+{ type: "invocation", artifactId: "<artifactId>", bindingName: "shoppingOrganizer" }.
 The app's Canvas must be attached to the Sidekick; creating it here does that.
 Attach the published resource with sidekick_attach_resource as explicit context.
 Wait for the wizard's acceptance confirmation. A Sidekick binds to one app;

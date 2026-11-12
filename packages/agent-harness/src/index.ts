@@ -2753,7 +2753,7 @@ const automationDraftSubmissionJsonSchema = {
             enum: ["manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "invocation"],
             description: "What starts a run: `invocation` when a bound app submits a task, `manual` when a person asks, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `webhook` on an inbound HTTP call. Legacy `resource_watch` does not start Sidekick runs; use declared events or polling instead."
           },
-          artifactId: { type: ["string", "null"], description: "For invocation, the published app artifact UUID (site.artifactId from publish_resource), not its resource ID. One app per Sidekick. Null for other types." },
+          artifactId: { type: ["string", "null"], description: "For invocation, the published app artifact UUID (artifactId from publish_resource), not its resource ID. One app per Sidekick. Null for other types." },
           bindingName: { type: ["string", "null"], description: "For invocation, the unique JavaScript identifier this app calls as env.SIDEKICKS.<bindingName>.send({operationId,input}). One invocation trigger per Sidekick; an app can bind many Sidekicks under different names. Null for other types." },
           rrule: { type: ["string", "null"], description: "For a `calendar` trigger, the recurrence as an iCalendar RRULE, for example `FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0`. Null for every other type." },
           timezone: {

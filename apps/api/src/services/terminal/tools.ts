@@ -127,6 +127,7 @@ export interface TerminalPublishedArchiveOutput
  */
 export interface TerminalPublishedSiteOutput {
   resourceId: string;
+  artifactId: string;
   title: string;
   publishKind: "site";
   resourceType: "generated_site";
