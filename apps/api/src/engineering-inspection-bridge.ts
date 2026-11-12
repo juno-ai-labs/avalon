@@ -1,6 +1,6 @@
 import { BillingAdminMutationSchema, BillingCatalogMutationSchema, InspectOrgBillingSchema, InspectBillingCatalogSchema, BillingMutationResultSchema } from "@rally/contracts/billing-admin";
 import { inspectOrgBilling } from "./services/billing-admin";
-import { readBillingCatalog } from "./services/billing-config";
+import { inspectBillingCatalog } from "./services/billing-catalog";
 import { BillingCreditsSchema, OverageCreditSchema, TrialMonthsGrantSchema } from "@rally/contracts/billing";
 import { readOverageCredits } from "./services/overage-credits";
 import { grantOverageCredit, expireOverageCredit, grantTrialMonths } from "./services/billing-coordination";
@@ -273,7 +273,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     return this.productOperation("inspectBillingCatalog", async () => {
       const request = InspectBillingCatalogSchema.parse(input);
       if (request.region !== this.env.AVALON_REGION) throw new Error("billing_region_mismatch");
-      return readBillingCatalog(this.env);
+      return inspectBillingCatalog(this.env);
     });
   }
   async administerBillingCatalog(input: unknown, operator: unknown) {

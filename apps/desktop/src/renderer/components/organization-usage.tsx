@@ -31,7 +31,7 @@ const PLAN_OPTIONS = PLAN_IDS.map((plan) => ({
   label: usagePlanLabel(plan),
   description: usagePlanPriceLabel(plan),
 }));
-export const NOT_BILLED_EXPLANATION = "Rally isn't charging for usage beyond your plan yet.";
+export const USAGE_TOTAL_EXPLANATION = "This is usage beyond your allowance, not an invoice total. Charges for earlier opted-in usage may still appear after cancellation.";
 
 /**
  * Settings → Organization → Usage. Every member sees it, whatever their role:
@@ -110,7 +110,7 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
       />
       <DropdownSelect
         ariaLabel="Plan"
-        disabled={!canChangePlan || !api || offline || setPlan.isPending || billing.data?.enabled === true}
+        disabled={!canChangePlan || !api || offline || setPlan.isPending || (Boolean(api?.getBillingStatus) && (billing.isError || billing.data?.enabled !== false))}
         onValueChange={(value) => {
           const plan = PlanIdSchema.parse(value);
           if (plan !== usage.plan) setPlan.mutate(plan);
@@ -120,7 +120,7 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
         variant="secondary"
       />
     </label>}
-    {billing.error && <ErrorNotice>Billing could not be loaded. {billing.error.message}</ErrorNotice>}
+    {billing.error && <><ErrorNotice>Billing could not be loaded. {billing.error.message}</ErrorNotice><div className="settings-preference-row"><span className="settings-row-copy"><strong>Billing unavailable</strong><small>Try again to load billing options.</small></span><Button onClick={() => void billing.refetch()} disabled={billing.isFetching}>Retry billing</Button></div></>}
     <div className="settings-preference-row">
       <SettingCopy
         setting={settings.quota}
@@ -141,9 +141,9 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
           <small>{usagePeriodLabel(usage.overage.periodStart, usage.overage.periodEndsAt)}</small>
         </span>
         <span className="usage-overage-value">
-          {usage.overage.billingEnabled ? <span>{formatMicrousd(usage.overage.amountMicrousd)}</span> : <s>{formatMicrousd(usage.overage.amountMicrousd)}</s>}
-          <Tip label={usage.overage.billingEnabled ? "Overage charges appear on a later invoice after usage settles." : NOT_BILLED_EXPLANATION} side="top">
-            <Badge className="usage-not-billed" tabIndex={0}>{usage.overage.billingEnabled ? "Overage enabled" : "Not billed"}</Badge>
+          <span>{formatMicrousd(usage.overage.amountMicrousd)}</span>
+          <Tip label={usage.overage.billingEnabled ? "Overage charges appear on a later invoice after usage settles." : USAGE_TOTAL_EXPLANATION} side="top">
+            <Badge className="usage-not-billed" tabIndex={0}>{usage.overage.billingEnabled ? "Overage enabled" : "Usage total"}</Badge>
           </Tip>
         </span>
       </div>

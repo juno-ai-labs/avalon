@@ -188,7 +188,7 @@ describe('Usage in Settings', () => {
     expect(await screen.findByRole('meter', { name: 'Weekly quota left' })).not.toHaveClass('meter-warning');
   });
 
-  it('says the quota is used at 0% and shows this month’s overage struck through and not billed', async () => {
+  it('shows beyond-quota usage without promising that the amount is waived', async () => {
     renderSection(apiAnswering(usage(0, 12_400_000)));
 
     expect(await screen.findByText('All used')).toBeVisible();
@@ -196,18 +196,18 @@ describe('Usage in Settings', () => {
     expect(screen.getByText('Usage beyond quota this month')).toBeVisible();
     expect(screen.getByText('Oct 3 to Nov 2')).toBeVisible();
     const amount = screen.getByText('$12.40');
-    expect(amount.tagName).toBe('S');
+    expect(amount.tagName).toBe('SPAN');
 
-    fireEvent.focus(screen.getByText('Not billed'));
-    expect(await screen.findByRole('tooltip')).toHaveTextContent("Rally isn't charging for usage beyond your plan yet.");
+    fireEvent.focus(screen.getByText('Usage total'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent("Charges for earlier opted-in usage may still appear after cancellation.");
   });
 
-  it('explains the Not billed tag on hover as well as focus', async () => {
+  it('explains that usage totals can include earlier billable periods', async () => {
     renderSection(apiAnswering(usage(40, 1_000_000)));
 
-    fireEvent.pointerMove(await screen.findByText('Not billed'), { pointerType: 'mouse' });
+    fireEvent.pointerMove(await screen.findByText('Usage total'), { pointerType: 'mouse' });
 
-    expect(await screen.findByRole('tooltip')).toHaveTextContent("Rally isn't charging for usage beyond your plan yet.");
+    expect(await screen.findByRole('tooltip')).toHaveTextContent("Charges for earlier opted-in usage may still appear after cancellation.");
   });
 
   it('draws an empty track and says it is checking while nothing is cached', () => {
@@ -369,12 +369,15 @@ describe('Usage in the Organization menu', () => {
   });
 });
 
-it('keeps the legacy plan picker available when billing status fails', async () => {
+it('keeps the plan picker disabled when billing status fails and retries explicitly', async () => {
   const api: OrganizationPlanApi = { ...apiAnswering(usage(72)), getBillingStatus: vi.fn(async () => { throw new Error('Billing read failed'); }) };
   renderSection(api);
   expect(await screen.findByText(/Billing could not be loaded/)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'OK' }));
-  expect(screen.getByRole('combobox', { name: 'Plan' })).not.toBeDisabled();
+  expect(screen.getByRole('combobox', { name: 'Plan' })).toBeDisabled();
+  vi.mocked(api.getBillingStatus!).mockResolvedValue({ enabled: false });
+  fireEvent.click(screen.getByRole('button', { name: 'Retry billing' }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Plan' })).not.toBeDisabled());
 });
 
 it('refreshes billing after returning from hosted checkout while Settings stays mounted', async () => {
@@ -388,4 +391,20 @@ it('refreshes billing after returning from hosted checkout while Settings stays 
   fireEvent(window, new Event('focus'));
   expect(await screen.findByText('Manage billing')).toBeVisible();
   expect(screen.getByText(/Start plan · Subscription: active/)).toBeVisible();
+});
+
+
+it('keeps the plan picker disabled while billing status is unknown', async () => {
+  const api: OrganizationPlanApi = { ...apiAnswering(usage(72)), getBillingStatus: () => new Promise(() => undefined) };
+  renderSection(api);
+  expect(await screen.findByRole('combobox', { name: 'Plan' })).toBeDisabled();
+});
+
+it('does not describe previously billable usage as waived after cancellation', async () => {
+  const answer = usage(0, 12_400_000); answer.overage.billingEnabled = false;
+  renderSection(apiAnswering(answer));
+  expect(await screen.findByText('$12.40')).not.toHaveProperty('tagName', 'S');
+  expect(screen.queryByText('Not billed')).not.toBeInTheDocument();
+  fireEvent.focus(screen.getByText('Usage total'));
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('Charges for earlier opted-in usage may still appear after cancellation.');
 });

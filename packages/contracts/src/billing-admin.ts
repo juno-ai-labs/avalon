@@ -10,6 +10,17 @@ export const BillingOfferSchema = z.strictObject({
 });
 export const BillingCatalogSchema = z.strictObject({ offers: z.array(BillingOfferSchema).min(1), pilotCouponId: z.string().min(1).nullable() });
 export const BillingCatalogResultSchema = BillingCatalogSchema.extend({ revision: z.number().int().nonnegative() });
+const PriceAmountSchema = z.object({ amountMinor: z.number().nullable(), amountDecimal: z.string().nullable(), taxBehavior: z.string() });
+export const BillingCatalogInspectionSchema = BillingCatalogResultSchema.extend({
+  prices: z.array(PriceAmountSchema.extend({ id: z.string(), productId: z.string(), active: z.boolean(), currency: z.string(),
+    recurring: z.object({ interval: z.string(), intervalCount: z.number(), usageType: z.string() }).nullable(),
+    currencyOptions: z.record(z.string(), PriceAmountSchema),
+  })),
+  coupons: z.array(z.object({ id: z.string(), valid: z.boolean(), percentOff: z.number().nullable(), amountOff: z.number().nullable(),
+    currency: z.string().nullable(), duration: z.string(), months: z.number().nullable(), productIds: z.array(z.string()).nullable(),
+  })),
+});
+export type BillingCatalogInspection = z.infer<typeof BillingCatalogInspectionSchema>;
 const identity = { operationId: z.uuid().describe('Reuse this UUID and identical arguments after an uncertain result.'), reason: z.string().trim().min(1).max(500) };
 export const InspectOrgBillingSchema = z.strictObject({ orgId: WorkspaceIdSchema, startingAfter: z.string().optional() });
 export const ChangeSubscriptionSchema = z.strictObject({ ...identity, orgId: WorkspaceIdSchema, subscriptionId: z.string().startsWith('sub_'),

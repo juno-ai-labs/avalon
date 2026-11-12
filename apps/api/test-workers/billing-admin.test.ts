@@ -42,7 +42,7 @@ beforeEach(() => {
     if (init?.method === 'POST') { writes++; if (writes === 1) await beforeWrite?.(); }
     if (path === 'charges/ch_1') return Response.json({ id: 'ch_1', customer: 'cus_1', amount: 10000, amount_refunded: 0, paid: true });
     if (path === 'refunds') return Response.json(init?.method === 'POST' ? { id: 're_1', status: 'succeeded', amount: 1500, currency: 'usd' } : { data: [], has_more: false });
-    if (path === 'prices/price_grow') return Response.json({ id: 'price_grow', product: 'prod_grow', active: true, unit_amount: 10000, currency: 'usd', billing_scheme: 'per_unit', transform_quantity: null, recurring: { usage_type: 'licensed', interval: 'month', interval_count: 1 } });
+    if (path === 'prices/price_grow') return Response.json({ id: 'price_grow', product: 'prod_grow', active: true, unit_amount: 10000, unit_amount_decimal: '10000', tax_behavior: 'exclusive', currency: 'usd', billing_scheme: 'per_unit', transform_quantity: null, recurring: { usage_type: 'licensed', interval: 'month', interval_count: 1 } });
     if (path === 'billing_portal/configurations') return Response.json({ data: [{ id: 'bpc_1', is_default: true, active: true }] });
     if (path === 'billing_portal/configurations/bpc_1') return Response.json({ id: 'bpc_1', metadata: {} });
     throw new Error(`unexpected_provider_path:${path}`);

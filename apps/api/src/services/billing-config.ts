@@ -19,7 +19,8 @@ export const BillingConfigSchema = z
     teamTrialDays: z.number().int().nonnegative().default(60),
     teamTrialMembers: z.number().int().positive().default(3),
     // Applied once per Organization, on its first paid subscription. Stripe owns
-    // the percentage and duration; omit to stop offering the pilot to new buyers.
+    // the percentage and duration. This bootstraps the pilot until a persisted
+    // catalog overrides it; then publish pilotCouponId:null to stop new awards.
     pilotCouponId: z.string().min(1).optional(),
     // A dedicated monthly metered USD price. Native Stripe credit grants apply
     // only to this overage price, never to the licensed plan subscription.

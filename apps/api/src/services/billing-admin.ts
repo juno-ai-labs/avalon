@@ -34,6 +34,18 @@ export async function requirePlanCoupon(env: Env, id: string, products: string[]
   if (config.overageCredits && coupon.applies_to.products.includes((await readAdminPrice(env, config.overageCredits.priceId)).product)) billingRefusal('billing_coupon_includes_overages');
   return coupon;
 }
+/** A repeating-month coupon discounts the entire invoice, including an annual one. */
+async function requireDiscountCompatibleInterval(env: Env, subscriptionId: string, price: z.infer<typeof AdminPrice>) {
+  if (price.recurring?.interval === 'month' && price.recurring.interval_count === 1) return;
+  const sub = await stripe(env, `subscriptions/${enc(subscriptionId)}?expand[]=discounts`, z.object({
+    discounts: z.array(z.object({ end: z.number().nullable(), coupon: z.object({ id: z.string(), duration: z.string() }) })),
+  }));
+  for (const discount of sub.discounts) {
+    if (discount.coupon.duration !== 'repeating' || (discount.end !== null && discount.end <= Date.now() / 1000)) continue;
+    const coupon = await stripe(env, `coupons/${enc(discount.coupon.id)}?expand[]=applies_to`, AdminCoupon);
+    if (!coupon.applies_to || coupon.applies_to.products.includes(price.product)) billingRefusal('billing_discount_requires_monthly_price');
+  }
+}
 async function customerForOrg(env: Env, orgId: string) {
   const account = await billingAccount(env, orgId, true);
   if (!account.customer_id) billingRefusal('billing_customer_required');
@@ -86,6 +98,7 @@ async function prepare(env: Env, request: BillingAdminMutation): Promise<Deliver
       const target = billingConfig(env).offers.find(item => item.id === offerId && item.enabled);
       if (!target || !target.currencies.includes(sub.currency)) billingRefusal('billing_offer_unavailable');
       const price = await readAdminPrice(env, target.priceId); requireLicensedPrice(price);
+      await requireDiscountCompatibleInterval(env, sub.id, price);
       if (price.currency !== sub.currency && !Object.hasOwn(price.currency_options ?? {}, sub.currency)) billingRefusal('billing_currency_unavailable');
       if (sub.items.data.length !== 1 || sub.items.data[0]!.quantity !== 1) billingRefusal('billing_subscription_shape_unsupported');
       Object.assign(fields, { 'items[0][id]': sub.items.data[0]!.id, 'items[0][price]': target.priceId, 'items[0][quantity]': '1',
@@ -101,7 +114,13 @@ async function prepare(env: Env, request: BillingAdminMutation): Promise<Deliver
       fields.proration_behavior = 'none';
     } else {
       if (request.change.couponId) {
-        await requirePlanCoupon(env, request.change.couponId, sub.items.data.map(item => item.price.product));
+        const coupon = await requirePlanCoupon(env, request.change.couponId, sub.items.data.map(item => item.price.product));
+        if (coupon.duration === 'repeating') {
+          for (const item of sub.items.data) {
+            const price = await readAdminPrice(env, item.price.id);
+            if (price.recurring?.interval !== 'month' || price.recurring.interval_count !== 1) billingRefusal('billing_discount_requires_monthly_price');
+          }
+        }
         fields['discounts[0][coupon]'] = request.change.couponId;
       } else fields.discounts = '';
       fields.proration_behavior = 'none';
