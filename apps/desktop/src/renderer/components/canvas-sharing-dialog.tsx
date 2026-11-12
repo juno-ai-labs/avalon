@@ -84,7 +84,12 @@ function AudienceTiles<T extends string>({
   title: string;
   description: string;
   icon: typeof IconLock;
-  options: readonly { value: T; label: string; icon: typeof IconLock }[];
+  options: readonly {
+    value: T;
+    label: string;
+    icon: typeof IconLock;
+    unavailable?: boolean;
+  }[];
   value: T;
   onChange: (value: T) => void;
   publicOptions?: boolean;
@@ -107,13 +112,17 @@ function AudienceTiles<T extends string>({
       <div
         className={`canvas-share-options${publicOptions ? " canvas-sharing-use-options" : ""}`}
       >
-        {options.map(({ value: option, label, icon: OptionIcon }) => (
-          <label className="action-tile canvas-share-option" key={option}>
+        {options.map(({ value: option, label, icon: OptionIcon, unavailable }) => (
+          <label
+            className={`action-tile canvas-share-option${unavailable ? " canvas-share-option-unavailable" : ""}`}
+            key={option}
+          >
             <input
               className="sr-only"
               type="radio"
               name={id}
               value={option}
+              disabled={unavailable}
               checked={value === option}
               onChange={() => onChange(option)}
             />
@@ -257,6 +266,21 @@ function AudiencePeople({
   );
 }
 
+/**
+ * Organization editors already reach the artifacts, so an artifact audience
+ * narrower than the Organization would misstate who can use them. Moves
+ * "editors" and "participants" up to "workspace"; "public" is wider and stays.
+ */
+function withArtifactFloor(
+  selection: CanvasSharingSelection,
+): CanvasSharingSelection {
+  return selection.editors === "workspace" &&
+    (selection.artifacts === "editors" ||
+      selection.artifacts === "participants")
+    ? { ...selection, artifacts: "workspace" }
+    : selection;
+}
+
 /** Shared two-audience modal; the host supplies persistence and clipboard behavior. */
 export function CanvasSharingDialog({
   open,
@@ -292,7 +316,9 @@ function CanvasSharingForm({
   beforeEditors,
   saveFailure = "save",
 }: Omit<CanvasSharingDialogProps, "open" | "title">): React.JSX.Element {
-  const [selection, setSelection] = useState(initialSelection);
+  const [selection, setSelection] = useState(() =>
+    withArtifactFloor(initialSelection),
+  );
   const observed = useRef(initialSelection);
   useEffect(() => {
     const previous = observed.current;
@@ -304,7 +330,7 @@ function CanvasSharingForm({
         ...after.filter((id) => !before.includes(id)),
       ]),
     ];
-    setSelection((current) => ({
+    setSelection((current) => withArtifactFloor({
       ...current,
       editors:
         initialSelection.editors !== previous.editors
@@ -393,19 +419,7 @@ function CanvasSharingForm({
           disabled={saving}
           value={selection.editors}
           onChange={(value) =>
-            setSelection({
-              ...selection,
-              editors: value,
-              // Organization editors already reach the artifacts, so the
-              // artifact audience follows up to match. A wider choice
-              // ("public") stays as it is.
-              artifacts:
-                value === "workspace" &&
-                (selection.artifacts === "editors" ||
-                  selection.artifacts === "participants")
-                  ? "workspace"
-                  : selection.artifacts,
-            })
+            setSelection(withArtifactFloor({ ...selection, editors: value }))
           }
         />
         {selection.editors !== "creator" && (
@@ -439,7 +453,12 @@ function CanvasSharingForm({
           title="Who can interact with artifacts"
           description="Open and use the published artifacts in this Canvas."
           icon={IconWorld}
-          options={ARTIFACT_OPTIONS}
+          options={ARTIFACT_OPTIONS.map((option) =>
+            selection.editors === "workspace" &&
+            (option.value === "editors" || option.value === "participants")
+              ? { ...option, unavailable: true }
+              : option,
+          )}
           disabled={saving}
           value={selection.artifacts}
           onChange={(value) => setSelection({ ...selection, artifacts: value })}
@@ -465,6 +484,12 @@ function CanvasSharingForm({
               setSelection({ ...selection, artifactUserIds })
             }
           />
+        )}
+        {selection.editors === "workspace" && (
+          <p className="canvas-share-note">
+            Everyone in the Organization can edit, so they can already use the
+            artifacts.
+          </p>
         )}
         {selection.artifacts === "participants" && (
           <p className="canvas-share-note">
