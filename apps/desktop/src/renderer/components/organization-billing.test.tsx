@@ -223,3 +223,81 @@ it('keeps every section visible with skeletons until billing and credits arrive'
   expect(screen.getByRole('button', { name: 'Manage billing' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Refresh credits' })).toHaveAttribute('aria-disabled', 'true');
 });
+
+describe('overage billing eligibility', () => {
+  const subscribed = { ...billing, subscribed: true, status: 'active', currency: 'usd', overageAvailable: true, paymentMethodReady: true };
+  const api = () => ({ getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(), createBillingPortal: vi.fn(), setBillingOverages: vi.fn(async (enabled: boolean) => ({ enabled })) });
+
+  it.each(['past_due', 'unpaid', 'paused', 'incomplete'])('keeps Stripe management available but blocks overage changes for %s subscriptions', (status) => {
+    const client = api();
+    render(<OrganizationBilling canManage api={client} billing={{ ...subscribed, status }} />);
+    expect(screen.getByRole('button', { name: 'Manage billing' })).toBeEnabled();
+    const toggle = screen.getByRole('checkbox');
+    expect(toggle).toBeDisabled();
+    expect(toggle.parentElement).toHaveAttribute('aria-label', 'An active or trialing subscription is required to change overages.');
+    fireEvent.click(toggle);
+    expect(client.setBillingOverages).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { changes: { currency: 'eur', overageAvailable: false }, reason: 'Overages require billing in USD.' },
+    { changes: { overageAvailable: false }, reason: 'Overages are unavailable for this plan.' },
+    { changes: { paymentMethodReady: false }, reason: 'Add a payment method and billing address to enable overages.' },
+  ])('blocks enabling with the specific reason: $reason', ({ changes, reason }) => {
+    const client = api();
+    render(<OrganizationBilling canManage api={client} billing={{ ...subscribed, ...changes }} />);
+    const toggle = screen.getByRole('checkbox');
+    expect(toggle).toBeDisabled();
+    expect(toggle.parentElement).toHaveAttribute('aria-label', reason);
+    fireEvent.click(toggle);
+    expect(client.setBillingOverages).not.toHaveBeenCalled();
+  });
+
+  it.each(['active', 'trialing'])('allows revoking consent on %s subscriptions even when enabling is no longer eligible', async (status) => {
+    const client = api();
+    render(<OrganizationBilling canManage api={client} billing={{ ...subscribed, status, overageEnabled: true, currency: 'eur', overageAvailable: false, paymentMethodReady: false }} />);
+    const toggle = screen.getByRole('checkbox');
+    expect(toggle).toBeEnabled();
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(client.setBillingOverages).toHaveBeenCalledWith(false);
+    await waitFor(() => {
+      expect(screen.getByRole('checkbox')).not.toBeChecked();
+      expect(screen.getByRole('checkbox')).toBeDisabled();
+    });
+  });
+
+  it('allows opting in during checkout before a payment method exists', async () => {
+    const { api: client, answer } = deferredCheckout();
+    render(<OrganizationBilling canManage api={client} billing={{ ...billing, paymentMethodReady: false }} />);
+    expect(screen.getByRole('checkbox')).toBeEnabled();
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
+    expect(client.createBillingCheckout).toHaveBeenCalledWith('grow', 'usd', true);
+    await act(async () => { answer(); });
+  });
+
+  it.each([
+    { currencies: ['eur'], overageAvailable: true, reason: 'Overages require billing in USD.' },
+    { currencies: ['usd'], overageAvailable: false, reason: 'Overages are unavailable for this plan.' },
+  ])('keeps checkout available when overages are disabled: $reason', ({ currencies, overageAvailable, reason }) => {
+    const { api: client } = deferredCheckout();
+    render(<OrganizationBilling canManage api={client} billing={{ ...billing, offers: [{ ...billing.offers[0]!, currencies, overageAvailable }] }} />);
+    expect(screen.getByRole('button', { name: 'Continue to checkout' })).toBeEnabled();
+    const toggle = screen.getByRole('checkbox');
+    expect(toggle).toBeDisabled();
+    expect(toggle.parentElement).toHaveAttribute('aria-label', reason);
+  });
+});
+
+it('keeps support-session billing visible without reading protected data or enabling changes', () => {
+  const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(), getBillingCredits: vi.fn(), createBillingCheckout: vi.fn() };
+  const reason = 'Billing is unavailable during support sessions.';
+  render(<OrganizationBilling canManage api={api} disabledReason={reason} readDisabledReason={reason} />);
+  expect(api.getBillingCredits).not.toHaveBeenCalled();
+  for (const control of [screen.getByRole('button', { name: 'Manage billing' }), screen.getByRole('checkbox'), ...screen.getAllByRole('combobox')]) {
+    expect(control).toBeDisabled();
+    expect(control.parentElement).toHaveAttribute('aria-label', reason);
+  }
+  expect(screen.getByRole('button', { name: 'Refresh credits' })).toHaveAttribute('aria-disabled', 'true');
+});

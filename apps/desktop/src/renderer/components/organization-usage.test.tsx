@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { OrganizationUsage } from '@rally/contracts/usage';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -419,4 +419,25 @@ it('loads billing and credits independently when usage fails', async () => {
   expect(await screen.findByRole('button', { name: 'Manage billing' })).toBeEnabled();
   expect(await screen.findByText(/\$42.00 available/)).toBeVisible();
   expect(screen.getByText('Usage beyond quota this month')).toBeVisible();
+});
+
+it('disables billing changes while offline even if no usage value was loaded', async () => {
+  const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn().mockRejectedValue(new Error('Usage unavailable')), setWorkspacePlan: vi.fn(),
+    getBillingStatus: vi.fn(async () => ({ enabled: true as const, status: 'active', subscribed: true, trialEndsAt: '2026-01-01T00:00:00Z', overageEnabled: false,
+      currency: 'usd', overageAvailable: true, paymentMethodReady: true, offers: [] })), createBillingPortal: vi.fn(), setBillingOverages: vi.fn(async (enabled) => ({ enabled })) };
+  renderSection(api);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Manage billing' })).toBeEnabled());
+  expect(screen.getByRole('checkbox')).toBeEnabled();
+  fireEvent.click(screen.getByRole('checkbox'));
+  await waitFor(() => {
+    expect(screen.getByRole('checkbox')).toBeEnabled();
+    expect(screen.getByRole('checkbox')).toBeChecked();
+  });
+  act(() => onlineManager.setOnline(false));
+  const toggle = screen.getByRole('checkbox');
+  expect(toggle).toBeDisabled();
+  expect(toggle).toBeChecked();
+  expect(toggle.parentElement).toHaveAttribute('aria-label', 'Connect to the internet to change billing.');
+  expect(screen.getByRole('button', { name: 'Manage billing' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Try again' })).toHaveAttribute('aria-disabled', 'true');
 });
