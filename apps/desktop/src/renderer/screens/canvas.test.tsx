@@ -813,7 +813,7 @@ describe('CanvasScreen', () => {
     }));
   });
 
-  it('widens artifact use to the Organization when editors become the Organization, unless already public', async () => {
+  it('rules out artifact audiences narrower than Organization editors, keeping public', async () => {
     setCanvasAudience.mockResolvedValue(detail({ visibility: 'workspace', artifactVisibility: 'workspace' }));
     renderCanvas();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
@@ -821,11 +821,16 @@ describe('CanvasScreen', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
     const artifactControls = within(within(dialog).getByRole('group', { name: 'Who can interact with artifacts' }));
     expect(artifactControls.getByRole('radio', { name: 'Editors only' })).toBeChecked();
+    expect(artifactControls.getByRole('radio', { name: 'Specific people' })).toBeEnabled();
     fireEvent.click(editorControls(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
     expect(artifactControls.getByRole('radio', { name: /Everyone in the Organization/ })).toBeChecked();
+    expect(artifactControls.getByRole('radio', { name: 'Editors only' })).toBeDisabled();
+    expect(artifactControls.getByRole('radio', { name: 'Specific people' })).toBeDisabled();
+    expect(within(dialog).getByText('Everyone in the Organization can edit, so they can already use the artifacts.')).toBeInTheDocument();
 
     fireEvent.click(artifactControls.getByRole('radio', { name: 'Anyone with the link' }));
     fireEvent.click(editorControls(dialog).getByRole('radio', { name: 'Only you' }));
+    expect(artifactControls.getByRole('radio', { name: 'Editors only' })).toBeEnabled();
     fireEvent.click(editorControls(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
     expect(artifactControls.getByRole('radio', { name: 'Anyone with the link' })).toBeChecked();
 
