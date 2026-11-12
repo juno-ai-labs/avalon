@@ -1902,6 +1902,8 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .signin-button { margin-top: 14px; width: 100%; min-height: 48px; border-radius: 26px; font-size: 14px; gap: 10px; }
 .signin-button .connector-mark { width: 18px; height: 18px; color: inherit; }
 .signin-button + .signin-button { margin-top: 10px; font-size: 12px; min-height: 40px; }
+/* A second sign-in provider is a peer of the first, not a lesser option: Apple asks that its button be no smaller than any other sign-in button. */
+.signin-button + .signin-button.signin-button-provider { font-size: 14px; min-height: 48px; }
 .workspace-setup-shell { overflow-y: auto; }
 .workspace-setup-card { width: min(420px, 100%); padding: 24px 0; text-align: center; }
 .workspace-setup-card .onboarding-copy h1 { font-size: 34px; font-weight: 600; letter-spacing: -.04em; margin: 0 0 14px; }

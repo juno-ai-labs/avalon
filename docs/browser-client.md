@@ -1,6 +1,6 @@
 # Browser client
 
-The browser client provides email, Google and operator-provisioned password sign-in, then mounts the desktop
+The browser client provides email, Google, Apple and operator-provisioned password sign-in, then mounts the desktop
 shell for everyone: Organization members and guests shared into some of its
 conversations, as described in [The shell](#the-shell). A guest gets no setup or
 onboarding. Sign-in, which also claims anything shared with the person's
@@ -178,6 +178,26 @@ shows until the person starts an email sign-in. Four choices shape it:
 
 The redirect URI must be registered on Google's identity OAuth client; the
 [runbook](runbook.md#provider-configuration) lists it.
+
+### Apple sign-in
+
+**Continue with Apple** sits under Google's button at the same size, with
+**Continue with email** the smaller option below both. It runs the same start,
+binding and callback as Google with `apple` in place of `google` in each path,
+cookie name and `#apple_error=<code>` fragment, and three differences:
+
+- **The callback is a cross-site POST.** Apple returns with `form_post` to
+  `/regional/<region>/browser/apple/callback`. The adapter's same-origin guard
+  refuses every other non-GET from another origin; this path alone is exempt,
+  and it is bound by the state cookie instead.
+- **Its state cookie is `SameSite=None`.** A `Lax` cookie does not ride a
+  cross-site POST, so the comparison would always fail. The session cookie the
+  callback sets stays `Lax`: a top-level navigation may set it, and the 303 to
+  the return path is a GET it rides.
+- **The Worker forwards it.** `deploymentCookies` passes `-apple-` state cookies
+  as well as `-google-` ones.
+
+[apple-login.md](apple-login.md) owns the provider side.
 
 ### Development sign-in
 
