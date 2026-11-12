@@ -267,19 +267,6 @@ function AudiencePeople({
   );
 }
 
-/** Applies the server's artifact floor to the draft, so the form shows what will be saved. */
-function withArtifactFloor(
-  selection: CanvasSharingSelection,
-): CanvasSharingSelection {
-  return {
-    ...selection,
-    artifacts: canvasArtifactVisibilityFloor(
-      selection.editors,
-      selection.artifacts,
-    ),
-  };
-}
-
 /** Shared two-audience modal; the host supplies persistence and clipboard behavior. */
 export function CanvasSharingDialog({
   open,
@@ -315,9 +302,11 @@ function CanvasSharingForm({
   beforeEditors,
   saveFailure = "save",
 }: Omit<CanvasSharingDialogProps, "open" | "title">): React.JSX.Element {
-  const [selection, setSelection] = useState(() =>
-    withArtifactFloor(initialSelection),
-  );
+  // `selection.artifacts` is the manager's own choice. What the form shows and
+  // saves is that choice under the floor Organization editors set, so leaving
+  // Organization editors brings the earlier choice back instead of keeping a
+  // raise the manager never picked.
+  const [selection, setSelection] = useState(initialSelection);
   const observed = useRef(initialSelection);
   useEffect(() => {
     const previous = observed.current;
@@ -329,7 +318,7 @@ function CanvasSharingForm({
         ...after.filter((id) => !before.includes(id)),
       ]),
     ];
-    setSelection((current) => withArtifactFloor({
+    setSelection((current) => ({
       ...current,
       editors:
         initialSelection.editors !== previous.editors
@@ -367,18 +356,21 @@ function CanvasSharingForm({
           ]
         : selection.editorIds;
   const editors = new Set([owner.id, ...editorIds]).size;
+  const artifacts = canvasArtifactVisibilityFloor(
+    selection.editors,
+    selection.artifacts,
+  );
   const artifactSummary = {
     editors: "Editors only",
     participants: "Selected artifact users",
     workspace: "Organization access",
     public: "Public artifacts",
-  }[selection.artifacts];
+  }[artifacts];
   const missingEditors =
     selection.editors === "participants" &&
     selection.editorIds.filter((id) => id !== owner.id).length === 0;
   const missingUsers =
-    selection.artifacts === "participants" &&
-    selection.artifactUserIds.length === 0;
+    artifacts === "participants" && selection.artifactUserIds.length === 0;
   return (
     <form
       className="canvas-sharing-form"
@@ -389,11 +381,11 @@ function CanvasSharingForm({
         try {
           await onSave({
             ...selection,
+            artifacts,
             editorIds:
               selection.editors === "creator" ? [] : selection.editorIds,
             artifactUserIds:
-              selection.artifacts === "participants" ||
-              selection.artifacts === "workspace"
+              artifacts === "participants" || artifacts === "workspace"
                 ? selection.artifactUserIds
                 : [],
           });
@@ -418,7 +410,7 @@ function CanvasSharingForm({
           disabled={saving}
           value={selection.editors}
           onChange={(value) =>
-            setSelection(withArtifactFloor({ ...selection, editors: value }))
+            setSelection({ ...selection, editors: value })
           }
         />
         {selection.editors !== "creator" && (
@@ -459,12 +451,11 @@ function CanvasSharingForm({
               : option,
           )}
           disabled={saving}
-          value={selection.artifacts}
+          value={artifacts}
           onChange={(value) => setSelection({ ...selection, artifacts: value })}
           publicOptions
         />
-        {(selection.artifacts === "participants" ||
-          selection.artifacts === "workspace") && (
+        {(artifacts === "participants" || artifacts === "workspace") && (
           <AudiencePeople
             currentUserId={currentUserId}
             disabled={saving}
@@ -472,7 +463,7 @@ function CanvasSharingForm({
             members={members}
             chosen={selection.artifactUserIds}
             includedIds={
-              selection.artifacts === "workspace"
+              artifacts === "workspace"
                 ? members
                     .filter((person) => person.accessClass !== "guest")
                     .map((person) => person.id)
@@ -490,7 +481,7 @@ function CanvasSharingForm({
             artifacts.
           </p>
         )}
-        {selection.artifacts === "participants" && (
+        {artifacts === "participants" && (
           <p className="canvas-share-note">
             {missingUsers
               ? "Choose at least one person. Editors already have access."

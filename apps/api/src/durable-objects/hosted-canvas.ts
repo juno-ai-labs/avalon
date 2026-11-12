@@ -639,7 +639,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       ...canvasSummary(row, canvasAppearanceReporter(this.host.env)),
       runningActivity: canvasRunningActivity(this.sql, [this.canvasId]).get(this.canvasId),
       participantUserIds: this.participantUserIds(),
-      artifactVisibility: canvasArtifactVisibilityFloor(row.visibility, row.artifact_visibility ?? 'editors'),
+      artifactVisibility: row.artifact_visibility ?? 'editors',
       artifactUserIds: this.sql.exec<{ user_id: string }>('SELECT user_id FROM canvas_artifact_users WHERE canvas_id=? ORDER BY user_id', this.canvasId).toArray().map(person=>person.user_id),
       sharingRevision: row.sharing_revision,
       artifacts: this.artifacts(),
