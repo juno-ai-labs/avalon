@@ -1,47 +1,129 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import "../../../../../tests/isolated-region";
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BillingCredits } from '@rally/contracts/billing';
 import { LocalCacheScopeProvider } from '../lib/local-cache-scope';
 import { OrganizationBilling } from './organization-billing';
 import type { OrganizationPlanApi } from '../lib/organization-usage';
-const openExternal = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ openExternal }) }));
+import type { RallyDesktopBridge } from '../../common/desktop';
+const openExternal = vi.fn<(url: string) => Promise<void>>(async () => undefined);
+const bridge = { openExternal } satisfies Pick<RallyDesktopBridge, 'openExternal'>;
+let native: Pick<RallyDesktopBridge, 'openExternal'> | undefined;
 
-describe('hosted billing handoff', () => {
-  it('waits for a direct link click after an arbitrarily slow checkout response', async () => {
-    let answer!: (value: { url: string }) => void;
-    const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(),
-      createBillingCheckout: vi.fn(() => new Promise<{ url: string }>((resolve) => { answer = resolve; })) };
-    render(<OrganizationBilling api={api} currentPlan="Start plan" billing={{ enabled: true, status: 'none', subscribed: false,
-      trialEndsAt: '2020-01-01T00:00:00Z', overageEnabled: false, offers: [{ id: 'start', name: 'Start', plan: 'starter', currencies: ['usd'], overageAvailable: true }] }} />);
-    fireEvent.click(screen.getByText('Continue to checkout'));
-    expect(openExternal).not.toHaveBeenCalled();
-    answer({ url: 'https://checkout.stripe.com/test' });
-    const link = await screen.findByRole('link', { name: 'Open Stripe' });
-    expect(openExternal).not.toHaveBeenCalled();
-    fireEvent.click(link);
-    expect(openExternal).toHaveBeenCalledWith('https://checkout.stripe.com/test');
-  });
+const billing = { enabled: true as const, status: 'none', subscribed: false, trialEndsAt: '2020-01-01T00:00:00Z',
+  overageEnabled: false, offers: [{ id: 'grow', name: 'Grow', plan: 'growth' as const, currencies: ['usd'], overageAvailable: true }] };
+const checkoutUrl = 'https://checkout.stripe.com/test';
+function deferredCheckout() {
+  let answer!: (value: { url: string }) => void;
+  const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(),
+    createBillingCheckout: vi.fn(() => new Promise<{ url: string }>((resolve) => { answer = resolve; })) };
+  return { api, answer: () => answer({ url: checkoutUrl }) };
+}
+function browserTab() {
+  native = undefined;
+  const tab = { opener: window as Window | null, location: { href: '' }, document: document.implementation.createHTMLDocument(), closed: false, close: vi.fn() };
+  const open = vi.mocked(window.open).mockReturnValue(tab as unknown as Window);
+  return { tab, open };
+}
+beforeEach(() => {
+  openExternal.mockReset();
+  native = bridge;
+  Object.defineProperty(window, 'rally', { configurable: true, get: () => native });
+  vi.spyOn(window, 'open');
 });
 
-it('hides a prepared checkout when subscription state changes to portal management', async () => {
-  const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(),
-    createBillingCheckout: vi.fn(async () => ({ url: 'https://checkout.stripe.com/old' })),
-    createBillingPortal: vi.fn(async () => ({ url: 'https://billing.stripe.com/new' })) };
-  const billing = { enabled: true as const, status: 'none', subscribed: false, trialEndsAt: '2020-01-01T00:00:00Z',
-    overageEnabled: false, offers: [{ id: 'start', name: 'Start', plan: 'starter' as const, currencies: ['usd'], overageAvailable: false }] };
-  const view = render(<OrganizationBilling api={api} currentPlan="Start plan" billing={billing} />);
-  fireEvent.click(screen.getByText('Continue to checkout'));
-  expect(await screen.findByRole('link', { name: 'Open Stripe' })).toHaveAttribute('href', 'https://checkout.stripe.com/old');
-  view.rerender(<OrganizationBilling api={api} currentPlan="Grow plan" billing={{ ...billing, subscribed: true, status: 'active' }} />);
-  expect(screen.queryByRole('link', { name: 'Open Stripe' })).toBeNull();
-  view.rerender(<OrganizationBilling api={api} currentPlan="Start plan" billing={billing} />);
-  expect(screen.queryByRole('link', { name: 'Open Stripe' })).toBeNull();
-  view.rerender(<OrganizationBilling api={api} currentPlan="Grow plan" billing={{ ...billing, subscribed: true, status: 'active' }} />);
-  fireEvent.click(screen.getByText('Manage billing'));
-  expect(await screen.findByRole('link', { name: 'Open Stripe' })).toHaveAttribute('href', 'https://billing.stripe.com/new');
-  view.rerender(<OrganizationBilling api={api} currentPlan="Start plan" billing={billing} />);
-  expect(screen.queryByRole('link', { name: 'Open Stripe' })).toBeNull();
+afterEach(() => { delete window.rally; });
+
+describe('hosted billing handoff', () => {
+  it('opens checkout immediately when a slow response arrives, with no second action', async () => {
+    const { api, answer } = deferredCheckout();
+    render(<OrganizationBilling api={api} currentPlan="Start plan" billing={billing} />);
+    const action = screen.getByRole('button', { name: 'Continue to checkout' });
+    fireEvent.click(action);
+    expect(api.createBillingCheckout).toHaveBeenCalledWith('grow', 'usd', false);
+    expect(screen.getByRole('button', { name: 'Opening…' })).toBeDisabled();
+    expect(openExternal).not.toHaveBeenCalled();
+    answer();
+    await waitFor(() => expect(openExternal).toHaveBeenCalledWith(checkoutUrl));
+    expect(screen.queryByText('Secure billing is ready')).toBeNull();
+    expect(screen.queryByText('Open Stripe')).toBeNull();
+    expect(action).toBeEnabled();
+  });
+
+  it('opens portal management from the same action', async () => {
+    const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(),
+      createBillingPortal: vi.fn(async () => ({ url: 'https://billing.stripe.com/test' })) };
+    render(<OrganizationBilling api={api} currentPlan="Grow plan" billing={{ ...billing, subscribed: true, status: 'active' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Manage billing' }));
+    await waitFor(() => expect(openExternal).toHaveBeenCalledWith('https://billing.stripe.com/test'));
+  });
+
+  it('reserves a browser tab on the initial click and navigates it after checkout returns', async () => {
+    const { tab, open } = browserTab();
+    const { api, answer } = deferredCheckout();
+    render(<OrganizationBilling api={api} currentPlan="Start plan" billing={billing} />);
+    const action = screen.getByRole('button', { name: 'Continue to checkout' });
+    fireEvent.click(action);
+    expect(open).toHaveBeenCalledOnce();
+    expect(tab.opener).toBeNull();
+    expect(tab.location.href).toBe('');
+    expect(tab.document.title).toBe('Opening link…');
+    expect(tab.document.body.textContent).toBe('Opening link…');
+    answer();
+    await waitFor(() => expect(tab.location.href).toBe(checkoutUrl));
+    expect(openExternal).not.toHaveBeenCalled();
+    expect(tab.close).not.toHaveBeenCalled();
+  });
+
+  it('reports a blocked tab before requesting checkout and allows retry', async () => {
+    const { open } = browserTab();
+    open.mockReturnValue(null);
+    const { api } = deferredCheckout();
+    render(<OrganizationBilling api={api} currentPlan="Start plan" billing={billing} />);
+    const action = screen.getByRole('button', { name: 'Continue to checkout' });
+    fireEvent.click(action);
+    expect(await screen.findByText('Allow pop-ups for Rally in this browser, then try again.')).toBeVisible();
+    expect(api.createBillingCheckout).not.toHaveBeenCalled();
+    expect(action).toBeEnabled();
+  });
+
+  it('closes the reserved tab and reports a failed checkout request', async () => {
+    const { tab } = browserTab();
+    const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(),
+      createBillingCheckout: vi.fn().mockRejectedValue(new Error('Stripe is unavailable')) };
+    render(<OrganizationBilling api={api} currentPlan="Start plan" billing={billing} />);
+    const action = screen.getByRole('button', { name: 'Continue to checkout' });
+    fireEvent.click(action);
+    expect(await screen.findByText('Stripe is unavailable')).toBeVisible();
+    expect(tab.close).toHaveBeenCalledOnce();
+    expect(action).toBeEnabled();
+  });
+
+  it('reports an external browser launch failure', async () => {
+    openExternal.mockRejectedValueOnce(new Error('Browser could not be opened'));
+    const { api, answer } = deferredCheckout();
+    render(<OrganizationBilling api={api} currentPlan="Start plan" billing={billing} />);
+    const action = screen.getByRole('button', { name: 'Continue to checkout' });
+    fireEvent.click(action);
+    answer();
+    expect(await screen.findByText('Browser could not be opened')).toBeVisible();
+    expect(action).toBeEnabled();
+  });
+
+  it.each(['organization', 'subscription', 'unmount'])('discards a pending handoff on %s change', async (change) => {
+    const { tab } = browserTab();
+    const { api, answer } = deferredCheckout();
+    const form = (scope: string, subscribed: boolean) => <LocalCacheScopeProvider scope={scope}><OrganizationBilling api={api} currentPlan="Start plan" billing={{ ...billing, subscribed }} /></LocalCacheScopeProvider>;
+    const view = render(form('org-a', false));
+    const action = screen.getByRole('button', { name: 'Continue to checkout' });
+    fireEvent.click(action);
+    if (change === 'unmount') view.unmount();
+    else view.rerender(form(change === 'organization' ? 'org-b' : 'org-a', change === 'subscription'));
+    expect(tab.close).toHaveBeenCalledOnce();
+    await act(async () => { answer(); });
+    expect(tab.location.href).toBe('');
+    expect(openExternal).not.toHaveBeenCalled();
+  });
 });
 
 it('reads remaining credits from Stripe on demand and shows an explicit error on refresh failure', async () => {
@@ -84,7 +166,8 @@ it('explains the automatic trial, collects billing details in Stripe, and enable
   expect(screen.getByText(/Without billing details, your organization returns to Start/)).toBeVisible();
   expect(screen.getByRole('checkbox')).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Add billing details' }));
-  expect(await screen.findByRole('link', { name: 'Open Stripe' })).toHaveAttribute('href', 'https://billing.stripe.com/card');
+  await waitFor(() => expect(openExternal).toHaveBeenCalledWith('https://billing.stripe.com/card'));
+  expect(screen.queryByText('Open Stripe')).toBeNull();
   view.rerender(<OrganizationBilling api={api} currentPlan="Grow" billing={{ ...billing, paymentMethodReady: true }} />);
   expect(screen.getByRole('checkbox')).toBeEnabled();
   fireEvent.click(screen.getByRole('checkbox'));

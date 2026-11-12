@@ -600,14 +600,7 @@ const browserBridge: RallyDesktopBridge = {
     throw new Error('Saving a message needs the Rally desktop application.');
   },
   async openExternal(url) {
-    // A new tab keeps the person's place, including an authorization the
-    // caller records once this returns. Open it blank and cut its opener
-    // before it loads the page, so the page never holds this window. A
-    // blocked popup is an error the caller shows, never a navigation away.
-    const opened = window.open('', '_blank');
-    if (!opened) throw new Error('Allow pop-ups for Rally in this browser, then try again.');
-    opened.opener = null;
-    opened.location.href = url;
+    await prepareExternalLink().open(url);
   },
   // The browser build has no main process to composite a view, and an iframe
   // is exactly what the desktop's design refuses. So the preview is absent
@@ -758,6 +751,37 @@ const browserBridge: RallyDesktopBridge = {
     return () => undefined;
   },
 };
+
+/** Reserve a browser tab during the click, before an async URL request loses user activation. */
+export function prepareExternalLink() {
+  const desktop = window.rally;
+  const tab = desktop ? null : window.open('', '_blank');
+  if (!desktop && !tab) {
+    throw new Error('Allow pop-ups for Rally in this browser, then try again.');
+  }
+  if (tab) {
+    tab.opener = null;
+    tab.document.title = 'Opening link…';
+    tab.document.body.textContent = 'Opening link…';
+  }
+  let pending = true;
+  return {
+    async open(url: string) {
+      if (!pending) return;
+      if (tab) {
+        if (tab.closed) throw new Error('The new tab was closed. Please try again.');
+        tab.location.href = url;
+      } else {
+        await desktop!.openExternal(url);
+      }
+      pending = false;
+    },
+    cancel() {
+      if (pending) tab?.close();
+      pending = false;
+    },
+  };
+}
 
 export function desktopBridge(): RallyDesktopBridge {
   if (window.rally) return window.rally;
