@@ -28,7 +28,7 @@ import {
   type ConnectorAdapter,
   type ConnectorConnectionContext,
 } from "./types";
-import { GRANOLA_SYSTEM_MESSAGE } from "./prompts/granola";
+import { GRANOLA_SYSTEM_MESSAGE } from "@rally/prompts/connectors/granola";
 
 const DEFAULT_API_BASE_URL = "https://public-api.granola.ai";
 const DEFAULT_MCP_URL = "https://mcp.granola.ai/mcp";

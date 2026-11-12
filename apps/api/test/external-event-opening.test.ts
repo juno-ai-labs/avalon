@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { externalEventOpening } from "../src/prompts/external-event-opening";
+import { externalEventOpening } from "@rally/prompts/api/external-event-opening";
 
 describe("the event that woke a run, as its opening message", () => {
   it("names the event and carries its metadata, marked as the connector's words", () => {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { MESSAGE_MAX_CHARACTERS, SIDEKICK_CHANGE_FRAME_RESERVE } from '@rally/contracts';
 import { hasAvalonToolProse } from '@rally/agent-harness';
-import { agentCoordinationRoleGuidance } from '../src/prompts/agent-coordination-role';
-import { sidekickChangeRequestText } from '../src/prompts/sidekick-change-request';
+import { agentCoordinationRoleGuidance } from '@rally/prompts/api/agent-coordination-role';
+import { sidekickChangeRequestText } from '@rally/prompts/api/sidekick-change-request';
 import { renderAgentMessage } from "../src/services/agent-message-content";
 import { createAgentCommunicationPlugin, type AgentCommunicationTools } from "../src/services/agent-communication-plugin";
 

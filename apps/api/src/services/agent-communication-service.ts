@@ -15,8 +15,8 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
-import { sidekickChangeRequestText } from "../prompts/sidekick-change-request";
-import { renderAgentFailureNotice, renderAgentSilentCompletionNotice } from "../prompts/agent-owner-notice";
+import { sidekickChangeRequestText } from "@rally/prompts/api/sidekick-change-request";
+import { renderAgentFailureNotice, renderAgentSilentCompletionNotice } from "@rally/prompts/api/agent-owner-notice";
 import { personManagesSidekick } from "./sidekick-run-continuation";
 import { isCanvasChat } from "../lib/canvas-chat";
 

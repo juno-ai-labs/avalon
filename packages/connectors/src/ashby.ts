@@ -13,8 +13,8 @@ import {
   assertPrincipalAccess, ConnectorError, defineConnectorActivityTriggers,
   defineConnectorAgentPlugin, type ConnectorAdapter, type ConnectorConnectionContext,
 } from "./types";
-import { ASHBY_SYSTEM_MESSAGE } from "./prompts/ashby";
-import { ASHBY_WORKSPACE_EVENTS_SYSTEM_MESSAGE } from "./prompts/ashby-workspace-events";
+import { ASHBY_SYSTEM_MESSAGE } from "@rally/prompts/connectors/ashby";
+import { ASHBY_WORKSPACE_EVENTS_SYSTEM_MESSAGE } from "@rally/prompts/connectors/ashby-workspace-events";
 
 export const AshbyCapabilities = {
   personalMcp: "ashby.personal.mcp",

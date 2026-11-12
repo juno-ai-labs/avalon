@@ -534,8 +534,9 @@ answered. Every other model-backed decision runs through
 `runStructuredInference`. A new caller adds a state shape and a question, not a
 transport. Each caller's question, and any fixed text its state carries for the judge
 to read, is a prompt: it lives in
-[`packages/agent-harness/src/prompts/`](../packages/agent-harness/src/prompts/)
-(or the sending package's own `prompts/`), one file per question, per
+[`packages/prompts/harness/`](../packages/prompts/harness/)
+(or the sending package's folder of `@rally/prompts`), one file per question
+with its closed set of choices, per
 [`writing-prompts.md`](writing-prompts.md#where-a-prompt-lives).
 
 A decision is a candidate when all five are true. The first two are

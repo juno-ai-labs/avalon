@@ -37,7 +37,7 @@ import {
   type ConnectorToolContext,
   type ConnectorToolResult,
 } from "./types";
-import { SLACK_SYSTEM_MESSAGE } from "./prompts/slack";
+import { SLACK_SYSTEM_MESSAGE } from "@rally/prompts/connectors/slack";
 
 const SLACK_API = "https://slack.com/api";
 const SLACK_MCP = "https://mcp.slack.com/mcp";

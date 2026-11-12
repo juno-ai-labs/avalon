@@ -1,5 +1,12 @@
-import { jevChoiceQuestion } from "../jev";
-import type { AddressingChoice } from "../index";
+import { jevChoiceQuestion } from "./jev-question";
+
+export const ADDRESSING_CHOICES = [
+  "rally_should_act",
+  "people_only",
+  "rally_and_people_should_act",
+  "no_clear_request",
+] as const;
+export type AddressingChoice = (typeof ADDRESSING_CHOICES)[number];
 
 export const typesafeAddressingQuestions = {
   addressing: jevChoiceQuestion<AddressingChoice>({

@@ -57,7 +57,7 @@ import { observabilityQueryInputSchema, queryObservability } from "./observabili
 import { organizationPage, organizationPageInputSchema } from "./organizations";
 import { userPage, userPageInputSchema } from "./users";
 import { acceptsTasks, createTaskCarrier, registerTaskMethods, type EngineeringTaskInput } from "./tasks";
-import { ENGINEERING_MCP_SERVER_INSTRUCTIONS } from "./prompts/server-instructions";
+import { ENGINEERING_MCP_SERVER_INSTRUCTIONS } from "@rally/prompts/engineering-mcp/server-instructions";
 
 type ToolResult = {
   content: [{ type: "text"; text: string }];

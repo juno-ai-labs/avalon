@@ -93,9 +93,9 @@ import {
   type RunHarnessInput,
   type StreamResult,
 } from "./index";
-import { normalizedPluginSearchText, renderPromptPluginCatalog } from "./prompts/plugin-catalog";
-import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
-import { renderCompactionCheckpointContent } from "./prompts/compaction";
+import { normalizedPluginSearchText, renderPromptPluginCatalog } from "@rally/prompts/harness/plugin-catalog";
+import { renderPromptSkillCatalog } from "./skill-catalog";
+import { renderCompactionCheckpointContent } from "@rally/prompts/harness/compaction";
 import {
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILLS_SYSTEM_MESSAGE,
@@ -140,11 +140,11 @@ import {
   type BindLoopTransition,
   type BindSystemProjection,
 } from "./bind-loop-projection";
-import { COMPACTION_SUMMARY_PROMPT } from "./prompts/compaction-summary";
-import { renderPluginCatalogSection } from "./prompts/plugin-catalog-section";
-import { renderSkillCatalogSection } from "./prompts/skill-catalog-section";
-import { COMPACTION_SUMMARY_RETRY_SUFFIX } from "./prompts/compaction-summary-retry";
-import { PLUGIN_DISCOVERY_SYSTEM_MESSAGE } from "./prompts/plugin-discovery";
+import { COMPACTION_SUMMARY_PROMPT } from "@rally/prompts/harness/compaction-summary";
+import { renderPluginCatalogSection } from "@rally/prompts/harness/plugin-catalog-section";
+import { renderSkillCatalogSection } from "@rally/prompts/harness/skill-catalog-section";
+import { COMPACTION_SUMMARY_RETRY_SUFFIX } from "@rally/prompts/harness/compaction-summary-retry";
+import { PLUGIN_DISCOVERY_SYSTEM_MESSAGE } from "@rally/prompts/harness/plugin-discovery";
 
 type ProviderMessage = Parameters<ToolLoopParams["callModel"]>[0][number];
 type ProviderMessages = ProviderMessage[];

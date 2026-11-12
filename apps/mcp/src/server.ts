@@ -32,10 +32,10 @@ import { ScopeInvitationResultSchema } from "@rally/contracts/scope-grants";
 import { isCodeShaped, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
 import { RallyApiError, type RallyApi } from "./api";
-import { RALLY_MCP_SERVER_INSTRUCTIONS } from "./prompts/server-instructions";
-import { renderPublishToRallyPrompt } from "./prompts/publish-to-rally";
-import { renderStartCanvasPrompt } from "./prompts/start-canvas";
-import { renderCatchUpPrompt } from "./prompts/catch-up";
+import { RALLY_MCP_SERVER_INSTRUCTIONS } from "@rally/prompts/mcp/server-instructions";
+import { renderPublishToRallyPrompt } from "@rally/prompts/mcp/publish-to-rally";
+import { renderStartCanvasPrompt } from "@rally/prompts/mcp/start-canvas";
+import { renderCatchUpPrompt } from "@rally/prompts/mcp/catch-up";
 
 /** A link to a resource the client can read back (`resources/read`) without another tool call. */
 type ResourceLink = { type: "resource_link"; uri: string; name: string; mimeType?: string; description?: string };

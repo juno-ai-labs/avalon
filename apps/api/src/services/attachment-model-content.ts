@@ -12,7 +12,7 @@ import {
   type GifModelMetadata,
 } from "./gif-metadata";
 import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
-import { renderAttachmentManifest } from "../prompts/attachment-manifest";
+import { renderAttachmentManifest } from "@rally/prompts/api/attachment-manifest";
 
 const MAX_INLINE_IMAGES = 8;
 const MAX_MODEL_IMAGE_BYTES = 8 * 1_024 * 1_024;

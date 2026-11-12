@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import type { ToolReceiptRecord } from "../durable-objects/workstream-tool-receipt-storage";
 import { parseRpcInput } from "../lib/rpc-input";
-import { SIDEKICK_TASK_OUTCOME_SYSTEM_MESSAGE } from "../prompts/sidekick-task-outcome-plugin";
+import { SIDEKICK_TASK_OUTCOME_SYSTEM_MESSAGE } from "@rally/prompts/api/sidekick-task-outcome-plugin";
 
 export const SIDEKICK_TASK_OUTCOME_CAPABILITY = "rally.sidekick.report_outcome";
 export const SidekickTaskOutcomeSchema = z.strictObject({

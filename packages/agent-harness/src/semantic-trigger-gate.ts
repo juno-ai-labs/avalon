@@ -5,8 +5,8 @@ import {
   jevSingleChoiceAnswers,
   JEV_LATEST_MODEL,
 } from "./jev";
-import { semanticTriggerQuestions } from "./prompts/semantic-trigger-question";
-export { semanticTriggerQuestions } from "./prompts/semantic-trigger-question";
+import { SEMANTIC_TRIGGER_CHOICES, semanticTriggerQuestions, type SemanticTriggerChoice } from "@rally/prompts/harness/semantic-trigger-question";
+export { SEMANTIC_TRIGGER_CHOICES, semanticTriggerQuestions, type SemanticTriggerChoice };
 
 /**
  * Whether one connector event satisfies one Sidekick's written condition.
@@ -26,12 +26,6 @@ export { semanticTriggerQuestions } from "./prompts/semantic-trigger-question";
  * The Suggested context retirement record in `docs/connectors.md` records
  * what the second kind cost the retired router; `docs/jev-best-practices.md` is why this one was first.
  */
-export const SEMANTIC_TRIGGER_CHOICES = [
-  "condition_met",
-  "condition_not_met",
-  "condition_not_judgeable",
-] as const;
-export type SemanticTriggerChoice = (typeof SEMANTIC_TRIGGER_CHOICES)[number];
 
 const SemanticTriggerAnswersSchema = jevSingleChoiceAnswers("condition", SEMANTIC_TRIGGER_CHOICES);
 

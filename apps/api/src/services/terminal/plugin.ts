@@ -17,7 +17,7 @@ import {
   TERMINAL_TOOL_NAMES,
   type TerminalToolExecutors,
 } from "./contract";
-import { renderTerminalPluginSystemMessage } from "../../prompts/terminal-plugin";
+import { renderTerminalPluginSystemMessage } from "@rally/prompts/api/terminal-plugin";
 import { canvasArtifactNoter, resolveTerminalPublicationHome, resolveTerminalRunScope, workspaceAgentOwnerLookup, type TerminalRunScope } from "./authority";
 import { TerminalSandboxCoordinator } from "./coordinator";
 import { createHarnessRunPortFactory } from "../../runtime/harness-run-port";

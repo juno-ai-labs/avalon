@@ -1,5 +1,8 @@
-import { jevChoiceQuestion } from "../jev";
-import type { ASSIGNMENT_CHOICES, CHOICES, CONTRIBUTOR_CHOICES } from "../message-continuation";
+import { jevChoiceQuestion } from "./jev-question";
+
+export const CHOICES = ["resume_requested_work", "followup_without_rally_action", "use_addressing"] as const;
+export const ASSIGNMENT_CHOICES = ["assigned_to_rally", "not_assigned_to_rally"] as const;
+export const CONTRIBUTOR_CHOICES = ["contributors_present", "contributors_missing"] as const;
 
 export const questions = {
   contributors: jevChoiceQuestion<(typeof CONTRIBUTOR_CHOICES)[number]>({

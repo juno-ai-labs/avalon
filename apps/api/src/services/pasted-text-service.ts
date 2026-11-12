@@ -6,7 +6,7 @@ import { detectTextType } from "../lib/pasted-text-type";
 import { truncateUtf16Safe } from "../lib/text";
 import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
-import { renderPastedTextNameMessages } from "../prompts/pasted-text-name";
+import { renderPastedTextNameMessages } from "@rally/prompts/api/pasted-text-name";
 
 /**
  * How much of the text the model reads. A name comes from what a document is
