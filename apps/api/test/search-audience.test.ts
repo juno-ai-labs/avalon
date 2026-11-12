@@ -26,7 +26,7 @@ describe('search audience groups', () => {
       .toEqual(['user:uploader', 'conversation:channel/0', 'sidekick:sidekick']);
     expect(resourceSearchAudience(workspaceId, { ...row, provider: 'avalon_generated' }, []))
       .toEqual(['user:uploader']);
-    expect(resourceSearchAudience(workspaceId, { ...row, provider: 'avalon_generated' }, [], true)).toEqual([]);
+    expect(resourceSearchAudience(workspaceId, { ...row, provider: 'avalon_generated' }, [channel], true)).toEqual(['user:uploader', 'conversation:channel/0']);
     expect(resourceSearchAudience(workspaceId, { ...row, provider: 'web' }, [channel]))
       .toEqual(['user:uploader', `members:${workspaceId}`, 'conversation:channel/0']);
     // An inbound email needs an attachment even for its owner.

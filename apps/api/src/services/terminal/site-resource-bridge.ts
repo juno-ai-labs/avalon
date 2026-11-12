@@ -402,6 +402,13 @@ export async function publishSiteVersion(env: Env, workspace: D1Database, input:
   serverModuleSha256: string | null;
   recordResource: (version: { written: SitePublishResult; version: number; hostnameStub: ArtifactHostnameStub }) => Promise<boolean>;
 }): Promise<{ landed: boolean; written: SitePublishResult; version: number; hostnameStub: ArtifactHostnameStub }> {
+  // Reject an ownerless publication before claims, payload writes or resource mutation.
+  const workspaceId = asWorkspaceId(input.workspaceId);
+  const source = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+    workspaceDOName(env.AVALON_REGION, workspaceId));
+  if (!await source.canvasArtifactAccessDelivery({ workspaceId, canvasId: input.workstreamId })) {
+    throw new TerminalToolError("canvas_artifact_policy_missing", "Publish the site into a Canvas.");
+  }
   const { previous } = input;
   // A republish takes its version before writing a byte of it, so two
   // publishes of one site never write the same version's keys.

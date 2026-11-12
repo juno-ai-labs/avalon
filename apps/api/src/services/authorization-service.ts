@@ -101,6 +101,13 @@ export class AuthorizationService {
     return result.metadata;
   }
 
+  /** Source reconstruction and administrative data are editor capabilities. */
+  async readResourceForEditing(subject: AuthorizationSubject, resourceId: string): Promise<ResourceReadMetadata> {
+    const metadata = await this.readResource(subject, resourceId);
+    if (metadata.canEditArtifact === false) throw new ApiError(404, "resource_not_found", "Resource not found");
+    return metadata;
+  }
+
   /** A single observation batch returns metadata only for admitted resources. */
   async readResources(subject: AuthorizationSubject, resourceIds: readonly string[]) {
     const batch = new AuthorizationBatch(this.env, this.requestMembership, true);

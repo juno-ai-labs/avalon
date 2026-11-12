@@ -149,8 +149,8 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
   /** The chosen icon and colour, `WorkstreamAppearanceSchema` JSON; null until someone chooses (migration 137). */
   appearance_json: string | null;
   archived_at: number | null;
-  artifact_visibility?: "editors" | "participants" | "workspace" | "public";
-  sharing_revision?: number;
+  artifact_visibility: "editors" | "participants" | "workspace" | "public";
+  sharing_revision: number;
 }
 
 /** What a hosted Canvas needs from the Organization object that holds it. */
@@ -638,7 +638,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       participantUserIds: this.participantUserIds(),
       artifactVisibility: row.artifact_visibility ?? 'editors',
       artifactUserIds: this.sql.exec<{ user_id: string }>('SELECT user_id FROM canvas_artifact_users WHERE canvas_id=? ORDER BY user_id', this.canvasId).toArray().map(person=>person.user_id),
-      sharingRevision: row.sharing_revision ?? 0,
+      sharingRevision: row.sharing_revision,
       artifacts: this.artifacts(),
       sidekicks: this.sidekicks(request.actor),
       canManage,
@@ -751,14 +751,14 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     await assertAudienceInOrganization((workspaceId, userId) => this.host.readRelationship(workspaceId, userId), row.workspace_id,
       userIds, () => new ApiError(422, "canvas_audience_not_member", "Everyone a Canvas is shared with must be in the Organization"));
     const artifactUserIds = [...new Set(request.update.artifactUserIds ?? [])];
-    if (request.update.artifactVisibility !== undefined) await assertAudienceInOrganization(
+    if (request.update.artifactUserIds !== undefined) await assertAudienceInOrganization(
       (workspaceId, userId) => this.host.readRelationship(workspaceId,userId), row.workspace_id, artifactUserIds,
       () => new ApiError(422,'canvas_artifact_audience_not_member','Artifact users must be in the Organization'));
     const now = Date.now();
     this.host.storage.transactionSync(() => {
       const currentRow = this.assertCanvas(request.workspaceId,request.canvasId);
       if (!this.manages(currentRow,request.actor)) throw forbidden();
-      if (request.update.expectedRevision !== undefined && request.update.expectedRevision !== (currentRow.sharing_revision ?? 0)) {
+      if (request.update.expectedRevision !== undefined && request.update.expectedRevision !== (currentRow.sharing_revision)) {
         throw new ApiError(409,'canvas_sharing_changed','Sharing changed. Reload it before saving.');
       }
       const kept = new Set<string>(userIds);
@@ -773,11 +773,11 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
           this.canvasId, userId, request.actor.userId, now,
         );
       }
-      if (request.update.artifactVisibility !== undefined) {
+      if (request.update.artifactUserIds !== undefined) {
         this.sql.exec('DELETE FROM canvas_artifact_users WHERE canvas_id=?',this.canvasId);
         for (const userId of artifactUserIds) this.sql.exec('INSERT INTO canvas_artifact_users(canvas_id,user_id) VALUES(?,?)',this.canvasId,userId);
       }
-      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, artifact_visibility = COALESCE(?,artifact_visibility), sharing_revision=sharing_revision+1 WHERE canvas_id = ?`,
+      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, artifact_visibility = COALESCE(?,artifact_visibility) WHERE canvas_id = ?`,
         request.update.visibility, request.update.artifactVisibility ?? null, this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
       this.host.noteAttachedCanvasChanged(this.canvasId);

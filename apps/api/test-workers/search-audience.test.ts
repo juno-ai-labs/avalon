@@ -96,7 +96,7 @@ it('withdraws an archived Canvas artifact from search and refreshes its indexed 
     sql.exec('UPDATE resources SET publication_parent_id = ? WHERE id = ?', parentId, resourceId);
     new AuthorizationStorage(state.storage).replaceLocations({ ...inventory(1, [resourceId]), parentKind: 'canvas' });
     const batch = await prepareResourceSearch(sql, env, workspaceId, resourceId);
-    expect(batch.documents.find((document) => document.text !== null)?.audience).toEqual([`conversation:${parentId}/0`]);
+    expect(batch.documents.find((document) => document.text !== null)?.audience).toEqual([`artifacts:${parentId}`]);
     sql.exec('UPDATE resource_search_versions SET revision = 10, pending = 0 WHERE resource_id = ?', resourceId);
     await instance.canvasArchive({ workspaceId, canvasId: parentId, actor: { userId: asUserId(uploaderId), actorRole: 'owner' } });
     expect(revision(sql)).toBe(11);

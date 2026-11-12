@@ -303,29 +303,77 @@ export async function applyWorkspaceRelationshipChange(env: Env, message: Worksp
 }
 
 /** One queued hop per artifact. Source reads and cross-object writes stay off serving. */
-export async function applyArtifactAccessChange(env: Env, message: ArtifactAccessMessage): Promise<void> {
-  if(message.region!==env.AVALON_REGION) throw new Error('artifact_access_region_mismatch');
-  const workspaceId=asWorkspaceId(message.workspaceId);
-  const workspace=await durableObjectStubForWorkspace(env,env.WORKSPACE_DOS,workspaceId,workspaceDOName(env.AVALON_REGION,workspaceId));
-  const delivery=await workspace.canvasArtifactAccessDelivery({workspaceId,canvasId:message.canvasId,...(message.kind==='artifact_access_sync'?{resourceId:message.resourceId}:{})});
-  if(!delivery) return;
-  if(message.kind==='canvas_artifact_access_changed') {
+export async function applyArtifactAccessChange(
+  env: Env,
+  message: ArtifactAccessMessage,
+): Promise<void> {
+  if (message.region !== env.AVALON_REGION)
+    throw new Error("artifact_access_region_mismatch");
+  const workspaceId = asWorkspaceId(message.workspaceId);
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    workspaceId,
+    workspaceDOName(env.AVALON_REGION, workspaceId),
+  );
+  const delivery = await workspace.canvasArtifactAccessDelivery({
+    workspaceId,
+    canvasId: message.canvasId,
+    ...(message.kind === "artifact_access_sync"
+      ? { resourceId: message.resourceId }
+      : {}),
+  });
+  if (!delivery) return;
+  if (message.kind === "canvas_artifact_access_changed") {
     // Bodies are addresses, so large audiences never exceed the Queue message limit.
-    for(let offset=0;offset<delivery.targets.length;offset+=100) {
-      await env.ACCESS_REVOCATION_QUEUE.sendBatch(delivery.targets.slice(offset,offset+100).map(target=>({body:ArtifactAccessMessageSchema.parse({
-        kind:'artifact_access_sync',region:message.region,workspaceId,canvasId:message.canvasId,...target,
-      })})));
+    for (let offset = 0; offset < delivery.targets.length; offset += 100) {
+      await env.ACCESS_REVOCATION_QUEUE.sendBatch(
+        delivery.targets.slice(offset, offset + 100).map((target) => ({
+          body: ArtifactAccessMessageSchema.parse({
+            kind: "artifact_access_sync",
+            region: message.region,
+            workspaceId,
+            canvasId: message.canvasId,
+            ...target,
+          }),
+        })),
+      );
     }
     return;
   }
-  if(!delivery.targets.some(target=>target.artifactId===message.artifactId && target.resourceId===message.resourceId)) return;
-  const file=delivery.file;
-  const affinity=await workspacePlacementAffinity(env,workspaceId);
-  const host=durableObjectStubForArtifact(env,env.ARTIFACT_HOSTS,artifactHostDOName(env.AVALON_REGION,asArtifactId(message.artifactId)),affinity);
+  if (
+    !delivery.targets.some(
+      (target) =>
+        target.artifactId === message.artifactId &&
+        target.resourceId === message.resourceId,
+    )
+  )
+    return;
+  const file = delivery.file;
+  const affinity = await workspacePlacementAffinity(env, workspaceId);
+  const host = durableObjectStubForArtifact(
+    env,
+    env.ARTIFACT_HOSTS,
+    artifactHostDOName(env.AVALON_REGION, asArtifactId(message.artifactId)),
+    affinity,
+  );
   await host.applyAccessSnapshot(delivery.snapshot);
-  if(file && !delivery.snapshot.archived) {
-    await host.recordFilePublication({workspaceId,canvasId:message.canvasId,revision:delivery.snapshot.revision,file});
-    const hostnameStub=await ensureArtifactHostname(env,{workspaceId,artifactId:message.artifactId});
-    await workspace.canvasRegisterFileHost({workspaceId,canvasId:message.canvasId,resourceId:message.resourceId,hostnameStub});
+  if (file && !delivery.snapshot.archived) {
+    await host.recordFilePublication({
+      workspaceId,
+      canvasId: message.canvasId,
+      revision: delivery.snapshot.revision,
+      file,
+    });
+    const hostnameStub = await ensureArtifactHostname(env, {
+      workspaceId,
+      artifactId: message.artifactId,
+    });
+    await workspace.canvasRegisterFileHost({
+      workspaceId,
+      canvasId: message.canvasId,
+      resourceId: message.resourceId,
+      hostnameStub,
+    });
   }
 }

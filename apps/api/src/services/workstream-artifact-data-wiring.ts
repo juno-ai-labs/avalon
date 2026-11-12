@@ -1,3 +1,4 @@
+import { AuthorizationService } from "./authorization-service";
 /**
  * The wiring that gives the artifact data tools a work stream to read from,
  * and decides which runs may write (`artifactDataWriteAccess`).
@@ -134,7 +135,15 @@ export function createArtifactDataToolContext(
         resourceIds: [candidate.id],
       },
     );
-    return match && match.resource_type === "generated_site" ? match : null;
+    if (!match || (match.resource_type !== "generated_site" && match.mime_type !== "application/vnd.rally.site-manifest+json")) return null;
+    if (match.canEditArtifact === false) return null;
+    if (input.principal.type === "user" && match.canEditArtifact === undefined) {
+      const metadata = await new AuthorizationService(env).readResource({
+        workspaceId: asWorkspaceId(input.workspaceId), userId: input.principal.userId, delegation: null,
+      }, match.id);
+      if (metadata.canEditArtifact === false) return null;
+    }
+    return match;
   }
   /** Whose rows this run touches on a site; the resource row records who the publishing run ran as. */
   function scopeOn(site: Record<string, unknown>) {

@@ -43,11 +43,11 @@ export function conversationSearchAudience(conversation: {
  */
 export function resourceSearchAudience(workspaceId: string, row: ResourceReadRow,
   locations: readonly { parentId: string; substreamId: string; parentKind: string }[], ownedByCanvas = false, ownerCanvasId?: string): SearchAudience {
-  if (ownedByCanvas) return ownerCanvasId ? [searchAudienceGroup.artifacts(ownerCanvasId)] : [];
+  if (ownedByCanvas && ownerCanvasId) return [searchAudienceGroup.artifacts(ownerCanvasId)];
   if (row.connection_id) return [searchAudienceGroup.connection(row.connection_id)];
   const groups = new Set<string>();
   // The uploader reads without an attachment unless the provider needs one even for its owner.
-  const canvasArtifact = row.provider === 'avalon_generated' && ownedByCanvas;
+  const canvasArtifact = row.provider === 'avalon_generated' && ownedByCanvas && Boolean(ownerCanvasId);
   if (row.uploaded_by_user_id && !canvasArtifact && !requiresAttachment(row, true)) groups.add(searchAudienceGroup.user(row.uploaded_by_user_id));
   if (isDraftUpload(row)) return [...groups];
   if (!requiresAttachment(row, false)) groups.add(searchAudienceGroup.members(workspaceId));

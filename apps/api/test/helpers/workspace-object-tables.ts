@@ -106,7 +106,7 @@ export function applyWorkspaceResourceSchema(database: DatabaseSync, workspaceId
       if (triggerTable && !exists(triggerTable)) continue;
       // An altered or indexed table must exist too, and a trigger whose body
       // writes or reads a DO-only table would fail on the first resource write.
-      const target = /^\s*(?:ALTER TABLE|CREATE (?:UNIQUE )?INDEX\s+\S+\s+ON)\s+(\w+)/u.exec(statement)?.[1];
+      const target = /^\s*(?:ALTER TABLE|UPDATE|CREATE (?:UNIQUE )?INDEX\s+\S+\s+ON)\s+(\w+)/u.exec(statement)?.[1];
       if (target && !exists(target)) continue;
       // A trigger skipped above is not there to drop.
       const dropped = /^\s*DROP TRIGGER\s+(\w+)/u.exec(statement)?.[1];
