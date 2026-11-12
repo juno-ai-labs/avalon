@@ -203,6 +203,7 @@ describe("plugin wire names", () => {
       "schedule_wakeup",
       "search_resource",
       "send_message",
+      "set_artifact_audience",
       "show_connector_connection",
       "sidekick_attach_resource",
       "sidekicks_list",

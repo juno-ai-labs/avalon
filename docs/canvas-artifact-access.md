@@ -22,6 +22,7 @@ conversation access. This module owns the serving projection and propagation;
 | `apps/api/src/artifacts/index.ts` | The shared gate for website routes, assets and published file bytes. |
 | `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Production modal adapter and atomic Save of both audiences. |
 | `apps/mcp/src/server.ts` | User-facing sharing fields and `get_artifact_link`. |
+| `apps/api/src/services/canvas-artifact-audience-tool.ts` | `set_artifact_audience`: a Canvas's Chat sets its own artifact audience as its person. |
 
 ## How it works
 
@@ -54,8 +55,16 @@ artifact fields; omitted artifact settings are preserved. A supplied artifact
 recipient list replaces that audience. Both policies commit in one transaction.
 The MCP tool requires `userIds` explicitly even for artifact-only changes;
 clients preserve editors by copying the current `participantUserIds`.
-Internal publishing agents direct a manager to the Canvas's Share screen to
-change the audience; the external MCP sharing tool is not available to them.
+A Canvas's Chat sets the artifact audience with `set_artifact_audience`, as
+its person and under Share's manager rule; it changes `artifact_visibility`
+alone and never names people. `artifact_visibility_chosen` (migration 148)
+records that someone set it: Share saves that send an artifact audience, and
+every tool call, mark it, and every Canvas that existed before the migration
+counts as chosen. An agent's default (`personAsked: false`) changes only an
+unchosen audience, because the audience covers every artifact the Canvas has
+published and a later site must not reopen one a manager restricted. Sidekick
+runs do not get the tool, and the external MCP sharing tool is not available
+to internal agents.
 
 Each generated artifact's card in the Chat also changes `artifact_visibility`
 from a menu (`apps/desktop/src/renderer/screens/canvas.tsx`): it resends the
@@ -210,9 +219,37 @@ initial propagation intents and retained null-incarnation sessions. MCP tests
 exercise both sharing fields, legacy omission and stable link retrieval.
 They also reject a missing editor list before any API update. The desktop's
 `screens/canvas.test.tsx` covers retrying a delayed artifact link in the open
-modal while preserving its audience draft.
+modal while preserving its audience draft. `canvas-artifact-access.test.ts` also
+drives `set_artifact_audience`: an editor who does not manage the Canvas is
+refused, a manager's default serves anonymous visitors without touching the
+editor audience, and a default after a Share save leaves the restriction in
+place while a call the person asked for changes it. The migration test proves
+existing Canvases count as chosen and new ones do not.
 
 ## Changelog
+
+### 2026-11-12 — Publishing agents set the artifact audience
+
+**What changed:** A Canvas's Chat gained `set_artifact_audience`, which changes
+only `artifact_visibility` as the person typing, under the Share screen's
+manager rule. Migration 148 adds `artifact_visibility_chosen`; an agent's
+default changes only an audience nobody has chosen. The site skills tell the
+agent to choose the most open audience the Canvas's artifacts allow, public by
+default, and to ask at the end whether the person wants it changed.
+
+**Why:** New Canvases start with editors-only artifact access, so a site an
+agent built for the public stayed private until a manager found Share, and
+nothing in the run could fix it. Product decided sites default to public.
+Changing the Canvas default was rejected because it would open every Canvas,
+including those that publish nothing anyone meant to share; resending the full
+`setAudience` update from the tool was rejected because a tool that must echo
+the editor list and named recipients can clear them on a stale read. Letting
+every publish apply the default was rejected in review: the audience covers
+the whole Canvas, so a sign-up page would have reopened a memo a manager had
+restricted. Existing Canvases count as chosen because nothing stored says
+whether their audience was deliberate. A future change must keep the tool
+narrower than Share: no editor changes, no named people, no access for a run
+that does not act as a manager, and no default over a chosen audience.
 
 ### 2026-11-11 — Canvas-owned artifact audiences with local serving admission
 
