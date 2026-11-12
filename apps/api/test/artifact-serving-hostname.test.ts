@@ -105,7 +105,7 @@ function fixture(route: unknown | null, options: {
     const viewer=session && options.checkSessionResult?.ok ? options.checkSessionResult : null;
     const state=viewer??options.currentStateResult;
     if(!state?.manifest || state.version===undefined || !state.mode) return {allowed:false as const,status:404 as const};
-    return {allowed:true as const,kind:'site' as const,revision:1,editor:Boolean(viewer),
+    return {allowed:true as const,kind:'site' as const,workspaceId:state.workspaceId,revision:1,editor:Boolean(viewer),
       viewerId:viewer?.viewerId??null,viewerName:viewer?.viewerName??null,
       version:state.version,mode:state.mode,stateful:state.stateful??false,manifest:state.manifest};
   });

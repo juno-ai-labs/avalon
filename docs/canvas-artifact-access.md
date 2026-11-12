@@ -105,6 +105,8 @@ identity and membership incarnation; it is not an enduring access grant. The
 current snapshot decides each request, including anonymous public requests.
 No cross-DO or product D1 authorization call is made while serving. The existing
 platform D1 hostname lookup remains unchanged.
+Successful site admission also carries the locally stored owning Organization
+ID into the app's scoped Sidekick invocation binding.
 
 An absent initial projection on a new host returns 503. Migration 4 seeds only
 already-published hosts with their historical public reach at revision 1;
