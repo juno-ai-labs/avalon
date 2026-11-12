@@ -1117,3 +1117,66 @@ it('does not retry an inaccessible Canvas on unrelated Canvas pushes', async () 
   await act(async () => { applyVersionedSidebarList(client, 'canvases', 1, []); });
   expect(getCanvas).toHaveBeenCalledTimes(calls);
 });
+
+describe('the artifact cards’ audience', () => {
+  const GUEST = asUserId('00000000-0000-7000-8000-0000000000a9');
+  const sharing = () => lastSurface().props.artifactSharing!;
+
+  it('hands the surface the Canvas’s published artifacts', async () => {
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().props.artifactSharing).toBeDefined());
+    expect(sharing().publishedIds).toEqual(['00000000-0000-7000-8000-0000000000b2', '00000000-0000-7000-8000-0000000000b1']);
+    expect(sharing().audience).toMatchObject({ value: 'editors', canChange: true });
+  });
+
+  it('saves a new artifact audience with the editors as they were and the revision it was drawn from', async () => {
+    getCanvas.mockResolvedValue(detail({
+      visibility: 'workspace', participantUserIds: [MAYA, GUEST], sharingRevision: 4,
+      artifactVisibility: 'workspace', artifactUserIds: [GUEST],
+    }));
+    setCanvasAudience.mockResolvedValue(detail({ visibility: 'workspace', participantUserIds: [MAYA, GUEST], sharingRevision: 5, artifactVisibility: 'public' }));
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().props.artifactSharing?.audience?.value).toBe('workspace'));
+    // The member list arrives on its own read; the guest filter needs it.
+    await waitFor(() => expect(getWorkspaceMembers).toHaveBeenCalled());
+
+    await act(async () => { await sharing().audience!.change('public'); });
+
+    // An Organization-wide Canvas names only its guests as editors; Maya is a member.
+    expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, {
+      visibility: 'workspace', userIds: [GUEST], artifactVisibility: 'public', artifactUserIds: [], expectedRevision: 4,
+    });
+    await waitFor(() => expect(sharing().audience?.value).toBe('public'));
+  });
+
+  it('keeps the chosen artifact users when the audience stays the Organization', async () => {
+    getCanvas.mockResolvedValue(detail({ artifactVisibility: 'participants', artifactUserIds: [GUEST], sharingRevision: 2 }));
+    setCanvasAudience.mockResolvedValue(detail({ artifactVisibility: 'workspace', artifactUserIds: [GUEST], sharingRevision: 3 }));
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().props.artifactSharing?.audience?.value).toBe('participants'));
+
+    await act(async () => { await sharing().audience!.change('workspace'); });
+
+    expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, {
+      visibility: 'creator', userIds: [], artifactVisibility: 'workspace', artifactUserIds: [GUEST], expectedRevision: 2,
+    });
+  });
+
+  it('reloads the Canvas and says why when someone else changed sharing first', async () => {
+    setCanvasAudience.mockRejectedValue(new ApiError('Sharing changed', 409, 'canvas_sharing_changed'));
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().props.artifactSharing?.audience).toBeDefined());
+    const reads = getCanvas.mock.calls.length;
+
+    await act(async () => { await expect(sharing().audience!.change('public')).rejects.toThrow('Sharing changed'); });
+
+    await waitFor(() => expect(getCanvas.mock.calls.length).toBeGreaterThan(reads));
+    expect(await screen.findByText(/Someone else changed this Canvas’s sharing first/u)).toBeInTheDocument();
+  });
+
+  it('offers the audience without a menu to someone who cannot manage sharing', async () => {
+    getCanvas.mockResolvedValue(detail({ canManage: false }));
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().props.artifactSharing?.audience?.canChange).toBe(false));
+  });
+});

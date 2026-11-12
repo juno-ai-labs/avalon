@@ -57,6 +57,12 @@ clients preserve editors by copying the current `participantUserIds`.
 Internal publishing agents direct a manager to the Canvas's Share screen to
 change the audience; the external MCP sharing tool is not available to them.
 
+Each generated artifact's card in the Chat also changes `artifact_visibility`
+from a menu (`apps/desktop/src/renderer/screens/canvas.tsx`): it resends the
+editor audience unchanged, keeps the selected artifact users only for
+`workspace`, and sends the same `expectedRevision`. Choosing specific people
+opens the Share modal, which owns the person picker.
+
 The Share modal shows the most recently updated artifact's stable link. A link
 lookup can fail while publication is still propagating. The modal retains a
 loading/retry control so a manager can retrieve the link without closing Share

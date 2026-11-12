@@ -1,13 +1,16 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { SITE_MANIFEST_MIME_TYPE } from '@rally/contracts';
 import type { CitationTarget } from '@rally/contracts/citations';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CitationFootnoteSection, CitationsProvider } from './markdown-citations';
 import type { CitationContext, CitationResource } from './markdown-citations';
+import type { ArtifactAudienceControl, ArtifactCardControls } from './artifact-card-tools';
 import { MarkdownBody } from './workstream-blocks';
 
+const clipboard = vi.hoisted(() => ({ copyText: vi.fn<(text: string) => Promise<void>>(async () => undefined) }));
 vi.mock('../lib/platform', () => ({
-  desktopBridge: () => ({ copyText: vi.fn(), exportMessage: vi.fn(), reportTelemetryProductIntent: vi.fn() }),
+  desktopBridge: () => ({ copyText: clipboard.copyText, exportMessage: vi.fn(), reportTelemetryProductIntent: vi.fn() }),
   desktopServicesAvailable: () => false,
 }));
 
@@ -958,5 +961,97 @@ describe('citations while a turn streams', () => {
 
     expect(document.querySelector('.citation-pill-pending')).toBeNull();
     expect(document.body).toHaveTextContent('The gap is real.[^ava more');
+  });
+});
+
+describe('a published artifact card', () => {
+  const SITE: CitationResource = { id: 'grocery', title: 'Grocery list', resourceType: 'generated_site' };
+  const URL = 'https://grocery.example-artifacts.test/';
+  beforeEach(() => { clipboard.copyText.mockClear(); });
+
+  function audience(overrides: Partial<ArtifactAudienceControl> = {}): ArtifactAudienceControl {
+    return { value: 'editors', canChange: true, change: vi.fn(async () => undefined), choosePeople: vi.fn(), ...overrides };
+  }
+  function controls(overrides: Partial<ArtifactCardControls> = {}): ArtifactCardControls {
+    return { link: vi.fn(async () => URL), openInBrowser: vi.fn(async () => undefined), ...overrides };
+  }
+  function renderCard(tools: ArtifactCardControls | undefined): void {
+    // The app's root provides the tooltips the tools' labels show in.
+    render(
+      <Tooltip.Provider>
+        <MarkdownBody citations={context({
+          resolve: (id) => (id === SITE.id ? SITE : undefined),
+          artifact: (id) => (id === SITE.id ? tools : undefined),
+        })}>
+          {'![Grocery list](resource://grocery)'}
+        </MarkdownBody>
+      </Tooltip.Provider>,
+    );
+  }
+
+  it('copies the artifact link and opens it in the browser from the card', async () => {
+    const tools = controls();
+    renderCard(tools);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
+    await waitFor(() => expect(clipboard.copyText).toHaveBeenCalledWith(URL));
+    expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open in browser' }));
+    expect(tools.openInBrowser).toHaveBeenCalledTimes(1);
+    // The tools are beside the card's own button, so neither opens the preview.
+    expect(screen.getByRole('button', { name: 'Open Grocery list' })).not.toContainElement(screen.getByRole('button', { name: 'Open in browser' }));
+  });
+
+  it('changes who can open the Canvas’s artifacts from the card’s menu', async () => {
+    const control = audience();
+    renderCard(controls({ audience: control }));
+
+    const trigger = screen.getByRole('button', { name: 'Who can open Grocery list: Editors only' });
+    expect(trigger).toHaveTextContent('Editors');
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    expect(await screen.findByText('Applies to every artifact in this Canvas.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Anyone with the link' }));
+
+    expect(control.change).toHaveBeenCalledWith('public');
+    // The pill shows the choice while the Canvas saves it.
+    expect(screen.getByRole('button', { name: 'Who can open Grocery list: Anyone with the link' })).toHaveTextContent('Public');
+  });
+
+  it('hands choosing specific people to the Share panel', async () => {
+    const control = audience({ value: 'workspace' });
+    renderCard(controls({ audience: control }));
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Who can open Grocery list: Everyone in the Organization' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Specific people…' }));
+
+    expect(control.choosePeople).toHaveBeenCalledTimes(1);
+    expect(control.change).not.toHaveBeenCalled();
+  });
+
+  it('reopens the people picker when specific people is already the setting', async () => {
+    const control = audience({ value: 'participants' });
+    renderCard(controls({ audience: control }));
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Who can open Grocery list: Specific people' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Specific people…' }));
+
+    expect(control.choosePeople).toHaveBeenCalledTimes(1);
+    expect(control.change).not.toHaveBeenCalled();
+  });
+
+  it('shows the audience without a menu to someone who cannot change it', () => {
+    renderCard(controls({ audience: audience({ value: 'public', canChange: false }) }));
+
+    expect(screen.getByRole('note', { name: 'Who can open Grocery list: Anyone with the link' })).toHaveTextContent('Public');
+    expect(screen.queryByRole('button', { name: /Who can open/u })).toBeNull();
+  });
+
+  it('draws no artifact tools for a resource the host gives none', () => {
+    renderCard(undefined);
+
+    expect(screen.getByRole('button', { name: 'Open Grocery list' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy link' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open in browser' })).toBeNull();
   });
 });
