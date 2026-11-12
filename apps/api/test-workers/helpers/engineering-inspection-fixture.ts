@@ -65,3 +65,10 @@ export async function seedSecondInspectableWorkspace(
     database.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(input.workspaceId),
   ]);
 }
+
+/** The billing-disabled closure fence still checks for retained Stripe customers. */
+export async function ensureBillingClosureSchema(database: D1Database): Promise<void> {
+  await database.prepare(`CREATE TABLE IF NOT EXISTS billing_accounts (
+    workspace_id TEXT PRIMARY KEY, customer_id TEXT
+  )`).run();
+}

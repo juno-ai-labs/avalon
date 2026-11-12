@@ -9,7 +9,7 @@ import { createEngineeringMcpHandler } from "../../engineering-mcp/src/index";
 import { TASKS_EXTENSION, TaskSnapshotSchema } from "../../engineering-mcp/src/tasks";
 import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridge";
 import { workspaceDOName } from "../src/durable-objects/names";
-import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
+import { ensureBillingClosureSchema, seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 import type { EngineeringTaskTestDO } from "./fixtures/engineering-task-worker";
 
@@ -249,6 +249,7 @@ describe("engineering MCP task execution", () => {
   it("resumes partial retirement after eviction and preserves the operator audit despite cancellation intent", async () => {
     await seedInspectableWorkspace(env.DB, { workspaceId: WORKSPACE, userId: USER,
       sessionId: "00000000-0000-7000-8000-00000000ef72", at: "2026-11-10T00:00:00.000Z" });
+    await ensureBillingClosureSchema(env.DB);
     await env.DB.prepare("ALTER TABLE workspaces ADD COLUMN updated_at TEXT").run();
     const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE)));
     await workspace.initializeWorkspace(WORKSPACE, "wnam");

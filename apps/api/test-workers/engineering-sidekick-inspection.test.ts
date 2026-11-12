@@ -24,7 +24,7 @@ import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 
-import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
+import { ensureBillingClosureSchema, seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -52,6 +52,7 @@ function bridge(): EngineeringInspectionBridge {
 }
 
 async function seedRegionalDatabase(): Promise<void> {
+  await ensureBillingClosureSchema(env.DB);
   await seedInspectableWorkspace(env.DB, {
     workspaceId: WORKSPACE_ID,
     userId: AUTHOR_ID,
