@@ -8,7 +8,6 @@ import type {
   SkillSummary,
   SkillWarn,
 } from "./types";
-import { renderSkillResourceHint } from "@rally/prompts/bind/skill-resource-hint";
 
 /**
  * Tier 2 — resolving the bodies of the skills a run has loaded.
@@ -136,7 +135,7 @@ export function wrapSkillContent(params: {
       // Escaped here too: the name is interpolated into a quoted call, so an
       // unescaped one breaks out of this sentence exactly as it would out of an
       // attribute. Identical output for any name a host should be accepting.
-      renderSkillResourceHint(attribute(params.name)),
+      `Read a resource with read_skill_resource("${attribute(params.name)}", path).`,
     );
   }
   parts.push("</skill_content>");
