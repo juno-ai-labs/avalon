@@ -7,7 +7,6 @@ import { diagnosticErrorCode } from "../observability/logger";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-export { openingWithEventContent } from "@rally/prompts/api/sidekick-event-content";
 
 /**
  * What an admitted event is about, read by the host for the run it started.
@@ -24,7 +23,6 @@ export { openingWithEventContent } from "@rally/prompts/api/sidekick-event-conte
  * line saying why. `docs/sidekick-sources.md` owns the rule.
  */
 import type { SidekickEventContent } from "@rally/prompts/api/sidekick-event-content";
-export type { SidekickEventContent };
 
 export async function readSidekickEventContent(
   env: Env,

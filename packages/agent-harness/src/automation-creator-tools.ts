@@ -31,8 +31,6 @@ import {
 } from "./index";
 import { AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE } from "@rally/prompts/harness/sidekick-authoring";
 import { CUSTOM_TOOLS_GUIDE } from "@rally/prompts/harness/custom-tools-guide";
-export { CUSTOM_TOOLS_GUIDE } from "@rally/prompts/harness/custom-tools-guide";
-export { AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE } from "@rally/prompts/harness/sidekick-authoring";
 
 /** A typed refusal from a drafting tool: a stable code and allowlisted details. */
 export class AutomationCreatorToolError extends Error {

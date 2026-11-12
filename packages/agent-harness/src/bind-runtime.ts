@@ -98,7 +98,6 @@ import { renderPromptSkillCatalog } from "./skill-catalog";
 import { renderCompactionCheckpointContent } from "@rally/prompts/harness/compaction";
 import {
   AVALON_SKILLS_PLUGIN_ID,
-  AVALON_SKILLS_SYSTEM_MESSAGE,
   createSkillRuntime,
   type SkillRuntime,
 } from "./skills";
@@ -145,6 +144,7 @@ import { renderPluginCatalogSection } from "@rally/prompts/harness/plugin-catalo
 import { renderSkillCatalogSection } from "@rally/prompts/harness/skill-catalog-section";
 import { COMPACTION_SUMMARY_RETRY_SUFFIX } from "@rally/prompts/harness/compaction-summary-retry";
 import { PLUGIN_DISCOVERY_SYSTEM_MESSAGE } from "@rally/prompts/harness/plugin-discovery";
+import { AVALON_SKILLS_SYSTEM_MESSAGE } from "@rally/prompts/harness/skills-plugin";
 
 type ProviderMessage = Parameters<ToolLoopParams["callModel"]>[0][number];
 type ProviderMessages = ProviderMessage[];

@@ -1,6 +1,5 @@
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
-import { renderMemoryDigest } from "@rally/agent-harness";
 
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
@@ -15,6 +14,7 @@ import {
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
+import { renderMemoryDigest } from "@rally/prompts/harness/memory-digest";
 
 /**
  * The memory digest's conversation half: which reader a run's digest is read

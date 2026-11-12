@@ -6,7 +6,6 @@ import {
   JEV_LATEST_MODEL,
 } from "./jev";
 import { SEMANTIC_TRIGGER_CHOICES, semanticTriggerQuestions, type SemanticTriggerChoice } from "@rally/prompts/harness/semantic-trigger-question";
-export { SEMANTIC_TRIGGER_CHOICES, semanticTriggerQuestions, type SemanticTriggerChoice };
 
 /**
  * Whether one connector event satisfies one Sidekick's written condition.

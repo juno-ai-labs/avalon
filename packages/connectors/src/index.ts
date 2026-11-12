@@ -557,7 +557,6 @@ function googleRejectedArgument(
   return null;
 }
 
-export { GoogleFileWriteAuthorizationGuidance } from "@rally/prompts/connectors/google-file-write-authorization";
 
 /**
  * The cursor parameter every paginated Google tool declares, and what it says.

@@ -1,5 +1,4 @@
 import type { SidekickReviewNoticeV1 } from "@rally/contracts";
-export { renderSidekickReviewNotice } from "@rally/prompts/api/sidekick-review-notice";
 
 /**
  * The host's scheduled self-review notice: the sentence people see on the

@@ -1,11 +1,5 @@
 import { z } from "zod";
 
-export {
-  jevChoiceQuestion,
-  type JevChoiceCriterion,
-  type JevChoiceInstructions,
-  type JevChoiceQuestion,
-} from "@rally/prompts/harness/jev-question";
 
 /**
  * The answer schema for one Choice question.

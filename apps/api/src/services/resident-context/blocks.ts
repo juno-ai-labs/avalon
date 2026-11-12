@@ -5,7 +5,6 @@ import {
   renderOmittedBlockLine,
   renderOmittedCountLine,
 } from "@rally/prompts/api/repository-instructions";
-export { INSTRUCTION_TRUNCATED_MARKER } from "@rally/prompts/api/repository-instructions";
 /**
  * Resident context blocks: content the model needs in context, with a stable
  * identity, a durable record of where it currently lives, and a policy for how

@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { jevSingleChoiceAnswers } from "./jev";
-export { questions } from "@rally/prompts/harness/completion-verification-question";
 
 import { choices, type Choice } from "@rally/prompts/harness/completion-verification-question";
-export { choices, type Choice };
 export const answers = jevSingleChoiceAnswers("stopping", choices);
 const contextSchema = z.object({ id: z.string(), role: z.string(), text: z.string(), relation: z.string() });
 export const completionStateSchema = z.object({
