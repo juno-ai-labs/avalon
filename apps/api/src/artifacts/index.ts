@@ -1,3 +1,5 @@
+import { contentDisposition } from '../lib/content-disposition';
+import { diagnosticErrorCode, logWarn } from '../observability/logger';
 import type { Region } from "@rally/contracts/regions";
 /**
  * The artifact serving Worker.
@@ -54,7 +56,6 @@ import { resolveArtifactHostname } from "./hostname-routes";
 import { artifactHostDOName } from "../durable-objects/names";
 import type { ArtifactHostDO } from "../durable-objects/artifact-host-do";
 import { durableObjectStubForArtifact } from "../lib/durable-object-namespace";
-import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
   ARTIFACT_CONTENT_SECURITY_POLICY,
   artifactContentSecurityPolicy,
@@ -271,88 +272,48 @@ const artifactServer = {
       return withSecurityHeaders(new Response(null, { status: 303, headers }));
     }
 
-    // Every remaining path is artifact content, and any request may reach it.
-    // Fetch metadata decides only whether it may carry a viewer identity:
-    // same-origin requests and top-level navigations may; everything else,
-    // any method from any origin, arrives anonymous. So a sibling artifact can
-    // never act with a viewer's identity, and the site's code decides what an
-    // anonymous request may do.
+    // Routing remains unchanged. Admission is one call to the artifact's own
+    // local SQLite; no WorkspaceDO or product D1 authorization read occurs here.
     const verdict = classifyFetchMetadata(request, origin);
-    let admitted: Admitted | null = null;
-    // Whether sending this person to sign in could help. Not when their
-    // session could not be checked: signing in again would only come back to
-    // the same failed check, round and round.
-    let signInCanHelp = true;
-    if (verdict === "same_origin" || verdict === "top_level") {
-      const session = readCookie(request, SESSION_COOKIE);
-      // Identity is an optional enhancement to a public response. If the
-      // visibility hop fails, degrade to anonymous rather than making a viewer
-      // with an old cookie less able to open the site than a crawler is.
-      let checked: Awaited<ReturnType<ArtifactHostDO["checkSession"]>> | null = null;
-      if (session) {
-        try {
-          checked = await artifact.checkSession(session);
-        } catch (error) {
-          signInCanHelp = false;
-          logWarn({
-            LOG_LEVEL: "info",
-            AVALON_REGION: env.AVALON_REGION,
-          }, "artifact_viewer_session_check_failed", {
-            artifact_id: artifactId,
-            code: diagnosticErrorCode(error, "session_check_failed"),
-          });
-        }
-      }
-      if (
-        checked?.ok
-        && checked.viewerId
-        && checked.viewerName !== undefined
-        && checked.version !== undefined
-        && checked.mode !== undefined
-        && checked.stateful !== undefined
-        && checked.workspaceId
-        && checked.manifest
-      ) {
-        admitted = {
-          workspaceId: checked.workspaceId,
-          viewerId: checked.viewerId,
-          viewerName: checked.viewerName,
-          version: checked.version,
-          mode: checked.mode,
-          stateful: checked.stateful,
-          manifest: checked.manifest,
-        };
-      }
+    const session = verdict === 'same_origin' || verdict === 'top_level' ? readCookie(request,SESSION_COOKIE) : null;
+    let admission: Awaited<ReturnType<ArtifactHostDO['admitRequest']>>;
+    try { admission=await artifact.admitRequest({session}); }
+    catch(error) {
+      logWarn({LOG_LEVEL:'info',AVALON_REGION:env.AVALON_REGION},'artifact_admission_failed',{
+        artifact_id:artifactId,code:diagnosticErrorCode(error,'artifact_admission_failed'),
+      });
+      return html(neutralPage(),503);
     }
-    if (!admitted) {
-      const state = await artifact.currentState();
-      if (!state) return html(neutralPage(), 404);
-      admitted = {
-        workspaceId: state.workspaceId,
-        viewerId: null,
-        viewerName: null,
-        version: state.version,
-        mode: state.mode,
-        stateful: state.stateful,
-        manifest: state.manifest,
-      };
+    if(!admission.allowed) {
+      const target=admission.status===401 && isDocumentNavigation(request) ? signInUrl(env,host,url.pathname+url.search) : null;
+      return target ? redirect(target) : html(neutralPage(),admission.status);
     }
-
-    // Anyone may submit to a site. A request without a session reaches the
-    // handler with no viewer headers, and the site's own code decides whether
-    // to require them: a protected site answers 401, which a page load turns
-    // into sign-in below.
+    if(admission.kind==='file') {
+      if(request.method!=='GET' && request.method!=='HEAD') return html(neutralPage(),405);
+      const mount=splitVersionMount(url.pathname);
+      if(mount.path!=='/' && mount.path!=='/index.html') return html(neutralPage(),404);
+      const latest=Math.max(...admission.file.versions.map(version=>version.version));
+      if(mount.version!==null && mount.version!==latest && !admission.editor) return html(neutralPage(),403);
+      const version=admission.file.versions.find(version=>version.version===(mount.version??latest));
+      if(!version) return html(neutralPage(),404);
+      const object=await env.PAYLOADS.get(version.contentRef);
+      if(!object) return html(neutralPage(),503);
+      return withSecurityHeaders(new Response(request.method==='HEAD'?null:object.body,{
+        headers:{'content-type':version.mimeType,'content-length':String(object.size),'content-disposition':contentDisposition('inline',admission.file.title)},
+      }));
+    }
+    const admitted: Admitted = admission;
 
     const mount = splitVersionMount(url.pathname);
     if (mount.version !== null && mount.version !== admitted.version) {
       // Historical active versions cannot run their protection guard, and a
       // historical static version has no guard at all. Keep version browsing
       // behind the Rally session even though the current site is public.
-      if (!admitted.viewerId) {
-        const target = signInCanHelp && isDocumentNavigation(request)
+      if (!admission.editor) {
+        const target = !admitted.viewerId && isDocumentNavigation(request)
           ? signInUrl(env, host, url.pathname + url.search)
           : null;
-        return target ? redirect(target) : html(neutralPage(), 401);
+        return target ? redirect(target) : html(neutralPage(), admitted.viewerId ? 403 : 401);
       }
       const refusal = refuseUnsafeVersionRequest(request);
       if (refusal) return html(plainErrorPage(refusal), 405);
@@ -364,7 +325,7 @@ const artifactServer = {
     // is loading a page, send them to sign in and back here instead, so a
     // direct link to a protected site works. The handler still decided the
     // refusal; only its page is replaced, and only for a page load.
-    if (response.status === 401 && !admitted.viewerId && signInCanHelp && isDocumentNavigation(request)) {
+    if (response.status === 401 && !admitted.viewerId && isDocumentNavigation(request)) {
       const target = signInUrl(env, host, url.pathname + url.search);
       if (target) return redirect(target);
     }

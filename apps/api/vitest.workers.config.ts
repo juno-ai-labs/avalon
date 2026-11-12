@@ -28,7 +28,7 @@ export default defineConfig({
             name: "queue-probe-test-service",
             scriptPath: "./test-workers/fixtures/queue-probe-service.mjs",
             modules: true,
-            queueConsumers: { "avalon-do-runtime-test-queue-probe": { maxBatchTimeout: 0 } },
+            queueConsumers: { "avalon-do-runtime-test-queue-probe": { maxBatchTimeout: 0 }, "avalon-do-runtime-test-access-revocations": { maxBatchTimeout: 0 } },
           },
         ],
       },

@@ -30,12 +30,13 @@ export function requiresAttachment(row: ResourceReadRow, owned: boolean): boolea
 
 /** Canvas ownership and archive are local facts, shared by direct reads and search. */
 export function resourceCanvasState(sql: SqlStorage, resourceId: string, publicationParentId: string | null): {
-  ownedByCanvas: boolean; archived: boolean;
+  ownedByCanvas: boolean; archived: boolean; ownerCanvasId: string | null;
 } {
-  const row = sql.exec<{ archived: number | null }>(
-    `SELECT MAX(archived_at IS NOT NULL) AS archived FROM canvas_directory
+  const row = sql.exec<{ archived: number | null; owner_canvas_id: string | null }>(
+    `SELECT MAX(archived_at IS NOT NULL) AS archived,
+      CASE WHEN COUNT(*) = 1 THEN MIN(canvas_id) ELSE NULL END AS owner_canvas_id FROM canvas_directory
       WHERE canvas_id IN (SELECT ? UNION SELECT canvas_id FROM canvas_artifacts WHERE resource_id = ? AND ? IS NULL)`,
     publicationParentId, resourceId, publicationParentId,
   ).one();
-  return { ownedByCanvas: row.archived !== null, archived: row.archived === 1 };
+  return { ownedByCanvas: row.archived !== null, archived: row.archived === 1, ownerCanvasId: row.owner_canvas_id };
 }

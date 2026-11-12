@@ -4,7 +4,7 @@ description: Understand who can open a Canvas, how to share it with people or th
 ---
 
 Before you paste a contract, a salary or a customer's details into a Canvas,
-you should know who can read it. This page explains how Rally decides, how to
+you should know who can read the conversation and who can use its artifacts. This page explains how Rally decides, how to
 check for any Canvas, and what happens the moment you change it.
 
 ## Each Canvas decides for itself
@@ -14,7 +14,7 @@ Canvases. Every Canvas has its own list of who can open it, and that list is
 the whole answer. Sidekicks work the same way, with their own sharing, covered
 in [What a Sidekick is](../03-sidekicks/01-what-a-sidekick-is.md#who-a-sidekick-is-shared-with).
 
-A Canvas can be open to one of three groups:
+**Who can edit** chooses who can read the conversation, send messages to Rally and change its artifacts:
 
 | Setting | Who can open it |
 | --- | --- |
@@ -23,7 +23,7 @@ A Canvas can be open to one of three groups:
 | **Everyone in the Organization** | Every member of the Organization, and any guests you add. |
 
 To check, click **Share** at the top right of the Canvas. The **Share Canvas**
-window shows which setting is chosen, and the people chosen below it.
+window shows the editor audience and a separate artifact audience.
 
 Whoever can open a Canvas can read all of it: the conversation, every version
 of what Rally made, and every comment. There is no way to show someone the
@@ -31,23 +31,28 @@ latest version but not the conversation behind it.
 
 ## Share a Canvas
 
-1. Click **Share** at the top right of the Canvas.
-2. Choose **Only you**, **Specific people** or **Everyone in the
-   Organization**. For **Specific people**, tick who should be able to open
-   it, as described in
-   [People in a Canvas](07-people-in-a-canvas.md#adding-and-removing-people).
-3. Click **Save**. **Cancel** leaves everything as it was.
+1. Click **Share** at the top right.
+2. Under **Who can edit**, choose **Only you**, **Specific people** or
+   **Everyone in the Organization**. **Add people** opens a searchable list;
+   tick the editors you want.
+3. Under **Who can interact with artifacts**, choose **Editors only**,
+   **Specific people**, **Everyone in the Organization** or **Anyone with the
+   link**. Use its own **Add people** picker for artifact users.
+4. Click **Save**. **Cancel** discards the changes.
 
-Choosing **Everyone in the Organization** puts the Canvas in every member's
-Canvases list and makes it findable in search. In the sharing window, you can
-still search for members and guests. Members appear checked because they
-already have access, and you can choose which guests to include. If you save
-and later go back to **Specific people**, choose the members again.
+Editors can always use the artifacts. Artifact users can open and use published
+outputs without seeing the conversation or asking Rally to change them. For
+example, two people can edit a planner while anyone with its link uses it.
+These settings apply to every published artifact in the Canvas.
 
-Guests are never included by the Organization-wide setting. A guest sees a
-Canvas only when someone chooses them for it, or invites them by email, as
-[Sharing with people outside your Organization](09-sharing-with-guests.md)
-explains.
+New Canvases start with artifact access set to **Editors only**. Choose public
+access explicitly. Changing access takes a short time to reach the published
+artifacts. Previously downloaded content cannot be taken back.
+
+Organization-wide audiences include active members, plus the guests you select.
+Guests do not gain access just by belonging to the Organization. Inviting a guest
+by email from this window grants editor access, including the conversation;
+[Sharing with guests](09-sharing-with-guests.md) explains that invitation.
 
 ### Who can change the sharing
 
@@ -89,13 +94,13 @@ on, the Sidekick's managers, and the Organization's owners and administrators,
 decide who else can open it. Changing who the Sidekick is shared with later
 does not change the Canvases it already made.
 
-## Sites have a public address
+## Artifact links
 
-Most of what Rally makes is reachable only inside Rally. A website is the
-exception: a live site has its own web address, and who can reach that address
-is set on the site itself, not by the Canvas's list. [Live sites](../06-things-rally-makes/03-live-sites.md)
-explains the choices. Check the site's setting before you send its address to
-anyone.
+**Copy link** copies an artifact's address. Its Canvas's artifact audience
+decides who can open it. **Anyone with the link** allows unsigned visitors;
+other audiences require the right account. Making artifacts public never makes
+the conversation public. [Live sites](../06-things-rally-makes/03-live-sites.md)
+explains how this works for websites.
 
 ## Roles
 
@@ -115,7 +120,7 @@ and how to change them, are covered in
 
 ## When access narrows
 
-Rally applies a narrowing within moments, including to people who have the
+Rally applies conversation changes within moments; published artifacts follow as the sharing update reaches them, including to people who have the
 Canvas open at that moment. Nobody keeps reading a Canvas because they happened
 to have it on screen.
 

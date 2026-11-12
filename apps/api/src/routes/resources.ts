@@ -1,3 +1,4 @@
+import { ArtifactLinkSchema } from '@rally/contracts/artifact-access';
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
@@ -126,6 +127,10 @@ resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
  * fragment, which a browser never sends to a server, so the code stays out of
  * every request log on the way to the artifact origin.
  */
+resourceRoutes.get('/:id/artifact/link',zValidator('param',idParam),async c=>{
+  c.header('Cache-Control','no-store');
+  return c.json(ArtifactLinkSchema.parse(await artifactReader(c).link(c.req.valid('param').id)));
+});
 resourceRoutes.post("/:id/artifact/open", zValidator("param", idParam), async (c) => {
   const service = artifactReader(c);
   return c.json(ArtifactOpenResultSchema.parse(await service.open(c.req.valid("param").id)));

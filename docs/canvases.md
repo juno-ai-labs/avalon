@@ -142,10 +142,21 @@ member has a role, so somebody suspended or with no relationship is never
 admitted by Organization visibility. Resource
 authorization, and so `ArtifactOpenService`, decides a Canvas's artifact from
 the same facts: an artifact generated in the Chat is attached to it, so a
-person who may open the Canvas may open the artifact and nobody else may
+person who may open the Canvas may open the artifact; additional artifact-only users are decided by the separate artifact audience
 (`hostedConversationAuthorizationFacts`, one call for a Sidekick or a Canvas).
 
 ### Who changes who can open it
+
+The sharing modal has two independent audiences: **Who can edit** (the Chat
+and publication) and **Who can interact with artifacts** (published output).
+Editors always have artifact access. A manager saves both in one transaction;
+artifact hosts receive the changed policy through the existing Cloudflare Queue.
+[Canvas artifact access](canvas-artifact-access.md) owns propagation and serving.
+The standalone component preview remains available with
+`pnpm --filter @rally/desktop preview:sharing` at
+`http://localhost:5175/sharing-preview.html`; its Save retains selections only
+in memory. The production Canvas screen uses the same presentation component
+with the real audience API, guest editor invitations and access requests.
 
 `canvasManages`: the creator, the Organization's owners and administrators,
 and for a Canvas a Sidekick writes, that Sidekick's managers

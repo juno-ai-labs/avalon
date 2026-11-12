@@ -1,3 +1,5 @@
+import { ArtifactAccessMessageSchema, type ArtifactAccessMessage } from '@rally/contracts/artifact-access';
+import { ensureArtifactHostname } from '../services/artifact-hostname';
 import {
   asArtifactId,
   asWorkspaceId,
@@ -18,7 +20,7 @@ import {
   workspacePlacementAffinity,
 } from "../lib/durable-object-namespace";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
-import { logInfo, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { WorkspaceRelationshipChangeMessageSchema, type WorkspaceRelationshipChangeMessage } from "../services/workspace-relationship-delivery";
 import { publishWorkspaceSync } from "../services/workspace-realtime-service";
 import {
@@ -180,6 +182,23 @@ export async function consumeAccessRevocationQueue(
   env: Env,
 ): Promise<void> {
   await Promise.all(batch.messages.map(async (message) => {
+    const accessChange = ArtifactAccessMessageSchema.safeParse(message.body);
+    const body = message.body;
+    if (!accessChange.success && body !== null && typeof body === 'object' && 'kind' in body
+      && (body.kind === 'canvas_artifact_access_changed' || body.kind === 'artifact_access_sync')) {
+      logWarn(env, 'artifact_access_message_invalid', { errors: describeZodIssues(accessChange.error) });
+      message.ack();
+      return;
+    }
+    if (accessChange.success) {
+      try { await applyArtifactAccessChange(env,accessChange.data); message.ack(); }
+      catch(error) {
+        if(isRetirementRefusal(error)) { message.ack(); return; }
+        logWarn(env,'artifact_access_delivery_failed',{workspace_id:accessChange.data.workspaceId,canvas_id:accessChange.data.canvasId,code:diagnosticErrorCode(error,'artifact_access_delivery_failed')});
+        message.retry();
+      }
+      return;
+    }
     const relationshipChange = WorkspaceRelationshipChangeMessageSchema.safeParse(message.body);
     if (relationshipChange.success) {
       try {
@@ -281,4 +300,80 @@ export async function applyWorkspaceRelationshipChange(env: Env, message: Worksp
     WHERE sequence = ? AND workspace_id = ? AND user_id = ? AND incarnation = ? AND revision = ?`)
     .bind(new Date().toISOString(), message.sequence, relationship.workspaceId, relationship.userId,
       relationship.incarnation, relationship.revision).run();
+}
+
+/** One queued hop per artifact. Source reads and cross-object writes stay off serving. */
+export async function applyArtifactAccessChange(
+  env: Env,
+  message: ArtifactAccessMessage,
+): Promise<void> {
+  if (message.region !== env.AVALON_REGION)
+    throw new Error("artifact_access_region_mismatch");
+  const workspaceId = asWorkspaceId(message.workspaceId);
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    workspaceId,
+    workspaceDOName(env.AVALON_REGION, workspaceId),
+  );
+  const delivery = await workspace.canvasArtifactAccessDelivery({
+    workspaceId,
+    canvasId: message.canvasId,
+    ...(message.kind === "artifact_access_sync"
+      ? { resourceId: message.resourceId }
+      : {}),
+  });
+  if (!delivery) return;
+  if (message.kind === "canvas_artifact_access_changed") {
+    // Bodies are addresses, so large audiences never exceed the Queue message limit.
+    for (let offset = 0; offset < delivery.targets.length; offset += 100) {
+      await env.ACCESS_REVOCATION_QUEUE.sendBatch(
+        delivery.targets.slice(offset, offset + 100).map((target) => ({
+          body: ArtifactAccessMessageSchema.parse({
+            kind: "artifact_access_sync",
+            region: message.region,
+            workspaceId,
+            canvasId: message.canvasId,
+            ...target,
+          }),
+        })),
+      );
+    }
+    return;
+  }
+  if (
+    !delivery.targets.some(
+      (target) =>
+        target.artifactId === message.artifactId &&
+        target.resourceId === message.resourceId,
+    )
+  )
+    return;
+  const file = delivery.file;
+  const affinity = await workspacePlacementAffinity(env, workspaceId);
+  const host = durableObjectStubForArtifact(
+    env,
+    env.ARTIFACT_HOSTS,
+    artifactHostDOName(env.AVALON_REGION, asArtifactId(message.artifactId)),
+    affinity,
+  );
+  await host.applyAccessSnapshot(delivery.snapshot);
+  if (file && !delivery.snapshot.archived) {
+    await host.recordFilePublication({
+      workspaceId,
+      canvasId: message.canvasId,
+      revision: delivery.snapshot.revision,
+      file,
+    });
+    const hostnameStub = await ensureArtifactHostname(env, {
+      workspaceId,
+      artifactId: message.artifactId,
+    });
+    await workspace.canvasRegisterFileHost({
+      workspaceId,
+      canvasId: message.canvasId,
+      resourceId: message.resourceId,
+      hostnameStub,
+    });
+  }
 }

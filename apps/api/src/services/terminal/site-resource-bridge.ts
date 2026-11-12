@@ -26,6 +26,7 @@ import {
   artifactAssetKey,
   artifactManifestKey,
   asArtifactId,
+  asWorkspaceId,
   type ArtifactManifest,
   type ArtifactMode,
   type ArtifactHostnameStub,
@@ -33,9 +34,9 @@ import {
 import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../../env";
-import { artifactHostDOName } from "../../durable-objects/names";
+import { artifactHostDOName, workspaceDOName } from "../../durable-objects/names";
 import { sha256Hex } from "../../lib/crypto";
-import { durableObjectStubForArtifact, workspacePlacementAffinity } from "../../lib/durable-object-namespace";
+import { durableObjectStubForArtifact, durableObjectStubForWorkspace, workspacePlacementAffinity } from "../../lib/durable-object-namespace";
 import { ensureArtifactHostname } from "../artifact-hostname";
 import { assetContentType } from "./site-publish";
 import { prepareSocialPreview } from "./site-social-preview";
@@ -218,6 +219,13 @@ export async function pointArtifactAtVersion(
     artifactHostDOName(env.AVALON_REGION, asArtifactId(input.artifactId)),
     affinity,
   );
+  const workspaceId=asWorkspaceId(input.workspaceId);
+  const source=await durableObjectStubForWorkspace(env,env.WORKSPACE_DOS,workspaceId,workspaceDOName(env.AVALON_REGION,workspaceId),affinity);
+  const delivery=await source.canvasArtifactAccessDelivery({workspaceId,canvasId:input.workstreamId});
+  if(!delivery) throw new TerminalToolError('canvas_artifact_policy_missing','This publication has no owning Canvas policy.');
+  // Publication is already an ordered, acknowledged operation. Initialize
+  // serving access before exposing new bytes; subsequent changes use Queues.
+  await host.applyAccessSnapshot(delivery.snapshot);
   return host.recordPublish({
     artifactId: input.artifactId,
     workspaceId: input.workspaceId,
@@ -394,6 +402,13 @@ export async function publishSiteVersion(env: Env, workspace: D1Database, input:
   serverModuleSha256: string | null;
   recordResource: (version: { written: SitePublishResult; version: number; hostnameStub: ArtifactHostnameStub }) => Promise<boolean>;
 }): Promise<{ landed: boolean; written: SitePublishResult; version: number; hostnameStub: ArtifactHostnameStub }> {
+  // Reject an ownerless publication before claims, payload writes or resource mutation.
+  const workspaceId = asWorkspaceId(input.workspaceId);
+  const source = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+    workspaceDOName(env.AVALON_REGION, workspaceId));
+  if (!await source.canvasArtifactAccessDelivery({ workspaceId, canvasId: input.workstreamId })) {
+    throw new TerminalToolError("canvas_artifact_policy_missing", "Publish the site into a Canvas.");
+  }
   const { previous } = input;
   // A republish takes its version before writing a byte of it, so two
   // publishes of one site never write the same version's keys.

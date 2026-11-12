@@ -12,6 +12,7 @@
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
     "./conversation-parent": "./src/conversation-parent.ts",
     "./canvases": "./src/canvases.ts",
+    "./artifact-access": "./src/artifact-access.ts",
     "./mcp-oauth": "./src/mcp-oauth.ts",
     "./canvas-build": "./src/canvas-build.ts",
     "./conversation-view": "./src/conversation-view.ts",

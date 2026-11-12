@@ -1,3 +1,4 @@
+import { ArtifactAccessSnapshotSchema, PublishedArtifactFileSchema, type ArtifactAccessSnapshot, type PublishedArtifactFile } from '@rally/contracts/artifact-access';
 import { revocationClosesSession } from "../services/access-revocation";
 import { RegionSchema } from "@rally/contracts/regions";
 /**
@@ -18,18 +19,16 @@ import { RegionSchema } from "@rally/contracts/regions";
  * work stream, which version, which bucket prefix) comes from this object once
  * it is addressed.
  *
- * Access is admitted before a viewer session is created. After that, this
- * object trusts the durable session until an explicit revocation removes it or
- * its fixed lifetime expires:
+ * Viewer sessions establish identity. Each request is admitted against the
+ * latest Canvas audience projected into this object's SQLite:
  *
  * - *Session and membership revocation is a D1 fact*, so it arrives on the
  *   access-revocation queue like every other one. This object joins that
  *   fan-out at the **workspace** hop, because `artifact_registry` lives beside
  *   the resource authority in `WorkspaceDO` and only the object holding a list
  *   can name its children.
- * - Resource visibility is resolved by the canonical authorization service
- *   before `openForViewer`; ordinary artifact requests do not poll that
- *   authority again.
+ * - Canvas audience snapshots arrive through the same Queue. Ordinary content
+ *   requests read only local policy and identity, without polling the source.
  *
  * See `docs/live-web-artifacts.md`.
  */
@@ -80,9 +79,8 @@ import {
 
 const MIGRATION_COMPONENT = "artifact_host";
 
-// Migration 1 retains the former per-request visibility columns. New sessions
-// record their admission there, but serving trusts the session until explicit
-// revocation or expiry. Keep this explanation outside the published SQL:
+// Migration 1 retains the former per-session visibility columns. Migration 4
+// separates session identity from the current local audience. Keep this outside the published SQL:
 // migration statement bytes, including SQL comments, are immutable receipts.
 export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -154,7 +152,18 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   `CREATE TABLE archived_canvases (workspace_id TEXT NOT NULL, canvas_id TEXT NOT NULL,
      PRIMARY KEY (workspace_id, canvas_id)) STRICT`,
 ]
-}];
+}, { version: 4, description: 'local Canvas artifact access and generic published files', statements: [
+  `CREATE TABLE artifact_access(id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT NOT NULL, canvas_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision>0), snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json))) STRICT`,
+  `CREATE TABLE published_file(id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT NOT NULL, canvas_id TEXT NOT NULL,
+    publication_json TEXT NOT NULL CHECK(json_valid(publication_json))) STRICT`,
+  `ALTER TABLE viewer_sessions ADD COLUMN membership_incarnation TEXT`,
+  // Only hosts already holding a publication at upgrade retain the old public
+  // reach. Fresh hosts have no row and still require a source snapshot.
+  `INSERT INTO artifact_access(id,workspace_id,canvas_id,revision,snapshot_json)
+    SELECT 1,workspace_id,workstream_id,1,json_object('workspaceId',workspace_id,'canvasId',workstream_id,
+      'revision',1,'public',json('true'),'archived',json('false'),'users',json('[]')) FROM artifact_state`,
+]}];
 
 /**
  * How long a viewer session lives, fixed from mint and never sliding.
@@ -268,6 +277,7 @@ export const ArtifactOpenRequestSchema = z.strictObject({
   userId: z.string().uuid(),
   appSessionId: z.string().min(1).max(200).nullable(),
   displayName: z.string().max(300),
+  membershipIncarnation: z.string().min(1).optional(),
 });
 
 /**
@@ -310,6 +320,11 @@ export type ArtifactPageResult =
   | { ok: false; reason: "no_artifact_data" }
   | { ok: false; reason: "table_refused"; detail: string };
 
+type ArtifactAdmissionIdentity = {viewerId:string|null;viewerName:string|null;editor:boolean;revision:number};
+export type ArtifactRequestAdmission = {allowed:false;status:401|403|404|503}
+  | ({allowed:true;kind:'site';workspaceId:string;version:number;mode:'static'|'active';stateful:boolean;manifest:ArtifactManifest} & ArtifactAdmissionIdentity)
+  | ({allowed:true;kind:'file';file:PublishedArtifactFile} & ArtifactAdmissionIdentity);
+
 export interface ArtifactSessionCheck {
   ok: boolean;
   /** Why a request was refused, for the serving Worker's response choice. */
@@ -345,18 +360,25 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    * serving live requests.
    */
   private facetVersion: number | null = null;
+  private cachedAccess: ArtifactAccessSnapshot | null = null;
+  private accessReaders = new Map<
+    string,
+    ArtifactAccessSnapshot["users"][number]
+  >();
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
     assertDurableObjectJurisdiction(state.id, env.AVALON_REGION, env.APP_ENV);
     this.state = state;
     this.initialized = this.initializeDurableObject(async () => {
-      await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
-        storage: state.storage,
-        migrations: ARTIFACT_HOST_SCHEMA_MIGRATIONS,
-        component: MIGRATION_COMPONENT,
-        workerVersionId: env.APP_VERSION ?? "unknown",
-      }));
+      await this.applyMigrations(() =>
+        applyDurableObjectSqliteMigrations({
+          storage: state.storage,
+          migrations: ARTIFACT_HOST_SCHEMA_MIGRATIONS,
+          component: MIGRATION_COMPONENT,
+          workerVersionId: env.APP_VERSION ?? "unknown",
+        }),
+      );
     });
   }
 
@@ -387,35 +409,70 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    * converges. `advanced` says whether this call moved what is served.
    */
   /** WorkspaceDO's durable archive fan-out; a late first publish cannot erase it. */
-  async archiveCanvas(input: { workspaceId: string; canvasId: string }): Promise<void> {
+  async archiveCanvas(input: {
+    workspaceId: string;
+    canvasId: string;
+  }): Promise<void> {
     await this.initialized;
-    const request = parseRpcInput(z.strictObject({ workspaceId: z.string().uuid(), canvasId: z.string().uuid() }), input, "canvas_archive_artifact");
+    const request = parseRpcInput(
+      z.strictObject({
+        workspaceId: z.string().uuid(),
+        canvasId: z.string().uuid(),
+      }),
+      input,
+      "canvas_archive_artifact",
+    );
     this.state.storage.transactionSync(() => {
       const state = this.stateRow();
-      if (state && (state.workspace_id !== request.workspaceId || state.workstream_id !== request.canvasId)) {
+      if (
+        state &&
+        (state.workspace_id !== request.workspaceId ||
+          state.workstream_id !== request.canvasId)
+      ) {
         throw new Error("canvas_archive_artifact_identity_mismatch");
       }
-      this.state.storage.sql.exec(`INSERT OR IGNORE INTO archived_canvases VALUES (?, ?)`, request.workspaceId, request.canvasId);
+      this.state.storage.sql.exec(
+        `INSERT OR IGNORE INTO archived_canvases VALUES (?, ?)`,
+        request.workspaceId,
+        request.canvasId,
+      );
       this.state.storage.sql.exec(`DELETE FROM viewer_sessions`);
     });
   }
 
   private canvasArchived(): boolean {
-    return this.state.storage.sql.exec(`SELECT 1 FROM archived_canvases LIMIT 1`).toArray().length > 0;
+    return (
+      this.state.storage.sql
+        .exec(`SELECT 1 FROM archived_canvases LIMIT 1`)
+        .toArray().length > 0
+    );
   }
 
-  async recordPublish(publish: ArtifactPublish): Promise<{ advanced: boolean }> {
+  async recordPublish(
+    publish: ArtifactPublish,
+  ): Promise<{ advanced: boolean }> {
     await this.initialized;
     const input = ArtifactPublishSchema.parse(publish);
+    const access = this.accessSnapshot();
+    if (
+      access &&
+      (access.workspaceId !== input.workspaceId ||
+        access.canvasId !== input.workstreamId)
+    )
+      throw new Error("artifact_publish_owner_mismatch");
     if (this.canvasArchived()) throw new Error("canvas_archived");
     const now = Date.now();
     // One synchronous event: nothing interleaves between this read and the
     // fenced upsert below.
-    const before = this.state.storage.sql.exec<{ current_version: number }>(
-      "SELECT current_version FROM artifact_state WHERE id = 1",
-    ).toArray()[0]?.current_version ?? null;
-    const written = this.state.storage.sql.exec<{ current_version: number }>(
-      `INSERT INTO artifact_state (
+    const before =
+      this.state.storage.sql
+        .exec<{
+          current_version: number;
+        }>("SELECT current_version FROM artifact_state WHERE id = 1")
+        .toArray()[0]?.current_version ?? null;
+    const written = this.state.storage.sql
+      .exec<{ current_version: number }>(
+        `INSERT INTO artifact_state (
          id, artifact_id, workspace_id, workstream_id, resource_id, region,
          current_version, mode, stateful, manifest_json, updated_at
        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -428,17 +485,18 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
          updated_at = excluded.updated_at
        WHERE excluded.current_version >= artifact_state.current_version
        RETURNING current_version`,
-      input.artifactId,
-      input.workspaceId,
-      input.workstreamId,
-      input.resourceId,
-      input.region,
-      input.manifest.artifactVersion,
-      input.manifest.mode,
-      input.manifest.stateful ? 1 : 0,
-      JSON.stringify(input.manifest),
-      now,
-    ).toArray()[0];
+        input.artifactId,
+        input.workspaceId,
+        input.workstreamId,
+        input.resourceId,
+        input.region,
+        input.manifest.artifactVersion,
+        input.manifest.mode,
+        input.manifest.stateful ? 1 : 0,
+        JSON.stringify(input.manifest),
+        now,
+      )
+      .toArray()[0];
     if (!written) return { advanced: false };
     // In-memory only, and deliberately pessimistic: the next request aborts
     // and reloads rather than trusting that this process is the one that will
@@ -454,20 +512,24 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    * bootstrap page in a fragment, which `POST`s it in a body. What is stored
    * here is its digest, so this database holds no redeemable secret.
    */
-  async openForViewer(request: z.infer<typeof ArtifactOpenRequestSchema>): Promise<{ code: string }> {
+  async openForViewer(
+    request: z.infer<typeof ArtifactOpenRequestSchema>,
+  ): Promise<{ code: string }> {
     await this.initialized;
     const input = ArtifactOpenRequestSchema.parse(request);
     const code = randomSecret();
     const now = Date.now();
     this.pruneExpired(now);
-    const pendingDigest = await sha256Hex(new TextEncoder().encode(`pending:${code}`));
+    const pendingDigest = await sha256Hex(
+      new TextEncoder().encode(`pending:${code}`),
+    );
     const codeDigest = await sha256Hex(new TextEncoder().encode(code));
     if (this.canvasArchived()) throw new Error("canvas_archived");
     this.state.storage.sql.exec(
       `INSERT INTO viewer_sessions (
          session_sha256, user_id, app_session_id, display_name,
-         issued_at, expires_at, code_sha256, code_expires_at, visibility_checked_at, visible
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+         issued_at, expires_at, code_sha256, code_expires_at, visibility_checked_at, visible, membership_incarnation
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
       // The session digest is a placeholder until redemption swaps in the
       // cookie's own digest; the primary key needs a value now and this row is
       // unreachable without the code.
@@ -480,6 +542,11 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       codeDigest,
       now + ARTIFACT_OPEN_CODE_LIFETIME_MS,
       now,
+      input.membershipIncarnation ??
+        this.accessSnapshot()?.users.find(
+          (person) => person.userId === input.userId,
+        )?.incarnation ??
+        null,
     );
     return { code };
   }
@@ -492,23 +559,27 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    * what keeps the code out of a log — nothing here can do that, which is why
    * the code travels in a fragment and a request body rather than a URL.
    */
-  async redeemCode(code: string): Promise<{ session: string; expiresAt: number } | null> {
+  async redeemCode(
+    code: string,
+  ): Promise<{ session: string; expiresAt: number } | null> {
     await this.initialized;
     const now = Date.now();
     const digest = await sha256Hex(new TextEncoder().encode(code));
     const session = randomSecret();
     const sessionDigest = await sha256Hex(new TextEncoder().encode(session));
-    const redeemed = this.state.storage.sql.exec<{ expires_at: number }>(
-      `UPDATE viewer_sessions
+    const redeemed = this.state.storage.sql
+      .exec<{ expires_at: number }>(
+        `UPDATE viewer_sessions
           SET session_sha256 = ?, code_sha256 = NULL, code_expires_at = NULL, redeemed_at = ?
         WHERE code_sha256 = ? AND code_expires_at > ? AND expires_at > ?
       RETURNING expires_at`,
-      sessionDigest,
-      now,
-      digest,
-      now,
-      now,
-    ).toArray();
+        sessionDigest,
+        now,
+        digest,
+        now,
+        now,
+      )
+      .toArray();
     const row = redeemed[0];
     return row ? { session, expiresAt: row.expires_at } : null;
   }
@@ -516,9 +587,8 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   /**
    * Admit or refuse one artifact request, and say who is making it.
    *
-   * Called by the serving Worker before anything reaches model-authored code.
-   * Admission already established resource access; this lookup answers whether
-   * the durable session still exists and has not reached its fixed expiry.
+   * Internal session inspection for diagnostics and lifecycle tests. This does
+   * not authorize content; serving always uses admitRequest and current policy.
    */
   async checkSession(sessionValue: string): Promise<ArtifactSessionCheck> {
     await this.initialized;
@@ -526,19 +596,24 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     if (!state) return { ok: false, reason: "no_session" };
     const now = Date.now();
     const digest = await sha256Hex(new TextEncoder().encode(sessionValue));
-    const rows = this.state.storage.sql.exec<{
-      user_id: string;
-      display_name: string;
-      expires_at: number;
-    }>(
-      `SELECT user_id, display_name, expires_at
+    const rows = this.state.storage.sql
+      .exec<{
+        user_id: string;
+        display_name: string;
+        expires_at: number;
+      }>(
+        `SELECT user_id, display_name, expires_at
          FROM viewer_sessions WHERE session_sha256 = ? AND redeemed_at IS NOT NULL`,
-      digest,
-    ).toArray();
+        digest,
+      )
+      .toArray();
     const row = rows[0];
     if (!row) return { ok: false, reason: "no_session" };
     if (row.expires_at <= now) {
-      this.state.storage.sql.exec(`DELETE FROM viewer_sessions WHERE session_sha256 = ?`, digest);
+      this.state.storage.sql.exec(
+        `DELETE FROM viewer_sessions WHERE session_sha256 = ?`,
+        digest,
+      );
       return { ok: false, reason: "expired" };
     }
     return {
@@ -553,7 +628,242 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     };
   }
 
-  /** Read the current manifest and execution shape for public serving and version routing. */
+  private accessSnapshot(): ArtifactAccessSnapshot | null {
+    const current = this.state.storage.sql
+      .exec<{
+        revision: number;
+      }>("SELECT revision FROM artifact_access WHERE id=1")
+      .toArray()[0];
+    if (!current) return null;
+    if (this.cachedAccess?.revision !== current.revision) {
+      const row = this.state.storage.sql
+        .exec<{
+          snapshot_json: string;
+        }>("SELECT snapshot_json FROM artifact_access WHERE id=1")
+        .one();
+      // Decode once per persisted revision, never once per asset request.
+      this.cachedAccess = JSON.parse(
+        row.snapshot_json,
+      ) as ArtifactAccessSnapshot;
+      this.accessReaders = new Map(
+        this.cachedAccess.users.map((person) => [person.userId, person]),
+      );
+    }
+    return this.cachedAccess;
+  }
+
+  /** Complete snapshots are replaceable, monotonic and bound to one immutable owner. */
+  async applyAccessSnapshot(
+    input: ArtifactAccessSnapshot,
+  ): Promise<{ applied: boolean }> {
+    await this.initialized;
+    const snapshot = parseRpcInput(
+      ArtifactAccessSnapshotSchema,
+      input,
+      "artifact_access_snapshot",
+    );
+    const prior = this.accessSnapshot();
+    const state = this.stateRow();
+    const file = this.state.storage.sql
+      .exec<{
+        workspace_id: string;
+        canvas_id: string;
+      }>("SELECT workspace_id,canvas_id FROM published_file WHERE id=1")
+      .toArray()[0];
+    const owner = prior
+      ? { workspaceId: prior.workspaceId, canvasId: prior.canvasId }
+      : state
+        ? { workspaceId: state.workspace_id, canvasId: state.workstream_id }
+        : file
+          ? { workspaceId: file.workspace_id, canvasId: file.canvas_id }
+          : null;
+    if (
+      owner &&
+      (owner.workspaceId !== snapshot.workspaceId ||
+        owner.canvasId !== snapshot.canvasId)
+    )
+      throw new Error("artifact_access_owner_mismatch");
+    if (prior && prior.revision >= snapshot.revision) return { applied: false };
+    if (prior?.archived && !snapshot.archived) return { applied: false };
+    this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `INSERT INTO artifact_access(id,workspace_id,canvas_id,revision,snapshot_json) VALUES(1,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,snapshot_json=excluded.snapshot_json
+        WHERE excluded.revision>artifact_access.revision`,
+        snapshot.workspaceId,
+        snapshot.canvasId,
+        snapshot.revision,
+        JSON.stringify(snapshot),
+      );
+      if (snapshot.archived)
+        this.state.storage.sql.exec(
+          "INSERT INTO archived_canvases(workspace_id,canvas_id) VALUES(?,?) ON CONFLICT DO NOTHING",
+          snapshot.workspaceId,
+          snapshot.canvasId,
+        );
+    });
+    return { applied: true };
+  }
+
+  async recordFilePublication(input: {
+    workspaceId: string;
+    canvasId: string;
+    revision: number;
+    file: PublishedArtifactFile;
+  }): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(
+      z.strictObject({
+        workspaceId: z.string().uuid(),
+        canvasId: z.string().uuid(),
+        revision: z.number().int().positive(),
+        file: PublishedArtifactFileSchema,
+      }),
+      input,
+      "artifact_file_publication",
+    );
+    const access = this.accessSnapshot();
+    if (
+      !access ||
+      access.workspaceId !== request.workspaceId ||
+      access.canvasId !== request.canvasId
+    )
+      throw new Error("artifact_file_owner_mismatch");
+    if (
+      access.archived ||
+      this.canvasArchived() ||
+      access.revision !== request.revision ||
+      this.stateRow()
+    )
+      return;
+    const existing = this.state.storage.sql
+      .exec<{
+        publication_json: string;
+      }>("SELECT publication_json FROM published_file WHERE id=1")
+      .toArray()[0];
+    const prior = existing
+      ? PublishedArtifactFileSchema.parse(JSON.parse(existing.publication_json))
+      : null;
+    if (
+      prior &&
+      Math.max(...prior.versions.map((version) => version.version)) >
+        Math.max(...request.file.versions.map((version) => version.version))
+    )
+      return;
+    this.state.storage.sql.exec(
+      `INSERT INTO published_file(id,workspace_id,canvas_id,publication_json) VALUES(1,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET publication_json=excluded.publication_json`,
+      request.workspaceId,
+      request.canvasId,
+      JSON.stringify(request.file),
+    );
+  }
+
+  /** The serving door. All authorization reads are from this object's own SQLite. */
+  async admitRequest(input: {
+    session: string | null;
+  }): Promise<ArtifactRequestAdmission> {
+    await this.initialized;
+    const request = parseRpcInput(
+      z.strictObject({ session: z.string().nullable() }),
+      input,
+      "artifact_request_admission",
+    );
+    let viewer: {
+      user_id: string;
+      display_name: string;
+      membership_incarnation: string | null;
+    } | null = null;
+    if (request.session) {
+      const digest = await sha256Hex(new TextEncoder().encode(request.session));
+      viewer =
+        this.state.storage.sql
+          .exec<{
+            user_id: string;
+            display_name: string;
+            membership_incarnation: string | null;
+          }>(
+            // Legacy sessions have no membership incarnation. Treat them as signed
+            // out so private-site navigation can bootstrap a current identity.
+            "SELECT user_id,display_name,membership_incarnation FROM viewer_sessions WHERE session_sha256=? AND redeemed_at IS NOT NULL AND expires_at>? AND membership_incarnation IS NOT NULL",
+            digest,
+            Date.now(),
+          )
+          .toArray()[0] ?? null;
+    }
+    // Read after the digest await: a snapshot that arrived meanwhile takes effect now.
+    const access = this.accessSnapshot();
+    if (!access) return { allowed: false, status: 503 };
+    if (access.archived || this.canvasArchived())
+      return { allowed: false, status: 404 };
+    const candidate = viewer ? this.accessReaders.get(viewer.user_id) : null;
+    const person =
+      candidate?.incarnation === viewer?.membership_incarnation
+        ? candidate
+        : null;
+    if (!person && !access.public)
+      return { allowed: false, status: viewer ? 403 : 401 };
+    const identity = {
+      viewerId: person ? viewer!.user_id : null,
+      viewerName: person ? viewer!.display_name : null,
+      editor: person?.editor ?? false,
+      revision: access.revision,
+    };
+    const file = this.state.storage.sql
+      .exec<{
+        publication_json: string;
+      }>("SELECT publication_json FROM published_file WHERE id=1")
+      .toArray()[0];
+    const state = this.stateRow();
+    if (file && !state)
+      return {
+        allowed: true,
+        kind: "file",
+        ...identity,
+        file: PublishedArtifactFileSchema.parse(
+          JSON.parse(file.publication_json),
+        ),
+      };
+    if (!state) return { allowed: false, status: 404 };
+    return {
+      allowed: true,
+      kind: "site",
+      workspaceId: state.workspace_id,
+      ...identity,
+      version: state.current_version,
+      mode: state.mode,
+      stateful: state.stateful === 1,
+      manifest: ArtifactManifestSchema.parse(JSON.parse(state.manifest_json)),
+    };
+  }
+
+  async publicationAddress(): Promise<{
+    workspaceId: string;
+    resourceId: string;
+  } | null> {
+    await this.initialized;
+    const access = this.accessSnapshot();
+    if (access?.archived || this.canvasArchived()) return null;
+    const state = this.stateRow();
+    if (state)
+      return { workspaceId: state.workspace_id, resourceId: state.resource_id };
+    const file = this.state.storage.sql
+      .exec<{
+        workspace_id: string;
+        publication_json: string;
+      }>("SELECT workspace_id,publication_json FROM published_file WHERE id=1")
+      .toArray()[0];
+    return file
+      ? {
+          workspaceId: file.workspace_id,
+          resourceId: PublishedArtifactFileSchema.parse(
+            JSON.parse(file.publication_json),
+          ).resourceId,
+        }
+      : null;
+  }
+
+  /** Inspect the current publication; content serving always uses admitRequest. */
   async currentState(): Promise<{
     artifactId: string;
     workspaceId: string;
@@ -604,31 +914,36 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     );
   }
 
-  async readErrors(): Promise<{
-    occurredAt: number;
-    version: number;
-    requestPath: string;
-    message: string;
-    stack: string | null;
-  }[]> {
-    await this.initialized;
-    return this.state.storage.sql.exec<{
-      occurred_at: number;
-      artifact_version: number;
-      request_path: string;
+  async readErrors(): Promise<
+    {
+      occurredAt: number;
+      version: number;
+      requestPath: string;
       message: string;
       stack: string | null;
-    }>(
-      `SELECT occurred_at, artifact_version, request_path, message, stack
+    }[]
+  > {
+    await this.initialized;
+    return this.state.storage.sql
+      .exec<{
+        occurred_at: number;
+        artifact_version: number;
+        request_path: string;
+        message: string;
+        stack: string | null;
+      }>(
+        `SELECT occurred_at, artifact_version, request_path, message, stack
          FROM error_log ORDER BY entry_id DESC LIMIT ?`,
-      ERROR_LOG_ENTRIES,
-    ).toArray().map((row) => ({
-      occurredAt: row.occurred_at,
-      version: row.artifact_version,
-      requestPath: row.request_path,
-      message: row.message,
-      stack: row.stack,
-    }));
+        ERROR_LOG_ENTRIES,
+      )
+      .toArray()
+      .map((row) => ({
+        occurredAt: row.occurred_at,
+        version: row.artifact_version,
+        requestPath: row.request_path,
+        message: row.message,
+        stack: row.stack,
+      }));
   }
 
   /**
@@ -643,21 +958,29 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    *
    * It is a leaf: an artifact has no children, so the walk stops here.
    */
-  async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<Record<string, never>> {
+  async revokeSocketAccess(
+    revocation: SocketAccessRevocation,
+  ): Promise<Record<string, never>> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
-    const sessions = this.state.storage.sql.exec<{ app_session_id: string | null }>(
-      "SELECT DISTINCT app_session_id FROM viewer_sessions WHERE user_id = ?", request.userId,
-    ).toArray();
+    const sessions = this.state.storage.sql
+      .exec<{
+        app_session_id: string | null;
+      }>("SELECT DISTINCT app_session_id FROM viewer_sessions WHERE user_id = ?", request.userId)
+      .toArray();
     for (const session of sessions) {
-      if (await revocationClosesSession(this.env, request, {
-        userId: request.userId, sessionId: session.app_session_id ?? undefined,
-      })) {
+      if (
+        await revocationClosesSession(this.env, request, {
+          userId: request.userId,
+          sessionId: session.app_session_id ?? undefined,
+        })
+      ) {
         // Redemption rotates the viewer digest while the D1 check is awaiting.
         // Its immutable app-session binding remains the revocation target.
         this.state.storage.sql.exec(
           "DELETE FROM viewer_sessions WHERE user_id = ? AND app_session_id IS ?",
-          request.userId, session.app_session_id,
+          request.userId,
+          session.app_session_id,
         );
       }
     }
@@ -689,7 +1012,11 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    * many of a per-viewer table's rows are theirs, not how many exist.
    */
   async describeData(scope: ArtifactRowScope): Promise<{
-    tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
+    tables: {
+      name: string;
+      columns: { name: string; type: string }[];
+      rowCount: number;
+    }[];
   }> {
     await this.initialized;
     const state = this.stateRow();
@@ -736,14 +1063,16 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   ): Promise<ArtifactQueryResult> {
     await this.initialized;
     const state = this.stateRow();
-    if (!state || state.stateful !== 1) return { ok: false, reason: "no_artifact_data" };
+    if (!state || state.stateful !== 1)
+      return { ok: false, reason: "no_artifact_data" };
     // A refusal is a **domain outcome, not an exception**: a model writing the
     // wrong SQL is the ordinary case this contract exists to repair, and
     // throwing would log an uncaught rejection inside this object on every one
     // of them — burying the failures that are actually Rally's fault. The tool
     // layer turns this into the model-visible error.
     const admission = admitReadOnlyStatement(sql);
-    if (!admission.admitted) return { ok: false, reason: "sql_refused", detail: admission.reason };
+    if (!admission.admitted)
+      return { ok: false, reason: "sql_refused", detail: admission.reason };
     const host = await this.facetFor(state);
     const statement = admission.sql;
     if (viewerOf(scope) !== null) {
@@ -755,12 +1084,19 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
         return {
           ok: false,
           reason: "private_rows",
-          detail: "This site keeps private rows, so free-form queries are not available here. Read a table with read_artifact_table instead: it returns every row of shared tables and only your own rows of private ones.",
+          detail:
+            "This site keeps private rows, so free-form queries are not available here. Read a table with read_artifact_table instead: it returns every row of shared tables and only your own rows of private ones.",
         };
       }
     }
     const read = await host.rallyQuery(statement, params, maxRows);
-    return { ok: true, columns: read.columns, rows: read.rows, rowCount: read.rowCount, truncated: read.truncated };
+    return {
+      ok: true,
+      columns: read.columns,
+      rows: read.rows,
+      rowCount: read.rowCount,
+      truncated: read.truncated,
+    };
   }
 
   /**
@@ -785,33 +1121,53 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   ): Promise<ArtifactWriteResult> {
     await this.initialized;
     const state = this.stateRow();
-    if (!state || state.stateful !== 1) return { ok: false, reason: "no_artifact_data" };
+    if (!state || state.stateful !== 1)
+      return { ok: false, reason: "no_artifact_data" };
     if (this.canvasArchived()) return { ok: false, reason: "canvas_archived" };
     const admission = admitDataWriteStatement(sql);
-    if (!admission.admitted) return { ok: false, reason: "sql_refused", detail: admission.reason };
+    if (!admission.admitted)
+      return { ok: false, reason: "sql_refused", detail: admission.reason };
     const host = await this.facetFor(state);
-    if (viewerOf(scope) !== null && viewerTables(await host.rallySchema()).filtered.length > 0) {
+    if (
+      viewerOf(scope) !== null &&
+      viewerTables(await host.rallySchema()).filtered.length > 0
+    ) {
       return {
         ok: false,
         reason: "private_rows",
-        detail: "This site keeps private rows, so only the person who published it can change its data from a Chat. Ask them, or use the site itself.",
+        detail:
+          "This site keeps private rows, so only the person who published it can change its data from a Chat. Ask them, or use the site itself.",
       };
     }
     const written = await host.rallyWrite(admission.sql, params, maxRows);
-    if (!written.ok) return { ok: false, reason: "sql_failed", detail: written.detail };
-    return { ok: true, rowsWritten: written.rowsWritten, columns: written.columns, rows: written.rows, truncated: written.truncated };
+    if (!written.ok)
+      return { ok: false, reason: "sql_failed", detail: written.detail };
+    return {
+      ok: true,
+      rowsWritten: written.rowsWritten,
+      columns: written.columns,
+      rows: written.rows,
+      truncated: written.truncated,
+    };
   }
 
   /** One page of one table, for the Data view and the CSV export. */
-  async pageData(table: string, offset: number, limit: number, scope: ArtifactRowScope): Promise<ArtifactPageResult> {
+  async pageData(
+    table: string,
+    offset: number,
+    limit: number,
+    scope: ArtifactRowScope,
+  ): Promise<ArtifactPageResult> {
     await this.initialized;
     const state = this.stateRow();
-    if (!state || state.stateful !== 1) return { ok: false, reason: "no_artifact_data" };
+    if (!state || state.stateful !== 1)
+      return { ok: false, reason: "no_artifact_data" };
     const host = await this.facetFor(state);
     // The allowlist is the *database's*, not the caller's: a name that is not a
     // real table in this facet never reaches SQL at all.
     const admitted = admitTableName(table, await host.rallyTableNames());
-    if (!admitted.admitted) return { ok: false, reason: "table_refused", detail: admitted.reason };
+    if (!admitted.admitted)
+      return { ok: false, reason: "table_refused", detail: admitted.reason };
     const viewerId = viewerOf(scope);
     if (viewerId !== null) {
       const scoped = viewerTables(await host.rallySchema());
@@ -858,11 +1214,15 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     const env = this.env;
     // Parsed rather than cast, like every other read of this column: it was
     // written by a possibly older deployment.
-    const manifest = ArtifactManifestSchema.parse(JSON.parse(state.manifest_json));
+    const manifest = ArtifactManifestSchema.parse(
+      JSON.parse(state.manifest_json),
+    );
     return this.ctx.facets.get<ArtifactFacetHost>(FACET_NAME, async () => {
       const loader = env.ARTIFACT_LOADER;
       if (!loader) throw new Error("artifact_loader_binding_missing");
-      const module = await env.PAYLOADS.get(artifactAssetKey(artifactId, version, "index.js"));
+      const module = await env.PAYLOADS.get(
+        artifactAssetKey(artifactId, version, "index.js"),
+      );
       if (!module) throw new Error("artifact_server_module_missing");
       // The revision keeps an isolate cached before a deploy, with older Rally
       // code, from answering for the new one.
@@ -920,16 +1280,20 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   }
 
   private stateRow(): z.infer<typeof ARTIFACT_STATE_ROW> | null {
-    const rows = this.state.storage.sql.exec(
-      `SELECT artifact_id, workspace_id, workstream_id, resource_id, region,
+    const rows = this.state.storage.sql
+      .exec(
+        `SELECT artifact_id, workspace_id, workstream_id, resource_id, region,
               current_version, mode, stateful, manifest_json
          FROM artifact_state WHERE id = 1`,
-    ).toArray();
+      )
+      .toArray();
     return rows[0] ? ARTIFACT_STATE_ROW.parse(rows[0]) : null;
   }
 
   private pruneExpired(now: number): void {
-    this.state.storage.sql.exec(`DELETE FROM viewer_sessions WHERE expires_at <= ?`, now);
+    this.state.storage.sql.exec(
+      `DELETE FROM viewer_sessions WHERE expires_at <= ?`,
+      now,
+    );
   }
-
 }

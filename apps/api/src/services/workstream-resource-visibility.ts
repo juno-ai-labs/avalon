@@ -36,6 +36,7 @@ export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
   visibility_version: string;
   /** Returned with authorization for a direct read; undefined for attachment-only reads. */
   artifact?: ResourceReadMetadata["artifact"];
+  canEditArtifact?: boolean | null;
 }
 
 export interface VisibleWorkstreamResourceSet {
@@ -207,8 +208,8 @@ async function loadVisibleRows(
   const listed = input.resourceIds === undefined
     ? ` AND ${listedResourceVisibilitySql("resource")}`
     : "";
-  const resources: Array<Record<string, unknown>> = [...authorizedResources.values()].map(({ resource, artifact }) => ({
-    ...resource, artifact, visibility_version: resource.updated_at,
+  const resources: Array<Record<string, unknown>> = [...authorizedResources.values()].map(({ resource, artifact, canEditArtifact }) => ({
+    ...resource, artifact, canEditArtifact, visibility_version: resource.updated_at,
   }));
   const remainingIds = ids.filter((id) => !authorizedResources.has(id));
   for (let offset = 0; offset < remainingIds.length; offset += RESOURCE_LOOKUP_BATCH) {
