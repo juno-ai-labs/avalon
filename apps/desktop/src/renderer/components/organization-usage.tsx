@@ -1,10 +1,10 @@
 import { useLocalCacheScope } from '../lib/local-cache-scope';
-import { useQuery } from '@tanstack/react-query';
-import { OrganizationBilling } from './organization-billing';
+import { onlineManager, useQuery, useQueryClient } from '@tanstack/react-query';
+import { BillingControl, BillingSkeleton, OrganizationBilling } from './organization-billing';
 import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { PLAN_IDS, PlanIdSchema } from '@rally/contracts/usage';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { settings } from '../settings/registry';
 import { SettingCopy, SettingLabel } from '../settings/setting-label';
 import {
@@ -21,11 +21,12 @@ import {
   useSetOrganizationPlan,
   type OrganizationPlanApi,
   type OrganizationUsageApi,
-  type UsageReading,
 } from '../lib/organization-usage';
 import { Badge, Button, DropdownSelect, Meter, Tip } from './primitives';
 
 const METER_LABEL = 'Weekly quota left';
+const subscribeOnline = (notify: () => void) => onlineManager.subscribe(notify);
+const readOnline = () => onlineManager.isOnline();
 const PLAN_OPTIONS = PLAN_IDS.map((plan) => ({
   value: plan,
   label: usagePlanLabel(plan),
@@ -34,121 +35,107 @@ const PLAN_OPTIONS = PLAN_IDS.map((plan) => ({
 export const USAGE_TOTAL_EXPLANATION = "This is usage beyond your allowance, not an invoice total. Charges for earlier opted-in usage may still appear after cancellation.";
 
 /**
- * Settings → Organization → Usage. Every member sees it, whatever their role:
+ * Settings → Organization → Billing. Every member sees it, whatever their role:
  * the quota is shared, so everyone spending it should be able to see it. Only
  * an administrator can change the plan; everyone else sees the picker locked.
  */
-export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, organizationName }: {
+export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, organizationName, billingAccessReason }: {
   api: OrganizationPlanApi | null;
   canChangePlan: boolean;
-  /**
-   * Counts the requests to open this section's pane. Mounting already fetches;
-   * a change after that is the pane being asked for again in a window that
-   * kept it mounted, which is an opening too.
-   */
   openRequest?: number;
   organizationName: string;
+  billingAccessReason?: string;
 }): React.JSX.Element {
   const state = useOrganizationUsage(api);
+  const online = useSyncExternalStore(subscribeOnline, readOnline);
   const { retry } = state;
+  const scope = useLocalCacheScope();
+  const queryClient = useQueryClient();
+  const setPlan = useSetOrganizationPlan(api);
+  const billing = useQuery({
+    queryKey: ['organization-billing', scope],
+    queryFn: () => api!.getBillingStatus!(),
+    enabled: Boolean(api?.getBillingStatus) && !billingAccessReason,
+    refetchOnWindowFocus: false,
+  });
+  const { refetch: refreshBilling } = billing;
+  useEffect(() => {
+    if (!api?.getBillingStatus || billingAccessReason) return;
+    const refresh = () => { void refreshBilling(); };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [api, billingAccessReason, refreshBilling]);
   const mountedRequest = useRef(openRequest);
   useEffect(() => {
-    if (openRequest !== mountedRequest.current) retry();
-  }, [openRequest, retry]);
+    if (openRequest === mountedRequest.current) return;
+    mountedRequest.current = openRequest;
+    retry();
+    if (api?.getBillingStatus && !billingAccessReason) void refreshBilling();
+    void queryClient.invalidateQueries({ queryKey: ['organization-billing-credits', scope] });
+  }, [openRequest, retry, api, billingAccessReason, refreshBilling, queryClient, scope]);
+  const reading = state.status === 'ready' ? state.reading : undefined;
+  const usage = reading?.usage;
+  const offline = !online || (state.status === 'ready' && state.offline);
+  const billingLoading = !billingAccessReason && billing.isPending && billing.isFetching;
+  const billingDisabledReason = billingAccessReason ?? (offline ? 'Connect to the internet to change billing.'
+    : billing.error ? 'Retry loading billing details first.' : undefined);
+  const legacyPlan = !api?.getBillingStatus || billing.data?.enabled === false;
+  const planReason = billingAccessReason ?? (!canChangePlan ? 'Only organization administrators can change the plan.'
+    : !api ? 'The organization is unavailable.' : offline ? 'Connect to the internet to change the plan.'
+    : setPlan.isPending ? 'Updating the plan…' : !usage ? 'Wait for usage to load before changing the plan.' : undefined);
   return (
     <div className="settings-subsection usage-settings">
       <div className="settings-pane-heading"><h2><SettingLabel setting={settings.usage} /></h2></div>
       <div className="settings-list-card">
-        {state.status === 'ready' ? (
-          <UsageReadingRows
-            api={api}
-            canChangePlan={canChangePlan}
-            offline={state.offline}
-            organizationName={organizationName}
-            reading={state.reading}
-          />
-        ) : state.status === 'loading' ? (
-          <div className="settings-preference-row">
-            <SettingCopy setting={settings.quota} description={<span role="status">Checking usage…</span>} />
-            <span className="usage-quota-value"><Meter label={METER_LABEL} value={null} /></span>
+        <OrganizationBilling
+          api={api}
+          billing={billingAccessReason ? undefined : billing.data}
+          currentPlan={usage ? usagePlanLabel(usage.plan) : undefined}
+          canManage={canChangePlan}
+          loading={billingLoading}
+          disabledReason={billingDisabledReason}
+          readDisabledReason={billingAccessReason}
+          beforePlan={<div className="settings-preference-row">
+            <SettingCopy setting={settings.quota} description={usage
+              ? `${usageResetLabel(usage.weekResetsAt)}. Shared by everyone in ${organizationName}.`
+              : state.status === 'loading' ? 'Checking the shared weekly quota.' : 'Usage is unavailable.'} />
+            <span className="usage-quota-value">
+              <Meter label={METER_LABEL} tone={usage ? usageTone(usage) : undefined} value={usage?.quotaRemainingPercent ?? null} />
+              {usage ? <small>{usageRemainingLabel(usage.quotaRemainingPercent)}{offline && reading && <span className="usage-as-of"> {usageAsOfLabel(reading.fetchedAt)}</span>}</small>
+                : state.status === 'loading' ? <BillingSkeleton label="Checking usage…" /> : <small>Unavailable</small>}
+            </span>
+          </div>}
+          planControl={legacyPlan ? (usage ? <BillingControl reason={planReason}><DropdownSelect
+            ariaLabel="Plan"
+            disabled={Boolean(planReason)}
+            onValueChange={(value) => {
+              const plan = PlanIdSchema.parse(value);
+              if (plan !== usage.plan) setPlan.mutate(plan);
+            }}
+            options={PLAN_OPTIONS}
+            value={setPlan.isPending ? setPlan.variables ?? usage.plan : usage.plan}
+            variant="secondary"
+          /></BillingControl> : state.status === 'loading' ? <BillingSkeleton label="Loading plan…" /> : <span>Unavailable</span>) : undefined}
+        >
+          {setPlan.error && <ErrorNotice>The plan could not be changed. {setPlan.error.message}</ErrorNotice>}
+          {billing.error && !billingAccessReason && <div className="settings-preference-row">
+            <span className="settings-row-copy"><strong>Billing unavailable</strong><small>{billing.error.message}</small></span>
+            <Button disabledReason={offline ? 'Connect to the internet to retry billing.' : billing.isFetching ? 'Loading billing details…' : undefined} onClick={() => void refreshBilling()}>Retry billing</Button>
+          </div>}
+          <div className="settings-preference-row usage-overage">
+            <span className="settings-row-copy"><strong>Usage beyond quota this month</strong><small>{usage ? usagePeriodLabel(usage.overage.periodStart, usage.overage.periodEndsAt) : 'Monthly usage beyond the shared quota.'}</small></span>
+            <span className="usage-overage-value">
+              {usage ? <><span>{formatMicrousd(usage.overage.amountMicrousd)}</span>
+                <Tip label={usage.overage.billingEnabled ? "Overage charges appear on a later invoice after usage settles." : USAGE_TOTAL_EXPLANATION} side="top">
+                  <Badge className="usage-not-billed" tabIndex={0}>{usage.overage.billingEnabled ? "Overage enabled" : "Usage total"}</Badge>
+                </Tip></> : state.status === 'loading' ? <BillingSkeleton label="Loading monthly usage…" /> : <span>Unavailable</span>}
+            </span>
           </div>
-        ) : (
-          <div className="settings-preference-row">
-            <span className="settings-row-copy"><strong>Usage isn't available right now.</strong></span>
-            <Button onClick={state.retry}>Try again</Button>
-          </div>
-        )}
+          {state.status === 'error' && <div className="settings-preference-row"><span className="settings-row-copy"><strong>Usage isn't available right now.</strong></span><Button disabledReason={!api ? 'The organization is unavailable.' : offline ? 'Connect to the internet to retry usage.' : undefined} onClick={retry}>Try again</Button></div>}
+        </OrganizationBilling>
       </div>
     </div>
   );
-}
-
-function UsageReadingRows({ api, canChangePlan, offline, organizationName, reading }: {
-  api: OrganizationPlanApi | null;
-  canChangePlan: boolean;
-  offline: boolean;
-  organizationName: string;
-  reading: UsageReading;
-}): React.JSX.Element {
-  const { usage, fetchedAt } = reading;
-  const setPlan = useSetOrganizationPlan(api);
-  const scope = useLocalCacheScope();
-  const billing = useQuery({ queryKey: ['organization-billing', scope], queryFn: () => api!.getBillingStatus!(), enabled: canChangePlan && Boolean(api?.getBillingStatus), refetchOnWindowFocus: false });
-  useEffect(() => {
-    if (!canChangePlan || !api?.getBillingStatus) return;
-    const refresh = () => { void billing.refetch(); };
-    window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
-  }, [api, canChangePlan, billing.refetch]);
-  return <>
-    {billing.data?.enabled && api ? <OrganizationBilling api={api} billing={billing.data} currentPlan={usagePlanLabel(usage.plan)} /> : <label className="settings-preference-row">
-      <SettingCopy
-        setting={settings.plan}
-        description={setPlan.error
-          ? <ErrorNotice>The plan could not be changed. {setPlan.error.message}</ErrorNotice>
-          : undefined}
-      />
-      <DropdownSelect
-        ariaLabel="Plan"
-        disabled={!canChangePlan || !api || offline || setPlan.isPending || (Boolean(api?.getBillingStatus) && (billing.isError || billing.data?.enabled !== false))}
-        onValueChange={(value) => {
-          const plan = PlanIdSchema.parse(value);
-          if (plan !== usage.plan) setPlan.mutate(plan);
-        }}
-        options={PLAN_OPTIONS}
-        value={setPlan.isPending ? setPlan.variables ?? usage.plan : usage.plan}
-        variant="secondary"
-      />
-    </label>}
-    {billing.error && <><ErrorNotice>Billing could not be loaded. {billing.error.message}</ErrorNotice><div className="settings-preference-row"><span className="settings-row-copy"><strong>Billing unavailable</strong><small>Try again to load billing options.</small></span><Button onClick={() => void billing.refetch()} disabled={billing.isFetching}>Retry billing</Button></div></>}
-    <div className="settings-preference-row">
-      <SettingCopy
-        setting={settings.quota}
-        description={`${usageResetLabel(usage.weekResetsAt)}. Shared by everyone in ${organizationName}.`}
-      />
-      <span className="usage-quota-value">
-        <Meter label={METER_LABEL} tone={usageTone(usage)} value={usage.quotaRemainingPercent} />
-        <small>
-          {usageRemainingLabel(usage.quotaRemainingPercent)}
-          {offline && <span className="usage-as-of"> {usageAsOfLabel(fetchedAt)}</span>}
-        </small>
-      </span>
-    </div>
-    {usage.overage.amountMicrousd > 0 && (
-      <div className="settings-preference-row usage-overage">
-        <span className="settings-row-copy">
-          <strong>Usage beyond quota this month</strong>
-          <small>{usagePeriodLabel(usage.overage.periodStart, usage.overage.periodEndsAt)}</small>
-        </span>
-        <span className="usage-overage-value">
-          <span>{formatMicrousd(usage.overage.amountMicrousd)}</span>
-          <Tip label={usage.overage.billingEnabled ? "Overage charges appear on a later invoice after usage settles." : USAGE_TOTAL_EXPLANATION} side="top">
-            <Badge className="usage-not-billed" tabIndex={0}>{usage.overage.billingEnabled ? "Overage enabled" : "Usage total"}</Badge>
-          </Tip>
-        </span>
-      </div>
-    )}
-  </>;
 }
 
 /**

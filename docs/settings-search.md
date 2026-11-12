@@ -17,7 +17,7 @@ without maintaining a second list of section keywords.
 | `apps/desktop/src/common/settings.ts` | Section identities shared with the desktop window. |
 | `apps/desktop/src/renderer/settings/search-results.tsx` | Result navigation and lazy target revelation. |
 | `apps/desktop/src/renderer/components/sidebar-search.tsx` | Search control shared by the main and Settings sidebars. |
-| `apps/desktop/src/renderer/components/organization-usage.tsx` | The Usage section of the Organization pane and the Organization menu's usage line. |
+| `apps/desktop/src/renderer/components/organization-usage.tsx` | The Usage section of the Billing child page and the Organization menu's usage line. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Existing settings bindings, authorized connection providers, section selection and availability. |
 
 The window these panes are drawn in, and what the screen may render before its
@@ -192,12 +192,20 @@ is required. Permission denial exposes a System Settings action.
 
 ## Usage
 
-The `workspace` section registers **Usage** (`settings.usage`) as an
-information definition with no availability gate, so every member finds it,
+The Billing page keeps every section visible, using disabled controls with concise
+reason tooltips for restricted or unavailable actions. Billing status, credits and
+usage load independently; initial reads use skeletons. Credits load automatically
+and have an icon-only refresh action. Weekly quota appears immediately above
+Plan, and Overage credits closes the page after monthly usage.
+
+The **Billing** child page under Organization (`billing`) registers **Usage**
+(`settings.usage`) as an information definition with no availability gate, so every member finds it,
 whatever their role. Its description names the plan and the week's shared
 quota, so "usage", "quota" and "plan" all reach it; "billing" and "limit" are
-aliases. The heading is the inert target, and it renders in every state of the
-section, loading and failed included, so a search result always has somewhere
+search terms. Plan and weekly quota definitions also belong to `billing`, and
+the Organization menu’s usage shortcut opens that page. The heading is the inert
+target, and it renders in every state of the section, loading and failed
+included, so a search result always has somewhere
 to land. `components/organization-usage.tsx` draws the section;
 [`local-cache.md`](local-cache.md) owns the row it paints from.
 

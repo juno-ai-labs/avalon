@@ -247,7 +247,7 @@ it('ignores overage subscriptions for entitlements and first-paid eligibility', 
   expect(db.prepare('SELECT plan FROM workspaces').get()).toEqual({ plan: 'starter' });
 });
 
-it.each(['member', 'support', 'owner'] as const)('exposes credit balances only to administrators outside support sessions: %s', async role => {
+it.each(['member', 'support', 'owner'] as const)('exposes credit balances to members outside support sessions: %s', async role => {
   const { env, provider } = await seed(); provider.grants = [stripeGrant()];
   const app = new Hono<HonoAppEnv>(); app.onError(errorHandler);
   app.use('*', async (c, next) => {
@@ -256,8 +256,8 @@ it.each(['member', 'support', 'owner'] as const)('exposes credit balances only t
   });
   app.route('/billing', billingRoutes);
   const response = await app.request('/billing/credits', {}, env);
-  expect(response.status).toBe(role === 'owner' ? 200 : 403);
-  if (role === 'owner') expect(await response.json()).toMatchObject({ availableCents: 10000, grants: [{ id: 'credgr_1' }] });
+  expect(response.status).toBe(role === 'support' ? 403 : 200);
+  if (role !== 'support') expect(await response.json()).toMatchObject({ availableCents: 10000, grants: [{ id: 'credgr_1' }] });
   // Customer administrators have no HTTP grant or expiry endpoint.
   expect((await app.request('/billing/credits', { method: 'POST', body: JSON.stringify({ amountCents: 10000 }) }, env)).status).toBe(role === 'owner' ? 404 : 403);
 });
