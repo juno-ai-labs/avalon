@@ -23,6 +23,7 @@ describe('browser fallback single-platform identity boundary', () => {
   beforeEach(async () => {
     delete window.rally;
     vi.stubGlobal('fetch', vi.fn());
+    vi.spyOn(window, 'open');
     await desktopBridge().logout();
   });
 
@@ -32,11 +33,10 @@ describe('browser fallback single-platform identity boundary', () => {
   });
 
   it('opens a Sidekick as a route of this tab rather than a new one', async () => {
-    const open = vi.spyOn(window, 'open');
+    const open = vi.mocked(window.open);
     await desktopBridge().openSidekick('example');
     expect(window.location.hash).toBe('#/sidekicks/example');
     expect(open).not.toHaveBeenCalled();
-    open.mockRestore();
   });
 
   it('reports a frozen and resumed tab as the desktop reports sleep and wake', () => {
@@ -64,15 +64,15 @@ describe('browser fallback single-platform identity boundary', () => {
   });
 
   it('opens an external page in a new tab with no opener, and reports a blocked popup', async () => {
-    const popup = { opener: window as Window | null, location: { href: '' } };
-    const open = vi.spyOn(window, 'open').mockReturnValueOnce(popup as unknown as Window).mockReturnValueOnce(null);
+    const popup = { opener: window as Window | null, location: { href: '' }, document: document.implementation.createHTMLDocument() };
+    const open = vi.mocked(window.open).mockReturnValueOnce(popup as unknown as Window).mockReturnValueOnce(null);
     await desktopBridge().openExternal('https://accounts.google.com/o/oauth2/v2/auth');
     expect(popup.opener).toBeNull();
     expect(popup.location.href).toBe('https://accounts.google.com/o/oauth2/v2/auth');
     const here = window.location.href;
     await expect(desktopBridge().openExternal('https://linear.app/oauth')).rejects.toThrow('Allow pop-ups for Rally in this browser, then try again.');
     expect(window.location.href).toBe(here);
-    open.mockRestore();
+    expect(open).toHaveBeenCalledTimes(2);
   });
 
   it('prefers the hardened preload bridge for clipboard writes', async () => {
