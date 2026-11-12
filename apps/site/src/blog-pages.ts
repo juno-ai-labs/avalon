@@ -9,6 +9,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { marked } from 'marked';
 import { parse as parseYaml } from 'yaml';
 import { escapeHtml, longDate } from './comparison-pages';
+import { renderHomeIllustration } from './home-illustrations';
 
 export interface BlogPost {
   /** Path segment under `/blog/`, from the front matter. */
@@ -25,7 +26,7 @@ export interface BlogPost {
 
 const ORIGIN = 'https://rallywith.ai';
 /** The index shares the home page's card; each post has its own, drawn at build time. */
-const HOME_IMAGE = `${ORIGIN}/rally-social-v01.jpg`;
+const HOME_IMAGE = `${ORIGIN}/rally-pencil-social.png`;
 const FIELDS = ['slug', 'title', 'description', 'author'] as const;
 
 /**
@@ -85,7 +86,7 @@ function page({ path, title, description, type, image, extraHead, main }: {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="theme-color" content="#fcfbf7" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
@@ -105,13 +106,13 @@ function page({ path, title, description, type, image, extraHead, main }: {
     <meta name="twitter:title" content="${escapeHtml(title)}" />
     <meta name="twitter:description" content="${escapeHtml(description)}" />
     <meta name="twitter:image" content="${image}" />
-${extraHead}    <link rel="stylesheet" href="/src/landing.css" />
+${extraHead}    <link rel="stylesheet" href="/src/reading.css" />
   </head>
-<body>
+<body class="paper-site">
 <a class="skip-link" href="#content">Skip to content</a>
 <header class="site-header"><div class="site-header-inner">
 <a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt="">rally</a>
-<!-- rally:site-nav -->
+<!-- rally:reading-nav -->
 </div></header>
 <main id="content">
 ${main}
@@ -152,7 +153,10 @@ export function renderBlogIndex(posts: readonly BlogPost[]): string {
   }).join('\n');
   return page({
     path: '/blog/', title: 'Blog · Rally', description: 'News and writing from the team building Rally.', type: 'website', image: HOME_IMAGE, extraHead: '',
-    main: `<div class="changelog">\n<h1 class="display changelog-heading">Blog</h1>\n<div class="changelog-entries">\n${entries}\n</div>\n</div>`,
+    main: `<div class="changelog"><header class="reading-hero">
+      <div><p class="eyebrow">The Rally blog</p><h1 class="changelog-heading">A few notes<br>from Rally.</h1><p class="lede">News and writing from the people building Rally. A little of what we’re making, learning, and thinking about along the way.</p></div>
+      <figure class="pencil-vignette">${renderHomeIllustration('together')}<figcaption>Good things are worth sharing.</figcaption></figure>
+      </header>\n<div class="changelog-entries">\n${entries}\n</div>\n</div>`,
   });
 }
 

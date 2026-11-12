@@ -689,34 +689,6 @@ main{counter-reset:fig}
 .changelog-more:hover{text-decoration:underline;text-underline-offset:4px}
 @media(max-width:900px){.changelog-entry{grid-template-columns:minmax(0,1fr);gap:0}.changelog-date time{position:static;line-height:1.5;margin-bottom:12px}.changelog-content{padding-bottom:72px}}
 
-/* ---------------------------------------------------------------- Pilot offer */
-/* A card that slides in from the lower right (a sheet along the bottom on a phone).
-   pilot-offer.ts removes `hidden` after a few seconds and adds `is-closing` to leave. */
-.pilot-offer{position:fixed;right:24px;bottom:24px;z-index:70;width:min(380px,calc(100vw - 32px));padding:26px;overflow:hidden;border:1px solid var(--rule-2);border-radius:var(--radius);background:var(--page);box-shadow:var(--shadow);transform-origin:100% 100%;animation:pilot-offer-in .7s var(--ease) both}
-.pilot-offer[hidden]{display:none}
-.pilot-offer::before{content:'';position:absolute;inset:0 0 auto;height:3px;background:var(--accent);transform-origin:0 50%;animation:pilot-offer-rule .9s var(--ease) .25s both}
-.pilot-offer>*{animation:pilot-offer-rise .6s var(--ease) both}
-.pilot-offer>:nth-child(3){animation-delay:.12s}
-.pilot-offer>:nth-child(4){animation-delay:.18s}
-.pilot-offer>:nth-child(5){animation-delay:.24s}
-.pilot-offer.is-closing{animation:pilot-offer-out .32s cubic-bezier(.4,0,1,1) both}
-.pilot-offer-close{position:absolute;top:12px;right:12px;z-index:1;display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;border-radius:8px;background:none;color:var(--text-3);cursor:pointer;transition:color .15s,background .15s}
-.pilot-offer-close:hover{color:var(--text);background:var(--tint)}
-.pilot-offer-eyebrow{padding-right:32px;font-family:var(--mono);font-size:12px;color:var(--accent)}
-.pilot-offer-title{margin-top:14px;font-size:46px;line-height:.92}
-.pilot-offer-title em{display:block;color:var(--accent)}
-.pilot-offer-body{margin-top:14px;font-size:var(--small);line-height:1.6;color:var(--text-2)}
-.pilot-offer-cta{width:100%;margin-top:22px}
-.pilot-offer-cta svg{transition:transform .2s var(--ease)}
-.pilot-offer-cta:hover svg{transform:translateX(3px)}
-@keyframes pilot-offer-in{from{opacity:0;transform:translateY(28px) scale(.97)}to{opacity:1;transform:none}}
-@keyframes pilot-offer-out{to{opacity:0;transform:translateY(16px) scale(.98)}}
-@keyframes pilot-offer-rule{from{transform:scaleX(0)}to{transform:scaleX(1)}}
-@keyframes pilot-offer-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-@keyframes pilot-offer-sheet-in{from{opacity:0;transform:translateY(calc(100% + 24px))}to{opacity:1;transform:none}}
-@keyframes pilot-offer-fade{from{opacity:0}to{opacity:1}}
-@media (prefers-reduced-motion:reduce){.pilot-offer,.pilot-offer>*,.pilot-offer::before{animation:pilot-offer-fade .2s linear both}}
-
 /* ---------------------------------------------------------------- Narrower screens */
 @media(max-width:1100px){
 .bento{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -809,6 +781,4 @@ main{counter-reset:fig}
 .compare-answer{font-size:17px}
 .versus-table th,.versus-table td{padding:12px}
 .blog-body{font-size:17px}
-.pilot-offer{right:16px;bottom:calc(16px + env(safe-area-inset-bottom));left:16px;width:auto;padding:22px;transform-origin:50% 100%;animation-name:pilot-offer-sheet-in}
-.pilot-offer-title{font-size:38px}
 }
