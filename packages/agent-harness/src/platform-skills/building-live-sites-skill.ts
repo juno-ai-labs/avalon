@@ -164,7 +164,7 @@ have not. Ask its entry-privacy question only when that skill requires it.
    - **Privacy is a Canvas setting.** Both static and active sites inherit
      the Canvas's artifact audience. New Canvases start with editors-only
      artifact access. Do not add a server solely to protect a page. A manager
-     changes the artifact audience in Share or through set_canvas_audience;
+     changes the artifact audience in the Canvas's Share screen;
      publishing does not change it. Public artifact access does not expose
      the conversation or permit visitors to redesign the site.
 
