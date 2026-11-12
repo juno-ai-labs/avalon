@@ -25,6 +25,7 @@ import {
   Plus,
   RefreshCcw,
   Search,
+  Settings,
 } from 'lucide-react';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
@@ -877,6 +878,7 @@ export function RunFailureNotice({
   requestId,
   retrying,
   onRetry,
+  onOpenUsageSettings,
 }: {
   automatic?: boolean;
   code: string;
@@ -884,10 +886,23 @@ export function RunFailureNotice({
   requestId?: string;
   retrying: boolean;
   onRetry: () => void;
+  /** Where the remedy for a usage limit lives; the card offers it first. */
+  onOpenUsageSettings?: () => void;
 }): React.JSX.Element {
+  // The one failure whose remedy is a setting rather than a retry: the
+  // Organization's weekly allowance is spent and overages are off. Retrying
+  // fails the same way until an administrator changes that, so the setting is
+  // the primary action and Retry stays for after it.
+  const usageLimit = code === 'usage_allowance_exhausted' && onOpenUsageSettings !== undefined;
+  // The rail's usage warning reads the same allowance; a run refused on it is
+  // the news that the read is stale, so refresh it rather than wait for a focus.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (usageLimit) void queryClient.invalidateQueries({ queryKey: ['workspace-usage'] });
+  }, [queryClient, usageLimit]);
   return (
     <section aria-label="Run recovery" className="run-recovery">
-      <ErrorNotice automatic={automatic} detailsLabel="Run details" occurrence={requestId} title="Run failed">
+      <ErrorNotice automatic={automatic} detailsLabel="Run details" occurrence={requestId} title={usageLimit ? 'Usage limit reached' : 'Run failed'}>
       <div className="run-failure-copy">
         <p>{message}</p>
         <code>{code}</code>
@@ -904,7 +919,13 @@ export function RunFailureNotice({
       </div>
       </ErrorNotice>
       <div className="run-failure-actions">
-        <Button className="button-primary" disabled={retrying} onClick={onRetry}>
+        {usageLimit ? (
+          <Button className="button-primary" onClick={onOpenUsageSettings}>
+            <Settings aria-hidden="true" size={13} />
+            Open usage settings
+          </Button>
+        ) : null}
+        <Button className={usageLimit ? undefined : 'button-primary'} disabled={retrying} onClick={onRetry}>
           {retrying ? <LoaderCircle aria-hidden="true" className="spin" size={13} /> : <RefreshCcw aria-hidden="true" size={13} />}
           Retry
         </Button>
@@ -2672,6 +2693,7 @@ function ConversationSurfaceContent({
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
               message={latestRunFailureMessage}
               onRetry={() => retry.mutate()}
+              onOpenUsageSettings={() => { void desktopBridge().openSettings('workspace'); }}
               requestId={detail.latestHarnessRun.requestId ?? detail.latestHarnessRun.id}
               retrying={retry.isPending}
             />

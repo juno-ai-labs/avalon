@@ -24,6 +24,8 @@ import {
   type UsageReading,
 } from '../lib/organization-usage';
 import { Badge, Button, DropdownSelect, Meter, Tip } from './primitives';
+import { IconAlertCircle } from '@tabler/icons-react';
+import { RailItem } from './rail-item';
 
 const METER_LABEL = 'Weekly quota left';
 const PLAN_OPTIONS = PLAN_IDS.map((plan) => ({
@@ -170,5 +172,33 @@ export function OrganizationUsageMenuItem({ api, onSelect }: {
       <Meter label={METER_LABEL} size="thin" tone={usageTone(usage)} value={usage.quotaRemainingPercent} />
       <small>{line}</small>
     </DropdownMenu.Item>
+  );
+}
+
+/**
+ * The rail's warning that Rally has stopped taking new work: the week's
+ * included usage is spent and overage billing is off. It sits above the
+ * account tile because the remedy is in Settings, and it is the only notice a
+ * person gets when the refusal landed in a Sidekick or a background agent.
+ * Shown from the server's own admission decision (`allowanceExhausted`), never
+ * re-derived here, so it clears the moment work would be admitted again.
+ */
+export function UsageLimitRailWarning({ api, onOpen }: {
+  api: OrganizationUsageApi | null;
+  onOpen: () => void;
+}): React.JSX.Element | null {
+  const state = useOrganizationUsage(api);
+  if (state.status !== 'ready' || state.reading.usage.allowanceExhausted !== true) return null;
+  const explanation = `This week's included usage is used up and overage billing is off, so Rally, Sidekicks and background agents are paused. An administrator can turn on overage billing in Settings. ${usageResetLabel(state.reading.usage.weekResetsAt)}.`;
+  return (
+    <Tip describesTrigger={false} label={explanation} side="right">
+      <RailItem
+        aria-label={`Usage limit reached. ${explanation}`}
+        className="navigation-rail-usage-warning"
+        icon={<IconAlertCircle aria-hidden="true" className="navigation-rail-usage-warning-icon" size={22} stroke={1.9} />}
+        label="Usage"
+        onClick={onOpen}
+      />
+    </Tip>
   );
 }

@@ -1905,10 +1905,14 @@ worth keeping (`ApiError.code`, object port codes) are the host's types, and
 `diagnosticErrorCode` already knows them. A second copy is how two boundaries
 came to disagree on what a code looks like.
 
+**Also:** `HarnessLimitError` is exported, and `requiredPort` lets it through
+unwrapped, so a host port can end a run on a limit it enforces under that
+limit's own code. The usage allowance is the first: before this it reached the
+member as `run_state_persistence_failed`.
+
 **What a future change has to respect:** `describeFailureCause` must return a
-code, never prose, and must not throw. This only names the cause; a usage
-refusal still surfaces as `run_state_persistence_failed`, which is its own
-defect.
+code, never prose, and must not throw. A host limit must be thrown as
+`HarnessLimitError`; anything else a port throws is still that port failing.
 
 ### 2026-11-12 — A reply does not relay another agent's report or test coverage
 

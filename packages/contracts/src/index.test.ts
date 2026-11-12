@@ -275,6 +275,8 @@ describe("boundary contracts", () => {
       // failing. Collapsing it back would restore the misattribution that cost
       // a work stream on 2026-08-24.
       "platform_limit_exceeded",
+      // A billing refusal, not a storage fault: its remedy is a setting.
+      "usage_allowance_exhausted",
     ]));
     expect(() => HarnessFailureCodeSchema.parse("generic_limit")).toThrow();
   });

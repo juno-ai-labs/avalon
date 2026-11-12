@@ -8205,6 +8205,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* Equal outer tracks center the pins in the whole rail; long pin lists scroll. */
 .navigation-rail-sections { align-self: start; display: flex; flex-direction: column; gap: 14px; width: 100%; }
 .navigation-rail-account { align-self: end; padding-bottom: 16px; width: 100%; }
+/* Above the account tile, in the danger hue: Rally has stopped taking new work. */
+.navigation-rail-usage-warning { margin-bottom: 8px; }
+.navigation-rail-usage-warning-icon { color: var(--av-sys-color-danger-base); }
 .navigation-rail-pins { align-self: stretch; min-height: 48px; overflow-y: auto; overscroll-behavior: contain; padding: 8px 0; width: 100%; }
 .navigation-rail-pins-list { display: flex; flex-direction: column; gap: 12px; }
 .navigation-rail-pin { display: block; flex: none; position: relative; }

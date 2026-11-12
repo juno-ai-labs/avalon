@@ -330,7 +330,12 @@ type RenderedSystemPrompt = {
   content: string;
 };
 
-class HarnessLimitError extends Error {
+/**
+ * A limit that ends the run under its own failure code. Exported so a host port
+ * can end a run on a limit it enforces (the usage allowance): `requiredPort`
+ * lets it through rather than reporting it as the port failing.
+ */
+export class HarnessLimitError extends Error {
   constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open" | "platform_limit_exceeded" | "context_length_exceeded">, message: string) {
     super(message);
     this.name = "HarnessLimitError";
@@ -4115,7 +4120,7 @@ async function requiredPort<T>(
   try {
     return await operation();
   } catch (error) {
-    if (error instanceof FatalHarnessPortError) throw error;
+    if (error instanceof FatalHarnessPortError || error instanceof HarnessLimitError) throw error;
     throw new FatalHarnessPortError(code, label, error);
   }
 }

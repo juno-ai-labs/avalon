@@ -16,6 +16,7 @@ import {
 import { describeZodIssues, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
+import { readUsageAllowance } from "./usage-admission";
 import type { WorkDeferral } from "../lib/defer";
 import { durableObjectStubForWorkspace, workspacePlacementAffinity } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logStructuredEvent, logWarn } from "../observability/logger";
@@ -262,6 +263,9 @@ export async function readOrganizationUsage(
   const billing = env.BILLING_CONFIG ? await env.DB.prepare('SELECT overage_enabled, status, overage_started_at FROM billing_accounts WHERE workspace_id = ?')
     .bind(workspaceId).first<{ overage_enabled: number; status: string; overage_started_at: number | null }>() : null;
   if (billing) result.overage.billingEnabled = billing.overage_enabled === 1 && ['active', 'trialing'].includes(billing.status) && billing.overage_started_at !== null && billing.overage_started_at * 1000 <= period.start;
+  // The same decision admission makes, so the client warns exactly while work is refused.
+  // An Organization with no billing account is refused on the unpaid plan's quota too.
+  if (env.BILLING_CONFIG) result.allowanceExhausted = (await readUsageAllowance(env, workspaceId, nowMs)).exhausted;
   return result;
 }
 

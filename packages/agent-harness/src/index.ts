@@ -78,7 +78,7 @@ export * from "./prompts";
 export * from "./completion-verification";
 export { classifyMessageAdmission, classifyMessageContinuation, classifyMessageContinuationWithTypeSafe } from "./message-continuation";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
-export { AmbiguousExternalWriteError } from "./bind-runtime";
+export { AmbiguousExternalWriteError, HarnessLimitError } from "./bind-runtime";
 export {
   formatToolArgumentValidationError,
   modelToolArgumentSchema,
@@ -4769,6 +4769,9 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   // run starts a fresh one — which is exactly what happened on 2026-08-24,
   // where the next run in the same work stream completed.
   platform_limit_exceeded: "Rally hit a platform limit partway through this run. Trying again usually works — if it keeps happening, copy the request ID for support",
+  // Names the two remedies and who holds the first. Retrying cannot help until
+  // one of them happens, so the sentence must not invite it.
+  usage_allowance_exhausted: "Your organization has used this week's included usage. An administrator can turn on overage billing in Organization settings, or usage resumes when the weekly allowance resets",
 });
 
 export function memberSafeHarnessFailureMessage(code: HarnessFailureCode): string {
