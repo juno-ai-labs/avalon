@@ -813,6 +813,51 @@ describe('CanvasScreen', () => {
     }));
   });
 
+  it('rules out artifact audiences narrower than Organization editors, keeping public', async () => {
+    setCanvasAudience.mockResolvedValue(detail({ visibility: 'workspace', artifactVisibility: 'workspace' }));
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    const artifactControls = within(within(dialog).getByRole('group', { name: 'Who can interact with artifacts' }));
+    expect(artifactControls.getByRole('radio', { name: 'Editors only' })).toBeChecked();
+    expect(artifactControls.getByRole('radio', { name: 'Specific people' })).toBeEnabled();
+    fireEvent.click(editorControls(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
+    expect(artifactControls.getByRole('radio', { name: /Everyone in the Organization/ })).toBeChecked();
+    expect(artifactControls.getByRole('radio', { name: 'Editors only' })).toBeDisabled();
+    expect(artifactControls.getByRole('radio', { name: 'Specific people' })).toBeDisabled();
+    expect(within(dialog).getByText('Everyone in the Organization can edit, so they can already use the artifacts.')).toBeInTheDocument();
+
+    fireEvent.click(artifactControls.getByRole('radio', { name: 'Anyone with the link' }));
+    fireEvent.click(editorControls(dialog).getByRole('radio', { name: 'Only you' }));
+    expect(artifactControls.getByRole('radio', { name: 'Editors only' })).toBeEnabled();
+    fireEvent.click(editorControls(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
+    expect(artifactControls.getByRole('radio', { name: 'Anyone with the link' })).toBeChecked();
+
+    fireEvent.click(artifactControls.getByRole('radio', { name: /Everyone in the Organization/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, {
+      visibility: 'workspace', userIds: [], artifactVisibility: 'workspace', artifactUserIds: [], expectedRevision: 0,
+    }));
+  });
+
+  it('restores the stored artifact choice when editors leave the Organization, never saving a raise nobody picked', async () => {
+    getCanvas.mockResolvedValue(detail({ visibility: 'workspace', artifactVisibility: 'editors' }));
+    setCanvasAudience.mockResolvedValue(detail());
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    const artifactControls = within(within(dialog).getByRole('group', { name: 'Who can interact with artifacts' }));
+    expect(artifactControls.getByRole('radio', { name: /Everyone in the Organization/ })).toBeChecked();
+    fireEvent.click(editorControls(dialog).getByRole('radio', { name: 'Only you' }));
+    expect(artifactControls.getByRole('radio', { name: 'Editors only' })).toBeChecked();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, {
+      visibility: 'creator', userIds: [], artifactVisibility: 'editors', artifactUserIds: [], expectedRevision: 0,
+    }));
+  });
+
   it('saves public artifact use independently of the two editors and copies the artifact URL',async()=>{
     getCanvas.mockResolvedValue(detail({visibility:'participants',participantUserIds:[MAYA],sharingRevision:7}));
     setCanvasAudience.mockResolvedValue(detail({visibility:'participants',participantUserIds:[MAYA],artifactVisibility:'public',sharingRevision:8}));
@@ -979,7 +1024,7 @@ describe('CanvasScreen', () => {
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Gale Guest' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     // Theo, a member, is in already; only the guest is sent.
-    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [GUEST], artifactVisibility: 'editors', artifactUserIds: [], expectedRevision: 0 }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [GUEST], artifactVisibility: 'workspace', artifactUserIds: [], expectedRevision: 0 }));
   });
 
   it('invites the guests typed in the form on Save, the dialog\'s one primary action', async () => {
@@ -989,8 +1034,9 @@ describe('CanvasScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
     fireEvent.click(editorControls(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
-    fireEvent.click(within(dialog).getByRole('button',{name:'Add people'}));
-    expect(within(dialog).getByRole('searchbox', { name: 'Search people' })).toBeInTheDocument();
+    const editorSection = within(within(dialog).getByRole('group', { name: 'Who can edit' }).closest('section')!);
+    fireEvent.click(editorSection.getByRole('button',{name:'Add people'}));
+    expect(editorSection.getByRole('searchbox', { name: 'Search people' })).toBeInTheDocument();
     const guests = within(dialog).getByText('Invite a guest by email').closest('details')!;
     guests.open = true;
     fireEvent(guests, new Event('toggle'));
@@ -1001,7 +1047,7 @@ describe('CanvasScreen', () => {
       parentId: CANVAS, emails: ['a@example.test', 'b@example.test'],
       targets: [{ kind: 'workstream', workspaceId: WORKSPACE, parentId: CANVAS }],
     })));
-    expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [], artifactVisibility: 'editors', artifactUserIds: [], expectedRevision: 0 });
+    expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [], artifactVisibility: 'workspace', artifactUserIds: [], expectedRevision: 0 });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share Canvas' })).toBeNull());
   });
 
@@ -1116,4 +1162,67 @@ it('does not retry an inaccessible Canvas on unrelated Canvas pushes', async () 
   const calls = getCanvas.mock.calls.length;
   await act(async () => { applyVersionedSidebarList(client, 'canvases', 1, []); });
   expect(getCanvas).toHaveBeenCalledTimes(calls);
+});
+
+describe('the artifact cards’ audience', () => {
+  const GUEST = asUserId('00000000-0000-7000-8000-0000000000a9');
+  const sharing = () => lastSurface().props.artifactSharing!;
+
+  it('hands the surface the Canvas’s published artifacts', async () => {
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().props.artifactSharing).toBeDefined());
+    expect(sharing().publishedIds).toEqual(['00000000-0000-7000-8000-0000000000b2', '00000000-0000-7000-8000-0000000000b1']);
+    expect(sharing().audience).toMatchObject({ value: 'editors', canChange: true });
+  });
+
+  it('saves a new artifact audience with the editors as they were and the revision it was drawn from', async () => {
+    getCanvas.mockResolvedValue(detail({
+      visibility: 'workspace', participantUserIds: [MAYA, GUEST], sharingRevision: 4,
+      artifactVisibility: 'workspace', artifactUserIds: [GUEST],
+    }));
+    setCanvasAudience.mockResolvedValue(detail({ visibility: 'workspace', participantUserIds: [MAYA, GUEST], sharingRevision: 5, artifactVisibility: 'public' }));
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().props.artifactSharing?.audience?.value).toBe('workspace'));
+    // The member list arrives on its own read; the guest filter needs it.
+    await waitFor(() => expect(getWorkspaceMembers).toHaveBeenCalled());
+
+    await act(async () => { await sharing().audience!.change('public'); });
+
+    // An Organization-wide Canvas names only its guests as editors; Maya is a member.
+    expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, {
+      visibility: 'workspace', userIds: [GUEST], artifactVisibility: 'public', artifactUserIds: [], expectedRevision: 4,
+    });
+    await waitFor(() => expect(sharing().audience?.value).toBe('public'));
+  });
+
+  it('keeps the chosen artifact users when the audience stays the Organization', async () => {
+    getCanvas.mockResolvedValue(detail({ artifactVisibility: 'participants', artifactUserIds: [GUEST], sharingRevision: 2 }));
+    setCanvasAudience.mockResolvedValue(detail({ artifactVisibility: 'workspace', artifactUserIds: [GUEST], sharingRevision: 3 }));
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().props.artifactSharing?.audience?.value).toBe('participants'));
+
+    await act(async () => { await sharing().audience!.change('workspace'); });
+
+    expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, {
+      visibility: 'creator', userIds: [], artifactVisibility: 'workspace', artifactUserIds: [GUEST], expectedRevision: 2,
+    });
+  });
+
+  it('reloads the Canvas and says why when someone else changed sharing first', async () => {
+    setCanvasAudience.mockRejectedValue(new ApiError('Sharing changed', 409, 'canvas_sharing_changed'));
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().props.artifactSharing?.audience).toBeDefined());
+    const reads = getCanvas.mock.calls.length;
+
+    await act(async () => { await expect(sharing().audience!.change('public')).rejects.toThrow('Sharing changed'); });
+
+    await waitFor(() => expect(getCanvas.mock.calls.length).toBeGreaterThan(reads));
+    expect(await screen.findByText(/Someone else changed this Canvas’s sharing first/u)).toBeInTheDocument();
+  });
+
+  it('offers the audience without a menu to someone who cannot manage sharing', async () => {
+    getCanvas.mockResolvedValue(detail({ canManage: false }));
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().props.artifactSharing?.audience?.canChange).toBe(false));
+  });
 });

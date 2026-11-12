@@ -9,6 +9,7 @@ import { httpHostname, useHostFavicon } from '../lib/host-favicon';
 
 import { AttachmentMediaTile } from './attachments';
 import { type ResourceAction, ResourceActionMenu, ResourceMoreMenu } from './resource-action-menu';
+import { type ArtifactCardControls, ArtifactCardTools } from './artifact-card-tools';
 import { isVideoAttachment } from '../lib/attachment-media';
 
 /**
@@ -84,6 +85,11 @@ export interface CitationContext {
   actions?: (resourceId: string) => readonly ResourceAction[] | undefined;
   /** Whether this person pinned the resource, which its card says beside its kind. */
   pinned?: (resourceId: string) => boolean;
+  /**
+   * The link, browser and audience controls for a published artifact's card,
+   * or `undefined` for a resource that is not one, such as an attached file.
+   */
+  artifact?: (resourceId: string) => ArtifactCardControls | undefined;
 }
 
 /**
@@ -246,6 +252,8 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
   const isImage = kind === 'image' && !still;
   const actions = useResourceActions(resource.id);
   const pinned = useResourcePinned(resource.id);
+  const { citations } = useCitationRender();
+  const tools = isImage || still ? undefined : citations?.artifact?.(resource.id);
   const [excerpt, setExcerpt] = useState<{ for: string; src?: string; open?: boolean }>({ for: '' });
   useEffect(() => {
     const request = isImage ? preview?.(resource.id) : undefined;
@@ -287,7 +295,7 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
   // A commit can hand this mounted card a different resource before the effect
   // re-runs; matching on the id keeps the old resource's text off the new one.
   const settled = excerpt.for === resource.id ? excerpt : { for: resource.id };
-  return (
+  const card = (
     <ResourceMoreMenu actions={actions} label={resource.title} placement={isImage ? 'corner' : 'row'}>
       <ResourceActionMenu actions={actions}>
         <button
@@ -335,6 +343,15 @@ export function ResourceEmbedCard({ label, resource, onOpen, onPreview, preview,
         </button>
       </ResourceActionMenu>
     </ResourceMoreMenu>
+  );
+  // A published artifact's row carries its own tools. The row, not the button,
+  // draws the card, so the tools sit inside its border without nesting in it.
+  if (!tools) return card;
+  return (
+    <span className="artifact-card">
+      {card}
+      <ArtifactCardTools controls={tools} title={resource.title} />
+    </span>
   );
 }
 

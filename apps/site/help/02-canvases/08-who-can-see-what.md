@@ -37,7 +37,11 @@ latest version but not the conversation behind it.
    tick the editors you want.
 3. Under **Who can interact with artifacts**, choose **Editors only**,
    **Specific people**, **Everyone in the Organization** or **Anyone with the
-   link**. Use its own **Add people** picker for artifact users.
+   link**. Use its own **Add people** picker for artifact users. When
+   **Everyone in the Organization** can edit, **Editors only** and **Specific
+   people** are turned off here, since the whole Organization can already use
+   the artifacts: the choice is **Everyone in the Organization** or **Anyone
+   with the link**.
 4. Click **Save**. **Cancel** discards the changes.
 
 Editors can always use the artifacts. Artifact users can open and use published

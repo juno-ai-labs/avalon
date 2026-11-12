@@ -1,4 +1,4 @@
-import type { CanvasDetail, WorkstreamAppearancePatch } from '@rally/contracts';
+import { asUserId, type CanvasDetail, type WorkstreamAppearancePatch } from '@rally/contracts';
 import { AppearancePicker } from '@rally/ui/components/appearance-picker';
 import { ActionTile, ActionTiles, TitleMenuItem, TitleMenuSeparator, TitlePillHeader, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconArchive, IconLayoutSidebarRight, IconLink, IconPalette, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
@@ -13,6 +13,8 @@ import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { CanvasMark, canvasHue } from '../components/canvas-mark';
 import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
+import type { ArtifactAudienceControl } from '../components/artifact-card-tools';
+import { editorUserIds } from '../lib/canvas-sharing';
 import { CanvasSidekicksSection, madeSidekicksArchiveCopy } from '../components/canvas-sidekicks-menu';
 import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasCreation, useCanvasList, useCanvasNameSources, type CanvasCreation } from '../lib/canvases';
@@ -151,6 +153,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const [choosingAppearance, setChoosingAppearance] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
   const [linkError, setLinkError] = useState<Error | null>(null);
+  const [audienceError, setAudienceError] = useState<Error | null>(null);
   const [renaming, setRenaming] = useState(() => canvasRenameRequested(location.state));
   const [renamePending, setRenamePending] = useState(false);
   const [renameError, setRenameError] = useState<Error | null>(null);
@@ -251,6 +254,40 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     setPinError(null);
     api.setCanvasPinned(id, !pinned).catch((cause: unknown) => setPinError(cause instanceof Error ? cause : new Error('The Canvas could not be pinned.')));
   };
+  // The artifact cards' audience menu: one setting for the whole Canvas,
+  // saved with the editors resent as they are, fenced on the revision the
+  // menu was drawn from so a concurrent Share edit is refused, not overwritten.
+  const sharingDetail = canvas.data;
+  const artifactAudience = useMemo((): ArtifactAudienceControl | undefined => {
+    if (!sharingDetail || !api) return undefined;
+    return {
+      value: sharingDetail.artifactVisibility ?? 'editors',
+      canChange: sharingDetail.canManage === true,
+      choosePeople: () => setSharing(true),
+      change: async (artifactVisibility) => {
+        setAudienceError(null);
+        try {
+          const updated = await api.setCanvasAudience(id, {
+            visibility: sharingDetail.visibility,
+            userIds: editorUserIds(sharingDetail, (userId) => membersById.get(userId) === undefined || membersById.get(userId)?.accessClass === 'guest').map(asUserId),
+            artifactVisibility,
+            artifactUserIds: artifactVisibility === 'workspace' ? [...(sharingDetail.artifactUserIds ?? [])] : [],
+            ...(sharingDetail.sharingRevision !== undefined ? { expectedRevision: sharingDetail.sharingRevision } : {}),
+          });
+          queryClient.setQueryData(canvasDetailQueryKey(id), updated);
+        } catch (cause) {
+          setAudienceError(cause instanceof Error ? cause : new Error('artifact_audience_failed'));
+          if (cause instanceof ApiError && cause.code === 'canvas_sharing_changed') void canvas.refetch();
+          throw cause;
+        }
+      },
+    };
+  }, [api, canvas.refetch, id, membersById, queryClient, sharingDetail]);
+  const publishedKey = sharingDetail?.artifacts.map((artifact) => artifact.resourceId).join(' ');
+  const artifactSharing = useMemo(() => publishedKey === undefined ? undefined : {
+    publishedIds: publishedKey ? publishedKey.split(' ') : [],
+    audience: artifactAudience,
+  }, [artifactAudience, publishedKey]);
   if (leaving) return <OpeningState label="Opening Canvases…" />;
   if (canvas.error && !row && !recoverableDetailFailure) {
     // One in-pane state, never a dialog over it (canvases.md). A malformed id
@@ -375,6 +412,9 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
     {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
+    {audienceError && <ErrorNotice occurrence={audienceError} title="Artifact access was not changed">{audienceError instanceof ApiError && audienceError.code === 'canvas_sharing_changed'
+      ? 'Someone else changed this Canvas’s sharing first. Their change is shown now; choose again if you still want yours.'
+      : 'Try again.'}</ErrorNotice>}
     {renameError && <ErrorNotice occurrence={renameError} title="The Canvas could not be renamed">{canvasRenameRefusal(renameError)}</ErrorNotice>}
     <ConversationSurface
       {...(openingDetail ? { openingDetail } : {})}
@@ -385,6 +425,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
         <ErrorNotice occurrence={canvas.error} title="The Canvas details could not be loaded">Your conversation is still open. Try loading the Canvas details again.</ErrorNotice>
         <Button onClick={() => void canvas.refetch()}>Retry loading Canvas details</Button>
       </> : undefined}
+      artifactSharing={artifactSharing}
       parentId={id}
       parentKind="canvas"
       composerActivity={<ComposerAgentActivity activity={workspaceSocket?.state === 'connected' && workspaceSocket.sidebarReady

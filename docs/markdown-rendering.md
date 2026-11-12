@@ -21,6 +21,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. |
 | `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, and the React context that holds which sections a reader has closed while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
+| `apps/desktop/src/renderer/components/artifact-card-tools.tsx` | A published artifact card's audience menu, copy-link and open-in-browser buttons. |
 | `apps/api/src/routes/favicons.ts`, `apps/api/src/services/favicon-service.ts` | The authenticated binary favicon endpoint and its public-host validation, parallel domain-chain resolution, image sniffing, and 30-day platform KV entries. |
 | `apps/desktop/src/renderer/lib/favicon-api.tsx` | Narrows the broad app-session context to the stable API capability link icons need, so unrelated session updates do not re-render every Markdown body. Detached exports receive no capability. |
 | `apps/desktop/src/renderer/lib/host-favicon.ts` | What the two surfaces that draw a site's icon share: the hostname an HTTP(S) target names, and the request, its object-URL revocation, and a result that is *target*-scoped rather than merely mount-scoped — it is read only for the `{api, hostname}` it was fetched for, and dies with the URL it names. The markup is not shared — a link puts the icon in front of its text, a footnote marker puts it instead of its asterisk. |
@@ -463,6 +464,22 @@ today; the one that did, a Breakout's **Attach to channel** on its generated
 artifacts, went with Breakouts. The
 [changelog](#2026-09-24--a-resource-citation-can-carry-a-hosts-right-click-menu)
 has why.
+
+**A published artifact's embed card carries its own tools.** The citation
+context's optional `artifact` returns, per resource, a link reader, a
+browser opener and, on a Canvas, the Canvas's artifact audience
+(`artifact-card-tools.tsx`). With them the row (`.artifact-card`), not the
+button, draws the card, and the audience pill, **Copy link** and **Open in
+browser** sit inside its border beside the button, which cannot hold buttons.
+The conversation surface offers them only where a link exists: in a Canvas,
+for the artifacts the Canvas lists as its publications (`CanvasDetail.artifacts`);
+elsewhere, for sites, which always have one. Other generated resources, such as
+audio, video, Terminal diffs, and attached files, have no registry row, so
+their cards keep no tools. Image tiles
+and stills get none. The audience is the Canvas's one setting, so the menu says
+it applies to every artifact in the Canvas; **Specific people…** opens the Share
+panel, the one person picker, and someone who cannot manage sharing sees the
+setting with no menu.
 
 A citation rendered into a **still** — the saved card — keeps numbered pills
 instead of asterisks or icons, so they identify entries in its trailing source
@@ -964,6 +981,33 @@ renderer keeps its existing parsing and code behavior. Source/range mapping and
 restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-12 — An artifact card opens, copies and shares from the feed
+
+**What changed:** A generated artifact's embed card gains an audience pill, a
+copy-link button and an open-in-browser button, through a new optional
+`artifact` member of the citation context. The artifact audience labels moved
+to `ARTIFACT_VISIBILITY_OPTIONS` so the Share panel and the card share words,
+and the editor list an audience update resends moved to `editorUserIds`.
+
+**Why:** The card is where a person first meets an artifact, and sharing it
+meant opening the viewer for the link or the Canvas's Share panel for access.
+Each tool reuses what already existed: the link route the Share panel reads
+(same query key, so one read), the single-use open the site viewer's own
+**Open in browser** mints, and the Canvas audience update with its revision
+fence.
+
+**Considered and rejected:** A per-artifact audience. Access is compiled per
+Canvas and propagated to every publication (see
+[Canvas artifact access](canvas-artifact-access.md)); a per-artifact setting is
+a server change nobody has asked for, so the menu names the real scope instead.
+Hiding the tools behind the hover `⋯` menu was rejected because the request was
+for visible controls.
+
+**Consequences:** A change from the card resends the editors unchanged and is
+refused, not merged, when someone else saved first; the Canvas detail is then
+refetched. A host that cannot open a browser or read a link should omit
+`artifact` rather than offer a dead button.
 
 ### 2026-11-02 — Sidekick mention chips
 

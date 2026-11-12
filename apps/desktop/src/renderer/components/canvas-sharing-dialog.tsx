@@ -1,19 +1,18 @@
 import {
-  IconBuilding,
   IconCheck,
   IconCopy,
   IconLock,
   IconPencil,
   IconPlus,
   IconRefresh,
-  IconUsers,
   IconWorld,
   IconX,
 } from "@tabler/icons-react";
+import { canvasArtifactVisibilityFloor } from "@rally/contracts/canvases";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import type { WorkspaceMember } from "../lib/types";
-import { CANVAS_VISIBILITY_OPTIONS } from "../lib/canvas-sharing";
+import { ARTIFACT_VISIBILITY_OPTIONS, CANVAS_VISIBILITY_OPTIONS } from "../lib/canvas-sharing";
 import {
   Avatar,
   Badge,
@@ -60,16 +59,8 @@ const EDITOR_OPTIONS = [
   { value: "participants", ...CANVAS_VISIBILITY_OPTIONS.participants },
   { value: "workspace", ...CANVAS_VISIBILITY_OPTIONS.workspace },
 ] as const;
-const ARTIFACT_OPTIONS = [
-  { value: "editors", label: "Editors only", icon: IconLock },
-  { value: "participants", label: "Specific people", icon: IconUsers },
-  {
-    value: "workspace",
-    label: "Everyone in the Organization",
-    icon: IconBuilding,
-  },
-  { value: "public", label: "Anyone with the link", icon: IconWorld },
-] as const;
+const ARTIFACT_OPTIONS = (["editors", "participants", "workspace", "public"] as const)
+  .map((value) => ({ value, ...ARTIFACT_VISIBILITY_OPTIONS[value] }));
 
 function AudienceTiles<T extends string>({
   title,
@@ -84,7 +75,12 @@ function AudienceTiles<T extends string>({
   title: string;
   description: string;
   icon: typeof IconLock;
-  options: readonly { value: T; label: string; icon: typeof IconLock }[];
+  options: readonly {
+    value: T;
+    label: string;
+    icon: typeof IconLock;
+    unavailable?: boolean;
+  }[];
   value: T;
   onChange: (value: T) => void;
   publicOptions?: boolean;
@@ -107,13 +103,17 @@ function AudienceTiles<T extends string>({
       <div
         className={`canvas-share-options${publicOptions ? " canvas-sharing-use-options" : ""}`}
       >
-        {options.map(({ value: option, label, icon: OptionIcon }) => (
-          <label className="action-tile canvas-share-option" key={option}>
+        {options.map(({ value: option, label, icon: OptionIcon, unavailable }) => (
+          <label
+            className={`action-tile canvas-share-option${unavailable ? " canvas-share-option-unavailable" : ""}`}
+            key={option}
+          >
             <input
               className="sr-only"
               type="radio"
               name={id}
               value={option}
+              disabled={unavailable}
               checked={value === option}
               onChange={() => onChange(option)}
             />
@@ -292,6 +292,10 @@ function CanvasSharingForm({
   beforeEditors,
   saveFailure = "save",
 }: Omit<CanvasSharingDialogProps, "open" | "title">): React.JSX.Element {
+  // `selection.artifacts` is the manager's own choice. What the form shows and
+  // saves is that choice under the floor Organization editors set, so leaving
+  // Organization editors brings the earlier choice back instead of keeping a
+  // raise the manager never picked.
   const [selection, setSelection] = useState(initialSelection);
   const observed = useRef(initialSelection);
   useEffect(() => {
@@ -342,18 +346,25 @@ function CanvasSharingForm({
           ]
         : selection.editorIds;
   const editors = new Set([owner.id, ...editorIds]).size;
+  const artifacts = canvasArtifactVisibilityFloor(
+    selection.editors,
+    selection.artifacts,
+  );
+  // Recipients kept under "editors" grant nothing, so a raise from it starts
+  // with none, as the server stores it. Picking people makes the raise a choice.
+  const artifactUserIds =
+    selection.artifacts === "editors" ? [] : selection.artifactUserIds;
   const artifactSummary = {
     editors: "Editors only",
     participants: "Selected artifact users",
     workspace: "Organization access",
     public: "Public artifacts",
-  }[selection.artifacts];
+  }[artifacts];
   const missingEditors =
     selection.editors === "participants" &&
     selection.editorIds.filter((id) => id !== owner.id).length === 0;
   const missingUsers =
-    selection.artifacts === "participants" &&
-    selection.artifactUserIds.length === 0;
+    artifacts === "participants" && artifactUserIds.length === 0;
   return (
     <form
       className="canvas-sharing-form"
@@ -364,12 +375,12 @@ function CanvasSharingForm({
         try {
           await onSave({
             ...selection,
+            artifacts,
             editorIds:
               selection.editors === "creator" ? [] : selection.editorIds,
             artifactUserIds:
-              selection.artifacts === "participants" ||
-              selection.artifacts === "workspace"
-                ? selection.artifactUserIds
+              artifacts === "participants" || artifacts === "workspace"
+                ? artifactUserIds
                 : [],
           });
         } catch {
@@ -392,7 +403,9 @@ function CanvasSharingForm({
           )}
           disabled={saving}
           value={selection.editors}
-          onChange={(value) => setSelection({ ...selection, editors: value })}
+          onChange={(value) =>
+            setSelection({ ...selection, editors: value })
+          }
         />
         {selection.editors !== "creator" && (
           <AudiencePeople
@@ -425,22 +438,26 @@ function CanvasSharingForm({
           title="Who can interact with artifacts"
           description="Open and use the published artifacts in this Canvas."
           icon={IconWorld}
-          options={ARTIFACT_OPTIONS}
+          options={ARTIFACT_OPTIONS.map((option) =>
+            canvasArtifactVisibilityFloor(selection.editors, option.value) !==
+            option.value
+              ? { ...option, unavailable: true }
+              : option,
+          )}
           disabled={saving}
-          value={selection.artifacts}
+          value={artifacts}
           onChange={(value) => setSelection({ ...selection, artifacts: value })}
           publicOptions
         />
-        {(selection.artifacts === "participants" ||
-          selection.artifacts === "workspace") && (
+        {(artifacts === "participants" || artifacts === "workspace") && (
           <AudiencePeople
             currentUserId={currentUserId}
             disabled={saving}
             owner={owner}
             members={members}
-            chosen={selection.artifactUserIds}
+            chosen={artifactUserIds}
             includedIds={
-              selection.artifacts === "workspace"
+              artifacts === "workspace"
                 ? members
                     .filter((person) => person.accessClass !== "guest")
                     .map((person) => person.id)
@@ -448,11 +465,17 @@ function CanvasSharingForm({
             }
             label="Artifact users"
             onChange={(artifactUserIds) =>
-              setSelection({ ...selection, artifactUserIds })
+              setSelection({ ...selection, artifacts, artifactUserIds })
             }
           />
         )}
-        {selection.artifacts === "participants" && (
+        {selection.editors === "workspace" && (
+          <p className="canvas-share-note">
+            Everyone in the Organization can edit, so they can already use the
+            artifacts.
+          </p>
+        )}
+        {artifacts === "participants" && (
           <p className="canvas-share-note">
             {missingUsers
               ? "Choose at least one person. Editors already have access."
