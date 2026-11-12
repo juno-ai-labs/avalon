@@ -500,6 +500,26 @@ it('starts Google sign-in for the page it was opened on and explains a declined 
   } finally { view.unmount(); }
 });
 
+it('says why an Apple sign-in came back, then starts Apple again from the same page', async () => {
+  const starts: Array<{ returnPath: string }> = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    const path = input.split('/browser')[1];
+    if (path === '/workspace/select' || path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
+    if (path === '/signup/view') return new Response(null, { status: 204 });
+    if (path === '/apple/start') { starts.push(JSON.parse(String(init?.body))); return Response.json({ url: 'https://appleid.apple.com/auth/authorize?state=s' }); }
+    throw new Error(`Unexpected browser request: ${input}`);
+  }));
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}#apple_error=apple_oauth_denied`);
+  const view = render(<BrowserEntry />);
+  try {
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Apple sign-in was cancelled.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(location.hash).toBe('');
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with Apple' }));
+    await waitFor(() => expect(starts).toEqual([expect.objectContaining({ returnPath: `/app/workspaces/global/${workspace.id}` })]));
+  } finally { view.unmount(); }
+});
+
 it.each([
   ['01a0ee73-d366-7fb9-b5c0-3ceb3156f70a', '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a'],
   ['invalid', expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-7/u)],

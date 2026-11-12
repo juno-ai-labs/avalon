@@ -5,10 +5,13 @@ import { ApiError } from "../lib/api-error";
 
 const EmailSchema = z.string().trim().email().transform((email) => email.toLowerCase());
 
-/** Call only after the provider or single-use mailbox challenge has been verified. */
-export async function persistVerifiedGoogleIdentity(db: D1Database, input: {
+/** What a sign-in provider proved about a person, after its token was verified. */
+export interface VerifiedLoginIdentity {
   subject: string; email: string; name: string; avatarUrl: string | null;
-}, signup?: SignupFlow): Promise<{ id: string; created: boolean }> {
+}
+
+/** Call only after the provider or single-use mailbox challenge has been verified. */
+export async function persistVerifiedGoogleIdentity(db: D1Database, input: VerifiedLoginIdentity, signup?: SignupFlow): Promise<{ id: string; created: boolean }> {
   const email = EmailSchema.parse(input.email);
   const candidateId = newId();
   const at = nowIso();
@@ -49,6 +52,50 @@ export async function persistVerifiedGoogleIdentity(db: D1Database, input: {
   const row = await db.prepare("SELECT id, signup_flow_id FROM users WHERE google_subject = ?").bind(input.subject).first<{ id: string; signup_flow_id: string | null }>();
   if (!row) throw new ApiError(500, "identity_persistence_failed", "Could not persist the user identity");
   return { id: row.id, created: row.id === candidateId || !!(signup?.flowId && row.signup_flow_id === signup.flowId) };
+}
+
+/**
+ * Resolve a provider's verified identity for a provider with no column of its
+ * own on `users` (every provider but Google, whose `google_subject` predates
+ * `user_login_identities`). Apple is the first.
+ *
+ * The provider and subject find the person first. Failing that, the verified
+ * email links to whoever already holds that address verified, as a Google
+ * sign-in does; failing that, a new user is created with it. An address held
+ * by an account that never verified it links to nothing, so the sign-in is
+ * refused rather than taking that account over.
+ *
+ * A returning sign-in changes nothing but `verified_at`. Unlike Google, the
+ * provider's address does not replace the account's: a person who also signs
+ * in with Google would otherwise have two providers rewriting one primary
+ * address, and an Apple relay address is stable for the life of the link.
+ */
+export async function persistVerifiedProviderIdentity(db: D1Database, provider: string, input: VerifiedLoginIdentity,
+  signup?: SignupFlow): Promise<{ id: string; created: boolean }> {
+  const email = EmailSchema.parse(input.email);
+  const candidateId = newId();
+  const at = nowIso();
+  await db.batch([
+    db.prepare(`INSERT INTO users
+      (id, email, name, avatar_url, platform_user_id, created_at, updated_at, signup_flow_id, signup_client_platform)
+      SELECT ?, ?, ?, ?, ?, ?, ?, (SELECT ? WHERE NOT EXISTS (SELECT 1 FROM users WHERE signup_flow_id = ?)), ?
+      WHERE NOT EXISTS (SELECT 1 FROM user_login_identities WHERE provider = ? AND subject = ?)
+        AND NOT EXISTS (SELECT 1 FROM users WHERE email = ?)`)
+      .bind(candidateId, email, input.name, input.avatarUrl, candidateId, at, at,
+        signup?.flowId ?? null, signup?.flowId ?? null, signup?.clientPlatform ?? null, provider, input.subject, email),
+    db.prepare(`INSERT INTO user_verified_emails (email, user_id, verified_at)
+      SELECT email, id, ? FROM users WHERE id = ?`)
+      .bind(at, candidateId),
+    db.prepare(`INSERT INTO user_login_identities (provider, subject, user_id, verified_at)
+      SELECT ?, ?, user_id, ? FROM user_verified_emails WHERE email = ?
+      ON CONFLICT(provider, subject) DO UPDATE SET verified_at = excluded.verified_at`)
+      .bind(provider, input.subject, at, email),
+  ]);
+  const row = await db.prepare(`SELECT identity.user_id, u.signup_flow_id FROM user_login_identities identity
+    JOIN users u ON u.id = identity.user_id WHERE identity.provider = ? AND identity.subject = ?`)
+    .bind(provider, input.subject).first<{ user_id: string; signup_flow_id: string | null }>();
+  if (!row) throw new ApiError(409, "verified_identity_required", "This address needs an explicit account link before this sign-in");
+  return { id: row.user_id, created: row.user_id === candidateId || !!(signup?.flowId && row.signup_flow_id === signup.flowId) };
 }
 
 /**

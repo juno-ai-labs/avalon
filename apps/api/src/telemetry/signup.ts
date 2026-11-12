@@ -51,7 +51,7 @@ export function observeSignup(
   }
 }
 
-export function observeAuthenticationCompleted(env: Env, flow: SignupFlow, method: 'google' | 'email', userId: string, created: boolean, clientPlatform: SignupPlatform = flow.clientPlatform): void {
+export function observeAuthenticationCompleted(env: Env, flow: SignupFlow, method: 'google' | 'apple' | 'email', userId: string, created: boolean, clientPlatform: SignupPlatform = flow.clientPlatform): void {
   observeSignup(env, flow, 'authentication_completed', method, { userId, created, clientPlatform });
   if (created) {
     observeSignup(env, flow, 'signup_account_created', method, { userId, created, clientPlatform });

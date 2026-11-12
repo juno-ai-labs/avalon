@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { databaseThroughMigration } from "./helpers/migrated-schema";
-import { persistVerifiedGoogleIdentity, resolveVerifiedEmailIdentity } from "../src/services/login-identity-service";
+import { persistVerifiedGoogleIdentity, persistVerifiedProviderIdentity, resolveVerifiedEmailIdentity } from "../src/services/login-identity-service";
 
 const databases: DatabaseSync[] = [];
 function database() {
@@ -65,6 +65,24 @@ describe("verified login identities", () => {
     expect((await resolveVerifiedEmailIdentity(binding, google.email)).id).toBe(guest);
     expect(db.prepare("SELECT user_id FROM user_login_identities WHERE provider = 'google'").all()).toEqual([{ user_id: guest }]);
     expect(db.prepare("SELECT platform_user_id FROM users WHERE id = ?").get(guest)).toEqual({ platform_user_id: guest });
+  });
+
+  it("refuses an Apple sign-in whose address belongs to an account that never verified it", async () => {
+    const db = database();
+    db.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES ('unverified','raw@example.com','Raw','now','now')").run();
+    await expect(persistVerifiedProviderIdentity(sqliteD1(db), "apple", { subject: "apple-raw", email: "raw@example.com", name: "Raw", avatarUrl: null }))
+      .rejects.toMatchObject({ code: "verified_identity_required" });
+    expect(db.prepare("SELECT COUNT(*) AS identities FROM user_login_identities").get()).toEqual({ identities: 0 });
+  });
+
+  it("keeps a returning Apple sign-in on its account when Apple reports another address", async () => {
+    const db = database();
+    const binding = sqliteD1(db);
+    const apple = { subject: "apple-subject", email: "relay@privaterelay.appleid.com", name: "Rally user", avatarUrl: null };
+    const first = await persistVerifiedProviderIdentity(binding, "apple", apple);
+    expect(first.created).toBe(true);
+    expect(await persistVerifiedProviderIdentity(binding, "apple", { ...apple, email: "moved@example.com" })).toEqual({ id: first.id, created: false });
+    expect(db.prepare("SELECT email FROM users").all()).toEqual([{ email: "relay@privaterelay.appleid.com" }]);
   });
 
   it("upgrades populated identities with foreign keys on, preserving membership, sessions and routes", async () => {
