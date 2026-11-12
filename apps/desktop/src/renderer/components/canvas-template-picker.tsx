@@ -1,6 +1,7 @@
 import { IdentityTile } from '@rally/ui/components/identity-tile';
 import { WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
+import { ArrowUp } from 'lucide-react';
 import { useState } from 'react';
 
 import { CANVAS_TEMPLATE_CATEGORIES } from '../lib/canvas-template-categories';
@@ -25,6 +26,27 @@ export function CanvasTemplateMark({ template, size = 24 }: { template: CanvasTe
 }
 
 /**
+ * One template as a card that starts it: its mark, name and description, and
+ * either the composer's Send arrow (the Marketplace page) or, compact, who it
+ * is for (under an empty Canvas's composer). One card so a change to how a
+ * template is drawn lands in both places.
+ */
+export function CanvasTemplateCard({ audience, compact = false, disabled = false, onStart, template }: {
+  audience?: string | undefined;
+  compact?: boolean;
+  disabled?: boolean;
+  onStart: (prompt: string) => void;
+  template: CanvasTemplate;
+}): React.JSX.Element {
+  return <button className={compact ? 'dashboard-card canvas-template-card is-compact' : 'dashboard-card canvas-template-card'} disabled={disabled} onClick={() => onStart(template.prompt)} type="button">
+    <span className="canvas-template-title"><CanvasTemplateMark size={compact ? 22 : 24} template={template} />{template.name}</span>
+    {!compact && <span aria-hidden="true" className="canvas-template-send"><ArrowUp size={15} /></span>}
+    <span className="canvas-template-description">{template.description}</span>
+    {audience && <span className="canvas-template-audience">For {audience.toLocaleLowerCase()}</span>}
+  </button>;
+}
+
+/**
  * The Marketplace's templates under an empty Canvas's composer: every group
  * named in one row, Popular first, and a card per template. Picking one hands
  * its prompt to `onStart`, which sends it as the Chat's first message exactly
@@ -45,16 +67,15 @@ export function CanvasTemplateStarters({ disabled, onStart }: {
       {groups.map(([value, label]) => <button aria-pressed={group === value} key={value} onClick={() => setGroup(value)} type="button">{label}</button>)}
     </div>
     <ul className="canvas-starters-cards">
-      {templates.map((template) => {
-        const audience = CATEGORY_LABELS.get(template.tags[0] ?? '');
-        return <li key={template.name}>
-          <button className="canvas-starter-card" disabled={disabled} onClick={() => onStart(template.prompt)} type="button">
-            <span className="canvas-starter-name"><CanvasTemplateMark size={22} template={template} />{template.name}</span>
-            <span className="canvas-starter-description">{template.description}</span>
-            {group === 'popular' && audience && <span className="canvas-starter-audience">For {audience.toLocaleLowerCase()}</span>}
-          </button>
-        </li>;
-      })}
+      {templates.map((template) => <li key={template.name}>
+        <CanvasTemplateCard
+          audience={group === 'popular' ? CATEGORY_LABELS.get(template.tags[0] ?? '') : undefined}
+          compact
+          disabled={disabled}
+          onStart={onStart}
+          template={template}
+        />
+      </li>)}
     </ul>
   </section>;
 }

@@ -2408,12 +2408,14 @@ function ConversationSurfaceContent({
         : stopAcknowledgement);
   }, [stopAcknowledgement]);
 
-  // Ahead of the early returns below, because the glide is a hook. The same
-  // test the "Ready to begin" state below makes, plus a host that offers starters.
-  const startingDetail = routedDetail ?? openingDetail;
-  const starting = Boolean(renderStarters) && !withoutComposer && !(openingDetail && openingPrompt)
-    && startingDetail !== undefined
-    && workstreamShowsReadyState(transcript.length, Boolean(activeElicitation), startingDetail.harnessStatus);
+  // Ahead of the early returns below, because the glide is a hook; the feed
+  // reads the same two values, so the starters and "Ready to begin" cannot
+  // disagree about whether the conversation is empty.
+  const shownDetail = routedDetail ?? openingDetail;
+  const showsOpeningPrompt = !routedDetail && Boolean(openingPrompt);
+  const showsReadyState = !showsOpeningPrompt && shownDetail !== undefined
+    && workstreamShowsReadyState(transcript.length, Boolean(activeElicitation), shownDetail.harnessStatus);
+  const starting = Boolean(renderStarters) && !withoutComposer && showsReadyState;
   useLayoutGlide(composerDockRef, starting);
 
   const detail = routedDetail ?? openingDetail;
@@ -2604,15 +2606,11 @@ function ConversationSurfaceContent({
               it, and inviting the person to start it is both wrong and the
               opposite of what the timer below says. The turn arrives moments
               later; until then the timer is the whole of the state. */}
-          {opening && openingPrompt ? <article className="message-block human-message">
+          {showsOpeningPrompt ? <article className="message-block human-message">
             <div className="human-message-content">
-              <HumanMessageBody attachments={[]} mentions={[]} messageId="opening" onOpenAttachment={openAttachment} text={openingPrompt} />
+              <HumanMessageBody attachments={[]} mentions={[]} messageId="opening" onOpenAttachment={openAttachment} text={openingPrompt ?? ''} />
             </div>
-          </article> : workstreamShowsReadyState(
-            visibleTranscript.length,
-            Boolean(activeElicitation),
-            detail.harnessStatus,
-          ) ? (
+          </article> : showsReadyState ? (
             <EmptyState
               title="Ready to begin"
               description={parentKind === 'automation'

@@ -6982,20 +6982,21 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .dashboard-card:has(.dashboard-card-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .canvas-template-card { align-content: start; color: inherit; cursor: pointer; display: grid; font: inherit; gap: 8px 12px; grid-template-columns: minmax(0, 1fr) auto; height: 100%; padding: 16px; text-align: start; width: 100%; }
 .canvas-template-card:disabled { cursor: default; opacity: .65; }
-.canvas-template-card > svg, .canvas-template-description { color: var(--av-sys-color-text-muted); }
-/* The composer's Send, drawn the same: picking a card sends its prompt. At
-   rest it wears the composer's quiet control fill, as the microphone does, so
-   a grid of cards is not a grid of black dots; the card under the pointer or
-   the keyboard takes Send's own colours. */
-.canvas-template-send { align-items: center; background: var(--av-cmp-control-background-quiet); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-sys-color-text-muted); display: flex; flex: none; height: 28px; justify-content: center; transition: background-color 120ms ease, color 120ms ease; width: 28px; }
+.canvas-template-card:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.canvas-template-description { color: var(--av-sys-color-text-muted); font-size: 14px; grid-column: 1 / -1; }
+.canvas-template-audience { color: var(--av-sys-color-text-subtle); font-size: 11.5px; grid-column: 1 / -1; }
+/* A long name wraps; its mark and the send circle stay level with its first line. */
+.canvas-template-title { align-items: flex-start; display: flex; font-weight: 600; gap: 10px; }
+.canvas-template-title > .identity-tile { flex: none; margin-block: -2px; }
+/* The composer's Send: quiet at rest, as the microphone is, and Send's own
+   colours on the card under the pointer or the keyboard. */
+.canvas-template-send { align-items: center; align-self: start; background: var(--av-cmp-control-background-quiet); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-sys-color-text-muted); display: flex; flex: none; height: 28px; justify-content: center; margin-top: -4px; transition: background-color 120ms ease, color 120ms ease; width: 28px; }
 .canvas-template-card:is(:hover, :focus-visible):not(:disabled) .canvas-template-send { background: var(--av-cmp-composer-send-background); color: var(--av-cmp-composer-send-foreground); }
 @media (prefers-reduced-motion: reduce) { .canvas-template-send { transition: none; } }
-.canvas-template-title { align-items: flex-start; display: flex; font-weight: 600; gap: 10px; }
-/* A long name wraps; its mark and the send circle stay level with the first
-   line rather than centring on the whole name. */
-.canvas-template-title > .identity-tile, .canvas-starter-name > .identity-tile { flex: none; margin-block: -2px; }
-.canvas-template-send { align-self: start; margin-top: -4px; }
-.canvas-template-description { font-size: 14px; grid-column: 1 / -1; }
+/* Compact: under an empty Canvas's composer, where it is one of four. */
+.canvas-template-card.is-compact { gap: 4px; padding: 11px 12px; }
+.canvas-template-card.is-compact .canvas-template-title { font-size: 13.5px; gap: 8px; }
+.canvas-template-card.is-compact .canvas-template-description { font-size: 12.5px; line-height: 1.45; }
 .dashboard-card-preview { border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; display: grid; height: 150px; overflow: hidden; place-items: center; position: relative; }
 .canvas-card-presence { left: 12px; pointer-events: none; position: absolute; top: 12px; }
 .canvas-card-indicators { align-items: flex-end; display: flex; flex-direction: column; gap: 8px; position: absolute; right: 12px; top: 12px; }
@@ -8742,15 +8743,8 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   min-height: 0;
 }
 
-/* An empty Canvas: "Ready to begin", the composer, and the Marketplace's
-   templates under it, with the composer in the middle of the pane. The
-   transcript row and the starters row share the room either side of the dock,
-   so the field sits at the centre and the empty state rests on top of it. Once
-   the first message is sent `is-starting` goes, the fourth row collapses, and
-   the dock is back in the bottom row; `useLayoutGlide` plays that move. The
-   dock is never re-parented, so the draft and focus are the same element
-   throughout. The starters row is at least its content's height, so in a short
-   window it is the transcript row that gives way. */
+/* An empty Canvas with starters: a fourth row under the dock centres the
+   composer. See docs/conversation-surfaces.md#starting-an-empty-canvas-from-a-template. */
 .workstream-screen.is-starting { grid-template-rows: 55px minmax(0, 1fr) auto minmax(max-content, 1fr); }
 .workstream-screen.is-starting:has(> .title-pill-header) { grid-template-rows: 64px minmax(0, 1fr) auto minmax(max-content, 1fr); }
 .workstream-screen.is-starting .transcript-column { display: flex; flex-direction: column; justify-content: flex-end; padding-bottom: var(--space-2); }
@@ -8765,41 +8759,29 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .canvas-starters-groups button[aria-pressed=true] { font-weight: 600; }
 .canvas-starters-cards { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
 @container conversation-starters (width < 480px) { .canvas-starters-cards { grid-template-columns: minmax(0, 1fr); } }
-.canvas-starter-card { align-content: start; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-sys-size-radius-lg); color: inherit; cursor: pointer; display: grid; font: inherit; gap: 4px; height: 100%; padding: 11px 12px; text-align: start; width: 100%; }
-.canvas-starter-card:hover:not(:disabled) { border-color: var(--av-sys-color-border-strong); }
-.canvas-starter-card:disabled { cursor: default; opacity: .65; }
-.canvas-starter-card:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
-.canvas-starter-name { align-items: flex-start; display: flex; font-size: 13.5px; font-weight: 600; gap: 8px; }
-.canvas-starter-description { color: var(--av-sys-color-text-muted); font-size: 12.5px; line-height: 1.45; }
-.canvas-starter-audience { color: var(--av-sys-color-text-subtle); font-size: 11.5px; }
 
-/* Typing fades the starters out: the group row first, then the cards in a
-   short stagger, each drifting down a few pixels. They keep their room, so
-   the field never moves under the person typing, and clearing the draft plays
-   it back. `:placeholder-shown` is the field saying its draft is empty, so no
-   draft state has to leave the composer for this. Visibility follows the fade
-   (delayed going out, at once coming back), which takes the hidden cards out
-   of the tab order without cutting the fade short. The delays run opacity,
-   transform, visibility, border-colour; the last is the hover's, undelayed. */
+/* Typing fades the starters out (`:placeholder-shown` is an empty draft);
+   visibility follows, delayed going out, so hidden cards leave the tab order
+   without cutting the fade short. Delays: opacity, transform, visibility. */
 .canvas-starters-groups,
-.canvas-starter-card {
+.canvas-starters .canvas-template-card {
   --starter-delay: 0ms;
-  transition: opacity 340ms cubic-bezier(.4, 0, .2, 1), transform 340ms cubic-bezier(.4, 0, .2, 1), visibility 0s linear, border-color 120ms ease;
-  transition-delay: var(--starter-delay), var(--starter-delay), 0s, 0s;
+  transition: opacity 340ms cubic-bezier(.4, 0, .2, 1), transform 340ms cubic-bezier(.4, 0, .2, 1), visibility 0s linear;
+  transition-delay: var(--starter-delay), var(--starter-delay), 0s;
 }
-.canvas-starters-cards > li:nth-child(1) .canvas-starter-card { --starter-delay: 40ms; }
-.canvas-starters-cards > li:nth-child(2) .canvas-starter-card { --starter-delay: 80ms; }
-.canvas-starters-cards > li:nth-child(3) .canvas-starter-card { --starter-delay: 120ms; }
-.canvas-starters-cards > li:nth-child(n + 4) .canvas-starter-card { --starter-delay: 160ms; }
-.workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) :is(.canvas-starters-groups, .canvas-starter-card) {
+.canvas-starters-cards > li:nth-child(1) .canvas-template-card { --starter-delay: 40ms; }
+.canvas-starters-cards > li:nth-child(2) .canvas-template-card { --starter-delay: 80ms; }
+.canvas-starters-cards > li:nth-child(3) .canvas-template-card { --starter-delay: 120ms; }
+.canvas-starters-cards > li:nth-child(n + 4) .canvas-template-card { --starter-delay: 160ms; }
+.workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) :is(.canvas-starters-groups, .canvas-template-card) {
   opacity: 0;
   pointer-events: none;
-  transition-delay: var(--starter-delay), var(--starter-delay), calc(var(--starter-delay) + 340ms), 0s;
+  transition-delay: var(--starter-delay), var(--starter-delay), calc(var(--starter-delay) + 340ms);
   visibility: hidden;
 }
 .workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters-groups { transform: translateY(4px); }
-.workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starter-card { transform: translateY(6px); }
+.workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters .canvas-template-card { transform: translateY(6px); }
 @media (prefers-reduced-motion: reduce) {
   .canvas-starters-groups,
-  .canvas-starter-card { transition-duration: 0s; transition-delay: 0s; }
+  .canvas-starters .canvas-template-card { transition-duration: 0s; transition-delay: 0s; }
 }
