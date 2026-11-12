@@ -232,34 +232,25 @@ which raises both kinds on real D1.
 ### 2026-11-12 — A Terminal authority's refusal is named by its code
 
 **What changed:** `diagnosticErrorCode` answers a `TerminalObjectPortError`
-with its `code`, as it already did an `ObjectPortError`.
-`TerminalObjectPortError` moved to `services/terminal/object-port-error.ts`
-so the logger can read it without importing the port; `object-port.ts`
-re-exports it.
+with its `code`, as it does an `ObjectPortError`; the class moved to
+`services/terminal/object-port-error.ts` so the logger can read it without
+importing the port. Separately, the `AgentLoopDO` Terminal observation alarm
+logs `reason` and `stack` beside its code.
 
-**Why:** Between 02:00 and 02:13 UTC on 2026-11-12, 39
-`terminal_provider_observation_failed` warnings fired from `AgentLoopDO`
-observation alarms across one organization's Canvases, right after a deploy.
-Every one logged `code: terminal_provider_observation_failed`, the bare
-fallback. The traces show no provider call and no write, so the failure came
-from the Terminal port before the Daytona read. The port throws a
-`TerminalObjectPortError` whose `code` is one of four declared literals, but
-the logger only knew `ObjectPortError`. It read the member-facing sentence,
-found no code in it, and threw the reason away.
+**Why:** 39 `terminal_provider_observation_failed` warnings on 2026-11-12
+named nothing beyond the fallback. That alarm runs its port over its own
+storage, so it never sees a `TerminalObjectPortError`: its failures are SQLite
+or provider-client sentences the code class cannot admit, hence `reason`, as
+`terminal_operation_commit_failed` already logs. Callers that do receive the
+typed error across RPC or the resident executor (the coordinator, the plugin)
+had the same blind spot in the helper.
 
-**Considered and rejected:** Making `TerminalObjectPortError` a subclass of
-`ObjectPortError`. Four other call sites branch on `instanceof
-ObjectPortError` (tool pagination, conversation reads, plugin
-reauthorization, scope invitations), and every one of them would start
-matching Terminal failures as well. Reading `code` at the one log site:
-every other Terminal caller that logs through this helper has the same blind
-spot.
+**Considered and rejected:** Subclassing `ObjectPortError`: four call sites
+branch on `instanceof ObjectPortError` and would start matching Terminal
+failures.
 
-**Consequences:** A Terminal port failure is logged as
-`terminal_operation_not_committed`, `invalid_terminal_operation`,
-`workstream_terminal_identity_mismatch` or
-`terminal_operation_protocol_error` where it said the caller's fallback.
-These are declared schema literals, so nothing new crosses to a log.
+**Consequences:** The four Terminal codes are declared literals, so nothing
+new crosses to a caller. `reason` is operator-log only.
 
 ### 2026-10-19 — A conversation object's refusal is named by its code
 
