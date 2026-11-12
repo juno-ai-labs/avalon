@@ -42,7 +42,7 @@ billingRoutes.get("/", async (c) => {
       trialEndsAt: new Date(account.trial_ends_at * 1000).toISOString(),
       overageEnabled:
         account.overage_enabled === 1 &&
-        account.status === "active" &&
+        ["active", "trialing"].includes(account.status) &&
         account.overage_started_at !== null,
       offers: config.offers
         .filter((o) => o.enabled)

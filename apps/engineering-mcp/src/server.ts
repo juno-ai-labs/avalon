@@ -1,7 +1,8 @@
-import { BillingCreditsSchema, OverageCreditSchema } from "@rally/contracts/billing";
+import { BillingCreditsSchema, OverageCreditSchema, TrialMonthsGrantSchema } from "@rally/contracts/billing";
 import { inspectQueues, peekDeadLetters } from "./queues";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
+  GrantEngineeringTrialMonthsInputSchema,
   InspectEngineeringCreditsInputSchema, GrantEngineeringCreditInputSchema, ExpireEngineeringCreditInputSchema,
   InspectEngineeringOrgSettingsInputSchema,
   UpdateEngineeringOrgSettingsInputSchema,
@@ -537,6 +538,13 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "update_org_settings", { workspace_id: request.orgId, model_selector_visible: request.modelSelectorVisible }, async () =>
     EngineeringOrgSettingsResultSchema.parse(await (await organizationBinding(env, request.orgId)).updateOrganizationSettings(request, principal))));
+
+  server.registerTool("grant_trial_months", {
+    description: "Grant an Organization extra calendar months without subscription fees. Requires an existing active or trialing monthly paid plan. Extends Stripe's base-subscription trial after the existing paid/trial/pilot period; included plan usage stays available and opted-in overages remain billable on their separate metered subscription. Does not refund existing invoices. A reason and operationId are required; reuse identical arguments and the same ID after an uncertain outcome to avoid awarding twice. Month ends clamp to the shorter month's last day. The result is an award receipt, not a live billing-status read.",
+    inputSchema: GrantEngineeringTrialMonthsInputSchema.shape,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, (request) => tool(principal, "grant_trial_months", { workspace_id: request.orgId, operation_id: request.operationId }, async () =>
+    TrialMonthsGrantSchema.parse(await (await organizationBinding(env, request.orgId)).grantTrialMonths(request, principal))));
 
   server.registerTool("inspect_overage_credits", {
     description: "Read an Organization's overage-only USD credit grants and available balances from Stripe. Includes grants made directly in Stripe with the dedicated overage price scope; does not include general invoice credits.",

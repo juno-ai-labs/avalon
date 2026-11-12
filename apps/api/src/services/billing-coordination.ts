@@ -1,5 +1,5 @@
 import { closeOrganizationBilling as closeWithoutBilling } from "./billing";
-import type { GrantOverageCredit } from "@rally/contracts/billing";
+import type { GrantOverageCredit, GrantTrialMonths } from "@rally/contracts/billing";
 import type { Env } from "../env";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { billingConfig } from "./billing-config";
@@ -32,6 +32,9 @@ export const closeOrganizationBilling = (
   env.BILLING_CONFIG
     ? coordinator(env, workspaceId).close(workspaceId, actorUserId)
     : closeWithoutBilling(env, workspaceId, actorUserId);
+
+export const grantTrialMonths = (env: Env, workspaceId: string, input: GrantTrialMonths) =>
+  coordinator(env, workspaceId).grantTrialMonths(workspaceId, input);
 
 export const grantOverageCredit = (env: Env, workspaceId: string, input: GrantOverageCredit) =>
   coordinator(env, workspaceId).grantCredit(workspaceId, input);

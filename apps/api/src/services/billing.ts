@@ -167,7 +167,7 @@ async function reconcileSubscription(
     subscription.currency === "usd" &&
     Boolean(offer.overagePriceId);
   const now = Math.floor(Date.now() / 1000);
-  const eligible = overage && subscription.status === "active";
+  const eligible = overage && paid;
   const open = await env.DB.prepare(
     `SELECT starts_at, price_id FROM billing_intervals
     WHERE subscription_id = ? AND ends_at IS NULL`,
@@ -196,10 +196,7 @@ async function reconcileSubscription(
         ? open.starts_at
         : prior
           ? now
-          : Math.max(
-              subscription.start_date ?? now,
-              subscription.trial_end ?? 0,
-            );
+          : (subscription.start_date ?? now);
     await env.DB.prepare(
       `INSERT INTO billing_terms(subscription_id, workspace_id, customer_id, price_id, starts_at)
       VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
@@ -287,8 +284,8 @@ async function closeBillableInterval(
     .run();
 }
 
-/** A paid invoice is activation evidence, including zero-total pilot invoices.
- * A canceled incomplete subscription or an unconverted free trial has none. */
+/** A paid invoice is activation evidence, including zero-total pilot/trial invoices.
+ * An incomplete unpaid subscription has none. */
 async function recoverCanceledTerms(env: Env, subscription: Subscription) {
   if (
     subscription.status !== "canceled" ||
@@ -318,10 +315,7 @@ async function recoverCanceledTerms(env: Env, subscription: Subscription) {
     (candidates.length === 1 ? candidates[0] : undefined);
   if (!account || !offer?.overagePriceId) return;
   let after = "";
-  const activationFloor = Math.max(
-    subscription.start_date ?? 0,
-    subscription.trial_end ?? 0,
-  );
+  const activationFloor = subscription.start_date ?? 0;
   let activation: number | null = null;
   do {
     const page = await stripe(
@@ -346,7 +340,8 @@ async function recoverCanceledTerms(env: Env, subscription: Subscription) {
     );
     for (const invoice of page.data)
       for (const line of invoice.lines.data) {
-        // Trial invoices cover [start, trial_end); they do not prove activation.
+        // A paid zero-dollar trial invoice also proves that opted-in usage began.
+        // Incomplete unpaid subscriptions still have no paid invoice evidence.
         if (
           line.type === "subscription" &&
           line.period.start >= activationFloor &&
