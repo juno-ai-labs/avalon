@@ -15,7 +15,8 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
-import { sidekickChangeRequestText } from "./agent-communication-prompts";
+import { sidekickChangeRequestText } from "../prompts/sidekick-change-request";
+import { renderAgentFailureNotice, renderAgentSilentCompletionNotice } from "../prompts/agent-owner-notice";
 import { personManagesSidekick } from "./sidekick-run-continuation";
 import { isCanvasChat } from "../lib/canvas-chat";
 
@@ -190,7 +191,7 @@ export class AgentCommunicationService {
    * messages it ever synthesizes: a failure, and a completion that sent nothing.
    */
   async notifyFailure(reason: string) {
-    await this.notifyOwner(`Agent failed due to ${reason}. Id: ${modelAgentId(this.senderId)}`, `failure:${this.input.harnessRunId}`, "failed", reason);
+    await this.notifyOwner(renderAgentFailureNotice(reason, modelAgentId(this.senderId)), `failure:${this.input.harnessRunId}`, "failed", reason);
   }
 
   /**
@@ -199,7 +200,7 @@ export class AgentCommunicationService {
    * exactly as a failure does; a run that sent even one message needs no notice.
    */
   async notifySilentCompletion(name: string | null) {
-    await this.notifyOwner(`Agent ${name ?? modelAgentId(this.senderId)} finished without replying. Id: ${modelAgentId(this.senderId)}. Message it if you still need its result.`, `completion:${this.input.harnessRunId}`, "finished_without_reply");
+    await this.notifyOwner(renderAgentSilentCompletionNotice(name, modelAgentId(this.senderId)), `completion:${this.input.harnessRunId}`, "finished_without_reply");
   }
 
   private async notifyOwner(

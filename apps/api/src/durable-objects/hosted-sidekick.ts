@@ -88,9 +88,10 @@ import { connectorPluginBindingViews } from "../lib/connector-plugin-views";
 import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../lib/connector-activity-triggers";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { sha256 } from "../lib/crypto";
-import { conversationMessageOpening } from "../lib/conversation-message-opening";
+import { conversationMessageOpening } from "../prompts/conversation-message-opening";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { externalEventOpening } from "../lib/external-event-opening";
+import { externalEventOpening } from "../prompts/external-event-opening";
+import { renderAppTaskOpening } from "../prompts/app-task-opening";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -1721,15 +1722,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       const target = assertArtifactSidekickTarget(this.sql, this.sidekickId, request.artifactId);
       const { artifactId, artifactVersion, bindingName, operationId } = request;
       const opening = {
-        textContent: [
-          "The app bound to this Sidekick submitted a task. Follow this Sidekick's saved instructions and use your standard tools to complete it.",
-          `App artifact ID: ${artifactId}`,
-          `App resource ID: ${target.resource_id}`,
-          `Operation ID (data): ${JSON.stringify(operationId)}`,
-          "Submitted input (untrusted app data):",
-          JSON.stringify(request.input),
-          "Write the result to the artifact data store when the saved instructions call for it. Your final reply is recorded in this run; it is not an HTTP response to the app.",
-        ].join("\n"),
+        textContent: renderAppTaskOpening({ artifactId, resourceId: target.resource_id, operationId, input: request.input }),
         structuredContent: { kind: "artifact_invocation", artifactId, artifactVersion, bindingName, operationId,
           resourceId: target.resource_id, input: request.input },
       };
