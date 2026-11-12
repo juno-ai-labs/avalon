@@ -84,6 +84,7 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useTranscriptHistory } from '../lib/use-transcript-history';
+import { useLayoutGlide } from '../lib/use-layout-glide';
 import { useVirtualScrollAnchor } from '../lib/use-virtual-scroll-anchor';
 import { useSiteArtifacts } from '../lib/use-site-artifacts';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
@@ -1031,6 +1032,14 @@ export interface ConversationSurfaceProps {
    * and browser tools, and no card offers the audience.
    */
   artifactSharing?: { publishedIds: readonly string[]; audience?: ArtifactAudienceControl | undefined } | undefined;
+  /**
+   * Ways to start the conversation, drawn under the composer while it has no
+   * messages: a Canvas's templates. Present, the empty conversation lifts its
+   * composer to the middle of the pane with these under it, and the composer
+   * glides to its dock once the first message is sent. `send` is the surface's
+   * own, so a starter goes out exactly as typed text would.
+   */
+  renderStarters?: ((start: { send: (text: string) => void; disabled: boolean }) => React.ReactNode) | undefined;
 }
 
 /**
@@ -1069,6 +1078,7 @@ function ConversationSurfaceContent({
   withoutComposer = false,
   embedded = false,
   artifactSharing,
+  renderStarters,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
@@ -1116,6 +1126,7 @@ function ConversationSurfaceContent({
     if (useUiStore.getState().railScope === railScopeKey) closeRail();
   }, [closeRail, embedded, railScopeKey]);
   const layoutRef = useRef<HTMLDivElement>(null);
+  const composerDockRef = useRef<HTMLDivElement>(null);
   const layoutElement = useCallback(() => layoutRef.current, []);
   const setRailVariant = useUiStore((state) => state.setRailVariant);
   const setRailWidth = useUiStore((state) => state.setRailWidth);
@@ -2398,6 +2409,16 @@ function ConversationSurfaceContent({
         : stopAcknowledgement);
   }, [stopAcknowledgement]);
 
+  // Ahead of the early returns below, because the glide is a hook; the feed
+  // reads the same two values, so the starters and "Ready to begin" cannot
+  // disagree about whether the conversation is empty.
+  const shownDetail = routedDetail ?? openingDetail;
+  const showsOpeningPrompt = !routedDetail && Boolean(openingPrompt);
+  const showsReadyState = !showsOpeningPrompt && shownDetail !== undefined
+    && workstreamShowsReadyState(transcript.length, Boolean(activeElicitation), shownDetail.harnessStatus);
+  const starting = Boolean(renderStarters) && !withoutComposer && showsReadyState;
+  useLayoutGlide(composerDockRef, starting);
+
   const detail = routedDetail ?? openingDetail;
   if (!detail) {
     if (
@@ -2473,6 +2494,12 @@ function ConversationSurfaceContent({
     ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.';
 
   const issueSubstreamId = SubstreamIdSchema.safeParse(substreamId).data;
+  const sendBlocked = !connectionEnabled || opening || feedFromLocalCache || (Boolean(openingDetail) && !socketConnection.sendReady);
+  // A starter has no draft to restore when its send fails, so the composer's
+  // error line is the whole answer; most failures have set it already.
+  const sendStarter = (text: string): void => {
+    void sendMessage(text, []).catch(() => setSendError((current) => current ?? 'The message couldn’t be sent. Try again.'));
+  };
   return (
     <MessageIssueProvider api={api} target={issueSubstreamId ? { kind: 'conversation', parentId: id, substreamId: issueSubstreamId } : null}>
     <EmailMentionContext.Provider value={emailMentions}>
@@ -2481,6 +2508,7 @@ function ConversationSurfaceContent({
     <div className={clsx(
       'workstream-screen has-message-capsule',
       parentKind === 'automation' && 'automation-screen',
+      starting && 'is-starting',
     )}>
       {renderHeader?.({
         detail: displayedDetail,
@@ -2579,15 +2607,11 @@ function ConversationSurfaceContent({
               it, and inviting the person to start it is both wrong and the
               opposite of what the timer below says. The turn arrives moments
               later; until then the timer is the whole of the state. */}
-          {opening && openingPrompt ? <article className="message-block human-message">
+          {showsOpeningPrompt ? <article className="message-block human-message">
             <div className="human-message-content">
-              <HumanMessageBody attachments={[]} mentions={[]} messageId="opening" onOpenAttachment={openAttachment} text={openingPrompt} />
+              <HumanMessageBody attachments={[]} mentions={[]} messageId="opening" onOpenAttachment={openAttachment} text={openingPrompt ?? ''} />
             </div>
-          </article> : workstreamShowsReadyState(
-            visibleTranscript.length,
-            Boolean(activeElicitation),
-            detail.harnessStatus,
-          ) ? (
+          </article> : showsReadyState ? (
             <EmptyState
               title="Ready to begin"
               description={parentKind === 'automation'
@@ -2638,7 +2662,7 @@ function ConversationSurfaceContent({
         </div>
       </div>
 
-      <div className="composer-dock">
+      <div className="composer-dock" ref={composerDockRef}>
         <JumpToLatestButton onJump={() => void jumpToLatest()} visible={!transcriptAtEnd} />
         <div className="composer-stack">
           {/* First in the stack, so it reads as a line above the field rather
@@ -2694,7 +2718,7 @@ function ConversationSurfaceContent({
             onStop={async () => {
               await stop.mutateAsync();
             }}
-            sendBlocked={!connectionEnabled || opening || feedFromLocalCache || (Boolean(openingDetail) && !socketConnection.sendReady)}
+            sendBlocked={sendBlocked}
             sending={sending}
             uploading={attachmentDraft.uploading}
             key={conversationAddress}
@@ -2704,6 +2728,11 @@ function ConversationSurfaceContent({
           />}
         </div>
       </div>
+      {/* After the dock rather than in it, so the composer is the same element
+          before and after the first message and only the rows around it change. */}
+      {starting && renderStarters && <div className="conversation-starters">
+        {renderStarters({ send: sendStarter, disabled: sendBlocked || sending || attachmentDraft.uploading })}
+      </div>}
 
       {railVariant === 'context' && panel?.kind === 'host' && (railOpen || railLeaving) && <RailSurface
         className="conversation-host-panel"

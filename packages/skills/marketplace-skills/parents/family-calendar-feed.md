@@ -1,6 +1,8 @@
 ---
 name: "Family calendar feed"
 description: "Keep shared appointments in sync with Apple Calendar or Google Calendar."
+icon: "calendar-days"
+color: "rose"
 tags:
   - parents
 ---
