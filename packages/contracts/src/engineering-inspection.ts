@@ -1,3 +1,4 @@
+import type { BillingAdminMutation, BillingCatalogMutation, BillingMutationResult, BillingCatalog, OrgBillingResult, InspectOrgBillingSchema, InspectBillingCatalogSchema } from "./billing-admin";
 import { GrantOverageCreditSchema, GrantTrialMonthsSchema, type TrialMonthsGrant, type BillingCredits, type OverageCredit } from "./billing";
 import { OrganizationUsageSchema, PlanIdSchema } from "./usage";
 import { z } from "zod";
@@ -509,6 +510,10 @@ export type ExpireEngineeringCreditInput = z.infer<typeof ExpireEngineeringCredi
 
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
 export interface EngineeringInspectionRpcBinding {
+  inspectOrgBilling(input: z.infer<typeof InspectOrgBillingSchema>): Promise<OrgBillingResult>;
+  administerOrgBilling(input: BillingAdminMutation, operator: EngineeringOperator): Promise<BillingMutationResult>;
+  inspectBillingCatalog(input: z.infer<typeof InspectBillingCatalogSchema>): Promise<BillingCatalog>;
+  administerBillingCatalog(input: BillingCatalogMutation, operator: EngineeringOperator): Promise<BillingMutationResult>;
   grantTrialMonths(input: GrantEngineeringTrialMonthsInput, operator: EngineeringOperator): Promise<TrialMonthsGrant>;
   inspectOverageCredits(input: z.infer<typeof InspectEngineeringCreditsInputSchema>): Promise<BillingCredits>;
   grantOverageCredit(input: GrantEngineeringCreditInput, operator: EngineeringOperator): Promise<OverageCredit>;

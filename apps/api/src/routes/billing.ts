@@ -15,7 +15,7 @@ import {
 } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { ApiError } from "../lib/api-error";
-import { billingConfig } from "../services/billing-config";
+import { billingConfig, resolveBillingEnvironment } from "../services/billing-config";
 import {
   billingAccount,
   hasLiveSubscription,
@@ -31,8 +31,9 @@ billingRoutes.use("*", async (c, next) => {
 });
 billingRoutes.get("/", async (c) => {
   if (!c.env.BILLING_CONFIG) return c.json({ enabled: false });
-  const account = await billingAccount(c.env, getAuth(c).workspaceId);
-  const config = billingConfig(c.env);
+  const env = await resolveBillingEnvironment(c.env);
+  const account = await billingAccount(env, getAuth(c).workspaceId);
+  const config = billingConfig(env);
   return c.json(
     BillingStatusSchema.parse({
       enabled: true,

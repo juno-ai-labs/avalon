@@ -1,3 +1,4 @@
+import { BillingOfferSchema, BillingCatalogResultSchema } from "@rally/contracts/billing-admin";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import { PlanIdSchema } from "@rally/contracts/usage";
@@ -34,21 +35,7 @@ export const BillingConfigSchema = z
         rallyMeterId: z.string().startsWith("mtr_"),
       })
       .optional(),
-    offers: z
-      .array(
-        z.strictObject({
-          id: z.string().regex(/^[a-z0-9_-]+$/),
-          name: z.string().min(1),
-          plan: PlanIdSchema,
-          priceId: z.string().startsWith("price_"),
-          currencies: z.array(z.string().regex(/^[a-z]{3}$/)).min(1),
-          couponId: z.string().optional(),
-          // USD $0.000001 per unit; use overageCredits.priceId for native credits.
-          overagePriceId: z.string().startsWith("price_").optional(),
-          enabled: z.boolean().default(true),
-        }),
-      )
-      .min(1),
+    offers: z.array(BillingOfferSchema).min(1),
   })
   .superRefine((config, ctx) => {
     if (config.overageCredits && config.offers.some((offer) => offer.priceId === config.overageCredits!.priceId)) {
@@ -102,4 +89,18 @@ export function billingConfig(env: Pick<Env, "BILLING_CONFIG">) {
       "Billing configuration is invalid",
     );
   return parsed.data;
+}
+
+const resolved = Symbol('billingConfigurationSnapshot');
+/** One D1 read per billing operation; never cache across requests or actor calls. */
+export async function resolveBillingEnvironment(env: Env): Promise<Env> {
+  if (!env.BILLING_CONFIG || (env as Env & { [resolved]?: boolean })[resolved]) return env;
+  const catalog = await readBillingCatalog(env);
+  return Object.assign({ ...env, BILLING_CONFIG: JSON.stringify({ ...billingConfig(env), offers: catalog.offers, pilotCouponId: catalog.pilotCouponId ?? undefined }) }, { [resolved]: true });
+}
+export async function readBillingCatalog(env: Env) {
+  const base = billingConfig(env);
+  const row = await env.DB.prepare('SELECT revision, catalog_json FROM billing_catalog WHERE region = ?').bind(env.AVALON_REGION)
+    .first<{ revision: number; catalog_json: string }>();
+  return BillingCatalogResultSchema.parse(row ? { ...JSON.parse(row.catalog_json), revision: row.revision } : { offers: base.offers, pilotCouponId: base.pilotCouponId ?? null, revision: 0 });
 }

@@ -9,7 +9,7 @@ import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import type { BillingAccount } from "./billing";
-import { billingConfig } from "./billing-config";
+import { billingConfig, resolveBillingEnvironment } from "./billing-config";
 import { stripe, StripeIdSchema } from "./stripe";
 
 const HOUR = 3600;
@@ -35,6 +35,7 @@ export async function ensureStripeCustomer(
   env: Env,
   account: BillingAccount,
 ): Promise<string> {
+  env = await resolveBillingEnvironment(env);
   if (account.customer_id) return account.customer_id;
   let customerId: string | undefined;
   // Metadata search avoids an account-wide scan on every first checkout.
@@ -77,6 +78,7 @@ export async function archiveStripeFreeSubscription(
   env: Env,
   account: BillingAccount,
 ) {
+  env = await resolveBillingEnvironment(env);
   if (!account.customer_id) return;
   if (!billingConfig(env).synchronization && !account.free_subscription_id) {
     await env.DB.prepare(
@@ -135,6 +137,7 @@ export async function synchronizeStripeProfile(
   env: Env,
   account: BillingAccount,
 ) {
+  env = await resolveBillingEnvironment(env);
   const config = billingConfig(env);
   const sync = config.synchronization;
   if (!sync) return;
@@ -410,6 +413,7 @@ export async function synchronizeStripeUsage(
   env: Env,
   account: BillingAccount,
 ) {
+  env = await resolveBillingEnvironment(env);
   const sync = billingConfig(env).synchronization;
   if (!sync || !account.customer_id) return;
   const rows = await env.USAGE_DB.prepare(
