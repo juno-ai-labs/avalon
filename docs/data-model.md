@@ -307,7 +307,12 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   [multiple workspaces](multiple-workspaces.md#authority-and-data-flow).
 
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable
-  sessions, PKCE, and single-use Electron deep-link completion. A session that
+  sessions, PKCE, and single-use Electron deep-link completion. `oauth_states.provider`
+  is the sign-in provider (`google` or `apple`) and its callback claims only its
+  own; for Apple, `code_verifier_encrypted` holds the nonce's preimage rather than a
+  PKCE verifier. `desktop_login_tickets.login_provider` (migration 0133) names the
+  provider for signup telemetry, and a null one is Google's
+  ([apple-login.md](apple-login.md)). A session that
   simply expires is also marked `revoked_at` by the five-minute reaper, which is
   what makes announcing the expiry exactly-once; see
   [`access-revocation.md`](access-revocation.md). `oauth_states`

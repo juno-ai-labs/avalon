@@ -2275,7 +2275,17 @@ export class RallyApi {
     callbackUri: string,
     input: { workspaceName?: string; invitationToken?: string; authAttempt: DesktopAuthAttempt; signupFlowId?: string },
   ): Promise<string> {
-    const result = await this.request('/auth/google/start', {
+    return this.beginProviderLogin('google', region, callbackUri, input);
+  }
+
+  /** Starts a provider sign-in; the returned URL is the provider's, opened in the system browser. */
+  async beginProviderLogin(
+    provider: 'google' | 'apple',
+    region: Region,
+    callbackUri: string,
+    input: { workspaceName?: string; invitationToken?: string; authAttempt: DesktopAuthAttempt; signupFlowId?: string },
+  ): Promise<string> {
+    const result = await this.request(`/auth/${provider}/start`, {
       method: 'POST',
       body: {
         region,

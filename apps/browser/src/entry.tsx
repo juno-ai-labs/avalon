@@ -21,16 +21,20 @@ import { SiteOpening } from "./site-open";
 
 const initialRegion = configuredRegions[0]!;
 
-/** What a failed Google sign-in says, by the code the callback returned with. */
-function googleSignInError(code: string): string {
-  if (code === "google_oauth_denied") return "Google sign-in was cancelled.";
-  if (code === "google_state_mismatch" || code === "invalid_oauth_state") return "That Google sign-in expired. Try again.";
-  return "Google sign-in did not complete. Try again or use your email.";
+type SignInProvider = "google" | "apple";
+const providerName: Record<SignInProvider, string> = { google: "Google", apple: "Apple" };
+
+/** What a failed provider sign-in says, by the code the callback returned with. */
+function providerSignInError(provider: SignInProvider, code: string): string {
+  const name = providerName[provider];
+  if (code === `${provider}_oauth_denied`) return `${name} sign-in was cancelled.`;
+  if (code === `${provider}_state_mismatch` || code === "invalid_oauth_state") return `That ${name} sign-in expired. Try again.`;
+  return `${name} sign-in did not complete. Try again or use your email.`;
 }
 
 /** Older strict start schemas reject the new optional analytics field before
  * any proof is created. Only that validation rejection gets a legacy retry. */
-async function signupStart<T>(path: '/google/start' | '/email/start', schema: z.ZodType<T>, body: Record<string, unknown>): Promise<T> {
+async function signupStart<T>(path: '/google/start' | '/apple/start' | '/email/start', schema: z.ZodType<T>, body: Record<string, unknown>): Promise<T> {
   try { return await browserRequest(IDENTITY_REGION, path, schema, body); }
   catch (error) {
     if (!(error instanceof BrowserApiError) || error.status !== 400 || error.code !== 'invalid_request') throw error;
@@ -149,7 +153,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Kept apart from `error`, which the session read clears when it finds no session.
-  const [googleNotice, setGoogleNotice] = useState<string | null>(null);
+  const [providerNotice, setProviderNotice] = useState<string | null>(null);
   // Whether the person asked to create an organization from the empty list.
   const [creating, setCreating] = useState(false);
   // Read from the email domain's homepage. The card opens without waiting for
@@ -195,10 +199,11 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const target = parseLinkPathTarget(location.pathname) ?? (workspaceTarget?.success ? workspaceTarget.data : null);
     if (target?.region && ConfiguredRegionSchema.safeParse(target.region).success) setDestination(target);
     const fragment = new URLSearchParams(location.hash.slice(1));
-    const googleError = fragment.get("google_error");
-    if (googleError) {
+    for (const provider of ["google", "apple"] as const) {
+      const providerError = fragment.get(`${provider}_error`);
+      if (!providerError) continue;
       history.replaceState(null, "", location.pathname);
-      setGoogleNotice(googleSignInError(googleError));
+      setProviderNotice(providerSignInError(provider, providerError));
     }
     const selectedRegion = ConfiguredRegionSchema.safeParse(target?.region ?? fragment.get("region") ?? initialRegion);
     const selected = selectedRegion.success ? selectedRegion.data : initialRegion;
@@ -382,7 +387,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   }
   async function useDevelopmentAccount() {
     if (busy) return;
-    setBusy(true); setError(null); setGoogleNotice(null);
+    setBusy(true); setError(null); setProviderNotice(null);
     try {
       await adopt(await browserRequest(IDENTITY_REGION, "/dev/session", BrowserSessionSchema, {}), IDENTITY_REGION);
     } catch (cause) {
@@ -394,7 +399,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
-    setBusy(true); setError(null); setGoogleNotice(null);
+    setBusy(true); setError(null); setProviderNotice(null);
     try {
       if (proof) await redeem({ challengeId: proof.challengeId, redemptionId: proof.redemptionId, credential: proof.credential, method: "magic" });
       else if (challenge) await redeem({ challengeId: challenge.id, redemptionId: challenge.redemptionId, method: "otp", credential: code.trim() });
@@ -434,15 +439,15 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     setDestination(opened);
   }
 
-  async function continueWithGoogle() {
+  async function continueWithProvider(provider: SignInProvider) {
     if (busy) return;
-    setBusy(true); setError(null); setGoogleNotice(null);
+    setBusy(true); setError(null); setProviderNotice(null);
     try {
       const returnPath = location.pathname.startsWith("/app/") ? location.pathname : "/";
-      const { url } = await signupStart("/google/start", BrowserGoogleStartedSchema, { returnPath, signupFlowId: signupFlow.current });
+      const { url } = await signupStart(`/${provider}/start`, BrowserGoogleStartedSchema, { returnPath, signupFlowId: signupFlow.current });
       location.assign(url);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to start Google sign-in. Try again.");
+      setError(cause instanceof Error ? cause.message : `Unable to start ${providerName[provider]} sign-in. Try again.`);
       setBusy(false);
     }
   }
@@ -503,7 +508,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     </main>;
   }
 
-  const failure = error ?? (!session && !proof && !challenge ? googleNotice : null);
+  const failure = error ?? (!session && !proof && !challenge ? providerNotice : null);
   return <main className="onboarding-shell signin-shell entry">
     <section className="signin-card entry-card" aria-busy={busy || checking}>
       <a className="entry-mark" href="/" aria-label="Rally"><RallyMark className="signin-mark" /></a>
@@ -532,10 +537,11 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
             try { await adopt(current, IDENTITY_REGION); }
             catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load your organizations."); }
           }} onBack={() => setPasswordChosen(false)} /> : !proof && !challenge && !emailChosen ? <>
-          <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>
+          <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithProvider("google"); }}><ConnectorMark mark="google" />Continue with Google</Button>
+          <Button className="button-secondary signin-button signin-button-provider" type="button" disabled={busy || checking} onClick={() => { void continueWithProvider("apple"); }}><ConnectorMark mark="apple" />Continue with Apple</Button>
           <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => setEmailChosen(true)}><Mail aria-hidden="true" size={16} />Continue with email</Button>
           <button className="text-button onboarding-signout" type="button" disabled={busy || checking}
-            onClick={() => { setPasswordChosen(true); setError(null); setGoogleNotice(null); }}>Sign in with password</button>
+            onClick={() => { setPasswordChosen(true); setError(null); setProviderNotice(null); }}>Sign in with password</button>
           {developmentAccount && <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => { void useDevelopmentAccount(); }}>Use local development account</Button>}
         </> : <form onSubmit={(event) => { void submit(event); }}>
           {!proof && (challenge ? <label className="onboarding-field"><span>Sign-in code</span><span className="onboarding-input-wrap"><KeyRound aria-hidden="true" size={16} /><input key="otp" autoComplete="one-time-code" inputMode="numeric" required value={code} onChange={(event) => setCode(event.target.value)} /></span></label>
@@ -545,7 +551,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
           {!proof && !challenge && <button className="text-button onboarding-signout" type="button" disabled={busy} onClick={() => { setEmailChosen(false); setError(null); }}>Other sign-in options</button>}
         </form>}
       </>}
-      {/* A Google failure belongs to the signed-out screen it returned to, not to a later one. */}
+      {/* A provider failure belongs to the signed-out screen it returned to, not to a later one. */}
       {failure && <ErrorNotice>{failure}</ErrorNotice>}
     </section>
   </main>;

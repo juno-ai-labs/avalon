@@ -337,7 +337,7 @@ const signupEventProperties = deferredZodSchema(() => z.strictObject({
       flowId: UuidV7Schema,
       clientPlatform: z.enum(["browser", "desktop"]),
       entryPlatform: z.enum(["browser", "desktop"]),
-      method: z.enum(["google", "email", "otp", "magic", "unknown"]),
+      method: z.enum(["google", "apple", "email", "otp", "magic", "unknown"]),
       result: z.enum(["success", "failed", "denied"]),
       accountStatus: z.enum(["new", "existing"]).optional(),
       signupPath: z.enum(["new_organization", "existing_organization"]).optional(),

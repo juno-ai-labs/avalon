@@ -13,6 +13,7 @@ import {
 
 const api = vi.hoisted(() => ({
   beginGoogleLogin: vi.fn(),
+  beginProviderLogin: vi.fn(),
   observeSignupView: vi.fn(),
 }));
 const telemetry = vi.hoisted(() => ({
@@ -127,6 +128,18 @@ describe('identity-first onboarding screens', () => {
       authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) },
       signupFlowId: '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a',
     }));
+  });
+
+  it('starts Apple sign-in through the same desktop attempt and opens Apple in the browser', async () => {
+    api.beginProviderLogin.mockResolvedValue('https://appleid.apple.com/auth/authorize?state=opaque');
+    render(<SignInScreen />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue with Apple' }));
+    await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledWith('https://appleid.apple.com/auth/authorize?state=opaque'));
+    expect(api.beginProviderLogin).toHaveBeenCalledWith('apple', 'global', 'rallywithai://auth/complete', {
+      authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) },
+      signupFlowId: telemetry.operationId,
+    });
+    expect(api.beginGoogleLogin).not.toHaveBeenCalled();
   });
 
   it('keeps signup available when first-install telemetry cannot be read', async () => {
