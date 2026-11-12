@@ -1,3 +1,5 @@
+import { asApiError } from "../lib/api-error";
+import { isUsageAllowanceExhausted } from "../services/usage-admission";
 import { ConversationViewJobSchema } from "../durable-objects/conversation-view-projection";
 import { ConnectorDeliveryReferenceSchema, readConnectorDeliveryReference, sendConnectorEventDelivery } from "../services/connector-queue-payload";
 import { SidekickReviewQueueMessageSchema, SidekickRunProvisionQueueMessageSchema } from "../durable-objects/automation-do-protocol";
@@ -164,6 +166,17 @@ export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: En
       for (const message of batch.messages.filter(isSearch)) {
         try { await consumeOne(message, env, indexSearch); }
         catch (error) {
+          // Keep semantic work durable while lexical results stay available.
+          // Re-enqueue billing holds rather than exhausting transport retries.
+          if (isUsageAllowanceExhausted(error)) {
+            const retryAfter = asApiError(error)?.details?.retryAfterSeconds;
+            // Cloudflare Queue delivery delay has a published 12-hour ceiling.
+            const delaySeconds = Math.min(43_200, typeof retryAfter === 'number' && Number.isFinite(retryAfter) ? Math.max(1, Math.ceil(retryAfter)) : 43_200);
+            await env.ACTIVITY_QUEUE.send(message.body, { delaySeconds });
+            logWarn(env, 'search_embedding_deferred', { region: env.AVALON_REGION, error_code: 'usage_allowance_exhausted', retry_delay_seconds: delaySeconds });
+            message.ack();
+            continue;
+          }
           logWarn(env, 'search_indexing_retry', { region: env.AVALON_REGION, queue_attempts: message.attempts,
             error_code: diagnosticErrorCode(error, 'search_indexing_failed') });
           message.retry();

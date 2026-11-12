@@ -19,7 +19,8 @@ records, allowance metadata and usage meters. `overage-credits.ts` owns operator
 ## How it works
 
 With `signupTrial` enabled, creating an Organization automatically provisions its
-Stripe customer and monthly paid-plan subscription before seed work starts. The
+Stripe customer and monthly paid-plan subscription in the background. Signup
+and seed work do not wait for Stripe; the plan updates when provisioning finishes. The
 standard campaign selects Grow for two calendar months, with no card required.
 The deadline is anchored to Organization creation and clamped at month end.
 `startsAt` is a rollout cutoff: existing Organizations and engineering plan

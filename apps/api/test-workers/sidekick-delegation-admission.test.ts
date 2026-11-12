@@ -397,12 +397,13 @@ describe("shared Sidekick delegation admission", () => {
         sql: "UPDATE connector_connections SET status='healthy' WHERE id=?", params: [secondConnection],
       }] });
       expect(connected.status).toBe(200);
-      const wake = await runInDurableObject(stub(), async (_instance, state) => state.storage.getAlarm());
-      // No alarm is a source wake that already fired, but `getAlarm()` is
-      // also null while that handler is still running, so the registered set
-      // is waited for rather than read once.
-      if (wake === null) await expect.poll(async () => (await registrations()).length).toBe(2);
-      else expect(wake).toBeLessThan(parkedAlarm);
+      // The source wake can already have reconciled and scheduled the next
+      // maintenance alarm (later than parkedAlarm). Observe either the earlier
+      // wake or its completed registration effect, not one transient alarm.
+      await expect.poll(async () => {
+        const wake = await runInDurableObject(stub(), async (_instance, state) => state.storage.getAlarm());
+        return (wake !== null && wake < parkedAlarm) || (await registrations()).length === 2;
+      }).toBe(true);
     } else await runDurableObjectAlarm(stub());
     await expect.poll(async () => (await registrations()).length).toBe(2);
     const expanded = await registrations();

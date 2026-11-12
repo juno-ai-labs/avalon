@@ -57,7 +57,17 @@ can continue beyond the quota. An expired no-card trial uses Start even while it
 Stripe cancellation webhook is delayed. Engineering plan overrides are retained.
 No Stripe request sits on this path. Calls already admitted may finish, and queued
 usage may not yet be in the ledger; this check does not reserve concurrent spend.
-The UI's rounded percentages do not decide admission.
+The UI's rounded percentages do not decide admission. Configuration parsing is
+cached by its exact value; regional account and usage reads run concurrently.
+
+Quota exhaustion does not block human conversation: shared-message classification
+returns a human-only admission without a provider call. Semantic Sidekick gates
+return a named refusal for that event. Search embedding jobs preserve the named
+quota error and re-enqueue toward the weekly reset (each delivery delay respects
+Cloudflare's 12-hour maximum), acknowledging only after the new delivery is
+accepted; lexical results remain available. These billing holds do not consume
+transport retries. OCR records the quota error and retries on the next explicit
+read instead of permanently caching it as a broken PDF.
 
 ### Sending
 

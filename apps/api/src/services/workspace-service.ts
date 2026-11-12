@@ -1108,7 +1108,7 @@ export class WorkspaceOnboardingService {
       .first<{ workspace_id: string }>();
     if (existing) {
       await this.bindSessions(existing.workspace_id);
-      await initializeOrganizationBilling(this.env, existing.workspace_id);
+      initializeOrganizationBilling(this.env, existing.workspace_id);
       return;
     }
 
@@ -1141,7 +1141,7 @@ export class WorkspaceOnboardingService {
            AND revoked_at IS NULL AND expires_at > ?`,
       ).bind(workspaceId, this.auth.userId, this.env.AVALON_REGION, at),
     ]);
-    await initializeOrganizationBilling(this.env, workspaceId);
+    initializeOrganizationBilling(this.env, workspaceId);
   }
 
   async acceptInvitation(invitationId: string): Promise<void> {

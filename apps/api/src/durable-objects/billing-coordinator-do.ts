@@ -76,8 +76,8 @@ export class BillingCoordinatorDO extends DurableObject<Env> {
       billing.createBillingPortal(this.env, workspaceId),
     );
   }
-  refresh(workspaceId: string) {
-    return this.serialize(workspaceId, () => billing.refreshBillingAccount(this.env, workspaceId));
+  refresh(workspaceId: string, checkPayment = false) {
+    return this.serialize(workspaceId, () => billing.refreshBillingAccount(this.env, workspaceId, checkPayment));
   }
   overages(workspaceId: string, enabled: boolean) {
     return this.serialize(workspaceId, () => billing.setBillingOverages(this.env, workspaceId, enabled));
