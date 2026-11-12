@@ -6974,8 +6974,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .dashboard-card:has(.dashboard-card-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .canvas-template-card { align-content: start; color: inherit; cursor: pointer; display: grid; font: inherit; gap: 8px 12px; grid-template-columns: minmax(0, 1fr) auto; height: 100%; padding: 16px; text-align: start; width: 100%; }
 .canvas-template-card:disabled { cursor: default; opacity: .65; }
-.canvas-template-card svg, .canvas-template-description { color: var(--av-sys-color-text-muted); }
-.canvas-template-title { font-weight: 600; }
+.canvas-template-card > svg, .canvas-template-description { color: var(--av-sys-color-text-muted); }
+.canvas-template-title { align-items: center; display: flex; font-weight: 600; gap: 10px; }
 .canvas-template-description { font-size: 14px; grid-column: 1 / -1; }
 .dashboard-card-preview { border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; display: grid; height: 150px; overflow: hidden; place-items: center; position: relative; }
 .canvas-card-presence { left: 12px; pointer-events: none; position: absolute; top: 12px; }
@@ -8721,4 +8721,66 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
+}
+
+/* An empty Canvas: "Ready to begin", the composer, and the Marketplace's
+   templates under it, with the composer in the middle of the pane. The
+   transcript row and the starters row share the room either side of the dock,
+   so the field sits at the centre and the empty state rests on top of it. Once
+   the first message is sent `is-starting` goes, the fourth row collapses, and
+   the dock is back in the bottom row; `useLayoutGlide` plays that move. The
+   dock is never re-parented, so the draft and focus are the same element
+   throughout. The starters row is at least its content's height, so in a short
+   window it is the transcript row that gives way. */
+.workstream-screen.is-starting { grid-template-rows: 55px minmax(0, 1fr) auto minmax(max-content, 1fr); }
+.workstream-screen.is-starting:has(> .title-pill-header) { grid-template-rows: 64px minmax(0, 1fr) auto minmax(max-content, 1fr); }
+.workstream-screen.is-starting .transcript-column { display: flex; flex-direction: column; justify-content: flex-end; padding-bottom: var(--space-2); }
+.workstream-screen.is-starting .transcript-column .empty-state { margin: 0 auto; padding-bottom: var(--space-4); }
+
+.conversation-starters { container: conversation-starters / inline-size; min-width: 0; padding: var(--space-2) 16px var(--space-8); }
+.canvas-starters { display: grid; gap: 10px; margin: 0 auto; max-width: var(--composer-width); width: 100%; }
+.canvas-starters-groups { display: flex; flex-wrap: wrap; gap: 2px; }
+.canvas-starters-groups button { background: none; border: 0; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); cursor: pointer; font: inherit; font-size: 13px; padding: 4px 9px; }
+.canvas-starters-groups button:hover,
+.canvas-starters-groups button[aria-pressed=true] { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.canvas-starters-groups button[aria-pressed=true] { font-weight: 600; }
+.canvas-starters-cards { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
+@container conversation-starters (width < 480px) { .canvas-starters-cards { grid-template-columns: minmax(0, 1fr); } }
+.canvas-starter-card { align-content: start; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-sys-size-radius-lg); color: inherit; cursor: pointer; display: grid; font: inherit; gap: 4px; height: 100%; padding: 11px 12px; text-align: start; width: 100%; }
+.canvas-starter-card:hover:not(:disabled) { border-color: var(--av-sys-color-border-strong); }
+.canvas-starter-card:disabled { cursor: default; opacity: .65; }
+.canvas-starter-card:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.canvas-starter-name { align-items: center; display: flex; font-size: 13.5px; font-weight: 600; gap: 8px; }
+.canvas-starter-description { color: var(--av-sys-color-text-muted); font-size: 12.5px; line-height: 1.45; }
+.canvas-starter-audience { color: var(--av-sys-color-text-subtle); font-size: 11.5px; }
+
+/* Typing fades the starters out: the group row first, then the cards in a
+   short stagger, each drifting down a few pixels. They keep their room, so
+   the field never moves under the person typing, and clearing the draft plays
+   it back. `:placeholder-shown` is the field saying its draft is empty, so no
+   draft state has to leave the composer for this. Visibility follows the fade
+   (delayed going out, at once coming back), which takes the hidden cards out
+   of the tab order without cutting the fade short. The delays run opacity,
+   transform, visibility, border-colour; the last is the hover's, undelayed. */
+.canvas-starters-groups,
+.canvas-starter-card {
+  --starter-delay: 0ms;
+  transition: opacity 340ms cubic-bezier(.4, 0, .2, 1), transform 340ms cubic-bezier(.4, 0, .2, 1), visibility 0s linear, border-color 120ms ease;
+  transition-delay: var(--starter-delay), var(--starter-delay), 0s, 0s;
+}
+.canvas-starters-cards > li:nth-child(1) .canvas-starter-card { --starter-delay: 40ms; }
+.canvas-starters-cards > li:nth-child(2) .canvas-starter-card { --starter-delay: 80ms; }
+.canvas-starters-cards > li:nth-child(3) .canvas-starter-card { --starter-delay: 120ms; }
+.canvas-starters-cards > li:nth-child(n + 4) .canvas-starter-card { --starter-delay: 160ms; }
+.workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) :is(.canvas-starters-groups, .canvas-starter-card) {
+  opacity: 0;
+  pointer-events: none;
+  transition-delay: var(--starter-delay), var(--starter-delay), calc(var(--starter-delay) + 340ms), 0s;
+  visibility: hidden;
+}
+.workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters-groups { transform: translateY(4px); }
+.workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starter-card { transform: translateY(6px); }
+@media (prefers-reduced-motion: reduce) {
+  .canvas-starters-groups,
+  .canvas-starter-card { transition-duration: 0s; transition-delay: 0s; }
 }

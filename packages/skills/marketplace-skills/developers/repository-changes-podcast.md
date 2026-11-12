@@ -1,6 +1,8 @@
 ---
 name: "Repository changes podcast"
 description: "Get a morning audio rundown of the most important changes in your repos."
+icon: "podcast"
+color: "indigo"
 tags:
   - developers
 ---

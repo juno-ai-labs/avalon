@@ -19,3 +19,5 @@ export const CANVAS_TEMPLATES = [
   familyCalendarFeed,
   recruitingMarketMap,
 ];
+
+export type CanvasTemplate = (typeof CANVAS_TEMPLATES)[number];

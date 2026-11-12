@@ -61,10 +61,13 @@ the Canvas list. Closing Marketplace restores the previous filter and any
 unsent **Start from a prompt** text. Selecting a filter switches to its list.
 `apps/desktop/src/renderer/lib/canvas-templates.ts` orders the catalog. Each
 Markdown file in `packages/skills/marketplace-skills/` supplies its card's `name`,
-`description`, and category `tags`. The builds check tags against
+`description`, `icon` and `color` (its card's mark, from the Canvas appearance
+catalog; it never becomes the started Canvas's mark), and category `tags`. The builds check tags against
 `canvas-template-categories.ts`. Each starter is tagged with its own directory.
 Selecting a template creates and opens a Canvas with the Markdown body sent
 as the creator's first Chat message through the **Start from a prompt** flow.
+An empty Canvas offers the same templates under its composer
+([`conversation-surfaces.md`](conversation-surfaces.md#starting-an-empty-canvas-from-a-template)).
 
 ### Electron navigation history
 

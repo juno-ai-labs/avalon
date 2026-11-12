@@ -1,6 +1,8 @@
 ---
 name: "Recruiting market map"
 description: "Research a hiring company and map relevant employers and teams."
+icon: "map"
+color: "blue"
 tags:
   - recruiters
 ---

@@ -33,6 +33,48 @@ Send and Enter even while recording audio. Dictation's ordinary empty-draft
 exception cannot bypass this readiness gate. The Canvas owns creation, retry
 and the opening detail ([`canvases.md`](canvases.md#in-the-client)).
 
+### Starting an empty Canvas from a template
+
+A host may pass `renderStarters`: ways to start the conversation, drawn under
+the composer while the conversation shows its ready state. The Canvas passes
+`CanvasTemplateStarters` (`components/canvas-template-picker.tsx`), the
+Marketplace's templates; a guest, who makes no Canvas, gets none, and a
+Sidekick's conversation passes nothing. The render function is given the
+surface's own send and its readiness gate, so a picked template goes out as
+the Chat's first message exactly as typed text would, through `sendMessage`
+and `createMessage`, and its cards are disabled whenever Send is.
+
+While starters show, `.workstream-screen.is-starting` adds a fourth grid row
+under the dock. The transcript row and that row share the pane's spare height,
+so the composer sits in the middle with "Ready to begin" resting on it and the
+templates under it. The starters row is at least its content's height, so a
+short window shrinks the transcript row instead. When the first message lands
+the class goes, the row collapses and the dock is back at the bottom.
+
+**The dock is never re-parented.** The starters render after it, not in it, and
+only the rows around it change, so the draft and focus are the same element on
+both sides of the first message. `useLayoutGlide` (`lib/use-layout-glide.ts`)
+plays the move as one slide: it records the dock's box after every commit and
+on window resize, and when `starting` flips it animates the difference as a
+transform (FLIP). It runs ahead of the surface's early returns because it is a
+hook, which is why `starting` is computed there. Reduced motion and a hidden
+window move it without the slide.
+
+Typing fades the templates out and clearing the draft brings them back, in CSS
+alone: `:placeholder-shown` on the composer's field is the field saying its
+draft is empty, so no draft state leaves the composer. The group row fades
+first, then the cards in a 40ms stagger, each drifting a few pixels down, over
+340ms. They keep their room, so the field never moves while someone types.
+Visibility follows the fade, delayed going out and immediate coming back,
+which takes hidden cards out of the tab order without cutting the fade short.
+
+The templates open on **Popular**, the first template of each Marketplace
+category in catalog order, each card naming who it is for; every category is
+a visible button beside it. A template's card mark is the `icon` and `color`
+in its front matter, from the catalog a Canvas's own appearance picks from.
+The mark draws only the card: a Canvas started from a template keeps its own
+generated mark.
+
 ## A Sidekick's shared conversation
 
 `screens/automation.tsx` hosts a Sidekick's conversation (`"0"`) on this
@@ -851,6 +893,13 @@ ends the attempt without sending, and the draft and the error stay on screen.
 
 ## Testing
 
+`screens/canvas-template-starters.test.tsx` mounts the real surface with the
+Canvas's starters and proves Popular's contents, the category switch, and that
+a picked template reaches `createMessage` as the first message and puts the
+starters away. The centred layout, the slide and the typing fade are CSS and
+layout, so they were checked in a real Electron window, including frame-by-frame
+samples of the dock's position through the slide.
+
 Shared components have fixture-level component tests for settled, streaming,
 failed, elicitation, attachment, tool, follow, and paging states. Each screen
 adapter separately proves its controls and identity transition.
@@ -894,6 +943,32 @@ captured pin IDs. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-11-12 — An empty Canvas offers the Marketplace's templates under a centred composer
+
+**What changed:** `ConversationSurface` takes `renderStarters`. The Canvas
+uses it to show its templates under the composer, which sits in the middle of
+an empty Chat and slides to the bottom on the first message. Typing fades the
+templates out. Templates gained `icon` and `color` front matter for their
+cards, here and in the dashboard Marketplace.
+
+**Why:** The Marketplace was only reachable from the Canvases dashboard, and a
+new Canvas opened on a blank Chat. The empty Canvas is where someone looks for
+a starting point.
+
+**Considered and rejected:** Templates above a composer left at the bottom
+crowded the field and competed with it. A category dropdown hid the other
+categories, and whichever opened first would not suit most people, hence
+Popular. Staging a picked template in the composer, so its questions could be
+answered before sending, added a composer state and a second step to every
+start; Rally asks the same questions after the prompt is sent. Moving the
+composer between two parents would have dropped the draft and focus, so the
+layout moves around one mounted dock instead.
+
+**Consequences:** A host that passes starters gets the centred layout; one
+that does not is unchanged. Anything that re-parents or remounts the dock
+breaks the slide and loses the draft. Applying a template's mark to the Canvas
+it starts was ruled out by the person who asked for the marks.
 
 ### 2026-11-11 — Keep readiness separate from dictation's empty-draft exception
 

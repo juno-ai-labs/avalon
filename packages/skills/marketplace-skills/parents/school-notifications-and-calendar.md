@@ -1,6 +1,8 @@
 ---
 name: "School notifications and calendar"
 description: "Turn school email into a notification list and calendar."
+icon: "school"
+color: "amber"
 tags:
   - parents
 ---
