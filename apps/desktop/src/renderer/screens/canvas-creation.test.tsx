@@ -16,7 +16,7 @@ const api = vi.hoisted(() => ({
   createCanvas: vi.fn(), getCanvas: vi.fn(), getWorkspaceMembers: vi.fn(async () => []),
   getWorkspace: vi.fn(async () => ({ id: 'org', region: 'global', modelSelectorVisible: false })),
   getConnections: vi.fn(async () => []), recordActivityEvents: vi.fn(async () => undefined),
-  acknowledgeConversationRead: vi.fn(),
+  acknowledgeConversationRead: vi.fn(), discardBlankCanvas: vi.fn(async () => undefined),
 }));
 const socket = vi.hoisted(() => ({
   createMessage: vi.fn(), enabled: false, ready: false,

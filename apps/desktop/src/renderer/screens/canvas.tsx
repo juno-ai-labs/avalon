@@ -3,7 +3,7 @@ import { AppearancePicker } from '@rally/ui/components/appearance-picker';
 import { ActionTile, ActionTiles, TitleMenuItem, TitleMenuSeparator, TitlePillHeader, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconArchive, IconLayoutSidebarRight, IconLink, IconPalette, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useActivityList } from '../components/activity-sidebar-section';
@@ -147,6 +147,32 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       if (mounted.current) setArchiving(false);
     }
   };
+  // Leaving a Canvas with nothing in it archives it, so a Canvas made and never
+  // used does not stay in the list as Untitled Canvas. The server judges blank
+  // again in the archive's transaction; this only spares it the request for a
+  // Canvas the screen knows has something in it. One made with an opening
+  // prompt is not blank, though its message may not have landed yet; and one
+  // whose create has not succeeded is left alone, since New Canvas retries
+  // that same id and a create of an archived id is refused.
+  const blank = useRef(false);
+  const onBlankChange = useCallback((value: boolean) => { blank.current = value; }, []);
+  const discardIfBlank = useRef<() => void>(() => undefined);
+  discardIfBlank.current = () => {
+    if (!api || !blank.current || canvas.data?.canManage === false) return;
+    if (creation && (creation.prompt || creation.status !== 'ready')) return;
+    api.discardBlankCanvas(id).then(
+      () => queryClient.removeQueries({ queryKey: canvasDetailQueryKey(id) }),
+      // Tidying up, which nobody asked for: a failure leaves the Canvas listed.
+      () => undefined,
+    );
+  };
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    // StrictMode runs the cleanup and this setup again in one pass; only a
+    // real unmount has no setup after it to cancel the timer.
+    clearTimeout(leaveTimer.current);
+    return () => { leaveTimer.current = setTimeout(() => discardIfBlank.current(), 0); };
+  }, []);
   // The Sidekicks attached to it, from the list row the socket keeps current:
   // one the Chat just made, or one renamed, paused or archived, arrives there
   // while this screen's detail is still the copy it opened with. The detail
@@ -422,6 +448,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       {...(openingDetail ? { openingDetail } : {})}
       {...(creation?.prompt ? { openingPrompt: creation.prompt } : {})}
       onConversationReady={creation?.status === 'ready' ? creation.complete : undefined}
+      onBlankChange={onBlankChange}
       connectionEnabled={!creationBlocked}
       composerNotice={creation?.error ? <CanvasCreationRetry creation={creation} /> : recoverableDetailFailure ? <>
         <ErrorNotice occurrence={canvas.error} title="The Canvas details could not be loaded">Your conversation is still open. Try loading the Canvas details again.</ErrorNotice>
