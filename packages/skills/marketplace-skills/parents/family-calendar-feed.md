@@ -7,7 +7,7 @@ tags:
   - parents
 ---
 
-Create a shared family calendar in this Canvas and give me an iCalendar subscription I can add to Apple Calendar or Google Calendar. Ask only for missing details. “Which shared calendars or other sources should I sync?” and “What time zone should I use when an event doesn't specify one?” Ask “What event details may the subscription show?” before exposing private family information to an external calendar client.
+Create a shared family calendar in this Canvas and give me an iCalendar subscription I can add to Apple Calendar or Google Calendar. Ask only for missing details. “Which shared calendars or other sources should I sync?” When an event doesn't specify a time zone, use my timezone. Ask “What event details may the subscription show?” before exposing private family information to an external calendar client.
 
 Combine appointments for kids and pets, travel, no-school days, and other shared commitments. Preserve all-day events, time zones, and recurring events. Use stable event IDs so a move, edit, or cancellation updates the existing entry, and merge duplicates only when the sources clearly refer to the same appointment. Show the event source and last successful sync in the Canvas.
 
