@@ -195,7 +195,8 @@ is required. Permission denial exposes a System Settings action.
 The Billing page keeps every section visible, using disabled controls with concise
 reason tooltips for restricted or unavailable actions. Billing status, credits and
 usage load independently; initial reads use skeletons. Credits load automatically
-and have an icon-only refresh action.
+and have an icon-only refresh action. Weekly quota appears immediately above
+Plan, and Overage credits closes the page after monthly usage.
 
 The **Billing** child page under Organization (`billing`) registers **Usage**
 (`settings.usage`) as an information definition with no availability gate, so every member finds it,
