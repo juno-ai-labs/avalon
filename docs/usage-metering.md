@@ -33,7 +33,7 @@ are in
 | `packages/db/usage-migrations/` | `usage_events`, `usage_rollups` and `usage_plan_changes`, in `USAGE_DB` (`avalon-<region>-usage`). Applied by `pnpm --filter @rally/api db:usage:migrate` (local, part of `db:migrate`) and `db:usage:migrate:remote` (deploy). |
 | `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
 | `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, `useSetOrganizationPlan`, `applyPushedOrganizationUsage`, the `usage` local-cache slice, and the formatters. `lib/workspace-socket.tsx` applies the push, marks the meter stale on every subscribe answer, and relays both to the Settings window as `usage`. |
-| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage with its plan picker, and the account menu's meter (a full row right under Settings). |
+| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Billing with its plan picker, and the account menu's meter (a full row right under Settings). |
 | `packages/ui/src/components/primitives.tsx` (`Meter`) | The shared meter primitive and its `cmp.meter.*` tokens. |
 
 Each call site emits next to where its cost is already known; searching for
@@ -165,8 +165,8 @@ at build time, avoiding a separate set of prices and allowances. Stored IDs `sta
 compatible and display as Start and Grow; Max and Ultra use `max` and `ultra`.
 
 Every new workspace starts on Start, with no payment or checkout required.
-Administrators use Stripe checkout when billing is enabled; otherwise the existing
-plan picker remains available. Operators use the engineering MCP. All paths reach
+Administrators open Settings → Organization → Billing to use Stripe checkout
+when billing is enabled; otherwise the existing plan picker remains available. Operators use the engineering MCP. All paths reach
 `setWorkspacePlan`. `setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
 replaced) and rewrites `quota_microusd` on the current week's rollups, in one
 `USAGE_DB` transaction, so the meter re-prices the current week at once. Then it
