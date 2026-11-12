@@ -408,6 +408,18 @@ function canvasRows(frames: Array<Record<string, unknown>>): Row[] {
   return sync.sidebar?.canvases?.items ?? [];
 }
 
+/** Every table in an object's SQLite with a row whose text names this id, in any column. */
+function tablesNaming(sql: SqlStorage, id: string): string[] {
+  return sql.exec<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'",
+  ).toArray().map(({ name }) => name).filter((name) => {
+    const columns = sql.exec<{ name: string }>(`SELECT name FROM pragma_table_info('${name}')`).toArray().map((column) => column.name);
+    if (columns.length === 0) return false;
+    const where = columns.map((column) => `instr(CAST("${column}" AS TEXT), ?) > 0`).join(" OR ");
+    return sql.exec(`SELECT 1 FROM "${name}" WHERE ${where} LIMIT 1`, ...columns.map(() => id)).toArray().length > 0;
+  });
+}
+
 /**
  * The Canvas rows a client holds: the subscribe payload, then each push whose
  * waterline is newer than the last one applied, as the desktop's sidebar list
@@ -494,7 +506,7 @@ describe("the Canvas list", () => {
     await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id), { timeout: waitBudget() }).toEqual([]);
   });
 
-  it("archives a Canvas its creator left blank off their list, and keeps one with a message, a title, or a reader who is not its creator", () => withNamingModel(async () => {
+  it("deletes a Canvas its creator left blank from every store and list, and keeps one with a message, a title, or a reader who is not its creator", () => withNamingModel(async () => {
     const service = new CanvasService(TEST_ENV, auth(CREATOR));
     const creator = await connect(CREATOR);
     const blank = (await service.create({})).canvasId;
@@ -516,12 +528,28 @@ describe("the Canvas list", () => {
     await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: blank,
       actor: { userId: CREATOR, actorRole: "member" }, update: { visibility: "creator", userIds: [] } });
 
+    const chatOf = (canvasId: string) => env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    // What its Chat sent before the delete and the Queue has not delivered yet.
+    const late = await pendingChildEffects(chatOf(blank));
+    expect(late.length).toBeGreaterThan(0);
+
     expect(await service.discardIfBlank(said)).toEqual({ discarded: false });
     expect(await service.discardIfBlank(titled)).toEqual({ discarded: false });
     expect(await service.discardIfBlank(blank)).toEqual({ discarded: true });
     await expect.poll(() => clientCanvasRows(creator.frames).map((row) => row.id).sort(), { timeout: waitBudget() })
       .toEqual([said, titled].sort());
     await expect(service.detail(blank)).rejects.toMatchObject({ code: "canvas_not_found" });
+    // Neither the Organization's object nor its Chat's still names it. The
+    // kept Canvas is the scan's control.
+    expect(await runInDurableObject(workspace(), (_instance, state) => tablesNaming(state.storage.sql, blank))).toEqual([]);
+    expect(await runInDurableObject(workspace(), (_instance, state) => tablesNaming(state.storage.sql, said))).toContain("canvas_directory");
+    await expect.poll(() => runInDurableObject(chatOf(blank), (_instance, state) => tablesNaming(state.storage.sql, blank)),
+      { timeout: waitBudget() }).toEqual([]);
+    expect(await runInDurableObject(chatOf(said), (_instance, state) => tablesNaming(state.storage.sql, said))).not.toEqual([]);
+    // Delivered after the delete, it is acknowledged rather than retried into
+    // the dead-letter queue, and writes nothing back.
+    expect(await consumeEffectBodies(TEST_ENV, late)).toEqual({ acked: late.length, retried: 0 });
+    expect(await runInDurableObject(workspace(), (_instance, state) => tablesNaming(state.storage.sql, blank))).toEqual([]);
     creator.socket.close(1000, "done");
   }));
 

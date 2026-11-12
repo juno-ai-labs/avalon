@@ -5221,6 +5221,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     if (envelope.parentKind === "canvas") {
       const canvas = await this.hostedCanvas(envelope.parentId, envelope.workspaceId);
+      // A Canvas's row is written before its Chat exists, so a Chat with no
+      // row is one `discardIfBlank` deleted. What it sent before the delete is
+      // acknowledged unapplied, not redelivered into the dead-letter queue.
+      if (!this.isCanvasParent(envelope.parentId)) {
+        logWarn(this.env, "canvas_effect_for_deleted_canvas", { canvas_id: envelope.parentId, envelopes: request.envelopes.length });
+        return { accepted: request.envelopes.map(({ messageId, payloadHash }) => ({ messageId, payloadHash })), notificationIntentIds: [] };
+      }
       return this.canvasWrite(() => canvas.receiveChildEffects(request));
     }
     // A Thread's or Space's effect: the envelope admits the retired kinds so
@@ -5433,7 +5440,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Archive a Canvas its creator left blank; see `HostedCanvas.discardIfBlank`.
+   * Delete a Canvas its creator left blank; see `HostedCanvas.discardIfBlank`.
    * Blank means no Sidekick is attached, so none of `canvasArchive`'s Sidekick
    * follow-up is owed.
    */

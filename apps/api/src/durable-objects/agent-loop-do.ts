@@ -8657,6 +8657,28 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return evicted;
   }
 
+  /**
+   * Erase this conversation outright: its sockets, its alarm, and every stored
+   * row. Only for a blank Canvas's Chat whose parent has already deleted it
+   * (`CanvasService.discardIfBlank`), so nothing here is anybody's content.
+   * The instance's caches describe what was erased, so it resets itself once
+   * this call has answered; the next request to this name meets an empty
+   * object with no identity, which admits nobody.
+   */
+  async eraseBlankConversation(input: { workspaceId: string; parentId: string }): Promise<void> {
+    await this.initialized;
+    const identity = this.objectStore.identity();
+    if (identity && (identity.workspaceId !== input.workspaceId || identity.parentId !== input.parentId)) {
+      throw new Error("conversation_erase_identity_mismatch");
+    }
+    for (const socket of this.state.getWebSockets()) {
+      disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "This Canvas was deleted");
+    }
+    await this.state.storage.deleteAlarm();
+    await this.state.storage.deleteAll();
+    setTimeout(() => this.state.abort("conversation_erased"), 0);
+  }
+
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<void> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);

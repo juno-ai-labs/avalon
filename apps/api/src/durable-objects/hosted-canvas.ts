@@ -60,6 +60,7 @@ import {
 } from "./canvas-access-requests";
 import { attachSidekickConversation } from "./workspace-sidekick-conversation-storage";
 import { CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
+import { CANVAS_ARTIFACT_ACCESS_ALARM } from "./canvas-artifact-access";
 import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { canvasTitleFromOpening } from "../services/canvas-naming";
@@ -221,6 +222,27 @@ export function canvasSummary(row: CanvasRow, report: InvalidCanvasAppearanceRep
   });
 }
 
+
+/**
+ * Every row this object keeps for a blank Canvas, by its id. A blank Canvas has
+ * no artifacts, Sidekicks, pins or Activity rows (`discardIfBlank` checks), so
+ * these are all it can have: its row, its creator's participation and read
+ * cursor, its sharing revision, and its Chat's registration and projection.
+ * The directory row goes first: the sharing triggers re-mark a Canvas only
+ * while its row exists. A table that starts
+ * keeping a row for every Canvas belongs here too; the test that discards one
+ * scans every table for its id.
+ */
+const CANVAS_DISCARD_STATEMENTS = [
+  "DELETE FROM canvas_directory WHERE canvas_id = ?",
+  "DELETE FROM canvas_participants WHERE canvas_id = ?",
+  "DELETE FROM canvas_artifact_users WHERE canvas_id = ?",
+  "DELETE FROM canvas_artifact_access_state WHERE canvas_id = ?",
+  "DELETE FROM sidekick_children WHERE sidekick_id = ?",
+  "DELETE FROM sidekick_child_projections WHERE sidekick_id = ?",
+  "DELETE FROM sidekick_child_receipts WHERE sidekick_id = ?",
+  "DELETE FROM sidekick_viewer_reads WHERE sidekick_id = ?",
+] as const;
 
 /**
  * One Canvas's parent state, scoped to a `canvas_id` inside `WorkspaceDO`'s
@@ -402,17 +424,51 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         throw new ApiError(403, "canvas_archive_forbidden", "Only a Canvas manager can archive it");
       }
       if (row.archived_at !== null) return;
-      this.archiveRow();
+      const now = Date.now();
+      this.sql.exec(`UPDATE canvas_directory SET archived_at = ?, title_status = 'settled' WHERE canvas_id = ?`,
+        now, this.canvasId);
+      this.sql.exec(`INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
+        SELECT id, 1, 1, 0 FROM resources WHERE provider = 'avalon_generated'
+          AND (publication_parent_id = ? OR id IN (SELECT resource_id FROM canvas_artifacts WHERE canvas_id = ?))
+        ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0`, this.canvasId, this.canvasId);
+      this.host.alarms.cancel(CANVAS_NAMING_ALARM_KIND, this.canvasId);
+      // A Sidekick made in this Canvas exists to work on it, so it goes with
+      // it: left running, each trigger would start a run with nowhere to write.
+      this.host.archiveMadeSidekicks(this.canvasId, now);
+      // Save the audience before any delivery. Retrying an archive cannot
+      // reconstruct it from admission: the tombstone now admits nobody.
+      const users = this.sql.exec<{ user_id: string }>(
+        `SELECT user_id FROM workspace_member_status WHERE active = 1`,
+      ).toArray().map((member) => member.user_id);
+      for (const child of this.childRegistry()) this.host.alarms.schedule({
+        kind: CANVAS_ARCHIVE_CONVERSATION_ALARM, key: `${this.canvasId}:${child.substreamId}`, dueAt: now,
+        payload: JSON.stringify({ canvasId: this.canvasId, substreamId: child.substreamId, users }),
+      });
+      for (const artifact of this.sql.exec<{ artifact_id: string }>(
+        `SELECT artifact_id FROM artifact_registry WHERE workstream_id = ?`, this.canvasId,
+      ).toArray()) this.host.alarms.schedule({
+        kind: CANVAS_ARCHIVE_ARTIFACT_ALARM, key: artifact.artifact_id, dueAt: now,
+        payload: JSON.stringify({ canvasId: this.canvasId }),
+      });
+      this.host.noteCanvasDirectoryChanged(this.canvasId);
+      for (const recipient of this.sql.exec<{ recipient_user_id: string }>(
+        `SELECT DISTINCT recipient_user_id FROM workspace_activity_items WHERE parent_kind = 'canvas' AND parent_id = ?`,
+        this.canvasId,
+      ).toArray()) this.host.noteActivityChanged(recipient.recipient_user_id);
     });
   }
 
   /**
-   * Archive a Canvas its creator made and left with nothing in it, so leaving
-   * a fresh Canvas unused does not leave an Untitled Canvas in their list.
-   * Blank is judged here, in the archive's transaction, not by the client: a
+   * Delete a Canvas its creator made and left with nothing in it, so leaving a
+   * fresh Canvas unused does not leave an Untitled Canvas in their list.
+   * Blank is judged here, in the delete's transaction, not by the client: a
    * message, an artifact, a retitle or chosen look, a pin, a share or an
    * attached Sidekick each keeps it. Anything else answers `discarded: false`
    * rather than refusing, since the caller only asked to tidy up.
+   *
+   * This removes the rows this object holds for it. Its Chat's own object and
+   * its D1 anchor are the caller's to erase after this commits
+   * (`CanvasService.discardIfBlank`).
    */
   discardIfBlank(input: CanvasActorRequest): { discarded: boolean } {
     const request = parseRpcInput(CanvasActorRequestSchema, input, "canvas_discard");
@@ -422,9 +478,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
         return { discarded: false };
       }
-      if (row.archived_at !== null) return { discarded: true };
-      const blank = row.title === UNTITLED_CANVAS && row.title_status === "settled" && row.appearance_json === null
-        && row.writer_sidekick_id === null && row.visibility === "creator"
+      const blank = row.archived_at === null && row.title === UNTITLED_CANVAS && row.title_status === "settled"
+        && row.appearance_json === null && row.writer_sidekick_id === null && row.visibility === "creator"
         && this.sql.exec<{ used: number }>(
           `SELECT EXISTS (SELECT 1 FROM sidekick_child_projections
                      WHERE sidekick_id = ?1 AND COALESCE(json_extract(effect_json, '$.latestAttentionOrdinal'), 0) > 0)
@@ -432,48 +487,17 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
                OR EXISTS (SELECT 1 FROM artifact_registry WHERE workstream_id = ?1)
                OR EXISTS (SELECT 1 FROM canvas_participants WHERE canvas_id = ?1 AND user_id <> ?2)
                OR EXISTS (SELECT 1 FROM sidekick_conversation_attachments WHERE parent_kind = 'canvas' AND parent_id = ?1)
-               OR EXISTS (SELECT 1 FROM workspace_pins WHERE item_kind = 'canvas' AND item_id = ?1) AS used`,
+               OR EXISTS (SELECT 1 FROM workspace_pins WHERE item_kind = 'canvas' AND item_id = ?1)
+               OR EXISTS (SELECT 1 FROM workspace_activity_items WHERE parent_kind = 'canvas' AND parent_id = ?1) AS used`,
           this.canvasId, row.created_by_user_id,
         ).one().used === 0;
       if (!blank) return { discarded: false };
-      this.archiveRow();
+      for (const statement of CANVAS_DISCARD_STATEMENTS) this.sql.exec(statement, this.canvasId);
+      this.host.alarms.cancel(CANVAS_NAMING_ALARM_KIND, this.canvasId);
+      this.host.alarms.cancel(CANVAS_ARTIFACT_ACCESS_ALARM, this.canvasId);
+      this.host.noteCanvasDirectoryChanged(this.canvasId);
       return { discarded: true };
     });
-  }
-
-  /** Inside a transaction, on an active row the caller may archive: tombstone it and queue what archiving owes. */
-  private archiveRow(): void {
-    const now = Date.now();
-    this.sql.exec(`UPDATE canvas_directory SET archived_at = ?, title_status = 'settled' WHERE canvas_id = ?`,
-      now, this.canvasId);
-    this.sql.exec(`INSERT INTO resource_search_versions(resource_id, revision, pending, not_before)
-      SELECT id, 1, 1, 0 FROM resources WHERE provider = 'avalon_generated'
-        AND (publication_parent_id = ? OR id IN (SELECT resource_id FROM canvas_artifacts WHERE canvas_id = ?))
-      ON CONFLICT(resource_id) DO UPDATE SET revision = revision + 1, pending = 1, not_before = 0`, this.canvasId, this.canvasId);
-    this.host.alarms.cancel(CANVAS_NAMING_ALARM_KIND, this.canvasId);
-    // A Sidekick made in this Canvas exists to work on it, so it goes with
-    // it: left running, each trigger would start a run with nowhere to write.
-    this.host.archiveMadeSidekicks(this.canvasId, now);
-    // Save the audience before any delivery. Retrying an archive cannot
-    // reconstruct it from admission: the tombstone now admits nobody.
-    const users = this.sql.exec<{ user_id: string }>(
-      `SELECT user_id FROM workspace_member_status WHERE active = 1`,
-    ).toArray().map((member) => member.user_id);
-    for (const child of this.childRegistry()) this.host.alarms.schedule({
-      kind: CANVAS_ARCHIVE_CONVERSATION_ALARM, key: `${this.canvasId}:${child.substreamId}`, dueAt: now,
-      payload: JSON.stringify({ canvasId: this.canvasId, substreamId: child.substreamId, users }),
-    });
-    for (const artifact of this.sql.exec<{ artifact_id: string }>(
-      `SELECT artifact_id FROM artifact_registry WHERE workstream_id = ?`, this.canvasId,
-    ).toArray()) this.host.alarms.schedule({
-      kind: CANVAS_ARCHIVE_ARTIFACT_ALARM, key: artifact.artifact_id, dueAt: now,
-      payload: JSON.stringify({ canvasId: this.canvasId }),
-    });
-    this.host.noteCanvasDirectoryChanged(this.canvasId);
-    for (const recipient of this.sql.exec<{ recipient_user_id: string }>(
-      `SELECT DISTINCT recipient_user_id FROM workspace_activity_items WHERE parent_kind = 'canvas' AND parent_id = ?`,
-      this.canvasId,
-    ).toArray()) this.host.noteActivityChanged(recipient.recipient_user_id);
   }
 
   /**
