@@ -51,7 +51,10 @@ a section of one, a plugin's system message, a classifier's question with its
 closed set of answers, an injected nudge or notice, a label on outside content
 or host data, and an MCP server's instructions or prompts. Tool descriptions
 stay with their tool, because the schema is their contract; skill bodies stay
-in their skill files.
+in their skill files. Text the agent loop itself needs stays in Bind
+(`@juno-ai/bind`), which depends on no Rally package: the interrupt header, the
+placeholder turn some providers require, and the skill resource hint are the
+loop's mechanics, not what Rally tells the model.
 
 **The package depends on `@rally/contracts` and nothing else**, because every
 sender depends on it and any other import would be a cycle. So a prompt takes

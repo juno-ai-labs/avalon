@@ -576,9 +576,6 @@ importers:
 
   packages/bind:
     dependencies:
-      '@rally/prompts':
-        specifier: workspace:*
-        version: link:../prompts
       zod:
         specifier: 'catalog:'
         version: 4.5.4
