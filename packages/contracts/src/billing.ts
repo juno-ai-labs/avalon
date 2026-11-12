@@ -4,6 +4,7 @@ import { PlanIdSchema } from './usage';
 export const BillingStatusSchema = z.discriminatedUnion('enabled', [
   z.object({ enabled: z.literal(false) }),
   z.object({ enabled: z.literal(true), status: z.string(), subscribed: z.boolean(), trialEndsAt: z.string(), overageEnabled: z.boolean(), creditsAvailable: z.boolean().optional(),
+    currency: z.string().nullable().optional(), offerId: z.string().nullable().optional(),
     paymentMethodReady: z.boolean().optional(), overageAvailable: z.boolean().optional(),
     offers: z.array(z.object({ id: z.string(), name: z.string(), plan: PlanIdSchema, currencies: z.array(z.string()), overageAvailable: z.boolean() })),
   }),
