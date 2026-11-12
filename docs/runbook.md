@@ -848,7 +848,13 @@ hash and public-domain verification. Every one of those downloads, from the R2
 API or the public domain, aborts only after 30 seconds with no bytes arriving,
 never on total transfer time: a healthy ~183 MiB zip can take longer than any
 fixed wall-clock deadline, and a 5-minute one failed two notarized 1.479.0
-attempts while hashing the existing orphan. Once the prepared receipt or a live
+attempts while hashing the existing orphan. Every upload, in turn, is retried
+while the Cloudflare API refuses it with a 429, a 5xx, or a dropped connection,
+backing off up to 30 seconds between attempts; any other refusal fails at once.
+A single 504 on the DMG upload failed the 1.727.0 release before this retry
+existed. Its attempt ceiling, `R2_UPLOAD_MAX_ATTEMPTS`, is still open, so until
+the team sets it a Cloudflare outage holds the runner until the release job's
+90-minute timeout; cancel the run and re-run it later rather than waiting. Once the prepared receipt or a live
 manifest names that version, recovery uses the recorded exact bytes; published
 release bytes are never regenerated from a fresh build. If publication stops
 after `release-publication.json` appears, rerun the same release workflow or tag
