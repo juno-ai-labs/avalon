@@ -30,7 +30,7 @@ const FreeSubscriptionSchema = z.object({
   }),
 });
 
-/** Caller holds the Organization claim. Discovery survives a lost create receipt. */
+/** Called inside the Organization billing actor. Discovery survives a lost create receipt. */
 export async function ensureStripeCustomer(
   env: Env,
   account: BillingAccount,
@@ -70,6 +70,62 @@ export async function ensureStripeCustomer(
   return customerId;
 }
 
+/** Retain award history, but release Stripe's active-subscription currency lock.
+ * The durable marker also prevents cron from recreating a free subscription
+ * while the administrator is completing Checkout in another currency. */
+export async function archiveStripeFreeSubscription(
+  env: Env,
+  account: BillingAccount,
+) {
+  if (!account.customer_id) return;
+  if (!billingConfig(env).synchronization && !account.free_subscription_id) {
+    await env.DB.prepare(
+      "UPDATE billing_accounts SET free_subscription_closed = 1 WHERE workspace_id = ?",
+    )
+      .bind(account.workspace_id)
+      .run();
+    return;
+  }
+  let after = "";
+  do {
+    const page = await stripe(
+      env,
+      `subscriptions?customer=${account.customer_id}&status=all&limit=100${after ? `&starting_after=${after}` : ""}`,
+      z.object({
+        has_more: z.boolean(),
+        data: z.array(FreeSubscriptionSchema),
+      }),
+    );
+    for (const free of page.data) {
+      if (
+        free.metadata.billing_role !== "free_record" ||
+        free.metadata.workspace_id !== account.workspace_id
+      )
+        continue;
+      if (!["canceled", "incomplete_expired"].includes(free.status))
+        await stripe(
+          env,
+          `subscriptions/${free.id}`,
+          StripeIdSchema,
+          undefined,
+          undefined,
+          "DELETE",
+        );
+      await env.DB.prepare(
+        "UPDATE billing_accounts SET free_subscription_id = ? WHERE workspace_id = ?",
+      )
+        .bind(free.id, account.workspace_id)
+        .run();
+    }
+    after = page.has_more ? page.data.at(-1)!.id : "";
+  } while (after);
+  await env.DB.prepare(
+    "UPDATE billing_accounts SET free_subscription_closed = 1 WHERE workspace_id = ?",
+  )
+    .bind(account.workspace_id)
+    .run();
+}
+
 /**
  * A zero-price subscription records the no-card trial independently of a paid
  * checkout. Its role excludes it from paid subscription/first-paid eligibility.
@@ -98,7 +154,6 @@ export async function synchronizeStripeProfile(
       "billing_workspace_missing",
       "Organization not found",
     );
-  if (workspace.abandoned_at && !account.customer_id) return;
   const customerId = await ensureStripeCustomer(env, account);
   const parsedPlan = PlanIdSchema.safeParse(workspace.plan);
   if (!parsedPlan.success)
@@ -150,7 +205,12 @@ export async function synchronizeStripeProfile(
     } while (after && !free);
   }
   const now = Math.floor(Date.now() / 1000);
-  if (!free && !workspace.abandoned_at) {
+  if (
+    !free &&
+    !workspace.abandoned_at &&
+    !account.subscription_id &&
+    !account.free_subscription_closed
+  ) {
     const price = await stripe(
       env,
       `prices/${sync.freePriceId}`,
@@ -216,7 +276,6 @@ export async function synchronizeStripeProfile(
     )
       .bind(account.workspace_id)
       .run();
-    return;
   }
   if (free) {
     if (
@@ -316,6 +375,12 @@ export async function synchronizeStripeProfile(
       ),
     });
   }
+  if (!free)
+    await env.DB.prepare(
+      "UPDATE billing_accounts SET trial_award_synced_end = ? WHERE workspace_id = ?",
+    )
+      .bind(awardEnd, account.workspace_id)
+      .run();
 }
 
 const MeterSchema = z.object({
@@ -340,18 +405,28 @@ interface UsageHour {
   confirmed_revision: number;
 }
 
-/** Caller holds the same non-expiring claim as checkout and settlement. */
+/** Runs inside the organization billing actor, independently of collection. */
 export async function synchronizeStripeUsage(
   env: Env,
   account: BillingAccount,
 ) {
   const sync = billingConfig(env).synchronization;
   if (!sync || !account.customer_id) return;
+  const rows = await env.USAGE_DB.prepare(
+    `SELECT * FROM billing_usage_hours WHERE workspace_id = ?
+    AND (error_code IS NULL OR error_code <> 'billing_usage_timestamp_expired')
+    AND (confirmed_revision <> revision OR meter_id IS NULL OR meter_id <> CASE organization_pays WHEN 1 THEN ? ELSE ? END)
+    ORDER BY hour_start, organization_pays`,
+  )
+    .bind(account.workspace_id, sync.organizationMeterId, sync.rallyMeterId)
+    .all<UsageHour>();
+  if (rows.results.length === 0) return;
   const meters = new Map<number, z.infer<typeof MeterSchema>>();
   for (const [payer, id] of [
     [1, sync.organizationMeterId],
     [0, sync.rallyMeterId],
   ] as const) {
+    if (!rows.results.some((row) => row.organization_pays === payer)) continue;
     const meter = await stripe(env, `billing/meters/${id}`, MeterSchema);
     if (
       meter.event_time_window !== "hour" ||
@@ -367,14 +442,6 @@ export async function synchronizeStripeUsage(
     }
     meters.set(payer, meter);
   }
-  const rows = await env.USAGE_DB.prepare(
-    `SELECT * FROM billing_usage_hours WHERE workspace_id = ?
-    AND (error_code IS NULL OR error_code <> 'billing_usage_timestamp_expired')
-    AND (confirmed_revision <> revision OR meter_id IS NULL OR meter_id <> CASE organization_pays WHEN 1 THEN ? ELSE ? END)
-    ORDER BY hour_start, organization_pays`,
-  )
-    .bind(account.workspace_id, sync.organizationMeterId, sync.rallyMeterId)
-    .all<UsageHour>();
   const now = Math.floor(Date.now() / 1000);
   for (const row of rows.results) {
     const meter = meters.get(row.organization_pays)!;

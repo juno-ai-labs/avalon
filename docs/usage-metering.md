@@ -6,7 +6,9 @@ small usage event in the background. One queue consumer adds the events into a
 ledger, a recent window in its own D1 database and the full history in R2, and
 one route derives the meter members see: the percentage of this
 week's quota left, and this month's overage. Optional Stripe billing settles
-opted-in overages; the meter reports whether billing is enabled.
+opted-in overages; the meter reports whether the current period is billable.
+The first partial activation/resumption period is waived, and low-quota menu
+copy says overages are enabled only for a billable period.
 
 The promise to the rest of the system: metering never waits on the work it
 measures and never fails it. A call site sends and forgets, and a lost event is

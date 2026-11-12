@@ -9,6 +9,7 @@ CREATE TABLE billing_accounts (
   free_subscription_closed INTEGER NOT NULL DEFAULT 0,
   trial_award_synced_end INTEGER,
   checkout_generation TEXT NOT NULL,
+  checkout_request_json TEXT,
   status TEXT NOT NULL DEFAULT 'none',
   offer_id TEXT,
   currency TEXT,
@@ -19,8 +20,7 @@ CREATE TABLE billing_accounts (
   team_trial_members INTEGER NOT NULL,
   trial_extended INTEGER NOT NULL DEFAULT 0,
   overage_started_at INTEGER,
-  overage_enabled INTEGER NOT NULL DEFAULT 0,
-  sync_token TEXT
+  overage_enabled INTEGER NOT NULL DEFAULT 0
 );
 -- Preserve paid terms after cancellation/re-subscription, independently of the current account.
 CREATE TABLE billing_terms (
@@ -34,6 +34,20 @@ CREATE TABLE billing_terms (
   final_invoice_id TEXT,
   final_invoice_finalized INTEGER NOT NULL DEFAULT 0
 );
+-- Each resumption starts a new billable interval; suspended gaps never become debt.
+CREATE TABLE billing_intervals (
+  subscription_id TEXT NOT NULL REFERENCES billing_terms(subscription_id),
+  starts_at INTEGER NOT NULL,
+  ends_at INTEGER,
+  price_id TEXT NOT NULL,
+  cutoff_quota_microusd INTEGER,
+  PRIMARY KEY(subscription_id, starts_at)
+);
+CREATE UNIQUE INDEX billing_interval_open ON billing_intervals(subscription_id) WHERE ends_at IS NULL;
+CREATE TRIGGER billing_initial_interval AFTER INSERT ON billing_terms BEGIN
+  INSERT INTO billing_intervals(subscription_id, starts_at, ends_at, price_id, cutoff_quota_microusd)
+  VALUES (NEW.subscription_id, NEW.starts_at, NEW.ends_at, NEW.price_id, NEW.cutoff_quota_microusd);
+END;
 CREATE TABLE billing_overages (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   subscription_id TEXT NOT NULL REFERENCES billing_terms(subscription_id),

@@ -326,17 +326,26 @@ describe('Usage in the Organization menu', () => {
   });
 
   it('says overage is enabled once the quota runs low', async () => {
-    renderMenuItem(apiAnswering(usage(19)));
+    const answer = usage(19); answer.overage.billingEnabled = true;
+    renderMenuItem(apiAnswering(answer));
     expect(await screen.findByRole('meter', { name: 'Weekly quota left' })).toHaveClass('meter-warning');
 
     expect(await screen.findByText('19% left till Thu 9:00 AM, overage enabled')).toBeVisible();
   });
 
   it('says overage is enabled at 0%', async () => {
-    renderMenuItem(apiAnswering(usage(0, 5_000_000)));
+    const answer = usage(0, 5_000_000); answer.overage.billingEnabled = true;
+    renderMenuItem(apiAnswering(answer));
 
     expect(await screen.findByText('0% left till Thu 9:00 AM, overage enabled')).toBeVisible();
     expect(screen.queryByText('Not billed')).not.toBeInTheDocument();
+  });
+
+  it('does not advertise overages when the current period is not billable', async () => {
+    const answer = usage(0); answer.overage.billingEnabled = false;
+    renderMenuItem(apiAnswering(answer));
+    expect(await screen.findByText('0% left till Thu 9:00 AM')).toBeVisible();
+    expect(screen.queryByText(/overage enabled/)).not.toBeInTheDocument();
   });
 
   it('hides the line while loading with nothing cached', () => {

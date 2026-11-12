@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import { migratedSqliteDatabase, migratedUsageSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 import { createTestEnv } from './helpers/cloudflare-test';
-import { billingAccount, createCheckout, billClosedOverage, syncSubscription, refreshBillingAccount, withBillingLock, withOrganizationBillingClosure, settleBillingAccounts } from '../src/services/billing';
+import { billingAccount, createCheckout, billClosedOverage, syncSubscription, refreshBillingAccount, settleBillingAccount, closeOrganizationBilling, withOrganizationBillingClosure } from '../src/services/billing';
 import { verifyStripeSignature, stripe } from '../src/services/stripe';
 import { BillingConfigSchema } from '../src/services/billing-config';
 
@@ -66,7 +66,8 @@ describe('organization billing', () => {
     expect(requests[1]!.body.get('allow_promotion_codes')).toBe('true');
     expect(await createCheckout(env, workspace, 'start', 'eur', false)).toEqual({ url: 'https://checkout.stripe.com/test' });
     expect(requests.filter((r) => r.url.endsWith('/checkout/sessions'))).toHaveLength(1);
-    await expect(createCheckout(env, workspace, 'start', 'usd', false)).rejects.toMatchObject({ code: 'billing_checkout_pending' });
+    await expect(createCheckout(env, workspace, 'start', 'usd', false)).resolves.toEqual({ url: 'https://checkout.stripe.com/test' });
+    expect(requests.some(r => r.url.endsWith('/expire'))).toBe(true);
   });
   it('rejects client prices, unsupported currency and unconfigured overages before Stripe', async () => {
     const { env } = seed();
@@ -401,17 +402,6 @@ it('acknowledges unknown Stripe customers without provider calls', async () => {
   expect(fetcher).not.toHaveBeenCalled();
 });
 
-it('does not steal ownership from a slow operation after the former five-minute deadline', async () => {
-  const { env } = await accountFixture();
-  let release!: () => void; let entered!: () => void;
-  const started = new Promise<void>((resolve) => { entered = resolve; });
-  const owner = withBillingLock(env, workspace, async () => { entered(); await new Promise<void>((resolve) => { release = resolve; }); });
-  await started; vi.setSystemTime(new Date('2027-01-01'));
-  await expect(withBillingLock(env, workspace, async () => 'stolen')).rejects.toMatchObject({ code: 'billing_busy' });
-  release(); await owner;
-  await expect(withBillingLock(env, workspace, async () => 'released')).resolves.toBe('released');
-});
-
 it('blocks closing an organization with a live subscription', async () => {
   const { env } = await accountFixture(); const close = vi.fn(async () => 'closed');
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [subscription()], has_more: false })));
@@ -424,6 +414,8 @@ it('shows overage enabled only after a subscription is active and consent has st
   db.prepare("UPDATE billing_accounts SET overage_enabled = 1, status = 'none'").run();
   expect((await readOrganizationUsage(env, workspace, Date.now()))!.overage.billingEnabled).toBe(false);
   db.prepare("UPDATE billing_accounts SET status = 'active', overage_started_at = unixepoch('2026-11-11')").run();
+  expect((await readOrganizationUsage(env, workspace, Date.now()))!.overage.billingEnabled).toBe(false);
+  vi.setSystemTime(new Date('2026-12-10'));
   expect((await readOrganizationUsage(env, workspace, Date.now()))!.overage.billingEnabled).toBe(true);
 });
 
@@ -460,8 +452,8 @@ it('settles pre-cancellation usage through a final invoice and excludes later us
     if (url.endsWith('/finalize')) { finalized = true; return Response.json({ id: 'in_final' }); }
     return Response.json({ status: finalized ? 'open' : 'draft' });
   }));
-  await settleBillingAccounts(env);
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, workspace);
+  await settleBillingAccount(env, workspace);
   expect(quantities).toEqual(['290000000', '250000000']);
   expect(finalized).toBe(true);
   expect(seen.filter((r) => r.url.endsWith('/invoices'))).toHaveLength(1);
@@ -469,20 +461,6 @@ it('settles pre-cancellation usage through a final invoice and excludes later us
   expect(seen.filter((r) => r.url.endsWith('/invoiceitems')).every((r) => !r.body.has('subscription'))).toBe(true);
   expect(seen.find((r) => r.url.includes('invoiceitems?'))!.url).toContain('created[gte]=');
   expect(usage.prepare('SELECT COUNT(*) AS count FROM usage_events').get()).toEqual({ count: 3 });
-});
-
-it('continues settlement after another organization has a held billing claim', async () => {
-  const { db, env } = await accountFixture();
-  const other = '01900000-0000-7000-8000-0000000000bb';
-  db.prepare("INSERT INTO workspaces(id,name,slug,region,created_by_user_id,created_at,updated_at) VALUES (?,'Other','other','global','owner','2026-11-10T00:00:00Z','2026-11-10T00:00:00Z')").run(other);
-  await billingAccount(env, other);
-  db.prepare("UPDATE billing_accounts SET customer_id = 'cus_other' WHERE workspace_id = ?").run(other);
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [], has_more: false })));
-  for (const id of [workspace, other]) db.prepare("INSERT INTO billing_terms(subscription_id,workspace_id,customer_id,price_id,starts_at) VALUES (?,?,'cus_1','price_overage',unixepoch('2026-11-25'))").run(`sub_${id}`,id);
-  db.prepare("UPDATE billing_accounts SET sync_token = 'held' WHERE workspace_id = ?").run(workspace);
-  vi.setSystemTime(new Date('2027-01-30'));
-  await settleBillingAccounts(env);
-  expect(db.prepare('SELECT workspace_id,invoice_item_id FROM billing_overages').all()).toEqual([{ workspace_id: other, invoice_item_id: 'zero' }]);
 });
 
 it('refuses closure while an uncompleted checkout could still create a subscription', async () => {
@@ -536,7 +514,7 @@ it('recovers activation in checkout-only cron and starts overages before an unus
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [subscription({
     start_date: Date.parse('2026-11-10') / 1000, metadata: { offer_id: 'grow', overage_enabled: 'true' },
   })], has_more: false })));
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, workspace);
   expect(db.prepare('SELECT starts_at FROM billing_terms').get()).toEqual({ starts_at: 1794268800 });
   expect(db.prepare('SELECT plan FROM workspaces').get()).toEqual({ plan: 'growth' });
 });
@@ -583,9 +561,8 @@ it('resets unpaid legacy plans while preserving explicit operator overrides', as
   expect(db.prepare('SELECT plan FROM workspaces').get()).toEqual({ plan: 'ultra' });
 });
 
-it('reads billing status while another writer holds the claim without contacting Stripe', async () => {
-  const { db, env } = await accountFixture();
-  db.prepare("UPDATE billing_accounts SET sync_token = 'writer'").run();
+it('reads billing status without contacting Stripe', async () => {
+  const { env } = await accountFixture();
   const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
   const app = new Hono<HonoAppEnv>(); app.onError(errorHandler);
   app.use('*', async (c, next) => {
@@ -611,11 +588,109 @@ it('closes a never-billed organization without provisioning Stripe records', asy
 
 it('blocks operator retirement before locking paying members out of their portal', async () => {
   const { db, env } = await accountFixture();
-  const { retireWorkspaceForOperator } = await import('../src/services/workspace-retirement-service');
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [subscription()], has_more: false })));
   let failure: unknown;
-  try { await retireWorkspaceForOperator(env, workspace, { operatorId: 'operator' }); }
+  try { await closeOrganizationBilling(env, workspace, null); }
   catch (error) { failure = error; }
   expect(db.prepare('SELECT abandoned_at FROM workspaces').get()).toEqual({ abandoned_at: null });
   expect(failure).toMatchObject({ code: 'billing_closure_blocked' });
+});
+
+it.each(['past_due', 'unpaid', 'paused', 'unsupported_offer', 'non_usd', 'consent_revoked'])('stops overages at %s and never backcharges the suspended gap', async (reason) => {
+  const { db, env } = await accountFixture();
+  const { applyUsageBatch } = await import('../src/services/usage-metering');
+  let current = subscription({ start_date: Date.parse('2026-11-10') / 1000,
+    metadata: { offer_id: 'grow', overage_enabled: 'true' } });
+  const quantities: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/subscriptions/')) return Response.json(current);
+    if (url.includes('/invoiceitems?')) return Response.json({ data: [], has_more: false });
+    if (url.endsWith('/invoiceitems')) {
+      quantities.push(new URLSearchParams(String(init?.body)).get('quantity')!);
+      return Response.json({ id: `ii_${quantities.length}` });
+    }
+    throw new Error(`Unexpected Stripe request: ${url}`);
+  }));
+  await syncSubscription(env, 'cus_1', 'sub_1');
+  const add = async (id: string, at: string, cost: number) => applyUsageBatch(env, [{ v: 1, eventId: id,
+    workspaceId: workspace, region: 'global', activity: 'agent_run', occurredAt: at,
+    costMicrousd: cost, model: null, refs: {} }], at);
+  await add('before-stop', '2026-12-12T00:00:00Z', 300_000_000);
+  vi.setSystemTime(new Date('2026-12-15'));
+  if (reason === 'unsupported_offer') current = subscription({ metadata: { offer_id: 'start', overage_enabled: 'true' }, items: { data: [{ price: { id: 'price_start' } }] } });
+  else if (reason === 'non_usd') current = { ...current, currency: 'eur' };
+  else if (reason === 'consent_revoked') current = { ...current, metadata: { offer_id: 'grow', overage_enabled: 'false' } };
+  else current = { ...current, status: reason };
+  await syncSubscription(env, 'cus_1', 'sub_1');
+  await add('during-gap', '2026-12-20T00:00:00Z', 500_000_000);
+  vi.setSystemTime(new Date('2027-01-11'));
+  current = subscription({ start_date: Date.parse('2026-11-10') / 1000,
+    metadata: { offer_id: 'grow', overage_enabled: 'true' } });
+  await syncSubscription(env, 'cus_1', 'sub_1');
+  await add('waived-resumption-month', '2027-01-12T00:00:00Z', 500_000_000);
+  vi.setSystemTime(new Date('2027-02-15'));
+  await billClosedOverage(env, workspace);
+  expect(quantities).toEqual(['250000000']);
+  expect(db.prepare('SELECT starts_at, ends_at FROM billing_intervals ORDER BY starts_at').all()).toEqual([
+    { starts_at: Date.parse('2026-11-10') / 1000, ends_at: Date.parse('2026-12-15') / 1000 },
+    { starts_at: Date.parse('2027-01-11') / 1000, ends_at: null },
+  ]);
+});
+
+it.each([true, false])('recovers a missed activation only with a paid post-trial invoice: %s', async (activated) => {
+  const { db, env } = await accountFixture();
+  const canceled = subscription({ status: 'canceled', start_date: Date.parse('2026-11-10') / 1000,
+    trial_end: Date.parse('2026-11-24') / 1000, ended_at: Date.parse('2027-01-15') / 1000,
+    metadata: { offer_id: 'grow', overage_enabled: 'true' } });
+  vi.setSystemTime(new Date('2027-01-20'));
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (url.includes('/subscriptions?')) return Response.json({ data: [canceled], has_more: false });
+    if (url.includes('/invoices?')) return Response.json({ has_more: false, data: [
+      { id: 'in_trial', lines: { data: [{ type: 'subscription', period: { start: Date.parse('2026-11-10') / 1000, end: Date.parse('2026-11-24') / 1000 } }] } },
+      ...(activated ? [{ id: 'in_zero_total_pilot', lines: { data: [{ type: 'subscription', period: { start: Date.parse('2026-11-24') / 1000, end: Date.parse('2026-12-24') / 1000 } }] } }] : []),
+    ] });
+    throw new Error(`Unexpected Stripe request: ${url}`);
+  }));
+  await refreshBillingAccount(env, workspace);
+  expect(db.prepare('SELECT starts_at, ends_at FROM billing_terms').all()).toEqual(activated ? [{
+    starts_at: Date.parse('2026-11-24') / 1000, ends_at: Date.parse('2027-01-15') / 1000,
+  }] : []);
+});
+
+it('resumes retirement of an abandoned organization that predates billing without provisioning it', async () => {
+  const { db, env } = seed();
+  db.prepare("UPDATE workspaces SET abandoned_at = '2026-11-10'").run();
+  const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+  await closeOrganizationBilling(env, workspace, null);
+  expect(db.prepare('SELECT COUNT(*) AS count FROM billing_accounts').get()).toEqual({ count: 0 });
+  expect(db.prepare('SELECT abandoned_at FROM workspaces').get()).toEqual({ abandoned_at: '2026-11-10' });
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('recovers the exact uncertain checkout request before replacing it with different terms', async () => {
+  const { env, db } = await accountFixture();
+  const writes: { currency: string | null; key: string | null }[] = [];
+  let lost = true;
+  let expired = false;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/subscriptions?')) return Response.json({ has_more: false, data: [] });
+    // The prior POST is still in flight; discovery cannot see it yet.
+    if (url.includes('/checkout/sessions?')) return Response.json({ data: [] });
+    if (url.endsWith('/expire')) { expired = true; return Response.json({ id: 'cs_usd' }); }
+    if (url.endsWith('/checkout/sessions')) {
+      const currency = new URLSearchParams(String(init?.body)).get('currency');
+      writes.push({ currency, key: new Headers(init?.headers).get('Idempotency-Key') });
+      if (lost) { lost = false; throw new Error('response_lost'); }
+      if (currency === 'eur') expect(expired).toBe(true);
+      return Response.json({ id: `cs_${currency}`, url: `https://checkout.stripe.com/${currency}` });
+    }
+    throw new Error(`Unexpected Stripe request: ${url}`);
+  }));
+  await expect(createCheckout(env, workspace, 'start', 'usd', false)).rejects.toThrow('response_lost');
+  expect(db.prepare('SELECT checkout_request_json IS NOT NULL AS pending FROM billing_accounts').get()).toEqual({ pending: 1 });
+  await expect(closeOrganizationBilling(env, workspace, null)).rejects.toMatchObject({ code: 'billing_closure_blocked' });
+  expect(await createCheckout(env, workspace, 'start', 'eur', false)).toEqual({ url: 'https://checkout.stripe.com/eur' });
+  expect(writes.map(row => row.currency)).toEqual(['usd', 'usd', 'eur']);
+  expect(writes[1]!.key).toBe(writes[0]!.key);
+  expect(writes[2]!.key).not.toBe(writes[0]!.key);
 });

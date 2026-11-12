@@ -189,7 +189,7 @@ export function usageMenuLabel(usage: OrganizationUsage): string {
   const at = new Date(usage.weekResetsAt);
   const day = new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(at);
   const line = `${usage.quotaRemainingPercent}% left till ${day} ${timeOfDay(at)}`;
-  return usageTone(usage) === 'warning' ? `${line}, overage enabled` : line;
+  return usageTone(usage) === 'warning' && usage.overage.billingEnabled === true ? `${line}, overage enabled` : line;
 }
 
 /** "Resets Thursday, October 8 at 9:00 AM", in the viewer's local time. */
