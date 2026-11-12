@@ -124,7 +124,7 @@ function heldReply(signal: AbortSignal | undefined): Response {
   }), { headers: { "content-type": "text/event-stream" } });
 }
 const provider = useOpenRouterDouble((call) => namingCall(call)
-  ? { say: JSON.stringify({ title: "December pricing launch" }) }
+  ? { say: JSON.stringify({ title: "December pricing launch", icon: "rocket" }) }
   : call.stream && JSON.stringify(memberInputs(call)).includes(LONG_REPLY_PROMPT) ? { raw: heldReply(call.signal) }
     : call.stream && JSON.stringify(memberInputs(call)).includes(INTERIM_REPLY_PROMPT) ? { raw: responsesStreamResponse([
       { choices: [{ delta: { content: INTERIM_REPLY }, finish_reason: null }] },
@@ -729,7 +729,7 @@ describe("a Canvas's title and pin order", () => {
     await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, canvasId))));
     await expect.poll(async () => (await service.detail(canvasId)).titleStatus, { timeout: waitBudget() }).toBe("settled");
-    expect((await service.detail(canvasId)).title).toBe("December pricing launch");
+    expect(await service.detail(canvasId)).toMatchObject({ title: "December pricing launch", appearance: { icon: "rocket", color: null } });
     await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title, { timeout: waitBudget() })
       .toBe("December pricing launch");
     const naming = provider.calls.filter(namingCall);
@@ -779,9 +779,13 @@ describe("a Canvas's title and pin order", () => {
     expect(await service.detail(canvasId)).toMatchObject({ title: "Untitled Canvas", titleStatus: "naming" });
     expect(provider.calls.filter(namingCall)).toEqual([]);
 
+    // An icon somebody chose before the pass ran is theirs to keep.
+    await service.update(canvasId, { appearance: { icon: "flag" } });
     await say("human", "Plan the December pricing launch.");
     await name();
-    expect(await service.detail(canvasId)).toMatchObject({ title: "December pricing launch", titleStatus: "settled" });
+    expect(await service.detail(canvasId)).toMatchObject({
+      title: "December pricing launch", titleStatus: "settled", appearance: { icon: "flag", color: null },
+    });
     const naming = provider.calls.filter(namingCall);
     expect(naming).toHaveLength(1);
     expect(JSON.stringify(naming[0]!.messages)).toContain("Plan the December pricing launch.");
