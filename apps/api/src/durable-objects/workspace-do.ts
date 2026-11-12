@@ -5448,7 +5448,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
     return this.canvasWrite(() => {
       const result = canvas.discardIfBlank(input);
-      if (result.discarded) this.broadcastPresence();
+      if (result.discarded && input.commit) this.broadcastPresence();
       return result;
     });
   }

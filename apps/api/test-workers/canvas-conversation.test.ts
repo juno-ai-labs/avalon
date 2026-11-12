@@ -553,6 +553,32 @@ describe("the Canvas list", () => {
     creator.socket.close(1000, "done");
   }));
 
+  it("keeps a blank-looking Canvas whose Chat holds a message its projection has not delivered yet, and leaves the Chat open", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({});
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    // Sent from another window: the Chat holds it, the Canvas has not heard yet.
+    const client = await new ConversationService(TEST_ENV, auth(CREATOR)).writableClient(canvasId, "0");
+    await client.createMessage({ text: "Keep this.", clientMessageId: "canvas-discard-race-1",
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+    expect(await workspace().canvasDiscardIfBlank({ workspaceId: WORKSPACE_ID, canvasId,
+      actor: { userId: CREATOR, actorRole: "member" }, commit: false })).toEqual({ discarded: true });
+
+    expect(await service.discardIfBlank(canvasId)).toEqual({ discarded: false });
+    expect((await service.detail(canvasId)).id).toBe(canvasId);
+    const said = () => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ content: string }>(
+      "SELECT content FROM canonical_conversation_turn_details WHERE author_type = 'member' ORDER BY sequence_number").toArray()
+      .map((row) => row.content));
+    expect(await said()).toEqual(["Keep this."]);
+    // Still open: the next message is admitted, into the transcript or the
+    // queue behind the run the first one started.
+    await client.createMessage({ text: "And this.", clientMessageId: "canvas-discard-race-2",
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+    expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec(
+      `SELECT 1 FROM canonical_conversation_turn_details WHERE client_message_id = ?1
+        UNION ALL SELECT 1 FROM pending_loop_inputs WHERE client_message_id = ?1`, "canvas-discard-race-2").toArray().length)).toBe(1);
+  }));
+
   it("lists a Canvas to whoever may open it, unread to a participant who has not opened it", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
     const creator = await connect(CREATOR);
