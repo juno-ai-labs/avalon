@@ -2,6 +2,7 @@ import { COMPLETION_VERIFICATION_MODEL } from "@rally/contracts/runtime-config";
 import type { ModelMessage, OpenRouterTraceContext, StructuredModelDiagnostic } from "./index";
 import { askJev, jevFailureKind } from "./jev";
 import { answers, questions, type CompletionAnswer, type CompletionState } from "./completion-verification-question";
+import { COMPLETION_CONTEXT_RELATION } from "./prompts/completion-verification-state";
 export { completionVerificationPrompt } from "./prompts/completion-verification-nudge";
 
 export type { CompletionState } from "./completion-verification-question";
@@ -24,7 +25,7 @@ export function completionConversationContext(messages: readonly ModelMessage[])
     const text = typeof message.content === "string" ? message.content
       : (message.content ?? []).flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
     return text ? [{ id: `context:${index}`, role: message.role, text,
-      relation: "Ordered conversation context available to the acting model; may include a compaction checkpoint or an in-run correction." }] : [];
+      relation: COMPLETION_CONTEXT_RELATION }] : [];
   });
 }
 
