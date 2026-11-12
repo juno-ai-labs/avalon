@@ -23,7 +23,8 @@ are in
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/usage.ts` | The single source for plans, metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
+| `packages/contracts/src/plans.ts` | The plan catalog and weekly allocation, shared by the product and public site; dependency-free so native Node site builds can consume it without loading the runtime schemas. |
+| `packages/contracts/src/usage.ts` | Re-exports the catalog and owns metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
 | `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only D1 ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`, `publishOrganizationUsage`, `pruneUsageEvents` and `USAGE_EVENTS_D1_RETENTION_DAYS`. |
 | `apps/api/src/durable-objects/workspace-do.ts` (`publishUsage`) | Sends the meter after a plan change to every subscribed member socket as `workspace_usage` (`WorkspaceUsageEventSchema`), never a guest's, and drops a meter read before the last one sent. |
 | `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, applies the batch to D1, then sends it to the usage lakehouse, logs `usage_batch_applied`. `usageLakehouseRecord` shapes the R2 row. |
@@ -158,7 +159,9 @@ has a nonzero allowance. Each weekly allocation is one quarter of the advertised
 allowance; the existing seven-day reset cadence is unchanged (this is not an exact
 calendar-month spending cap). Both meters turn the warning colour below 20% left.
 Overage is priced at cost. These product values live in
-`packages/contracts/src/usage.ts`. Stored IDs `starter` and `growth` remain
+`packages/contracts/src/plans.ts`, re-exported by `usage.ts` so its existing
+consumers retain the same API. The public homepage uses this catalog directly
+at build time, avoiding a separate set of prices and allowances. Stored IDs `starter` and `growth` remain
 compatible and display as Start and Grow; Max and Ultra use `max` and `ultra`.
 
 Every new workspace starts on Start, with no payment or checkout required.
