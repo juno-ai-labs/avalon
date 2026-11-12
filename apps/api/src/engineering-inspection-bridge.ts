@@ -358,9 +358,9 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
 
   async inspectOverageCredits(input: unknown) {
     return this.productOperation("inspectOverageCredits", async () => {
-      const { orgId } = InspectEngineeringCreditsInputSchema.parse(input);
+      const { orgId, operationId } = InspectEngineeringCreditsInputSchema.parse(input);
       if (!(await this.resolveWorkspace({ workspaceId: orgId })).found) throw new Error("engineering_organization_not_found");
-      return BillingCreditsSchema.parse(await readOverageCredits(this.env, orgId));
+      return BillingCreditsSchema.parse(await readOverageCredits(this.env, orgId, operationId));
     });
   }
 

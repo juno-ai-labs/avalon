@@ -55,10 +55,18 @@ function scopedToOverages(grant: z.infer<typeof Grant>, prices: Set<string>) {
   const scope = grant.applicability_config.scope.prices;
   return Boolean(scope?.length && scope.every((price) => price.id !== null && prices.has(price.id)));
 }
+function grantReceipt(env: Env, workspaceId: string, operationId: string) {
+  return `overage-credit:${env.AVALON_REGION}:${workspaceId}:${operationId}`;
+}
 
 /** Read the financial authority directly. This never provisions a customer. */
-export async function readOverageCredits(env: Env, workspaceId: string): Promise<BillingCredits> {
+export async function readOverageCredits(env: Env, workspaceId: string, operationId?: string): Promise<BillingCredits> {
   env = await resolveBillingEnvironment(env);
+  const operation = operationId
+    ? await env.DB.prepare("SELECT stripe_grant_id FROM billing_credit_operations WHERE workspace_id = ? AND operation_id = ?")
+      .bind(workspaceId, operationId).first<{ stripe_grant_id: string | null }>()
+    : null;
+  if (operationId && !operation) throw new ApiError(404, "billing_credit_operation_not_found", "Credit operation not found for this organization");
   const empty: BillingCredits = { enabled: Boolean(env.BILLING_CONFIG && billingConfig(env).overageCredits), currency: "usd", availableCents: 0, grants: [] };
   if (!env.BILLING_CONFIG) return empty;
   const account = await env.DB.prepare("SELECT b.customer_id FROM billing_accounts b JOIN workspaces w ON w.id = b.workspace_id WHERE b.workspace_id = ? AND w.region = ?")
@@ -68,6 +76,9 @@ export async function readOverageCredits(env: Env, workspaceId: string): Promise
   if (!prices.size) return empty;
   const grants = [];
   for (const grant of await listGrants(env, account.customer_id)) {
+    // Legacy intents may lack expiresAt or a saved Stripe ID after a lost response.
+    // Recover their receipt by lookup only; never replay a financial write here.
+    if (operationId && grant.id !== operation?.stripe_grant_id && grant.metadata.receipt !== grantReceipt(env, workspaceId, operationId)) continue;
     if (scopedToOverages(grant, prices)) grants.push(await creditView(env, grant));
   }
   return { ...empty, enabled: empty.enabled || grants.length > 0, grants, availableCents: grants.reduce((sum, grant) => sum + grant.availableCents, 0) };
@@ -77,6 +88,8 @@ export async function readOverageCredits(env: Env, workspaceId: string): Promise
 export async function grantOverageCredit(env: Env, workspaceId: string, input: GrantOverageCredit): Promise<OverageCredit> {
   env = await resolveBillingEnvironment(env);
   const request = GrantOverageCreditSchema.parse(input);
+  const expiresMs = Date.parse(request.expiresAt);
+  const expiresSeconds = Math.floor(expiresMs / 1000);
   const account = await billingAccount(env, workspaceId);
   const existing = await env.DB.prepare("SELECT request_json, stripe_grant_id FROM billing_credit_operations WHERE workspace_id = ? AND operation_id = ?")
     .bind(workspaceId, request.operationId).first<{ request_json: string; stripe_grant_id: string | null }>();
@@ -91,21 +104,20 @@ export async function grantOverageCredit(env: Env, workspaceId: string, input: G
     if (!config.overageCredits || !config.offers.some((offer) => offer.overagePriceId === config.overageCredits!.priceId))
       throw new ApiError(409, "billing_overage_credits_unavailable", "Configure a metered overage price before granting credits");
     const now = Date.now();
-    const expiresAt = Math.floor(Date.parse(request.expiresAt) / 1000) * 1000;
-    if (expiresAt <= now) throw new ApiError(400, "billing_credit_expiry_past", "expiresAt must be in the future");
+    if (expiresSeconds * 1000 <= now) throw new ApiError(400, "billing_credit_expiry_past", "expiresAt must be in the future");
     // Credits must expire within two calendar years; clamp leap day to February 28.
     // Check only new intents so retries retain the original financial terms.
     const latestExpiry = new Date(now);
     latestExpiry.setUTCFullYear(latestExpiry.getUTCFullYear() + 2);
     if (latestExpiry.getUTCMonth() !== new Date(now).getUTCMonth()) latestExpiry.setUTCDate(0);
-    if (Date.parse(request.expiresAt) > latestExpiry.getTime()) throw new ApiError(400, "billing_credit_expiry_too_late", "expiresAt must be within two calendar years");
+    if (expiresMs > latestExpiry.getTime()) throw new ApiError(400, "billing_credit_expiry_too_late", "expiresAt must be within two calendar years");
     await validateOverageMeter(env, config.overageCredits.priceId, config.overageCredits.meterId);
     saved = { request, ...config.overageCredits };
     await env.DB.prepare("INSERT INTO billing_credit_operations(workspace_id, operation_id, request_json) VALUES (?, ?, ?)")
       .bind(workspaceId, request.operationId, JSON.stringify(saved)).run();
   }
   const customer = await ensureStripeCustomer(env, account);
-  const receipt = `overage-credit:${env.AVALON_REGION}:${workspaceId}:${request.operationId}`;
+  const receipt = grantReceipt(env, workspaceId, request.operationId);
   // Metadata lookup outlives Stripe's 24-hour idempotency retention.
   let grant = existing?.stripe_grant_id
     ? await stripe(env, `billing/credit_grants/${encodeURIComponent(existing.stripe_grant_id)}`, Grant)
@@ -116,7 +128,7 @@ export async function grantOverageCredit(env: Env, workspaceId: string, input: G
     "applicability_config[scope][prices][0][id]": saved.priceId,
     "metadata[receipt]": receipt, "metadata[workspace_id]": workspaceId, "metadata[region]": env.AVALON_REGION,
     "metadata[reason]": request.reason,
-    expires_at: String(Math.floor(Date.parse(request.expiresAt) / 1000)),
+    expires_at: String(expiresSeconds),
   }, receipt);
   await env.DB.prepare("UPDATE billing_credit_operations SET stripe_grant_id = ? WHERE workspace_id = ? AND operation_id = ?")
     .bind(grant.id, workspaceId, request.operationId).run();
