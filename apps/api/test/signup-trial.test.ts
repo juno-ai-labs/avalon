@@ -164,7 +164,7 @@ it('ends an agent run on the exhausted allowance as a usage limit, not as a brok
 it('emails each owner and administrator once a week when the allowance runs out, and no plain member', async () => {
   const { env, db, usage } = seed(); await refreshBillingAccount(env, ORG);
   const sent: { to: string; subject: string; text: string }[] = [];
-  Object.assign(env, { APP_ENV: 'production', EMAIL_FROM: 'Rally <notices@example.test>', PUBLIC_WEB_BASE_URL: 'https://rally.example.test',
+  Object.assign(env, { APP_ENV: 'production', EMAIL_FROM: 'Rally <notices@example.test>', PUBLIC_WEB_BASE_URL: 'https://rally.example.test', BROWSER_APP_ORIGIN: 'https://app.example.test',
     EMAIL: { send: async (message: { to: string; subject: string; text: string }) => { sent.push(message); return { messageId: `m${sent.length}` }; } } });
   for (const [id, role] of [['owner', 'owner'], ['admin', 'admin'], ['member', 'member']] as const) {
     if (id !== 'owner') db.prepare("INSERT INTO users(id,google_subject,email,name,created_at,updated_at) VALUES (?,?,?,?,'2027-01-31','2027-01-31')").run(id, id, `${id}@example.test`, `${id} person`);
@@ -187,6 +187,9 @@ it('emails each owner and administrator once a week when the allowance runs out,
   expect(warn.mock.calls.map((call) => (call[0] as { event?: string }).event)).not.toContain('usage_allowance_email_failed');
   expect(sent[0]).toMatchObject({ subject: "Org has used this week's included Rally usage" });
   expect(sent[0]!.text).toContain('turn on overage billing in Settings, Organization, Usage');
+  // The desktop handoff and a browser link, since `/open` reaches only the desktop app.
+  expect(sent[0]!.text).toContain('Open usage settings in the Rally app: https://rally.example.test/open#target=');
+  expect(sent[0]!.text).toContain('Open usage settings in your browser: https://app.example.test/#/settings?section=workspace');
 });
 
 it('blocks a real provider entry point before opening a request after the allowance is exhausted', async () => {

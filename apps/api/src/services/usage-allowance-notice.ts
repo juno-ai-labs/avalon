@@ -4,6 +4,7 @@ import type { Env } from "../env";
 import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger";
 import { ApiError } from "../lib/api-error";
 import { escapeHtml, sendEmail, singleLine } from "./email";
+import { publishOrganizationUsage } from "./usage-metering";
 
 const EMAIL_ERRORS = {
   unavailable: { code: "usage_allowance_email_unavailable", message: "Usage allowance email is temporarily unavailable" },
@@ -38,6 +39,9 @@ export async function noticeUsageAllowanceExhausted(
           AND receipt.delivery_key IS NULL`,
     ).bind(deliveryKeyPrefix(input), input.workspaceId)
       .all<{ user_id: string; email: string; name: string | null; workspace_name: string }>();
+    // Recipients left means this is the week's first refusal: tell open
+    // windows now, or a rail warning waits until something else rereads usage.
+    if (results.length > 0) await publishOrganizationUsage(env, input.workspaceId);
     for (const admin of results) {
       try {
         await sendEmail(env, usageAllowanceEmail(env, input, admin));
@@ -64,7 +68,7 @@ function deliveryKeyPrefix(input: { workspaceId: string; weekStart: string }): s
 }
 
 export function usageAllowanceEmail(
-  env: Pick<Env, "AVALON_REGION" | "PUBLIC_WEB_BASE_URL">,
+  env: Pick<Env, "AVALON_REGION" | "PUBLIC_WEB_BASE_URL" | "BROWSER_APP_ORIGIN">,
   input: { workspaceId: string; weekStart: string; resetsAt: string },
   admin: { user_id: string; email: string; name: string | null; workspace_name: string },
 ) {
@@ -83,12 +87,21 @@ export function usageAllowanceEmail(
     "Until that changes, Rally will not answer in Chats, and Sidekicks and background agents stop when they next need a model.",
     `To keep working, turn on overage billing in Settings, Organization, Usage. Otherwise usage resumes when the allowance resets on ${resets}.`,
   ];
+  // `/open` hands off to the desktop app only. The browser app has no
+  // Organization-addressed Settings URL, so its link opens Settings in
+  // whichever Organization that browser last used; the text names the path.
+  const links = [
+    { label: "Open usage settings in the Rally app", url: settingsUrl.toString() },
+    ...(env.BROWSER_APP_ORIGIN
+      ? [{ label: "Open usage settings in your browser", url: new URL("/#/settings?section=workspace", env.BROWSER_APP_ORIGIN).toString() }]
+      : []),
+  ];
   const text = [firstName ? `Hi ${firstName},` : "Hi,", "", ...paragraphs.flatMap((line) => [line, ""]),
-    `Open usage settings: ${settingsUrl.toString()}`].join("\n");
+    ...links.map((link) => `${link.label}: ${link.url}`)].join("\n");
   const html = [
     `<p>${escapeHtml(firstName ? `Hi ${firstName},` : "Hi,")}</p>`,
     ...paragraphs.map((line) => `<p>${escapeHtml(line)}</p>`),
-    `<p><a href="${escapeHtml(settingsUrl.toString())}">Open usage settings</a></p>`,
+    ...links.map((link) => `<p><a href="${escapeHtml(link.url)}">${escapeHtml(link.label)}</a></p>`),
   ].join("\n");
   return {
     recipientEmail: admin.email,
