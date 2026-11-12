@@ -588,14 +588,14 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     TrialMonthsGrantSchema.parse(await (await organizationBinding(env, request.orgId)).grantTrialMonths(request, principal))));
 
   server.registerTool("inspect_overage_credits", {
-    description: "Read an Organization's overage-only USD credit grants and available balances from Stripe. Includes grants made directly in Stripe with the dedicated overage price scope; does not include general invoice credits.",
+    description: "Read an Organization's overage-only USD credit grants and available balances from Stripe. Includes grants made directly in Stripe with the dedicated overage price scope; does not include general invoice credits. Supply operationId to recover the result of a previously accepted grant after an uncertain response, including legacy non-expiring grants. This only looks up the existing Stripe grant: it never issues credit or changes its terms. An unknown operation is rejected; an empty grants list means no matching Stripe receipt was found, not permission to reissue under a new ID.",
     inputSchema: InspectEngineeringCreditsInputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "inspect_overage_credits", { workspace_id: request.orgId }, async () =>
     BillingCreditsSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOverageCredits(request))));
 
   server.registerTool("grant_overage_credit", {
-    description: "Issue promotional USD credit for an Organization's future overage invoices in Stripe. Requires configured metered overage billing. amountCents is invoice dollars in cents, not effective usage. Never offsets plan fees or alters included usage. Supply a reason and expiresAt, which must be in the future and within two calendar years (UTC). Non-expiring grants are not supported. Reuse the same operationId and arguments after an uncertain outcome; a new ID issues another financial grant.",
+    description: "Issue promotional USD credit for an Organization's future overage invoices in Stripe. Requires configured metered overage billing. amountCents is invoice dollars in cents, not effective usage. Never offsets plan fees or alters included usage. Supply a reason and expiresAt, which must be in the future and within two calendar years (UTC). Non-expiring grants are not supported. Reuse the same operationId and arguments after an uncertain outcome; a new ID issues another financial grant. For legacy operations accepted without expiresAt, recover by operationId with inspect_overage_credits instead.",
     inputSchema: GrantEngineeringCreditInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "grant_overage_credit", { workspace_id: request.orgId, operation_id: request.operationId }, async () =>

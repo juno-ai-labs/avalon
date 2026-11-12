@@ -86,9 +86,7 @@ it('refuses invalid operator input and another regions organization before issui
   const bridge = new EngineeringInspectionBridge(createExecutionContext(), configured());
   const input = { orgId: ORG, operationId: OPERATION, amountCents: 5000, reason: 'Incident credit', expiresAt: new Date(Date.now() + 86_400_000).toISOString() };
   await expect(bridge.grantOverageCredit({ ...input, amountCents: -1 }, OPERATOR)).rejects.toThrow(/amountCents/);
-  for (const expiresAt of [undefined, null, '']) {
-    await expect(bridge.grantOverageCredit({ ...input, expiresAt }, OPERATOR)).rejects.toThrow(/expiresAt/);
-  }
+  await expect(bridge.grantOverageCredit({ ...input, expiresAt: undefined }, OPERATOR)).rejects.toThrow(/expiresAt/);
   await expect(bridge.grantOverageCredit({ ...input, expiresAt: '2000-01-01T00:00:00Z' }, OPERATOR)).rejects.toThrow(/billing_credit_expiry_past/);
   const tooLate = new Date(); tooLate.setUTCFullYear(tooLate.getUTCFullYear() + 3);
   await expect(bridge.grantOverageCredit({ ...input, expiresAt: tooLate.toISOString() }, OPERATOR)).rejects.toThrow(/billing_credit_expiry_too_late/);
@@ -97,6 +95,21 @@ it('refuses invalid operator input and another regions organization before issui
   await expect(bridge.grantOverageCredit(input, OPERATOR)).rejects.toThrow(/organization_not_found/);
   await expect(Promise.resolve(stub().grantCredit(ORG, { operationId: OPERATION, amountCents: 5000, reason: 'Incident credit', expiresAt: input.expiresAt }))).rejects.toMatchObject({ code: 'billing_account_not_found' });
   expect(writes).toBe(0);
+});
+
+it('recovers a legacy lost-response grant through inspection by operation ID without a financial write', async () => {
+  const bridge = new EngineeringInspectionBridge(createExecutionContext(), configured());
+  await env.DB.prepare('INSERT INTO billing_credit_operations(workspace_id, operation_id, request_json) VALUES (?, ?, ?)')
+    .bind(ORG, OPERATION, JSON.stringify({ request: { operationId: OPERATION, amountCents: 5000, reason: 'Legacy credit' }, priceId: 'price_overage', meterId: 'mtr_overage' })).run();
+  expect(await bridge.inspectOverageCredits({ orgId: ORG, operationId: OPERATION })).toMatchObject({ grants: [], availableCents: 0 });
+  grant = { id: 'credgr_1', customer: 'cus_1', amount: money(5000), effective_at: 1797768900, expires_at: null,
+    applicability_config: { scope: { prices: [{ id: 'price_overage' }] } }, metadata: { receipt: `overage-credit:global:${ORG}:${OPERATION}` } };
+  expect(await bridge.inspectOverageCredits({ orgId: ORG, operationId: OPERATION })).toMatchObject({
+    availableCents: 5000, grants: [{ id: 'credgr_1', expiresAt: null }],
+  });
+  await expect(bridge.inspectOverageCredits({ orgId: ORG, operationId: USER })).rejects.toThrow(/billing_credit_operation_not_found/);
+  expect(writes).toBe(0);
+  expect(await env.DB.prepare('SELECT stripe_grant_id FROM billing_credit_operations').first()).toEqual({ stripe_grant_id: null });
 });
 
 

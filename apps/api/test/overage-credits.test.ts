@@ -127,6 +127,34 @@ it('expires only an owned overage grant and reflects Stripe balance changes with
   expect(provider.writes.map(write => write.path)).toEqual(['billing/credit_grants/credgr_1/expire']);
 });
 
+it.each([null, 'credgr_legacy'])('recovers a legacy grant by operation ID with saved Stripe ID %s without issuing credit', async (stripeGrantId) => {
+  const { env, db, provider } = await seed();
+  const saved = JSON.stringify({ request: { operationId: OPERATION, amountCents: 10000, reason: 'Legacy credit' }, priceId: 'price_overage', meterId: 'mtr_overage' });
+  db.prepare('INSERT INTO billing_credit_operations(workspace_id, operation_id, request_json, stripe_grant_id) VALUES (?, ?, ?, ?)')
+    .run(ORG, OPERATION, saved, stripeGrantId);
+  provider.grants = [stripeGrant({ id: 'credgr_other' }), stripeGrant({ id: 'credgr_legacy',
+    metadata: stripeGrantId ? {} : { receipt: `overage-credit:global:${ORG}:${OPERATION}` },
+  })];
+  vi.setSystemTime(new Date('2027-01-20T00:00:00Z')); // Receipt lookup must outlive Stripe idempotency retention.
+  expect(await readOverageCredits(env, ORG, OPERATION)).toEqual({ enabled: true, currency: 'usd', availableCents: 10000,
+    grants: [{ id: 'credgr_legacy', amountCents: 10000, availableCents: 10000, effectiveAt: '2026-12-20T12:15:00.000Z', expiresAt: null, voided: false }],
+  });
+  expect(provider.writes).toEqual([]);
+  expect(db.prepare('SELECT request_json, stripe_grant_id FROM billing_credit_operations').all()).toEqual([{ request_json: saved, stripe_grant_id: stripeGrantId }]);
+});
+
+it('keeps operation recovery scoped to the organization and never issues a missing legacy grant', async () => {
+  const { env, db, provider } = await seed();
+  db.prepare('INSERT INTO billing_credit_operations(workspace_id, operation_id, request_json) VALUES (?, ?, ?)')
+    .run(ORG, OPERATION, JSON.stringify({ request: { operationId: OPERATION, amountCents: 10000, reason: 'Legacy credit' }, priceId: 'price_overage', meterId: 'mtr_overage' }));
+  provider.grants = [stripeGrant({ id: 'credgr_unrelated' })];
+  expect(await readOverageCredits(env, ORG, OPERATION)).toEqual({ enabled: true, currency: 'usd', availableCents: 0, grants: [] });
+  await expect(readOverageCredits(env, ORG, '01900000-0000-7000-8000-0000000000cc')).rejects.toMatchObject({ code: 'billing_credit_operation_not_found' });
+  await expect(readOverageCredits(env, 'other-org', OPERATION)).rejects.toMatchObject({ code: 'billing_credit_operation_not_found' });
+  expect(provider.writes).toEqual([]);
+  expect(db.prepare('SELECT stripe_grant_id FROM billing_credit_operations').all()).toEqual([{ stripe_grant_id: null }]);
+});
+
 it('rejects a past expiry and a meter with a price incompatible with credit grants before issuing money', async () => {
   const { env, provider } = await seed();
   await expect(grantOverageCredit(env, ORG, { operationId: OPERATION, amountCents: 100, reason: 'Test', expiresAt: '2020-01-01T00:00:00Z' })).rejects.toMatchObject({ code: 'billing_credit_expiry_past' });
