@@ -637,7 +637,7 @@ it.each(['past_due', 'unpaid', 'paused', 'unsupported_offer', 'non_usd', 'consen
   ]);
 });
 
-it.each([true, false])('recovers a missed activation only with a paid post-trial invoice: %s', async (activated) => {
+it.each([true, false])('recovers opted-in trial usage only when a paid subscription invoice exists: %s', async (activated) => {
   const { db, env } = await accountFixture();
   const canceled = subscription({ status: 'canceled', start_date: Date.parse('2026-11-10') / 1000,
     trial_end: Date.parse('2026-11-24') / 1000, ended_at: Date.parse('2027-01-15') / 1000,
@@ -645,15 +645,15 @@ it.each([true, false])('recovers a missed activation only with a paid post-trial
   vi.setSystemTime(new Date('2027-01-20'));
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url.includes('/subscriptions?')) return Response.json({ data: [canceled], has_more: false });
-    if (url.includes('/invoices?')) return Response.json({ has_more: false, data: [
+    if (url.includes('/invoices?')) return Response.json({ has_more: false, data: activated ? [
       { id: 'in_trial', lines: { data: [{ type: 'subscription', period: { start: Date.parse('2026-11-10') / 1000, end: Date.parse('2026-11-24') / 1000 } }] } },
-      ...(activated ? [{ id: 'in_zero_total_pilot', lines: { data: [{ type: 'subscription', period: { start: Date.parse('2026-11-24') / 1000, end: Date.parse('2026-12-24') / 1000 } }] } }] : []),
-    ] });
+      { id: 'in_zero_total_pilot', lines: { data: [{ type: 'subscription', period: { start: Date.parse('2026-11-24') / 1000, end: Date.parse('2026-12-24') / 1000 } }] } },
+    ] : [] });
     throw new Error(`Unexpected Stripe request: ${url}`);
   }));
   await refreshBillingAccount(env, workspace);
   expect(db.prepare('SELECT starts_at, ends_at FROM billing_terms').all()).toEqual(activated ? [{
-    starts_at: Date.parse('2026-11-24') / 1000, ends_at: Date.parse('2027-01-15') / 1000,
+    starts_at: Date.parse('2026-11-10') / 1000, ends_at: Date.parse('2027-01-15') / 1000,
   }] : []);
 });
 

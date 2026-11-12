@@ -69,6 +69,15 @@ CREATE TABLE billing_credit_operations (
   stripe_grant_id TEXT,
   PRIMARY KEY (workspace_id, operation_id)
 );
+CREATE TABLE billing_trial_operations (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  operation_id TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  delivery_json TEXT NOT NULL,
+  result_json TEXT,
+  error_code TEXT,
+  PRIMARY KEY (workspace_id, operation_id)
+);
 -- A separate metered subscription keeps cancellation-tail usage billable and
 -- keeps subscription-fee coupons off overages. Stripe closes it at period end.
 CREATE TABLE billing_overage_subscriptions (

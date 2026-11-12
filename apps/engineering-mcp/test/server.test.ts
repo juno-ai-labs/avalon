@@ -23,6 +23,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     inspectOrganizationSettings: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationSettings"]>(),
     updateOrganizationSettings: vi.fn<EngineeringInspectionRpcBinding["updateOrganizationSettings"]>(),
     inspectOrganizationUsage: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationUsage"]>(),
+    grantTrialMonths: vi.fn<EngineeringInspectionRpcBinding["grantTrialMonths"]>(),
     inspectOverageCredits: vi.fn<EngineeringInspectionRpcBinding["inspectOverageCredits"]>(),
     grantOverageCredit: vi.fn<EngineeringInspectionRpcBinding["grantOverageCredit"]>(),
     expireOverageCredit: vi.fn<EngineeringInspectionRpcBinding["expireOverageCredit"]>(),
@@ -308,6 +309,7 @@ describe("Rally engineering MCP tools", () => {
       "inspect_dead_letters",
       "inspect_org_settings",
       "update_org_settings",
+      "grant_trial_months",
       "inspect_overage_credits",
       "grant_overage_credit",
       "expire_overage_credit",
@@ -1037,12 +1039,16 @@ describe("operations tools", () => {
     vi.mocked(global.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "global", authorityGeneration: 1 } });
     const credit = { id: "credgr_1", amountCents: 10000, availableCents: 7500, effectiveAt: "2026-11-01T00:00:00Z", expiresAt: null, voided: false };
     vi.mocked(global.grantOverageCredit).mockResolvedValue(credit);
+    vi.mocked(global.grantTrialMonths).mockResolvedValue({ subscriptionId: "sub_1", months: 2, previousFeeCoveredUntil: "2027-01-01T00:00:00Z", trialEndsAt: "2027-03-01T00:00:00Z" });
     vi.mocked(global.expireOverageCredit).mockResolvedValue({ ...credit, availableCents: 0 });
     vi.mocked(global.inspectOverageCredits).mockResolvedValue({ enabled: true, currency: "usd", availableCents: 7500, grants: [credit] });
     const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
     const input = { orgId, operationId: "00000000-0000-7000-8000-000000000ac2", amountCents: 10000, reason: "Incident credit" };
     expect((await rpc(env, "tools/call", { name: "grant_overage_credit", arguments: input })).result).not.toHaveProperty("isError", true);
     expect(global.grantOverageCredit).toHaveBeenCalledWith(input, principal);
+    const trial = { orgId, operationId: input.operationId, months: 2, reason: "Extra evaluation time" };
+    expect((await rpc(env, "tools/call", { name: "grant_trial_months", arguments: trial })).result).not.toHaveProperty("isError", true);
+    expect(global.grantTrialMonths).toHaveBeenCalledWith(trial, principal);
     expect((await rpc(env, "tools/call", { name: "inspect_overage_credits", arguments: { orgId } })).result).not.toHaveProperty("isError", true);
     expect((await rpc(env, "tools/call", { name: "expire_overage_credit", arguments: { orgId, grantId: "credgr_1" } })).result).not.toHaveProperty("isError", true);
     expect(global.expireOverageCredit).toHaveBeenCalledWith({ orgId, grantId: "credgr_1" }, principal);
