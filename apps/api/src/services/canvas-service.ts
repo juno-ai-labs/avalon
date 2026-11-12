@@ -156,8 +156,8 @@ export class CanvasService {
   }
 
   /**
-   * Delete a Canvas this person made and left blank. Three objects' views of
-   * "blank" are joined in order:
+   * Delete a Canvas this person made and left blank, joining two objects'
+   * views of blank in order:
    *
    * 1. The Organization object judges the Canvas (title, sharing, artifacts,
    *    the Chat's projection), deleting nothing.

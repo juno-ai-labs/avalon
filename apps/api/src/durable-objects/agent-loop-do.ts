@@ -8663,12 +8663,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return identity !== null && identity.workspaceId === input.workspaceId && identity.parentId === input.parentId;
   }
 
-  /**
-   * Close a blank Canvas's Chat to new messages if nothing was ever said in it
-   * (`WorkstreamObjectProductService.sealIfEmpty`). The first step of
-   * `CanvasService.discardIfBlank`: this object holds the messages, so it is
-   * the one that can say there are none.
-   */
+  /** Step 2 of `CanvasService.discardIfBlank`; see `WorkstreamObjectProductService.sealIfEmpty`. */
   async sealBlankConversation(input: { workspaceId: string; parentId: string }): Promise<{ sealed: boolean }> {
     await this.initialized;
     if (!this.namesParent(input)) return { sealed: false };
@@ -8682,10 +8677,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Erase a sealed blank Chat outright: its sockets, its alarm, and every
-   * stored row. Its parent has already deleted the Canvas. The instance's
-   * caches describe what was erased, so it resets itself once this call has
-   * answered; the next request to this name meets an empty object with no
+   * Step 4 of `CanvasService.discardIfBlank`: erase a sealed Chat's sockets,
+   * alarm and storage. The instance resets itself once this has answered, so
+   * no cache outlives the rows; the next request meets an object with no
    * identity, which admits nobody.
    */
   async eraseBlankConversation(input: { workspaceId: string; parentId: string }): Promise<void> {

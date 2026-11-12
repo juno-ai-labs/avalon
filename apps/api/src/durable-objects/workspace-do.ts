@@ -5439,11 +5439,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  /**
-   * Delete a Canvas its creator left blank; see `HostedCanvas.discardIfBlank`.
-   * Blank means no Sidekick is attached, so none of `canvasArchive`'s Sidekick
-   * follow-up is owed.
-   */
+  /** See `HostedCanvas.discardIfBlank`; a blank Canvas has no Sidekick, so none of `canvasArchive`'s follow-up is owed. */
   async canvasDiscardIfBlank(input: Parameters<HostedCanvas["discardIfBlank"]>[0]): Promise<{ discarded: boolean }> {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
     return this.canvasWrite(() => {
