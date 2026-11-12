@@ -392,7 +392,21 @@ function CanvasSharingForm({
           )}
           disabled={saving}
           value={selection.editors}
-          onChange={(value) => setSelection({ ...selection, editors: value })}
+          onChange={(value) =>
+            setSelection({
+              ...selection,
+              editors: value,
+              // Organization editors already reach the artifacts, so the
+              // artifact audience follows up to match. A wider choice
+              // ("public") stays as it is.
+              artifacts:
+                value === "workspace" &&
+                (selection.artifacts === "editors" ||
+                  selection.artifacts === "participants")
+                  ? "workspace"
+                  : selection.artifacts,
+            })
+          }
         />
         {selection.editors !== "creator" && (
           <AudiencePeople
