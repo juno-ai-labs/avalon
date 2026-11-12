@@ -36,8 +36,8 @@ function seed(): { database: DatabaseSync; usage: DatabaseSync; env: { DB: D1Dat
      VALUES (?, 'google-owner', 'owner@example.test', 'Owner', ?, ?)`,
   ).run(OWNER, CREATED, CREATED);
   database.prepare(
-    `INSERT INTO workspaces(id, name, slug, region, created_by_user_id, created_at, updated_at)
-     VALUES (?, 'Juno Labs', 'juno', 'global', ?, ?, ?)`,
+    `INSERT INTO workspaces(id, name, slug, region, created_by_user_id, created_at, updated_at, plan)
+     VALUES (?, 'Juno Labs', 'juno', 'global', ?, ?, ?, 'growth')`,
   ).run(WORKSPACE, OWNER, CREATED, CREATED);
   return { database, usage, env: { DB: sqliteD1(database), USAGE_DB: sqliteD1(usage), AVALON_REGION: "global" } };
 }
@@ -116,7 +116,7 @@ describe("rollup quota", () => {
   it("prices a late event's past week with the plan in force that week, not today's", async () => {
     const { usage, env } = seed();
     // Upgraded during the week of Oct 8; an event from the week of Oct 1 arrives after.
-    await setWorkspacePlan(env, WORKSPACE, "growth", Date.parse("2026-10-10T00:00:00.000Z"));
+    await setWorkspacePlan(env, WORKSPACE, "max", Date.parse("2026-10-10T00:00:00.000Z"));
     await applyUsageBatch(env, [
       event("inf:late", { occurredAt: "2026-10-02T12:00:00.000Z" }),
       event("inf:now", { occurredAt: "2026-10-10T12:00:00.000Z" }),
@@ -132,7 +132,7 @@ describe("rollup quota", () => {
     const { usage, env } = seed();
     // The change has committed to the ledger, but this batch read `DB` before it.
     usage.prepare(
-      `INSERT INTO usage_plan_changes (workspace_id, effective_at, plan, previous_plan) VALUES (?, ?, 'growth', 'starter')`,
+      `INSERT INTO usage_plan_changes (workspace_id, effective_at, plan, previous_plan) VALUES (?, ?, 'max', 'growth')`,
     ).run(WORKSPACE, "2026-10-02T11:00:00.000Z");
     await applyUsageBatch(env, [event("inf:racing")], RECEIVED);
 
@@ -152,7 +152,7 @@ describe("readOrganizationUsage", () => {
     }
 
     expect(readings[0]).toEqual({
-      plan: "starter",
+      plan: "growth",
       quotaRemainingPercent: 0,
       weekResetsAt: "2026-11-05T09:00:00.000Z",
       overage: { amountMicrousd: 10_000_000, periodStart: "2026-11-01T09:00:00.000Z", periodEndsAt: "2026-12-01T09:00:00.000Z", billed: false },
@@ -166,10 +166,10 @@ describe("readOrganizationUsage", () => {
     const now = Date.parse("2026-10-03T00:00:00.000Z");
     expect(await readOrganizationUsage(env, WORKSPACE, now)).toMatchObject({ quotaRemainingPercent: 0, overage: { amountMicrousd: 20_000_000 } });
 
-    await setWorkspacePlan(env, WORKSPACE, "growth", now);
+    await setWorkspacePlan(env, WORKSPACE, "max", now);
 
-    expect(await readOrganizationUsage(env, WORKSPACE, now)).toMatchObject({ plan: "growth", quotaRemainingPercent: 44, overage: { amountMicrousd: 0 } });
-    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE)).toEqual({ plan: "growth" });
+    expect(await readOrganizationUsage(env, WORKSPACE, now)).toMatchObject({ plan: "max", quotaRemainingPercent: 44, overage: { amountMicrousd: 0 } });
+    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE)).toEqual({ plan: "max" });
   });
 
   it("reads 100% in a new week and nothing for an unknown Organization", async () => {
@@ -208,7 +208,7 @@ describe("GET /workspace/usage", () => {
 
     const member = await read(MEMBER);
     expect(member.status).toBe(200);
-    await expect(member.json()).resolves.toMatchObject({ plan: "starter", quotaRemainingPercent: 70, overage: { amountMicrousd: 0, billed: false } });
+    await expect(member.json()).resolves.toMatchObject({ plan: "growth", quotaRemainingPercent: 70, overage: { amountMicrousd: 0, billed: false } });
     expect((await read(OUTSIDER)).status).toBe(401);
   });
 });
@@ -249,20 +249,20 @@ describe("PUT /workspace/plan", () => {
       body: JSON.stringify({ plan }),
     }, routeEnv);
 
-    const refused = await choose(MEMBER, "growth");
+    const refused = await choose(MEMBER, "max");
     expect(refused.status).toBe(403);
     await expect(refused.json()).resolves.toMatchObject({ error: { code: "workspace_admin_required" } });
-    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE)).toEqual({ plan: "starter" });
+    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE)).toEqual({ plan: "growth" });
     expect(published).toEqual([]);
 
-    const changed = await choose(ADMIN, "growth");
+    const changed = await choose(ADMIN, "max");
     expect(changed.status).toBe(200);
-    await expect(changed.json()).resolves.toMatchObject({ plan: "growth", quotaRemainingPercent: 44, overage: { amountMicrousd: 0 } });
-    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE)).toEqual({ plan: "growth" });
+    await expect(changed.json()).resolves.toMatchObject({ plan: "max", quotaRemainingPercent: 44, overage: { amountMicrousd: 0 } });
+    expect(database.prepare(`SELECT plan FROM workspaces WHERE id = ?`).get(WORKSPACE)).toEqual({ plan: "max" });
     expect(usage.prepare(`SELECT plan, previous_plan FROM usage_plan_changes WHERE workspace_id = ?`).all(WORKSPACE))
-      .toEqual([{ plan: "growth", previous_plan: "starter" }]);
+      .toEqual([{ plan: "max", previous_plan: "growth" }]);
     await vi.waitFor(() => expect(published).toMatchObject([
-      { plan: "growth", quotaRemainingPercent: 44, overage: { amountMicrousd: 0, billed: false } },
+      { plan: "max", quotaRemainingPercent: 44, overage: { amountMicrousd: 0, billed: false } },
     ]));
 
     expect((await choose(ADMIN, "enterprise")).status).toBe(400);
@@ -370,4 +370,45 @@ describe("usage ledger indexes", () => {
       usage.close();
     }
   });
+});
+
+// Exercises the catalog through the real plan-history constraints and rollup writer.
+it.each([
+  ['starter', 10_000_000, 80], ['growth', 50_000_000, 96],
+  ['max', 125_000_000, 98], ['ultra', 500_000_000, 99],
+] as const)('meters the %s allowance after a persisted plan change', async (plan, quota, remaining) => {
+  const { usage, env } = seed();
+  await setWorkspacePlan(env, WORKSPACE, plan, Date.parse('2026-10-02T00:00:00.000Z'));
+  await applyUsageBatch(env, [event('catalog', { costMicrousd: 2_000_000 })], RECEIVED);
+  expect(usage.prepare('SELECT quota_microusd FROM usage_rollups').get()).toEqual({ quota_microusd: quota });
+  expect(await readOrganizationUsage(env, WORKSPACE, Date.parse('2026-10-03'))).toMatchObject({ plan, quotaRemainingPercent: remaining });
+});
+
+it('preserves a historical weekly quota across a month boundary after the plan catalog changes', async () => {
+  const { env, usage } = seed();
+  usage.prepare(`INSERT INTO usage_rollups(workspace_id,week_start,period_start,quota_microusd,organization_microusd,rally_microusd)
+    VALUES (?, '2026-10-29T09:00:00.000Z', '2026-10-01T09:00:00.000Z', 200000000, 100000000, 0)`).run(WORKSPACE);
+  await applyUsageBatch(env, [event('late-sibling', { occurredAt: '2026-11-02T10:00:00.000Z', costMicrousd: 20_000_000 })], RECEIVED);
+  expect(usage.prepare('SELECT quota_microusd FROM usage_rollups ORDER BY period_start').all())
+    .toEqual([{ quota_microusd: 200_000_000 }, { quota_microusd: 200_000_000 }]);
+  expect((await readOrganizationUsage(env, WORKSPACE, Date.parse('2026-11-02T12:00:00Z')))!.overage.amountMicrousd).toBe(0);
+});
+
+it('gates new-plan HTTP snapshots by client contract without blocking legacy plans', async () => {
+  const { database, env } = seed();
+  database.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,joined_at) VALUES (?,?,'owner','active',?)").run(WORKSPACE, OWNER, CREATED);
+  const app = new Hono<HonoAppEnv>();
+  app.use('*', requireAuth); app.route('/workspace', workspaceRoutes); app.onError(errorHandler);
+  const routeEnv = createTestEnv({ ...env, APP_ENV: 'development', RALLY_DEV_AUTH: 'true' });
+  const read = (contract: string) => app.request('/workspace/usage', { headers: {
+    'x-rally-dev-user-id': OWNER, 'x-rally-dev-workspace-id': WORKSPACE, 'x-rally-client-contract': contract,
+  } }, routeEnv);
+  expect((await read('14')).status).toBe(200);
+  database.prepare("UPDATE workspaces SET plan = 'ultra'").run();
+  const refused = await read('14');
+  expect(refused.status).toBe(426);
+  expect(await refused.json()).toMatchObject({ error: { code: 'client_update_required' } });
+  const current = await read('15');
+  expect(current.status).toBe(200);
+  expect(await current.json()).toMatchObject({ plan: 'ultra' });
 });

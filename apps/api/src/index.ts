@@ -1,4 +1,5 @@
 export { ArtifactSidekickDispatcher, ArtifactSidekickLoopback } from "./artifacts/sidekick-dispatch";
+export { BillingCoordinatorDO } from "./durable-objects/billing-coordinator-do";
 export { AshbyRegionalBridge } from "./ashby-regional-bridge";
 export { AshbyRoutingBridge } from "./ashby-routing-bridge";
 import workerEvents from "./worker-events";

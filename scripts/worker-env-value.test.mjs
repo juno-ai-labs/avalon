@@ -30,3 +30,10 @@ test("legacy generated JSON strings migrate without losing nested escaping", () 
 test("malformed JSON names its setting without exposing the value", () => {
   assert.throws(() => workerEnvValue('EMAIL_LOGIN_POLICY_JSON', '{secret-value'), { message: 'EMAIL_LOGIN_POLICY_JSON is not valid JSON' });
 });
+
+
+test("billing catalog survives local Worker dotenv encoding", () => {
+  const catalog = { returnUrl: "https://app.test", offers: [{ id: "grow", name: "Team's Grow", currencies: ["usd", "eur"] }] };
+  const encoded = workerEnvValue("BILLING_CONFIG", JSON.stringify(catalog));
+  assert.deepEqual(JSON.parse(parseEnv(`BILLING_CONFIG=${encoded}`).BILLING_CONFIG), catalog);
+});

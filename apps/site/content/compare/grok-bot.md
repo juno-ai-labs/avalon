@@ -23,13 +23,13 @@ edge: "A single AI the whole team communicates with together."
 | Your tools | Google Workspace, Slack, Notion, GitHub, Linear, Granola, and more. Reads and writes back. | A plugin catalog, plus computer use on a cloud machine for everything else |
 | Runs on its own | Sidekicks run on a schedule or when something happens. | Bots save skills and rerun them on a schedule, on a cloud computer |
 | Models | One voice, with each job routed to the model family best at it. | Grok models from xAI |
-| Pricing | $100 or $250 per organization a month. No seat limit. | Included in Cursor plans (Teams is $40 per user a month) or a linked SuperGrok plan; weekly allowance, then on-demand |
+| Pricing | Free, $100, $250 or $1,000 per organization a month. No seat limit. | Included in Cursor plans (Teams is $40 per user a month) or a linked SuperGrok plan; weekly allowance, then on-demand |
 
 ## Where Rally wins
 
 ### A price you can plan around
 
-Rally costs $100 or $250 a month for the whole organization. Add a teammate and the bill stays the same.
+Rally has a free plan and $100, $250 or $1,000 monthly plans for the whole organization. Add a teammate and the bill stays the same.
 
 ### Nobody has to own the bot
 

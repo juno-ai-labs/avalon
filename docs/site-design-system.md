@@ -118,6 +118,9 @@ Shared markup is never copied between pages. A page holds a marker such as
 `<!-- rally:canvas-demo -->` and `renderSiteChrome` in `site-chrome.ts`
 replaces it at build time and in the dev server.
 
+Pricing uses a two-column card grid for Start, Grow, Max and Ultra, stacking to
+one column at the existing phone breakpoint so the Ultra price stays legible.
+
 ### Steps: the demo and the carousel
 
 Both the launch-tracker demo and each carousel slide are drawn at build time

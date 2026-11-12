@@ -5,8 +5,13 @@ plan's weekly quota. Every model call Rally makes for an Organization sends one
 small usage event in the background. One queue consumer adds the events into a
 ledger, a recent window in its own D1 database and the full history in R2, and
 one route derives the meter members see: the percentage of this
-week's quota left, and this month's overage. Nothing is charged; the overage is
-shown as not billed.
+week's quota left, and this month's overage. Optional Stripe billing settles
+opted-in overages; the meter reports whether the current period is billable.
+The first partial activation/resumption period is waived, and low-quota menu
+copy says overages are enabled only for a billable period. Beyond-quota amounts
+are usage totals, not invoice totals: cancellation does not waive prior opted-in
+usage. Settings keeps plan changes disabled while billing configuration is unknown
+and offers an explicit retry if that read fails.
 
 The promise to the rest of the system: metering never waits on the work it
 measures and never fails it. A call site sends and forgets, and a lost event is
@@ -74,6 +79,13 @@ reads each Organization's plan and creation time from `DB`, and in one
   `organization_microusd` or `rally_microusd`. A new row takes the quota of the
   plan in force at the end of its week (see [Plans](#plans)).
 
+The `usage_billing_hour_insert` trigger also updates `billing_usage_hours` in
+that same transaction. It accumulates absolute UTC-hour totals per payer and
+advances a revision only when a new event is inserted. These rows are the durable
+outbox for [Stripe synchronization](stripe-billing.md#synchronization-and-source-of-truth).
+They preserve included, free-period and Rally-paid usage as well as overages;
+Stripe transport remains outside the queue consumer and inference path.
+
 Then it sends the whole batch to the usage lakehouse and acks. If that send
 fails the batch retries: D1 skips what it already holds, and the batch is sent
 again, so R2 can hold an event twice. The consumer computes no overage.
@@ -81,7 +93,8 @@ again, so R2 can hold an event twice. The consumer computes no overage.
 ### Retention
 
 D1 keeps `usage_events` for `USAGE_EVENTS_D1_RETENTION_DAYS` (90) from receipt;
-the scheduled tick deletes older rows. `usage_rollups` is kept for good, so the
+the scheduled tick deletes older rows. `usage_rollups` and the hourly
+`billing_usage_hours` delivery records are kept for good, so the
 meter never reads a pruned row. The lakehouse in R2 keeps every event: it is
 the history a Stripe replay, a per-person breakdown or an older support
 question reads, through Basin SQL (read-only, over its REST API; $2.50 per TB
@@ -110,21 +123,25 @@ next, clamped to the last day of a short month, in UTC.
 
 ### Plans
 
-| Plan | Price | Weekly quota |
-| --- | --- | --- |
-| Starter | $100 a month | $50 |
-| Growth | $250 a month | $125 |
+| Plan | Monthly price | Included effective usage | Weekly allocation |
+| --- | --- | --- | --- |
+| Start | $0 | $40 | $10 |
+| Grow | $100 | $200 | $50 |
+| Max | $250 | $500 | $125 |
+| Ultra | $1,000 | $2,000 | $500 |
 
-The weekly quota is twice the monthly price, divided by four
-(`INCLUDED_USAGE_MULTIPLIER`). Both meters, Settings' and the account menu's,
-fill in the text colour and turn the warning colour below 20% left
-(`LOW_QUOTA_PERCENT`). Overage is priced at cost. All three are product
-decisions, set in `packages/contracts/src/usage.ts`.
+Price and included usage are independent catalog fields, so the free Start plan
+has a nonzero allowance. Each weekly allocation is one quarter of the advertised
+allowance; the existing seven-day reset cadence is unchanged (this is not an exact
+calendar-month spending cap). Both meters turn the warning colour below 20% left.
+Overage is priced at cost. These product values live in
+`packages/contracts/src/usage.ts`. Stored IDs `starter` and `growth` remain
+compatible and display as Start and Grow; Max and Ultra use `max` and `ultra`.
 
-Every workspace starts on Starter. An administrator changes the plan from the
-picker at the top of Settings → Organization → Usage, and an operator through the engineering MCP;
-both reach `setWorkspacePlan`. There is no checkout behind either yet, so a
-change moves the quota and nothing is charged. `setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
+Every new workspace starts on Start, with no payment or checkout required.
+Administrators use Stripe checkout when billing is enabled; otherwise the existing
+plan picker remains available. Operators use the engineering MCP. All paths reach
+`setWorkspacePlan`. `setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
 replaced) and rewrites `quota_microusd` on the current week's rollups, in one
 `USAGE_DB` transaction, so the meter re-prices the current week at once. Then it
 writes `workspaces.plan` in `DB`; if that second write fails, the caller shows
@@ -141,7 +158,9 @@ Settings window as the relay-only name `usage`. The push is not replayed: the
 desktop marks the meter stale on every subscribe answer and relays `usage`
 then too.
 
-A new rollup row's quota is computed inside the consumer's insert from
+A new rollup row first inherits any existing sibling row's quota for the same
+week, preserving the catalog version across an anniversary-month split. Without
+a sibling, its quota is computed inside the consumer's insert from
 `usage_plan_changes`: the latest change before the row's week ended, else the
 plan the first later change replaced, else the plan `DB` holds. Past weeks
 therefore keep the plan they had, even for an event that arrives late.
@@ -207,7 +226,8 @@ change. The socket itself is [`realtime-sockets.md`](realtime-sockets.md)'s.
 
 It does not stop, slow or gate any work when the quota is spent: the product
 never asks permission before a tool call (`AGENTS.md`), and no run reads the
-meter. It does not charge anyone or talk to Stripe. It is not the inference
+meter. It does not charge anyone or talk to Stripe directly; [Stripe billing](stripe-billing.md) settles closed opted-in periods and synchronizes paid plan changes and exports hourly usage totals to Stripe when configured.
+Background synchronization failures do not block settlement. It is not the inference
 archive: the [inference lakehouse](inference-lakehouse.md) keeps exact request
 and response records, and this ledger keeps only cost, activity and IDs. The
 desktop meter is owned by the settings screens and
@@ -304,7 +324,7 @@ plan change as an independent audit attempt and result with the authenticated ac
 ## Operator plan changes
 
 The engineering MCP offers `inspect_usage_plan` and `change_usage_plan` with
-`orgId` and, for writes, `plan` (`starter` or `growth`). The MCP resolves exactly
+`orgId` and, for writes, `plan` (`starter`, `growth`, `max` or `ultra`). The MCP resolves exactly
 one owning region and the bridge calls the metering service directly. Changes
 carry the Access operator in independent audit attempt/result records, update the
 current week's allowance, preserve past weeks, and publish the current meter.
@@ -312,6 +332,35 @@ An uncertain write may have committed: inspect before retrying.
 
 
 ## Changelog
+
+### 2026-11-11 — Four plan allowances and cancellation cutoffs
+
+The requested Start/Grow/Max/Ultra catalog separates price from included usage:
+Start must provide $40 of effective usage even though its price is zero. Weekly
+allocation remains one quarter of the allowance. Usage migration 0003 preserves
+plan history while removing its obsolete two-plan CHECK constraints; PlanIdSchema
+owns validation, as it already does for workspaces. Existing weeks and charge receipts retain their recorded quotas: a new monthly
+segment of an existing week inherits its sibling quota. New weeks use the
+updated catalog. Engineering changes mark an explicit plan override; paid-state
+reconciliation preserves it while resetting legacy self-service unpaid upgrades.
+
+Billing can request a historical cutoff with the quota captured before downgrade.
+The cutoff week's costs come from retained usage events, excluding work performed
+after cancellation; older weeks retain their rollups. The reader refuses an expired
+history window rather than invoice later activity. Paid plan transitions still use
+the existing plan writer/publisher; direct member changes are refused while Stripe
+is configured. [Stripe billing](stripe-billing.md) owns charging and receipts.
+
+The ledger insert now also advances a permanent hourly delivery outbox, in the
+same transaction, so free and included usage can be reported to Stripe without
+adding a provider call to inference or risking a lost post-commit enqueue. Its
+absolute totals and revisions survive raw-event retention and make replay safe
+after Stripe's event-identifier deduplication window. Reporting errors remain
+visible for background reconciliation and do not block overage invoices.
+Settings labels beyond-quota amounts as usage rather than striking them out when
+the subscription stops: earlier billable intervals still settle after cancellation.
+An unknown billing status no longer exposes the legacy plan-change control,
+which the server would reject for a Stripe-billed Organization.
 
 ### 2026-11-07 — Index the ledger by Sidekick
 

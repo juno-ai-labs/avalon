@@ -86,3 +86,12 @@ describe("whether a client opens a guest relationship", () => {
       .toEqual([false, false, false, false, true, true, false]);
   });
 });
+
+// A feature gate can require a newer contract without refusing older builds
+// from all Organization activity during a staged client rollout.
+it("requires the four-plan contract only when that payload is requested", () => {
+  const old = request({ origin: "app://rallywithai", "x-rally-client-contract": "14" });
+  expect(requireCurrentClientContract(old)).toBe(14);
+  expect(() => requireCurrentClientContract(old, 15)).toThrow(/Update Rally/);
+  expect(requireCurrentClientContract(request({ "x-rally-client-contract": "15" }), 15)).toBe(15);
+});

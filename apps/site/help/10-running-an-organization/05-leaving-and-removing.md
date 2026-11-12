@@ -58,6 +58,12 @@ consequence plain. Under **Organization access** the row reads **Leave and
 close this organization**, with the note **You are the last member. The
 organization will become unavailable without deleting its retained data.**
 
+Before closing, use **Manage billing** to cancel the paid subscription. If it is
+scheduled to end at the end of the billing period, wait until that date before
+returning to Settings. Any pending Stripe Checkout must also expire. Contact
+support if you need help ending the subscription or expiring Checkout immediately.
+Usage charges incurred before cancellation can still appear on a final invoice.
+
 1. Click **Leave and close organization**.
 2. The dialog asks **Leave and close** *Organization name*? and says **You are
    the last member.** *Organization name* **will close, and nobody will be able

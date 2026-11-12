@@ -1,3 +1,4 @@
+import { USAGE_PLANS_CLIENT_CONTRACT } from "@rally/contracts/http-headers";
 import { PromoteWorkspaceGuestSchema, WorkspaceRelationshipSchema } from "@rally/contracts/scope-grants";
 import { OnboardingJourneyService } from '../services/onboarding-journey-service';
 import { OnboardingJourneySchema, UpdateOnboardingJourneySchema } from '@rally/contracts';
@@ -147,6 +148,9 @@ workspaceRoutes.get("/attention", async (c) =>
 workspaceRoutes.get("/usage", async (c) => {
   const usage = await readOrganizationUsage(c.env, getAuth(c).workspaceId, Date.now());
   if (!usage) throw new ApiError(404, "workspace_not_found", "Workspace not found");
+  if (usage.plan === "max" || usage.plan === "ultra") {
+    requireCurrentClientContract((name) => c.req.header(name), USAGE_PLANS_CLIENT_CONTRACT);
+  }
   return c.json(OrganizationUsageSchema.parse(usage));
 });
 // An administrator choosing the Organization's plan. Answers with the meter as
