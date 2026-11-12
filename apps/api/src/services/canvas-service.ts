@@ -1,7 +1,7 @@
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { AddCanvasSidekickRequest, AddedCanvasSidekick, CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
-import { workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { createAutomation } from "./automation-service";
@@ -155,9 +155,22 @@ export class CanvasService {
     await (await this.workspace()).canvasArchive({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });
   }
 
-  /** Archive a Canvas this person made and left blank; see `HostedCanvas.discardIfBlank`. */
+  /**
+   * Delete a Canvas this person made and left blank. The Organization object
+   * decides and deletes its rows first: that commit is the delete, so the
+   * Canvas leaves every list at once. Its Chat's object is erased next. A
+   * failure there leaves only storage nothing names, and is thrown so it is
+   * logged. The D1 anchor and route stay: D1 refuses to delete an anchor
+   * (`workstreams_reject_post_cutover_delete`), and they hold only the id.
+   */
   async discardIfBlank(canvasId: string): Promise<{ discarded: boolean }> {
-    return (await this.workspace()).canvasDiscardIfBlank({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });
+    const workspaceId = asWorkspaceId(this.auth.workspaceId);
+    const result = await (await this.workspace()).canvasDiscardIfBlank({ workspaceId, canvasId, actor: this.actor() });
+    if (!result.discarded) return result;
+    const chat = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
+      conversationObjectName(this.env.AVALON_REGION, workspaceId, asWorkstreamId(canvasId)));
+    await chat.eraseBlankConversation({ workspaceId, parentId: canvasId });
+    return result;
   }
 
   async setAudience(canvasId: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
