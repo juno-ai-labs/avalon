@@ -161,8 +161,9 @@ export class CanvasService {
    *
    * 1. The Organization object judges the Canvas (title, sharing, artifacts,
    *    the Chat's projection), deleting nothing.
-   * 2. The Chat seals itself if it holds no message: only it knows a message
-   *    whose projection has not reached the parent, and sealed, it admits none.
+   * 2. The Chat seals itself if it holds no message and no other client has
+   *    it open: only it knows a message whose projection has not reached the
+   *    parent, or a second window, and sealed, it admits no message.
    * 3. The Organization object judges again and deletes its rows; that commit
    *    is the delete. If the Canvas changed in between, the Chat is reopened.
    * 4. The Chat erases its storage.
@@ -171,7 +172,7 @@ export class CanvasService {
    * is logged. The D1 anchor and route stay: D1 refuses to delete an anchor
    * (`workstreams_reject_post_cutover_delete`), and they hold only the id.
    */
-  async discardIfBlank(canvasId: string): Promise<{ discarded: boolean }> {
+  async discardIfBlank(canvasId: string, leavingTicketId?: string): Promise<{ discarded: boolean }> {
     const workspaceId = asWorkspaceId(this.auth.workspaceId);
     const workspace = await this.workspace();
     const request = { workspaceId, canvasId, actor: this.actor() };
@@ -179,7 +180,9 @@ export class CanvasService {
     const chat = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
       conversationObjectName(this.env.AVALON_REGION, workspaceId, asWorkstreamId(canvasId)));
     const address = { workspaceId, parentId: canvasId };
-    if (!(await chat.sealBlankConversation(address)).sealed) return { discarded: false };
+    if (!(await chat.sealBlankConversation({ ...address, ...(leavingTicketId ? { leavingTicketId } : {}) })).sealed) {
+      return { discarded: false };
+    }
     const result = await workspace.canvasDiscardIfBlank({ ...request, commit: true });
     if (!result.discarded) {
       await chat.unsealBlankConversation(address);

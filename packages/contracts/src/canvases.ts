@@ -354,6 +354,13 @@ export type CanvasAccess = z.infer<typeof CanvasAccessSchema>;
  * whoever decides, bounded by what its push and Activity row carry
  * (`PUSH_BODY_PREVIEW_CHARACTERS`), so nothing is stored that is never shown.
  */
+/**
+ * `POST /canvases/:id/discard`: the leaving client's own Chat socket, by the
+ * ticket it opened with, so the Chat counts only the other clients still on it.
+ */
+export const DiscardCanvasRequestSchema = z.strictObject({ leavingTicketId: z.string().uuid().optional() });
+export type DiscardCanvasRequest = z.infer<typeof DiscardCanvasRequestSchema>;
+
 export const CanvasAccessRequestSchema = z.strictObject({ message: z.string().max(PUSH_BODY_PREVIEW_CHARACTERS).optional() });
 export type CanvasAccessRequest = z.infer<typeof CanvasAccessRequestSchema>;
 

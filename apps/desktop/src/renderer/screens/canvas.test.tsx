@@ -24,6 +24,7 @@ const WORKSPACE = '00000000-0000-7000-8000-0000000000f1';
 const ME = asUserId('00000000-0000-7000-8000-0000000000a1');
 const MAYA = asUserId('00000000-0000-7000-8000-0000000000a2');
 const CANVAS = '00000000-0000-7000-8000-0000000000c1';
+const LEAVING_TICKET = '00000000-0000-7000-8000-0000000000e1';
 
 const getCanvas = vi.hoisted(() => vi.fn());
 const archiveCanvas = vi.hoisted(() => vi.fn());
@@ -197,19 +198,19 @@ describe('CanvasScreen', () => {
     getCanvas.mockResolvedValue(detail({ title: 'Untitled Canvas', artifacts: [] }));
     renderCanvas();
     await screen.findByRole('button', { name: 'Canvas menu: Untitled Canvas' });
-    act(() => lastSurface().props.onBlankChange?.(true));
+    act(() => lastSurface().props.onBlankChange?.(true, LEAVING_TICKET));
     expect(discardBlankCanvas).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Leave the Canvas' }));
     expect(await screen.findByText('Canvases home')).toBeInTheDocument();
-    await waitFor(() => expect(discardBlankCanvas).toHaveBeenCalledWith(CANVAS));
+    await waitFor(() => expect(discardBlankCanvas).toHaveBeenCalledWith(CANVAS, LEAVING_TICKET));
   });
 
   it('keeps a Canvas left with something typed or said in its Chat', async () => {
     getCanvas.mockResolvedValue(detail({ title: 'Untitled Canvas', artifacts: [] }));
     renderCanvas();
     await screen.findByRole('button', { name: 'Canvas menu: Untitled Canvas' });
-    act(() => lastSurface().props.onBlankChange?.(true));
-    act(() => lastSurface().props.onBlankChange?.(false));
+    act(() => lastSurface().props.onBlankChange?.(true, LEAVING_TICKET));
+    act(() => lastSurface().props.onBlankChange?.(false, LEAVING_TICKET));
     fireEvent.click(screen.getByRole('button', { name: 'Leave the Canvas' }));
     expect(await screen.findByText('Canvases home')).toBeInTheDocument();
     await new Promise((resolve) => setTimeout(resolve, 10));

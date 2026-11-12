@@ -988,9 +988,10 @@ export interface ConversationSurfaceProps {
    * Whether the conversation is known to have nothing in it: its history has
    * loaded live with no message and no run, no send is in flight, and the
    * composer's saved text and attachments have loaded empty. Reported on every
-   * change, for a host that tidies up a conversation left unused.
+   * change, with the room socket's ticket (see `currentTicketId`), for a host
+   * that tidies up a conversation left unused.
    */
-  onBlankChange?: (blank: boolean) => void;
+  onBlankChange?: (blank: boolean, ticketId: string | null) => void;
   /** The parent must exist before opening its conversation socket. */
   connectionEnabled?: boolean;
   /** Already inside a panel: previews cover that slot without claiming the shell. */
@@ -2430,7 +2431,10 @@ function ConversationSurfaceContent({
   const blank = feedLive && routedDetail != null && !openingPrompt && !sending && draftEmpty
     && attachmentDraft.restored && attachmentDraft.attachments.length === 0
     && workstreamShowsReadyState(transcript.length, Boolean(activeElicitation), routedDetail.harnessStatus);
-  useEffect(() => { onBlankChange?.(blank); }, [blank, onBlankChange]);
+  const currentTicketId = socketConnection.currentTicketId;
+  useEffect(() => {
+    onBlankChange?.(blank, currentTicketId?.() ?? null);
+  }, [blank, currentTicketId, onBlankChange, socketState]);
 
   const detail = routedDetail ?? openingDetail;
   if (!detail) {

@@ -579,6 +579,36 @@ describe("the Canvas list", () => {
         UNION ALL SELECT 1 FROM pending_loop_inputs WHERE client_message_id = ?1`, "canvas-discard-race-2").toArray().length)).toBe(1);
   }));
 
+  it("keeps a blank Canvas another window still has open, and deletes it once only the leaving one did", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({});
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    const open = async (ticketId: string) => {
+      await new ConversationService(TEST_ENV, auth(CREATOR)).authorizeViewer(canvasId);
+      const response = await chat.fetch("https://substream.test/socket", { headers: {
+        Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-workstream-id": canvasId,
+        "x-rally-substream-id": "0", "x-rally-user-id": CREATOR, "x-rally-session-id": `session-${CREATOR}`,
+        "x-rally-socket-ticket-id": ticketId, "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-socket-after-sequence": "0",
+      } });
+      expect(response.status, response.status === 101 ? "" : await response.text()).toBe(101);
+      const socket = response.webSocket!;
+      const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve));
+      socket.accept();
+      return { socket, closed };
+    };
+    const leaving = crypto.randomUUID();
+    await open(leaving);
+    const second = await open(crypto.randomUUID());
+
+    expect(await service.discardIfBlank(canvasId, leaving)).toEqual({ discarded: false });
+    expect((await service.detail(canvasId)).id).toBe(canvasId);
+
+    second.socket.close(1000, "left");
+    await expect.poll(async () => (await service.discardIfBlank(canvasId, leaving)).discarded, { timeout: waitBudget() }).toBe(true);
+    await expect(service.detail(canvasId)).rejects.toMatchObject({ code: "canvas_not_found" });
+  }));
+
   it("lists a Canvas to whoever may open it, unread to a participant who has not opened it", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
     const creator = await connect(CREATOR);
