@@ -15,6 +15,7 @@ import {
   CanvasSidebarRowSchema,
   CanvasSidekickSchema,
   CanvasSummarySchema,
+  canvasArtifactVisibilityFloor,
   type CanvasSidekick,
   type CanvasSidebarRow,
   type CanvasAccess,
@@ -478,10 +479,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }): void {
     this.sql.exec(
       `INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at,
-         last_editor_kind, last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation, title_status)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+         last_editor_kind, last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation, title_status,
+         artifact_visibility)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
       this.canvasId, row.workspaceId, row.title, row.createdByUserId, row.createdAt, row.updatedAt,
       row.writer?.sidekickId ?? null, row.writer?.runId ?? null, row.visibility, row.authorityGeneration, row.titleStatus,
+      canvasArtifactVisibilityFloor(row.visibility, "editors"),
     );
     this.host.noteCanvasDirectoryChanged(this.canvasId);
   }
@@ -636,7 +639,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       ...canvasSummary(row, canvasAppearanceReporter(this.host.env)),
       runningActivity: canvasRunningActivity(this.sql, [this.canvasId]).get(this.canvasId),
       participantUserIds: this.participantUserIds(),
-      artifactVisibility: row.artifact_visibility ?? 'editors',
+      artifactVisibility: canvasArtifactVisibilityFloor(row.visibility, row.artifact_visibility ?? 'editors'),
       artifactUserIds: this.sql.exec<{ user_id: string }>('SELECT user_id FROM canvas_artifact_users WHERE canvas_id=? ORDER BY user_id', this.canvasId).toArray().map(person=>person.user_id),
       sharingRevision: row.sharing_revision,
       artifacts: this.artifacts(),
@@ -777,8 +780,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         this.sql.exec('DELETE FROM canvas_artifact_users WHERE canvas_id=?',this.canvasId);
         for (const userId of artifactUserIds) this.sql.exec('INSERT INTO canvas_artifact_users(canvas_id,user_id) VALUES(?,?)',this.canvasId,userId);
       }
-      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, artifact_visibility = COALESCE(?,artifact_visibility) WHERE canvas_id = ?`,
-        request.update.visibility, request.update.artifactVisibility ?? null, this.canvasId);
+      // An omitted artifact audience keeps the stored one, still subject to
+      // the floor Organization editors set (canvasArtifactVisibilityFloor).
+      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, artifact_visibility = ? WHERE canvas_id = ?`,
+        request.update.visibility,
+        canvasArtifactVisibilityFloor(request.update.visibility, request.update.artifactVisibility ?? currentRow.artifact_visibility ?? 'editors'),
+        this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
       this.host.noteAttachedCanvasChanged(this.canvasId);
     });

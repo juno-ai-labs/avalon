@@ -10,6 +10,7 @@ import {
   IconWorld,
   IconX,
 } from "@tabler/icons-react";
+import { canvasArtifactVisibilityFloor } from "@rally/contracts/canvases";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import type { WorkspaceMember } from "../lib/types";
@@ -266,19 +267,17 @@ function AudiencePeople({
   );
 }
 
-/**
- * Organization editors already reach the artifacts, so an artifact audience
- * narrower than the Organization would misstate who can use them. Moves
- * "editors" and "participants" up to "workspace"; "public" is wider and stays.
- */
+/** Applies the server's artifact floor to the draft, so the form shows what will be saved. */
 function withArtifactFloor(
   selection: CanvasSharingSelection,
 ): CanvasSharingSelection {
-  return selection.editors === "workspace" &&
-    (selection.artifacts === "editors" ||
-      selection.artifacts === "participants")
-    ? { ...selection, artifacts: "workspace" }
-    : selection;
+  return {
+    ...selection,
+    artifacts: canvasArtifactVisibilityFloor(
+      selection.editors,
+      selection.artifacts,
+    ),
+  };
 }
 
 /** Shared two-audience modal; the host supplies persistence and clipboard behavior. */
@@ -454,8 +453,8 @@ function CanvasSharingForm({
           description="Open and use the published artifacts in this Canvas."
           icon={IconWorld}
           options={ARTIFACT_OPTIONS.map((option) =>
-            selection.editors === "workspace" &&
-            (option.value === "editors" || option.value === "participants")
+            canvasArtifactVisibilityFloor(selection.editors, option.value) !==
+            option.value
               ? { ...option, unavailable: true }
               : option,
           )}

@@ -149,12 +149,16 @@ person who may open the Canvas may open the artifact; additional artifact-only u
 
 The sharing modal has two independent audiences: **Who can edit** (the Chat
 and publication) and **Who can interact with artifacts** (published output).
-Editors always have artifact access. With Organization editors the form turns
-off the narrower artifact audiences (Editors only and Specific people) and moves
-one already chosen, on open or on the editor pick, up to the Organization, since
-those editors already reach the artifacts and a narrower label would misstate
-who can use them. Anyone with the link is left as it is. The two audiences stay
-independent in storage. A manager saves both in one transaction;
+Editors always have artifact access. With Organization editors the artifact
+audience is at least the Organization: `canvasArtifactVisibilityFloor` in
+`@rally/contracts/canvases` raises Editors only and Specific people to the
+Organization, since those editors already reach the artifacts and a narrower
+label would misstate who can use them. Anyone with the link stays. The Canvas
+Durable Object applies it when it stores an audience (`setAudience`, so the app,
+the HTTP API and the MCP tool alike, including an omitted artifact audience) and
+when it creates a Canvas, and reports it on read, so a Canvas stored before the
+rule reads correctly until its next save. The sharing form uses the same
+function to turn the two narrower tiles off and move a draft up. A manager saves both in one transaction;
 artifact hosts receive the changed policy through the existing Cloudflare Queue.
 [Canvas artifact access](canvas-artifact-access.md) owns propagation and serving.
 The standalone component preview remains available with
@@ -963,19 +967,24 @@ why the refresh lease shares the owning object's transaction.
 
 ## Changelog
 
-### 2026-11-12 — Organization editors rule out narrower artifact audiences
+### 2026-11-12 — Organization editors set a floor on the artifact audience
 
 Picking Everyone in the Organization under Who can edit left the artifact
 audience on Editors only. That was not wrong on access (editors reach the
-artifacts) but the form then read as if the artifacts were private, and a
-manager who wanted the Organization to use them had to pick it twice. The form
-now turns off Editors only and Specific people while editors are the
-Organization, and moves either one up to the Organization, including when a
-saved Canvas opens in that state. A narrower choice there could only mislead,
-so it is not offered. This is form logic, not a stored rule: the two audiences
-stay independent, and the server still accepts any pair. Anyone with the link
-is never narrowed. Switching editors back does not narrow the artifact audience
-again; it re-enables the options and leaves the choice to the manager.
+artifacts) but the Canvas then read as if the artifacts were private, and a
+manager who wanted the Organization to use them had to pick it twice. Now the
+artifact audience is never narrower than Organization editors: Editors only and
+Specific people become the Organization, and Anyone with the link is never
+narrowed. The rule is one function in `@rally/contracts`, enforced by the Canvas
+Durable Object on every write so an MCP or API caller cannot store the
+contradiction, and mirrored by the form, which disables the two narrower tiles.
+
+The server raises a narrower request instead of rejecting it. A rejection would
+break saves from desktop builds already released, which send that pair when a
+manager picks Organization editors; raising it stores what those builds then
+show anyway. Switching editors back narrows nothing: the stored audience stays
+until a manager changes it. Rows stored before the rule are raised on read, not
+by a migration, since access is the same either way (every member is an editor).
 
 ### 2026-11-11 — App invocation does not imply automatic upkeep
 
