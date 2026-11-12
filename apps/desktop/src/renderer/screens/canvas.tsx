@@ -283,6 +283,11 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       },
     };
   }, [api, canvas.refetch, id, membersById, queryClient, sharingDetail]);
+  const publishedKey = sharingDetail?.artifacts.map((artifact) => artifact.resourceId).join(' ');
+  const artifactSharing = useMemo(() => publishedKey === undefined ? undefined : {
+    publishedIds: publishedKey ? publishedKey.split(' ') : [],
+    audience: artifactAudience,
+  }, [artifactAudience, publishedKey]);
   if (leaving) return <OpeningState label="Opening Canvases…" />;
   if (canvas.error && !row && !recoverableDetailFailure) {
     // One in-pane state, never a dialog over it (canvases.md). A malformed id
@@ -421,7 +426,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
         <ErrorNotice occurrence={canvas.error} title="The Canvas details could not be loaded">Your conversation is still open. Try loading the Canvas details again.</ErrorNotice>
         <Button onClick={() => void canvas.refetch()}>Retry loading Canvas details</Button>
       </> : undefined}
-      artifactAudience={artifactAudience}
+      artifactSharing={artifactSharing}
       parentId={id}
       parentKind="canvas"
       composerActivity={<ComposerAgentActivity activity={workspaceSocket?.state === 'connected' && workspaceSocket.sidebarReady
