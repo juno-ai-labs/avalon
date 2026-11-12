@@ -4,6 +4,7 @@ import { HttpUrlSchema } from './url-schemas';
 import { IdSchema, UserIdSchema, WorkspaceIdSchema } from './identifiers';
 
 export const CanvasArtifactVisibilitySchema = z.enum(['editors', 'participants', 'workspace', 'public']);
+export type CanvasArtifactVisibility = z.infer<typeof CanvasArtifactVisibilitySchema>;
 
 /** A complete, replaceable projection. Only the owning Canvas produces revisions. */
 export const ArtifactAccessSnapshotSchema = z.strictObject({

@@ -1,4 +1,5 @@
 import { useAnnotationDraft } from './artifact-annotations';
+import { isSiteResource } from '../lib/site-resource';
 import { AnnotationSurface } from './annotation-surface';
 import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
@@ -307,11 +308,6 @@ function readableAsText(resource: WorkstreamResource): boolean {
   // page — so the text preview would render the index rather than the site.
   // Its own detail renders the page itself instead.
   return kind !== 'image' && kind !== 'site';
-}
-
-/** Whether this resource is a live artifact Rally serves rather than a file. */
-function isSiteResource(resource: WorkstreamResource): boolean {
-  return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) === 'site';
 }
 
 function isImageResource(resource: WorkstreamResource): boolean {
