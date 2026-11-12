@@ -8664,9 +8664,18 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   }
 
   /** Step 2 of `CanvasService.discardIfBlank`; see `WorkstreamObjectProductService.sealIfEmpty`. */
-  async sealBlankConversation(input: { workspaceId: string; parentId: string }): Promise<{ sealed: boolean }> {
+  async sealBlankConversation(input: { workspaceId: string; parentId: string; leavingTicketId?: string }): Promise<{ sealed: boolean }> {
     await this.initialized;
     if (!this.namesParent(input)) return { sealed: false };
+    // Another window or device with this Chat open may be about to type into
+    // it. The leaving client's own socket, named by its ticket, may still be
+    // closing; one that never says whose it is counts as another.
+    const othersHere = this.state.getWebSockets().some((socket) => {
+      if (socket.readyState !== WebSocket.OPEN) return false;
+      const ticketId = this.readAttachment(socket)?.ticketId;
+      return ticketId === undefined || ticketId !== input.leavingTicketId;
+    });
+    if (othersHere) return { sealed: false };
     return { sealed: this.product.sealIfEmpty() };
   }
 

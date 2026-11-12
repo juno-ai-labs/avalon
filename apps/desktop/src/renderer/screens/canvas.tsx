@@ -149,13 +149,15 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   };
   // Leaving a blank Canvas deletes it (`CanvasService.discardIfBlank`). Skipped
   // while its create is unfinished, which could land after the delete.
-  const blank = useRef(false);
-  const onBlankChange = useCallback((value: boolean) => { blank.current = value; }, []);
+  const blank = useRef<{ blank: boolean; ticketId: string | null }>({ blank: false, ticketId: null });
+  const onBlankChange = useCallback((value: boolean, ticketId: string | null) => {
+    blank.current = { blank: value, ticketId };
+  }, []);
   const discardIfBlank = useRef<() => void>(() => undefined);
   discardIfBlank.current = () => {
-    if (!api || !blank.current || canvas.data?.canManage === false) return;
+    if (!api || !blank.current.blank || canvas.data?.canManage === false) return;
     if (creation && (creation.prompt || creation.status !== 'ready')) return;
-    api.discardBlankCanvas(id).then(
+    api.discardBlankCanvas(id, blank.current.ticketId).then(
       () => queryClient.removeQueries({ queryKey: canvasDetailQueryKey(id) }),
       // Tidying up, which nobody asked for: a failure leaves the Canvas listed.
       () => undefined,
