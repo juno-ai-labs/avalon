@@ -1029,6 +1029,17 @@ describe('a published artifact card', () => {
     expect(control.change).not.toHaveBeenCalled();
   });
 
+  it('reopens the people picker when specific people is already the setting', async () => {
+    const control = audience({ value: 'participants' });
+    renderCard(controls({ audience: control }));
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Who can open Grocery list: Specific people' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Specific people…' }));
+
+    expect(control.choosePeople).toHaveBeenCalledTimes(1);
+    expect(control.change).not.toHaveBeenCalled();
+  });
+
   it('shows the audience without a menu to someone who cannot change it', () => {
     renderCard(controls({ audience: audience({ value: 'public', canChange: false }) }));
 
