@@ -8,7 +8,7 @@ import {
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
-import { billingConfig } from "./billing-config";
+import { billingConfig, resolveBillingEnvironment } from "./billing-config";
 import { stripe, StripeIdSchema, StripeUrlSchema } from "./stripe";
 import {
   publishOrganizationUsage,
@@ -52,6 +52,7 @@ export async function billingAccount(
   workspaceId: string,
   includeClosed = false,
 ): Promise<BillingAccount> {
+  env = await resolveBillingEnvironment(env);
   const config = billingConfig(env);
   await env.DB.prepare(
     `INSERT INTO billing_accounts (workspace_id, checkout_generation, trial_started_at, trial_ends_at,
@@ -514,6 +515,7 @@ async function reconcileUnpaidPlan(env: Env, workspaceId: string) {
 }
 
 export async function refreshBillingAccount(env: Env, workspaceId: string) {
+  env = await resolveBillingEnvironment(env);
   await billingAccount(env, workspaceId);
   return refreshBillingState(env, await billingAccount(env, workspaceId));
 }
@@ -576,6 +578,7 @@ export async function createCheckout(
   currency: string,
   overage: boolean,
 ) {
+  env = await resolveBillingEnvironment(env);
   const config = billingConfig(env);
   const offer = config.offers.find((o) => o.id === offerId && o.enabled);
   if (!offer || !offer.currencies.includes(currency))
@@ -762,6 +765,7 @@ export async function createCheckout(
 }
 
 export async function createBillingPortal(env: Env, workspaceId: string) {
+  env = await resolveBillingEnvironment(env);
   const account = await billingAccount(env, workspaceId);
   if (!account.customer_id)
     throw new ApiError(409, "billing_customer_missing", "Choose a plan first");
@@ -776,6 +780,7 @@ export async function syncSubscription(
   customerId: string,
   subscriptionId: string,
 ) {
+  env = await resolveBillingEnvironment(env);
   const account = await env.DB.prepare(
     `SELECT b.* FROM billing_accounts b JOIN workspaces w ON w.id = b.workspace_id
     WHERE b.customer_id = ? AND w.region = ?`,
@@ -822,6 +827,7 @@ export async function withOrganizationBillingClosure<T>(
   workspaceId: string,
   close: () => Promise<T>,
 ): Promise<T> {
+  env = await resolveBillingEnvironment(env);
   const closed = await env.DB.prepare(
     `SELECT w.abandoned_at, b.workspace_id AS account_id
     FROM workspaces w LEFT JOIN billing_accounts b ON b.workspace_id = w.id
@@ -896,6 +902,7 @@ export async function billClosedOverage(
   workspaceId: string,
   now = Date.now(),
 ) {
+  env = await resolveBillingEnvironment(env);
   const terms = await env.DB.prepare(
     "SELECT * FROM billing_terms WHERE workspace_id = ?",
   )
@@ -1121,6 +1128,7 @@ async function finalizeCanceledOverage(env: Env, term: BillingTerm) {
 
 /** Run inside the organization's BillingCoordinatorDO. Reporting never gates collection. */
 export async function settleBillingAccount(env: Env, workspaceId: string) {
+  env = await resolveBillingEnvironment(env);
   await billingAccount(env, workspaceId, true);
   try {
     await refreshBillingAccount(env, workspaceId);
@@ -1157,6 +1165,7 @@ export async function closeOrganizationBilling(
   workspaceId: string,
   actorUserId: string | null,
 ) {
+  env = await resolveBillingEnvironment(env);
   return withOrganizationBillingClosure(env, workspaceId, async () => {
     if (actorUserId === null) {
       const at = new Date().toISOString();

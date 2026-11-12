@@ -122,3 +122,22 @@ CREATE TRIGGER billing_team_trial_award AFTER INSERT ON billing_team_qualificati
     WHERE workspace_id = NEW.workspace_id AND trial_extended = 0 AND subscription_id IS NULL
       AND NEW.qualified_at < trial_base_ends_at AND NEW.members >= team_trial_members;
 END;
+
+-- Deployment configuration enables billing and owns infrastructure. Operators
+-- version the commercial catalog without losing retired subscription mappings.
+CREATE TABLE billing_catalog (
+  region TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL,
+  catalog_json TEXT NOT NULL,
+  operation_id TEXT NOT NULL
+);
+CREATE TABLE billing_admin_operations (
+  scope TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  delivery_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  result_json TEXT,
+  error_code TEXT,
+  PRIMARY KEY (scope, operation_id)
+);

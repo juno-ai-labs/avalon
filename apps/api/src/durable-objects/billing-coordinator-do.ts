@@ -1,3 +1,6 @@
+import type { BillingAdminMutation, BillingCatalogMutation } from "@rally/contracts/billing-admin";
+import { administerOrgBilling } from "../services/billing-admin";
+import { administerBillingCatalog } from "../services/billing-catalog";
 import { grantTrialMonths } from "../services/trial-months";
 import type { GrantOverageCredit, GrantTrialMonths } from "@rally/contracts/billing";
 import { grantOverageCredit, expireOverageCredit } from "../services/overage-credits";
@@ -44,6 +47,20 @@ export class BillingCoordinatorDO extends DurableObject<Env> {
     }
   }
 
+  administer(workspaceId: string, input: BillingAdminMutation) {
+    return this.serialize(workspaceId, () => {
+      if (input.orgId !== workspaceId) throw new ApiError(409, "billing_account_mismatch", "Organization mismatch");
+      return administerOrgBilling(this.env, input);
+    });
+  }
+  async configure(input: BillingCatalogMutation) {
+    if (input.region !== this.env.AVALON_REGION || this.ctx.id.name !== `${this.env.AVALON_REGION}:billing:catalog`)
+      throw new ApiError(409, "billing_region_mismatch", "Region mismatch");
+    if (this.busy) throw new ApiError(409, "billing_busy", "Billing is updating; please retry");
+    this.busy = true;
+    try { return await administerBillingCatalog(this.env, input); }
+    finally { this.busy = false; }
+  }
   checkout(
     workspaceId: string,
     offerId: string,

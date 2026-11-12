@@ -1,3 +1,4 @@
+import { InspectOrgBillingSchema, OrgBillingResultSchema, ChangeSubscriptionSchema, RefundPaymentSchema, CorrectInvoiceSchema, InspectBillingCatalogSchema, CreateBillingPriceSchema, CreateBillingCouponSchema, ConfigureBillingCatalogSchema, BillingCatalogResultSchema, BillingMutationResultSchema } from "@rally/contracts/billing-admin";
 import { BillingCreditsSchema, OverageCreditSchema, TrialMonthsGrantSchema } from "@rally/contracts/billing";
 import { inspectQueues, peekDeadLetters } from "./queues";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
@@ -124,6 +125,12 @@ function inspectionBindings(env: Env) {
   });
 }
 
+function billingRegionBinding(env: Env, region: Parameters<typeof regionConfiguration>[0]) {
+  const binding = env[`${regionConfiguration(region).bindingPrefix}_INSPECTION`];
+  if (!binding) throw new InspectionRefusal("regional_inspection_unavailable", "regional_inspection_unavailable");
+  return binding;
+}
+
 async function organizationBinding(env: Env, orgId: string) {
   const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveWorkspace({ workspaceId: WorkspaceIdSchema.parse(orgId) })));
   return oneRegionalTarget(env, results.map((result) => EngineeringWorkspaceTargetLookupSchema.parse(result)), `Organization ${orgId}`).binding;
@@ -216,7 +223,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
   const server = new McpServer({
     name: "Rally engineering",
     version: "1.0.0",
-    description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; create organizations and send messages as a selected Rally user.",
+    description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; administer billing, create organizations and send messages as a selected Rally user.",
   }, {
     instructions: [
       "Use these tools for Rally engineering investigations and requested administration.",
@@ -224,6 +231,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
       "Resolve the exact organization, user and conversation before investigating. Start with the list/search tools and inspect database schemas before querying rows; bind SQL values with placeholders.",
       "For participant-visible content use read_canvas_chat or read_sidekick_conversation as the selected user and follow pagination. Those reads omit internal tools and thinking; use the exact conversation's inspection SQL and observability tools when diagnosing execution failures.",
       "SQL tools can mutate production data. Use read-only queries for investigations; make changes only within the user's request. For creation and message sends, reuse the same operationId and arguments after an uncertain outcome rather than creating a second operation.",
+      "For billing, inspect_org_billing and inspect_billing_catalog establish current resources and catalog revisions. Use the dedicated billing tools rather than SQL for financial changes. Reuse operationId and identical arguments after uncertainty; new IDs can issue additional refunds or credits. Catalog changes affect future signups, while existing subscription changes are explicit.",
       "Filter logs and analytical queries to the relevant time window and identifiers. Never expose credentials, OAuth codes, socket tickets or unrelated private content found in diagnostic data.",
       "Separate verified durable state, observed tool results and inference from hypotheses, and distinguish a local change from a merged or deployed fix.",
     ].join("\n\n"),
@@ -538,6 +546,39 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "update_org_settings", { workspace_id: request.orgId, model_selector_visible: request.modelSelectorVisible }, async () =>
     EngineeringOrgSettingsResultSchema.parse(await (await organizationBinding(env, request.orgId)).updateOrganizationSettings(request, principal))));
+
+  server.registerTool("inspect_org_billing", {
+    description: "Inspect an Organization's Stripe subscriptions, invoice amounts and charge IDs, pending operator operations, and Rally entitlement/overage state. Pass nextInvoicePage as startingAfter for the next page. Does not create a Stripe customer. Local entitlement status may lag Stripe; subscriptions are live provider reads.",
+    inputSchema: InspectOrgBillingSchema.shape, annotations: { readOnlyHint: true, openWorldHint: true },
+  }, request => tool(principal, "inspect_org_billing", { workspace_id: request.orgId }, async () => OrgBillingResultSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOrgBilling(request))));
+  server.registerTool("change_subscription", {
+    description: "Change an existing paid Stripe subscription to a configured offer with explicit proration, schedule or immediately cancel it, undo scheduled cancellation, or replace/remove its subscription discount. Requires the exact current subscriptionId. Immediate cancellation does not refund invoices; opted-in overage obligations still settle. Resume cannot resurrect a canceled subscription. Existing usage-plan overrides remain in force. Reason and stable operationId required; reuse identical arguments after uncertainty.",
+    inputSchema: ChangeSubscriptionSchema.shape, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  }, request => tool(principal, "change_subscription", { workspace_id: request.orgId, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await (await organizationBinding(env, request.orgId)).administerOrgBilling({ ...request, kind: "subscription" }, principal))));
+  server.registerTool("refund_payment", {
+    description: "Refund amountMinor in the charge currency to its original payment method, for a charge owned by this Organization. Does not cancel subscriptions or change invoice accounting. For invoice corrections use correct_invoice with a credit note. Returned status may be pending; a receipt does not guarantee the refund has reached the bank. Reuse operationId and arguments after uncertainty.",
+    inputSchema: RefundPaymentSchema.shape, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  }, request => tool(principal, "refund_payment", { workspace_id: request.orgId, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await (await organizationBinding(env, request.orgId)).administerOrgBilling({ ...request, kind: "refund" }, principal))));
+  server.registerTool("correct_invoice", {
+    description: "Correct an Organization-owned Stripe invoice: void an open invoice, mark it uncollectible, or issue a partial/full credit note against an open/paid invoice. amountMinor uses invoice currency. Choose how any already-paid portion is returned: refund or general customer balance credit (which can pay future plan fees). invoice_balance only reduces unpaid amounts. Does not cancel the subscription or erase Rally usage. Reason and stable operationId required.",
+    inputSchema: CorrectInvoiceSchema.shape, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  }, request => tool(principal, "correct_invoice", { workspace_id: request.orgId, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await (await organizationBinding(env, request.orgId)).administerOrgBilling({ ...request, kind: "invoice" }, principal))));
+  server.registerTool("inspect_billing_catalog", {
+    description: "Read a region's effective billing offers, first-paid pilot coupon, and catalog revision. Deployment configuration enables billing; operator changes override only offers and pilot configuration. Retired offers remain mapped for existing subscriptions.",
+    inputSchema: InspectBillingCatalogSchema.shape, annotations: { readOnlyHint: true, openWorldHint: false },
+  }, request => tool(principal, "inspect_billing_catalog", { region: request.region }, async () => BillingCatalogResultSchema.parse(await billingRegionBinding(env, request.region).inspectBillingCatalog(request))));
+  server.registerTool("create_billing_price", {
+    description: "Create an immutable Stripe recurring price on the product of sourceOfferId. amountMinor uses the specified currency; choose interval and inclusive/exclusive tax behavior explicitly. Does not publish the price, reprice subscribers, or edit the landing page. Publish a new offer ID with configure_billing_catalog afterward. Reuse operationId and arguments after uncertainty.",
+    inputSchema: CreateBillingPriceSchema.shape, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, request => tool(principal, "create_billing_price", { region: request.region, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await billingRegionBinding(env, request.region).administerBillingCatalog({ ...request, kind: "price" }, principal))));
+  server.registerTool("create_billing_coupon", {
+    description: "Create a percentage-off Stripe coupon scoped to paid plan products of offerIds. Select once, repeating months, or forever. Never scopes the coupon to overages. Does not activate the coupon: publish it as first-paid pilot or an offer coupon with configure_billing_catalog, or apply it to an existing subscription with change_subscription. Reuse operationId and arguments after uncertainty.",
+    inputSchema: CreateBillingCouponSchema.shape, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, request => tool(principal, "create_billing_coupon", { region: request.region, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await billingRegionBinding(env, request.region).administerBillingCatalog({ ...request, kind: "coupon" }, principal))));
+  server.registerTool("configure_billing_catalog", {
+    description: "Publish the complete commercial catalog for a region using expectedRevision from inspect_billing_catalog. Synchronizes Billing Portal plan choices and subsequent Checkout offers. Keep every historical offer ID and its plan, priceId and overagePriceId; set enabled:false to retire one. A replacement price requires a new offer ID. pilotCouponId:null stops new pilot awards; existing subscriptions/discounts and open Checkout Sessions are unchanged until refreshed/expired. Does not change infrastructure meters, usage quotas, taxes or static landing-page copy. Reason and stable operationId required.",
+    inputSchema: ConfigureBillingCatalogSchema.shape, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  }, request => tool(principal, "configure_billing_catalog", { region: request.region, operation_id: request.operationId }, async () => BillingMutationResultSchema.parse(await billingRegionBinding(env, request.region).administerBillingCatalog({ ...request, kind: "catalog" }, principal))));
 
   server.registerTool("grant_trial_months", {
     description: "Grant an Organization extra calendar months without subscription fees. Requires an existing active or trialing monthly paid plan. Extends Stripe's base-subscription trial after the existing paid/trial/pilot period; included plan usage stays available and opted-in overages remain billable on their separate metered subscription. Does not refund existing invoices. A reason and operationId are required; reuse identical arguments and the same ID after an uncertain outcome to avoid awarding twice. Month ends clamp to the shorter month's last day. The result is an award receipt, not a live billing-status read.",

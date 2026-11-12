@@ -3,7 +3,7 @@ import { GrantOverageCreditSchema, type BillingCredits, type GrantOverageCredit,
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { billingAccount } from "./billing";
-import { billingConfig } from "./billing-config";
+import { billingConfig, resolveBillingEnvironment } from "./billing-config";
 import { ensureStripeCustomer } from "./stripe-billing-sync";
 import { stripe } from "./stripe";
 import { validateOverageMeter } from "./stripe-overages";
@@ -58,6 +58,7 @@ function scopedToOverages(grant: z.infer<typeof Grant>, prices: Set<string>) {
 
 /** Read the financial authority directly. This never provisions a customer. */
 export async function readOverageCredits(env: Env, workspaceId: string): Promise<BillingCredits> {
+  env = await resolveBillingEnvironment(env);
   const empty: BillingCredits = { enabled: Boolean(env.BILLING_CONFIG && billingConfig(env).overageCredits), currency: "usd", availableCents: 0, grants: [] };
   if (!env.BILLING_CONFIG) return empty;
   const account = await env.DB.prepare("SELECT b.customer_id FROM billing_accounts b JOIN workspaces w ON w.id = b.workspace_id WHERE b.workspace_id = ? AND w.region = ?")
@@ -74,6 +75,7 @@ export async function readOverageCredits(env: Env, workspaceId: string): Promise
 
 /** Operator-only, inside the organization actor. Persist intent before Stripe. */
 export async function grantOverageCredit(env: Env, workspaceId: string, input: GrantOverageCredit): Promise<OverageCredit> {
+  env = await resolveBillingEnvironment(env);
   const request = GrantOverageCreditSchema.parse(input);
   const account = await billingAccount(env, workspaceId);
   const existing = await env.DB.prepare("SELECT request_json, stripe_grant_id FROM billing_credit_operations WHERE workspace_id = ? AND operation_id = ?")
@@ -115,6 +117,7 @@ export async function grantOverageCredit(env: Env, workspaceId: string, input: G
 
 /** Expire only the unused balance. Already finalized invoices remain unchanged. */
 export async function expireOverageCredit(env: Env, workspaceId: string, grantId: string): Promise<OverageCredit> {
+  env = await resolveBillingEnvironment(env);
   const account = await billingAccount(env, workspaceId, true);
   const grant = await stripe(env, `billing/credit_grants/${encodeURIComponent(grantId)}`, Grant);
   if (grant.customer !== account.customer_id || grant.amount.monetary.currency !== "usd" || !scopedToOverages(grant, await overagePrices(env, workspaceId)))

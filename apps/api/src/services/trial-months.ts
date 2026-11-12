@@ -2,7 +2,7 @@ import { z } from "zod";
 import { GrantTrialMonthsSchema, TrialMonthsGrantSchema, type GrantTrialMonths, type TrialMonthsGrant } from "@rally/contracts/billing";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { billingConfig } from "./billing-config";
+import { billingConfig, resolveBillingEnvironment } from "./billing-config";
 import { refreshBillingAccount, syncSubscription } from "./billing";
 import { stripe } from "./stripe";
 import { validateOverageMeter } from "./stripe-overages";
@@ -64,6 +64,7 @@ async function planDelivery(env: Env, workspaceId: string, request: GrantTrialMo
 /** Internal operator write, serialized with checkout and reconciliation. Stripe
  * owns the actual fee-free deadline; D1 stores intent and retry receipts only. */
 export async function grantTrialMonths(env: Env, workspaceId: string, input: GrantTrialMonths): Promise<TrialMonthsGrant> {
+  env = await resolveBillingEnvironment(env);
   const request = GrantTrialMonthsSchema.parse(input);
   let operation = await env.DB.prepare("SELECT * FROM billing_trial_operations WHERE workspace_id = ? AND operation_id = ?")
     .bind(workspaceId, request.operationId).first<Operation>();

@@ -351,6 +351,85 @@ are terminal and permit a corrected request with a new ID. A lost response is
 recovered from Stripe's deadline and operation marker. If the subscription was
 canceled before delivery, the grant does not restart it.
 
+## Billing administration through Engineering MCP
+
+Operators use the authenticated engineering bridge; Organization administrators
+continue using Checkout and Billing Portal. The eight administration tools are:
+
+| Tool | Effect |
+| --- | --- |
+| `inspect_org_billing` | Live Stripe subscriptions and paginated invoices with charge IDs, Rally entitlement/overage state, and pending operator operation IDs. |
+| `change_subscription` | Change an existing paid plan with explicit `none`, `create_prorations`, or `always_invoice`; cancel now or at period end; undo scheduled cancellation; replace or remove a base-subscription coupon. |
+| `refund_payment` | Refund an explicit amount in the charge's currency to its original payment method, after checking Organization ownership. |
+| `correct_invoice` | Void an open invoice, mark it uncollectible, or issue a credit note on an open/paid invoice. The paid portion is explicitly refunded or credited to the general customer balance. |
+| `inspect_billing_catalog` | Read the effective regional offers, pilot coupon, and revision. |
+| `create_billing_price` | Create a new recurring price on an existing plan product, with explicit currency, interval, amount and tax behavior. Does not publish or migrate subscriptions. |
+| `create_billing_coupon` | Create a percentage coupon for selected paid plan products, with once, repeating-month, or forever duration. Does not activate it. |
+| `configure_billing_catalog` | Publish offers and pilot configuration using the inspected revision; update Portal's editable plan prices and retain historical offer mappings. |
+
+Every write requires a reason and UUID `operationId`. Reuse both the ID and exact
+arguments after an uncertain result. The amount fields are **minor units of the
+Stripe resource's currency**, not effective usage or always USD cents. Refunds do
+not cancel a subscription or correct invoice accounting. Use a credit note when
+correcting an invoice; general customer-balance credits can also pay plan fees,
+whereas `grant_overage_credit` remains scoped only to metered overages. A refund
+receipt with `pending` status is not proof that funds reached the customer's bank.
+
+Subscription mutations require the exact current paid subscription ID, excluding
+the free record and separate overage subscription. Immediate cancellation sends
+`prorate=false` and `invoice_now=false`: it creates no automatic refund, and prior
+overage obligations remain eligible for ordinary delayed settlement. An already
+canceled subscription cannot be resumed; the administrator starts a new Checkout.
+Plan changes use `payment_behavior=error_if_incomplete`, retain quantity one, and
+reconcile Rally immediately. Explicit usage-plan overrides are preserved. A pending
+trial-month grant must be recovered before another subscription mutation.
+
+The regional billing actor also has a dedicated `<region>:billing:catalog`
+instance for catalog writes. `billing_catalog` holds a versioned commercial
+override; `BILLING_CONFIG` still enables billing and owns credentials, meters,
+trial defaults and other infrastructure settings. Each billing operation resolves
+one catalog snapshot; the next operation sees a newly published catalog without
+a process cache or redeploy. Disabled offers remain available to reconciliation
+and settlement. Publishing cannot delete an old offer or change its plan, price
+or overage price. Create a new price and offer ID, disable the old offer, then
+publish both. Existing subscribers are only repriced by an explicit subscription
+change. New quota tiers and allowance amounts still require code changes.
+
+A typical price change is `inspect_billing_catalog`, `create_billing_price`, then
+`configure_billing_catalog` with the inspected revision and the complete offer
+list. The source offer selects the existing plan product. New currency prices can
+be published as new offers. Annual prices require disabling the monthly pilot;
+trial-month grants continue to require monthly plans. Coupons are scoped to plan
+products, and catalog publication rejects pilot coupons that do not cover the
+active paid products. Set `pilotCouponId: null` to stop new pilot awards. Existing
+discounts and already-open Checkout Sessions keep their terms until refreshed or
+expired. These tools do not edit the landing page's static pricing/pilot copy.
+
+`billing_admin_operations` records immutable intent, frozen provider arguments,
+and result receipts. One unresolved operation blocks further administration in
+that scope. A lost response is recovered from Stripe metadata, the invoice's
+terminal state, or the canceled subscription. After Stripe's guaranteed 24-hour
+idempotency window, missing proof yields `billing_operation_uncertain_expired`
+instead of repeating a financial write. Inspect the pending operation and Stripe
+before repairing such an exceptional receipt. Provider refusals persist a terminal
+error so a new operation ID can make a corrected request. A completed receipt is
+returned unchanged; subscription replay also repairs local reconciliation.
+
+Portal publication precedes the D1 catalog commit, so those authorities are not
+atomic. A temporary failure can leave Portal updated before Checkout. Retrying
+the same operation recovers Portal's durable operation marker, commits the saved
+catalog, and finishes the receipt. Revision checks reject stale edits. The
+operator audit admits each write before effects and records only receipt IDs,
+action, status and operator identity; reasons stay out of audit/log metadata.
+
+The runtime Stripe restricted key needs the existing customer/subscription reads
+and subscription writes, plus Charges read, Refunds write, Invoices/Credit Notes
+write, Products read, Prices write, Coupons write, and Billing Portal configuration
+write. Configure these permissions before deploying the new tools; no Cloudflare
+administration credential is added to the MCP Worker. Tax registrations remain a
+Stripe account responsibility. Creating an inclusive/exclusive price does not
+register the business or enable tax collection.
+
 ## Invariants
 
 - Client input selects catalog offer IDs, never Stripe price IDs or amounts.
@@ -367,7 +446,7 @@ canceled before delivery, the grant does not restart it.
 ## Boundary
 
 `GET /workspace/billing`, `POST /workspace/billing/checkout` and
-`POST /workspace/billing/portal` and read-only `GET /workspace/billing/credits` are authenticated administrator routes. Grant/expiry writes exist only on the internal engineering bridge.
+`POST /workspace/billing/portal` and read-only `GET /workspace/billing/credits` are authenticated administrator routes. Credit, trial-month, subscription, refund, invoice and catalog writes exist only on the internal engineering bridge.
 `POST /stripe/webhook` accepts Stripe-signed requests. Configure separate webhook
 secrets/endpoints for each owning deployment if more regions are introduced.
 The current deployment is Global. Standard member plan changes are rejected while
@@ -641,5 +720,11 @@ while the separate metered subscription continues collecting overages. Absolute
 trial deadlines preserve retries and remaining pilot time without another coupon
 lifecycle. Trialing paid subscriptions are overage-eligible, including recovery
 from their zero-dollar activation invoices; incomplete unpaid subscriptions are
-still excluded. Future changes must preserve pre-consent exclusion, cancellation
+still excluded. Routine billing administration now shares the actor and audit
+boundary. Durable intent and provider receipts were chosen over raw Stripe proxy
+tools so uncertain refunds cannot be repeated and Organization ownership stays
+explicit. A revisioned commercial catalog replaces deployment-only price and
+promotion changes; historical mappings remain immutable, and Portal publication
+can recover independently from the D1 commit. Infrastructure and quota definitions
+remain deployment-owned. Future changes must preserve pre-consent exclusion, cancellation
 cutoffs and permanent charge receipts.
