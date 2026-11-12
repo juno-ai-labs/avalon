@@ -1100,6 +1100,8 @@ describe("operations tools", () => {
     expect((await rpc(env, "tools/call", { name: "grant_trial_months", arguments: trial })).result).not.toHaveProperty("isError", true);
     expect(global.grantTrialMonths).toHaveBeenCalledWith(trial, principal);
     expect((await rpc(env, "tools/call", { name: "inspect_overage_credits", arguments: { orgId } })).result).not.toHaveProperty("isError", true);
+    expect((await rpc(env, "tools/call", { name: "inspect_overage_credits", arguments: { orgId, operationId: input.operationId } })).result).not.toHaveProperty("isError", true);
+    expect(global.inspectOverageCredits).toHaveBeenLastCalledWith({ orgId, operationId: input.operationId });
     expect((await rpc(env, "tools/call", { name: "expire_overage_credit", arguments: { orgId, grantId: "credgr_1" } })).result).not.toHaveProperty("isError", true);
     expect(global.expireOverageCredit).toHaveBeenCalledWith({ orgId, grantId: "credgr_1" }, principal);
     expect(enterprise.grantOverageCredit).not.toHaveBeenCalled();

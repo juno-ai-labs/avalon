@@ -266,12 +266,15 @@ credit with:
 ```
 
 `expiresAt` is required: choose any future date no more than two calendar years
-from creation, measured in UTC (February 29 clamps to February 28). The billing
-service checks this before recording a new grant intent; retries keep the
-original expiration, including when recovering a grant after it has expired.
-Stripe receives the expiration at whole-second precision. Existing grants,
-including historical grants without an expiration, remain readable and can be
-expired explicitly; this rule does not rewrite them.
+from creation, measured in UTC (February 29 clamps to February 28). Retries keep
+the original expiration, including when recovering a grant after it has expired.
+
+For an older operation accepted without `expiresAt`, call `inspect_overage_credits`
+with its `orgId` and original `operationId`. This looks up the saved Stripe grant
+ID or the operation's receipt without issuing credit or changing accepted terms.
+Unknown operations are rejected; an empty `grants` list means no matching Stripe
+receipt was found. It does not authorize reissuing under a new ID. Historical
+grants remain readable and can be expired explicitly.
 
 The amount is USD invoice credit, not effective usage or
 included allowance. Grants do not enable overages, change the plan, or reduce
@@ -755,8 +758,8 @@ credit. The grant contract now requires `expiresAt`, and the billing service
 rejects new intents outside the future-to-two-calendar-years window before any
 Stripe write. The operator can choose any date in that window; silently choosing
 a default was rejected because the grant's financial terms must be explicit.
-Retries preserve accepted terms, and inspection still supports historical
-non-expiring grants.
+Inspection can recover a historical non-expiring grant by its original operation
+ID after a lost response, without reopening the ability to create such grants.
 
 ### 2026-11-12 — Open hosted billing from the initial action
 
