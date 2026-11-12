@@ -5,6 +5,7 @@ export const desktopSettingsSections = [
   'notifications',
   'workspace',
   'members',
+  'billing',
   'internet-access',
   'connections',
   'connection',
