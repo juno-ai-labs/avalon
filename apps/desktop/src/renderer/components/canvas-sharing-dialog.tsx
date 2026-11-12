@@ -5,6 +5,7 @@ import {
   IconLock,
   IconPencil,
   IconPlus,
+  IconRefresh,
   IconUsers,
   IconWorld,
   IconX,
@@ -42,6 +43,8 @@ interface CanvasSharingDialogProps {
   members: WorkspaceMember[];
   initialSelection: CanvasSharingSelection;
   artifactLink?: string;
+  artifactLinkStatus?: "pending" | "error";
+  onRetryArtifactLink?: () => void;
   onOpenChange: (open: boolean) => void;
   onSave: (selection: CanvasSharingSelection) => Promise<void> | void;
   currentUserId?: string;
@@ -278,6 +281,8 @@ function CanvasSharingForm({
   members,
   initialSelection,
   artifactLink,
+  artifactLinkStatus,
+  onRetryArtifactLink,
   onOpenChange,
   onSave,
   onCopyLink,
@@ -458,30 +463,49 @@ function CanvasSharingForm({
           <IconLock aria-hidden="true" size={16} stroke={1.6} />
           <span>The conversation is only visible to editors.</span>
         </p>
-        {artifactLink && (
+        {(artifactLink || artifactLinkStatus) && (
           <div className="canvas-sharing-link">
             <label htmlFor="canvas-sharing-link">Artifact link</label>
             <div className="canvas-sharing-link-control">
-              <input id="canvas-sharing-link" value={artifactLink} readOnly />
+              <input
+                id="canvas-sharing-link"
+                value={artifactLink ?? ""}
+                placeholder={artifactLinkStatus === "pending" ? "Getting artifact link…" : "Artifact link unavailable"}
+                readOnly
+              />
               <Button
+                disabled={!artifactLink && artifactLinkStatus === "pending"}
                 onClick={() => {
+                  if (!artifactLink) {
+                    onRetryArtifactLink?.();
+                    return;
+                  }
                   void onCopyLink().then(
                     () => setCopied(true),
                     () => setCopyFailure((attempt) => attempt + 1),
                   );
                 }}
               >
-                {copied ? (
+                {!artifactLink ? (
+                  <IconRefresh aria-hidden="true" size={16} />
+                ) : copied ? (
                   <IconCheck aria-hidden="true" size={16} />
                 ) : (
                   <IconCopy aria-hidden="true" size={16} />
                 )}
-                {copied ? "Copied" : "Copy link"}
+                {!artifactLink
+                  ? artifactLinkStatus === "pending" ? "Getting link…" : "Retry link"
+                  : copied ? "Copied" : "Copy link"}
               </Button>
             </div>
           </div>
         )}
       </section>
+      {artifactLinkStatus === "error" && (
+        <ErrorNotice title="Artifact link couldn’t be loaded">
+          The artifact may still be publishing. Use Retry link to try again.
+        </ErrorNotice>
+      )}
       {saveAttempt > 0 && (
         <ErrorNotice occurrence={saveAttempt} title="Sharing couldn’t be saved">
           {saveFailure === "changed"

@@ -109,8 +109,30 @@ describe("the Canvas tools", () => {
       return Response.json({...sidebarRow({id:CANVAS,title:'Launch',visibility:'creator',updatedAt:'2026-11-11T12:00:00Z',artifactKind:null,unread:false,pinnedPosition:null}),
         participantUserIds:[],artifacts:[],canManage:true,artifactVisibility:'public',artifactUserIds:[],sharingRevision:10});
     });
-    const {body}=await rpc(upstream.binding,call('set_canvas_audience',{canvasId:CANVAS,visibility:'creator'}));
+    const {body}=await rpc(upstream.binding,call('set_canvas_audience',{canvasId:CANVAS,visibility:'creator',userIds:[]}));
     expect(JSON.parse(body.result!.content[0]!.text).artifactVisibility).toBe('public');
+  });
+
+  it.each(['workspace', 'participants'])('refuses an artifact-only update that omits the %s editor list before calling the API', async (visibility) => {
+    const upstream = api(() => Response.json(canvasDetail([])));
+    const { body } = await rpc(upstream.binding, call('set_canvas_audience', {
+      canvasId: CANVAS, visibility, artifactVisibility: 'public', expectedRevision: 8,
+    }));
+    expect(body.result?.isError).toBe(true);
+    expect(upstream.fetch).not.toHaveBeenCalled();
+  });
+
+  it('preserves guest editors on an artifact-only update with the required complete list', async () => {
+    const upstream = api(async (request) => {
+      expect(`${request.method} ${new URL(request.url).pathname}`).toBe(`POST /canvases/${CANVAS}/audience`);
+      expect(await request.json()).toEqual({ visibility: 'workspace', userIds: [USER], artifactVisibility: 'public', expectedRevision: 8 });
+      return Response.json({ ...canvasDetail([]), visibility: 'workspace', participantUserIds: [USER], artifactVisibility: 'public', sharingRevision: 9 });
+    });
+    const { body } = await rpc(upstream.binding, call('set_canvas_audience', {
+      canvasId: CANVAS, visibility: 'workspace', userIds: [USER], artifactVisibility: 'public', expectedRevision: 8,
+    }));
+    expect(body.result?.isError).not.toBe(true);
+    expect(JSON.parse(body.result!.content[0]!.text)).toMatchObject({ participantUserIds: [USER], artifactVisibility: 'public' });
   });
 
   it('gets an artifact-only share link without requesting its Canvas or minting a viewer session',async()=>{

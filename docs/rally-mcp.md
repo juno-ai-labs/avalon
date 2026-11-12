@@ -136,7 +136,7 @@ API verifies the signature and the session on every call.
 | `add_canvas_sidekick` | `POST /canvases/:id/sidekicks`, the operation id as the Sidekick's id and its instructions' `clientMessageId` |
 | `send_canvas_message` | `POST /conversations/:id/substreams/0/messages` |
 | `update_canvas` | `PATCH /canvases/:id` |
-| `set_canvas_audience` | `POST /canvases/:id/audience`: editor visibility/userIds, optional artifactVisibility/artifactUserIds and expectedRevision |
+| `set_canvas_audience` | `POST /canvases/:id/audience`: required editor visibility/userIds, optional artifactVisibility/artifactUserIds and expectedRevision. Even artifact-only changes send the complete current editor list; omission is rejected before calling the API. |
 | `get_artifact_link` | `GET /resources/:id/artifact/link`: stable URL without minting a viewer session |
 | `invite_canvas_guests` | `GET /workspace`, then `POST /sharing` |
 | `decide_canvas_access_request` | `POST /canvases/:id/access-requests/:userId/decision` |
@@ -461,6 +461,9 @@ endpoint forwards there. How to connect each client is in
 `set_canvas_audience` accepts artifact visibility/recipients and an optional
 revision fence; omission preserves the prior artifact policy. `get_artifact_link`
 returns a stable file/site URL. Existing email invitations grant editor access.
+The MCP tool requires the full editor list explicitly: an artifact-only update
+copies `get_canvas.participantUserIds` into `userIds`, rather than turning an
+omitted list into an empty one and removing guest editors.
 
 **Why:** MCP clients must express public artifact use independently of the people
 allowed to converse and publish. Links must respect that policy without exposing
