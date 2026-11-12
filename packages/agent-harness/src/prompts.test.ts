@@ -195,7 +195,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "52e91f496d47a58189cb90f89dea72bf4d030f78a0a0572ac7124c15c0116fee",
+        hash: "448206bbd66efc53bda49a54a32db4615cecb39b9b8a5991c52f574731b0c520",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -203,7 +203,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "365602cda817315741c61435d033235e16632a2a5c6dabb6e1511cc57ec3d509",
+        hash: "af2340799f1256f927ffebdcbed5ce17662c33a63c99573fe65cb55d07bc236e",
       },
     };
 
@@ -638,8 +638,8 @@ describe("prompt renderers", () => {
       objective: "O",
     });
 
-    expect(workstreamPrompt).toContain("Sites are public by default");
-    expect(workstreamPrompt).toContain("protection requires an active site that enforces Rally viewer headers");
+    expect(workstreamPrompt).toContain("Sites follow the Canvas artifact audience");
+    expect(workstreamPrompt).toContain("Static and active sites can both be private");
 
     // The 8,500-byte ceiling was introduced with the standing `# Sites`
     // trigger. Keep platform definitions within it by removing repetitive

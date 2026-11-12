@@ -76,6 +76,7 @@ import { ActivityMarkAllSeenCommandSchema, ActivityPageSchema } from "./activity
 import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 export * from "./artifacts";
+export * from "./artifact-access";
 export * from "./attachment-contracts";
 export * from "./palette";
 export * from "./projects";

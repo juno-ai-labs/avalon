@@ -30,7 +30,7 @@ import {
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
-import { workspaceResourceMaintenanceBinding } from "./helpers/workspace-object-rpcs";
+import { workspaceResourceMaintenanceRpcs } from "./helpers/workspace-object-rpcs";
 import { sha256Hex } from "../src/lib/crypto";
 import { RESOURCE_SLUG_PATTERN } from "../src/services/resource-slug";
 
@@ -140,6 +140,15 @@ function fixture(
   });
   // What the artifact host answers a publish with: whether its pointer moved.
   const recordPublish = vi.fn(async () => ({ advanced: true }));
+  // Policy compilation and local admission run in the workerd suite. This
+  // bridge fixture exercises resource/version writes and publication ordering.
+  const workspaceRpcs = { ...workspaceResourceMaintenanceRpcs(database),
+    canvasArtifactAccessDelivery: async () => ({snapshot:{workspaceId:W,canvasId:S,revision:1,public:false,archived:false,
+      users:[{userId:U,incarnation:'publisher',editor:true}]},targets:[],file:null}),
+  };
+  const workspaceObjects: Env['WORKSPACE_DOS'] = createCloudflareTestBinding<Env['WORKSPACE_DOS']>({
+    idFromName:(name:string)=>createTestDurableObjectId(name),get:()=>workspaceRpcs,jurisdiction:()=>workspaceObjects,
+  });
   const baseEnv = createTestEnv({
     DB: workspaceDatabase(database), PLATFORM_DB: sqliteD1(platformDatabase),
     PAYLOADS: bucket, AVALON_REGION: "global", APP_ENV: "test",
@@ -147,10 +156,10 @@ function fixture(
     // The reaper's decisions are typed WorkspaceDO methods now. They run the
     // object's own storage functions over this fixture's database, because a
     // second real object could not see the rows the bridge writes here.
-    WORKSPACE_DOS: workspaceResourceMaintenanceBinding(database),
+    WORKSPACE_DOS: workspaceObjects,
     ARTIFACT_HOSTS: createCloudflareTestBinding<Env["ARTIFACT_HOSTS"]>({
       idFromName: (name: string) => createTestDurableObjectId(name),
-      get: () => ({ recordPublish }),
+      get: () => ({ recordPublish, applyAccessSnapshot: async()=>({applied:true}) }),
     }),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
       extra: {

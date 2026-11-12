@@ -28,6 +28,7 @@ const CANVAS = '00000000-0000-7000-8000-0000000000c1';
 const getCanvas = vi.hoisted(() => vi.fn());
 const archiveCanvas = vi.hoisted(() => vi.fn());
 const setCanvasPinned = vi.hoisted(() => vi.fn());
+const artifactLink = vi.hoisted(() => vi.fn());
 const setCanvasAudience = vi.hoisted(() => vi.fn());
 const renameCanvas = vi.hoisted(() => vi.fn());
 const setCanvasAppearance = vi.hoisted(() => vi.fn());
@@ -38,7 +39,7 @@ const requestCanvasAccess = vi.hoisted(() => vi.fn());
 const decideCanvasAccess = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({
-    api: { getCanvas, archiveCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
+    api: { artifactLink, getCanvas, archiveCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
     session: { user: { id: ME }, workspace: { id: WORKSPACE, region: 'global', role: 'member' } },
   }),
   useOptionalCollaborationSession: () => null,
@@ -76,8 +77,10 @@ vi.mock('./conversation-surface', () => ({
 
 vi.mock('./automation', () => ({ SidekickPanel: ({ id, controls }: { id: string; controls: { onClose: () => void } }) => <div>Sidekick panel {id}<button onClick={controls.onClose}>Close panel</button></div> }));
 
+const editorControls=(dialog:HTMLElement)=>within(within(dialog).getByRole('group',{name:'Who can edit'}));
+
 function detail(overrides: Partial<CanvasDetail> = {}): CanvasDetail {
-  return {
+  return { artifactVisibility:'editors', artifactUserIds:[], sharingRevision:0,
     id: CANVAS, title: 'Q4 revenue review', createdByUserId: ME, createdAt: '2026-11-07T09:00:00.000Z',
     updatedAt: '2026-11-07T09:30:00.000Z', lastEditor: null, writerSidekickId: null, visibility: 'creator',
     participantUserIds: [], canManage: true,
@@ -147,6 +150,7 @@ beforeEach(() => {
   archiveCanvas.mockReset().mockResolvedValue(undefined);
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
   setCanvasAudience.mockReset();
+  artifactLink.mockReset().mockResolvedValue({artifactId:'00000000-0000-7000-8000-0000000000b2',canonicalUrl:'https://quiet-blue-river-garden-g.rallyusercontent.com'});
   renameCanvas.mockReset();
   setCanvasAppearance.mockReset();
   createScopeInvitations.mockReset().mockResolvedValue({ status: 'created', invitations: [] });
@@ -755,21 +759,38 @@ describe('CanvasScreen', () => {
     expect(document.title).toBe('Rally');
   });
 
+  it('saves public artifact use independently of the two editors and copies the artifact URL',async()=>{
+    getCanvas.mockResolvedValue(detail({visibility:'participants',participantUserIds:[MAYA],sharingRevision:7}));
+    setCanvasAudience.mockResolvedValue(detail({visibility:'participants',participantUserIds:[MAYA],artifactVisibility:'public',sharingRevision:8}));
+    renderCanvas();
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Share'})).toBeEnabled());
+    fireEvent.click(screen.getByRole('button',{name:'Share'}));
+    const dialog=await screen.findByRole('dialog',{name:'Share Canvas'});
+    const artifactControls=within(within(dialog).getByRole('group',{name:'Who can interact with artifacts'}));
+    fireEvent.click(artifactControls.getByRole('radio',{name:'Anyone with the link'}));
+    expect(editorControls(dialog).getByRole('radio',{name:'Specific people'})).toBeChecked();
+    fireEvent.click(await within(dialog).findByRole('button',{name:'Copy link'}));
+    await waitFor(()=>expect(copyText).toHaveBeenCalledWith('https://quiet-blue-river-garden-g.rallyusercontent.com'));
+    fireEvent.click(within(dialog).getByRole('button',{name:'Save'}));
+    await waitFor(()=>expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS,{visibility:'participants',userIds:[MAYA],artifactVisibility:'public',artifactUserIds:[],expectedRevision:7}));
+  });
+
   it('changes who can open it from Share, for a manager', async () => {
     setCanvasAudience.mockResolvedValue(detail({ visibility: 'participants', participantUserIds: [MAYA] }));
     renderCanvas();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
-    const onlyYou = within(dialog).getByRole('radio', { name: 'Only you' });
+    const onlyYou = editorControls(dialog).getByRole('radio', { name: 'Only you' });
     expect(onlyYou).toBeChecked();
-    fireEvent.click(within(dialog).getByText('Specific people'));
+    fireEvent.click(editorControls(dialog).getByText('Specific people'));
     expect(onlyYou).not.toBeChecked();
-    expect(within(dialog).getByRole('radio', { name: 'Specific people' })).toBeChecked();
+    expect(editorControls(dialog).getByRole('radio', { name: 'Specific people' })).toBeChecked();
     expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button',{name:'Add people'}));
     fireEvent.click(await within(dialog).findByRole('checkbox', { name: 'Maya Lin' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA] }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA], artifactVisibility: 'editors', artifactUserIds: [], expectedRevision: 0 }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share Canvas' })).toBeNull());
   });
 
@@ -780,9 +801,9 @@ describe('CanvasScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
     expect(within(dialog).queryByText('Nobody else can open it.')).toBeNull();
-    const onlyYou = within(dialog).getByRole('radio', { name: 'Only you' });
+    const onlyYou = editorControls(dialog).getByRole('radio', { name: 'Only you' });
     expect(onlyYou).toBeChecked();
-    expect(onlyYou).toHaveAccessibleDescription('And everyone the Sidekick that writes it is shared with.');
+    expect(within(dialog).getByText('Editors include everyone the Sidekick that writes this Canvas is shared with.')).toBeInTheDocument();
   });
 
   it("lists a decider's pending requests in Share, and Approve keeps the new participant when Save follows", async () => {
@@ -803,9 +824,10 @@ describe('CanvasScreen', () => {
     fireEvent.click(within(row!).getByRole('button', { name: 'Approve Maya Lin' }));
     await waitFor(() => expect(decideCanvasAccess).toHaveBeenCalledWith(CANVAS, MAYA, 'approve'));
     await waitFor(() => expect(within(dialog).queryByRole('region', { name: 'Requests' })).toBeNull());
+    fireEvent.click(within(dialog).getByRole('button',{name:'Add people'}));
     expect(await within(dialog).findByRole('checkbox', { name: 'Maya Lin' })).toBeChecked();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA] }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA], artifactVisibility: 'editors', artifactUserIds: [], expectedRevision: 0 }));
   });
 
   it('takes the visibility an approval moved a creator-only Canvas to, so Save keeps the person let in', async () => {
@@ -816,15 +838,15 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
-    expect(within(dialog).getByRole('radio', { name: /^Only you/u })).toBeChecked();
+    expect(editorControls(dialog).getByRole('radio', { name: /^Only you/u })).toBeChecked();
 
     // The server seats Maya and opens the Canvas to its participants.
     getCanvas.mockResolvedValue(detail({ visibility: 'participants', participantUserIds: [MAYA], pendingAccessRequests: [] }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Approve Maya Lin' }));
     await waitFor(() => expect(within(dialog).queryByRole('region', { name: 'Requests' })).toBeNull());
-    await waitFor(() => expect(within(dialog).getByRole('radio', { name: /^Specific people/u })).toBeChecked());
+    await waitFor(() => expect(editorControls(dialog).getByRole('radio', { name: /^Specific people/u })).toBeChecked());
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA] }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA], artifactVisibility: 'editors', artifactUserIds: [], expectedRevision: 0 }));
   });
 
   it('shows Deny and its refusal by name', async () => {
@@ -857,11 +879,12 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    fireEvent.click(within(dialog).getByRole('button',{name:'Add people'}));
     expect(await within(dialog).findByRole('checkbox', { name: 'Theo Park' })).toBeChecked();
     expect(within(dialog).getByRole('checkbox', { name: 'Rae Lee' })).not.toBeChecked();
     expect(within(dialog).queryByRole('checkbox', { name: 'Adam Jones' })).toBeNull();
 
-    fireEvent.click(within(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
+    fireEvent.click(editorControls(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
 
     expect(within(dialog).getByRole('checkbox', { name: 'Theo Park' })).toBeDisabled();
     const invitee = within(dialog).getByRole('checkbox', { name: 'Isa Bell' });
@@ -879,7 +902,7 @@ describe('CanvasScreen', () => {
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Gale Guest' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     // Theo, a member, is in already; only the guest is sent.
-    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [GUEST] }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [GUEST], artifactVisibility: 'editors', artifactUserIds: [], expectedRevision: 0 }));
   });
 
   it('invites the guests typed in the form on Save, the dialog\'s one primary action', async () => {
@@ -888,7 +911,8 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
-    fireEvent.click(within(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
+    fireEvent.click(editorControls(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
+    fireEvent.click(within(dialog).getByRole('button',{name:'Add people'}));
     expect(within(dialog).getByRole('searchbox', { name: 'Search people' })).toBeInTheDocument();
     const guests = within(dialog).getByText('Invite a guest by email').closest('details')!;
     guests.open = true;
@@ -900,7 +924,7 @@ describe('CanvasScreen', () => {
       parentId: CANVAS, emails: ['a@example.test', 'b@example.test'],
       targets: [{ kind: 'workstream', workspaceId: WORKSPACE, parentId: CANVAS }],
     })));
-    expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [] });
+    expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [], artifactVisibility: 'editors', artifactUserIds: [], expectedRevision: 0 });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share Canvas' })).toBeNull());
   });
 

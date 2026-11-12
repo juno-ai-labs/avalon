@@ -119,6 +119,11 @@ the conversation parent's `authorizeViewer` admission for access and archive sta
 rather than invoking general resource authorization and then re-reading parent
 lifecycle.
 
+Site-building guidance follows the owning Canvas's artifact audience for both
+static and active outputs. Viewer headers are for identity-dependent application
+actions, not a replacement for the platform sharing gate. See
+[Canvas artifact access](canvas-artifact-access.md).
+
 ## Sidekick trust and activation
 
 The host resolves Sidekick candidates once and persists their accepted instruction

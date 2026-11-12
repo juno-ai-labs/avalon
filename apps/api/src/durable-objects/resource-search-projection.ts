@@ -187,7 +187,7 @@ export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspace
   // withdraws a row that was indexed before it was marked unlisted.
   const canvas = row?.provider === 'avalon_generated'
     ? resourceCanvasState(sql, resourceId, typeof row.publication_parent_id === 'string' ? row.publication_parent_id : null)
-    : { ownedByCanvas: false, archived: false };
+    : { ownedByCanvas: false, archived: false, ownerCanvasId: null };
   const category = canvas.archived ? null : row && !isUnlistedResourceMetadata(row.metadata_json)
     ? resourceSearchCategory(row.provider, row.canonical_url)
     : null;
@@ -201,7 +201,7 @@ export async function prepareResourceSearch(sql: SqlStorage, env: Env, workspace
     uploaded_by_user_id: typeof row.uploaded_by_user_id === 'string' ? row.uploaded_by_user_id : null,
     attachment_status: typeof row.attachment_status === 'string' ? row.attachment_status : null,
     connection_id: typeof row.connection_id === 'string' ? row.connection_id : null,
-  }, authorizationLocations(sql, resourceId), canvas.ownedByCanvas) : [];
+  }, authorizationLocations(sql, resourceId), canvas.ownedByCanvas, canvas.ownerCanvasId ?? undefined) : [];
   const documents: SearchDocument[] = [];
   for (const source of ['files', 'artifacts', 'links'] as const) {
     const id = await searchDocumentId(source, workspaceId, resourceId);

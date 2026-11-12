@@ -9,7 +9,7 @@ import type { HarnessSkill } from "../index";
  * it renders on every request and this is hundreds of lines. What is here is the
  * craft: which entry file decides the site's kind, why every path is relative,
  * the handler shape, the storage class a site that must remember exports, and
- * how a public-by-default site uses or requires trusted Rally viewer identity.
+ * how a Canvas-governed site uses or requires trusted Rally viewer identity.
  *
  * `ownerPlugin` is the Terminal plugin, so the skill is offered only to runs
  * whose frozen scope includes it: the whole procedure ends in writing files in a
@@ -149,8 +149,7 @@ have not. Ask its entry-privacy question only when that skill requires it.
    - The page just shows things (content, layout, client-side
      interactivity)? Write **\`index.html\`** at the directory root and
      assets beside it. This is a **static** site and the default; do
-     not add a server the page does not need. Static sites are always
-     public.
+     not add a server the page does not need. Static sites follow the Canvas's artifact audience, including private access.
    - The page needs **request-time computation** — server-side search
      or filtering over data you publish with it, a small JSON API the
      page calls? Also write **\`index.js\`** at the directory root. This
@@ -162,12 +161,12 @@ have not. Ask its entry-privacy question only when that skill requires it.
      add storage speculatively: a page that only computes gets no
      database, and never publish a page that looks like it saves but
      does not.
-   - If the user asks for a **protected, private, members-only, or
-     Canvas-only** site, or the site displays private connected data,
-     make it active even when it would otherwise be static. Write
-     \`index.js\` and reject every request without \`x-rally-viewer-id\`
-     before routing or serving assets. Use this protection and complete
-     the requested publication, data population and updates.
+   - **Privacy is a Canvas setting.** Both static and active sites inherit
+     the Canvas's artifact audience. New Canvases start with editors-only
+     artifact access. Do not add a server solely to protect a page. A manager
+     changes the artifact audience in Share or through set_canvas_audience;
+     publishing does not change it. Public artifact access does not expose
+     the conversation or permit visitors to redesign the site.
 
 2. **Lay out one stable directory** beneath the workspace's resource
    output directory, named for the site (\`launch-checklist/\`, not
@@ -237,37 +236,34 @@ have not. Ask its entry-privacy question only when that skill requires it.
    }
    \`\`\`
 
-   **Sites are public by default.** Rally adds trusted viewer headers
-   only when the request has a valid session for this artifact. Rally
-   issues that session after checking canonical resource access,
-   including the owning Canvas's audience for Canvas artifacts;
-   signing into Rally alone does not grant access. The site does not
-   need to reimplement Canvas membership checks. This is Rally resource
-   authorization, not a check of each viewer's account at the source
-   provider. A direct public visit or crawler has neither header.
-   Someone without an artifact viewer session
-   reaches your handler with no viewer headers, for reads and submissions
-   alike; your code decides what they may do. If this site must be protected, put
-   this guard at the very start of the handler, before
-   API routing and before \`env.ASSETS.fetch\`, so it protects the HTML
-   and every asset as well as computed routes:
+   **Sites follow the Canvas artifact audience.** Rally checks every request
+   against the host's locally projected Canvas policy before running your code,
+   including pages, assets and submissions. Static sites can be private too.
+   A sharing change reaches all artifacts through background Queue delivery.
+   Do not reimplement the Canvas audience inside the site or add a global
+   login guard merely because the artifact is private.
+
+   Rally adds trusted viewer headers for an admitted signed-in visitor. A
+   public visitor can be anonymous and have neither header. Your code decides
+   what they may do within the application: for example, a public poll can
+   accept anonymous answers while a personal journal API requires identity.
+   For an action that needs an identified person, check the trusted header
+   before reading or writing that person's rows:
 
    \`\`\`js
    const viewerId = request.headers.get("x-rally-viewer-id");
    if (!viewerId) {
-     return new Response("Sign in to view this site.", {
+     return new Response("Sign in to use this feature.", {
        status: 401,
        headers: { "content-type": "text/plain; charset=utf-8" },
      });
    }
    \`\`\`
 
-   A static site cannot perform this check. Do not call a site private
-   because its URL is hard to guess, and do not build a login or accept
-   an identity header from client JavaScript; only Rally injects these
-   headers after validating its own session.
+   Never accept identity from client JavaScript or a request body. Only Rally
+   injects viewer headers after checking its session and local artifact policy.
 
-   **Signing in is Rally's.** When this guard answers 401 to someone
+   **Signing in is Rally's.** When an identity-dependent route answers 401 to someone
    loading a page, Rally sends them to sign in and back to the same
    page, where Rally checks their access to this artifact before
    issuing a viewer session. Holding the link does not grant access.
@@ -729,9 +725,9 @@ A request from someone who is not signed in reaches your handler with no
 viewer headers, and your class can write it to its database like any other.
 When the request opens answers to people outside Rally (the public,
 customers, guests, anyone, the internet), accept those requests and tell the
-person anyone with the link can answer. Otherwise return 401 when
-\`x-rally-viewer-id\` is missing, with the sign-in link from item 3 of the
-build steps; the answers still store no id.
+person that public participation requires Anyone with the link in Canvas Share.
+For a restricted audience, rely on Rally's Canvas gate. The answers still store
+no id; requiring a viewer header is only needed for identity-dependent actions.
 `;
 
 const WORKED_EXAMPLES = `Two complete, minimal examples the body's rules produce — read this
@@ -783,7 +779,7 @@ no module-level state, real statuses, nothing external.
 export const BUILDING_LIVE_SITES_SKILL: HarnessSkill = {
   name: "building-live-sites",
   description:
-    "How to build a public-by-default live web page or small app, or an active protected site: choose static, active, or stateful, write its handler or storage class against injected bindings, and revise it in place.",
+    "How to build a live web page or small app governed by its Canvas artifact audience: choose static, active, or stateful, write its handler or storage class against injected bindings, and revise it in place.",
   whenToUse:
     "When building or updating a page, dashboard, calculator, or small app someone will open, or configuring a Sidekick to refresh an existing site.",
   body: BUILDING_LIVE_SITES_BODY,

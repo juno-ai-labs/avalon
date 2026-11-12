@@ -751,15 +751,15 @@ describe("built-in skills", () => {
     // `Rally-…` invention beside it.
     expect(body).toContain("x-rally-viewer-id");
     expect(body).toContain("x-rally-viewer-name");
-    expect(body).toContain("Sites are public by default");
-    expect(body).toContain("A static site cannot perform this check");
-    expect(body).toContain("your code decides what they may do");
+    expect(body).toContain("Sites follow the Canvas artifact audience");
+    expect(body).toContain("Static sites can be private too");
+    expect(body).toContain("Your code decides");
     expect(body).toContain("social-preview.png");
     expect(body).toContain("1200×630");
     expect(body).toContain("summary_large_image");
     expect(body).toContain("generates a branded fallback card");
     expect(body).toContain("Never create files beneath `.rally/`");
-    expect(body).toMatch(/before\s+API routing and before `env\.ASSETS\.fetch`/u);
+    expect(body).toContain("including pages, assets and submissions");
     expect(body).not.toMatch(/\bRally-Viewer-Id\b/u);
     // The three rules that keep a polling page a good citizen, and the one that
     // makes the fence true rather than advisory.
