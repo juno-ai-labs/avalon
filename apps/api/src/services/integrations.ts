@@ -289,7 +289,7 @@ import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { createWorkstreamArtifactDataTools } from "./workstream-artifact-data-tools";
 import { artifactDataReader, artifactDataWriteAccess, createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
-import { artifactAudiencePort, createArtifactAudienceTool } from "./canvas-artifact-audience-tool";
+import { createArtifactAudienceTool } from "./canvas-artifact-audience-tool";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
@@ -8643,9 +8643,9 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
     // A Canvas's Chat sets who opens its own artifacts, as its person; the
     // object refuses anyone who does not manage the Canvas.
     ...(artifactDataWriteAccess(input)?.kind === "canvas_chat" && input.executionPrincipal.type === "user"
-      ? [createArtifactAudienceTool(artifactAudiencePort(env, {
+      ? [createArtifactAudienceTool(env, {
         workspaceId: input.workspaceId, canvasId: input.parentId, userId: input.executionPrincipal.userId,
-      }))]
+      })]
       : []),
     {
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,

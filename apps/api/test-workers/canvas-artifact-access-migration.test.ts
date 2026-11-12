@@ -108,14 +108,21 @@ it("upgrades committed WorkspaceDO 146 publications without narrowing old public
       USER,
     );
     expect(canvasArtifactAccessSnapshot(sql, RESOURCE)?.public).toBe(false);
+    // An existing Canvas's audience counts as chosen, so an agent's default
+    // never widens it (migration 148); a new Canvas's does not.
     expect(
       sql
         .exec(
-          "SELECT artifact_visibility FROM canvas_directory WHERE canvas_id=?",
+          "SELECT canvas_id, artifact_visibility, artifact_visibility_chosen FROM canvas_directory WHERE canvas_id IN (?,?) ORDER BY canvas_id = ?",
+          CANVAS,
+          RESOURCE,
           RESOURCE,
         )
-        .one(),
-    ).toEqual({ artifact_visibility: "editors" });
+        .toArray(),
+    ).toEqual([
+      { canvas_id: CANVAS, artifact_visibility: "public", artifact_visibility_chosen: 1 },
+      { canvas_id: RESOURCE, artifact_visibility: "editors", artifact_visibility_chosen: 0 },
+    ]);
     expect(sql.exec("PRAGMA foreign_key_check").toArray()).toEqual([]);
   });
 });
