@@ -73,11 +73,9 @@ import type {
 } from "./bind-loop-projection";
 import { reasoningEffortFor } from "./model-inference-defaults";
 import { ADDRESSING_CHOICES, typesafeAddressingQuestions, type AddressingChoice } from "@rally/prompts/harness/addressing-question";
-export type { AddressingChoice };
 import { renderExpectedJsonSchemaInstruction } from "@rally/prompts/harness/expected-json-schema";
 import { renderStructuredOutputRetryMessage } from "@rally/prompts/harness/structured-output-retry";
 
-export * from "@rally/prompts/harness";
 export * from "./completion-verification";
 export { classifyMessageAdmission, classifyMessageContinuation, classifyMessageContinuationWithTypeSafe } from "./message-continuation";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
@@ -138,7 +136,6 @@ export {
 export { CREATING_AN_APP_SKILL, REPORTING_ON_DATA_SKILL, TASK_SKILLS } from "@rally/skills";
 export {
   AVALON_SKILLS_PLUGIN_ID,
-  AVALON_SKILLS_SYSTEM_MESSAGE,
   AVALON_SKILL_TOOL_DEFINITIONS,
   createSkillRuntime,
   type SkillRuntime,
@@ -152,8 +149,6 @@ export {
 } from "./model-inference-defaults";
 export {
   AUTOMATIONS_PLUGIN_ID,
-  AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
-  CUSTOM_TOOLS_GUIDE,
   createAutomationsPlugin,
   rememberAutomationToolTest,
   AutomationCreatorToolError,

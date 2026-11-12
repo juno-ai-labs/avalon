@@ -19,7 +19,6 @@ import {
   type ToolDefinition,
 } from "@rally/contracts";
 import type { HarnessSkill, HarnessTool, HarnessToolResult } from "./index";
-export { AVALON_SKILLS_SYSTEM_MESSAGE } from "@rally/prompts/harness/skills-plugin";
 
 /**
  * Skills — loadable instructions, as against loadable tools.

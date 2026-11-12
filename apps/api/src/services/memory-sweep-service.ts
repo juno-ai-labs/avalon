@@ -2,14 +2,6 @@ import { IdSchema, WorkspaceIdSchema, asWorkspaceId } from "@rally/contracts";
 import { RegionSchema } from "@rally/contracts/regions";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { newId } from "@rally/db";
-import {
-  MAXIMUM_MEMORY_SWEEP_EVIDENCE,
-  MAXIMUM_MEMORY_SWEEP_OPERATIONS,
-  memorySweepJsonSchema,
-  renderMemorySweepMessages,
-  type MemorySweepCandidateInput,
-  type MemorySweepMessageInput,
-} from "@rally/agent-harness";
 import { z } from "zod";
 
 import type { Env } from "../env";
@@ -31,6 +23,7 @@ import { createMessageObjectPort } from "../runtime/message-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { refreshMemoryDigestCopies } from "./memory-digest-service";
 import { runStructuredInference } from "./structured-inference";
+import { MAXIMUM_MEMORY_SWEEP_EVIDENCE, MAXIMUM_MEMORY_SWEEP_OPERATIONS, memorySweepJsonSchema, renderMemorySweepMessages, type MemorySweepCandidateInput, type MemorySweepMessageInput } from "@rally/prompts/harness/memory-sweep";
 
 /**
  * The memory sweep lane: after a run settles, a conversation that has rested

@@ -39,8 +39,7 @@ import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
 } from "./sidekick-operation-accounts";
 import type { SidekickExecutionDelegation } from "@rally/contracts";
-import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
-import { renderSidekickReviewNotice } from "./sidekick-review-notice";
+import { AgentMessageContentSchema } from "./agent-message-content";
 import { ObjectPortError } from "../runtime/object-port";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools, discoverDynamicConnectorTools, connectorServerPresentation, storedConnectorServerMetadata } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
@@ -76,15 +75,11 @@ import {
   canonicalToolInputHash,
   createTextDeltaBatcher,
   memberSafeHarnessFailureMessage,
-  renderScheduledWakeupMessage,
-  renderWorkstreamSystemPrompt,
-  renderCompactionCheckpointContent,
   rememberAutomationPeopleSearchResult,
   rememberAutomationResourceSearchResult,
   rememberAutomationToolTest,
   runHarness,
   judgeCompletionStop,
-  type AddressingContextMessage,
   type BindLoopProjectionState,
   type BindLoopTransition,
   type BindCompactionCommit,
@@ -194,7 +189,6 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
 import {
   CHECKPOINT_TEMPLATE_VERSION,
-  renderWorkstreamResourceInventoryAggregate,
 } from "./workstream-resource-inventory";
 import {
   executionPrincipalKey,
@@ -260,7 +254,6 @@ import {
   projectParticipantModelMessage,
   projectSidekickPostMessage,
   renderElicitationResponseMessage,
-  renderRunContinuationNote,
 } from "./workstream-participant-model-message";
 import {
   createWorkstreamAttachmentTools,
@@ -351,6 +344,14 @@ import { WEB_PLUGIN_SYSTEM_MESSAGE } from "@rally/prompts/api/web-plugin";
 import { WORKSTREAM_PLUGIN_SYSTEM_MESSAGE } from "@rally/prompts/api/workstream-plugin";
 import { MEMORY_PLUGIN_SYSTEM_MESSAGE } from "@rally/prompts/api/memory-plugin";
 import { TABLES_PLUGIN_SYSTEM_MESSAGE } from "@rally/prompts/api/tables-plugin";
+import { renderAgentMessage } from "@rally/prompts/api/agent-message";
+import { renderSidekickReviewNotice } from "@rally/prompts/api/sidekick-review-notice";
+import { renderScheduledWakeupMessage } from "@rally/prompts/harness/scheduled-wakeup";
+import { renderWorkstreamSystemPrompt } from "@rally/prompts/harness/workstream";
+import { renderCompactionCheckpointContent } from "@rally/prompts/harness/compaction";
+import { type AddressingContextMessage } from "@rally/prompts/harness/addressing";
+import { renderWorkstreamResourceInventoryAggregate } from "@rally/prompts/api/resource-inventory";
+import { renderRunContinuationNote } from "@rally/prompts/api/run-continuation-note";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v8-sidekick-activation-identity";
@@ -8195,6 +8196,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
     || tool.definition.name === "get_connector_connection_state"
     || tool.definition.name === "show_connector_connection"
     || tool.definition.name === CHECK_RESOURCE_ACCESS_TOOL_NAME);
+  const holds = (name: string) => coreTools.some((tool) => tool.definition.name === name);
   const memoryTools = tools.filter((tool) => tool.definition.capability.startsWith("memory."));
   const tableTools = tools.filter((tool) => tool.definition.capability.startsWith("table."));
   return [
@@ -8207,7 +8209,12 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           // and repeated a plugin it can neither load nor unload.
           shortWireName: "",
           description: "Check the current time, connector connection status, and access to linked files, or pause to ask for required information.",
-          systemMessage: renderCorePluginSystemMessage(new Set(coreTools.map((tool) => tool.definition.name))),
+          systemMessage: renderCorePluginSystemMessage({
+            currentTime: holds("current_time"),
+            elicitation: holds("request_elicitation"),
+            connectorConnection: holds("get_connector_connection_state") && holds("show_connector_connection"),
+            resourceAccess: holds(CHECK_RESOURCE_ACCESS_TOOL_NAME),
+          }),
           tools: coreTools,
           preload: true,
           explicit: true,

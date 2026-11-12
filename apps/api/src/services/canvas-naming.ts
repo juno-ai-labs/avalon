@@ -1,4 +1,3 @@
-import { renderCanvasTitleMessages } from "@rally/agent-harness";
 import { PickableWorkstreamIconKeySchema, WORKSTREAM_ICON_KEYS, type PickableWorkstreamIconKey } from "@rally/contracts";
 import { z } from "zod";
 
@@ -6,6 +5,7 @@ import type { Env } from "../env";
 import { truncateUtf16Safe } from "../lib/text";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
+import { renderCanvasTitleMessages } from "@rally/prompts/harness/canvas-title";
 
 /** A Canvas title's own bound (`canvas_directory.title`). */
 const TITLE_MAX_CHARACTERS = 300;
