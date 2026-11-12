@@ -1,3 +1,4 @@
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { artifactAssetKey, asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { readFileSync } from "node:fs";
@@ -30,7 +31,7 @@ import {
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
-import { workspaceResourceMaintenanceRpcs } from "./helpers/workspace-object-rpcs";
+import { createTestWorkspaceDO, workspaceResourceMaintenanceRpcs } from "./helpers/workspace-object-rpcs";
 import { sha256Hex } from "../src/lib/crypto";
 import { RESOURCE_SLUG_PATTERN } from "../src/services/resource-slug";
 
@@ -146,6 +147,32 @@ function fixture(
     canvasArtifactAccessDelivery: async () => ({snapshot:{workspaceId:W,canvasId:S,revision:1,public:false,archived:false,
       users:[{userId:U,incarnation:'publisher',editor:true}]},targets:[],file:null}),
   };
+  // The source import now asks canonical authorization as well as resolving
+  // attachments. Run that owner over its real schema; only RPC transport is doubled.
+  const workspaceAdmission = readFileSync(fileURLToPath(new URL('../../../packages/db/migrations/0098_multiple_workspaces.sql', import.meta.url)), 'utf8')
+    .split(';').find(statement=>statement.includes('ALTER TABLE workspaces ADD COLUMN abandoned_at'));
+  if (!workspaceAdmission) throw new Error('workspace_admission_migration_missing');
+  database.exec(workspaceAdmission);
+  database.exec(readFileSync(fileURLToPath(new URL('../../../packages/db/migrations/0109_workspace_guest_relationships.sql', import.meta.url)), 'utf8'));
+  database.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status) VALUES(?,?,'member','active')").run(W,U);
+  let authorizationOwner: ReturnType<typeof createTestWorkspaceDO> | null = null;
+  Object.assign(workspaceRpcs, {
+    authorizationResourceFacts: async (input: Parameters<WorkspaceDO["authorizationResourceFacts"]>[0]) => {
+      if (!authorizationOwner) {
+        authorizationOwner = createTestWorkspaceDO({workspaceId:W,regionalDatabase:database,register:db=>openDatabases.push(db)});
+        authorizationOwner.objectDatabase.prepare("INSERT INTO canvas_directory(canvas_id,workspace_id,title,created_by_user_id,created_at,updated_at,visibility,authority_generation) VALUES(?,?,'Publication Canvas',?,1,1,'creator',1)").run(S,W,U);
+      }
+      for (const id of input.resourceIds) {
+        const row = database.prepare("SELECT * FROM resources WHERE id=?").get(id);
+        if (!row) continue;
+        if (row.resource_type === 'generated_site') row.publication_parent_id = S;
+        const fields = new Set(authorizationOwner.objectDatabase.prepare("PRAGMA table_info(resources)").all().map(column=>String(column.name)));
+        const columns = Object.keys(row).filter(column=>fields.has(column));
+        authorizationOwner.objectDatabase.prepare(`INSERT OR REPLACE INTO resources(${columns.join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).run(...columns.map(column=>row[column]!));
+      }
+      return authorizationOwner.instance.authorizationResourceFacts(input);
+    },
+  });
   const workspaceObjects: Env['WORKSPACE_DOS'] = createCloudflareTestBinding<Env['WORKSPACE_DOS']>({
     idFromName:(name:string)=>createTestDurableObjectId(name),get:()=>workspaceRpcs,jurisdiction:()=>workspaceObjects,
   });
@@ -1374,8 +1401,8 @@ describe("Terminal resource bridge", () => {
     expect(forged.resourceId).not.toBe(log.resourceId);
     expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 2 });
     expect(database.prepare(
-      "SELECT provider_resource_id FROM resources WHERE id = ?",
-    ).get(String(log.resourceId))).toEqual({ provider_resource_id: `terminal-command-log:${I}` });
+      "SELECT provider_resource_id, publication_parent_id FROM resources WHERE id = ?",
+    ).get(String(log.resourceId))).toEqual({ provider_resource_id: `terminal-command-log:${I}`, publication_parent_id: null });
   });
 
   it("publishes opaque binaries as download-only resources", async () => {

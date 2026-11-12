@@ -321,7 +321,8 @@ describe("seeding the Getting Started guide into an Organization", () => {
   });
 
   it("opens the Chat on Rally's message alone when the creator has left before the job runs", async () => {
-    await env.DB.prepare(`UPDATE workspace_members SET status = 'removed' WHERE workspace_id = ? AND user_id = ?`)
+    // Leaving deletes the relationship; "removed" is not a valid membership status.
+    await env.DB.prepare(`DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
       .bind(WORKSPACE_ID, OWNER).run();
 
     expect(await deliverSeedJob()).toEqual([]);

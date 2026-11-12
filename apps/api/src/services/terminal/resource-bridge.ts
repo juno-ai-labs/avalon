@@ -1,4 +1,5 @@
-import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
+import { AuthorizationService } from "../authorization-service";
+import { asWorkspaceId, DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import {
   AttachmentKindSchema,
@@ -584,14 +585,20 @@ export function createTerminalResourceBridge(
         },
       );
       const row = rows[0];
-      if (!row) {
+      if (!row || (row.canEditArtifact === false && (row.resource_type === "generated_site" || row.mime_type === SITE_MANIFEST_MIME_TYPE))) {
         throw new TerminalToolError(
           "resource_not_found",
           "resourceId could not be read. Check the Rally resource ID and this run's access. Sidekicks can import a known resource their execution user can read without attaching it first. Use list_resources to discover other resources.",
           { field: "resourceId", reason: "Check the Rally resource ID and the execution user's current read access." },
         );
       }
-      if (row.resource_type === "generated_site") {
+      if (row.resource_type === "generated_site" || row.mime_type === "application/vnd.rally.site-manifest+json") {
+        if (context.executionPrincipal.type === "user" && row.canEditArtifact === undefined) {
+          await new AuthorizationService(env).readResourceForEditing({
+            workspaceId: asWorkspaceId(context.workspaceId), userId: context.executionPrincipal.userId, delegation: null,
+          }, row.id);
+        }
+
         // Deterministic placement exists to give a *file* import provenance: a
         // fixed path, a digest, and a reuse when they match. A tree has no
         // single body to match, and the path a site wants is not Rally's to
@@ -977,7 +984,8 @@ export function createTerminalResourceBridge(
       });
       try {
         await insertPublishedResource(workspace, {
-          publicationParentId: target.parentId,
+          // Platform captures are conversation context, not published outputs.
+          publicationParentId: input.providerResourceId === undefined ? target.parentId : null,
           resourceId,
           workspaceId: context.workspaceId,
           resourceType: "generated_file",

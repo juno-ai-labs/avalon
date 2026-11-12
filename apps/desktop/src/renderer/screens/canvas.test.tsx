@@ -759,6 +759,60 @@ describe('CanvasScreen', () => {
     expect(document.title).toBe('Rally');
   });
 
+  it('keeps guest editors when saving while the people roster is pending', async () => {
+    const GUEST = asUserId('00000000-0000-7000-8000-0000000000a7');
+    getWorkspaceMembers.mockReturnValue(new Promise(() => {}));
+    getCanvas.mockResolvedValue(detail({ visibility: 'workspace', participantUserIds: [GUEST] }));
+    setCanvasAudience.mockResolvedValue(detail({ visibility: 'workspace', participantUserIds: [GUEST], artifactVisibility: 'public' }));
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Anyone with the link' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, {
+      visibility: 'workspace', userIds: [GUEST], artifactVisibility: 'public', artifactUserIds: [], expectedRevision: 0,
+    }));
+  });
+
+  it('lets a manager explicitly retain an existing editor as an artifact recipient', async () => {
+    getCanvas.mockResolvedValue(detail({visibility:'participants',participantUserIds:[MAYA]}));
+    setCanvasAudience.mockResolvedValue(detail({visibility:'participants',participantUserIds:[MAYA],artifactVisibility:'participants',artifactUserIds:[MAYA]}));
+    renderCanvas();
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Share'})).toBeEnabled());
+    fireEvent.click(screen.getByRole('button',{name:'Share'}));
+    const dialog=await screen.findByRole('dialog',{name:'Share Canvas'});
+    const artifactControls=within(dialog).getByRole('group',{name:'Who can interact with artifacts'});
+    fireEvent.click(within(artifactControls).getByRole('radio',{name:'Specific people'}));
+    const section=artifactControls.closest('section')!;
+    fireEvent.click(within(section).getByRole('button',{name:'Add people'}));
+    const person=await within(section).findByRole('checkbox',{name:'Maya Lin'});
+    expect(person).toBeEnabled();
+    fireEvent.click(person);
+    fireEvent.click(within(dialog).getByRole('button',{name:'Save'}));
+    await waitFor(()=>expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS,{
+      visibility:'participants',userIds:[MAYA],artifactVisibility:'participants',artifactUserIds:[MAYA],expectedRevision:0,
+    }));
+  });
+
+  it('keeps explicit artifact recipients when they also become editors', async () => {
+    getCanvas.mockResolvedValue(detail({ visibility: 'creator', artifactVisibility: 'participants', artifactUserIds: [MAYA] }));
+    setCanvasAudience.mockResolvedValue(detail({ visibility: 'participants', participantUserIds: [MAYA], artifactVisibility: 'participants', artifactUserIds: [MAYA] }));
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    const editorSection = within(dialog).getByRole('group', { name: 'Who can edit' }).closest('section')!;
+    fireEvent.click(editorControls(dialog).getByRole('radio', { name: 'Specific people' }));
+    fireEvent.click(within(editorSection).getByRole('button', { name: 'Add people' }));
+    fireEvent.click(await within(editorSection).findByRole('checkbox', { name: 'Maya Lin' }));
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, {
+      visibility: 'participants', userIds: [MAYA], artifactVisibility: 'participants', artifactUserIds: [MAYA], expectedRevision: 0,
+    }));
+  });
+
   it('saves public artifact use independently of the two editors and copies the artifact URL',async()=>{
     getCanvas.mockResolvedValue(detail({visibility:'participants',participantUserIds:[MAYA],sharingRevision:7}));
     setCanvasAudience.mockResolvedValue(detail({visibility:'participants',participantUserIds:[MAYA],artifactVisibility:'public',sharingRevision:8}));

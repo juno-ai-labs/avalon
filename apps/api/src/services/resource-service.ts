@@ -428,7 +428,10 @@ export class ResourceService {
   }
 
   async content(id: string): Promise<Response> {
-    const { resource } = await this.readResource(id);
+    const { resource, canEditArtifact } = await this.readResource(id);
+    if (canEditArtifact === false && (resource.resource_type === "generated_site" || resource.mime_type === "application/vnd.rally.site-manifest+json")) {
+      throw new ApiError(404, "resource_not_found", "Resource not found");
+    }
     if (typeof resource.content_ref !== "string") throw new ApiError(404, "resource_content_unavailable", "Resource content has not been hydrated");
     const object = await this.env.PAYLOADS.get(resource.content_ref);
     if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");

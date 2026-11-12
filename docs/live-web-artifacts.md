@@ -767,7 +767,7 @@ facet that holds a stateful artifact's data. It does not own:
 - **The projected audience changes.** The next request is checked against the
   new local snapshot even when the viewer cookie remains valid. Propagation
   delay is accepted; sessions do not delay enforcement until their expiry.
-- **Local admission fails or has no initial snapshot.** Serving returns 503,
+- **Local admission fails or a new host has no initial snapshot.** Serving returns 503,
   never public content. A retry can succeed after recovery or queue delivery.
 - **`BROWSER_APP_ORIGIN` is unset or not a URL, or the host is a legacy UUID
   host.** There is nowhere to sign in: `/__rally/sign-in` answers the neutral
