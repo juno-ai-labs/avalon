@@ -8,6 +8,7 @@ import {
 import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
+import { MULTIMODAL_GENERATION_SYSTEM_MESSAGE } from "@rally/prompts/api/multimodal-generation-plugin";
 
 export {
   MULTIMODAL_GENERATION_MODEL,
@@ -145,7 +146,7 @@ export function createMultimodalGenerationPlugin(
     displayName: "Multimodal generation",
     searchAliases: ["image", "generate image", "edit image", "illustration", "picture", "visual", "audio", "speech", "voice", "text to speech"],
     description: "Generate a new image, edit an attached image, or turn text into an AI voice recording.",
-    systemMessage: "Generate exactly one media resource per call. Use generate_image for a prompt-only image, edit_image when an attached image must be transformed, and generate_audio to turn text into an AI-generated voice recording. Image output is fixed to low moderation, medium quality, auto background, and PNG. Audio output is fixed to MP3 and defaults to the marin voice. Generated media is attached as a workstream resource; refer to the returned resource ID or resource URI in the final response, and clearly disclose that generated speech uses an AI voice.",
+    systemMessage: MULTIMODAL_GENERATION_SYSTEM_MESSAGE,
     tools,
     preload: false,
     explicit: false,

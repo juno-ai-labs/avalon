@@ -8,13 +8,13 @@ import { __integrationTesting } from "../src/services/integrations";
 import {
   canonicalModelMessageJson,
   projectParticipantModelMessage,
-  renderRunContinuationNote,
 } from "../src/services/workstream-participant-model-message";
 import type { MessageObjectPort } from "../src/durable-objects/workstream-message-protocol";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import type { DatabaseSync } from "node:sqlite";
 import { seedWorkstreamObjectRoot, testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 import { providerRequestView, responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
+import { renderRunContinuationNote } from "@rally/prompts/api/run-continuation-note";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");

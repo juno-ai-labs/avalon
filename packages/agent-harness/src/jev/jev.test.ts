@@ -4,7 +4,6 @@ import { z } from "zod";
 import {
   askJev,
   classifyAddressingWithTypeSafe,
-  jevChoiceQuestion,
   jevSingleChoiceAnswers,
   JevRequestFailed,
   runConfidenceCascade,
@@ -15,9 +14,10 @@ import {
 import {
   judgeSemanticTriggerCondition,
   judgeSemanticTriggerConditions,
-  semanticTriggerQuestions,
   SEMANTIC_TRIGGER_CONFIDENCE_THRESHOLD,
 } from "../semantic-trigger-gate";
+import { jevChoiceQuestion } from "@rally/prompts/harness/jev-question";
+import { semanticTriggerQuestions } from "@rally/prompts/harness/semantic-trigger-question";
 
 const ANSWERS = jevSingleChoiceAnswers("verdict", ["yes", "no"] as const);
 

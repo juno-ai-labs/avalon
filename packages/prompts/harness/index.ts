@@ -11,3 +11,4 @@ export * from "./workstream";
 export * from "./memory-sweep";
 export * from "./memory-digest";
 export * from "./icon-catalog";
+export * from "./scheduled-wakeup";

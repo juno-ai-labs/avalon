@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-export { choices, answers, questions, type Choice } from "../../src/completion-verification-question";
-import { choices, completionStateSchema, type Choice } from "../../src/completion-verification-question";
+import { choices, type Choice } from "@rally/prompts/harness/completion-verification-question";
+import { answers, completionStateSchema } from "../../src/completion-verification-question";
+
+export { answers };
 
 export const caseSchema = z.object({
   id: z.string(), family: z.string(), split: z.enum(["development", "holdout"]),

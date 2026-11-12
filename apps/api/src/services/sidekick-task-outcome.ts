@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { ToolReceiptRecord } from "../durable-objects/workstream-tool-receipt-storage";
 import { parseRpcInput } from "../lib/rpc-input";
+import { SIDEKICK_TASK_OUTCOME_SYSTEM_MESSAGE } from "@rally/prompts/api/sidekick-task-outcome-plugin";
 
 export const SIDEKICK_TASK_OUTCOME_CAPABILITY = "rally.sidekick.report_outcome";
 export const SidekickTaskOutcomeSchema = z.strictObject({
@@ -24,7 +25,7 @@ export function createSidekickTaskOutcomePlugin(input: WorkstreamWorkflowInput):
     canonicalId: "rally:sidekick-outcome", modelId: "rally_sidekick_outcome", shortWireName: "sidekick",
     displayName: "Sidekick task outcome", description: "Record whether this activation accomplished its task.",
     preload: true, explicit: true,
-    systemMessage: "Record the initial activation's outcome with sidekick_report_outcome after work and required tool-delivery attempts, before your final reply. An ordinary follow-up answer needs no new report; report if it changes whether the task succeeded. A delivered failure notice is not a successful task, and a recovered tool error is not a failed task.",
+    systemMessage: SIDEKICK_TASK_OUTCOME_SYSTEM_MESSAGE,
     tools: [{
       definition: {
         name: "report_outcome", capability: SIDEKICK_TASK_OUTCOME_CAPABILITY,

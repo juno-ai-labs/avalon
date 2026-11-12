@@ -1,5 +1,5 @@
-import { jevChoiceQuestion } from "../../src/jev";
-import { questions, type Choice } from "./evaluation";
+import { questions, type Choice } from "@rally/prompts/harness/completion-verification-question";
+import { jevChoiceQuestion } from "@rally/prompts/harness/jev-question";
 
 export const variantNames = ["baseline", "temporal", "active_request", "compact"] as const;
 
