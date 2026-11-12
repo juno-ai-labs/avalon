@@ -1,4 +1,10 @@
-import { INSTRUCTION_TRUNCATED_MARKER, REPOSITORY_INSTRUCTIONS_HEADING, REPOSITORY_INSTRUCTIONS_PREAMBLE } from "../../prompts/repository-instructions";
+import {
+  INSTRUCTION_TRUNCATED_MARKER,
+  REPOSITORY_INSTRUCTIONS_HEADING,
+  REPOSITORY_INSTRUCTIONS_PREAMBLE,
+  renderOmittedBlockLine,
+  renderOmittedCountLine,
+} from "../../prompts/repository-instructions";
 export { INSTRUCTION_TRUNCATED_MARKER } from "../../prompts/repository-instructions";
 /**
  * Resident context blocks: content the model needs in context, with a stable
@@ -150,7 +156,7 @@ export function renderResidentContextBlock(block: Pick<ResidentContextBlock, "ki
 
 function omittedLine(block: Pick<ResidentContextBlock, "kind" | "blockId">): string {
   const policy = RESIDENT_CONTEXT_KIND_POLICIES[block.kind];
-  return `Omitted: ${policy.locator(block.blockId)} exceeds the instruction budget; read it with ${policy.readerTool}`;
+  return renderOmittedBlockLine(policy.locator(block.blockId), policy.readerTool);
 }
 
 /**
@@ -166,7 +172,7 @@ export function compareBlockIds(left: Pick<ResidentContextBlock, "blockId">, rig
 
 /** The one-line notice used when naming every omitted block would itself not fit. */
 export function omittedCountLine(kind: ResidentContextKind, count: number): string {
-  return `Omitted: ${count} beyond the instruction budget; read them with ${RESIDENT_CONTEXT_KIND_POLICIES[kind].readerTool}`;
+  return renderOmittedCountLine(count, RESIDENT_CONTEXT_KIND_POLICIES[kind].readerTool);
 }
 
 /**

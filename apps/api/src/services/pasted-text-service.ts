@@ -6,7 +6,7 @@ import { detectTextType } from "../lib/pasted-text-type";
 import { truncateUtf16Safe } from "../lib/text";
 import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
-import { PASTED_TEXT_NAME_SYSTEM_PROMPT } from "../prompts/pasted-text-name";
+import { renderPastedTextNameMessages } from "../prompts/pasted-text-name";
 
 /**
  * How much of the text the model reads. A name comes from what a document is
@@ -74,20 +74,7 @@ async function nameFromContent(
   text: string,
   extension: string,
 ): Promise<string | null> {
-  const messages: ModelMessage[] = [
-    {
-      role: "system",
-      content: PASTED_TEXT_NAME_SYSTEM_PROMPT,
-    },
-    {
-      role: "user",
-      content: [
-        { type: "text", text: `File type: ${extension}` },
-        { type: "text", text: "Untrusted content:" },
-        { type: "text", text: text.slice(0, SAMPLE_CHARACTERS) },
-      ],
-    },
-  ];
+  const messages = renderPastedTextNameMessages(extension, text.slice(0, SAMPLE_CHARACTERS));
   try {
     return normalizePastedTextName(await infer(messages), extension);
   } catch (error) {
