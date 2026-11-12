@@ -150,22 +150,11 @@ person who may open the Canvas may open the artifact; additional artifact-only u
 The sharing modal has two independent audiences: **Who can edit** (the Chat
 and publication) and **Who can interact with artifacts** (published output).
 Editors always have artifact access. With Organization editors the artifact
-audience is at least the Organization: `canvasArtifactVisibilityFloor` in
-`@rally/contracts/canvases` raises Editors only and Specific people to the
-Organization, since those editors already reach the artifacts and a narrower
-label would misstate who can use them. Anyone with the link stays. The Canvas
-Durable Object applies it when it stores an audience (`setAudience`, so the app,
-the HTTP API and the MCP tool alike, including an omitted artifact audience) and
-when it creates a Canvas, and reports it on read, so a Canvas stored before the
-rule reads correctly until its next save. The sharing form uses the same
-function to turn the two narrower tiles off and move a draft up. A manager saves both in one transaction;
+audience is at least the Organization (`canvasArtifactVisibilityFloor` in
+`@rally/contracts/canvases`, applied by `setAudience` and on create).
+A manager saves both in one transaction;
 artifact hosts receive the changed policy through the existing Cloudflare Queue.
 [Canvas artifact access](canvas-artifact-access.md) owns propagation and serving.
-The standalone component preview remains available with
-`pnpm --filter @rally/desktop preview:sharing` at
-`http://localhost:5175/sharing-preview.html`; its Save retains selections only
-in memory. The production Canvas screen uses the same presentation component
-with the real audience API, guest editor invitations and access requests.
 
 `canvasManages`: the creator, the Organization's owners and administrators,
 and for a Canvas a Sidekick writes, that Sidekick's managers
@@ -970,21 +959,20 @@ why the refresh lease shares the owning object's transaction.
 ### 2026-11-12 — Organization editors set a floor on the artifact audience
 
 Picking Everyone in the Organization under Who can edit left the artifact
-audience on Editors only. That was not wrong on access (editors reach the
-artifacts) but the Canvas then read as if the artifacts were private, and a
-manager who wanted the Organization to use them had to pick it twice. Now the
-artifact audience is never narrower than Organization editors: Editors only and
-Specific people become the Organization, and Anyone with the link is never
-narrowed. The rule is one function in `@rally/contracts`, enforced by the Canvas
-Durable Object on every write so an MCP or API caller cannot store the
-contradiction, and mirrored by the form, which disables the two narrower tiles.
+audience on Editors only, so the Canvas read as if its artifacts were private
+and a manager had to pick the Organization twice. The artifact audience is now
+never stored narrower than Organization editors: the Canvas Durable Object
+raises Editors only and Specific people to the Organization on every write, so
+an MCP or API caller cannot store the pair. It raises rather than rejects
+because released desktop builds send that pair.
 
-The server raises a narrower request instead of rejecting it. A rejection would
-break saves from desktop builds already released, which send that pair when a
-manager picks Organization editors; raising it stores what those builds then
-show anyway. Switching editors back narrows nothing: the stored audience stays
-until a manager changes it. Rows stored before the rule are raised on read, not
-by a migration, since access is the same either way (every member is an editor).
+The stored raise is one-way: moving editors off the Organization keeps it, since
+the row cannot tell a raise from a choice. The MCP tool tells callers to send
+the artifact audience when narrowing. The sharing form avoids the problem by
+keeping the manager's own choice in its draft and applying the floor only to
+what it shows and saves, so leaving Organization editors restores the earlier
+choice. Rows stored before the rule are not raised on read: reads report what
+access checks enforce, which differs for guests named as artifact users.
 
 ### 2026-11-11 — App invocation does not imply automatic upkeep
 
