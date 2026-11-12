@@ -362,12 +362,12 @@ continue using Checkout and Billing Portal. The eight administration tools are:
 | `change_subscription` | Change an existing paid plan with explicit `none`, `create_prorations`, or `always_invoice`; cancel now or at period end; undo scheduled cancellation; replace or remove a base-subscription coupon. |
 | `refund_payment` | Refund an explicit amount in the charge's currency to its original payment method, after checking Organization ownership. |
 | `correct_invoice` | Void an open invoice, mark it uncollectible, or issue a credit note on an open/paid invoice. The paid portion is explicitly refunded or credited to the general customer balance. |
-| `inspect_billing_catalog` | Read the effective regional offers, pilot coupon, and revision. |
+| `inspect_billing_catalog` | Read the effective regional offers, pilot coupon, and revision, plus live price amounts, currency options, intervals, tax behavior and coupon terms. |
 | `create_billing_price` | Create a new recurring price on an existing plan product, with explicit currency, interval, amount and tax behavior. Does not publish or migrate subscriptions. |
 | `create_billing_coupon` | Create a percentage coupon for selected paid plan products, with once, repeating-month, or forever duration. Does not activate it. |
-| `configure_billing_catalog` | Publish offers and pilot configuration using the inspected revision; update Portal's editable plan prices and retain historical offer mappings. |
+| `configure_billing_catalog` | Publish offers and pilot configuration using the inspected revision; update Portal's editable monthly plan prices and retain historical offer mappings. |
 
-Every write requires a reason and UUID `operationId`. Reuse both the ID and exact
+Every write requires a reason and UUID `operationId`. MCP registrations preserve the full strict input schema, so undeclared fields such as `dryRun` are rejected before any financial action. Reuse both the ID and exact
 arguments after an uncertain result. The amount fields are **minor units of the
 Stripe resource's currency**, not effective usage or always USD cents. Refunds do
 not cancel a subscription or correct invoice accounting. Use a credit note when
@@ -398,8 +398,13 @@ change. New quota tiers and allowance amounts still require code changes.
 A typical price change is `inspect_billing_catalog`, `create_billing_price`, then
 `configure_billing_catalog` with the inspected revision and the complete offer
 list. The source offer selects the existing plan product. New currency prices can
-be published as new offers. Annual prices require disabling the monthly pilot;
-trial-month grants continue to require monthly plans. Coupons are scoped to plan
+be published as new offers. Annual prices require disabling new monthly pilot awards; existing discounts
+remain attached. Operator plan changes reject longer billing intervals while an
+applicable repeating discount is active. Applying a repeating coupon to a longer
+interval is also refused, including offer coupons at publication. Portal exposes
+only monthly prices, because it cannot run Rally's discount check before a plan
+change. Annual prices remain available through Checkout and eligible operator
+changes; trial-month grants continue to require monthly plans. Coupons are scoped to plan
 products, and catalog publication rejects pilot coupons that do not cover the
 active paid products. Set `pilotCouponId: null` to stop new pilot awards. Existing
 discounts and already-open Checkout Sessions keep their terms until refreshed or
@@ -447,7 +452,7 @@ register the business or enable tax collection.
 
 `GET /workspace/billing`, `POST /workspace/billing/checkout` and
 `POST /workspace/billing/portal` and read-only `GET /workspace/billing/credits` are authenticated administrator routes. Credit, trial-month, subscription, refund, invoice and catalog writes exist only on the internal engineering bridge.
-`POST /stripe/webhook` accepts Stripe-signed requests. Configure separate webhook
+`POST /stripe/webhook` bounds the raw body with the shared `PROVIDER_WEBHOOK_MAX_BYTES` limit before verifying the Stripe signature. Oversized signed or unsigned requests return 413. Configure separate webhook
 secrets/endpoints for each owning deployment if more regions are introduced.
 The current deployment is Global. Standard member plan changes are rejected while
 billing is configured; the engineering operator plan override remains available.
@@ -655,7 +660,11 @@ Percentage discounts work across the catalog's supported currencies. Stripe owns
 the discount duration/percentage and returns billing to the normal subscription
 price when it expires. Keep the landing claim aligned if those terms change.
 
-Omit `pilotCouponId` to stop new pilot checkouts without removing existing discounts.
+Before any operator catalog is published, omit `pilotCouponId` from
+`BILLING_CONFIG` to stop new pilot checkouts without removing existing discounts.
+After publication, the persisted catalog takes precedence: inspect its revision
+and publish `pilotCouponId: null` through `configure_billing_catalog`. Editing only
+the Worker variable no longer changes the effective offers or pilot.
 A pending checkout is replaced with current campaign terms when an administrator
 returns through Rally; already-open hosted pages can still complete until expiry.
 For an immediate campaign cutoff, expire those Stripe Checkout Sessions as well.
@@ -669,7 +678,8 @@ Stripe promotion codes. Disable new sales with `enabled: false`, retaining the
 price mapping. For overages, add `overagePriceId` pointing to a one-time USD price
 with `unit_amount_decimal: "0.0001"` cents (one micro-USD), tax behavior and product
 tax code configured. Without `overageCredits`, do not use a recurring metered price: settlement creates
-invoice items. Catalog changes need only Worker configuration and Stripe settings;
+invoice items. Worker configuration bootstraps the catalog; after its first publication,
+use Engineering MCP to change offers and promotions in the persisted catalog;
 landing-page prose must be kept aligned separately.
 
 ## Changelog
@@ -725,6 +735,11 @@ boundary. Durable intent and provider receipts were chosen over raw Stripe proxy
 tools so uncertain refunds cannot be repeated and Organization ownership stays
 explicit. A revisioned commercial catalog replaces deployment-only price and
 promotion changes; historical mappings remain immutable, and Portal publication
-can recover independently from the D1 commit. Infrastructure and quota definitions
+can recover independently from the D1 commit. Live price/coupon inspection makes
+pricing edits possible without guessing terms. Strict MCP inputs reject unsupported
+financial flags, and signed webhook ingestion uses the shared bounded reader.
+Repeating discounts cannot move to a longer invoice interval; Portal keeps monthly
+choices because it has no discount-validation hook. These restrictions prevent a
+short pilot from waiving an annual invoice. Infrastructure and quota definitions
 remain deployment-owned. Future changes must preserve pre-consent exclusion, cancellation
 cutoffs and permanent charge receipts.

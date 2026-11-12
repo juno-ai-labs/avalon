@@ -8,7 +8,10 @@ one route derives the meter members see: the percentage of this
 week's quota left, and this month's overage. Optional Stripe billing settles
 opted-in overages; the meter reports whether the current period is billable.
 The first partial activation/resumption period is waived, and low-quota menu
-copy says overages are enabled only for a billable period.
+copy says overages are enabled only for a billable period. Beyond-quota amounts
+are usage totals, not invoice totals: cancellation does not waive prior opted-in
+usage. Settings keeps plan changes disabled while billing configuration is unknown
+and offers an explicit retry if that read fails.
 
 The promise to the rest of the system: metering never waits on the work it
 measures and never fails it. A call site sends and forgets, and a lost event is
@@ -354,6 +357,10 @@ adding a provider call to inference or risking a lost post-commit enqueue. Its
 absolute totals and revisions survive raw-event retention and make replay safe
 after Stripe's event-identifier deduplication window. Reporting errors remain
 visible for background reconciliation and do not block overage invoices.
+Settings labels beyond-quota amounts as usage rather than striking them out when
+the subscription stops: earlier billable intervals still settle after cancellation.
+An unknown billing status no longer exposes the legacy plan-change control,
+which the server would reject for a Stripe-billed Organization.
 
 ### 2026-11-07 — Index the ledger by Sidekick
 

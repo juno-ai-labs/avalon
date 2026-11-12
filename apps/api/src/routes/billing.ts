@@ -1,3 +1,4 @@
+import { providerWebhookMaxBytes, readBoundedRequestBytes } from "../lib/bounded-request-body";
 import { createBillingPortal, createCheckout, syncSubscription } from "../services/billing-coordination";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
@@ -110,7 +111,7 @@ stripeWebhookRoutes.post("/", async (c) => {
       "stripe_webhook_not_configured",
       "Billing webhook is not configured",
     );
-  const body = await c.req.text();
+  const body = new TextDecoder().decode(await readBoundedRequestBytes(c.req.raw, providerWebhookMaxBytes(c.env)));
   if (
     !(await verifyStripeSignature(
       body,

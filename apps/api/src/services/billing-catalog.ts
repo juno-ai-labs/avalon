@@ -1,10 +1,10 @@
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { ApiError } from "../lib/api-error";
 import { z } from 'zod';
-import { BillingCatalogMutationSchema, type BillingCatalogMutation, type BillingMutationResult, type BillingCatalog } from '@rally/contracts/billing-admin';
+import { BillingCatalogInspectionSchema, BillingCatalogMutationSchema, type BillingCatalogMutation, type BillingMutationResult, type BillingCatalog } from '@rally/contracts/billing-admin';
 import type { Env } from '../env';
 import { billingConfig, BillingConfigSchema, readBillingCatalog, resolveBillingEnvironment } from './billing-config';
-import { type AdminPrice, readAdminPrice, requireLicensedPrice, requirePlanCoupon } from './billing-admin';
+import { AdminPrice, AdminCoupon, readAdminPrice, requireLicensedPrice, requirePlanCoupon } from './billing-admin';
 import { billingOperation, billingRefusal } from './billing-admin-operations';
 import { stripe } from './stripe';
 
@@ -12,6 +12,26 @@ const enc = encodeURIComponent;
 interface Delivery { path: string; fields: Record<string, string>; recoveryList?: string; couponId?: string; catalog?: BillingCatalog; expectedRevision?: number }
 const receipt = (request: BillingCatalogMutation, id: string, status = 'created', revision?: number): BillingMutationResult => ({ operationId: request.operationId, resourceId: id, resourceType: request.kind, status, ...(revision === undefined ? {} : { revision }) });
 
+/** Live provider terms are inspection data, never persisted as catalog authority. */
+export async function inspectBillingCatalog(env: Env) {
+  const catalog = await readBillingCatalog(env);
+  const amount = z.object({ unit_amount: z.number().nullable(), unit_amount_decimal: z.string().nullable(), tax_behavior: z.string() });
+  const prices = await Promise.all([...new Set(catalog.offers.map(offer => offer.priceId))].map(async id => {
+    const price = await stripe(env, `prices/${enc(id)}?expand[]=currency_options`, AdminPrice.extend({ ...amount.shape, currency_options: z.record(z.string(), amount).optional() }));
+    const describe = (value: z.infer<typeof amount>) => ({ amountMinor: value.unit_amount, amountDecimal: value.unit_amount_decimal, taxBehavior: value.tax_behavior });
+    return { id: price.id, productId: price.product, active: price.active, currency: price.currency, ...describe(price),
+      recurring: price.recurring && { interval: price.recurring.interval, intervalCount: price.recurring.interval_count, usageType: price.recurring.usage_type },
+      currencyOptions: Object.fromEntries(Object.entries(price.currency_options ?? {}).map(([currency, value]) => [currency, describe(value)])),
+    };
+  }));
+  const couponIds = new Set([...catalog.offers.map(offer => offer.couponId), catalog.pilotCouponId].filter((id): id is string => Boolean(id)));
+  const coupons = await Promise.all([...couponIds].map(async id => {
+    const coupon = await stripe(env, `coupons/${enc(id)}?expand[]=applies_to`, AdminCoupon.extend({ amount_off: z.number().nullable(), currency: z.string().nullable() }));
+    return { id: coupon.id, valid: coupon.valid, percentOff: coupon.percent_off, amountOff: coupon.amount_off, currency: coupon.currency,
+      duration: coupon.duration, months: coupon.duration_in_months, productIds: coupon.applies_to?.products ?? null };
+  }));
+  return BillingCatalogInspectionSchema.parse({ ...catalog, prices, coupons });
+}
 async function prepare(env: Env, request: BillingCatalogMutation): Promise<Delivery> {
   const current = await readBillingCatalog(env);
   if (request.kind === 'price') {
@@ -56,7 +76,10 @@ async function prepare(env: Env, request: BillingCatalogMutation): Promise<Deliv
     if (offer.enabled) {
       requireLicensedPrice(price);
       if (offer.currencies.some(currency => currency !== price.currency && !Object.hasOwn(price.currency_options ?? {}, currency))) billingRefusal('billing_currency_unavailable');
-      if (offer.couponId) await requirePlanCoupon(env, offer.couponId, [price.product]);
+      if (offer.couponId) {
+        const coupon = await requirePlanCoupon(env, offer.couponId, [price.product]);
+        if (coupon.duration === 'repeating' && (price.recurring?.interval !== 'month' || price.recurring.interval_count !== 1)) billingRefusal('billing_discount_requires_monthly_price');
+      }
     }
     // Infrastructure rates/meters are deployment-owned. Publishing a catalog
     // cannot silently introduce a new financial meter or overage unit price.
@@ -71,7 +94,13 @@ async function prepare(env: Env, request: BillingCatalogMutation): Promise<Deliv
   const portal = portals.data.find(item => item.active && item.is_default);
   if (!portal) billingRefusal('billing_portal_configuration_required');
   const products = new Map<string, Set<string>>();
-  for (const offer of active) {
+  // Portal has no per-transition hook to inspect existing discounts. Keep its
+  // self-service choices monthly even after new pilot awards are disabled.
+  // Longer intervals remain available through Checkout and guarded MCP changes.
+  for (const offer of active.filter(offer => {
+    const recurring = prices.get(offer.id)!.recurring;
+    return recurring?.interval === 'month' && recurring.interval_count === 1;
+  })) {
     const product = prices.get(offer.id)!.product;
     const ids = products.get(product) ?? new Set<string>(); ids.add(offer.priceId); products.set(product, ids);
   }

@@ -1074,6 +1074,12 @@ describe("operations tools", () => {
     const publish = { region: "global", operationId, reason: "Publish", expectedRevision: 0, catalog };
     expect((await rpc(env, "tools/call", { name: "configure_billing_catalog", arguments: publish })).result).not.toHaveProperty("isError", true);
     expect(global.administerBillingCatalog).toHaveBeenLastCalledWith({ ...publish, kind: "catalog" }, principal);
+    vi.mocked(global.administerOrgBilling).mockClear(); vi.mocked(global.administerBillingCatalog).mockClear();
+    for (const [name, args] of [['refund_payment',refund], ['change_subscription',change], ['correct_invoice',invoice],
+      ['create_billing_price',price], ['create_billing_coupon',coupon], ['configure_billing_catalog',publish]] as const) {
+      expect((await rpc(env, 'tools/call', { name, arguments: { ...args, dryRun: true } })).result).toHaveProperty('isError', true);
+    }
+    expect(global.administerOrgBilling).not.toHaveBeenCalled(); expect(global.administerBillingCatalog).not.toHaveBeenCalled();
     expect(enterprise.administerOrgBilling).not.toHaveBeenCalled(); expect(enterprise.administerBillingCatalog).not.toHaveBeenCalled();
   });
 
