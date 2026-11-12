@@ -190,7 +190,7 @@ export function UsageLimitRailWarning({ api, onOpen }: {
   api: OrganizationUsageApi | null;
   onOpen: () => void;
 }): React.JSX.Element | null {
-  const state = useOrganizationUsage(api, { refetchOnWindowFocus: true });
+  const state = useOrganizationUsage(api);
   if (state.status !== 'ready') return null;
   const { usage } = state.reading;
   const reset = `${usageResetLabel(usage.weekResetsAt)}.`;

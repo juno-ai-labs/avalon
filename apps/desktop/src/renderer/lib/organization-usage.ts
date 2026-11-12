@@ -90,10 +90,7 @@ const readOnline = (): boolean => onlineManager.isOnline();
  * until the answer lands. A cached row seeds only an empty query: an answer
  * already in memory from earlier in the session is newer than anything on disk.
  */
-export function useOrganizationUsage(
-  api: OrganizationUsageApi | null,
-  options: { refetchOnWindowFocus?: boolean } = {},
-): OrganizationUsageState & { retry: () => void } {
+export function useOrganizationUsage(api: OrganizationUsageApi | null): OrganizationUsageState & { retry: () => void } {
   const scope = useLocalCacheScope();
   const online = useSyncExternalStore(subscribeOnline, readOnline);
   const [seed, setSeed] = useState<UsageReading | null>(null);
@@ -112,9 +109,6 @@ export function useOrganizationUsage(
     enabled: Boolean(api),
     // Opening the surface is the refresh; only a plan change is pushed.
     refetchOnMount: 'always',
-    // The rail's warning asks for this: overages are turned on in the Settings
-    // window, which pushes nothing here.
-    refetchOnWindowFocus: options.refetchOnWindowFocus ?? false,
   });
 
   useEffect(() => {

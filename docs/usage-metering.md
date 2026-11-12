@@ -77,7 +77,8 @@ admission throws on it, and the usage read reports it as `allowanceExhausted`
 and `stopsAtAllowance` for the desktop's rail warning. Each refusal also defers
 a once-per-week email to owners and administrators, keyed
 `usage_allowance_exhausted/<org>/<week start>/<user>` in the shared email
-receipts.
+receipts; the week's first refusal also pushes the meter to open windows, and a
+billing change already does (`reconcileSubscription`).
 
 ### Sending
 
