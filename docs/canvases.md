@@ -964,7 +964,10 @@ and a manager had to pick the Organization twice. The artifact audience is now
 never stored narrower than Organization editors: the Canvas Durable Object
 raises Editors only and Specific people to the Organization on every write, so
 an MCP or API caller cannot store the pair. It raises rather than rejects
-because released desktop builds send that pair.
+because released desktop builds send that pair. A raise from Editors only drops
+artifact recipients left over from an earlier choice, which grant nothing under
+Editors only but would grant access under the Organization; a raise from
+Specific people keeps them.
 
 The stored raise is one-way: moving editors off the Organization keeps it, since
 the row cannot tell a raise from a choice. The MCP tool tells callers to send

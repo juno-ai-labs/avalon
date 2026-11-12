@@ -486,6 +486,32 @@ describe("Canvas artifact access propagated to local serving", () => {
     );
   });
 
+  it("raising editors-only artifact access does not revive recipients it had left inactive", async () => {
+    const audience = (
+      visibility: "creator" | "workspace",
+      artifactVisibility?: "editors",
+    ) =>
+      workspace().canvasSetAudience({
+        workspaceId,
+        canvasId: CANVAS,
+        actor: { userId: OWNER, actorRole: "member" },
+        update: {
+          visibility,
+          userIds: [],
+          ...(artifactVisibility ? { artifactVisibility } : {}),
+        },
+      });
+    await share("participants", [READER]);
+    // Raised from Specific people: the named recipient stays.
+    expect((await audience("workspace")).artifactUserIds).toEqual([READER]);
+    // Editors only keeps the omitted recipient row, inactive.
+    expect((await audience("creator", "editors")).artifactUserIds).toEqual([READER]);
+    // Raised from Editors only: the inactive row is dropped, not honoured.
+    const raised = await audience("workspace");
+    expect(raised.artifactVisibility).toBe("workspace");
+    expect(raised.artifactUserIds).toEqual([]);
+  });
+
   it("uses site manifests to recognize upgraded archives and never replaces site serving with a file", async () => {
     await share("public");
     await runInDurableObject(workspace(), (_instance, state) => {

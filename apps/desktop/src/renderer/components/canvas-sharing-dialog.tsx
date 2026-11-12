@@ -360,6 +360,10 @@ function CanvasSharingForm({
     selection.editors,
     selection.artifacts,
   );
+  // Recipients kept under "editors" grant nothing, so a raise from it starts
+  // with none, as the server stores it. Picking people makes the raise a choice.
+  const artifactUserIds =
+    selection.artifacts === "editors" ? [] : selection.artifactUserIds;
   const artifactSummary = {
     editors: "Editors only",
     participants: "Selected artifact users",
@@ -370,7 +374,7 @@ function CanvasSharingForm({
     selection.editors === "participants" &&
     selection.editorIds.filter((id) => id !== owner.id).length === 0;
   const missingUsers =
-    artifacts === "participants" && selection.artifactUserIds.length === 0;
+    artifacts === "participants" && artifactUserIds.length === 0;
   return (
     <form
       className="canvas-sharing-form"
@@ -386,7 +390,7 @@ function CanvasSharingForm({
               selection.editors === "creator" ? [] : selection.editorIds,
             artifactUserIds:
               artifacts === "participants" || artifacts === "workspace"
-                ? selection.artifactUserIds
+                ? artifactUserIds
                 : [],
           });
         } catch {
@@ -461,7 +465,7 @@ function CanvasSharingForm({
             disabled={saving}
             owner={owner}
             members={members}
-            chosen={selection.artifactUserIds}
+            chosen={artifactUserIds}
             includedIds={
               artifacts === "workspace"
                 ? members
@@ -471,7 +475,7 @@ function CanvasSharingForm({
             }
             label="Artifact users"
             onChange={(artifactUserIds) =>
-              setSelection({ ...selection, artifactUserIds })
+              setSelection({ ...selection, artifacts, artifactUserIds })
             }
           />
         )}
