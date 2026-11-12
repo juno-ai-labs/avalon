@@ -322,7 +322,11 @@ active site's pages, assets and submissions are admitted by Rally before any
 model-authored code runs. Anonymous visitors are admitted only when the local
 snapshot explicitly permits public access. Static sites can therefore be private.
 Generated code can further restrict actions or individual rows; it cannot bypass
-Rally's gate. Public does not mean indexed: the existing `noindex` header remains.
+Rally's gate. The site skills teach it not to by default: whoever the audience
+admits may use every feature, signed in or not, and only an action that needs to
+know who is acting (one vote per person, a person's own rows, requested
+attribution) checks the viewer header. The agent sets the audience itself with
+`set_artifact_audience`, owned by [Canvas artifact access](canvas-artifact-access.md). Public does not mean indexed: the existing `noindex` header remains.
 
 `ArtifactHostDO.admitRequest` checks its own SQLite snapshot and session records
 on every request. A missing snapshot or an unavailable host fails closed; it
@@ -930,6 +934,26 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-12 — Public sites accept anonymous writes by default
+
+**What changed:** `building-live-sites` and `creating-an-app` now teach that an
+anonymous visitor on a public site may add, edit, delete and clear like anyone
+else. The viewer-header check moved from a guard in front of every write to the
+one route that needs identity, the RSVP example says why it is the exception, a
+new anti-pattern names the blanket guard, and the page's 401 handling shows the
+handler's own text rather than "session ended".
+
+**Why:** A public grocery list built in production refused "Clear all" from a
+signed-out visitor with "Your session is unavailable". Rally had admitted the
+request; the site's own code answered 401 because the skill's only example of a
+write began with that guard, and `creating-an-app` said people sign in to add
+entries unless the request named outsiders. Product decided a public site's
+writes are open by default.
+
+**Consequences:** Anyone with a public site's link can change or delete its
+shared data. That is the intended default; a site that must not allow it asks
+for identity on that route or narrows the audience.
 
 ### 2026-11-12 — A Sidekick's wizard can check the row write it saves
 
