@@ -7,6 +7,7 @@
 import { readFileSync } from 'node:fs';
 import opentype from 'opentype.js';
 import sharp from 'sharp';
+import { renderReadingCard } from './reading-card';
 
 export const SOCIAL_CARD_WIDTH = 1200;
 export const SOCIAL_CARD_HEIGHT = 630;
@@ -116,10 +117,11 @@ export function renderComparisonCard({ slug, name, edge }: { slug: string; name:
 
 /** The card for one blog post. */
 export function renderBlogCard({ slug, title, description }: { slug: string; title: string; description: string }): Promise<Buffer> {
-  return renderSocialCard({
+  return renderReadingCard({
     eyebrow: 'Rally blog',
-    headline: [{ text: title }],
-    body: description,
+    title,
+    description,
     address: `rallywith.ai/blog/${slug}`,
+    scene: 'together',
   });
 }
