@@ -10,6 +10,9 @@ const legacyTargetPath = resolve(root, "apps/api/.dev.vars");
 const regionalTargetPaths = Object.fromEntries(configuredRegions.map((region) => [region, resolve(root, `apps/api/.dev.vars.${region}`)]));
 
 const workerKeys = [
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "BILLING_CONFIG",
   "APP_ENV",
   "AVALON_REGION",
   "RALLY_DEV_AUTH",

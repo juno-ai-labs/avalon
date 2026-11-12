@@ -4,7 +4,7 @@ export { ArtifactSidekickForwarder } from "../../src/artifacts/sidekick-forwarde
 export {
   default,
   AshbyRegionalBridge, AshbyRoutingBridge, AgentLoopDO, MigrationProbeDO,
-  WorkspaceDO, CrashSymbolicatorContainer, ArtifactHostDO, ArtifactAssetLoopback, ArtifactSidekickLoopback, ArtifactSidekickDispatcher,
+  BillingCoordinatorDO, WorkspaceDO, CrashSymbolicatorContainer, ArtifactHostDO, ArtifactAssetLoopback, ArtifactSidekickLoopback, ArtifactSidekickDispatcher,
   ConnectorPollWorkflow, ConnectorEventWorkflow, RegionalIdentityBridge,
   GitHubRegionalBridge, GitHubRoutingBridge, LinearRegionalBridge, LinearRoutingBridge,
   NotionRegionalBridge, NotionRoutingBridge, SlackRegionalBridge, SlackRoutingBridge,

@@ -544,7 +544,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     EngineeringUsageResultSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOrganizationUsage(request))));
 
   server.registerTool("change_usage_plan", {
-    description: "Change an Organization's plan. Applies its new quota to the current week, records the plan change, and notifies connected members. Past weekly quotas remain unchanged. Resolve an uncertain outcome with inspect_usage_plan before retrying.",
+    description: "Set a persistent operator override of an Organization's usage plan. Stripe subscription changes preserve this override; this tool does not change the Stripe subscription or its price. Applies its new quota to the current week, records the plan change, and notifies connected members. Past weekly quotas remain unchanged. Resolve an uncertain outcome with inspect_usage_plan before retrying.",
     inputSchema: ChangeEngineeringPlanInputSchema.shape,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, (request) => tool(principal, "change_usage_plan", { workspace_id: request.orgId, plan: request.plan }, async () =>
