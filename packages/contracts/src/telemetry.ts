@@ -1701,7 +1701,7 @@ export const TELEMETRY_EVENTS = {
       harnessRunId: resourceId,
       automationId: resourceId.optional(),
       runKind: z.enum(["workstream", "automation", "subagent", "system"]),
-      triggerType: z.enum(["composer", "retry", "manual", "scheduled", "activity", "digest", "system"]),
+      triggerType: z.enum(["composer", "retry", "manual", "scheduled", "activity", "digest", "system", "invocation"]),
       terminalState: z.enum(["completed", "needs_input", "stopped", "failed"]),
       duration: journeyDurationBucket,
       timeToFirstOutput: journeyDurationBucket,

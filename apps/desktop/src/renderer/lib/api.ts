@@ -520,7 +520,9 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.runState === undefined ? {} : { runState: automation.runState }),
     ...(automation.running === undefined ? {} : { running: automation.running }),
     ...(automation.pendingQuestion ? { pendingQuestion: automation.pendingQuestion } : {}),
-    ...(automation.triggerKinds ? { triggerKinds: automation.triggerKinds } : {}),
+    ...(automation.triggerKinds || automation.hasInvocationTrigger ? { triggerKinds: [
+      ...(automation.triggerKinds ?? []), ...(automation.hasInvocationTrigger ? ['invocation' as const] : []),
+    ] } : {}),
     ...(automation.scheduleTimeZone ? { scheduleTimeZone: automation.scheduleTimeZone } : {}),
   };
 }

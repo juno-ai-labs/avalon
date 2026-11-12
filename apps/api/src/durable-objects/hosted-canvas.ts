@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { IdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema, type AutomationSummary, type WorkstreamAppearance } from "@rally/contracts";
 import { logWarn } from "../observability/logger";
-import { AUTOMATION_TRIGGER_KINDS_SQL, parsedAppearance } from "./sidekick-directory-sql";
+import { AUTOMATION_TRIGGER_KINDS_SQL, parsedAppearance, sidekickTriggerSummary } from "./sidekick-directory-sql";
 import {
   CanvasAccessDecisionRequestSchema,
   CanvasAccessDecisionSchema,
@@ -572,7 +572,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       const appearance = parsedAppearance(row.appearance_json, "automation_appearance", (code) =>
         logWarn(this.host.env, "automation_directory_appearance_invalid", { automation_id: row.automation_id, code }));
       return CanvasSidekickSchema.parse({
-        id: row.automation_id, name: row.title || "New Sidekick", status: row.lifecycle, triggerKinds: JSON.parse(row.trigger_kinds),
+        id: row.automation_id, name: row.title || "New Sidekick", status: row.lifecycle, ...sidekickTriggerSummary(row.trigger_kinds),
         ...(appearance ? { appearance } : {}), madeHere: row.made_here === 1,
         ...(viewer ? { canOpen: sidekickReaderAllows(row, viewer, this.sql) } : {}),
       });
@@ -954,7 +954,7 @@ export function canvasSidebarRows(
   ).toArray()) {
     const appearance = parsedAppearance(sidekick.appearance_json, "automation_appearance", () => undefined);
     const held = attached.get(sidekick.canvas_id) ?? [];
-    held.push(CanvasSidekickSchema.parse({ id: sidekick.automation_id, name: sidekick.title || "New Sidekick", status: sidekick.lifecycle, triggerKinds: JSON.parse(sidekick.trigger_kinds),
+    held.push(CanvasSidekickSchema.parse({ id: sidekick.automation_id, name: sidekick.title || "New Sidekick", status: sidekick.lifecycle, ...sidekickTriggerSummary(sidekick.trigger_kinds),
       ...(appearance ? { appearance } : {}), madeHere: sidekick.made_here === 1,
       canOpen: sidekickReaderAllows(sidekick, reader, sql) }));
     attached.set(sidekick.canvas_id, held);

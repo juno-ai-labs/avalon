@@ -953,7 +953,7 @@ The Live updating badge and Live filter require an active Sidekick with a
 schedule or external-event trigger. Dedicated app Sidekicks respond to app
 submissions, so their invocation trigger alone does not qualify. A Sidekick
 with invocation alongside a schedule or event still qualifies through that
-automatic trigger. The home-screen test covers both cases.
+automatic trigger.
 
 ### 2026-11-11 — Open a new Canvas before its create request answers
 

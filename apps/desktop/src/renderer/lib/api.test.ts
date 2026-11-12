@@ -5,7 +5,7 @@ import "../../../../../tests/isolated-region";
 import type { DesktopSession } from '../../common/desktop';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import type { ApiError } from './api';
-import { RallyApi, mapWorkstreamSummary, mapResource, mapWorkstreamDetail, redactQuery } from './api';
+import { RallyApi, mapAutomationSummary, mapWorkstreamSummary, mapResource, mapWorkstreamDetail, redactQuery } from './api';
 import { clearAllLocalCache } from './local-cache';
 import { refreshPoppedOutArtifacts } from './popped-out-artifacts';
 import { SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
@@ -199,6 +199,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
   reportJavascriptError.mockReset();
   reportTelemetryProductIntent.mockReset();
+});
+
+it('maps additive invocation metadata without widening legacy wire trigger kinds', () => {
+  const summary = mapAutomationSummary({
+    id: automationId, name: 'Shopping organizer', description: 'Sorts groceries', loadable: false,
+    scope: 'personal', status: 'active', nextRunAt: null, lastRunAt: null,
+    updatedAt: timestamp, triggerKinds: [], hasInvocationTrigger: true,
+  });
+  expect(summary.triggerKinds).toEqual(['invocation']);
 });
 
 describe('Rally API wire adapter', () => {

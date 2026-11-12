@@ -1,4 +1,4 @@
-import { ArtifactSidekickInvocationSchema } from "@rally/contracts";
+import type { ArtifactSidekickInvocation } from "@rally/contracts";
 import {
   AutomationDraftSchema,
   AutomationRunReferenceV1Schema,
@@ -154,8 +154,7 @@ export const AutomationSetAudienceRequestSchema = z.strictObject({
 });
 export type AutomationSetAudienceRequest = z.input<typeof AutomationSetAudienceRequestSchema>;
 
-export const SidekickInvocationRequestSchema = ArtifactSidekickInvocationSchema.extend({ automationId: IdSchema });
-export type SidekickInvocationRequest = z.infer<typeof SidekickInvocationRequestSchema>;
+export type SidekickInvocationRequest = ArtifactSidekickInvocation & { automationId: string };
 
 export const AutomationRunNowRequestSchema = z.strictObject({
   ...Addressed,
