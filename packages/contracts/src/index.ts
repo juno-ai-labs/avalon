@@ -1,3 +1,6 @@
+import { ArtifactIdSchema } from "./identifiers";
+export * from "./artifact-invocation";
+import { ArtifactSidekickBindingNameSchema } from "./artifact-invocation";
 import { AGENT_MODEL_OVERRIDES } from "./runtime-config";
 export * from './artifact-picker';
 export * from "./sidekick-delegation";
@@ -1095,6 +1098,7 @@ export const WorkstreamContextSchema = z.object({
 });
 
 export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("invocation"), artifactId: ArtifactIdSchema, bindingName: ArtifactSidekickBindingNameSchema }),
   z.object({ type: z.literal("manual") }),
   z.object({
     type: z.literal("calendar"),
@@ -1368,6 +1372,11 @@ export const AutomationDraftSchema = z.object({
       }
     });
   });
+  draft.triggers.forEach((trigger, index) => {
+    if (trigger.type === "invocation" && draft.triggers.slice(0, index).some((entry) => entry.type === "invocation")) {
+      context.addIssue({ code: "custom", path: ["triggers", index], message: "A Sidekick can be bound to only one app" });
+    }
+  });
   const sourceBindings = new Map<string, { connectorType: string; pluginId: string }>();
   draft.triggers.forEach((trigger, index) => {
     if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook") return;
@@ -1580,7 +1589,9 @@ export const AutomationSummarySchema = z.object({
    */
   running: z.boolean().optional(),
   pendingQuestion: z.string().nullable().optional(),
-  triggerKinds: z.array(z.enum(["manual", "schedule", "external_event"])).optional(),
+  triggerKinds: z.array(z.enum(["manual", "schedule", "external_event", "invocation"])).optional(),
+  /** Additive wire field: older clients keep their closed triggerKinds vocabulary. */
+  hasInvocationTrigger: z.boolean().optional(),
   /**
    * The IANA zone the schedule behind `nextRunAt` reads its wall-clock time
    * in, so a client formats `nextRunAt` the way the schedule's own summary
@@ -1649,7 +1660,7 @@ export const AutomationRunSchema = z.object({
   id: IdSchema,
   automationId: IdSchema,
   coordinatorUserId: IdSchema.nullable().optional(),
-  triggerType: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+  triggerType: z.enum(["manual", "schedule", "external_event", "invocation", "inbound_email"]),
   plannedFor: TimestampSchema.nullable(),
   startedAt: TimestampSchema.nullable(),
   completedAt: TimestampSchema.nullable(),

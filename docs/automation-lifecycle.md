@@ -679,8 +679,15 @@ run it already made. The object must hold an accepted revision
 | Trigger | Entry | Occurrence key | Refusals |
 | --- | --- | --- | --- |
 | **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `sidekick_not_active` unless `active`; `sidekick_forbidden` unless the caller may manage it |
+| **Invocation** | An active app's server-side named binding; `artifactInvokeSidekick` → `invokeArtifact` | `invocation:<artifactId>:<operationId>` | requires the live accepted binding, an active Sidekick, the app's open attached Canvas, and a serialized opening within the existing transcript limit |
 | **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`, and unless the row's `next_due_at` has arrived: an entry that runs after a pause and resume, or an apply that kept the schedule, moved it into the future, and admitting it would start the next occurrence early; the next occurrence is computed from now and re-armed |
 | **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `occurrence:<key>` when the connector named the occurrence the event reports, else `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
+
+**App invocations** use normal unattended principal selection, occurrence
+admission and tool policy. Their trigger records app ID, serving version, binding
+name and operation ID; their opening carries the input and resource ID. See
+[the app runtime](live-web-artifacts.md#calling-dedicated-sidekicks) for binding
+ownership, lifecycle, input admission and the asynchronous response.
 
 **Connector events** follow one regional path. The regional activity Queue
 hands a normalized event to `WorkspaceDO.ingestConnectorEvent`; a second,
@@ -2400,6 +2407,25 @@ conversation-object SQLite; the vocabulary, `StatusDot`, the
 survive as described above.
 
 ## Changelog
+
+### 2026-11-11 — Admit app-requested Sidekick runs
+
+Added the `invocation` configuration and run provenance kinds so a Canvas can
+create dedicated Sidekicks for an app's semantic tasks. App requests have a
+different admission authority from manager-only manual runs and connector
+sources, so they receive their own trigger while reusing the existing run
+engine, delegation, tools and lifecycle. Bindings live in accepted definitions,
+with one app per Sidekick and unique names per app; another registry would
+repeat authority already held by WorkspaceDO. Runs use existing write behavior,
+and the app receives only durable admission before the run executes. Serialized
+openings must fit the existing transcript limit before admission, so a successful
+submission cannot be stranded during provisioning. List summaries expose
+invocation through additive metadata to preserve older clients' closed enums. The
+opening is projected into model history as labelled user-role app data only
+when it is the selected trigger; storing it as a system transcript row alone
+hides the submitted input from the model. The live walkthrough caught that
+gap, so the workerd flow also asserts on the provider-facing input.
+
 
 ### 2026-11-10 — A Sidekick runs as itself, and delegation no longer decides what starts it
 

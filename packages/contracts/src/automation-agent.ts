@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  IdSchema,
+  ArtifactIdSchema, IdSchema,
   UserIdSchema,
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
@@ -64,6 +64,10 @@ export type AutomationLifecycleState = z.infer<typeof AutomationLifecycleStateSc
 /** Provenance for already admitted runs, including retired kinds in stored history.
  * Active trigger configuration is defined separately by TriggerDefinitionSchema. */
 export const AutomationRunTriggerV1Schema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("invocation"), artifactId: ArtifactIdSchema,
+    artifactVersion: z.number().int().positive(), bindingName: z.string().min(1), operationId: z.string().min(1),
+  }),
   z.strictObject({ kind: z.literal("manual"), requestedByUserId: UserIdSchema }),
   z.strictObject({
     kind: z.literal("schedule"),
@@ -131,7 +135,7 @@ export const AutomationActivationV1Schema = z.strictObject({
    * conversation, which no trigger started.
    */
   trigger: z.strictObject({
-    kind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+    kind: z.enum(["manual", "schedule", "external_event", "invocation", "inbound_email"]),
   }).strict().optional(),
   occurredAt: z.number().int().nonnegative(),
   /**

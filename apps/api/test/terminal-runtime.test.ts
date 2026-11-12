@@ -281,7 +281,7 @@ function fixture(
       input,
       site: Parameters<TerminalResourceBridge["publishSiteResource"]>[2],
     ): Promise<TerminalPublishedSiteOutput> => ({
-      resourceId: "published-site", title: input.displayName ?? input.filePath,
+      resourceId: "published-site", artifactId: "published-artifact", title: input.displayName ?? input.filePath,
       publishKind: "site", resourceType: "generated_site", provider: "avalon_generated", attachmentKind: "site",
       slug: "site-slug",
       url: `https://${"1".repeat(8)}-g.rallyusercontent.test`,

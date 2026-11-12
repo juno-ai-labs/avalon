@@ -32,7 +32,9 @@ exists.
 | `apps/api/src/artifacts/hostname-routes.ts` | The stub-to-artifact lookup, shared by the serving Worker and the API. |
 | `apps/api/src/services/artifact-site-resolution.ts` | The hostname-to-organization lookup behind `/browser/sites/resolve`, for signing in from a site's link. |
 | `apps/api/src/artifacts/facet-host.ts` | The Rally-authored module source loaded into a stateful artifact's facet beside the model's own. |
-| `apps/api/src/artifacts/asset-loopback.ts` | `ArtifactAssetLoopback`: the `ASSETS` binding, as an exported entrypoint. The one thing that crosses into an artifact's isolate. |
+| `apps/api/src/artifacts/asset-loopback.ts` | `ArtifactAssetLoopback`: the `ASSETS` binding, as an exported entrypoint. The file-reading capability that crosses into an artifact's isolate. |
+| `apps/api/src/artifacts/sidekick-dispatch.ts`, `sidekick-forwarder.ts`, `sidekick-input.ts` | App-scoped Sidekick invocation: the facet loopback, the serving Worker's narrow API service bridge, and the common input parser. |
+| `apps/api/src/durable-objects/artifact-sidekick-bindings.ts` | Resolving accepted named bindings and checking the attached, open Canvas. |
 | `apps/api/src/artifacts/asset-shim.ts` | The two module sources that run inside the isolate: the wrapper that makes `fetch(string)` true, and the entry Rally puts in front of a stateless active site's own module. |
 | `apps/api/src/artifacts/pages.ts` | The neutral page, the plain error page, and the fragment-to-cookie bootstrap. |
 | `apps/api/src/services/workstream-artifact-data-tools.ts` | The data tools' contract, three reads and `write_artifact_data`: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
@@ -185,6 +187,68 @@ The one manifest asset source import deliberately omits is a preview marked
 returning it to the sandbox would make an unchanged import-and-republish look
 like a source edit and could duplicate the generated asset. Authored preview
 images carry `generated: false` and import normally.
+
+### Calling dedicated Sidekicks
+
+An active app may bind many Sidekicks under distinct JavaScript identifier
+names. A Sidekick has at most one `invocation` trigger, naming one stable
+`artifactId` and one `bindingName`. The accepted Sidekick definition owns the
+binding; there is no manifest copy or second binding registry. Saving acceptance
+checks that the artifact is active and its open Canvas is attached to the
+Sidekick, and atomically refuses another non-archived Sidekick's use of the
+same name on that app. A paused Sidekick retains its binding name.
+
+`publish_resource` returns the canonical `artifactId` alongside `resourceId`
+on its site result, including an unchanged republish. Canvas authoring gives
+the wizard that artifact ID to save the invocation trigger; the resource ID
+remains the address used by the artifact data tools.
+
+Generated server code submits tasks through
+`env.SIDEKICKS.shoppingOrganizer.send({ operationId, input: { item: "Greek yogurt" } })`;
+a `SiteData` handler uses `this.env.SIDEKICKS`. The host supplies the app's
+workspace, artifact ID and published version. Generated code chooses only the
+binding name and task data. The call resolves with `{ runId, reused }` after
+durable admission, so the route can return HTTP 202. It does not await inference
+or artifact writes. `operationId` identifies one submission across retries;
+reusing it on the same Sidekick and artifact returns the original run and input. Both
+serialized opening fields must fit the existing `MESSAGE_MAX_CHARACTERS`
+transcript limit before a run is committed; oversized payloads fail with
+`sidekick_invocation_input_too_large`. App code receives refusal codes in
+`Error.message`, including across both runtime paths.
+
+Organization-wide Sidekick and Canvas lists keep the released `triggerKinds`
+vocabulary. Invocation is advertised through optional `hasInvocationTrigger`
+metadata; matching clients use it for the app-request label. Older clients can
+still read the lists while invocation-specific definition/history screens need
+a matching client.
+
+Stateless sites receive an exported `ArtifactSidekickForwarder` capability in
+the serving Worker. It calls the regional API's `ArtifactSidekickDispatcher`
+through the typed `ARTIFACT_SIDEKICKS` service binding. Stateful facets receive
+the API Worker's own scoped loopback, which reaches WorkspaceDO directly.
+Neither path calls the artifact supervisor while its facet is serving the
+submission, avoiding a request waiting on itself. Both retain
+`globalOutbound: null`, and no product credentials enter generated code.
+
+WorkspaceDO resolves the live accepted binding and admits an ordinary independent
+Sidekick run, with the input and app resource ID in its opening. The model
+projection admits that opening as labelled, untrusted user-role task data when
+it is the run's trigger; the transcript system row alone is not model history. Paused or
+archived Sidekicks, removed bindings, and detached or archived Canvases refuse
+new admission. The serving version is recorded as provenance; a republish does
+not invalidate the stable app binding. Runs retain the existing Sidekick principal,
+delegation, tools, account access and write rules. Invocation is permission to
+start that work; it does not reduce execution authority to this artifact or
+introduce viewer-specific execution. Sidekicks use standard data tools such as
+`write_artifact_data`, and the app sees committed writes on its next data read.
+No additional write-deduplication protocol is introduced.
+
+The Canvas's site-building skill describes publishing the app first, creating
+its dedicated Sidekicks with the returned artifact and resource IDs, configuring
+their named invocation triggers, and reusing them across app revisions. A run
+ID does not grant public transcript access. Apps can keep operation status in
+their own data when their experience needs it; Sidekick run history and task
+outcomes retain their normal access rules.
 
 ### Serving
 
@@ -790,6 +854,7 @@ from a real Canvas archive to its published site.
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-social-preview-runtime.test.ts` | `HTMLRewriter` on real workerd: active HTML receives metadata without buffering, while protected errors and JSON remain exact. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-asset-uploads.test.ts` | Real-R2 asset upload overlap, the assets-before-manifest barrier, generated tail assets, and failure draining. |
+| `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-sidekick-invocation.test.ts` | Stateful route admission followed by an ordinary Sidekick's standard artifact write; stateless production loader assembly and the actual named Service Binding; bounded opening admission, code-shaped refusals, compatible list metadata, many Sidekicks per app, unique names, rebind, pause, unbind, republish and attachment checks. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. Also scoped reads: a private table paged as one viewer's rows, search indexes however fed reading as empty, and free SQL refused on a site with a private table and allowed on one without. Also `writeData`: a committed write the site's own handler then reads with no new version, schema statements and reads refused, the database's own refusal returned with nothing written, a scoped writer refused on a site with private rows, and an archived Canvas's site taking no write. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/conversation-tools.test.ts`) | Which scope the data tools resolve for the author, another member and an unattended run; the write gate through the real tool, WorkspaceDO and facet (a Sidekick run refused until its own Sidekick has the site's Canvas attached and again once the Canvas is archived, a Canvas's Chat writing a linked site and no other); and `/browser/sites/resolve`'s 200, 403 (outside the Organization, or a member outside the audience of the site's Canvas) and 404. |
 
@@ -833,17 +898,18 @@ Two traps:
 
 The trust surface is the point of this module, and
 [`security.md`](security.md) owns the boundaries it sits on. In short: artifact
-code is untrusted and capability-fenced (one injected binding, no network, no
-secrets, no Rally bindings); artifact *data* is untrusted content with a trusted
-container, since the rows were written by model code, page visitors and, through
+code is untrusted and capability-fenced (its asset reader and app-scoped Sidekick
+invocation binding, no network, no secrets or general Rally bindings); artifact
+*data* is untrusted content with a trusted container, since the rows were written by model code, page visitors and, through
 `write_artifact_data`, a Canvas's Chat or an attached Sidekick's run, while the
 host class that reads them is Rally's and cannot be shadowed; and the serving
 Worker's waistline is deliberately minimal. Artifact content is intentionally
 public unless its active handler requires the trusted viewer header; error logs,
 and inspection data require canonical resource access; publication and revision
 retain their execution-scope authorization. A
-compromise of the serving Worker exposes artifact content and viewer sessions
-rather than workspace authority.
+compromise of the serving Worker exposes artifact content, viewer sessions, and
+the ability to submit work to explicitly bound Sidekicks. Their runs retain
+normal Sidekick authority.
 
 `viewer_sessions` is also readable and writable by an admitted operator through
 the engineering MCP. It stores digests rather than cookie values, so nothing
@@ -878,6 +944,24 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-11 — Active apps invoke their dedicated Sidekicks
+
+Apps such as shopping trackers need semantic processing after a submission,
+with the Sidekick writing through its standard artifact tools. Added a named,
+app-scoped invocation capability for both active runtimes, backed by accepted
+Sidekick triggers and existing occurrence admission. One app can bind many
+Sidekicks; each Sidekick binds one app. Admission is synchronous RPC because
+the route needs the committed run ID; execution remains asynchronous through
+the existing alarm and provisioning Queue. General artifact networking and
+new execution policies were rejected: app invocations retain normal Sidekick
+authority. Additional viewer privacy and write-deduplication mechanisms were
+explicitly deferred. Future changes must preserve host-derived app identity
+and avoid waiting for a run while holding its artifact facet request. Site
+publication exposes its canonical artifact ID so authoring can bind the app
+without deriving an ID from its public hostname or confusing it with the
+resource ID; the live authoring walkthrough exposed that missing output.
+
 
 ### 2026-11-10 — One function holds the order of a site publish
 

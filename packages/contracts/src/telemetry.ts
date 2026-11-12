@@ -242,7 +242,7 @@ export type TelemetryMenuBarAction = (typeof TELEMETRY_MENU_BAR_ACTIONS)[number]
 const menuBarAction = z.enum(TELEMETRY_MENU_BAR_ACTIONS);
 
 const automationTriggerType = z.enum([
-  "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook",
+  "manual", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook", "invocation",
 ]);
 const automationDeliveryTargetType = z.enum(["email", "slack_agent_dm"]);
 /** Where a digest goes: an automation destination, or the person's own Personal Channel. */
@@ -1701,7 +1701,7 @@ export const TELEMETRY_EVENTS = {
       harnessRunId: resourceId,
       automationId: resourceId.optional(),
       runKind: z.enum(["workstream", "automation", "subagent", "system"]),
-      triggerType: z.enum(["composer", "retry", "manual", "scheduled", "activity", "digest", "system"]),
+      triggerType: z.enum(["composer", "retry", "manual", "scheduled", "activity", "digest", "system", "invocation"]),
       terminalState: z.enum(["completed", "needs_input", "stopped", "failed"]),
       duration: journeyDurationBucket,
       timeToFirstOutput: journeyDurationBucket,

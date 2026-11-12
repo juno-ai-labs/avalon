@@ -788,6 +788,10 @@ those permissions without an attachment. Prefer attaching intended resources for
 clarity; an omitted attachment must not block an authorized read.
 
 # Choose triggers and test the method
+For app-requested work, load building-live-sites for the app binding and input
+setup. Keep the existing Sidekick execution policy and use standard artifact
+data tools for results; invocation triggers need no connector evaluator rules.
+
 Use an empty triggers array for reusable knowledge; do not add manual or scheduled
 triggers to make it valid. For work after an external change, load polling-for-events and follow
 its event-first setup and resource-registration procedure. When another person's own account

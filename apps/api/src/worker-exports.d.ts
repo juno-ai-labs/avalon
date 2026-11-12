@@ -1,5 +1,5 @@
 /**
- * Teach `ctx.exports` what this Worker exports.
+ * Teach `ctx.exports` what the API and artifact-serving Workers export.
  *
  * `Cloudflare.Exports` — the type of `ctx.exports`, the loopback bindings for
  * every top-level export — is derived from `GlobalProps["mainModule"]`, which
@@ -15,11 +15,12 @@
  * type-checking.
  */
 import type * as MainModule from "./index";
+import type * as ArtifactModule from "./artifacts/index";
 
 declare global {
   namespace Cloudflare {
     interface GlobalProps {
-      mainModule: typeof MainModule;
+      mainModule: typeof MainModule & Omit<typeof ArtifactModule, "default">;
     }
   }
 }

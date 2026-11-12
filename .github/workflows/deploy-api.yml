@@ -506,13 +506,13 @@ jobs:
                 --message "Promote verified GitHub deployment $DEPLOY_SHA" \
                 --yes
             }
-            # Keep the reader ahead of the writer during the hostname cutover.
-            promote_version wrangler.artifacts.global.jsonc "${{ steps.upload_global.outputs.global_artifacts }}"
             promote_version wrangler.documents.global.jsonc "${{ steps.upload_global.outputs.global_documents }}"
             promote_version wrangler.terminal.global.jsonc "${{ steps.upload_global.outputs.global_terminal }}"
             promote_version wrangler.telemetry.global.jsonc "${{ steps.upload_global.outputs.global_telemetry }}"
             promote_version wrangler.pricing.global.jsonc "${{ steps.upload_global.outputs.global_pricing }}"
             promote_version .wrangler.lakehouses.global.json "${{ steps.upload_global.outputs.global_api }}"
+            # The artifact caller requires the API's ArtifactSidekickDispatcher export.
+            promote_version wrangler.artifacts.global.jsonc "${{ steps.upload_global.outputs.global_artifacts }}"
           else
             node scripts/deploy-api-direct-region.mjs global
           fi
