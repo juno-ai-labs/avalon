@@ -1,18 +1,50 @@
 # Site design system
 
-The public site at `rallywith.ai` (the home page, `/start-fast/`, the product
-pages `/canvases/` and `/sidekicks/`, the blog, the `/compare/` pages and the
-Trust Center) is one visual system in one stylesheet, `apps/site/src/landing.css`.
-This document owns that system: the brand decisions behind it, the tokens, the
-page architecture, the hero carousel and the figures, and the rules a change
-to any marketing page must keep. It was set in the redesign that followed the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
+The homepage, blog, Trust Center, and Help Center share the organic pencil
+identity: warm paper, sage and ink, Instrument Serif headlines, Geist reading
+text, and one coordinated illustration master. `apps/site/src/site-theme.css`
+owns their shared fonts and palette. The homepage keeps its own composition;
+`reading.css` provides the blog and Trust Center's reading layouts and shared
+chrome, and `help.css` provides the manual's navigation and reading interface.
 
-The help center (`/help/`) has its own light and dark theme and is not part of
-this system; see [`help-center.md`](help-center.md). The download, Slack and
-404 pages still load `styles.css`. What the pages report is
-[`landing-page-tracking.md`](landing-page-tracking.md)'s; the three.js figure
-in the Technology section is [`landing-technology-schematic.md`](landing-technology-schematic.md)'s.
+The product pages, `/start-fast/`, and comparison pages continue to use the
+earlier `landing.css` system described later in this document. The download,
+Slack, and 404 pages still load `styles.css`.
+
+This document owns the visual decisions. The renderers and content contracts
+belong to [`site-blog.md`](site-blog.md) and [`help-center.md`](help-center.md).
+Tracking belongs to [`landing-page-tracking.md`](landing-page-tracking.md), and
+the three.js figure to [`landing-technology-schematic.md`](landing-technology-schematic.md).
+
+## Pencil-site boundaries
+
+The migrated pages stay light in either system appearance. Shared type and
+palette belong in `site-theme.css`; normal secondary text must remain readable
+on paper, sunken surfaces and sage. The homepage owns its composition in
+`home.css` and its illustrative examples in `home.ts`. Reading pages use
+`reading.css`, with `trust.css` and `help.css` retaining their own layouts.
+
+- **One artwork source:** `home-illustrations.ts` owns the 1448 × 1086 master
+  and its 724 × 543 quadrant crops. `getIllustration` supplies both SVG viewports
+  and raster preview crops. Update that geometry when replacing the master;
+  browser and card code must not keep separate coordinates. Retain the distinct
+  blue hexagonal Sidekick and compare the drawings as a set.
+- **Illustrative actions:** The homepage's Canvas/Sidekick examples change local
+  example data; they do not run jobs or connect to tools. Preserve that distinction
+  and the acquisition action IDs. The historical offer action is now an inline
+  browser-entry link; the timed offer card was removed.
+- **One plan catalog:** Homepage pricing reads `@rally/contracts/plans`, also
+  re-exported by the usage module. The separate, dependency-free entry lets
+  native Node site builds consume the catalog without traversing the runtime
+  schemas' extensionless imports. Trial terms are Organization-specific; the
+  static FAQ directs readers to Usage settings rather than promising defaults.
+- **One preview renderer:** Blog and help previews share `reading-card.ts` and
+  local static TTF derivatives, avoiding network/system font dependencies.
+  Titles and descriptions fit their columns before rasterization. Bump the help
+  card design version when its rendering changes, since its URLs are immutable.
+  Unversioned public pencil artwork and the homepage preview cache for one day.
+
+The following decisions apply to the earlier pages using `landing.css`.
 
 ## Decisions
 
@@ -38,12 +70,17 @@ the page live in the pages and in `access-copy.ts`, not here.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/site/src/landing.css` | The whole system: tokens, type roles, buttons, header, footer, bands, the demo, bento, timeline, pricing, product-page rows, and the blog, compare and Trust Center layouts |
-| `apps/site/src/trust.css` | Trust Center layout on top of `landing.css`'s tokens |
-| `apps/site/index.html` | The home page hero; everything below it comes from `landing-sections.html` |
-| `apps/site/start-fast/index.html` | The home page with the web app as the first button and its own note under the buttons; the same headline from `access-copy.ts` |
-| `apps/site/src/landing-sections.html` | The home page below the hero, shared with `/start-fast/` |
-| `apps/site/src/canvas-demo.html` | The launch-tracker Canvas: Fig. 03 on the home page and the figure on `/canvases/` |
+| `apps/site/src/site-theme.css` | Shared pencil-site fonts and paper, ink, sage tokens |
+| `apps/site/src/reading.css` | Blog layouts and reading-page header, footer and typography |
+| `apps/site/src/reading-card.ts` | Matching blog and manual social cards from local fonts and shared artwork |
+| `apps/site/src/landing.css` | The earlier product, start-fast and comparison system: tokens, chrome, demos, pricing and page layouts |
+| `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
+| `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
+| `apps/site/src/home-illustrations.ts` | Shared artwork geometry and accessible SVG views |
+| `apps/site/src/home-pricing.ts` | Homepage plan markup from the product catalog and weekly allocation function |
+| `apps/site/start-fast/index.html` | The earlier landing design, with copy from `access-copy.ts` and shared sections |
+| `apps/site/src/landing-sections.html` | Sections below the hero on `/start-fast/` |
+| `apps/site/src/canvas-demo.html` | The detailed launch-tracker figure on `/start-fast/` and `/canvases/` |
 | `apps/site/src/steps.ts` | `applyStep`, the step primitive the Canvas demo and the carousel share, and `whenVisible` |
 | `apps/site/canvases/index.html`, `apps/site/sidekicks/index.html` | The two product pages |
 | `apps/site/src/site-motion.ts` | The demo's timeline and the scroll reveals |
@@ -91,7 +128,7 @@ A page is a header, a hero, then **bands**. Each `.band` opens on a ruled
 index line (`.band-head`): the `.eyebrow` (a two-digit number and a name, in
 mono) sits in the left margin, three twelfths wide, and the serif headline and
 lede sit in the text column beside it. Content inside a band is cards on
-`--card` with hairline borders and a 14px radius. The home hero sets its
+`--card` with hairline borders and a 14px radius. The `/start-fast/` hero sets its
 headline across faint twelve-column guides, then puts the introduction and
 the actions on a ruled line below it, then Figure 1. Every marketing page
 ends with the `.closer` plate and the footer, whose oversized italic
@@ -99,7 +136,7 @@ wordmark closes the page.
 
 The hero stacks three equal-width actions vertically: web entry, macOS download,
 then Linux x64 Debian download, labeled Linux (.deb). The group is rendered by
-`rally:desktop-downloads` on both `/` and `/start-fast/`. At narrower widths the
+`rally:desktop-downloads` on `/start-fast/`. At narrower widths the
 hero columns stack and the buttons fill the available width on small screens; touch-only devices retain the web
 entry as their action.
 
@@ -250,6 +287,26 @@ automated test: it is checked in a real browser at desktop and phone widths,
 in light and dark, before a change ships, as the repository's rule on visible changes requires.
 
 ## Changelog
+
+### 2026-11-12 — A pencil identity for the homepage and reading pages
+
+**What changed:** The homepage has an independent pencil composition and manual
+Canvas/Sidekick examples. Blog, Trust Center and help share its theme and artwork;
+pricing reads the current product catalog. The earlier homepage remains at
+`/start-fast/`.
+
+**Why:** The requested direction was a fresh design around the current product.
+A shared theme and illustration master keep the new pages consistent, while
+pricing from the product catalog avoids a second set of plan amounts.
+
+**Considered and rejected:** Restyling `landing.css` would carry the earlier
+carousel and figures into a brief that asked for a fresh start, and would change
+product/comparison pages outside the migration. Generating scenes independently
+caused style drift, so browser views and card crops share one coordinated master.
+
+**Consequences:** Shared brand changes belong in `site-theme.css`. Keep one
+homepage rule per selector and breakpoint, one source for artwork geometry,
+illustrative-only demo actions, catalog-driven pricing, and acquisition IDs.
 
 ### 2026-11-09 — The site becomes "the shared page" and leads with live artifacts
 
