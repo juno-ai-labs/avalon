@@ -57,8 +57,9 @@ reservation. Desktop and browser use the same server admission checks.
 The following legacy trial/coupon behavior remains available for deployments that
 have not enabled the signup campaign.
 
-Administrators open Settings → Organization → Billing, select an offer and supported
-currency and optionally enable overages. **Continue to checkout** and **Manage
+Administrators open Settings → Organization → Billing, select an offer and
+optionally enable overages. Checkout always uses USD; the page has no currency
+control and only lists offers that support USD. **Continue to checkout** and **Manage
 billing** open Stripe as soon as the session URL returns; web reserves a tab on
 click so popup permission survives the request. Returning to Settings refreshes
 billing status. The base
@@ -73,9 +74,9 @@ show the blocking reason on hover and keyboard focus. The UI follows these rules
 | Control | When changes are available |
 | --- | --- |
 | All billing changes | Organization administrator, outside a support session, online, with billing loaded and no request in progress. |
-| Checkout | No live subscription, an enabled catalog offer and its supported currency, and the checkout endpoint available. Stripe collects billing details. |
+| Checkout | No live subscription, an enabled USD catalog offer, and the checkout endpoint available. Stripe collects billing details. |
 | Manage billing / Add billing details | A live subscription and the portal endpoint available, including past-due or paused subscriptions that need repair in Stripe. |
-| Plan / Currency | Before checkout. Existing subscription plans are managed in Stripe; the saved currency stays visible and locked. The legacy plan picker is available only when billing is disabled. |
+| Plan | Before checkout. Existing subscription plans are managed in Stripe. The legacy plan picker is available only when billing is disabled. |
 | Overages before checkout | A selected offer that supports overages in USD. Consent is passed to checkout; a saved payment method is not required yet. |
 | Enable overages on a subscription | Active or trialing subscription, supported USD overages, billing readiness (payment method and any required tax location), and the overage endpoint available. Credits and remaining quota do not affect eligibility. |
 | Disable overages on a subscription | Active or trialing subscription with consent already enabled and the overage endpoint available. Losing payment readiness or plan/currency eligibility must not block revoking consent. |
@@ -773,7 +774,7 @@ landing-page prose must be kept aligned separately.
 ### 2026-11-12 — Keep Billing visible across permissions and loading states
 
 Billing moved out of general Organization settings into its own child page. The
-page always renders trial, subscription, plan, currency, overage consent, credits,
+page always renders trial, subscription, plan, overage consent, credits,
 weekly quota and monthly usage, including zero usage. Disabled controls explain
 permissions, unavailable services and subscription constraints in tooltips.
 
@@ -787,7 +788,8 @@ explicitly. Scoped query keys prevent one Organization's credits reaching anothe
 Overage controls distinguish checkout consent from changing an existing
 subscription: only active/trialing subscriptions can change consent, and enabling
 requirements never block disabling consent. Offline restrictions do not depend on
-whether the quota read succeeded.
+whether the quota read succeeded. Checkout is fixed to USD and has no currency
+control; offers without USD support cannot be selected.
 
 ### 2026-11-12 — Require an expiration within two years for overage credits
 
