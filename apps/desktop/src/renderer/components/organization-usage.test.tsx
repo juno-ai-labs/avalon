@@ -94,7 +94,7 @@ describe('Usage in Settings', () => {
     expect(meter).toHaveAttribute('aria-valuemin', '0');
     expect(meter).toHaveAttribute('aria-valuemax', '100');
     expect(meter).not.toHaveClass('meter-warning');
-    expect(screen.getByText('Starter plan')).toBeVisible();
+    expect(screen.getByText('Start plan')).toBeVisible();
     expect(screen.getByText('72% left')).toBeVisible();
     expect(screen.getByText('Resets Thursday, October 8 at 9:00 AM. Shared by everyone in Juno Labs.')).toBeVisible();
     expect(screen.queryByText('Usage beyond quota this month')).not.toBeInTheDocument();
@@ -106,14 +106,17 @@ describe('Usage in Settings', () => {
     renderSection(api);
 
     const picker = await screen.findByRole('combobox', { name: 'Plan' });
-    expect(picker).toHaveTextContent('Starter plan');
+    expect(picker).toHaveTextContent('Start plan');
     fireEvent.click(picker);
-    expect(screen.getByRole('option', { name: /Growth plan/ })).toHaveTextContent('$250 a month');
-    fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
+    expect(screen.getByRole('option', { name: /Start plan/ })).toHaveTextContent('$0 a month');
+    expect(screen.getByRole('option', { name: /Grow plan/ })).toHaveTextContent('$100 a month');
+    expect(screen.getByRole('option', { name: /Max plan/ })).toHaveTextContent('$250 a month');
+    expect(screen.getByRole('option', { name: /Ultra plan/ })).toHaveTextContent('$1,000 a month');
+    fireEvent.keyDown(screen.getByRole('option', { name: /Grow plan/ }), { key: 'Enter' });
 
     expect(await screen.findByText('44% left')).toBeVisible();
     expect(api.setWorkspacePlan).toHaveBeenCalledWith('growth');
-    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Growth plan');
+    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Grow plan');
     expect(await usageCacheSlice.read(SCOPE, 'usage')).toMatchObject({ usage: { plan: 'growth', quotaRemainingPercent: 44 } });
   });
 
@@ -127,14 +130,14 @@ describe('Usage in Settings', () => {
     renderSection(api);
 
     fireEvent.click(await screen.findByRole('combobox', { name: 'Plan' }));
-    fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
+    fireEvent.keyDown(screen.getByRole('option', { name: /Grow plan/ }), { key: 'Enter' });
     expect(await screen.findByText('44% left')).toBeVisible();
 
     answerRead(usage(72));
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(screen.getByText('44% left')).toBeVisible();
-    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Growth plan');
+    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Grow plan');
     expect(await usageCacheSlice.read(SCOPE, 'usage')).toMatchObject({ usage: { plan: 'growth' } });
   });
 
@@ -144,18 +147,18 @@ describe('Usage in Settings', () => {
     renderSection(api);
 
     fireEvent.click(await screen.findByRole('combobox', { name: 'Plan' }));
-    fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
+    fireEvent.keyDown(screen.getByRole('option', { name: /Grow plan/ }), { key: 'Enter' });
 
     expect(await screen.findByText('The plan could not be changed. This action requires a workspace administrator')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'OK' }));
-    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Starter plan');
+    expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Start plan');
   });
 
   it('shows the plan to a member who is not an administrator but does not let them change it', async () => {
     renderSection(apiAnswering(usage(72)), SCOPE, false);
 
     const picker = await screen.findByRole('combobox', { name: 'Plan' });
-    expect(picker).toHaveTextContent('Starter plan');
+    expect(picker).toHaveTextContent('Start plan');
     expect(picker).toBeDisabled();
   });
 
@@ -185,7 +188,7 @@ describe('Usage in Settings', () => {
     expect(await screen.findByRole('meter', { name: 'Weekly quota left' })).not.toHaveClass('meter-warning');
   });
 
-  it('says the quota is used at 0% and shows this month’s overage struck through and not billed', async () => {
+  it('shows beyond-quota usage without promising that the amount is waived', async () => {
     renderSection(apiAnswering(usage(0, 12_400_000)));
 
     expect(await screen.findByText('All used')).toBeVisible();
@@ -193,18 +196,18 @@ describe('Usage in Settings', () => {
     expect(screen.getByText('Usage beyond quota this month')).toBeVisible();
     expect(screen.getByText('Oct 3 to Nov 2')).toBeVisible();
     const amount = screen.getByText('$12.40');
-    expect(amount.tagName).toBe('S');
+    expect(amount.tagName).toBe('SPAN');
 
-    fireEvent.focus(screen.getByText('Not billed'));
-    expect(await screen.findByRole('tooltip')).toHaveTextContent("Rally isn't charging for usage beyond your plan yet.");
+    fireEvent.focus(screen.getByText('Usage total'));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent("Charges for earlier opted-in usage may still appear after cancellation.");
   });
 
-  it('explains the Not billed tag on hover as well as focus', async () => {
+  it('explains that usage totals can include earlier billable periods', async () => {
     renderSection(apiAnswering(usage(40, 1_000_000)));
 
-    fireEvent.pointerMove(await screen.findByText('Not billed'), { pointerType: 'mouse' });
+    fireEvent.pointerMove(await screen.findByText('Usage total'), { pointerType: 'mouse' });
 
-    expect(await screen.findByRole('tooltip')).toHaveTextContent("Rally isn't charging for usage beyond your plan yet.");
+    expect(await screen.findByRole('tooltip')).toHaveTextContent("Charges for earlier opted-in usage may still appear after cancellation.");
   });
 
   it('draws an empty track and says it is checking while nothing is cached', () => {
@@ -323,17 +326,26 @@ describe('Usage in the Organization menu', () => {
   });
 
   it('says overage is enabled once the quota runs low', async () => {
-    renderMenuItem(apiAnswering(usage(19)));
+    const answer = usage(19); answer.overage.billingEnabled = true;
+    renderMenuItem(apiAnswering(answer));
     expect(await screen.findByRole('meter', { name: 'Weekly quota left' })).toHaveClass('meter-warning');
 
     expect(await screen.findByText('19% left till Thu 9:00 AM, overage enabled')).toBeVisible();
   });
 
   it('says overage is enabled at 0%', async () => {
-    renderMenuItem(apiAnswering(usage(0, 5_000_000)));
+    const answer = usage(0, 5_000_000); answer.overage.billingEnabled = true;
+    renderMenuItem(apiAnswering(answer));
 
     expect(await screen.findByText('0% left till Thu 9:00 AM, overage enabled')).toBeVisible();
     expect(screen.queryByText('Not billed')).not.toBeInTheDocument();
+  });
+
+  it('does not advertise overages when the current period is not billable', async () => {
+    const answer = usage(0); answer.overage.billingEnabled = false;
+    renderMenuItem(apiAnswering(answer));
+    expect(await screen.findByText('0% left till Thu 9:00 AM')).toBeVisible();
+    expect(screen.queryByText(/overage enabled/)).not.toBeInTheDocument();
   });
 
   it('hides the line while loading with nothing cached', () => {
@@ -355,4 +367,44 @@ describe('Usage in the Organization menu', () => {
     await waitFor(() => expect(screen.queryByText('55% left till Thu 9:00 AM')).not.toBeInTheDocument());
     expect(screen.queryAllByRole('menuitem')).toHaveLength(1);
   });
+});
+
+it('keeps the plan picker disabled when billing status fails and retries explicitly', async () => {
+  const api: OrganizationPlanApi = { ...apiAnswering(usage(72)), getBillingStatus: vi.fn(async () => { throw new Error('Billing read failed'); }) };
+  renderSection(api);
+  expect(await screen.findByText(/Billing could not be loaded/)).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+  expect(screen.getByRole('combobox', { name: 'Plan' })).toBeDisabled();
+  vi.mocked(api.getBillingStatus!).mockResolvedValue({ enabled: false });
+  fireEvent.click(screen.getByRole('button', { name: 'Retry billing' }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Plan' })).not.toBeDisabled());
+});
+
+it('refreshes billing after returning from hosted checkout while Settings stays mounted', async () => {
+  let subscribed = false;
+  const api: OrganizationPlanApi = { ...apiAnswering(usage(72)), getBillingStatus: vi.fn(async () => ({ enabled: true as const, status: subscribed ? 'active' : 'none', subscribed,
+    trialEndsAt: '2020-01-01T00:00:00Z', overageEnabled: false, offers: [{ id: 'start', name: 'Start', plan: 'starter' as const, currencies: ['usd'], overageAvailable: false }] })) };
+  renderSection(api);
+  expect(await screen.findByText('Continue to checkout')).toBeVisible();
+  expect(screen.getByText(/Start plan. Trial ended/)).toBeVisible();
+  subscribed = true;
+  fireEvent(window, new Event('focus'));
+  expect(await screen.findByText('Manage billing')).toBeVisible();
+  expect(screen.getByText(/Start plan · Subscription: active/)).toBeVisible();
+});
+
+
+it('keeps the plan picker disabled while billing status is unknown', async () => {
+  const api: OrganizationPlanApi = { ...apiAnswering(usage(72)), getBillingStatus: () => new Promise(() => undefined) };
+  renderSection(api);
+  expect(await screen.findByRole('combobox', { name: 'Plan' })).toBeDisabled();
+});
+
+it('does not describe previously billable usage as waived after cancellation', async () => {
+  const answer = usage(0, 12_400_000); answer.overage.billingEnabled = false;
+  renderSection(apiAnswering(answer));
+  expect(await screen.findByText('$12.40')).not.toHaveProperty('tagName', 'S');
+  expect(screen.queryByText('Not billed')).not.toBeInTheDocument();
+  fireEvent.focus(screen.getByText('Usage total'));
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('Charges for earlier opted-in usage may still appear after cancellation.');
 });

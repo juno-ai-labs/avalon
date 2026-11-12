@@ -65,11 +65,11 @@ Tagged links on the landing page, by `data-site-action` id:
 | --- | --- | --- |
 | `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally, on every device | primary_cta · header |
 | `web-app-hero` | Hero Sign up now (app.rallywith.ai), the left and primary button | secondary_cta · hero |
-| `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai, with `pilotOfferFirstSeen`), which slides in two seconds after the page loads | primary_cta · offer |
+| `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai), which slides in two seconds after the page loads | primary_cta · offer |
 | `download-hero` | Hero Download the macOS app, before Linux, hidden on touch-only devices | download · hero |
 | `download-linux-hero` | Hero Download for Linux, below macOS, hidden on touch-only devices | download · hero |
-| `download-pricing-start` / `-grow` | Start and Grow Start free trial buttons | download · pricing · plan |
-| `contact-pricing-enterprise` | Grown up Contact us (emails Katherine) | founder_contact · pricing · enterprise |
+| `download-pricing-start` / `-grow` / `-max` / `-ultra` | Start for free and paid-plan Start free trial buttons | download · pricing · plan |
+| `contact-pricing-enterprise` | Pricing contact link (emails Katherine) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Katherine and Alex), in the home page's Sidekicks band and the `/sidekicks/` hero | demo_request · sidekicks |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
 
@@ -84,15 +84,15 @@ session storage before removing the URL field, so refreshing before sign-in
 keeps the landing attribution. Authentication retires it. See
 [`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
 
-The pilot offer card is on `/` only, not `/start-fast/`. It gives each visitor
-their own deadline: six days after the day this browser first showed the card,
-stored as that local date in `rally.site.pilot-offer-first-seen.v1` and kept on
-later visits. After that day the card stops showing; whoever signs up by their
-date gets the offer. Its Sign up link carries the first-visit date as
-`pilotOfferFirstSeen=YYYY-MM-DD`, which the web app does not read yet. Closing
-the card or following its link keeps it away in that browser
-(`rally.site.pilot-offer-dismissed.v1` in local storage). Neither its
-appearance nor its close is reported.
+The pilot offer card is on `/` only, not `/start-fast/`. It advertises two months
+without subscription fees on an Organization's first paid subscription while the
+pilot is enabled; included usage remains available and optional overages are billed
+separately. Eligibility and redemption are server-side, described in
+[`stripe-billing.md`](stripe-billing.md). There is no visitor-specific deadline or
+`pilotOfferFirstSeen` query parameter. Closing the card or following its link keeps
+it away in that browser (`rally.site.pilot-offer-dismissed.v1` in local storage).
+Neither its appearance nor its close is reported. Remove the card when ending the
+pilot campaign; billing configuration does not rebuild the static site.
 
 Not reported as site events: scrolling, section views, header nav clicks, the
 "See pricing" and product-page links. The `/canvases/` and `/sidekicks/` pages count as page

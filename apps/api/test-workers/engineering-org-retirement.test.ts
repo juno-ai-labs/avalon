@@ -18,7 +18,7 @@ import { workspaceDOName } from "../src/durable-objects/names";
 import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridge";
 import type { Env } from "../src/env";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
-import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
+import { ensureBillingClosureSchema, seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ef40");
@@ -41,6 +41,7 @@ beforeEach(async () => {
   await seedInspectableWorkspace(env.DB, {
     workspaceId: WORKSPACE_ID, userId: USER_ID, sessionId: "00000000-0000-7000-8000-00000000ef43", at: NOW,
   });
+  await ensureBillingClosureSchema(env.DB);
   // The door's fence write stamps `updated_at`, which the shared fixture leaves out.
   await env.DB.prepare("ALTER TABLE workspaces ADD COLUMN updated_at TEXT").run();
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");

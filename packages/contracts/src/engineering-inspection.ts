@@ -1,3 +1,5 @@
+import type { BillingAdminMutation, BillingCatalogMutation, BillingMutationResult, BillingCatalogInspection, OrgBillingResult, InspectOrgBillingSchema, InspectBillingCatalogSchema } from "./billing-admin";
+import { GrantOverageCreditSchema, GrantTrialMonthsSchema, type TrialMonthsGrant, type BillingCredits, type OverageCredit } from "./billing";
 import { OrganizationUsageSchema, PlanIdSchema } from "./usage";
 import { z } from "zod";
 import { deferredZodSchema } from "./deferred-zod-schema";
@@ -497,8 +499,25 @@ export type InspectEngineeringUsageInput = z.infer<typeof InspectEngineeringUsag
 export type ChangeEngineeringPlanInput = z.infer<typeof ChangeEngineeringPlanInputSchema>;
 export type EngineeringUsageResult = z.infer<typeof EngineeringUsageResultSchema>;
 
+export const GrantEngineeringTrialMonthsInputSchema = GrantTrialMonthsSchema.extend({ orgId: WorkspaceIdSchema });
+export type GrantEngineeringTrialMonthsInput = z.infer<typeof GrantEngineeringTrialMonthsInputSchema>;
+
+export const InspectEngineeringCreditsInputSchema = z.strictObject({ orgId: WorkspaceIdSchema });
+export const GrantEngineeringCreditInputSchema = GrantOverageCreditSchema.extend({ orgId: WorkspaceIdSchema });
+export const ExpireEngineeringCreditInputSchema = InspectEngineeringCreditsInputSchema.extend({ grantId: z.string().startsWith("credgr_") });
+export type GrantEngineeringCreditInput = z.infer<typeof GrantEngineeringCreditInputSchema>;
+export type ExpireEngineeringCreditInput = z.infer<typeof ExpireEngineeringCreditInputSchema>;
+
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
 export interface EngineeringInspectionRpcBinding {
+  inspectOrgBilling(input: z.infer<typeof InspectOrgBillingSchema>): Promise<OrgBillingResult>;
+  administerOrgBilling(input: BillingAdminMutation, operator: EngineeringOperator): Promise<BillingMutationResult>;
+  inspectBillingCatalog(input: z.infer<typeof InspectBillingCatalogSchema>): Promise<BillingCatalogInspection>;
+  administerBillingCatalog(input: BillingCatalogMutation, operator: EngineeringOperator): Promise<BillingMutationResult>;
+  grantTrialMonths(input: GrantEngineeringTrialMonthsInput, operator: EngineeringOperator): Promise<TrialMonthsGrant>;
+  inspectOverageCredits(input: z.infer<typeof InspectEngineeringCreditsInputSchema>): Promise<BillingCredits>;
+  grantOverageCredit(input: GrantEngineeringCreditInput, operator: EngineeringOperator): Promise<OverageCredit>;
+  expireOverageCredit(input: ExpireEngineeringCreditInput, operator: EngineeringOperator): Promise<OverageCredit>;
   inspectOrganizationSettings(input: InspectEngineeringOrgSettingsInput): Promise<EngineeringOrgSettingsResult>;
   updateOrganizationSettings(input: UpdateEngineeringOrgSettingsInput, operator: EngineeringOperator): Promise<EngineeringOrgSettingsResult>;
   inspectOrganizationUsage(input: InspectEngineeringUsageInput): Promise<EngineeringUsageResult>;

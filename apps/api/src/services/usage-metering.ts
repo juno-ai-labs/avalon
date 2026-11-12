@@ -166,7 +166,9 @@ export async function applyUsageBatch(
       organizationPays ? 1 : 0, event.model, event.refs.userId ?? null, event.refs.workstreamId ?? null,
       event.refs.substreamId ?? null, event.refs.sidekickId ?? null, receivedAt,
     ));
-    // Runs only if the insert above added the event. A new row's quota is
+    // Preserve a sibling monthly segment's quota for this same week, including
+    // across catalog changes. Runs only if the insert above added the event.
+    // Without a sibling, a new row's quota is
     // the plan in force at the end of its week, read from
     // `usage_plan_changes` inside this statement: the latest change before
     // the week ended, else the plan the first later change replaced, else the
@@ -176,12 +178,14 @@ export async function applyUsageBatch(
     // quota, which only a plan change rewrites.
     statements.push(env.USAGE_DB.prepare(
       `INSERT INTO usage_rollups (workspace_id, week_start, period_start, quota_microusd, organization_microusd, rally_microusd)
-       SELECT ?, ?, ?, ${PLAN_QUOTA_SQL}, ?, ? WHERE changes() = 1
+       SELECT ?, ?, ?, COALESCE(
+         (SELECT quota_microusd FROM usage_rollups WHERE workspace_id = ? AND week_start = ? LIMIT 1),
+         ${PLAN_QUOTA_SQL}), ?, ? WHERE changes() = 1
        ON CONFLICT (workspace_id, week_start, period_start) DO UPDATE SET
          organization_microusd = organization_microusd + excluded.organization_microusd,
          rally_microusd = rally_microusd + excluded.rally_microusd`,
     ).bind(
-      event.workspaceId, weekStart, periodStart,
+      event.workspaceId, weekStart, periodStart, event.workspaceId, weekStart,
       event.workspaceId, weekEnd, event.workspaceId, weekEnd, plan,
       ...PLAN_QUOTA_BINDINGS,
       organizationPays ? event.costMicrousd : 0, organizationPays ? 0 : event.costMicrousd,
@@ -212,9 +216,10 @@ async function workspacePlan(
  * starts (a week that straddles the boundary) up to now.
  */
 export async function readOrganizationUsage(
-  env: Pick<Env, "DB" | "USAGE_DB">,
+  env: Pick<Env, "DB" | "USAGE_DB" | "BILLING_CONFIG">,
   workspaceId: string,
   nowMs: number,
+  cutoff?: { at: number; quotaMicrousd: number },
 ): Promise<OrganizationUsage | null> {
   const workspace = await workspacePlan(env, workspaceId);
   if (!workspace) return null;
@@ -224,7 +229,26 @@ export async function readOrganizationUsage(
        FROM usage_rollups WHERE workspace_id = ? AND week_start >= ?`,
   ).bind(workspaceId, new Date(period.start - WEEK_MS).toISOString())
     .all<{ week_start: string; period_start: string; quota_microusd: number; organization_microusd: number }>();
-  return deriveOrganizationUsage({
+  if (cutoff) {
+    const cutoffWeek = usageWeekStart(workspace.createdAtMs, cutoff.at - 1);
+    if (cutoffWeek < Date.now() - USAGE_EVENTS_D1_RETENTION_DAYS * 24 * 60 * 60 * 1000) {
+      throw new Error('billing_cutoff_history_expired');
+    }
+    for (const row of rows.results) {
+      const weekStart = Date.parse(row.week_start);
+      if (weekStart > cutoffWeek) { row.organization_microusd = 0; continue; }
+      if (weekStart === cutoffWeek) {
+        const partStart = Math.max(weekStart, Date.parse(row.period_start));
+        const partEnd = Math.min(cutoff.at, usagePeriod(workspace.createdAtMs, Date.parse(row.period_start)).end);
+        const sum = await env.USAGE_DB.prepare(`SELECT COALESCE(SUM(cost_microusd), 0) AS total FROM usage_events
+          WHERE workspace_id = ? AND organization_pays = 1 AND occurred_at >= ? AND occurred_at < ?`)
+          .bind(workspaceId, new Date(partStart).toISOString(), new Date(partEnd).toISOString()).first<{ total: number }>();
+        row.organization_microusd = sum!.total;
+        row.quota_microusd = cutoff.quotaMicrousd;
+      }
+    }
+  }
+  const result = deriveOrganizationUsage({
     plan: workspace.plan,
     createdAtMs: workspace.createdAtMs,
     nowMs,
@@ -235,6 +259,10 @@ export async function readOrganizationUsage(
       organizationMicrousd: row.organization_microusd,
     })),
   });
+  const billing = env.BILLING_CONFIG ? await env.DB.prepare('SELECT overage_enabled, status, overage_started_at FROM billing_accounts WHERE workspace_id = ?')
+    .bind(workspaceId).first<{ overage_enabled: number; status: string; overage_started_at: number | null }>() : null;
+  if (billing) result.overage.billingEnabled = billing.overage_enabled === 1 && ['active', 'trialing'].includes(billing.status) && billing.overage_started_at !== null && billing.overage_started_at * 1000 <= period.start;
+  return result;
 }
 
 /**
@@ -252,6 +280,7 @@ export async function setWorkspacePlan(
   workspaceId: string,
   plan: PlanId,
   nowMs: number,
+  operatorOverride = false,
 ): Promise<boolean> {
   // Only a workspace this region owns: a row for another region's workspace
   // can sit in the table, and its ledger is not here.
@@ -267,8 +296,8 @@ export async function setWorkspacePlan(
     env.USAGE_DB.prepare(`UPDATE usage_rollups SET quota_microusd = ? WHERE workspace_id = ? AND week_start = ?`)
       .bind(weeklyQuotaMicrousd(plan), workspaceId, weekStart),
   ]);
-  await env.DB.prepare(`UPDATE workspaces SET plan = ?, updated_at = ? WHERE id = ?`)
-    .bind(plan, at, workspaceId).run();
+  await env.DB.prepare(`UPDATE workspaces SET plan = ?, updated_at = ?, billing_plan_override = ? WHERE id = ?`)
+    .bind(plan, at, operatorOverride ? 1 : 0, workspaceId).run();
   return true;
 }
 

@@ -92,6 +92,9 @@ describe("development authentication", () => {
       DB: sqliteD1(database),
       PUBLIC_API_BASE_URL: "http://127.0.0.1:8787",
     }));
+    // Both membership transitions occur in one SQLite second, reproducing the
+    // duplicate qualification that an outer UPSERT must not turn into a failure.
+    database.function("unixepoch", () => 1794441600);
     const first = await service.createDevelopmentSession("Rally Development");
     database.prepare("UPDATE workspaces SET abandoned_at = ? WHERE id = ?")
       .run("2026-09-01T00:00:00.000Z", first.workspace!.id);
@@ -102,5 +105,7 @@ describe("development authentication", () => {
       .resolves.toMatchObject({ workspace: { id: first.workspace!.id } });
     expect(database.prepare("SELECT abandoned_at FROM workspaces WHERE id = ?").get(first.workspace!.id))
       .toEqual({ abandoned_at: null });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM billing_team_qualifications WHERE workspace_id = ?").get(first.workspace!.id))
+      .toEqual({ count: 1 });
   });
 });

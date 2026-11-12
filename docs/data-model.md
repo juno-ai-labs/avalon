@@ -105,6 +105,25 @@ D1 migration `0130_model_selector_visibility.sql` adds the Organization profile
 Boolean `workspaces.model_selector_visible` (`0`/`1`, default `0`); see
 [feature flags](feature-flags.md#organization-model-selector-visibility).
 
+D1 migration `0131_billing.sql` adds Organization billing accounts, per-subscription
+paid terms and billable intervals, membership-triggered trial awards and permanent overage receipts.
+`billing_catalog` versions regional commercial offers/pilot configuration while
+retaining retired mappings. `billing_admin_operations` persists frozen subscription,
+refund, invoice and catalog intent plus provider receipts for uncertain-write recovery.
+`billing_trial_operations` retains fixed subscription-fee trial deadlines and delivery
+receipts, so retries cannot repeatedly add calendar months.
+`billing_credit_operations` stores immutable operator request receipts and Stripe
+grant IDs; balances and redemption remain in Stripe. `billing_overage_subscriptions`
+retains provisioning generations and cleanup markers for dedicated metered billing.
+Overage receipts retain their meter and delivery timestamp for absolute-hour replay.
+Membership qualification counts persist before account creation and survive
+departures. Accounts retain the zero-price Stripe trial-record ID, cleanup receipt
+and last synchronized award deadline; paid terms retain final-invoice completion.
+Intervals retain eligibility cutoffs and pre-downgrade quota snapshots across
+suspension/resumption. Serialization belongs to the regional billing actor; there
+is no persistent D1 ownership token to recover after a runtime crash.
+`workspaces.billing_plan_override` preserves explicit engineering overrides. [Stripe billing](stripe-billing.md) owns their lifecycle.
+
 ## Message issue reports
 
 [Message issues](message-issues.md) owns the separate `MESSAGE_ISSUES_DB` schema
@@ -1050,14 +1069,20 @@ and `parent_access_operations` with migration 94.
 
 ## Usage metering
 
-Migration 0118 adds `workspaces.plan` (`starter` or `growth`, default
+Migration 0118 adds `workspaces.plan` (now `starter`, `growth`, `max` or `ultra`, default
 `starter`), with no CHECK: the plan set is a moving product decision, and
 `PlanIdSchema` parses it on every read. The ledger itself is in a separate D1 database, `USAGE_DB`, with
 its own migrations in `packages/db/usage-migrations/`: `usage_events`, one row
 per metered call keyed by `event_id` and kept 90 days, and `usage_rollups`,
 one row per workspace per quota week and monthly period, kept for good. Every
 event is also in the Iceberg table `avalon.usage_events` in R2. Overage is not
-stored; it is derived on read. See [usage metering](usage-metering.md).
+stored; it is derived on read. Usage migration 0003 rebuilds `usage_plan_changes`
+without the old two-plan CHECK constraints, preserving its rows and primary key.
+Usage migration 0004 creates `billing_usage_hours`, keyed by Organization, UTC hour
+and payer, backfills retained events, and maintains totals/revisions with an insert
+trigger. Sent/confirmed revisions and provider diagnostics survive raw-event
+retention and support replay of absolute hourly totals.
+See [usage metering](usage-metering.md).
 
 ## Push devices
 
@@ -1081,6 +1106,21 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-11-12 — Retain Organization billing and financial delivery receipts
+
+Migration 0131 records trial qualification, paid consent intervals, immutable
+closed-period overages, operator credit requests and fixed trial-month grant
+deadlines, versioned commercial catalog overrides, and durable subscription/refund/
+invoice administration receipts. Catalog history is retained so changing future
+signups cannot make existing subscriptions unrecognizable. Trial receipts retain the original target so uncertain retries cannot
+award additional months repeatedly. Native credit balances stay
+in Stripe; local grant and metered-subscription receipts recover uncertain writes
+without relying on the provider's short idempotency retention. Dedicated metered
+overages keep credits off plan fees and preserve cancellation tails. A second
+local credit balance was rejected because it would create another financial
+authority. The regional billing actor serializes financial writes; these tables
+are audit and recovery data, not persistent runtime locks.
 
 ### 2026-11-09 — Persist opaque Cloudflare sending claims in D1
 

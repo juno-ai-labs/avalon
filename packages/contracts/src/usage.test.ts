@@ -14,9 +14,11 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 const created = at("2026-10-01T09:00:00.000Z");
 
 describe("weeklyQuotaMicrousd", () => {
-  it("is twice the monthly price divided by four", () => {
-    expect(weeklyQuotaMicrousd("starter")).toBe(50_000_000);
-    expect(weeklyQuotaMicrousd("growth")).toBe(125_000_000);
+  it("allocates the included allowance independently of the subscription price", () => {
+    expect(weeklyQuotaMicrousd("starter")).toBe(10_000_000);
+    expect(weeklyQuotaMicrousd("ultra")).toBe(500_000_000);
+    expect(weeklyQuotaMicrousd("growth")).toBe(50_000_000);
+    expect(weeklyQuotaMicrousd("max")).toBe(125_000_000);
   });
 });
 
@@ -51,15 +53,15 @@ describe("usagePeriod", () => {
 });
 
 describe("deriveOrganizationUsage", () => {
-  const starter = weeklyQuotaMicrousd("starter");
+  const starter = weeklyQuotaMicrousd("growth");
   const row = (weekStart: string, periodStart: string, spent: number, quota = starter): UsageRollup => ({
     weekStart: at(weekStart), periodStart: at(periodStart), quotaMicrousd: quota, organizationMicrousd: spent,
   });
 
   it("reads 100% with no usage and names the next reset", () => {
-    const usage = deriveOrganizationUsage({ plan: "starter", createdAtMs: created, nowMs: at("2026-10-03T00:00:00.000Z"), rollups: [] });
+    const usage = deriveOrganizationUsage({ plan: "growth", createdAtMs: created, nowMs: at("2026-10-03T00:00:00.000Z"), rollups: [] });
     expect(usage).toEqual({
-      plan: "starter",
+      plan: "growth",
       quotaRemainingPercent: 100,
       weekResetsAt: "2026-10-08T09:00:00.000Z",
       overage: { amountMicrousd: 0, periodStart: "2026-10-01T09:00:00.000Z", periodEndsAt: "2026-11-01T09:00:00.000Z", billed: false },
@@ -68,10 +70,10 @@ describe("deriveOrganizationUsage", () => {
 
   it("rounds the percentage left down and floors it at zero, with overage past the quota", () => {
     const now = at("2026-10-03T00:00:00.000Z");
-    const partly = deriveOrganizationUsage({ plan: "starter", createdAtMs: created, nowMs: now,
+    const partly = deriveOrganizationUsage({ plan: "growth", createdAtMs: created, nowMs: now,
       rollups: [row("2026-10-01T09:00:00.000Z", "2026-10-01T09:00:00.000Z", 14_000_001)] });
     expect(partly.quotaRemainingPercent).toBe(71);
-    const over = deriveOrganizationUsage({ plan: "starter", createdAtMs: created, nowMs: now,
+    const over = deriveOrganizationUsage({ plan: "growth", createdAtMs: created, nowMs: now,
       rollups: [row("2026-10-01T09:00:00.000Z", "2026-10-01T09:00:00.000Z", 70_000_000)] });
     expect(over.quotaRemainingPercent).toBe(0);
     expect(over.overage.amountMicrousd).toBe(20_000_000);
@@ -83,22 +85,22 @@ describe("deriveOrganizationUsage", () => {
       row("2026-10-29T09:00:00.000Z", "2026-10-01T09:00:00.000Z", 40_000_000),
       row("2026-10-29T09:00:00.000Z", "2026-11-01T09:00:00.000Z", 20_000_000),
     ];
-    const november = deriveOrganizationUsage({ plan: "starter", createdAtMs: created, nowMs: at("2026-11-02T00:00:00.000Z"), rollups });
+    const november = deriveOrganizationUsage({ plan: "growth", createdAtMs: created, nowMs: at("2026-11-02T00:00:00.000Z"), rollups });
     expect(november.overage.amountMicrousd).toBe(10_000_000);
     expect(november.quotaRemainingPercent).toBe(0);
-    const october = deriveOrganizationUsage({ plan: "starter", createdAtMs: created, nowMs: at("2026-10-31T00:00:00.000Z"), rollups });
+    const october = deriveOrganizationUsage({ plan: "growth", createdAtMs: created, nowMs: at("2026-10-31T00:00:00.000Z"), rollups });
     expect(october.overage.amountMicrousd).toBe(0);
   });
 
   it("re-prices the current week against a changed quota", () => {
-    const usage = deriveOrganizationUsage({ plan: "growth", createdAtMs: created, nowMs: at("2026-10-03T00:00:00.000Z"),
-      rollups: [row("2026-10-01T09:00:00.000Z", "2026-10-01T09:00:00.000Z", 70_000_000, weeklyQuotaMicrousd("growth"))] });
+    const usage = deriveOrganizationUsage({ plan: "max", createdAtMs: created, nowMs: at("2026-10-03T00:00:00.000Z"),
+      rollups: [row("2026-10-01T09:00:00.000Z", "2026-10-01T09:00:00.000Z", 70_000_000, weeklyQuotaMicrousd("max"))] });
     expect(usage.quotaRemainingPercent).toBe(44);
     expect(usage.overage.amountMicrousd).toBe(0);
   });
 
   it("sums overage across the period's weeks and ignores weeks outside it", () => {
-    const usage = deriveOrganizationUsage({ plan: "starter", createdAtMs: created, nowMs: at("2026-10-16T00:00:00.000Z"), rollups: [
+    const usage = deriveOrganizationUsage({ plan: "growth", createdAtMs: created, nowMs: at("2026-10-16T00:00:00.000Z"), rollups: [
       row("2026-09-24T09:00:00.000Z", "2026-09-01T09:00:00.000Z", 90_000_000),
       row("2026-10-01T09:00:00.000Z", "2026-10-01T09:00:00.000Z", 55_000_000),
       row("2026-10-08T09:00:00.000Z", "2026-10-01T09:00:00.000Z", 52_500_000),
