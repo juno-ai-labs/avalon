@@ -195,7 +195,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "448206bbd66efc53bda49a54a32db4615cecb39b9b8a5991c52f574731b0c520",
+        hash: "3870d035a9dbc1c2c87845c4568157e673b1889a367b605d3aef82d33fca06b7",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -203,7 +203,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "af2340799f1256f927ffebdcbed5ce17662c33a63c99573fe65cb55d07bc236e",
+        hash: "e54f4eaf634c68ff6a7a35ecbc8b1ed5a0e84fc5f9e882569a35c0fd6f07ff3b",
       },
     };
 
