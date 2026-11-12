@@ -3,6 +3,7 @@ import { z } from "zod";
 import { IdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
 import { PUSH_BODY_PREVIEW_CHARACTERS } from "./notification-text";
 import { WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema } from "./workstream-appearance";
+import { CanvasArtifactVisibilitySchema } from './artifact-access';
 
 /**
  * A Canvas is a conversation first: its id is the parent id of its
@@ -37,12 +38,24 @@ export type CanvasEditor = z.infer<typeof CanvasEditorSchema>;
 export const CanvasAudienceUpdateSchema = z.strictObject({
   visibility: CanvasVisibilitySchema,
   userIds: z.array(UserIdSchema).default([]),
+  artifactVisibility: CanvasArtifactVisibilitySchema.optional(),
+  artifactUserIds: z.array(UserIdSchema).optional(),
+  expectedRevision: z.number().int().nonnegative().optional(),
 }).superRefine((update, context) => {
   if (update.visibility === "creator" && update.userIds.length > 0) {
     context.addIssue({ code: "custom", path: ["userIds"], message: "must be empty when only the creator can open it" });
   }
   if (update.visibility === "participants" && update.userIds.length === 0) {
     context.addIssue({ code: "custom", path: ["userIds"], message: "must name someone when participants can open it" });
+  }
+  if (update.artifactUserIds !== undefined && update.artifactVisibility === undefined) {
+    context.addIssue({code:'custom',path:['artifactVisibility'],message:'required with artifactUserIds'});
+  }
+  if (update.artifactVisibility === 'participants' && !update.artifactUserIds?.length) {
+    context.addIssue({ code: 'custom', path: ['artifactUserIds'], message: 'must name an artifact user' });
+  }
+  if (update.artifactVisibility !== undefined && update.artifactVisibility !== 'participants' && update.artifactVisibility !== 'workspace' && update.artifactUserIds?.length) {
+    context.addIssue({ code: 'custom', path: ['artifactUserIds'], message: 'must be empty unless sharing with specific people' });
   }
 });
 export type CanvasAudienceUpdate = z.infer<typeof CanvasAudienceUpdateSchema>;
@@ -130,6 +143,9 @@ export type CanvasSidekick = z.infer<typeof CanvasSidekickSchema>;
 export const CanvasDetailSchema = CanvasSummarySchema.extend({
   /** Everyone on the participant list besides the creator, guests among them. */
   participantUserIds: z.array(UserIdSchema),
+  artifactVisibility: CanvasArtifactVisibilitySchema.optional(),
+  artifactUserIds: z.array(UserIdSchema).optional(),
+  sharingRevision: z.number().int().nonnegative().optional(),
   artifacts: z.array(CanvasArtifactSchema),
   /** This viewer may change who can open it (`canvasManages`). */
   canManage: z.boolean(),

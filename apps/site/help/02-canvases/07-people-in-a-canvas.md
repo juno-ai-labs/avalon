@@ -40,7 +40,7 @@ it, as [Who can see what](08-who-can-see-what.md#who-can-change-the-sharing)
 explains.
 
 1. Click **Share** at the top right of the Canvas.
-2. Choose **Specific people**.
+2. Under **Who can edit**, choose **Specific people** and click **Add people**.
 3. Tick the people who should be able to open it. **Search people** narrows
    the list by name or email.
 4. Click **Save**.

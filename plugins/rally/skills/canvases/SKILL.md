@@ -40,9 +40,21 @@ use the `publishing` skill: publish it, do not paste it into a message.
 
 - `list_people` turns names into user ids.
 - `set_canvas_audience` replaces the whole list: read `get_canvas` first and
-  send everyone who should keep access. `workspace` visibility opens it to the
-  whole Organization.
-- `invite_canvas_guests` shares by email with people outside the Organization.
+  send everyone who should keep access. `userIds` is required even when only
+  changing artifact access: copy the current `participantUserIds` to preserve
+  editors, including guests. `workspace` visibility opens it to the
+  whole Organization for editing and conversation access.
+- `artifactVisibility` separately controls all published artifacts: `editors`,
+  `participants`, `workspace`, or `public`. Use `artifactUserIds` for selected
+  artifact users; these people do not gain Chat access. Editors always retain
+  artifact access. Send the full list for each supplied audience.
+- Pass `get_canvas.sharingRevision` as `expectedRevision` when saving. A conflict
+  means read again and reconcile the current audiences before retrying.
+- Omitted artifact settings are preserved for older editor-only calls. Artifact
+  changes propagate asynchronously over Cloudflare Queues.
+- `get_artifact_link` returns a stable artifact URL from its resourceId without
+  creating a viewer session. Public artifact access never opens the Chat.
+- `invite_canvas_guests` invites guest editors by email. They can read and converse in the Canvas; use artifactUserIds for artifact-only guests already in the Organization.
 - `decide_canvas_access_request` approves or denies a waiting request, listed
   in `get_canvas` as `pendingAccessRequests`.
 

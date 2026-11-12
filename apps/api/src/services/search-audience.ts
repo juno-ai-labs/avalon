@@ -15,6 +15,7 @@ import { isDraftUpload, requiresAttachment, type ResourceReadRow } from './resou
 export type SearchAudience = string[];
 
 export const searchAudienceGroup = {
+  artifacts: (canvasId: string) => `artifacts:${canvasId}`,
   user: (userId: string) => `user:${userId}`,
   /** Every active member whose access class is `member`; never a guest. */
   members: (workspaceId: string) => `members:${workspaceId}`,
@@ -41,11 +42,12 @@ export function conversationSearchAudience(conversation: {
  * conversation the canonical inventory places it in.
  */
 export function resourceSearchAudience(workspaceId: string, row: ResourceReadRow,
-  locations: readonly { parentId: string; substreamId: string; parentKind: string }[], ownedByCanvas = false): SearchAudience {
+  locations: readonly { parentId: string; substreamId: string; parentKind: string }[], ownedByCanvas = false, ownerCanvasId?: string): SearchAudience {
+  if (ownedByCanvas && ownerCanvasId) return [searchAudienceGroup.artifacts(ownerCanvasId)];
   if (row.connection_id) return [searchAudienceGroup.connection(row.connection_id)];
   const groups = new Set<string>();
   // The uploader reads without an attachment unless the provider needs one even for its owner.
-  const canvasArtifact = row.provider === 'avalon_generated' && ownedByCanvas;
+  const canvasArtifact = row.provider === 'avalon_generated' && ownedByCanvas && Boolean(ownerCanvasId);
   if (row.uploaded_by_user_id && !canvasArtifact && !requiresAttachment(row, true)) groups.add(searchAudienceGroup.user(row.uploaded_by_user_id));
   if (isDraftUpload(row)) return [...groups];
   if (!requiresAttachment(row, false)) groups.add(searchAudienceGroup.members(workspaceId));

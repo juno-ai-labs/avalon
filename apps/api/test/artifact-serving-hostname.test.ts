@@ -1,3 +1,4 @@
+import type { ArtifactHostDO, ArtifactSessionCheck } from '../src/durable-objects/artifact-host-do';
 import "../../../tests/isolated-region";
 /** Public hostname routing at the isolated artifact Worker boundary. */
 import { artifactAnnotationScriptPath, asArtifactId, type ArtifactManifest } from "@rally/contracts";
@@ -72,9 +73,9 @@ function context(): ExecutionContext {
 }
 
 function fixture(route: unknown | null, options: {
-  checkSessionResult?: unknown;
+  checkSessionResult?: ArtifactSessionCheck;
   checkSessionError?: Error;
-  currentStateResult?: unknown;
+  currentStateResult?: Awaited<ReturnType<ArtifactHostDO['currentState']>>;
   loaderFetch?: (request: Request) => Promise<Response>;
 } = {}): {
   env: ArtifactServingEnv;
@@ -82,8 +83,7 @@ function fixture(route: unknown | null, options: {
   prepare: ReturnType<typeof vi.fn>;
   idFromName: ReturnType<typeof vi.fn>;
   redeemCode: ReturnType<typeof vi.fn>;
-  checkSession: ReturnType<typeof vi.fn>;
-  currentState: ReturnType<typeof vi.fn>;
+  admitRequest: ReturnType<typeof vi.fn>;
   recordError: ReturnType<typeof vi.fn>;
 } {
   const readRoute = vi.fn(async () => route === null ? null : route);
@@ -98,23 +98,28 @@ function fixture(route: unknown | null, options: {
   });
   const idFromName = vi.fn((name: string) => createTestDurableObjectId(name));
   const redeemCode = vi.fn();
-  const checkSession = vi.fn(async () => {
-    if (options.checkSessionError) throw options.checkSessionError;
-    return options.checkSessionResult ?? null;
+  // One platform admission result is the boundary this isolated Worker consumes.
+  // The real local policy evaluation is covered in test-workers/canvas-artifact-access.
+  const admitRequest = vi.fn(async ({session}:{session:string|null}) => {
+    if(options.checkSessionError) throw options.checkSessionError;
+    const viewer=session && options.checkSessionResult?.ok ? options.checkSessionResult : null;
+    const state=viewer??options.currentStateResult;
+    if(!state?.manifest || state.version===undefined || !state.mode) return {allowed:false as const,status:404 as const};
+    return {allowed:true as const,kind:'site' as const,workspaceId:state.workspaceId,revision:1,editor:Boolean(viewer),
+      viewerId:viewer?.viewerId??null,viewerName:viewer?.viewerName??null,
+      version:state.version,mode:state.mode,stateful:state.stateful??false,manifest:state.manifest};
   });
-  const currentState = vi.fn(async () => options.currentStateResult ?? null);
   const recordError = vi.fn(async () => undefined);
   const hosts = createCloudflareTestBinding<ArtifactServingEnv["ARTIFACT_HOSTS"]>({
     idFromName,
-    get: () => ({ redeemCode, checkSession, currentState, recordError }),
+    get: () => ({ redeemCode, admitRequest, recordError }),
   });
   return {
     readRoute,
     prepare,
     idFromName,
     redeemCode,
-    checkSession,
-    currentState,
+    admitRequest,
     recordError,
     env: {
       APP_ENV: "test",
@@ -283,7 +288,7 @@ describe("artifact serving hostname routes", () => {
   });
 
   it("serves a public artifact to a crawler without a Rally session", async () => {
-    const { env, checkSession, currentState } = fixture({
+    const { env, admitRequest } = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
       region: "global",
@@ -315,8 +320,8 @@ describe("artifact serving hostname routes", () => {
     );
     expect(body).toContain(`name="twitter:card" content="summary_large_image"`);
     expect(response.headers.get("content-security-policy")).toBeTruthy();
-    expect(checkSession).not.toHaveBeenCalled();
-    expect(currentState).toHaveBeenCalledOnce();
+    expect(admitRequest).toHaveBeenCalledWith({session:null});
+    expect(admitRequest).toHaveBeenCalledOnce();
 
     const image = await artifactWorker.fetch(
       new Request(`https://${STUB}-g.rallyusercontent.test/.rally/social-preview.png?v=1`),
@@ -351,7 +356,7 @@ describe("artifact serving hostname routes", () => {
   });
 
   it("puts the annotation script first in a Rally viewer's page and nowhere in the public one", async () => {
-    const state = {
+    const state: NonNullable<Awaited<ReturnType<ArtifactHostDO["currentState"]>>> = {
       artifactId: ARTIFACT,
       workspaceId: "00000000-0000-7000-8000-0000000000c1",
       workstreamId: "00000000-0000-7000-8000-0000000000d1",
@@ -397,7 +402,7 @@ describe("artifact serving hostname routes", () => {
       viewerId: request.headers.get("x-rally-viewer-id"),
       viewerName: request.headers.get("x-rally-viewer-name"),
     }));
-    const { env, checkSession, currentState } = fixture({
+    const { env, admitRequest } = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
       region: "global",
@@ -435,12 +440,12 @@ describe("artifact serving hostname routes", () => {
       viewerName: null,
     });
     expect(forwarded).toHaveBeenCalledOnce();
-    expect(checkSession).not.toHaveBeenCalled();
-    expect(currentState).toHaveBeenCalledOnce();
+    expect(admitRequest).toHaveBeenCalledWith({session:null});
+    expect(admitRequest).toHaveBeenCalledOnce();
   });
 
   it("keeps prior versions behind a valid Rally viewer session", async () => {
-    const { env, checkSession } = fixture({
+    const { env, admitRequest } = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
       region: "global",
@@ -464,7 +469,7 @@ describe("artifact serving hostname routes", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(checkSession).not.toHaveBeenCalled();
+    expect(admitRequest).toHaveBeenCalledWith({session:null});
   });
 
   it("fails a stateless active site closed when its handler cannot run", async () => {
@@ -501,7 +506,7 @@ describe("artifact serving hostname routes", () => {
       viewerId: request.headers.get("x-rally-viewer-id"),
       viewerName: request.headers.get("x-rally-viewer-name"),
     }));
-    const { env, checkSession, currentState } = fixture({
+    const { env, admitRequest } = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
       region: "global",
@@ -535,13 +540,12 @@ describe("artifact serving hostname routes", () => {
       viewerId: "user-1",
       viewerName: "Ada%20Lovelace",
     });
-    expect(checkSession).toHaveBeenCalledWith("secret");
-    expect(currentState).not.toHaveBeenCalled();
+    expect(admitRequest).toHaveBeenCalledWith({session:"secret"});
   });
 
-  it("falls back to the public representation when identity validation is unavailable", async () => {
+  it("fails closed when local admission is unavailable", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const { env, checkSession, currentState } = fixture({
+    const { env, admitRequest } = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
       region: "global",
@@ -570,18 +574,18 @@ describe("artifact serving hostname routes", () => {
       },
     ), env, context());
 
-    expect(response.status).toBe(200);
-    expect(checkSession).toHaveBeenCalledOnce();
-    expect(currentState).toHaveBeenCalledOnce();
+    expect(response.status).toBe(503);
+    expect(admitRequest).toHaveBeenCalledOnce();
+    expect(admitRequest).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(expect.objectContaining({
-      event: "artifact_viewer_session_check_failed",
+      event: "artifact_admission_failed",
       artifact_id: ARTIFACT,
     }));
     warn.mockRestore();
   });
 
   it("falls back to public without identity after its viewer session is revoked", async () => {
-    const { env, checkSession, currentState } = fixture({
+    const { env, admitRequest } = fixture({
       hostname_stub: STUB,
       artifact_id: ARTIFACT,
       region: "global",
@@ -609,8 +613,8 @@ describe("artifact serving hostname routes", () => {
     }), env, context());
 
     expect(response.status).toBe(200);
-    expect(checkSession).toHaveBeenCalledOnce();
-    expect(currentState).toHaveBeenCalledOnce();
+    expect(admitRequest).toHaveBeenCalledOnce();
+    expect(admitRequest).toHaveBeenCalledOnce();
   });
 
   it("does not let anonymous failures evict the participant error ring", async () => {
@@ -668,7 +672,7 @@ describe("signing in from a site's own URL", () => {
   const BROWSER = "https://app.rally.test";
   const origin = `https://${STUB}-g.rallyusercontent.test`;
   const route = { hostname_stub: STUB, artifact_id: ARTIFACT, region: "global" };
-  const signedOutState = {
+  const signedOutState: NonNullable<Awaited<ReturnType<ArtifactHostDO["currentState"]>>> = {
     artifactId: ARTIFACT,
     workspaceId: "00000000-0000-7000-8000-0000000000c1",
     workstreamId: "00000000-0000-7000-8000-0000000000d1",
@@ -766,7 +770,7 @@ describe("signing in from a site's own URL", () => {
     });
 
     const response = await artifactWorker.fetch(withCookie, { ...env, BROWSER_APP_ORIGIN: BROWSER }, context());
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(503);
     expect(response.headers.get("location")).toBeNull();
     warn.mockRestore();
   });
@@ -804,7 +808,7 @@ describe("signing in from a site's own URL", () => {
 describe("submissions from people who are not signed in", () => {
   const origin = `https://${STUB}-g.rallyusercontent.test`;
   const route = { hostname_stub: STUB, artifact_id: ARTIFACT, region: "global" };
-  const state = {
+  const state: NonNullable<Awaited<ReturnType<ArtifactHostDO["currentState"]>>> = {
     artifactId: ARTIFACT,
     workspaceId: "00000000-0000-7000-8000-0000000000c1",
     workstreamId: "00000000-0000-7000-8000-0000000000d1",
@@ -842,7 +846,7 @@ describe("submissions from people who are not signed in", () => {
       viewerId: request.headers.get("x-rally-viewer-id"),
       cookie: request.headers.get("cookie"),
     }));
-    const { env, checkSession } = fixture(route, {
+    const { env, admitRequest } = fixture(route, {
       currentStateResult: state,
       checkSessionResult: {
         ok: true,
@@ -864,6 +868,6 @@ describe("submissions from people who are not signed in", () => {
     }), env, context());
 
     expect(await response.json()).toEqual({ viewerId: null, cookie: null });
-    expect(checkSession).not.toHaveBeenCalled();
+    expect(admitRequest).toHaveBeenCalledWith({session:null});
   });
 });

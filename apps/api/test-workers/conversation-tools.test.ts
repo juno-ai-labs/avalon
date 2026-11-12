@@ -175,8 +175,11 @@ async function seedSidekick(_home: "0", automationId = AUTOMATION_ID): Promise<v
 /** Deliver canonical attachment discovery for every parent this fixture creates. */
 async function projectResourceAccess() {
   await workspace().beginAuthorizationBackfill({ workspaceId: WORKSPACE_ID });
+  // Canonical resource reads use inventories from both hosted parent kinds.
+  // A Canvas attachment must remain readable after its uploader changes too.
   const parents = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ parent_id: string }>(
-    "SELECT automation_id AS parent_id FROM automation_directory",
+    `SELECT automation_id AS parent_id FROM automation_directory
+     UNION SELECT canvas_id AS parent_id FROM canvas_directory`,
   ).toArray());
   for (const { parent_id: parentId } of parents) {
     const job = { type: "authorization_projection_v1" as const, region: "global" as const, workspaceId: WORKSPACE_ID, parentId };

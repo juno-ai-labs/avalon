@@ -36,7 +36,7 @@ Click the **Site** card to open the site view, which shows the live page itself.
 
 - **Stored data**, only on sites that remember things (below).
 - **Open in a new window**, which gives the site its own window, handy for a dashboard on a second monitor. The window behaves as described in [Opening, docking and downloading](02-opening-and-downloading.md#giving-an-artifact-its-own-window).
-- **Copy public link**, which copies the site's address.
+- **Copy link**, which copies the site's address.
 - **Open in browser**, which opens the site in your usual web browser.
 
 A site opens in the panel beside the conversation, the same way a document does.
@@ -64,20 +64,30 @@ While the table loads you see **Reading…**. Before anyone has submitted anythi
 
 ## Sharing a site, and who can see it
 
-Every site has a public web address made of four ordinary words, ending in `rallyusercontent.com`. **Copy public link** puts it on your clipboard, ready to paste into an email, a chat or a slide.
+Every site has a public web address made of four ordinary words, ending in `rallyusercontent.com`. **Copy link** puts it on your clipboard, ready to paste into an email, a chat or a slide.
 
-> [!WARNING]
-> **Sites are public by default.** Anyone who has the address can open the latest version of the site without signing in to anything. The address is made of readable words, not a secret code, so treat a site as visible to anyone who comes across its link. Search engines are asked not to list it, but that is a request, not a lock.
->
-> Before you share a link, check what is on the page. Do not put anything on a public site that you would not put on a public notice board.
+A site's access comes from **Who can interact with artifacts** in its
+Canvas's **Share** window. The same audience applies to files and other artifacts
+published in that Canvas.
 
-Some more detail on access:
+- **Editors only** is the default. Only the Canvas's editors can use it.
+- **Specific people** adds selected artifact users without exposing the chat.
+- **Everyone in the Organization** admits active members and selected guests.
+- **Anyone with the link** allows visitors without signing in.
 
-- Visitors can read a public site. They cannot change it.
-- If a site must be private, say so when you ask for it, for example "make this sign-up sheet only open to people in our Rally Organization". Rally then builds a site that checks who is visiting and turns away anyone who is not signed in to Rally. A plain page that looks the same for everyone cannot be made private.
-- The public address always shows the latest version. Earlier versions are only visible inside Rally, and they show the page as it was, never live data.
-- **Open in browser** and **Open in a new window** sign you in to the site as yourself for that visit. That sign-in lasts 24 hours. Use the buttons each time rather than reusing an address from your browser's history, because the sign-in part of that address only works once and expires within a minute.
-- People you have invited into the Canvas as guests (see [Sharing with people outside your Organization](../02-canvases/09-sharing-with-guests.md)) can open a site that is part of what was shared with them.
+Editors always have access. Static pages and interactive apps follow the same
+sharing setting. Using an app may include submitting a form or changing entries;
+that does not grant permission to redesign or republish it through Rally.
+
+Sharing changes reach published artifacts in the background. A visitor who loses
+access cannot make further requests once the update reaches the site. Content
+already downloaded and work done entirely in the browser cannot be taken back.
+
+**Open in browser** and **Open in a new window** sign you in for that visit.
+The sign-in session lasts up to 24 hours, but a change in artifact access takes
+effect without waiting for it to expire. Earlier versions and administrative
+stored-data views are available to editors.
+
 
 ## Limits
 
