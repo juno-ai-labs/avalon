@@ -166,10 +166,10 @@ export class CanvasService {
    *    parent, or a second window, and sealed, it admits no message.
    * 3. The Organization object judges again and deletes its rows; that commit
    *    is the delete. If the Canvas changed in between, the Chat is reopened.
-   * 4. The Chat erases its storage.
+   * 4. The Chat erases its storage, from an alarm entry step 3 commits, so it
+   *    retries until it lands (`CANVAS_DISCARD_ERASE_ALARM`).
    *
-   * A failure at step 4 leaves only storage nothing names, and is thrown so it
-   * is logged. The D1 anchor and route stay: D1 refuses to delete an anchor
+   * The D1 anchor and route stay: D1 refuses to delete an anchor
    * (`workstreams_reject_post_cutover_delete`), and they hold only the id.
    */
   async discardIfBlank(canvasId: string, leavingTicketId?: string): Promise<{ discarded: boolean }> {
@@ -184,11 +184,7 @@ export class CanvasService {
       return { discarded: false };
     }
     const result = await workspace.canvasDiscardIfBlank({ ...request, commit: true });
-    if (!result.discarded) {
-      await chat.unsealBlankConversation(address);
-      return result;
-    }
-    await chat.eraseBlankConversation(address);
+    if (!result.discarded) await chat.unsealBlankConversation(address);
     return result;
   }
 

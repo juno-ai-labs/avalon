@@ -8686,14 +8686,18 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Step 4 of `CanvasService.discardIfBlank`: erase a sealed Chat's sockets,
-   * alarm and storage. The instance resets itself once this has answered, so
-   * no cache outlives the rows; the next request meets an object with no
-   * identity, which admits nobody.
+   * Step 4 of `CanvasService.discardIfBlank`, run and retried by the
+   * Organization object's alarm: erase a sealed Chat's sockets, alarm and
+   * storage. The instance resets itself once this has answered, so no cache
+   * outlives the rows; the next request meets an object with no identity,
+   * which admits nobody. A retry that finds no identity has nothing to erase
+   * but the empty schema it just opened, and wipes that too.
    */
   async eraseBlankConversation(input: { workspaceId: string; parentId: string }): Promise<void> {
     await this.initialized;
-    if (!this.namesParent(input) || !this.product.sealedBlank()) throw new Error("conversation_erase_not_sealed");
+    if (this.objectStore.identity() !== null && (!this.namesParent(input) || !this.product.sealedBlank())) {
+      throw new Error("conversation_erase_not_sealed");
+    }
     for (const socket of this.state.getWebSockets()) {
       disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "This Canvas was deleted");
     }

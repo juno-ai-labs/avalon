@@ -712,7 +712,7 @@ import {
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
 import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
-import { CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_STATEMENTS, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_STATEMENTS, CANVAS_DISCARD_ERASE_ALARM, CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, SIDEKICK_CANVAS_ATTACHMENT_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasReaderAllows, sidekickAttachedToCanvas, sidekickReaderAllows, writerSidekickAdmits } from "./canvas-sidekick-admission";
 import { canvasAppearanceReporter, canvasesAttachedTo, canvasesWrittenBy, canvasSidebarRows, HostedCanvas, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
@@ -1041,7 +1041,7 @@ const RETIRED_ALARM_KINDS: ReadonlySet<string> = new Set([
 const WORKSPACE_DISPATCHED_ALARM_KINDS: ReadonlySet<string> = new Set([
   CANVAS_ARTIFACT_ACCESS_ALARM, ...HOSTED_SIDEKICK_ALARM_KINDS, ...RETIRED_ALARM_KINDS, ...WORKSPACE_SCHEDULE_ALARM_KINDS,
   SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND, CANVAS_NAMING_ALARM_KIND, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM,
-  REPLY_BATCH_ALARM_KIND,
+  CANVAS_DISCARD_ERASE_ALARM, REPLY_BATCH_ALARM_KIND,
 ]);
 
 function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTargetKind {
@@ -7242,6 +7242,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             target: { scope: "substream", workstreamId: delivery.canvasId, substreamId: delivery.substreamId },
           })));
           if (sent.some((accepted) => !accepted)) throw new Error("canvas_archive_revocation_deferred");
+          return;
+        }
+        if (alarm.kind === CANVAS_DISCARD_ERASE_ALARM) {
+          const chat = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, asWorkspaceId(workspaceId),
+            conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId), alarm.key));
+          try {
+            await chat.eraseBlankConversation({ workspaceId, parentId: alarm.key });
+          } catch (error) {
+            // The Chat resets itself only after the wipe, and the reset can
+            // reach this call before its answer does: that is the erase landing.
+            if (!(error instanceof Error && error.message.includes("conversation_erased"))) throw error;
+          }
           return;
         }
         if (alarm.kind === CANVAS_ARCHIVE_ARTIFACT_ALARM) {
