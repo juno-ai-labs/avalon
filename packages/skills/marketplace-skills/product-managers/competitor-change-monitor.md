@@ -1,6 +1,8 @@
 ---
 name: "Competitor change monitor"
 description: "Get a brief when competitor pricing, product, or hiring pages change."
+icon: "telescope"
+color: "cyan"
 tags:
   - product-managers
 ---

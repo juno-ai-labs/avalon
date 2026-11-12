@@ -1,6 +1,8 @@
 ---
 name: "Shared grocery list"
 description: "Add groceries together and see them grouped by store section."
+icon: "shopping-cart"
+color: "lime"
 tags:
   - parents
 ---

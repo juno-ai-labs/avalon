@@ -1,6 +1,8 @@
 ---
 name: "Email notification screener"
 description: "Turn repeated email alerts into a ranked dashboard of issues."
+icon: "inbox"
+color: "orange"
 tags:
   - developers
 ---

@@ -1,11 +1,12 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { IconBolt, IconDatabase, IconHexagon } from '@tabler/icons-react';
 import { SidekickStack } from '@rally/ui/components/sidekick-stack';
-import { ArrowUpRight, Plus, Sparkles, Store } from 'lucide-react';
+import { ChevronLeft, Plus, Sparkles, Store } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { canvasMark } from '../components/canvas-mark';
+import { CanvasTemplateCard } from '../components/canvas-template-picker';
 import { CanvasSharingStatus } from '../components/canvas-sharing-status';
 import { AvatarStack, Button, EmptyState, TitleSkeleton } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
@@ -54,13 +55,13 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const { guest } = useShellCapabilities();
   const currentUserId = session?.user.id;
   const rows = useCanvasList();
-  useDocumentTitle('Canvases');
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  const showMarketplace = !guest && marketplaceOpen;
+  useDocumentTitle(showMarketplace ? 'Marketplace' : 'Canvases');
   const { membersById } = useCanvasNameSources(api);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<CanvasFilter>('all');
-  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState('');
-  const showMarketplace = !guest && marketplaceOpen;
   const create = useCreateCanvas();
   const needle = search.trim().toLocaleLowerCase();
   const hasCanvases = !!rows?.length;
@@ -96,25 +97,31 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     </li>;
   };
   // A guest makes no Canvas (`canvas_create_member_required`), so is offered none.
-  const newCanvas = guest ? null : <Button className="button-primary" onClick={() => create()}>
+  const newCanvas = guest ? null : <Button className="button-primary canvases-home-new" onClick={() => create()}>
     <Plus aria-hidden="true" size={16} />New Canvas
   </Button>;
+  // The Marketplace is a place, not a filter of this person's Canvases, so it
+  // is opened from the header and replaces the page rather than adding a
+  // second row of pills under the filters.
   return <main className="sidekicks-library dashboard-home">
-    <header className="sidekicks-library-heading window-drag">
-      <div><h1>Canvases</h1><p>Live pages your team and Rally build together.</p></div>
+    {showMarketplace ? <header className="sidekicks-library-heading canvases-home-heading window-drag">
+      <div className="canvases-home-title">
+        <button className="canvases-home-back window-no-drag" onClick={() => setMarketplaceOpen(false)} type="button"><ChevronLeft aria-hidden="true" size={16} />Canvases</button>
+        <h1>Marketplace</h1><p>Templates to start a Canvas from. Pick one and Rally builds it with you.</p>
+      </div>
       <div className="sidekicks-library-actions window-no-drag">{newCanvas}</div>
-    </header>
+    </header> : <header className="sidekicks-library-heading canvases-home-heading window-drag">
+      <div className="canvases-home-title is-collapsible"><h1>Canvases</h1><p>Live pages your team and Rally build together.</p></div>
+      <div className="sidekicks-library-actions window-no-drag">
+        {!guest && <Button className="button-secondary" onClick={() => setMarketplaceOpen(true)}><Store aria-hidden="true" size={16} />Marketplace</Button>}
+        {newCanvas}
+      </div>
+    </header>}
     {hasCanvases && !showMarketplace && <div className="sidekicks-library-controls">
       <SidebarSearch aria-label="Search Canvases" mode="input" onChange={(event) => setSearch(event.target.value)} placeholder="Search Canvases" value={search} />
     </div>}
-    {(hasCanvases || !guest) && <div aria-label="Canvas filter" className="sidekick-filters canvas-dashboard-filters" role="group">
-      {hasCanvases && FILTERS.map(([value, label]) => <button aria-pressed={!showMarketplace && filter === value} key={value} onClick={() => {
-        setFilter(value);
-        setMarketplaceOpen(false);
-      }} type="button">{label}</button>)}
-      {!guest && <button aria-pressed={showMarketplace} className="canvas-marketplace-toggle" onClick={() => setMarketplaceOpen((open) => !open)} type="button">
-        <Store aria-hidden="true" size={16} />Marketplace
-      </button>}
+    {hasCanvases && !showMarketplace && <div aria-label="Canvas filter" className="sidekick-filters canvas-dashboard-filters" role="group">
+      {FILTERS.map(([value, label]) => <button aria-pressed={filter === value} key={value} onClick={() => setFilter(value)} type="button">{label}</button>)}
     </div>}
     {showMarketplace ? <CanvasMarketplace onStart={create} />
       : rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
@@ -137,11 +144,7 @@ function CanvasMarketplace({ onStart }: { onStart: (prompt: string) => void }): 
     </div>
     <ul className="dashboard-grid">
       {templates.map((template) => <li key={template.name}>
-        <button className="dashboard-card canvas-template-card" onClick={() => onStart(template.prompt)} type="button">
-          <span className="canvas-template-title">{template.name}</span>
-          <ArrowUpRight aria-hidden="true" size={16} />
-          <span className="canvas-template-description">{template.description}</span>
-        </button>
+        <CanvasTemplateCard onStart={onStart} template={template} />
       </li>)}
     </ul>
   </section>;

@@ -2,12 +2,19 @@ import type { Plugin } from 'vite';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
+import { PICKABLE_APPEARANCE_ICON_KEYS } from '../../packages/contracts/src/appearance-icons';
+import { PALETTE_RING } from '../../packages/contracts/src/palette';
 import { describeZodIssues } from '../../packages/contracts/src/zod-diagnostics';
 import { CANVAS_TEMPLATE_CATEGORIES } from './src/renderer/lib/canvas-template-categories';
 
 const templateMetadata = z.object({
   name: z.string().trim().min(1),
   description: z.string().trim().min(1),
+  // The mark the template's card wears, from the catalog a Canvas's own
+  // appearance picks from, so a card is drawn the way a Canvas is. Only the
+  // card: a Canvas started from a template keeps its own generated mark.
+  icon: z.enum(PICKABLE_APPEARANCE_ICON_KEYS),
+  color: z.enum(PALETTE_RING),
   tags: z.array(z.enum(CANVAS_TEMPLATE_CATEGORIES.map(({ tag }) => tag))).min(1),
 });
 
