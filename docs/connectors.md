@@ -1669,6 +1669,8 @@ two declarations of one contract. A new bound on either side belongs in a shared
 constant, and the boundary test in `index.test.ts` drives each tool to its
 advertised limit and one past it.
 
+Shipped in #1586.
+
 ### 2026-11-10 — An adapter can read what one activity is about
 
 **What changed:** Adapters gain an optional `readActivityContent`, and Google
