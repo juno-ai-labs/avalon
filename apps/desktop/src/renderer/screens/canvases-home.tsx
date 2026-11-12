@@ -1,12 +1,12 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { IconBolt, IconDatabase, IconHexagon } from '@tabler/icons-react';
 import { SidekickStack } from '@rally/ui/components/sidekick-stack';
-import { ArrowUp, ChevronLeft, Plus, Sparkles, Store } from 'lucide-react';
+import { ChevronLeft, Plus, Sparkles, Store } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { canvasMark } from '../components/canvas-mark';
-import { CanvasTemplateMark } from '../components/canvas-template-picker';
+import { CanvasTemplateCard } from '../components/canvas-template-picker';
 import { CanvasSharingStatus } from '../components/canvas-sharing-status';
 import { AvatarStack, Button, EmptyState, TitleSkeleton } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
@@ -144,11 +144,7 @@ function CanvasMarketplace({ onStart }: { onStart: (prompt: string) => void }): 
     </div>
     <ul className="dashboard-grid">
       {templates.map((template) => <li key={template.name}>
-        <button className="dashboard-card canvas-template-card" onClick={() => onStart(template.prompt)} type="button">
-          <span className="canvas-template-title"><CanvasTemplateMark template={template} />{template.name}</span>
-          <span aria-hidden="true" className="canvas-template-send"><ArrowUp size={15} /></span>
-          <span className="canvas-template-description">{template.description}</span>
-        </button>
+        <CanvasTemplateCard onStart={onStart} template={template} />
       </li>)}
     </ul>
   </section>;
