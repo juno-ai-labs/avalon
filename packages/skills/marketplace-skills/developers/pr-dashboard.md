@@ -1,6 +1,8 @@
 ---
 name: "PR dashboard"
 description: "See open pull requests and highlight the ones that have gone stale."
+icon: "git-pull-request"
+color: "violet"
 tags:
   - developers
 ---

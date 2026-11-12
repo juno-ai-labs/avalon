@@ -1,6 +1,8 @@
 ---
 name: "Granola feature requests"
 description: "Collect requests from customer interviews and let your team vote."
+icon: "thumbs-up"
+color: "green"
 tags:
   - product-managers
 ---

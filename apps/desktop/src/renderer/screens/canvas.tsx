@@ -15,6 +15,7 @@ import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import type { ArtifactAudienceControl } from '../components/artifact-card-tools';
 import { editorUserIds } from '../lib/canvas-sharing';
+import { CanvasTemplateStarters } from '../components/canvas-template-picker';
 import { CanvasSidekicksSection, madeSidekicksArchiveCopy } from '../components/canvas-sidekicks-menu';
 import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasCreation, useCanvasList, useCanvasNameSources, type CanvasCreation } from '../lib/canvases';
@@ -24,7 +25,7 @@ import { sidebarListApplied } from '../lib/sidebar-list-store';
 import { useDocumentTitle } from '../lib/document-title';
 import { ApiError } from '../lib/api';
 import { isNotFoundError, useRestoredRouteFallback } from '../lib/landing';
-import { useCollaborationSession } from '../lib/collaboration-session';
+import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { layoutKey, readArtifactPanel } from '../lib/desktop-layout';
 import { openResourceRequest, openResourceState } from '../lib/navigation-routes';
 import { SidekickPanel } from './automation';
@@ -46,6 +47,7 @@ export function CanvasScreen(): React.JSX.Element {
 
 function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const { api, session } = useCollaborationSession();
+  const { guest } = useShellCapabilities();
   const workspaceSocket = useOptionalWorkspaceSocket();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -436,6 +438,8 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       // pill and Share over the state rather than a bare Back and Forward.
       stateHeader={header([], false)}
       substreamId="0"
+      // A guest makes no Canvas, so is offered no way to start one.
+      renderStarters={guest ? undefined : ({ send, disabled }) => <CanvasTemplateStarters disabled={disabled} onStart={send} />}
     />
     {canvas.data && <CanvasShareDialog canvas={canvas.data} onOpenChange={(open) => {
       setSharing(open);
