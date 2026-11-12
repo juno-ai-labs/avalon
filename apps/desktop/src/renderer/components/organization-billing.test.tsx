@@ -1,14 +1,14 @@
+import "../../../../../tests/isolated-region";
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BillingCredits } from '@rally/contracts/billing';
 import { LocalCacheScopeProvider } from '../lib/local-cache-scope';
 import { OrganizationBilling } from './organization-billing';
 import type { OrganizationPlanApi } from '../lib/organization-usage';
-const { openExternal, desktopServicesAvailable } = vi.hoisted(() => ({
-  openExternal: vi.fn<(url: string) => Promise<void>>(async () => undefined),
-  desktopServicesAvailable: vi.fn(() => true),
-}));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ openExternal }), desktopServicesAvailable }));
+import type { RallyDesktopBridge } from '../../common/desktop';
+const openExternal = vi.fn<(url: string) => Promise<void>>(async () => undefined);
+const bridge = { openExternal } satisfies Pick<RallyDesktopBridge, 'openExternal'>;
+let native: Pick<RallyDesktopBridge, 'openExternal'> | undefined;
 
 const billing = { enabled: true as const, status: 'none', subscribed: false, trialEndsAt: '2020-01-01T00:00:00Z',
   overageEnabled: false, offers: [{ id: 'grow', name: 'Grow', plan: 'growth' as const, currencies: ['usd'], overageAvailable: true }] };
@@ -20,15 +20,19 @@ function deferredCheckout() {
   return { api, answer: () => answer({ url: checkoutUrl }) };
 }
 function browserTab() {
-  desktopServicesAvailable.mockReturnValue(false);
-  const tab = { opener: window as Window | null, location: { href: '' }, closed: false, close: vi.fn() };
-  const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+  native = undefined;
+  const tab = { opener: window as Window | null, location: { href: '' }, document: document.implementation.createHTMLDocument(), closed: false, close: vi.fn() };
+  const open = vi.mocked(window.open).mockReturnValue(tab as unknown as Window);
   return { tab, open };
 }
 beforeEach(() => {
   openExternal.mockReset();
-  desktopServicesAvailable.mockReturnValue(true);
+  native = bridge;
+  Object.defineProperty(window, 'rally', { configurable: true, get: () => native });
+  vi.spyOn(window, 'open');
 });
+
+afterEach(() => { delete window.rally; });
 
 describe('hosted billing handoff', () => {
   it('opens checkout immediately when a slow response arrives, with no second action', async () => {
@@ -63,6 +67,8 @@ describe('hosted billing handoff', () => {
     expect(open).toHaveBeenCalledOnce();
     expect(tab.opener).toBeNull();
     expect(tab.location.href).toBe('');
+    expect(tab.document.title).toBe('Opening link…');
+    expect(tab.document.body.textContent).toBe('Opening link…');
     answer();
     await waitFor(() => expect(tab.location.href).toBe(checkoutUrl));
     expect(openExternal).not.toHaveBeenCalled();

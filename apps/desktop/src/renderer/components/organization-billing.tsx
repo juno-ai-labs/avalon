@@ -1,5 +1,5 @@
 import { IconArrowUpRight } from '@tabler/icons-react';
-import { prepareExternalLink } from '../lib/external-link';
+import { prepareExternalLink } from '../lib/platform';
 import { useEffect, useRef, useState } from 'react';
 import type { BillingStatus, BillingCredits } from '@rally/contracts/billing';
 import type { OrganizationPlanApi } from '../lib/organization-usage';
@@ -83,7 +83,7 @@ function BillingForm({ api, billing, currentPlan }: BillingProps) {
     {trial && <div className="settings-preference-row"><span className="settings-row-copy"><strong>{currentPlan} trial</strong><small>Subscription fees are waived until {new Date(billing.trialEndsAt).toLocaleDateString()}. {billing.paymentMethodReady ? 'Subscription fees resume afterward unless you cancel. Opted-in overages are charged during the trial.' : 'Add a payment method and billing address to continue afterward. Without billing details, your organization returns to Start. Usage pauses when the included allowance is used up.'}</small></span></div>}
     <div className="settings-preference-row">
       <span className="settings-row-copy"><strong>Organization billing</strong><small>{billing.subscribed ? `${currentPlan} · Subscription: ${billing.status}` : `${currentPlan}. Trial ${Date.parse(billing.trialEndsAt) < Date.now() ? 'ended' : 'ends'} ${new Date(billing.trialEndsAt).toLocaleDateString()}. One subscription for everyone; no seat charges.`}</small></span>
-      <button type="button" className="text-button billing-link" disabled={busy || (!billing.subscribed && !offer)} aria-busy={busy} onClick={() => void open()}><span>{busy ? 'Opening…' : trial && !billing.paymentMethodReady ? 'Add billing details' : billing.subscribed ? 'Manage billing' : 'Continue to checkout'}</span><IconArrowUpRight aria-hidden="true" size={16} /></button>
+      <button type="button" className="text-button external-link-button" disabled={busy || (!billing.subscribed && !offer)} aria-busy={busy} onClick={() => void open()}><span>{busy ? 'Opening…' : trial && !billing.paymentMethodReady ? 'Add billing details' : billing.subscribed ? 'Manage billing' : 'Continue to checkout'}</span><IconArrowUpRight aria-hidden="true" size={16} /></button>
     </div>
     {billing.subscribed && billing.overageAvailable && api.setBillingOverages && <label className="settings-preference-row"><span className="settings-row-copy"><strong>Bill usage beyond shared quota</strong><small>{billing.paymentMethodReady ? 'Optional. Overages remain billable during the free trial.' : 'Add a payment method and billing address in Stripe before enabling overages.'}</small></span><input type="checkbox" checked={overage} disabled={busy || (!billing.paymentMethodReady && !overage)} onChange={(event) => void saveOverages(event.target.checked)} /></label>}
     {!billing.subscribed && <>
