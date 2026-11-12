@@ -502,9 +502,12 @@ export type EngineeringUsageResult = z.infer<typeof EngineeringUsageResultSchema
 export const GrantEngineeringTrialMonthsInputSchema = GrantTrialMonthsSchema.extend({ orgId: WorkspaceIdSchema });
 export type GrantEngineeringTrialMonthsInput = z.infer<typeof GrantEngineeringTrialMonthsInputSchema>;
 
-export const InspectEngineeringCreditsInputSchema = z.strictObject({ orgId: WorkspaceIdSchema });
+export const InspectEngineeringCreditsInputSchema = z.strictObject({
+  orgId: WorkspaceIdSchema,
+  operationId: z.uuid().optional().describe('Look up only the grant for this previously accepted operation, including legacy grants without an expiration. Never issues credit; an empty grants list means no matching Stripe receipt was found.'),
+});
 export const GrantEngineeringCreditInputSchema = GrantOverageCreditSchema.extend({ orgId: WorkspaceIdSchema });
-export const ExpireEngineeringCreditInputSchema = InspectEngineeringCreditsInputSchema.extend({ grantId: z.string().startsWith("credgr_") });
+export const ExpireEngineeringCreditInputSchema = z.strictObject({ orgId: WorkspaceIdSchema, grantId: z.string().startsWith("credgr_") });
 export type GrantEngineeringCreditInput = z.infer<typeof GrantEngineeringCreditInputSchema>;
 export type ExpireEngineeringCreditInput = z.infer<typeof ExpireEngineeringCreditInputSchema>;
 
