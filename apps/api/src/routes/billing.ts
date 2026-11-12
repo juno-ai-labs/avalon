@@ -27,7 +27,7 @@ import { readOverageCredits } from "../services/overage-credits";
 export const billingRoutes = new Hono<HonoAppEnv>();
 billingRoutes.use("*", refuseSupportSession);
 billingRoutes.use("*", async (c, next) => {
-  requireWorkspaceAdmin(c);
+  if (c.req.method !== "GET") requireWorkspaceAdmin(c);
   await next();
 });
 billingRoutes.get("/", async (c) => {
@@ -41,6 +41,8 @@ billingRoutes.get("/", async (c) => {
     BillingStatusSchema.parse({
       enabled: true,
       status: account.status,
+      currency: account.currency,
+      offerId: account.offer_id,
       subscribed: hasLiveSubscription(account),
       creditsAvailable: Boolean(config.overageCredits),
       paymentMethodReady: account.payment_method_ready === 1,

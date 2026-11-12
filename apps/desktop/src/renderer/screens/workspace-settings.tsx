@@ -1937,7 +1937,7 @@ export function WorkspaceSettingsScreen({
 
             {activeSection === 'billing' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <UsageSettingsSection api={api ?? null} canChangePlan={isAdmin} organizationName={workspace.name} openRequest={usageRequest} />
+                <UsageSettingsSection api={api ?? null} canChangePlan={isAdmin} organizationName={workspace.name} openRequest={usageRequest} billingAccessReason={session?.impersonator ? "Billing is unavailable during support sessions." : undefined} />
               </section>
             )}
 

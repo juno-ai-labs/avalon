@@ -163,8 +163,9 @@ usage plan contract; changing Stripe prices does not change those allowances.
 Set `synchronization` to provision every local Organization in Stripe on the
 existing five-minute scheduled tick, including accounts that never open billing.
 `pnpm env:sync` copies the optional server keys and preserves the JSON catalog
-through local dotenv encoding. Status GETs use stored state without waiting for the billing actor or making provider calls. A single
-focus listener refreshes that cache on return from Stripe. Webhooks and scheduled
+through local dotenv encoding. Status GETs refresh through the billing actor when signup trials, usage enforcement
+or a live subscription require reconciliation; otherwise they use stored state.
+A focus listener refreshes status on return from Stripe. Webhooks and scheduled
 recovery refresh paid lifecycle state even without usage synchronization. Profile
 synchronization is separate, so a bad free price cannot block checkout or closure.
 Customer metadata search and subscription discovery recover lost create receipts
@@ -287,9 +288,10 @@ lookup recovers the grant even after its idempotency retention expires.
 
 Stripe owns the promotional credit grant, remaining balance, expiry and invoice
 application. Scope is the dedicated overage **price**, not all metered prices.
-Administrators can read grants and available balances in Usage settings on both
-desktop and web. The explicit **View credits / Refresh credits** read goes to
-Stripe; ordinary billing status stays provider-free. Grants created directly in
+Organization members can read grants and available balances on the Billing page
+in both desktop and web. Credits load automatically on opening; a small refresh
+icon requests a fresh balance. Initial reads show skeletons, and refreshing keeps
+the last balance visible. These reads go to Stripe. Grants created directly in
 Stripe appear too if their USD scope contains only this Organization's configured
 or previously used overage prices. General customer invoice-balance credits are
 excluded because they can also offset subscription fees. Expiring a grant removes
@@ -490,7 +492,9 @@ register the business or enable tax collection.
 
 - Client input selects catalog offer IDs, never Stripe price IDs or amounts.
   Otherwise a caller could buy an arbitrary price. Tests cover rejected selections.
-- Only active Organization administrators, outside support sessions, access billing.
+- Active Organization members can read billing status and credits. Only
+  administrators can create checkout/portal sessions or change overage consent.
+  Support sessions cannot access billing reads or writes.
 - Checkout never grants an entitlement; verified Stripe subscription state does.
 - A matching open checkout is reused; changing offer, currency or overage consent
   expires the old session before preparing its replacement inside the same actor.
@@ -501,8 +505,9 @@ register the business or enable tax collection.
 
 ## Boundary
 
-`GET /workspace/billing`, `POST /workspace/billing/checkout` and
-`POST /workspace/billing/portal` and read-only `GET /workspace/billing/credits` are authenticated administrator routes. Credit, trial-month, subscription, refund, invoice and catalog writes exist only on the internal engineering bridge.
+`GET /workspace/billing` and `GET /workspace/billing/credits` are authenticated
+member reads. `POST /workspace/billing/checkout`, `POST /workspace/billing/portal`
+and `POST /workspace/billing/overages` require an administrator. Credit, trial-month, subscription, refund, invoice and catalog writes exist only on the internal engineering bridge.
 `POST /stripe/webhook` bounds the raw body with the shared `PROVIDER_WEBHOOK_MAX_BYTES` limit before verifying the Stripe signature. Oversized signed or unsigned requests return 413. Configure separate webhook
 secrets/endpoints for each owning deployment if more regions are introduced.
 The current deployment is Global. Standard member plan changes are rejected while
@@ -750,6 +755,21 @@ use Engineering MCP to change offers and promotions in the persisted catalog;
 landing-page prose must be kept aligned separately.
 
 ## Changelog
+
+### 2026-11-12 — Keep Billing visible across permissions and loading states
+
+Billing moved out of general Organization settings into its own child page. The
+page always renders trial, subscription, plan, currency, overage consent, credits,
+weekly quota and monthly usage, including zero usage. Disabled controls explain
+permissions, unavailable services and subscription constraints in tooltips.
+
+Usage, billing status and credits load independently so a failed quota read cannot
+hide the payment-details action. Credits load on opening and retain their last
+balance during icon-triggered refreshes; cold reads show skeletons. Member GET
+access supplies real read-only values, while all billing POSTs remain admin-only
+and support sessions remain excluded. Hiding controls or showing invented defaults
+would obscure what an administrator could configure, so unavailable data is stated
+explicitly. Scoped query keys prevent one Organization's credits reaching another.
 
 ### 2026-11-12 — Require an expiration within two years for overage credits
 
