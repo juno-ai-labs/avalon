@@ -1,3 +1,4 @@
+import { runtimeDeferral } from "../lib/defer";
 import { closeOrganizationBilling as closeWithoutBilling } from "./billing";
 import type { GrantOverageCredit, GrantTrialMonths } from "@rally/contracts/billing";
 import type { Env } from "../env";
@@ -8,6 +9,18 @@ const coordinator = (env: Env, workspaceId: string) =>
   env.BILLING_COORDINATORS.getByName(
     `${env.AVALON_REGION}:billing:${workspaceId}`,
   );
+
+export const refreshOrganizationBilling = (env: Env, workspaceId: string, checkPayment = false) => coordinator(env, workspaceId).refresh(workspaceId, checkPayment);
+export const setBillingOverages = (env: Env, workspaceId: string, enabled: boolean) => coordinator(env, workspaceId).overages(workspaceId, enabled);
+
+/** Signup survives a provider outage; the scheduled actor retries the same
+ * persisted award. Provision in the background so signup does not wait on Stripe. */
+export function initializeOrganizationBilling(env: Env, workspaceId: string): void {
+  if (!env.BILLING_CONFIG) return;
+  runtimeDeferral(Promise.resolve().then(() => refreshOrganizationBilling(env, workspaceId)).catch(error => {
+    logWarn(env, "billing_signup_pending", { workspace_id: workspaceId, error_code: diagnosticErrorCode(error, "billing_signup_failed") });
+  }));
+}
 
 export const createCheckout = (
   env: Env,

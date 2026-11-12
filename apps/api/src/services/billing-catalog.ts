@@ -57,8 +57,8 @@ async function prepare(env: Env, request: BillingCatalogMutation): Promise<Deliv
     return { path: 'coupons', fields, couponId, recoveryList: 'coupons?' };
   }
   if (request.expectedRevision !== current.revision) billingRefusal('billing_catalog_revision_conflict');
-  const proposed = request.catalog;
-  const parsed = BillingConfigSchema.safeParse({ ...billingConfig(env), ...proposed, pilotCouponId: proposed.pilotCouponId ?? undefined });
+  const proposed = { ...request.catalog, signupTrial: request.catalog.signupTrial === undefined ? current.signupTrial : request.catalog.signupTrial };
+  const parsed = BillingConfigSchema.safeParse({ ...billingConfig(env), ...proposed, pilotCouponId: proposed.pilotCouponId ?? undefined, signupTrial: proposed.signupTrial ?? undefined });
   if (!parsed.success) throw new ApiError(400, zodDiagnosticCode(parsed.error, 'billing_catalog')!, 'Billing catalog is invalid');
   // Historical prices must stay mapped to their original entitlement and
   // overage rate. New prices use new offer IDs; disable the retired offer.
@@ -86,6 +86,10 @@ async function prepare(env: Env, request: BillingCatalogMutation): Promise<Deliv
     if (offer.overagePriceId && !current.offers.some(old => old.overagePriceId === offer.overagePriceId)) billingRefusal('billing_overage_price_not_configured');
   }
   const active = proposed.offers.filter(offer => offer.enabled && offer.plan !== 'starter');
+  if (proposed.signupTrial) {
+    const price = prices.get(proposed.signupTrial.offerId)!;
+    if (price.recurring?.interval !== 'month' || price.recurring.interval_count !== 1) billingRefusal('billing_signup_trial_requires_monthly_price');
+  }
   if (proposed.pilotCouponId) {
     await requirePlanCoupon(env, proposed.pilotCouponId, active.map(offer => prices.get(offer.id)!.product));
     if (active.some(offer => prices.get(offer.id)!.recurring?.interval !== 'month' || prices.get(offer.id)!.recurring?.interval_count !== 1)) billingRefusal('billing_pilot_requires_monthly_prices');

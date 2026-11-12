@@ -32,6 +32,11 @@ the judgement is designed and evaluated.
 
 ## How it works
 
+When billing admission reports `usage_allowance_exhausted`, a gated event is
+refused with that outcome before its classifier runs. This is a named policy
+refusal rather than a provider outage to retry; later events can be admitted once
+usage or payment-backed overages are available.
+
 A `semantic_activity` trigger reaches production the same way a
 `connector_activity` one does. The authoring agent writes it into a draft, the
 draft schema requires a non-empty `condition` and a `deterministicPrefilter`

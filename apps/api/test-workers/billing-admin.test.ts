@@ -8,6 +8,7 @@ import { seedInspectableWorkspace } from './helpers/engineering-inspection-fixtu
 import { ensureAuditSchema } from './helpers/audit-fixture';
 import { billingAccount } from '../src/services/billing';
 import billingMigration from '../../../packages/db/migrations/0131_billing.sql?raw';
+import signupMigration from '../../../packages/db/migrations/0132_signup_trials.sql?raw';
 
 const ORG = asWorkspaceId('00000000-0000-7000-8000-00000000fda1');
 const OPERATION = '00000000-0000-7000-8000-00000000fda2';
@@ -31,6 +32,7 @@ beforeAll(async () => {
     env.DB.prepare('ALTER TABLE workspaces ADD COLUMN updated_at TEXT'),
   ]);
   await env.DB.exec(billingMigration.replace(/--[^\n]*\n/g,'').replace(/\s*\n\s*/g,' '));
+  await env.DB.exec(signupMigration.replace(/--[^\n]*\n/g, '').replace(/\s*\n\s*/g, ' '));
   await ensureAuditSchema(); await billingAccount(configured(), ORG);
   await env.DB.prepare("UPDATE billing_accounts SET customer_id='cus_1'").run();
   for (const stub of [actor(),catalogActor()]) await runInDurableObject(stub, instance => { Object.defineProperty(instance,'env',{ value: configured(), configurable: true }); });

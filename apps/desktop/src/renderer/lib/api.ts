@@ -1,7 +1,7 @@
 import type { ProductAnalyticsPreference } from '@rally/contracts/telemetry';
 import { ProductAnalyticsPreferenceClient } from '../../common/product-analytics-preference';
 import { ArtifactLinkSchema } from '@rally/contracts/artifact-access';
-import { BillingStatusSchema, BillingUrlSchema, BillingCreditsSchema } from '@rally/contracts/billing';
+import { BillingStatusSchema, BillingUrlSchema, BillingCreditsSchema, BillingOveragePreferenceSchema } from '@rally/contracts/billing';
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
@@ -1001,6 +1001,9 @@ export class RallyApi {
   }
   async createBillingCheckout(offerId: string, currency: string, overage: boolean) {
     return this.request('/workspace/billing/checkout', { method: 'POST', body: { offerId, currency, overage }, schema: BillingUrlSchema });
+  }
+  async setBillingOverages(enabled: boolean) {
+    return this.request('/workspace/billing/overages', { method: 'POST', body: { enabled }, schema: BillingOveragePreferenceSchema });
   }
   async createBillingPortal() {
     return this.request('/workspace/billing/portal', { method: 'POST', schema: BillingUrlSchema });

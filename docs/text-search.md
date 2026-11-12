@@ -40,6 +40,13 @@ before a search needs it.
 
 ## How it works
 
+When usage admission refuses a paid embedding, lexical indexing remains usable.
+The Queue preserves `usage_allowance_exhausted`, re-enqueues the same semantic job
+toward the weekly reset with Cloudflare's maximum 12-hour delivery delay, then
+acknowledges the original. Billing holds do not exhaust retries or drop indexing.
+Adding billing details earlier does not expedite already delayed deliveries.
+
+
 Generation v3 uses two namespaces: `rally-search-v3-<identity hash>-text` holds
 complete lexical documents without vectors; `rally-search-v3-semantic-<hash>` holds
 embedded chunks. The semantic hash combines the workspace identity with tokenizer revision, algorithm version, chunk size,

@@ -1,3 +1,4 @@
+import { isUsageAllowanceExhausted } from "./usage-admission";
 import { BPE, Tokenizer } from '@huggingface/tokenizers';
 import { gunzipSync, strFromU8 } from 'fflate';
 import { z } from 'zod';
@@ -66,7 +67,8 @@ export async function embedSearchDocuments(env: Env, workspaceId: string, texts:
       feature: 'search_embedding',
     });
     return { model: result.resolvedModel, vectors: result.embeddings };
-  } catch {
-    throw new Error('search_embedding_failed');
+  } catch (error) {
+    if (isUsageAllowanceExhausted(error)) throw error;
+    throw new Error('search_embedding_failed', { cause: error });
   }
 }
