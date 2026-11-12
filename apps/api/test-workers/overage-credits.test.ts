@@ -37,7 +37,7 @@ beforeEach(async () => {
       customer_mapping: { type: 'by_id', event_payload_key: 'stripe_customer_id' }, value_settings: { event_payload_key: 'value' } });
     if (path === 'billing/credit_grants' && init?.method === 'POST') {
       writes++;
-      grant = { id: 'credgr_1', customer: 'cus_1', amount: money(5000), effective_at: Math.floor(Date.now() / 1000), expires_at: null, voided_at: null,
+      grant = { id: 'credgr_1', customer: 'cus_1', amount: money(5000), effective_at: Math.floor(Date.now() / 1000), expires_at: null,
         applicability_config: { scope: { prices: [{ id: fields.get('applicability_config[scope][prices][0][id]') }] } }, metadata: { receipt: fields.get('metadata[receipt]') } };
       return Response.json(grant);
     }
@@ -52,7 +52,7 @@ afterEach(() => vi.unstubAllGlobals());
 it('audits operator grants through the real organization actor and serializes retries without issuing another grant', async () => {
   const bridge = new EngineeringInspectionBridge(createExecutionContext(), configured());
   const input = { orgId: ORG, operationId: OPERATION, amountCents: 5000, reason: 'Incident credit' };
-  expect(await bridge.grantOverageCredit(input, OPERATOR)).toMatchObject({ id: 'credgr_1', availableCents: 5000 });
+  expect(await bridge.grantOverageCredit(input, OPERATOR)).toMatchObject({ id: 'credgr_1', availableCents: 5000, voided: false });
   expect(await bridge.inspectOverageCredits({ orgId: ORG })).toMatchObject({ availableCents: 5000 });
   const results = await Promise.allSettled(Array.from({ length: 8 }, () => stub().grantCredit(ORG, { operationId: OPERATION, amountCents: 5000, reason: 'Incident credit' })));
   expect(results.some(result => result.status === 'fulfilled')).toBe(true);

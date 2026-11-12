@@ -11,8 +11,8 @@ import { validateOverageMeter } from "./stripe-overages";
 const Money = z.object({ type: z.literal("monetary"), monetary: z.object({ currency: z.string(), value: z.number().int() }) });
 const Grant = z.object({
   id: z.string(), customer: z.string(), amount: Money,
-  effective_at: z.number(), expires_at: z.number().nullable(), voided_at: z.number().nullable(),
-  applicability_config: z.object({ scope: z.object({ prices: z.array(z.object({ id: z.string() })).optional() }) }),
+  effective_at: z.number(), expires_at: z.number().nullable(), voided_at: z.number().nullish(),
+  applicability_config: z.object({ scope: z.object({ prices: z.array(z.object({ id: z.string().nullable() })).nullish() }) }),
   metadata: z.record(z.string(), z.string()),
 });
 // List envelopes may contain grants in other currencies, which are unrelated.
@@ -38,7 +38,7 @@ async function creditView(env: Env, grant: z.infer<typeof Grant>): Promise<Overa
     id: grant.id, amountCents: grant.amount.monetary.value,
     availableCents: balance.balances.reduce((sum, item) => sum + (item.available_balance.monetary.currency === "usd" ? item.available_balance.monetary.value : 0), 0),
     effectiveAt: new Date(grant.effective_at * 1000).toISOString(),
-    expiresAt: grant.expires_at === null ? null : new Date(grant.expires_at * 1000).toISOString(), voided: grant.voided_at !== null,
+    expiresAt: grant.expires_at === null ? null : new Date(grant.expires_at * 1000).toISOString(), voided: grant.voided_at != null,
   };
 }
 
@@ -53,7 +53,7 @@ async function overagePrices(env: Env, workspaceId: string) {
 }
 function scopedToOverages(grant: z.infer<typeof Grant>, prices: Set<string>) {
   const scope = grant.applicability_config.scope.prices;
-  return Boolean(scope?.length && scope.every((price) => prices.has(price.id)));
+  return Boolean(scope?.length && scope.every((price) => price.id !== null && prices.has(price.id)));
 }
 
 /** Read the financial authority directly. This never provisions a customer. */
@@ -119,6 +119,6 @@ export async function expireOverageCredit(env: Env, workspaceId: string, grantId
   const grant = await stripe(env, `billing/credit_grants/${encodeURIComponent(grantId)}`, Grant);
   if (grant.customer !== account.customer_id || grant.amount.monetary.currency !== "usd" || !scopedToOverages(grant, await overagePrices(env, workspaceId)))
     throw new ApiError(404, "billing_credit_not_found", "Overage credit not found for this organization");
-  if (grant.voided_at !== null || (grant.expires_at !== null && grant.expires_at <= Date.now() / 1000)) return creditView(env, grant);
+  if (grant.voided_at != null || (grant.expires_at !== null && grant.expires_at <= Date.now() / 1000)) return creditView(env, grant);
   return creditView(env, await stripe(env, `billing/credit_grants/${encodeURIComponent(grantId)}/expire`, Grant, {}, `expire:${grantId}`));
 }
