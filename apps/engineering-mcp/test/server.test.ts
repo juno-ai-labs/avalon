@@ -17,12 +17,20 @@ const principal: AccessPrincipal = {
 
 function regionalBinding(region: string): EngineeringInspectionRpcBinding {
   return {
+    inspectOrgBilling: vi.fn<EngineeringInspectionRpcBinding["inspectOrgBilling"]>(),
+    administerOrgBilling: vi.fn<EngineeringInspectionRpcBinding["administerOrgBilling"]>(),
+    inspectBillingCatalog: vi.fn<EngineeringInspectionRpcBinding["inspectBillingCatalog"]>(),
+    administerBillingCatalog: vi.fn<EngineeringInspectionRpcBinding["administerBillingCatalog"]>(),
     provisionUserPassword: vi.fn<EngineeringInspectionRpcBinding["provisionUserPassword"]>(),
     revokeUserPassword: vi.fn<EngineeringInspectionRpcBinding["revokeUserPassword"]>(),
     createOrg: vi.fn<EngineeringInspectionRpcBinding["createOrg"]>(),
     inspectOrganizationSettings: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationSettings"]>(),
     updateOrganizationSettings: vi.fn<EngineeringInspectionRpcBinding["updateOrganizationSettings"]>(),
     inspectOrganizationUsage: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationUsage"]>(),
+    grantTrialMonths: vi.fn<EngineeringInspectionRpcBinding["grantTrialMonths"]>(),
+    inspectOverageCredits: vi.fn<EngineeringInspectionRpcBinding["inspectOverageCredits"]>(),
+    grantOverageCredit: vi.fn<EngineeringInspectionRpcBinding["grantOverageCredit"]>(),
+    expireOverageCredit: vi.fn<EngineeringInspectionRpcBinding["expireOverageCredit"]>(),
     changeOrganizationPlan: vi.fn<EngineeringInspectionRpcBinding["changeOrganizationPlan"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
@@ -139,7 +147,7 @@ describe("Rally engineering MCP tools", () => {
     });
     expect(response.result).toMatchObject({ serverInfo: {
       name: "Rally engineering",
-      description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; create organizations and send messages as a selected Rally user.",
+      description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; administer billing, create organizations and send messages as a selected Rally user.",
     } });
     const instructions = (response.result as { instructions: string }).instructions;
     expect(instructions).toContain("a Sidekick is an automation");
@@ -305,6 +313,18 @@ describe("Rally engineering MCP tools", () => {
       "inspect_dead_letters",
       "inspect_org_settings",
       "update_org_settings",
+      "inspect_org_billing",
+      "change_subscription",
+      "refund_payment",
+      "correct_invoice",
+      "inspect_billing_catalog",
+      "create_billing_price",
+      "create_billing_coupon",
+      "configure_billing_catalog",
+      "grant_trial_months",
+      "inspect_overage_credits",
+      "grant_overage_credit",
+      "expire_overage_credit",
       "inspect_usage_plan",
       "change_usage_plan",
       "inspect_migration_progress",
@@ -1023,6 +1043,68 @@ describe("operations tools", () => {
     expect(enterprise.updateOrganizationSettings).not.toHaveBeenCalled();
     expect((await rpc(env, "tools/call", { name: "update_org_settings", arguments: { orgId, modelSelectorVisible: "true" } })).result).toMatchObject({ isError: true });
     expect(global.updateOrganizationSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes billing administration and catalog tools with the verified operator and validates financial arguments", async () => {
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ac1");
+    const operationId = "00000000-0000-7000-8000-000000000ac2";
+    const global = regionalBinding("global"); const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "global", authorityGeneration: 1 } });
+    vi.mocked(global.administerOrgBilling).mockResolvedValue({ operationId, resourceId: "re_1", resourceType: "refund", status: "succeeded", amountMinor: 500, currency: "usd" });
+    vi.mocked(global.administerBillingCatalog).mockResolvedValue({ operationId, resourceId: "price_new", resourceType: "price", status: "created" });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+    const refund = { orgId, operationId, reason: "Service adjustment", chargeId: "ch_1", amountMinor: 500 };
+    expect((await rpc(env, "tools/call", { name: "refund_payment", arguments: refund })).result).not.toHaveProperty("isError", true);
+    expect(global.administerOrgBilling).toHaveBeenCalledWith({ ...refund, kind: "refund" }, principal);
+    expect((await rpc(env, "tools/call", { name: "refund_payment", arguments: { ...refund, amountMinor: -1 } })).result).toHaveProperty("isError", true);
+    expect(global.administerOrgBilling).toHaveBeenCalledTimes(1);
+    const change = { orgId, operationId, reason: "Plan adjustment", subscriptionId: "sub_1", change: { type: "plan", offerId: "max", proration: "none" } };
+    expect((await rpc(env, "tools/call", { name: "change_subscription", arguments: change })).result).not.toHaveProperty("isError", true);
+    expect(global.administerOrgBilling).toHaveBeenLastCalledWith({ ...change, kind: "subscription" }, principal);
+    const invoice = { orgId, operationId, reason: "Correction", invoiceId: "in_1", correction: { type: "void" } };
+    expect((await rpc(env, "tools/call", { name: "correct_invoice", arguments: invoice })).result).not.toHaveProperty("isError", true);
+    expect(global.administerOrgBilling).toHaveBeenLastCalledWith({ ...invoice, kind: "invoice" }, principal);
+    const price = { region: "global", operationId, reason: "New price", sourceOfferId: "grow", amountMinor: 12000, currency: "usd", interval: "month", intervalCount: 1, taxBehavior: "exclusive" };
+    expect((await rpc(env, "tools/call", { name: "create_billing_price", arguments: price })).result).not.toHaveProperty("isError", true);
+    expect(global.administerBillingCatalog).toHaveBeenCalledWith({ ...price, kind: "price" }, principal);
+    const coupon = { region: "global", operationId, reason: "Pilot", name: "Pilot", offerIds: ["grow"], percentOff: 100, duration: { type: "repeating", months: 2 } };
+    expect((await rpc(env, "tools/call", { name: "create_billing_coupon", arguments: coupon })).result).not.toHaveProperty("isError", true);
+    expect(global.administerBillingCatalog).toHaveBeenLastCalledWith({ ...coupon, kind: "coupon" }, principal);
+    const catalog = { offers: [{ id: "grow", name: "Grow", plan: "growth", priceId: "price_grow", currencies: ["usd"], enabled: true }], pilotCouponId: null };
+    const publish = { region: "global", operationId, reason: "Publish", expectedRevision: 0, catalog };
+    expect((await rpc(env, "tools/call", { name: "configure_billing_catalog", arguments: publish })).result).not.toHaveProperty("isError", true);
+    expect(global.administerBillingCatalog).toHaveBeenLastCalledWith({ ...publish, kind: "catalog" }, principal);
+    vi.mocked(global.administerOrgBilling).mockClear(); vi.mocked(global.administerBillingCatalog).mockClear();
+    for (const [name, args] of [['refund_payment',refund], ['change_subscription',change], ['correct_invoice',invoice],
+      ['create_billing_price',price], ['create_billing_coupon',coupon], ['configure_billing_catalog',publish]] as const) {
+      expect((await rpc(env, 'tools/call', { name, arguments: { ...args, dryRun: true } })).result).toHaveProperty('isError', true);
+    }
+    expect(global.administerOrgBilling).not.toHaveBeenCalled(); expect(global.administerBillingCatalog).not.toHaveBeenCalled();
+    expect(enterprise.administerOrgBilling).not.toHaveBeenCalled(); expect(enterprise.administerBillingCatalog).not.toHaveBeenCalled();
+  });
+
+  it("routes overage credit tools to the owning region with the Access actor", async () => {
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ac1");
+    const global = regionalBinding("global"); const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "global", authorityGeneration: 1 } });
+    const credit = { id: "credgr_1", amountCents: 10000, availableCents: 7500, effectiveAt: "2026-11-01T00:00:00Z", expiresAt: null, voided: false };
+    vi.mocked(global.grantOverageCredit).mockResolvedValue(credit);
+    vi.mocked(global.grantTrialMonths).mockResolvedValue({ subscriptionId: "sub_1", months: 2, previousFeeCoveredUntil: "2027-01-01T00:00:00Z", trialEndsAt: "2027-03-01T00:00:00Z" });
+    vi.mocked(global.expireOverageCredit).mockResolvedValue({ ...credit, availableCents: 0 });
+    vi.mocked(global.inspectOverageCredits).mockResolvedValue({ enabled: true, currency: "usd", availableCents: 7500, grants: [credit] });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+    const input = { orgId, operationId: "00000000-0000-7000-8000-000000000ac2", amountCents: 10000, reason: "Incident credit" };
+    expect((await rpc(env, "tools/call", { name: "grant_overage_credit", arguments: input })).result).not.toHaveProperty("isError", true);
+    expect(global.grantOverageCredit).toHaveBeenCalledWith(input, principal);
+    const trial = { orgId, operationId: input.operationId, months: 2, reason: "Extra evaluation time" };
+    expect((await rpc(env, "tools/call", { name: "grant_trial_months", arguments: trial })).result).not.toHaveProperty("isError", true);
+    expect(global.grantTrialMonths).toHaveBeenCalledWith(trial, principal);
+    expect((await rpc(env, "tools/call", { name: "inspect_overage_credits", arguments: { orgId } })).result).not.toHaveProperty("isError", true);
+    expect((await rpc(env, "tools/call", { name: "expire_overage_credit", arguments: { orgId, grantId: "credgr_1" } })).result).not.toHaveProperty("isError", true);
+    expect(global.expireOverageCredit).toHaveBeenCalledWith({ orgId, grantId: "credgr_1" }, principal);
+    expect(enterprise.grantOverageCredit).not.toHaveBeenCalled();
+    expect((await rpc(env, "tools/call", { name: "grant_overage_credit", arguments: { ...input, amountCents: -1 } })).result).toMatchObject({ isError: true });
+    expect(global.grantOverageCredit).toHaveBeenCalledTimes(1);
   });
 
   it("routes usage and plan changes to the owning region with the Access actor", async () => {

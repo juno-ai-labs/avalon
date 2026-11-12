@@ -1,3 +1,6 @@
+import { useLocalCacheScope } from '../lib/local-cache-scope';
+import { useQuery } from '@tanstack/react-query';
+import { OrganizationBilling } from './organization-billing';
 import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { PLAN_IDS, PlanIdSchema } from '@rally/contracts/usage';
@@ -28,7 +31,7 @@ const PLAN_OPTIONS = PLAN_IDS.map((plan) => ({
   label: usagePlanLabel(plan),
   description: usagePlanPriceLabel(plan),
 }));
-export const NOT_BILLED_EXPLANATION = "Rally isn't charging for usage beyond your plan yet.";
+export const USAGE_TOTAL_EXPLANATION = "This is usage beyond your allowance, not an invoice total. Charges for earlier opted-in usage may still appear after cancellation.";
 
 /**
  * Settings → Organization → Usage. Every member sees it, whatever their role:
@@ -89,8 +92,16 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
 }): React.JSX.Element {
   const { usage, fetchedAt } = reading;
   const setPlan = useSetOrganizationPlan(api);
+  const scope = useLocalCacheScope();
+  const billing = useQuery({ queryKey: ['organization-billing', scope], queryFn: () => api!.getBillingStatus!(), enabled: canChangePlan && Boolean(api?.getBillingStatus), refetchOnWindowFocus: false });
+  useEffect(() => {
+    if (!canChangePlan || !api?.getBillingStatus) return;
+    const refresh = () => { void billing.refetch(); };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [api, canChangePlan, billing.refetch]);
   return <>
-    <label className="settings-preference-row">
+    {billing.data?.enabled && api ? <OrganizationBilling api={api} billing={billing.data} currentPlan={usagePlanLabel(usage.plan)} /> : <label className="settings-preference-row">
       <SettingCopy
         setting={settings.plan}
         description={setPlan.error
@@ -99,7 +110,7 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
       />
       <DropdownSelect
         ariaLabel="Plan"
-        disabled={!canChangePlan || !api || offline || setPlan.isPending}
+        disabled={!canChangePlan || !api || offline || setPlan.isPending || (Boolean(api?.getBillingStatus) && (billing.isError || billing.data?.enabled !== false))}
         onValueChange={(value) => {
           const plan = PlanIdSchema.parse(value);
           if (plan !== usage.plan) setPlan.mutate(plan);
@@ -108,7 +119,8 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
         value={setPlan.isPending ? setPlan.variables ?? usage.plan : usage.plan}
         variant="secondary"
       />
-    </label>
+    </label>}
+    {billing.error && <><ErrorNotice>Billing could not be loaded. {billing.error.message}</ErrorNotice><div className="settings-preference-row"><span className="settings-row-copy"><strong>Billing unavailable</strong><small>Try again to load billing options.</small></span><Button onClick={() => void billing.refetch()} disabled={billing.isFetching}>Retry billing</Button></div></>}
     <div className="settings-preference-row">
       <SettingCopy
         setting={settings.quota}
@@ -129,9 +141,9 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
           <small>{usagePeriodLabel(usage.overage.periodStart, usage.overage.periodEndsAt)}</small>
         </span>
         <span className="usage-overage-value">
-          <s>{formatMicrousd(usage.overage.amountMicrousd)}</s>
-          <Tip label={NOT_BILLED_EXPLANATION} side="top">
-            <Badge className="usage-not-billed" tabIndex={0}>Not billed</Badge>
+          <span>{formatMicrousd(usage.overage.amountMicrousd)}</span>
+          <Tip label={usage.overage.billingEnabled ? "Overage charges appear on a later invoice after usage settles." : USAGE_TOTAL_EXPLANATION} side="top">
+            <Badge className="usage-not-billed" tabIndex={0}>{usage.overage.billingEnabled ? "Overage enabled" : "Usage total"}</Badge>
           </Tip>
         </span>
       </div>

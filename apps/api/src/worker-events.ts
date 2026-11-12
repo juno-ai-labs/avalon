@@ -1,3 +1,4 @@
+import { settleBillingAccounts } from './services/billing-coordination';
 import { purgeExpiredPasswordLoginAttempts } from './services/password-login-service';
 import { purgeExpiredEmailLoginChallenges } from "./services/auth-service";
 import { recoverEmailLoginDeliveries } from "./services/email-login-service";
@@ -196,6 +197,7 @@ export default {
         purgeExpiredEmailLoginChallenges(env),
         purgeExpiredPasswordLoginAttempts(env),
         pruneUsageEvents(env, Date.now()),
+        settleBillingAccounts(env),
         processTelemetry(env),
       ]);
     })());

@@ -23,13 +23,13 @@ edge: "Rally knows how to be polite and not pester you constantly."
 | Your tools | Google Workspace, Slack, Notion, GitHub, Linear, Granola, and more. Reads and writes back. | 3,200+ integrations, including Salesforce, HubSpot, Stripe, and ad platforms |
 | Runs on its own | Sidekicks run on a schedule or when something happens. | Scheduled tasks and automations |
 | Models | One voice, with each job routed to the model family best at it. | Model names not published. You can pick a faster or deeper model for a reply. |
-| Pricing | $100 or $250 per organization a month. No seat limit. | Shared credits per workspace, from $50 a month for 20,000 credits. No seat charge. |
+| Pricing | Free, $100, $250 or $1,000 per organization a month. No seat limit. | Shared credits per workspace, from $50 a month for 20,000 credits. No seat charge. |
 
 ## Where Rally wins
 
 ### Flat, so people just ask
 
-Rally costs one flat amount per organization, with one shared quota. Start is $100 a month and Grow is $250. The tenth question of the day costs the same as the first.
+Rally costs one flat amount per organization, with one shared quota. Start is free, Grow is $100 a month, Max is $250, and Ultra is $1,000. Each includes a shared usage allowance; paid plans can optionally bill overages.
 
 ### Next week starts where this one ended
 

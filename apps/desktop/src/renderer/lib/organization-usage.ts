@@ -23,7 +23,7 @@ import { useLocalCacheScope } from './local-cache-scope';
 export type OrganizationUsageApi = Pick<RallyApi, 'getWorkspaceUsage'>;
 
 /** What Settings needs on top of the read: an administrator choosing the plan. */
-export type OrganizationPlanApi = OrganizationUsageApi & Pick<RallyApi, 'setWorkspacePlan'>;
+export type OrganizationPlanApi = OrganizationUsageApi & Pick<RallyApi, 'setWorkspacePlan'> & Partial<Pick<RallyApi, 'getBillingStatus' | 'getBillingCredits' | 'createBillingCheckout' | 'createBillingPortal'>>;
 
 /** One answer and when it arrived, which is what the offline label names. */
 export interface UsageReading {
@@ -165,7 +165,7 @@ export function usagePlanLabel(plan: PlanId): string {
 
 /** "$100 a month", under each plan in the picker. */
 export function usagePlanPriceLabel(plan: PlanId): string {
-  return `$${PLANS[plan].monthlyPriceUsd} a month`;
+  return `$${PLANS[plan].monthlyPriceUsd.toLocaleString('en-US')} a month`;
 }
 
 /** The value under the meter on the Weekly quota row in Settings. */
@@ -189,7 +189,7 @@ export function usageMenuLabel(usage: OrganizationUsage): string {
   const at = new Date(usage.weekResetsAt);
   const day = new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(at);
   const line = `${usage.quotaRemainingPercent}% left till ${day} ${timeOfDay(at)}`;
-  return usageTone(usage) === 'warning' ? `${line}, overage enabled` : line;
+  return usageTone(usage) === 'warning' && usage.overage.billingEnabled === true ? `${line}, overage enabled` : line;
 }
 
 /** "Resets Thursday, October 8 at 9:00 AM", in the viewer's local time. */

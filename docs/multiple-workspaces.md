@@ -30,6 +30,10 @@ is stored in the same set as the Organization's credential, marked by an
 Organizations: the directory, push registration and background reads skip it,
 and selecting any other Organization drops it.
 
+Closing an Organization with a live Stripe subscription or pending checkout is
+refused before suspending the final membership. Checkout and closure share an
+ownership claim; [Stripe billing](stripe-billing.md) owns cancellation and recovery.
+
 ## Where the code lives
 
 | Path | Responsibility |

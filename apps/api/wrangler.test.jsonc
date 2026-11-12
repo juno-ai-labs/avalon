@@ -73,6 +73,7 @@
   "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }, { "binding": "CODE_LOADER" }],
   "durable_objects": {
     "bindings": [
+      { "name": "BILLING_COORDINATORS", "class_name": "BillingCoordinatorDO" },
       { "name": "SUBSTREAM_AGENTS", "class_name": "AgentLoopDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" },
@@ -90,7 +91,8 @@
         "MigrationProbeDO",
         "EngineeringTaskTestDO"
       ]
-    }
+    },
+    { "tag": "billing-v1", "new_sqlite_classes": ["BillingCoordinatorDO"] }
   ],
   "queues": {
     "producers": [
