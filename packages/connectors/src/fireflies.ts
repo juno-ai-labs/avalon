@@ -23,8 +23,8 @@ import {
   type ConnectorAdapter,
   type ConnectorConnectionContext,
 } from "./types";
-import { FIREFLIES_PERSONAL_SYSTEM_MESSAGE } from "./prompts/fireflies-personal";
-import { FIREFLIES_SYSTEM_MESSAGE } from "./prompts/fireflies";
+import { FIREFLIES_PERSONAL_SYSTEM_MESSAGE } from "@rally/prompts/connectors/fireflies-personal";
+import { FIREFLIES_SYSTEM_MESSAGE } from "@rally/prompts/connectors/fireflies";
 
 const FIREFLIES_GRAPHQL_URL = "https://api.fireflies.ai/graphql";
 export const FIREFLIES_MCP_URL = "https://api.fireflies.ai/mcp";

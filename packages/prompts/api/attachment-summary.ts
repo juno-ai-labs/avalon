@@ -1,4 +1,4 @@
-import type { ModelMessage } from "@rally/agent-harness";
+import type { PromptPartsMessage } from "../harness/types";
 
 /** System prompt for summarizing an attachment from bounded samples. */
 const ATTACHMENT_SUMMARY_SYSTEM_PROMPT = [
@@ -14,7 +14,7 @@ export function renderAttachmentSummaryMessages(input: {
   focus: unknown;
   text: string;
   sources: readonly { id: string; start: number; end: number }[];
-}): ModelMessage[] {
+}): PromptPartsMessage[] {
   return [
     {
       role: "system",

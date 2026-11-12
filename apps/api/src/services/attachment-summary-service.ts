@@ -2,7 +2,7 @@ import type { ModelMessage } from "@rally/agent-harness";
 import { z } from "zod";
 import type { Env } from "../env";
 import { runStructuredInference } from "./structured-inference";
-import { renderAttachmentSummaryMessages } from "../prompts/attachment-summary";
+import { renderAttachmentSummaryMessages } from "@rally/prompts/api/attachment-summary";
 
 const MAX_SAMPLED_CHARACTERS = 80_000;
 const MAX_SAMPLE_SEGMENTS = 8;

@@ -5,7 +5,7 @@ import {
 import type { HarnessPlugin, HarnessTool } from "@rally/agent-harness";
 import { z } from "zod";
 import type { AgentCommunicationService } from "./agent-communication-service";
-import { renderAgentCommunicationSystemMessage } from "../prompts/agent-communication-plugin";
+import { renderAgentCommunicationSystemMessage } from "@rally/prompts/api/agent-communication-plugin";
 
 /** What the tools call: the service's model-facing operations and nothing else. */
 export type AgentCommunicationTools = Pick<AgentCommunicationService,

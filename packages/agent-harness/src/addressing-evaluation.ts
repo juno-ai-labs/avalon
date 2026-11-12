@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AddressingClassificationSchema } from "@rally/contracts";
 import type { AddressingClassification } from "@rally/contracts";
-import type { AddressingPromptInput } from "./prompts/addressing";
+import type { AddressingPromptInput } from "@rally/prompts/harness/addressing";
 
 const AddressingContextMessageSchema = z.object({
   authorType: z.enum(["human", "agent"]),

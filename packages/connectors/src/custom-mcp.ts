@@ -33,7 +33,7 @@ import {
   type ConnectorConnectionContext,
   type ConnectorServerMetadata,
 } from "./types";
-import { CUSTOM_MCP_SYSTEM_MESSAGE } from "./prompts/custom-mcp";
+import { CUSTOM_MCP_SYSTEM_MESSAGE } from "@rally/prompts/connectors/custom-mcp";
 
 export const CUSTOM_MCP_CONNECTOR_TYPE = "custom_mcp";
 export const CUSTOM_MCP_DISPLAY_NAME = "Custom MCP server";

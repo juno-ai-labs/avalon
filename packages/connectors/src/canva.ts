@@ -12,7 +12,7 @@ import {
 } from "./provider-utils";
 import { assertPrincipalAccess, ConnectorError, defineConnectorAgentPlugin, defineConnectorActivityTriggers,
   type ConnectorAdapter, type ConnectorConnectionContext } from "./types";
-import { CANVA_SYSTEM_MESSAGE } from "./prompts/canva";
+import { CANVA_SYSTEM_MESSAGE } from "@rally/prompts/connectors/canva";
 
 export const CANVA_MCP_URL = "https://mcp.canva.com/mcp";
 export const CanvaCapabilities = { personalMcp: "canva.personal.mcp" } as const;

@@ -4,7 +4,7 @@ import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createIdentityObjectPort } from "../runtime/identity-port";
-import { renderUserAuthoredSkillBody } from "../prompts/user-authored-skill";
+import { renderUserAuthoredSkillBody } from "@rally/prompts/api/user-authored-skill";
 
 // Durable identity is independent of the readable catalog name.
 export const sidekickSkillRef = (id: string): string => codeSkillRef(`sidekick-${id}`);

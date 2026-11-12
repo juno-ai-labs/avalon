@@ -1,4 +1,4 @@
-import { AnnotatedMessageContentSchema, type Annotation } from '../artifact-annotations';
+import { AnnotatedMessageContentSchema, type Annotation } from '@rally/contracts';
 
 const escape = (text: string): string => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 

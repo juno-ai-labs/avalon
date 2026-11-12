@@ -1,5 +1,7 @@
-import { jevChoiceQuestion } from "../jev";
-import type { Choice } from "../completion-verification-question";
+import { jevChoiceQuestion } from "./jev-question";
+
+export const choices = ["announces_unfinished_work", "answer_or_result", "blocker_or_question", "unclear"] as const;
+export type Choice = (typeof choices)[number];
 
 export const questions = {
   stopping: jevChoiceQuestion<Choice>({

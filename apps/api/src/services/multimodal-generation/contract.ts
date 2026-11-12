@@ -8,7 +8,7 @@ import {
 import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
-import { MULTIMODAL_GENERATION_SYSTEM_MESSAGE } from "../../prompts/multimodal-generation-plugin";
+import { MULTIMODAL_GENERATION_SYSTEM_MESSAGE } from "@rally/prompts/api/multimodal-generation-plugin";
 
 export {
   MULTIMODAL_GENERATION_MODEL,

@@ -1,7 +1,6 @@
 import { MESSAGE_MAX_CHARACTERS } from './message-limits';
 import { z } from 'zod';
 import { classifyAttachmentKind } from './attachment-contracts';
-export { renderAnnotations } from "./prompts/artifact-annotations";
 
 const offset = z.number().int().nonnegative();
 const span = { start: offset, end: offset };

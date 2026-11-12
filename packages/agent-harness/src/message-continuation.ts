@@ -1,11 +1,11 @@
 import { MESSAGE_CONTINUATION_FALLBACK_MODEL } from "@rally/contracts/runtime-config";
 import { z } from "zod";
 import { askJev, jevChoiceAnswerSchema, runConfidenceCascade, JEV_LATEST_MODEL } from "./jev";
-import { messageContinuationState, renderMessageContinuationMessages, type MessageContinuationInput } from "./prompts/message-continuation";
+import { messageContinuationState, renderMessageContinuationMessages, type MessageContinuationInput } from "@rally/prompts/harness/message-continuation";
 import type { StructuredModelDiagnostic, OpenRouterTraceContext } from "./index";
 // Re-exported by index; these runtime values are read only when a call runs.
 import { classifyAddressing, OpenRouterClient, ADDRESSING_FALLBACK_TIMEOUT_MS } from "./index";
-import { questions } from "./prompts/message-continuation-question";
+import { ASSIGNMENT_CHOICES, CHOICES, CONTRIBUTOR_CHOICES, questions } from "@rally/prompts/harness/message-continuation-question";
 
 // This second message-admission check uses the existing JEV admission budget:
 // one second, about three times the measured 346 ms p95, and strict > 0.5.
@@ -14,9 +14,6 @@ export const MESSAGE_CONTINUATION_CONFIDENCE_THRESHOLD = 0.5;
 export { MESSAGE_CONTINUATION_FALLBACK_MODEL };
 export const MESSAGE_CONTINUATION_FALLBACK_PROVIDER = "openai";
 
-export const CHOICES = ["resume_requested_work", "followup_without_rally_action", "use_addressing"] as const;
-export const ASSIGNMENT_CHOICES = ["assigned_to_rally", "not_assigned_to_rally"] as const;
-export const CONTRIBUTOR_CHOICES = ["contributors_present", "contributors_missing"] as const;
 const Answers = z.object({
   continuation: jevChoiceAnswerSchema(CHOICES),
   assignment: jevChoiceAnswerSchema(ASSIGNMENT_CHOICES),

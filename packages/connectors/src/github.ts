@@ -35,7 +35,7 @@ import {
   type ConnectorToolContext,
   type ConnectorToolResult,
 } from "./types";
-import { GITHUB_SYSTEM_MESSAGE } from "./prompts/github";
+import { GITHUB_SYSTEM_MESSAGE } from "@rally/prompts/connectors/github";
 
 const DEFAULT_API_BASE_URL = "https://api.github.com";
 const DEFAULT_WEB_BASE_URL = "https://github.com";

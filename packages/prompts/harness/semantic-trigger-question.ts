@@ -1,5 +1,11 @@
-import { jevChoiceQuestion } from "../jev";
-import type { SemanticTriggerChoice } from "../semantic-trigger-gate";
+import { jevChoiceQuestion } from "./jev-question";
+
+export const SEMANTIC_TRIGGER_CHOICES = [
+  "condition_met",
+  "condition_not_met",
+  "condition_not_judgeable",
+] as const;
+export type SemanticTriggerChoice = (typeof SEMANTIC_TRIGGER_CHOICES)[number];
 
 export const semanticTriggerQuestions = {
   condition: jevChoiceQuestion<SemanticTriggerChoice>({

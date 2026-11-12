@@ -7,7 +7,7 @@ import {
   assertPrincipalAccess, ConnectorError, defineConnectorAgentPlugin,
   type ConnectorAdapter, type ConnectorConnectionContext,
 } from "./types";
-import { APOLLO_SYSTEM_MESSAGE } from "./prompts/apollo";
+import { APOLLO_SYSTEM_MESSAGE } from "@rally/prompts/connectors/apollo";
 
 export const APOLLO_MCP_URL = "https://mcp.apollo.io/mcp";
 export const ApolloCapabilities = { personalMcp: "apollo.personal.mcp" } as const;

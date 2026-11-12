@@ -1,9 +1,12 @@
 import { ATTACHMENT_KIND_ENTRIES } from "@rally/contracts";
-import type { VisibleWorkstreamResourceInventory } from "../services/workstream-resource-visibility";
 
 export function renderWorkstreamResourceInventoryAggregate(input: {
   asOf: string;
-  inventory: VisibleWorkstreamResourceInventory;
+  inventory: {
+    totalVisibleResources: number;
+    totalVisibleMessageAttachments: number;
+    groups: readonly { kind: string; count: number }[];
+  };
 }): string {
   const asOf = new Date(input.asOf);
   if (!Number.isFinite(asOf.getTime())) throw new Error("Invalid resource inventory timestamp");

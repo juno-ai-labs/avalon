@@ -30,7 +30,7 @@ import {
   type ConnectorAdapter,
   type ConnectorConnectionContext,
 } from "./types";
-import { NOTION_SYSTEM_MESSAGE } from "./prompts/notion";
+import { NOTION_SYSTEM_MESSAGE } from "@rally/prompts/connectors/notion";
 
 const NOTION_API_BASE_URL = "https://api.notion.com/v1";
 const NOTION_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";

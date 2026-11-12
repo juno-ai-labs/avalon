@@ -8,8 +8,8 @@ import {
   loadVisibleWorkstreamResourceInventory,
   type VisibleWorkstreamResourceRow,
 } from "./workstream-resource-visibility";
-import { renderWorkstreamResourceInventoryAggregate } from "../prompts/resource-inventory";
-export { renderWorkstreamResourceInventoryAggregate } from "../prompts/resource-inventory";
+import { renderWorkstreamResourceInventoryAggregate } from "@rally/prompts/api/resource-inventory";
+export { renderWorkstreamResourceInventoryAggregate } from "@rally/prompts/api/resource-inventory";
 
 export const CHECKPOINT_TEMPLATE_VERSION = 1;
 
@@ -27,7 +27,6 @@ export function renderWorkstreamResourceInventory(input: {
   return renderWorkstreamResourceInventoryAggregate({
     asOf: input.asOf,
     inventory: {
-      fingerprint: "render-only",
       totalVisibleResources: input.rows.length,
       totalVisibleMessageAttachments: messageAttachments,
       groups: ATTACHMENT_KIND_ENTRIES.map(({ kind }) => ({ kind, count: counts.get(kind) ?? 0 })),

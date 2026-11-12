@@ -12,6 +12,7 @@
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
     "@rally/contracts": "workspace:*",
+    "@rally/prompts": "workspace:*",
     "agents": "0.22.0",
     "jose": "6.2.9",
     "zod": "catalog:"

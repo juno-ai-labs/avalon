@@ -3,7 +3,7 @@ import {
   type judgeCompletionStop, type ModelMessage, type CompletionState,
 } from "@rally/agent-harness";
 import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
-import { COMPLETION_EVIDENCE_COVERAGE } from "../prompts/completion-evidence-coverage";
+import { COMPLETION_EVIDENCE_COVERAGE } from "@rally/prompts/api/completion-evidence-coverage";
 
 /** Re-read lifecycle after network I/O. Persistence of the returned derived
  * message consumes recovery atomically with its delivery to the model. */

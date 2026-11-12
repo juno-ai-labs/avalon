@@ -1,6 +1,6 @@
 import { AGENT_MESSAGE_CONTENT_KIND, AgentExchangeSchema } from "@rally/contracts";
 import { z } from "zod";
-export { renderAgentMessage } from "../prompts/agent-message";
+export { renderAgentMessage } from "@rally/prompts/api/agent-message";
 
 /** Durable message content used both on admission and when rebuilding model context. */
 export const AgentMessageContentSchema = AgentExchangeSchema.extend({

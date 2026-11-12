@@ -1,5 +1,5 @@
-import type { ModelMessage } from "@rally/agent-harness";
-import { providerDisplayName } from "../services/workstream-participant-model-message";
+import type { PromptMessage } from "../harness/types";
+import { providerDisplayName } from "./provider-display-name";
 
 /**
  * The host's note at the head of a continued Sidekick run's new work.
@@ -21,7 +21,7 @@ import { providerDisplayName } from "../services/workstream-participant-model-me
 export function renderRunContinuationNote(continuation: {
   senderName: string;
   source: { kind: "run" } | { kind: "provider_thread"; provider: string };
-}, options: { fromWizard?: boolean } = {}): ModelMessage {
+}, options: { fromWizard?: boolean } = {}): PromptMessage {
   if (options.fromWizard) {
     return {
       role: "user",

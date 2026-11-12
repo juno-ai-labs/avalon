@@ -21,7 +21,7 @@ import {
   type ConnectorAdapter,
   type ConnectorConnectionContext,
 } from "./types";
-import { X_SYSTEM_MESSAGE } from "./prompts/x";
+import { X_SYSTEM_MESSAGE } from "@rally/prompts/connectors/x";
 
 const DEFAULT_X_API_BASE_URL = "https://api.twitterapi.io";
 const X_RESPONSE_BYTES = 1_000_000;

@@ -13,6 +13,7 @@
   "dependencies": {
     "@modelcontextprotocol/server": "2.4.0",
     "@rally/contracts": "workspace:*",
+    "@rally/prompts": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

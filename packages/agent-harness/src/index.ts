@@ -14,7 +14,7 @@ import type {
   StructuredFailureDetail,
   ToolDefinition
 } from "@rally/contracts";
-import { normalizedPluginSearchText } from "./prompts/plugin-catalog";
+import { normalizedPluginSearchText } from "@rally/prompts/harness/plugin-catalog";
 import {
   AddressingClassificationSchema,
   AutomationSetEvaluatorRulesModelInputV1Schema,
@@ -65,18 +65,19 @@ import {
   renderAddressingMessages,
   WORKSTREAM_ICON_CATALOG,
   type AddressingContextMessage,
-} from "./prompts";
+} from "@rally/prompts/harness";
 import type {
   BindLoopProjectionState,
   BindLoopTransition,
   BindProviderBoundary,
 } from "./bind-loop-projection";
 import { reasoningEffortFor } from "./model-inference-defaults";
-import { typesafeAddressingQuestions } from "./prompts/addressing-question";
-import { renderExpectedJsonSchemaInstruction } from "./prompts/expected-json-schema";
-import { renderStructuredOutputRetryMessage } from "./prompts/structured-output-retry";
+import { ADDRESSING_CHOICES, typesafeAddressingQuestions, type AddressingChoice } from "@rally/prompts/harness/addressing-question";
+export type { AddressingChoice };
+import { renderExpectedJsonSchemaInstruction } from "@rally/prompts/harness/expected-json-schema";
+import { renderStructuredOutputRetryMessage } from "@rally/prompts/harness/structured-output-retry";
 
-export * from "./prompts";
+export * from "@rally/prompts/harness";
 export * from "./completion-verification";
 export { classifyMessageAdmission, classifyMessageContinuation, classifyMessageContinuationWithTypeSafe } from "./message-continuation";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
@@ -2375,13 +2376,6 @@ export const ADDRESSING_FALLBACK_TIMEOUT_MS = 15_000;
 export { ADDRESSING_FALLBACK_MODEL };
 export const ADDRESSING_FALLBACK_PROVIDER = "wafer/fast";
 
-const ADDRESSING_CHOICES = [
-  "rally_should_act",
-  "people_only",
-  "rally_and_people_should_act",
-  "no_clear_request",
-] as const;
-export type AddressingChoice = (typeof ADDRESSING_CHOICES)[number];
 
 const AddressingAnswersSchema = jevSingleChoiceAnswers("addressing", ADDRESSING_CHOICES);
 
