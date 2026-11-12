@@ -26,6 +26,8 @@ type BillingProps = {
   disabledReason?: string;
   readDisabledReason?: string;
   planControl?: ReactNode;
+  beforePlan?: ReactNode;
+  children?: ReactNode;
 };
 
 export function OrganizationBilling(props: BillingProps) {
@@ -35,6 +37,7 @@ export function OrganizationBilling(props: BillingProps) {
   // Discard pending external handoffs when the organization, permissions or subscription changes.
   return <>
     <BillingForm key={key} {...props} />
+    {props.children}
     <OverageCredits api={props.api} readDisabledReason={props.readDisabledReason} />
   </>;
 }
@@ -71,7 +74,7 @@ function OverageCredits({ api, readDisabledReason }: Pick<BillingProps, 'api' | 
   </>;
 }
 
-function BillingForm({ api, billing: status, currentPlan, canManage, loading, disabledReason, planControl }: BillingProps) {
+function BillingForm({ api, billing: status, currentPlan, canManage, loading, disabledReason, planControl, beforePlan }: BillingProps) {
   const scope = useLocalCacheScope();
   const queryClient = useQueryClient();
   const billing = status?.enabled ? status : undefined;
@@ -151,6 +154,7 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
       </span>
       <BillingControl reason={actionReason}><button type="button" className="text-button external-link-button" disabled={Boolean(actionReason)} aria-busy={busy} onClick={() => void open()}><span>{busy ? 'Opening…' : trial && !billing?.paymentMethodReady ? 'Add billing details' : subscribed || !billing ? 'Manage billing' : 'Continue to checkout'}</span><IconArrowUpRight aria-hidden="true" size={16} /></button></BillingControl>
     </div>
+    {beforePlan}
     <div className="settings-preference-row"><span className="settings-row-copy"><strong>Plan</strong><small>{subscribed ? 'Manage your subscribed plan in Stripe.' : 'Review pricing, discounts and taxes at checkout.'}</small></span>
       {planControl ?? (loading ? <BillingSkeleton label="Loading plan…" /> : subscribed ? <span>{currentOffer?.name ?? currentPlan ?? 'Unavailable'}</span> : <BillingControl reason={planReason}><DropdownSelect ariaLabel="Billing plan" value={displayedPlan} disabled={Boolean(planReason)} options={offers.length
         ? offers.map((item) => ({ value: item.id, label: item.name })) : [{ value: displayedPlan, label: currentPlan ?? 'Unavailable' }]}

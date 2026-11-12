@@ -95,6 +95,16 @@ export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, orga
           loading={billingLoading}
           disabledReason={billingDisabledReason}
           readDisabledReason={billingAccessReason}
+          beforePlan={<div className="settings-preference-row">
+            <SettingCopy setting={settings.quota} description={usage
+              ? `${usageResetLabel(usage.weekResetsAt)}. Shared by everyone in ${organizationName}.`
+              : state.status === 'loading' ? 'Checking the shared weekly quota.' : 'Usage is unavailable.'} />
+            <span className="usage-quota-value">
+              <Meter label={METER_LABEL} tone={usage ? usageTone(usage) : undefined} value={usage?.quotaRemainingPercent ?? null} />
+              {usage ? <small>{usageRemainingLabel(usage.quotaRemainingPercent)}{offline && reading && <span className="usage-as-of"> {usageAsOfLabel(reading.fetchedAt)}</span>}</small>
+                : state.status === 'loading' ? <BillingSkeleton label="Checking usage…" /> : <small>Unavailable</small>}
+            </span>
+          </div>}
           planControl={legacyPlan ? (usage ? <BillingControl reason={planReason}><DropdownSelect
             ariaLabel="Plan"
             disabled={Boolean(planReason)}
@@ -106,32 +116,23 @@ export function UsageSettingsSection({ api, canChangePlan, openRequest = 0, orga
             value={setPlan.isPending ? setPlan.variables ?? usage.plan : usage.plan}
             variant="secondary"
           /></BillingControl> : state.status === 'loading' ? <BillingSkeleton label="Loading plan…" /> : <span>Unavailable</span>) : undefined}
-        />
-        {setPlan.error && <ErrorNotice>The plan could not be changed. {setPlan.error.message}</ErrorNotice>}
-        {billing.error && !billingAccessReason && <div className="settings-preference-row">
-          <span className="settings-row-copy"><strong>Billing unavailable</strong><small>{billing.error.message}</small></span>
-          <Button disabledReason={offline ? 'Connect to the internet to retry billing.' : billing.isFetching ? 'Loading billing details…' : undefined} onClick={() => void refreshBilling()}>Retry billing</Button>
-        </div>}
-        <div className="settings-preference-row">
-          <SettingCopy setting={settings.quota} description={usage
-            ? `${usageResetLabel(usage.weekResetsAt)}. Shared by everyone in ${organizationName}.`
-            : state.status === 'loading' ? 'Checking the shared weekly quota.' : 'Usage is unavailable.'} />
-          <span className="usage-quota-value">
-            <Meter label={METER_LABEL} tone={usage ? usageTone(usage) : undefined} value={usage?.quotaRemainingPercent ?? null} />
-            {usage ? <small>{usageRemainingLabel(usage.quotaRemainingPercent)}{offline && reading && <span className="usage-as-of"> {usageAsOfLabel(reading.fetchedAt)}</span>}</small>
-              : state.status === 'loading' ? <BillingSkeleton label="Checking usage…" /> : <small>Unavailable</small>}
-          </span>
-        </div>
-        <div className="settings-preference-row usage-overage">
-          <span className="settings-row-copy"><strong>Usage beyond quota this month</strong><small>{usage ? usagePeriodLabel(usage.overage.periodStart, usage.overage.periodEndsAt) : 'Monthly usage beyond the shared quota.'}</small></span>
-          <span className="usage-overage-value">
-            {usage ? <><span>{formatMicrousd(usage.overage.amountMicrousd)}</span>
-              <Tip label={usage.overage.billingEnabled ? "Overage charges appear on a later invoice after usage settles." : USAGE_TOTAL_EXPLANATION} side="top">
-                <Badge className="usage-not-billed" tabIndex={0}>{usage.overage.billingEnabled ? "Overage enabled" : "Usage total"}</Badge>
-              </Tip></> : state.status === 'loading' ? <BillingSkeleton label="Loading monthly usage…" /> : <span>Unavailable</span>}
-          </span>
-        </div>
-        {state.status === 'error' && <div className="settings-preference-row"><span className="settings-row-copy"><strong>Usage isn't available right now.</strong></span><Button disabledReason={!api ? 'The organization is unavailable.' : offline ? 'Connect to the internet to retry usage.' : undefined} onClick={retry}>Try again</Button></div>}
+        >
+          {setPlan.error && <ErrorNotice>The plan could not be changed. {setPlan.error.message}</ErrorNotice>}
+          {billing.error && !billingAccessReason && <div className="settings-preference-row">
+            <span className="settings-row-copy"><strong>Billing unavailable</strong><small>{billing.error.message}</small></span>
+            <Button disabledReason={offline ? 'Connect to the internet to retry billing.' : billing.isFetching ? 'Loading billing details…' : undefined} onClick={() => void refreshBilling()}>Retry billing</Button>
+          </div>}
+          <div className="settings-preference-row usage-overage">
+            <span className="settings-row-copy"><strong>Usage beyond quota this month</strong><small>{usage ? usagePeriodLabel(usage.overage.periodStart, usage.overage.periodEndsAt) : 'Monthly usage beyond the shared quota.'}</small></span>
+            <span className="usage-overage-value">
+              {usage ? <><span>{formatMicrousd(usage.overage.amountMicrousd)}</span>
+                <Tip label={usage.overage.billingEnabled ? "Overage charges appear on a later invoice after usage settles." : USAGE_TOTAL_EXPLANATION} side="top">
+                  <Badge className="usage-not-billed" tabIndex={0}>{usage.overage.billingEnabled ? "Overage enabled" : "Usage total"}</Badge>
+                </Tip></> : state.status === 'loading' ? <BillingSkeleton label="Loading monthly usage…" /> : <span>Unavailable</span>}
+            </span>
+          </div>
+          {state.status === 'error' && <div className="settings-preference-row"><span className="settings-row-copy"><strong>Usage isn't available right now.</strong></span><Button disabledReason={!api ? 'The organization is unavailable.' : offline ? 'Connect to the internet to retry usage.' : undefined} onClick={retry}>Try again</Button></div>}
+        </OrganizationBilling>
       </div>
     </div>
   );
