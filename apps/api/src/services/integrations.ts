@@ -5237,7 +5237,8 @@ const WIZARD_CANVAS_UPDATING = "This Sidekick is attached to the Canvases above,
   + "Save instructions that name the canvasId and each artifact's resourceId. For an artifact with storesData true, have each run change rows with write_artifact_data, "
   + "naming the tables and columns (describe_artifact_data shows them): a row write is safe when runs overlap and makes no new version. "
   + "Only for a change to an artifact's files, have a run import it to its filePath and publish_resource that filePath with canvas set to the canvasId, rebuilding it from its sources. "
-  + "Before you report a saved row write ready, run it once with write_artifact_data on a row you can tell is a test, read it back with query_artifact_data, then delete that row.";
+  + "Before you report a saved row write ready, run it once with write_artifact_data on a row you can tell is a test, read it back with query_artifact_data, then delete every row your test added or changed and confirm with query_artifact_data that none is left: "
+  + "the person's first look at the app must show only their own data.";
 
 /** One of a Canvas's artifacts as an agent is told of it; see `HostedCanvas.agentArtifacts`. */
 function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind: string; version: number; filePath: string | null; storesData: boolean }) {
