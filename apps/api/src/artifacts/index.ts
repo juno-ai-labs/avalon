@@ -303,7 +303,6 @@ const artifactServer = {
       }));
     }
     const admitted: Admitted = admission;
-    const signInCanHelp = true;
 
     const mount = splitVersionMount(url.pathname);
     if (mount.version !== null && mount.version !== admitted.version) {
@@ -311,10 +310,10 @@ const artifactServer = {
       // historical static version has no guard at all. Keep version browsing
       // behind the Rally session even though the current site is public.
       if (!admission.editor) {
-        const target = signInCanHelp && isDocumentNavigation(request)
+        const target = !admitted.viewerId && isDocumentNavigation(request)
           ? signInUrl(env, host, url.pathname + url.search)
           : null;
-        return target ? redirect(target) : html(neutralPage(), 401);
+        return target ? redirect(target) : html(neutralPage(), admitted.viewerId ? 403 : 401);
       }
       const refusal = refuseUnsafeVersionRequest(request);
       if (refusal) return html(plainErrorPage(refusal), 405);
@@ -326,7 +325,7 @@ const artifactServer = {
     // is loading a page, send them to sign in and back here instead, so a
     // direct link to a protected site works. The handler still decided the
     // refusal; only its page is replaced, and only for a page load.
-    if (response.status === 401 && !admitted.viewerId && signInCanHelp && isDocumentNavigation(request)) {
+    if (response.status === 401 && !admitted.viewerId && isDocumentNavigation(request)) {
       const target = signInUrl(env, host, url.pathname + url.search);
       if (target) return redirect(target);
     }

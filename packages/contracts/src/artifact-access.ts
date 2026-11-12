@@ -18,7 +18,7 @@ export type ArtifactAccessSnapshot = z.infer<typeof ArtifactAccessSnapshotSchema
 
 /** Queue bodies carry addresses, not potentially unbounded audience lists. */
 export const ArtifactAccessMessageSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('canvas_artifact_access_changed'), region:RegionSchema, workspaceId: WorkspaceIdSchema, canvasId: IdSchema, revision:z.number().int().positive() }),
+  z.strictObject({ kind: z.literal('canvas_artifact_access_changed'), region:RegionSchema, workspaceId: WorkspaceIdSchema, canvasId: IdSchema }),
   z.strictObject({ kind: z.literal('artifact_access_sync'), region:RegionSchema, workspaceId: WorkspaceIdSchema, canvasId: IdSchema,
     artifactId: IdSchema, resourceId: IdSchema }),
 ]);

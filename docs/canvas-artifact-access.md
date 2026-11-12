@@ -37,9 +37,15 @@ The existing guest-email invitation grants editor access and is labeled as such;
 selecting a guest in the artifact picker grants no editor rights.
 
 A generated resource's `publication_parent_id` is its owning Canvas. Older
-publications with exactly one `canvas_artifacts` location use that location.
-References do not create a second owner. Sites keep their artifact UUID;
-new file hosts use the resource UUID. File links use the existing hostname
+publications use their site registry's Canvas owner when available (backfilled
+by migration 147), otherwise a single `canvas_artifacts` location. Ambiguous
+legacy placements retain attachment-based reads and search until republished
+with an explicit owner; references do not acquire a new artifact audience.
+Sites keep their artifact UUID;
+new file hosts use the resource UUID. Internal Terminal command logs and
+checkout backups remain conversation attachments, not Canvas artifact
+publications. Migration 147 clears the historical command-log owner column;
+their bytes and conversation links are retained. File links use the existing hostname
 allocator and route directory, with no change to routing.
 
 `sharing_revision` fences concurrent modal/MCP edits, including changes made by
@@ -91,7 +97,10 @@ current snapshot decides each request, including anonymous public requests.
 No cross-DO or product D1 authorization call is made while serving. The existing
 platform D1 hostname lookup remains unchanged.
 
-An absent initial projection returns 503. An archived Canvas returns 404.
+An absent initial projection on a new host returns 503. Migration 4 seeds only
+already-published hosts with their historical public reach at revision 1;
+source snapshots start at revision 2 and supersede that bootstrap. This is a
+one-time migration, never a public fallback when an authority fails. An archived Canvas returns 404.
 Unsigned visitors to restricted content receive 401 (or the existing browser
 sign-in handoff for page navigation); an identified but unauthorized visitor
 receives 403. Authority failure never falls back to public serving. Existing
@@ -105,6 +114,12 @@ representations, error logs and bulk data inspection require editor access.
 Resource API reads and search use the owning Canvas's artifact policy rather
 than uploader or unrelated-attachment shortcuts. Search has a separate artifact
 reader group, so artifact users never acquire the conversation's group.
+Full members can discover public Canvas outputs in Organization search; guests
+need editor access or explicit artifact selection to discover them. A public
+link by itself does not advertise unrelated Canvases to guests. Interactive
+reads evaluate only the requester. Complete audience compilation runs only for
+propagation; hosts cache the validated audience and an indexed in-memory reader
+map, invalidated against the stored revision on each admission.
 
 Snapshots apply only at higher revisions and must retain the same Workspace and
 Canvas owner. Archive tombstones cannot be reopened by a delayed access update
@@ -149,13 +164,21 @@ their next network request; previously downloaded content and local computation
 cannot be withdrawn. HTTP responses remain `private, no-store` so shared caches
 cannot bypass the gate.
 
-WorkspaceDO migration 147 schedules initial propagation for existing Canvases.
-Both existing and new Canvases default artifact access to editors. Previously
-public website URLs therefore require editor access until a manager explicitly
-sets public artifact access. Hosts fail closed while their first snapshot is
-pending. Deploy serving and API changes together; source migrations run when
-objects initialize, and cold Organizations must be woken through the existing
-forced-migration mechanism before their source outboxes can deliver snapshots.
+WorkspaceDO migration 147 schedules initial propagation for existing Canvases
+and preserves public access for Canvases with existing registered publications.
+Only new Canvases default artifact access to editors. ArtifactHostDO migration
+4 preserves existing published sites' public reach locally, so cold Organizations
+do not require a source wake to keep serving. Hosts created after migration
+remain closed until policy arrives. Existing hosts without a Canvas owner retain
+their historical public bootstrap; new publication requires an owning Canvas and
+checks that before writing publication state.
+
+A real membership change invalidates every Canvas because role changes can
+affect editor access everywhere. This costs one root delivery per Canvas plus
+one child per artifact, and each child compiles the latest audience. Negative
+membership-cache placeholders and timestamp-only resource touches do not trigger
+this fan-out. Queue failures remain visible through the existing retry and
+dead-letter mechanisms.
 
 ## Testing
 
@@ -163,8 +186,11 @@ forced-migration mechanism before their source outboxes can deliver snapshots.
 ArtifactHostDO migrations, source policy, durable outbox, background delivery,
 file/site serving, artifact-only users, retained cookies, stale snapshots,
 archive tombstones, membership delivery and concurrent saves. Serving also runs
-with the product membership table removed after propagation. MCP tests exercise
-both sharing fields, legacy omission and stable link retrieval.
+with the product membership table removed after propagation. `test-workers/canvas-artifact-access-migration.test.ts` upgrades populated
+WorkspaceDO 146 and ArtifactHostDO 3 fixtures in separate events, proving retained
+publications, legacy-only public bootstrap, editor defaults for new Canvases,
+initial propagation intents and retained null-incarnation sessions. MCP tests
+exercise both sharing fields, legacy omission and stable link retrieval.
 
 ## Changelog
 
@@ -179,4 +205,6 @@ The production modal and user-facing MCP expose both audiences.
 change them. Per-request source-authority calls were rejected because serving
 must stay local; realistic eventual consistency allows durable Queue delivery.
 Routing is intentionally unchanged. Delayed and duplicate updates must never
-restore old access, and missing projections must never expose content.
+restore old access, and new hosts without projections must never expose content. Existing published
+sites retain their prior public reach through a one-time bootstrap to avoid a
+deploy-time outage; the source policy supersedes it monotonically.

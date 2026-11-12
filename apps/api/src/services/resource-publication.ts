@@ -105,8 +105,8 @@ function authorColumns(author: PublicationAuthor) {
 export async function insertPublishedResource(workspace: D1Database, input: {
   resourceId: string;
   workspaceId: string;
-  /** Persisted before attachment so archive fences a delayed publication. */
-  publicationParentId: string;
+  /** Output owner before attachment; internal captures belong only to their conversation. */
+  publicationParentId: string | null;
   resourceType: "generated_file" | "generated_site";
   providerResourceId: string;
   title: string;

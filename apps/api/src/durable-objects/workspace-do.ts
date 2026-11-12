@@ -1,7 +1,7 @@
 import { ArtifactSidekickInvocationSchema, type ArtifactSidekickInvocation } from "@rally/contracts";
 import { artifactSidekickBinding } from "./artifact-sidekick-bindings";
 import { ArtifactHostnameStubSchema } from '@rally/contracts';
-import { CANVAS_ARTIFACT_ACCESS_ALARM, CANVAS_ARTIFACT_ACCESS_STATEMENTS, canvasArtifactAccessSnapshot, canvasArtifactTargets, canvasArtifactFile } from './canvas-artifact-access';
+import { CANVAS_ARTIFACT_ACCESS_ALARM, CANVAS_ARTIFACT_ACCESS_STATEMENTS, canvasArtifactAccessSnapshot, canvasArtifactAccessForReader, canvasArtifactTargets, canvasArtifactFile } from './canvas-artifact-access';
 import { ArtifactAccessMessageSchema } from '@rally/contracts/artifact-access';
 import {
   CHANNEL_COLOR_SYNC_MIGRATION,
@@ -7210,7 +7210,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           await this.bootstrapArtifactAccessMembers(workspaceId);
           await this.env.ACCESS_REVOCATION_QUEUE.send(ArtifactAccessMessageSchema.parse({
             kind: 'canvas_artifact_access_changed', region:this.env.AVALON_REGION, workspaceId, canvasId: alarm.key,
-            revision: canvasArtifactAccessSnapshot(this.state.storage.sql,alarm.key)?.revision ?? 1,
           }));
           return;
         }
@@ -11370,8 +11369,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // A Canvas's Chat is its conversation `0`, read by whoever opens the Canvas.
     const actorRole = member ? relationship.role ?? "member" : null;
     for (const canvas of sql.exec<CanvasRow>(`SELECT * FROM canvas_directory`).toArray()) {
-      const artifactAccess=canvasArtifactAccessSnapshot(sql,canvas.canvas_id);
-      if(artifactAccess && !artifactAccess.archived && (artifactAccess.public || artifactAccess.users.some(person=>person.userId===request.userId))) groups.push(searchAudienceGroup.artifacts(canvas.canvas_id));
+      const artifactAccess = canvasArtifactAccessForReader(sql, canvas.canvas_id, relationship);
+      // Public links do not advertise unrelated Canvases to Organization guests.
+      if (artifactAccess?.allowed && (member || artifactAccess.editor || sql.exec("SELECT 1 FROM canvas_artifact_users WHERE canvas_id=? AND user_id=?", canvas.canvas_id, request.userId).toArray().length > 0)) groups.push(searchAudienceGroup.artifacts(canvas.canvas_id));
       if (canvasReaderAllows(canvas, { userId: request.userId, actorRole }, sql)) {
         groups.push(searchAudienceGroup.conversation(canvas.canvas_id, "0"));
       }
@@ -11464,13 +11464,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     // Only Canvas-owned outputs need the local editor/artifact predicate.
     // Other providers retain their existing resource authorization path.
+    let artifactReader: WorkspaceRelationship | null = null;
     if (this.state.storage.sql.exec(`SELECT 1 FROM resources resource
       WHERE workspace_id=? AND provider='avalon_generated'
         AND id IN (SELECT value FROM json_each(?))
         AND (publication_parent_id IS NOT NULL OR EXISTS
           (SELECT 1 FROM canvas_artifacts WHERE resource_id=resource.id)) LIMIT 1`,
     request.workspaceId,JSON.stringify(request.resourceIds)).toArray().length) {
-      await this.readRelationship(request.workspaceId,request.userId);
+      artifactReader = await this.readRelationship(request.workspaceId,request.userId);
     }
     const locations = new AuthorizationStorage(this.state.storage);
     const coverage = this.authorizationCoverage();
@@ -11493,11 +11494,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray()[0] : null;
 
       const ownerCanvasId = canvas?.ownerCanvasId;
-      const artifactPolicy = ownerCanvasId ? canvasArtifactAccessSnapshot(this.state.storage.sql,ownerCanvasId) : null;
-      const artifactPerson = artifactPolicy?.users.find(person=>person.userId===request.userId);
-      const canvasAccess = artifactPolicy ? {allowed:!artifactPolicy.archived && (artifactPolicy.public || Boolean(artifactPerson)),
-        editor:artifactPerson?.editor??false,revision:artifactPolicy.revision}
-        : canvas?.ownedByCanvas ? {allowed:false,editor:false,revision:0} : null;
+      const canvasAccess = ownerCanvasId
+        ? canvasArtifactAccessForReader(this.state.storage.sql, ownerCanvasId, artifactReader) : null;
+      // Ambiguous legacy placements retain the attachment-based read policy.
       const owned = row.uploaded_by_user_id === request.userId;
       const placed = locations.locations(resourceId);
       // A merge once shared a resource with a Channel; Channels are retired
