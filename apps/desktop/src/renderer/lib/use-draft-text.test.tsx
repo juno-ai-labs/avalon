@@ -19,6 +19,18 @@ describe('useDraftText', () => {
     expect(result.current.mentions.map((mention) => mention.label)).toEqual(['Ada']);
   });
 
+  it('says it has loaded only once the saved draft has been read, so an empty box before then is not empty', async () => {
+    await writeDraftText(draftKey, 'half a thought');
+    const { result, rerender } = renderHook(({ key }) => useDraftText(key), { initialProps: { key: draftKey } });
+
+    expect(result.current).toMatchObject({ loaded: false, text: '' });
+    await waitFor(() => expect(result.current).toMatchObject({ loaded: true, text: 'half a thought' }));
+
+    rerender({ key: `${draftKey}-other` });
+    expect(result.current.loaded).toBe(false);
+    await waitFor(() => expect(result.current).toMatchObject({ loaded: true, text: '' }));
+  });
+
   it('caches what the user types', async () => {
     const { result } = renderHook(() => useDraftText(draftKey));
     await waitFor(() => expect(result.current.text).toBe(''));

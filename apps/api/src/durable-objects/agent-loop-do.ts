@@ -8657,6 +8657,55 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return evicted;
   }
 
+  /** Whether this object is the named parent's conversation; an object with no identity names nothing. */
+  private namesParent(input: { workspaceId: string; parentId: string }): boolean {
+    const identity = this.objectStore.identity();
+    return identity !== null && identity.workspaceId === input.workspaceId && identity.parentId === input.parentId;
+  }
+
+  /** Step 2 of `CanvasService.discardIfBlank`; see `WorkstreamObjectProductService.sealIfEmpty`. */
+  async sealBlankConversation(input: { workspaceId: string; parentId: string; leavingTicketId?: string }): Promise<{ sealed: boolean }> {
+    await this.initialized;
+    if (!this.namesParent(input)) return { sealed: false };
+    // Another window or device with this Chat open may be about to type into
+    // it. The leaving client's own socket, named by its ticket, may still be
+    // closing; one that never says whose it is counts as another.
+    const othersHere = this.state.getWebSockets().some((socket) => {
+      if (socket.readyState !== WebSocket.OPEN) return false;
+      const ticketId = this.readAttachment(socket)?.ticketId;
+      return ticketId === undefined || ticketId !== input.leavingTicketId;
+    });
+    if (othersHere) return { sealed: false };
+    return { sealed: this.product.sealIfEmpty() };
+  }
+
+  /** Reopen a Chat `sealBlankConversation` closed, when its Canvas was not deleted after all. */
+  async unsealBlankConversation(input: { workspaceId: string; parentId: string }): Promise<void> {
+    await this.initialized;
+    if (this.namesParent(input)) this.product.unsealBlank();
+  }
+
+  /**
+   * Step 4 of `CanvasService.discardIfBlank`, run and retried by the
+   * Organization object's alarm: erase a sealed Chat's sockets, alarm and
+   * storage. The instance resets itself once this has answered, so no cache
+   * outlives the rows; the next request meets an object with no identity,
+   * which admits nobody. A retry that finds no identity has nothing to erase
+   * but the empty schema it just opened, and wipes that too.
+   */
+  async eraseBlankConversation(input: { workspaceId: string; parentId: string }): Promise<void> {
+    await this.initialized;
+    if (this.objectStore.identity() !== null && (!this.namesParent(input) || !this.product.sealedBlank())) {
+      throw new Error("conversation_erase_not_sealed");
+    }
+    for (const socket of this.state.getWebSockets()) {
+      disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "This Canvas was deleted");
+    }
+    await this.state.storage.deleteAlarm();
+    await this.state.storage.deleteAll();
+    setTimeout(() => this.state.abort("conversation_erased"), 0);
+  }
+
   async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<void> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);

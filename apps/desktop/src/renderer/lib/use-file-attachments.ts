@@ -122,6 +122,7 @@ function restoredAttachment(cached: CachedDraftAttachment, connected: boolean): 
 export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: string) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>(NO_ATTACHMENTS);
   const [error, setError] = useState<string>();
+  const [restoredKey, setRestoredKey] = useState<string | null>(null);
   const [fingerprinting, setFingerprinting] = useState(0);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
   const fingerprintQueue = useRef(Promise.resolve());
@@ -418,6 +419,7 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
     setError(undefined);
     void readDraftAttachments(draftKey).then((cached) => {
       if (cancelled) return;
+      setRestoredKey(draftKey);
       const overflow = cached.slice(MAX_ATTACHMENTS);
       if (overflow.length > 0) void deleteDraftAttachments(draftKey, overflow.map((item) => item.localId));
       if (cached.length === 0) return;
@@ -454,6 +456,8 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
 
   return {
     attachments,
+    /** Whether the saved attachments for this key have been read, so an empty list means none. */
+    restored: restoredKey === draftKey,
     error,
     addFiles,
     removeAttachment,

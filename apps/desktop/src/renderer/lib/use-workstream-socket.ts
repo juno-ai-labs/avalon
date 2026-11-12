@@ -149,6 +149,8 @@ export interface WorkstreamSocketConnection {
   }): Promise<TranscriptRangeResult>;
   /** Ask the admitted room to replace local base state with one canonical frame. */
   requestSnapshot(): void;
+  /** The ticket the current room socket opened with, which names it to the server; null before one has. */
+  currentTicketId?(): string | null;
 }
 
 export type AcceptedWorkstreamTurn = WorkstreamMessageAdmissionReceipt['turn']
@@ -772,6 +774,7 @@ export function useWorkstreamSocket(
   // snapshot, and the open chips must not vanish until a forced one.
   const attempts = useRef(0);
   const reconnectRef = useRef<(() => void) | null>(null);
+  const ticketIdRef = useRef<string | null>(null);
   const retryOpening = useCallback((): void => {
     reconnectRef.current?.();
   }, []);
@@ -2112,6 +2115,7 @@ export function useWorkstreamSocket(
           return;
         }
         const nextSocket = createRealtimeSocket('substream_feed', socketTicket.url, socketTicket.protocols);
+        ticketIdRef.current = socketTicket.ticketId ?? null;
         markOpenedRequired = speculative;
         markOpenedSent = !speculative;
         // Splits the wait between holding a ticket and being connected into the
@@ -2510,6 +2514,7 @@ export function useWorkstreamSocket(
   ]);
 
   const workspaceSocketState = state === 'idle' ? 'unavailable' : state;
+  const currentTicketId = useCallback(() => ticketIdRef.current, []);
 
   return useMemo(
     () => ({
@@ -2527,9 +2532,11 @@ export function useWorkstreamSocket(
       reorderPendingInputs,
       retryHarness,
       stopHarness,
+      currentTicketId,
     }),
     [
       admissionAllowed,
+      currentTicketId,
       activeCompaction,
       activeInferenceDelays,
       answerElicitation,
