@@ -95,7 +95,7 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
   const actionReason = reason ?? (subscribed
     ? !api?.createBillingPortal ? 'Billing management is unavailable.' : undefined
     : !offer ? 'No billing plans are available in USD.' : !api?.createBillingCheckout ? 'Checkout is unavailable.' : undefined);
-  const planReason = reason ?? (subscribed ? 'Manage your subscribed plan in Stripe.' : !offer ? 'No billing plans are available in USD.' : undefined);
+  const planReason = reason ?? (!offer ? 'No billing plans are available in USD.' : undefined);
   const overageReason = reason ?? (subscribed
     ? !['active', 'trialing'].includes(billing?.status ?? '') ? 'An active or trialing subscription is required to change overages.'
       : !api?.setBillingOverages ? 'Overage changes are unavailable.'
@@ -137,7 +137,8 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
     finally { setBusy(false); }
   };
   const currentOffer = billing?.offers.find((item) => item.id === billing.offerId);
-  const displayedPlan = subscribed ? billing?.offerId ?? 'current' : offerId || 'unavailable';
+  const currentPlanLabel = subscribed && currentOffer ? `${currentOffer.name} plan` : currentPlan;
+  const displayedPlan = offerId || 'unavailable';
   return <>
     <div className="settings-preference-row"><span className="settings-row-copy"><strong>Trial</strong>
       {loading ? <BillingSkeleton label="Loading trial…" /> : <small>{!billing ? 'Trial details are unavailable.' : trial
@@ -146,14 +147,13 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
     </span></div>
     <div className="settings-preference-row">
       <span className="settings-row-copy"><strong>Organization billing</strong>
-        {loading ? <BillingSkeleton label="Loading billing…" /> : <small>{billing ? `${currentPlan ?? 'Organization plan'} · ${subscribed ? `Subscription: ${billing.status}` : 'No subscription. One subscription for everyone; no seat charges.'}` : 'Billing is unavailable.'}</small>}
+        {loading ? <BillingSkeleton label="Loading billing…" /> : <small>{billing ? `${currentPlanLabel ?? 'Organization plan'} · ${subscribed ? `Subscription: ${billing.status}` : 'No subscription. One subscription for everyone; no seat charges.'}` : 'Billing is unavailable.'}</small>}
       </span>
       <BillingControl reason={actionReason}><button type="button" className="text-button external-link-button" disabled={Boolean(actionReason)} aria-busy={busy} onClick={() => void open()}><span>{busy ? 'Opening…' : trial && !billing?.paymentMethodReady ? 'Add billing details' : subscribed || !billing ? 'Manage billing' : 'Continue to checkout'}</span><IconArrowUpRight aria-hidden="true" size={16} /></button></BillingControl>
     </div>
     <div className="settings-preference-row"><span className="settings-row-copy"><strong>Plan</strong><small>{subscribed ? 'Manage your subscribed plan in Stripe.' : 'Review pricing, discounts and taxes at checkout.'}</small></span>
-      {planControl ?? (loading ? <BillingSkeleton label="Loading plan…" /> : <BillingControl reason={planReason}><DropdownSelect ariaLabel="Billing plan" value={displayedPlan} disabled={Boolean(planReason)} options={subscribed
-        ? [{ value: displayedPlan, label: currentOffer?.name ?? currentPlan ?? 'Unavailable' }]
-        : offers.length ? offers.map((item) => ({ value: item.id, label: item.name })) : [{ value: displayedPlan, label: currentPlan ?? 'Unavailable' }]}
+      {planControl ?? (loading ? <BillingSkeleton label="Loading plan…" /> : subscribed ? <span>{currentOffer?.name ?? currentPlan ?? 'Unavailable'}</span> : <BillingControl reason={planReason}><DropdownSelect ariaLabel="Billing plan" value={displayedPlan} disabled={Boolean(planReason)} options={offers.length
+        ? offers.map((item) => ({ value: item.id, label: item.name })) : [{ value: displayedPlan, label: currentPlan ?? 'Unavailable' }]}
         onValueChange={(id) => { setOfferId(id); setOverage(false); }} /></BillingControl>)}
     </div>
     <div className="settings-preference-row"><span className="settings-row-copy"><strong>Bill usage beyond shared quota</strong><small>Optional. Overages remain billable during a free trial.</small></span>
