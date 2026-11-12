@@ -227,14 +227,10 @@ export function canvasSummary(row: CanvasRow, report: InvalidCanvasAppearanceRep
 
 
 /**
- * Every row this object keeps for a blank Canvas, by its id. A blank Canvas has
- * no artifacts, Sidekicks, pins, invitations or Activity rows (`discardIfBlank` checks), so
- * these are all it can have: its row, its creator's participation and read
- * cursor, its sharing revision, and its Chat's registration and projection.
- * The directory row goes first: the sharing triggers re-mark a Canvas only
- * while its row exists. A table that starts
- * keeping a row for every Canvas belongs here too; the test that discards one
- * scans every table for its id.
+ * Every row this object keeps for a blank Canvas. The directory row goes first:
+ * the sharing triggers re-mark a Canvas only while it exists. A table that
+ * starts keeping a row per Canvas belongs here; the discard test scans every
+ * table for the id.
  */
 const CANVAS_DISCARD_STATEMENTS = [
   "DELETE FROM canvas_directory WHERE canvas_id = ?",
@@ -462,17 +458,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }
 
   /**
-   * Delete a Canvas its creator made and left with nothing in it, so leaving a
-   * fresh Canvas unused does not leave an Untitled Canvas in their list.
-   * Blank is judged here, in the delete's transaction, not by the client: a
-   * message, an artifact, a retitle or chosen look, a pin, a share, a pending
-   * invitation or an attached Sidekick each keeps it. Anything else answers `discarded: false`
-   * rather than refusing, since the caller only asked to tidy up.
-   *
-   * The Chat's own messages are not visible here: this object holds only its
-   * projection, which can lag. So `CanvasService.discardIfBlank` asks once
-   * without `commit`, has the Chat seal itself if it holds nothing, then asks
-   * again with `commit`, which deletes the rows this object holds for it.
+   * Whether a Canvas is blank as this object sees it, and with `commit`, delete
+   * its rows if so. The query below is the definition of blank; anything a
+   * person can put into a Canvas must appear in it. Not blank is an answer,
+   * not a refusal. The Chat's own messages are not visible here (its
+   * projection lags), so `CanvasService.discardIfBlank` asks the Chat between
+   * the two calls.
    */
   discardIfBlank(input: CanvasDiscardRequest): { discarded: boolean } {
     const request = parseRpcInput(CanvasDiscardRequestSchema, input, "canvas_discard");
@@ -493,7 +484,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
                OR EXISTS (SELECT 1 FROM sidekick_conversation_attachments WHERE parent_kind = 'canvas' AND parent_id = ?1)
                OR EXISTS (SELECT 1 FROM workspace_pins WHERE item_kind = 'canvas' AND item_id = ?1)
                OR EXISTS (SELECT 1 FROM workspace_activity_items WHERE parent_kind = 'canvas' AND parent_id = ?1)
-               OR EXISTS (SELECT 1 FROM parent_invitations WHERE parent_id = ?1) AS used`,
+               OR EXISTS (SELECT 1 FROM parent_invitations WHERE parent_id = ?1)
+               OR EXISTS (SELECT 1 FROM canvas_access_requests WHERE canvas_id = ?1) AS used`,
           this.canvasId, row.created_by_user_id,
         ).one().used === 0;
       if (!blank || !request.commit) return { discarded: blank };

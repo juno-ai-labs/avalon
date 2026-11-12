@@ -151,7 +151,7 @@ interface WorkstreamComposerProps {
   onAttach?: (files: FileList | File[]) => void;
   /** Every edit to the draft, for a host that clears its own notice on one. */
   onDraftChange?: (value: string) => void;
-  /** Whether the box holds no text, a restored draft included; reported on every change. */
+  /** Whether the box is known to hold no text: false until the saved draft has been read. Reported on every change. */
   onDraftEmptyChange?: (empty: boolean) => void;
   onOpenAttachment: (preview: AttachmentPreview) => void;
   onRemoveAttachment: (localId: string) => void;
@@ -234,12 +234,13 @@ export function WorkstreamComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRevisionRef = useRef(0);
   const {
+    loaded: draftLoaded,
     text,
     setText,
     mentions: selectedMentions,
     setMentions: setSelectedMentions,
   } = useDraftText(draftKey);
-  const draftEmpty = text.trim() === '';
+  const draftEmpty = draftLoaded && text.trim() === '';
   useEffect(() => { onDraftEmptyChange?.(draftEmpty); }, [draftEmpty, onDraftEmptyChange]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [slashDismissed, setSlashDismissed] = useState(false);
