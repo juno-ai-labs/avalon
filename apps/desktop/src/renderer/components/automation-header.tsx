@@ -73,6 +73,7 @@ export function sidekickAudienceLabel(automation: Pick<AutomationDetail, 'audien
 function runTriggerLabel(run: AutomationRun): string {
   switch (run.triggerType) {
     case 'manual': return 'On request';
+    case 'invocation': return 'App request';
     case 'schedule': return 'Scheduled';
     case 'external_event': return 'Event';
     case 'inbound_email': return 'Email (retired)';

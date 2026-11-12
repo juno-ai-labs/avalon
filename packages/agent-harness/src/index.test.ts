@@ -7479,6 +7479,17 @@ describe("agent harness", () => {
     expect(schema).toContain('{\\"eventType\\": \\"the.event.type\\"}');
   });
 
+  it("preserves an app invocation binding from the model's draft", () => {
+    expect(__testing.normalizeAutomationDraft({
+      name: "Shopping organizer", description: "Files groceries", instructions: "Write each item to its store section.",
+      triggers: [{ type: "invocation", artifactId: "00000000-0000-7000-8000-000000000091", bindingName: "shoppingOrganizer",
+        rrule: null, timezone: null, summary: null, intervalSeconds: null, connectorType: null,
+        sourceBindingKey: null, suggestedSourcePluginId: null, eventTypes: null, deterministicFilters: null,
+        deterministicPrefilter: null, condition: null, resourceId: null }],
+      expectedOutputs: [], defaultBehavior: "{}", suggestedScope: "personal",
+    })).toMatchObject({ triggers: [{ type: "invocation", artifactId: "00000000-0000-7000-8000-000000000091", bindingName: "shoppingOrganizer" }] });
+  });
+
   it("hands a prefilter that is not a JSON object to the schema instead of emptying it", () => {
     const trigger = (deterministicPrefilter: unknown) => (__testing.normalizeAutomationDraft({
       name: "Contract watch",

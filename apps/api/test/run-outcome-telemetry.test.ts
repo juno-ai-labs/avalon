@@ -1,4 +1,4 @@
-import { asAutomationId, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asArtifactId, asAutomationId, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { describe, expect, it, vi } from 'vitest';
 import type { IdentityAuthContext } from '../src/env';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from '../src/telemetry/api-emitter';
@@ -36,7 +36,7 @@ function workDeferral() {
 }
 
 describe('authoritative run outcome telemetry', () => {
-  it('writes one idempotent outcome keyed by the run while retaining the operation as correlation', async () => {
+  it.each(['schedule', 'invocation'] as const)('writes one idempotent %s outcome while retaining the operation as correlation', async (kind) => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-12T20:00:08.000Z'));
     const database = preRetirementProductSqliteDatabase();
@@ -157,10 +157,13 @@ describe('authoritative run outcome telemetry', () => {
         automationId,
         runId: automationRunId,
         definitionRevision: 1,
-        trigger: {
-          kind: "schedule",
+        trigger: kind === "invocation" ? {
+          kind: "invocation" as const, artifactId: asArtifactId("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7906"),
+          artifactVersion: 1, bindingName: "shoppingOrganizer", operationId: "add-yogurt",
+        } : {
+          kind: "schedule" as const,
           scheduleId: '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7905',
-          scheduleKind: "calendar",
+          scheduleKind: "calendar" as const,
           plannedFor: Date.parse('2026-08-12T19:00:00.000Z'),
         },
       },
@@ -196,7 +199,7 @@ describe('authoritative run outcome telemetry', () => {
         runKind: 'automation',
         // The reference says `schedule`; this event has always said
         // `scheduled`, and the run's own origin is the activation.
-        triggerType: 'scheduled',
+        triggerType: kind === 'schedule' ? 'scheduled' : 'invocation',
         terminalState: 'completed',
         duration: '5s_30s',
         timeToFirstOutput: '1s_5s',

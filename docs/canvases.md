@@ -593,9 +593,10 @@ card grid with Sidekicks; the shared layout is described in
   facepiles and timestamps. Viewer presence
   is shown separately from **Data backed**, which means the Canvas holds a
   listed database-backed artifact. **Live updating** means an active attached
-  Sidekick has a schedule or event trigger; manual-only, paused and draft
-  Sidekicks do not qualify. Trigger kinds travel in the Canvas projection so
-  readers who cannot open the Sidekick still see this state. The projection
+  Sidekick has a schedule or event trigger; invocation-only, manual-only, paused
+  and draft Sidekicks do not qualify. App invocation handles submitted work and
+  does not by itself mean the Canvas updates automatically. Trigger kinds travel
+  in the Canvas projection so readers who cannot open the Sidekick still see this state. The projection
   uses the same definition query as the Sidekick directory, and refreshes when
   its trigger kinds change, including draft changes; instruction-only edits
   do not refresh it.
@@ -945,6 +946,14 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-11 — App invocation does not imply automatic upkeep
+
+The Live updating badge and Live filter require an active Sidekick with a
+schedule or external-event trigger. Dedicated app Sidekicks respond to app
+submissions, so their invocation trigger alone does not qualify. A Sidekick
+with invocation alongside a schedule or event still qualifies through that
+automatic trigger.
 
 ### 2026-11-11 — Open a new Canvas before its create request answers
 
