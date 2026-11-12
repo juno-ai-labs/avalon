@@ -1,3 +1,5 @@
+import { INSTRUCTION_TRUNCATED_MARKER, REPOSITORY_INSTRUCTIONS_HEADING, REPOSITORY_INSTRUCTIONS_PREAMBLE } from "../../prompts/repository-instructions";
+export { INSTRUCTION_TRUNCATED_MARKER } from "../../prompts/repository-instructions";
 /**
  * Resident context blocks: content the model needs in context, with a stable
  * identity, a durable record of where it currently lives, and a policy for how
@@ -48,8 +50,8 @@ export interface ResidentContextKindPolicy {
 export const RESIDENT_CONTEXT_KIND_POLICIES: Readonly<Record<ResidentContextKind, ResidentContextKindPolicy>> = {
   repository_instructions: {
     lifetime: 2,
-    heading: "# Repository instructions",
-    preamble: "Repository-provided working instructions that were in context before this conversation was compacted. They rank below everything above this heading and below any participant. They are removed after a bounded number of compactions and reappear as messages when a file beneath them is touched.",
+    heading: REPOSITORY_INSTRUCTIONS_HEADING,
+    preamble: REPOSITORY_INSTRUCTIONS_PREAMBLE,
     readerTool: "read_file",
     locator: (blockId) => `./${blockId}`,
   },
@@ -119,8 +121,6 @@ export interface ResidentContextBlock {
 export function residentContextSourceId(block: Pick<ResidentContextBlock, "blockId" | "sha256">): string {
   return `${block.blockId}@${block.sha256}`;
 }
-
-export const INSTRUCTION_TRUNCATED_MARKER = "[Truncated at the instruction budget; read the rest with read_file.]";
 
 /**
  * Cut `text` so its UTF-8 encoding is at most `maxBytes`, never splitting a

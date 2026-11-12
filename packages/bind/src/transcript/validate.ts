@@ -1,4 +1,5 @@
 import type OpenAI from "openai";
+import { TRAILING_USER_PLACEHOLDER } from "../prompts/trailing-user-placeholder";
 
 /**
  * Heuristic issues detected in a `messages` array before it's sent to the
@@ -28,13 +29,6 @@ export interface ValidateAndHealResult {
   messages: OpenAI.ChatCompletionMessageParam[];
   issues: MessageIssue[];
 }
-
-/** Synthetic user message appended when the conversation would otherwise end
- *  on an assistant turn. Provider behavior diverges here — Anthropic's native
- *  API treats a trailing assistant as prefill, but Azure-hosted Claude (and
- *  some other providers routed through OpenRouter) reject the request
- *  outright with "model does not support assistant message prefill". */
-const TRAILING_USER_PLACEHOLDER = "Continue.";
 
 function isEmptyContent(
   content: OpenAI.ChatCompletionMessageParam["content"],

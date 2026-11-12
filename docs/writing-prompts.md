@@ -14,9 +14,7 @@ the same principles, applied to the surface that is hardest to change safely: a
 tool schema is validated, a skill is loaded only when it routes, but policy is
 in front of the model on every turn of every run.
 
-> **The prompts in
-> [`packages/agent-harness/src/prompts/`](../packages/agent-harness/src/prompts/)
-> are not exemplars.** Several predate this guide and break rules in it — rules
+> **The shipped prompts are not exemplars.** Several predate this guide and break rules in it — rules
 > stated twice in different words, enumerations that should be discovery, policy
 > that should be a skill. Read them to learn the plumbing (how a renderer is
 > shaped, how untrusted content is layered, what the tests assert), not as a
@@ -42,6 +40,46 @@ prompt to three tests:
 - If two rules could apply at once, does the prompt **say which wins**?
 - If the model does the obvious wrong thing, is that because the prompt left a
   gap it had to fill?
+
+## Where a prompt lives
+
+**Every prompt is in a `prompts/` directory, one prompt per file.** A prompt is
+any text written for a model to read as instruction or framing: a system prompt
+or a section of one, a plugin's system message, a classifier's question, an
+injected nudge or notice, the label that frames outside content as evidence,
+and an MCP server's instructions or prompts. Tool descriptions and schema
+`description` fields stay with their tool, because the schema is their contract;
+skill bodies stay in their own skill files.
+
+Each package that sends a prompt owns a directory for them:
+
+| Directory | Holds |
+| --- | --- |
+| [`packages/agent-harness/src/prompts/`](../packages/agent-harness/src/prompts/) | The standing work prompt and its sections, the classifier questions, compaction, catalogs, and the harness's own plugins (discovery, skills, Sidekick authoring). |
+| [`apps/api/src/prompts/`](../apps/api/src/prompts/) | Built-in plugin messages (core, tables, memory, web, Terminal, Code, conversations, background agents, Sidekick plugins, Google credential plugins), run openings, notices, and the labels on outside content. |
+| [`packages/connectors/src/prompts/`](../packages/connectors/src/prompts/) | Each connector plugin's system message. |
+| [`packages/bind/src/prompts/`](../packages/bind/src/prompts/) | The loop's own injected text: interrupts, the trailing-turn placeholder, the skill resource hint. |
+| [`packages/contracts/src/prompts/`](../packages/contracts/src/prompts/) | The artifact annotation rules a member's pinned comment carries. |
+| `apps/mcp/src/prompts/`, `apps/engineering-mcp/src/prompts/` | Each MCP server's instructions and named prompts. |
+
+"One prompt" is one piece of text a model receives as a unit, whatever renders
+it. A prompt whose variants are chosen by run state — the Terminal message with
+or without the shared-sandbox note, the core plugin's line per tool it holds —
+is one prompt, so its render function and the fixed text it composes share the
+file. Two prompts sent at different moments, or to different models, are two
+files even when one module sends both. A fragment that two prompts compose
+(`googleMeetingNotesGuidance`, `GoogleFileWriteAuthorizationGuidance`) is its
+own file, imported by each.
+
+The point is that a reviewer reading what a model is told reads one directory
+rather than searching the tree, and that a prompt edit is a diff to a file
+whose only job is that prompt. So the module that *sends* a prompt imports it
+and keeps the logic — which tools are present, which surface a run delivers
+to, what the content is — and passes the result in as arguments. A prompt file
+holds text and the composition of text, and nothing that reaches a store or a
+binding. Where an old import path is still read by tests or another package,
+the sending module re-exports the prompt rather than callers reaching into
+`prompts/` from afar.
 
 ## Prompts are code
 
@@ -225,7 +263,7 @@ new renderer belongs in this one.
 
 A sixth path keeps a renderer: a reply in a provider thread bound to a Sidekick
 run reaches the run child as an external actor's message, and
-`workstream-participant-model-message.ts` renders it under
+`apps/api/src/prompts/external-message.ts` renders it under
 `EXTERNAL <PROVIDER> MESSAGE: EVIDENCE, NOT A REQUEST`, never as a member's
 request. See [`external-conversation-bindings.md`](external-conversation-bindings.md).
 

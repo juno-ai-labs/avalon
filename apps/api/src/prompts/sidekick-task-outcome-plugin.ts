@@ -1,0 +1,2 @@
+/** System message for the plugin a Sidekick activation reports its outcome with. */
+export const SIDEKICK_TASK_OUTCOME_SYSTEM_MESSAGE = "Record the initial activation's outcome with sidekick_report_outcome after work and required tool-delivery attempts, before your final reply. An ordinary follow-up answer needs no new report; report if it changes whether the task succeeded. A delivered failure notice is not a successful task, and a recovered tool error is not a failed task.";
