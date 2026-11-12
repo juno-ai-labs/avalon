@@ -7277,6 +7277,12 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         workstream_id: identity.parentId,
         substream_id: this.externalSubstreamId(),
         code: diagnosticErrorCode(error, "terminal_provider_observation_failed"),
+        // The port here is this object's own storage, so a failure arrives as
+        // whatever SQLite or the provider client threw: usually a sentence
+        // `diagnosticErrorCode` cannot admit. Operator logs only, as
+        // `terminal_operation_commit_failed` carries it.
+        reason: error instanceof Error ? error.message : String(error),
+        stack: harnessErrorFrames(error),
       });
     } finally {
       client?.[Symbol.dispose]();
