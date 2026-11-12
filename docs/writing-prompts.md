@@ -43,66 +43,29 @@ prompt to three tests:
 
 ## Where a prompt lives
 
-**Every prompt is in the `@rally/prompts` package, under
-[`packages/prompts/`](../packages/prompts/), one prompt per file.** A prompt is
-any text written for a model to read as instruction or framing: a system prompt
-or a section of one, a plugin's system message, a classifier's question and its
-closed set of answers, an injected nudge or notice, the label that frames
-outside content as evidence or host data, and an MCP server's instructions or
-prompts. Tool descriptions and schema `description` fields stay with their
-tool, because the schema is their contract; skill bodies stay in their own
-skill files.
+**Every prompt is a file of its own in the `@rally/prompts` package
+([`packages/prompts/`](../packages/prompts/)), under the folder named for the
+package that sends it** (`harness/`, `api/`, `connectors/`, …). A prompt is any
+text written for a model to read as instruction or framing: a system prompt or
+a section of one, a plugin's system message, a classifier's question with its
+closed set of answers, an injected nudge or notice, a label on outside content
+or host data, and an MCP server's instructions or prompts. Tool descriptions
+stay with their tool, because the schema is their contract; skill bodies stay
+in their skill files.
 
-The package has one folder per package that sends the prompts, and a consumer
-imports a file by path (`@rally/prompts/api/terminal-plugin`):
+**The package depends on `@rally/contracts` and nothing else**, because every
+sender depends on it and any other import would be a cycle. So a prompt takes
+run state as plain arguments and declares what it reads structurally rather
+than importing a host type; a value that is the prompt's own, such as a JEV
+question's choices, lives with the prompt and the host imports it back. A
+sender imports a prompt from `@rally/prompts` directly; it does not re-export
+one under a second path.
 
-| Folder | Holds |
-| --- | --- |
-| [`harness/`](../packages/prompts/harness/) | The standing work prompt and its sections, the JEV questions and the shape helper they are declared with, compaction, catalogs, and the harness's own plugins (discovery, skills, Sidekick authoring). `@rally/agent-harness` re-exports the folder's barrel, so `@rally/agent-harness` callers are unchanged. |
-| [`api/`](../packages/prompts/api/) | Built-in plugin messages (core, tables, memory, web, Terminal, Code, conversations, background agents, Sidekick plugins, Google credential plugins), run openings, notices, context labels, and the labels on outside content. |
-| [`connectors/`](../packages/prompts/connectors/) | Each connector plugin's system message. |
-| [`bind/`](../packages/prompts/bind/) | The loop's own injected text: interrupts, the trailing-turn placeholder, the skill resource hint. |
-| [`contracts/`](../packages/prompts/contracts/) | The artifact annotation rules a member's pinned comment carries. |
-| [`mcp/`](../packages/prompts/mcp/), [`engineering-mcp/`](../packages/prompts/engineering-mcp/) | Each MCP server's instructions and named prompts. |
-
-**The package depends on `@rally/contracts` and nothing else.** Every package
-that sends a prompt depends on it, so a prompt file that imported from the
-harness, the API, Bind or a connector would be a cycle. A prompt therefore takes
-what it needs from run state as plain arguments — the Code deadline, which core
-tools a run holds, the inventory counts — and declares the shape of what it
-reads structurally rather than importing a host type. Where a value is the
-prompt's own, it lives with the prompt and the host imports it back: a JEV
-question's closed set of choices (`ADDRESSING_CHOICES`) is defined beside the
-question that enumerates them, and the host builds its answer schema from that.
-The one helper that is the loop's rather than the prompt's — Bind's skill
-catalog partition — stays in the harness, which partitions and then hands the
-result to the prompt to word. `@rally/contracts` cannot import a prompt for the
-same reason, so `renderAnnotations` is imported from
-`@rally/prompts/contracts/artifact-annotations`, not from contracts.
-
-"One prompt" is one piece of text a model receives as a unit, whatever renders
-it. A prompt whose variants are chosen by run state — the Terminal message with
-or without the shared-sandbox note, the core plugin's line per tool it holds —
-is one prompt, so its render function and the fixed text it composes share the
-file. A classifier's system and user turns are one prompt. Two prompts sent at
-different moments, or to different models, are two files even when one module
-sends both. A fragment that two prompts compose
-(`googleMeetingNotesGuidance`, `GoogleFileWriteAuthorizationGuidance`) is its
-own file, imported by each.
-
-The point is that a reviewer reading what a model is told reads one package
-rather than searching the tree, and that a prompt edit is a diff to a file whose
-only job is that prompt. So the module that *sends* a prompt imports it and
-keeps the logic — which tools are present, which surface a run delivers to,
-what the content is — and passes the result in. A prompt file holds text and
-the composition of text, and nothing that reaches a store or a binding. Where an
-old import path is still read by tests or another package, the sending module
-re-exports the prompt.
-
-A prompt's tests stay with the behavior they prove: the golden hashes and
-injection tests in `packages/agent-harness/src/prompts.test.ts` run the harness
-renderers through the harness barrel, and a test of a prompt alone, such as the
-annotation rules, sits beside it in `packages/prompts/`.
+**One prompt is one piece of text a model receives as a unit.** Variants chosen
+by run state, such as the Terminal message with or without the shared-sandbox
+note, are one prompt and share a file with their render function, and so are a
+classifier's system and user turns. A fragment two prompts compose is its own
+file.
 
 ## Prompts are code
 

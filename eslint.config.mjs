@@ -117,6 +117,7 @@ export default tseslint.config(
       "packages/connectors/src/**/*.{ts,tsx}",
       "packages/contracts/src/**/*.{ts,tsx}",
       "packages/skills/**/*.{ts,tsx}",
+      "packages/prompts/**/*.{ts,tsx}",
     ],
     ignores: ["**/*.test.{ts,tsx}", "packages/bind/src/**/__tests__/**"],
     rules: {
@@ -132,6 +133,7 @@ export default tseslint.config(
       "apps/**/src/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
       "packages/**/src/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
       "packages/skills/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+      "packages/prompts/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
     ],
     ignores: ["**/*.test.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"],
     rules: {
@@ -301,6 +303,7 @@ export default tseslint.config(
       "apps/**/src/**/*.{ts,tsx}",
       "packages/**/src/**/*.{ts,tsx}",
       "packages/skills/**/*.{ts,tsx}",
+      "packages/prompts/**/*.{ts,tsx}",
     ],
     ignores: ["**/*.test.{ts,tsx}"],
     rules: {
@@ -356,6 +359,7 @@ export default tseslint.config(
       "apps/**/src/**/*.{ts,tsx}",
       "packages/**/src/**/*.{ts,tsx}",
       "packages/skills/**/*.{ts,tsx}",
+      "packages/prompts/**/*.{ts,tsx}",
     ],
     ignores: ["**/*.test.{ts,tsx}"],
     rules: {
@@ -363,7 +367,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["packages/agent-harness/src/**/*.ts", "packages/bind/src/**/*.ts", "packages/skills/**/*.ts"],
+    files: ["packages/agent-harness/src/**/*.ts", "packages/bind/src/**/*.ts", "packages/skills/**/*.ts", "packages/prompts/**/*.ts"],
     ignores: ["**/*.test.ts", "packages/bind/src/**/__tests__/**"],
     rules: {
       "no-restricted-globals": [
