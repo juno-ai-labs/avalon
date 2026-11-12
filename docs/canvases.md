@@ -35,7 +35,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/desktop/src/renderer/screens/canvases-home.tsx` | `/canvases`: the home page — New Canvas, search, the Live, Data and authorship filters, the Recent list, and the first-run "Start from a prompt" card. |
 | `apps/desktop/src/renderer/screens/canvas.tsx` | `/canvases/:id`: the Chat as a `canvas` conversation in `ConversationSurface`, its header (pill, people present, Share, menu), and opening the newest artifact in the right rail. |
 | `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; guests invited by email on Save. |
-| `apps/desktop/src/renderer/components/canvas-mark.tsx` | `CanvasMark` and `canvasMark`: the chosen icon and colour, else the kind's glyph and `canvasHue`, field by field. |
+| `apps/desktop/src/renderer/components/canvas-mark.tsx` | `CanvasMark` and `canvasMark`: the chosen icon and colour, else the unchosen glyph (`PanelsTopLeft`) and `canvasHue`, field by field. |
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx` | The Canvases sidebar section: a Pinned group and every Canvas by recent activity. |
 | `apps/desktop/src/renderer/components/canvas-creation-notices.tsx` | Shell-owned failure notices and navigation back to a pending Canvas's recovery controls. |
 | `apps/desktop/src/renderer/lib/canvases.ts` | The list as the socket keeps it (`useCanvasList`), routes and Canvas creation. |
@@ -270,9 +270,10 @@ Sidekick stores and parsed by the same `WorkstreamAppearanceSchema`
 owns the catalog and the ring). They live on the directory row as
 `appearance_json` (migration 137), null until someone chooses, and the
 summary carries them as `appearance` on the list row, the detail and a
-Sidekick's Canvases, each field null while unchosen. An unchosen icon draws the
-glyph of the newest artifact's kind and an unchosen colour the hue the id
-gives it (`canvasHue`), so a Canvas nobody dressed looks as it always has.
+Sidekick's Canvases, each field null while unchosen. An unchosen icon draws one
+fixed placeholder (`PanelsTopLeft`), never a glyph read from the Canvas's
+artifacts: only the naming pass or a person sets the icon. An unchosen colour
+is the hue the id gives it (`canvasHue`).
 
 `PATCH /canvases/:id` with `appearance` sets them, beside or instead of a
 title, by anyone the Canvas admits, the rule renaming has, and
@@ -618,8 +619,8 @@ card grid with Sidekicks; the shared layout is described in
   The attached Sidekick facepile names each mark on hover and lists hidden
   names on its hexagonal overflow count. Clicking it opens the Canvas; the title link's
   accessible description carries the indicators and stack name.
-- **The mark** (`CanvasMark`) holds the chosen icon, else the row's
-  `artifactKind` glyph, in a pastel pair through `markColors`: the chosen
+- **The mark** (`CanvasMark`) holds the chosen icon, else the unchosen
+  placeholder, in a pastel pair through `markColors`: the chosen
   colour, else a hue stable for the id (`canvasHue`). The home card's preview
   fills its entire background with that tint and centers the glyph vertically
   and horizontally, with no icon repeated in the title row. The ink applies
@@ -876,7 +877,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   preserves the restored panel before opening a later live attachment.
 - `canvases-home.test.tsx`, `canvas-sidebar-section.test.tsx` and
   `components/navigation-sidebar.test.tsx` (the Activity section) — each mark
-  in the chosen icon and colour, and an unchosen one in its kind and hue.
+  in the chosen icon and colour, and an unchosen one in the placeholder and its hue.
 - `apps/desktop/src/renderer/components/canvas-sidebar-section.test.tsx` — the
   section's Pinned group and rows, drag to pin, unpin, and the skeleton.
 - `apps/api/test/workstream-object-schema.test.ts` — conversation migration 83
@@ -969,7 +970,9 @@ ever set its icon: Thread naming chose one beside the name, and the Canvas
 titling that replaced it carried the title forward and dropped the icon. The
 title call now also returns a key from the shared icon catalog, and the pass
 writes it only when the icon is unchosen. It rides the same model call rather
-than a second one, since one more key costs no latency. The colour stays the
+than a second one, since one more key costs no latency. The client no longer
+reads an icon from the newest artifact's kind: an unchosen icon is one fixed
+placeholder, so the icon is only ever the model's choice or a person's. The colour stays the
 id-derived default, so two Canvases with the same icon still differ. A future
 change must keep the write conditional on an unchosen icon, so the pass never
 overrides a person's pick.

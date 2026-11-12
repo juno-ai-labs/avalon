@@ -24,7 +24,7 @@ export function CanvasPinRail(): React.JSX.Element {
   return <section aria-label="Pinned Canvas shortcuts" className={clsx('navigation-rail-pins', over === 'end' && 'navigation-pin-drop-end')} {...targetProps()}>
     <div className="navigation-rail-pins-list">
       {pinned.map((canvas) => {
-        const { icon, color } = canvasMark(canvas.id, canvas.artifactKind, canvas.appearance);
+        const { icon, color } = canvasMark(canvas.id, canvas.appearance);
         return <ContextMenu.Root key={canvas.id}>
           <ContextMenu.Trigger asChild>
             <span className={clsx('navigation-rail-pin', over === canvas.id && 'navigation-pin-drop-before')} {...targetProps(canvas.id)}>
