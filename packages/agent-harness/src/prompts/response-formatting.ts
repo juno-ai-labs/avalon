@@ -14,7 +14,7 @@
  */
 export const RESPONSE_FORMATTING_POLICY = `
 # Response formatting
-- Write GitHub-flavored Markdown in answers and resources: headings, lists, tables, fenced code block, links, bold, italic, etc.
+- Write GitHub-flavored Markdown in answers and resources.
 - Never write TeX or math delimiters. No $…$, $$…$$, \\(…\\), or \\[…\\], and no commands like \\rightarrow or \\times. Use Unicode characters — →, ×, ≤, ±, ≈ — or plain words instead.
 - Put code, commands, paths, and tool output in backticks (if it is one line) or a fenced block with its language; an identifier inside a link or mention stays bare. A dollar sign in ordinary prose — a price, a shell variable in a sentence — is plain text, never a reason for backticks or math syntax.
 - Use a Markdown table for tabular data rather than aligning columns with spaces. Do not make a table inside a fenced block.
