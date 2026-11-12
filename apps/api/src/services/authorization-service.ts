@@ -259,6 +259,8 @@ class AuthorizationBatch {
     if (!facts) throw new Error('authorization_resource_facts_missing');
     const evidence = { owner: `resource:${resource.resourceId}`, revision: facts.exists ? facts.revision : 'absent', validatedAt: facts.validatedAt };
     if (!facts.exists) return { status: 'not_found', resource, evidence: [evidence] };
+    if (facts.canvasAccess) return evaluateReadPolicy(fact(facts.canvasAccess.allowed,'resource_not_shared',
+      {...evidence,revision:String(facts.canvasAccess.revision)}),Date.now());
     const base: ReadPolicy = { kind: 'all', policies: [
       fact(facts.connectionAllowed, 'connection_not_accessible', evidence),
       fact(facts.noteAllowed && facts.draftAllowed, 'resource_not_shared', evidence),

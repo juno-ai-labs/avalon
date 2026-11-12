@@ -15,6 +15,7 @@ import { isDraftUpload, requiresAttachment, type ResourceReadRow } from './resou
 export type SearchAudience = string[];
 
 export const searchAudienceGroup = {
+  artifacts: (canvasId: string) => `artifacts:${canvasId}`,
   user: (userId: string) => `user:${userId}`,
   /** Every active member whose access class is `member`; never a guest. */
   members: (workspaceId: string) => `members:${workspaceId}`,
@@ -41,7 +42,8 @@ export function conversationSearchAudience(conversation: {
  * conversation the canonical inventory places it in.
  */
 export function resourceSearchAudience(workspaceId: string, row: ResourceReadRow,
-  locations: readonly { parentId: string; substreamId: string; parentKind: string }[], ownedByCanvas = false): SearchAudience {
+  locations: readonly { parentId: string; substreamId: string; parentKind: string }[], ownedByCanvas = false, ownerCanvasId?: string): SearchAudience {
+  if (ownedByCanvas) return ownerCanvasId ? [searchAudienceGroup.artifacts(ownerCanvasId)] : [];
   if (row.connection_id) return [searchAudienceGroup.connection(row.connection_id)];
   const groups = new Set<string>();
   // The uploader reads without an attachment unless the provider needs one even for its owner.

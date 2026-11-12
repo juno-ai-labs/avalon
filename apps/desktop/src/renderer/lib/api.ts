@@ -1,5 +1,6 @@
 import type { ProductAnalyticsPreference } from '@rally/contracts/telemetry';
 import { ProductAnalyticsPreferenceClient } from '../../common/product-analytics-preference';
+import { ArtifactLinkSchema } from '@rally/contracts/artifact-access';
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
@@ -1662,6 +1663,12 @@ export class RallyApi {
    * prefetchable and cacheable — both wrong for a credential. The `openUrl` it
    * returns carries that code in its fragment, which never leaves the browser.
    */
+  async artifactLink(resourceId:string):Promise<{artifactId:string;canonicalUrl:string}> {
+    const response=await this.execute(`/resources/${encodeURIComponent(resourceId)}/artifact/link`,{method:'GET'});
+    if(!response.ok) return this.throwResponseError(response);
+    return ArtifactLinkSchema.parse(await response.json());
+  }
+
   async openArtifact(resourceId: string): Promise<{
     openUrl: string;
     canonicalUrl: string;

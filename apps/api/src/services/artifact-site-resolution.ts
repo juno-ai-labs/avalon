@@ -32,7 +32,7 @@ export async function resolveSiteForViewer(
     env,
     env.ARTIFACT_HOSTS,
     artifactHostDOName(env.AVALON_REGION, asArtifactId(artifactId)),
-  ).currentState();
+  ).publicationAddress();
   if (!state) throw notFound();
   const [decision] = await new AuthorizationService(env).checkMany(
     { workspaceId: asWorkspaceId(state.workspaceId), userId: asUserId(userId), delegation: null },

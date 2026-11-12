@@ -1,5 +1,8 @@
 import { ArtifactSidekickInvocationSchema, type ArtifactSidekickInvocation } from "@rally/contracts";
 import { artifactSidekickBinding } from "./artifact-sidekick-bindings";
+import { ArtifactHostnameStubSchema } from '@rally/contracts';
+import { CANVAS_ARTIFACT_ACCESS_ALARM, CANVAS_ARTIFACT_ACCESS_STATEMENTS, canvasArtifactAccessSnapshot, canvasArtifactTargets, canvasArtifactFile } from './canvas-artifact-access';
+import { ArtifactAccessMessageSchema } from '@rally/contracts/artifact-access';
 import {
   CHANNEL_COLOR_SYNC_MIGRATION,
   CHANNEL_MESSAGE_SEARCH_MIGRATION,
@@ -781,6 +784,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   // reads it through this object's local executor, the same predicate the
   // reap applies, as the Slack due times above are read.
   "canvas_directory", "canvas_participants", "canvas_access_requests",
+  "canvas_artifact_users", "canvas_artifact_access_state", "canvas_artifact_access_bootstrap",
   // Each person's Activity: written beside a notification intent, read by the socket.
   "workspace_activity_items", "workspace_activity_seen",
   "realtime_transcription_sessions",
@@ -1035,7 +1039,7 @@ const RETIRED_ALARM_KINDS: ReadonlySet<string> = new Set([
  * any other logs as `unknown`.
  */
 const WORKSPACE_DISPATCHED_ALARM_KINDS: ReadonlySet<string> = new Set([
-  ...HOSTED_SIDEKICK_ALARM_KINDS, ...RETIRED_ALARM_KINDS, ...WORKSPACE_SCHEDULE_ALARM_KINDS,
+  CANVAS_ARTIFACT_ACCESS_ALARM, ...HOSTED_SIDEKICK_ALARM_KINDS, ...RETIRED_ALARM_KINDS, ...WORKSPACE_SCHEDULE_ALARM_KINDS,
   SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND, CANVAS_NAMING_ALARM_KIND, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM,
   REPLY_BATCH_ALARM_KIND,
 ]);
@@ -4458,6 +4462,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // second list admits a request's three notice kinds on the intents and
   // Activity (SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS).
   statements: [...SIDEKICK_SOURCE_SCHEMA_STATEMENTS, ...SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS],
+}, { version: 147, description: 'separate Canvas artifact audiences and durably propagate local serving access',
+  statements: CANVAS_ARTIFACT_ACCESS_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -7200,6 +7206,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // Thread and Channel parents' own alarms are gone (plan step C-2); an
         // entry an object armed before that deploy has nothing left to do.
         if (RETIRED_ALARM_KINDS.has(alarm.kind)) return;
+        if (alarm.kind === CANVAS_ARTIFACT_ACCESS_ALARM) {
+          await this.bootstrapArtifactAccessMembers(workspaceId);
+          await this.env.ACCESS_REVOCATION_QUEUE.send(ArtifactAccessMessageSchema.parse({
+            kind: 'canvas_artifact_access_changed', region:this.env.AVALON_REGION, workspaceId, canvasId: alarm.key,
+            revision: canvasArtifactAccessSnapshot(this.state.storage.sql,alarm.key)?.revision ?? 1,
+          }));
+          return;
+        }
         // Archive deliveries commit with the tombstone and retry independently.
         if (alarm.kind === CANVAS_ARCHIVE_CONVERSATION_ALARM) {
           const delivery = parseRpcInput(z.strictObject({ canvasId: IdSchema, substreamId: SubstreamIdSchema,
@@ -9505,6 +9519,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         userId, Date.now(),
       );
     }
+    await this.armNextAlarm();
     return relationship;
   }
 
@@ -9630,7 +9645,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.queueSidekickSourcesForUsers([userId]);
       return true;
     });
-    if (this.state.storage.sql.exec("SELECT 1 FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources' LIMIT 1").toArray().length > 0) await this.armNextAlarm();
+    await this.armNextAlarm();
     return { applied };
   }
 
@@ -11355,6 +11370,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // A Canvas's Chat is its conversation `0`, read by whoever opens the Canvas.
     const actorRole = member ? relationship.role ?? "member" : null;
     for (const canvas of sql.exec<CanvasRow>(`SELECT * FROM canvas_directory`).toArray()) {
+      const artifactAccess=canvasArtifactAccessSnapshot(sql,canvas.canvas_id);
+      if(artifactAccess && !artifactAccess.archived && (artifactAccess.public || artifactAccess.users.some(person=>person.userId===request.userId))) groups.push(searchAudienceGroup.artifacts(canvas.canvas_id));
       if (canvasReaderAllows(canvas, { userId: request.userId, actorRole }, sql)) {
         groups.push(searchAudienceGroup.conversation(canvas.canvas_id, "0"));
       }
@@ -11390,6 +11407,48 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.target);
   }
 
+  /** Complete older Organizations' sparse membership projection once, outside serving. */
+  private async bootstrapArtifactAccessMembers(workspaceId: string): Promise<void> {
+    const sql = this.state.storage.sql;
+    if (sql.exec<{ completed: number }>('SELECT completed FROM canvas_artifact_access_bootstrap WHERE id=1').one().completed) return;
+    const members = await this.env.DB.prepare('SELECT user_id FROM workspace_members WHERE workspace_id=?').bind(workspaceId).all<{ user_id: string }>();
+    for (const member of members.results) await this.readRelationship(workspaceId, member.user_id);
+    sql.exec('UPDATE canvas_artifact_access_bootstrap SET completed=1 WHERE id=1');
+  }
+
+  /** Queue consumers read complete snapshots. No artifact request calls this RPC. */
+  async canvasArtifactAccessDelivery(input: { workspaceId: string; canvasId: string; resourceId?: string }) {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, canvasId: IdSchema, resourceId:IdSchema.optional() }), input, 'canvas_artifact_access_delivery');
+    this.assertWorkspace(request.workspaceId);
+    await this.bootstrapArtifactAccessMembers(request.workspaceId);
+    const sql = this.state.storage.sql;
+    const snapshot = canvasArtifactAccessSnapshot(sql, request.canvasId);
+    const targets=canvasArtifactTargets(sql, request.canvasId);
+    const file=request.resourceId && targets.some(target=>target.resourceId===request.resourceId)
+      ? canvasArtifactFile(sql,request.resourceId) : null;
+    // Capture permission and file versions together, before any await. A child
+    // must never pair an old public snapshot with newly private file bytes.
+    const delivery=snapshot ? {snapshot,targets,file} : null;
+    await this.armNextAlarm();
+    return delivery;
+  }
+
+  async canvasRegisterFileHost(input: {workspaceId:string;canvasId:string;resourceId:string;hostnameStub:string}) {
+    await this.initialized;
+    const request=parseRpcInput(z.strictObject({workspaceId:WorkspaceIdSchema,canvasId:IdSchema,resourceId:IdSchema,hostnameStub:ArtifactHostnameStubSchema}),input,'canvas_register_file_host');
+    this.assertWorkspace(request.workspaceId);
+    const sql=this.state.storage.sql;
+    if(!canvasArtifactTargets(sql,request.canvasId).some(target=>target.resourceId===request.resourceId && target.artifactId===request.resourceId)) throw new Error('artifact_file_target_mismatch');
+    sql.exec(`INSERT INTO artifact_registry(artifact_id,workspace_id,workstream_id,resource_id,mode,stateful,current_version,manifest_ref,created_at,updated_at,hostname_stub)
+      SELECT id,workspace_id,?1,id,'static',0,COALESCE((SELECT MAX(version) FROM resource_versions WHERE resource_id=resources.id),1),content_ref,?2,?2,?3
+      FROM resources WHERE id=?4 AND resource_type='generated_file' AND content_ref IS NOT NULL
+      ON CONFLICT(resource_id) DO UPDATE SET current_version=excluded.current_version,manifest_ref=excluded.manifest_ref,updated_at=excluded.updated_at`,
+      request.canvasId,Date.now(),request.hostnameStub,request.resourceId);
+    await this.armNextAlarm();
+  }
+
+
   async authorizationResourceFacts(input: {
     workspaceId: string; userId: string; resourceIds: string[];
     /** The reader's access class, which decides the Channels they read. */
@@ -11403,6 +11462,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       includeReadMetadata: z.boolean().optional(),
     }).parse(input);
     this.assertWorkspace(request.workspaceId);
+    // Only Canvas-owned outputs need the local editor/artifact predicate.
+    // Other providers retain their existing resource authorization path.
+    if (this.state.storage.sql.exec(`SELECT 1 FROM resources resource
+      WHERE workspace_id=? AND provider='avalon_generated'
+        AND id IN (SELECT value FROM json_each(?))
+        AND (publication_parent_id IS NOT NULL OR EXISTS
+          (SELECT 1 FROM canvas_artifacts WHERE resource_id=resource.id)) LIMIT 1`,
+    request.workspaceId,JSON.stringify(request.resourceIds)).toArray().length) {
+      await this.readRelationship(request.workspaceId,request.userId);
+    }
     const locations = new AuthorizationStorage(this.state.storage);
     const coverage = this.authorizationCoverage();
     // Absence is evidence only as old as the oldest source observation, never today's projection read.
@@ -11414,14 +11483,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         attachment_status: string | null; updated_at: string; connection_id: string | null; publication_parent_id: string | null;
       }>('SELECT provider, resource_type, uploaded_by_user_id, attachment_status, updated_at, connection_id, publication_parent_id FROM resources WHERE id = ? AND workspace_id = ?',
       resourceId, request.workspaceId).toArray()[0];
-      if (!row || (row.provider === 'avalon_generated'
-        && resourceCanvasState(this.state.storage.sql, resourceId, row.publication_parent_id).archived)) {
+      const canvas = row?.provider === 'avalon_generated'
+        ? resourceCanvasState(this.state.storage.sql, resourceId, row.publication_parent_id) : null;
+      if (!row || canvas?.archived) {
         return { resourceId, exists: false as const, validatedAt: Date.now() };
       }
       const connection = row.connection_id ? this.state.storage.sql.exec<{ scope: string; owner_user_id: string | null; status: string }>(
         'SELECT scope, owner_user_id, status FROM connector_connections WHERE id = ?', row.connection_id,
       ).toArray()[0] : null;
 
+      const ownerCanvasId = canvas?.ownerCanvasId;
+      const artifactPolicy = ownerCanvasId ? canvasArtifactAccessSnapshot(this.state.storage.sql,ownerCanvasId) : null;
+      const artifactPerson = artifactPolicy?.users.find(person=>person.userId===request.userId);
+      const canvasAccess = artifactPolicy ? {allowed:!artifactPolicy.archived && (artifactPolicy.public || Boolean(artifactPerson)),
+        editor:artifactPerson?.editor??false,revision:artifactPolicy.revision}
+        : canvas?.ownedByCanvas ? {allowed:false,editor:false,revision:0} : null;
       const owned = row.uploaded_by_user_id === request.userId;
       const placed = locations.locations(resourceId);
       // A merge once shared a resource with a Channel; Channels are retired
@@ -11431,6 +11507,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // The caller discloses them only after composing the complete decision.
       const readMetadata = request.includeReadMetadata ? {
         placementAffinity: this.placementAffinity(),
+        canEditArtifact: canvasAccess?.editor ?? null,
         resource: this.state.storage.sql.exec<Record<string, SqlStorageValue>>(`${RESOURCE_READ_PROJECTION_SQL}
           WHERE r.id = ? AND r.workspace_id = ?`, resourceId, request.workspaceId).one(),
         artifact: this.state.storage.sql.exec<{
@@ -11438,7 +11515,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }>(`SELECT artifact_id, workstream_id, mode, stateful, hostname_stub FROM artifact_registry
           WHERE workspace_id = ? AND resource_id = ?`, request.workspaceId, resourceId).toArray()[0] ?? null,
       } : null;
-      return { resourceId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at, owned, sharedThrough,
+      return { resourceId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at, owned, sharedThrough, canvasAccess,
         connectionAllowed: !row.connection_id || Boolean(connection && connection.status !== 'disabled'
           && (connection.scope === 'workspace' || connection.owner_user_id === request.userId)),
         noteAllowed: row.provider !== 'avalon_note',
