@@ -222,6 +222,12 @@ export async function readOrganizationUsage(
   nowMs: number,
   cutoff?: { at: number; quotaMicrousd: number },
 ): Promise<OrganizationUsage | null> {
+  // Admission's own decision, read alongside the meter so the client warns
+  // exactly while work is refused (or would be at zero). Its failure leaves the
+  // two flags absent rather than failing the meter; admission still refuses.
+  const allowanceRead = env.BILLING_CONFIG
+    ? readUsageAllowance(env, workspaceId, nowMs).catch(() => null)
+    : Promise.resolve(null);
   const workspace = await workspacePlan(env, workspaceId);
   if (!workspace) return null;
   const period = usagePeriod(workspace.createdAtMs, nowMs);
@@ -263,12 +269,10 @@ export async function readOrganizationUsage(
   const billing = env.BILLING_CONFIG ? await env.DB.prepare('SELECT overage_enabled, status, overage_started_at FROM billing_accounts WHERE workspace_id = ?')
     .bind(workspaceId).first<{ overage_enabled: number; status: string; overage_started_at: number | null }>() : null;
   if (billing) result.overage.billingEnabled = billing.overage_enabled === 1 && ['active', 'trialing'].includes(billing.status) && billing.overage_started_at !== null && billing.overage_started_at * 1000 <= period.start;
-  // The same decision admission makes, so the client warns exactly while work is refused.
-  // An Organization with no billing account is refused on the unpaid plan's quota too.
-  if (env.BILLING_CONFIG) {
-    const allowance = await readUsageAllowance(env, workspaceId, nowMs);
+  const allowance = await allowanceRead;
+  if (allowance) {
     result.allowanceExhausted = allowance.exhausted;
-    result.stopsAtAllowance = allowance.stopsAtLimit;
+    result.stopsAtAllowance = allowance.stopsAtAllowance;
   }
   return result;
 }

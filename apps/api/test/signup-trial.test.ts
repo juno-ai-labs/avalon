@@ -172,10 +172,19 @@ it('emails each owner and administrator once a week when the allowance runs out,
   }
   usage.prepare("INSERT INTO usage_rollups(workspace_id,week_start,period_start,quota_microusd,organization_microusd,rally_microusd) VALUES (?, '2027-01-31T10:30:00.000Z','2027-01-31T10:30:00.000Z',50000000,50000000,0)").run(ORG);
 
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  // Two refusals at once: the email is deferred, so the second races the first.
+  await Promise.all([
+    expect(requireUsageAllowance(env, ORG)).rejects.toMatchObject({ code: 'usage_allowance_exhausted' }),
+    expect(requireUsageAllowance(env, ORG)).rejects.toMatchObject({ code: 'usage_allowance_exhausted' }),
+  ]);
+  await vi.waitFor(() => expect(sent).toHaveLength(2));
+  // A later refusal that week finds both receipts and sends nothing.
   await expect(requireUsageAllowance(env, ORG)).rejects.toMatchObject({ code: 'usage_allowance_exhausted' });
-  await expect(requireUsageAllowance(env, ORG)).rejects.toMatchObject({ code: 'usage_allowance_exhausted' });
+  await vi.advanceTimersByTimeAsync(50);
 
   expect(sent.map((message) => message.to).sort()).toEqual(['admin@example.test', 'owner@example.test']);
+  expect(warn.mock.calls.map((call) => (call[0] as { event?: string }).event)).not.toContain('usage_allowance_email_failed');
   expect(sent[0]).toMatchObject({ subject: "Org has used this week's included Rally usage" });
   expect(sent[0]!.text).toContain('turn on overage billing in Settings, Organization, Usage');
 });

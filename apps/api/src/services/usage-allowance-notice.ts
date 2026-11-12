@@ -2,6 +2,7 @@ import { addWorkspaceTarget } from "@rally/contracts/workspace-target";
 
 import type { Env } from "../env";
 import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger";
+import { ApiError } from "../lib/api-error";
 import { escapeHtml, sendEmail, singleLine } from "./email";
 
 const EMAIL_ERRORS = {
@@ -11,17 +12,14 @@ const EMAIL_ERRORS = {
 
 /**
  * Tell an Organization's owners and administrators, once per allowance week,
- * that its included usage is spent and overages are off.
+ * that its included usage is spent and overages are off. Only they can turn
+ * overages on, and a refusal in a Sidekick or background agent shows nobody.
  *
- * A refusal in a Chat shows its own card, but one in a Sidekick or a background
- * agent is seen by nobody: the work stops and nothing says why. Only an owner or
- * administrator can turn overages on, so they are the ones told.
- *
- * "Once" is the delivery key, `usage_allowance_exhausted/<org>/<week>/<user>`,
- * in the shared sender's durable receipts: a later refusal that week finds the
- * receipt and sends nothing, and `review` delivery claims the key before
- * sending, so two refusals at the same moment do not both send. Never throws:
- * the caller is refusing work, and a failed email must not change that answer.
+ * Once is the delivery key below in the shared email receipts. The recipients
+ * query skips anyone whose key already has a receipt in any state, so after the
+ * first send a refusal costs one query and sends nothing; a refusal racing the
+ * first send loses the `review` claim, which is the same outcome. Never throws:
+ * callers defer it, and a failed email must not change a refusal.
  */
 export async function noticeUsageAllowanceExhausted(
   env: Env,
@@ -33,13 +31,20 @@ export async function noticeUsageAllowanceExhausted(
          FROM workspace_members member
          JOIN users person ON person.id = member.user_id
          JOIN workspaces workspace ON workspace.id = member.workspace_id
+         LEFT JOIN email_delivery_receipts receipt
+           ON receipt.delivery_key = ? || person.id AND receipt.state <> 'pending'
         WHERE member.workspace_id = ? AND member.status = 'active'
-          AND member.access_class = 'member' AND member.role IN ('owner', 'admin')`,
-    ).bind(input.workspaceId).all<{ user_id: string; email: string; name: string | null; workspace_name: string }>();
+          AND member.access_class = 'member' AND member.role IN ('owner', 'admin')
+          AND receipt.delivery_key IS NULL`,
+    ).bind(deliveryKeyPrefix(input), input.workspaceId)
+      .all<{ user_id: string; email: string; name: string | null; workspace_name: string }>();
     for (const admin of results) {
       try {
         await sendEmail(env, usageAllowanceEmail(env, input, admin));
       } catch (error) {
+        // Another refusal holds the claim, or an earlier attempt's outcome is
+        // under review: either way this key is already handled.
+        if (error instanceof ApiError && error.diagnosticCode === "email_delivery_review_required") continue;
         logStructuredEvent(env, "warn", "usage_allowance_email_failed", {
           workspace_id: input.workspaceId,
           error_code: diagnosticErrorCode(error, "usage_allowance_email_failed"),
@@ -52,6 +57,10 @@ export async function noticeUsageAllowanceExhausted(
       error_code: diagnosticErrorCode(error, "usage_allowance_recipients_unavailable"),
     });
   }
+}
+
+function deliveryKeyPrefix(input: { workspaceId: string; weekStart: string }): string {
+  return `usage_allowance_exhausted/${input.workspaceId}/${input.weekStart}/`;
 }
 
 export function usageAllowanceEmail(
@@ -86,7 +95,7 @@ export function usageAllowanceEmail(
     subject,
     html,
     text,
-    idempotencyKey: `usage_allowance_exhausted/${input.workspaceId}/${input.weekStart}/${admin.user_id}`,
+    idempotencyKey: `${deliveryKeyPrefix(input)}${admin.user_id}`,
     category: "usage_allowance_exhausted",
     region: env.AVALON_REGION,
     sender: "notification" as const,

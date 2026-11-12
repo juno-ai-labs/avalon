@@ -4621,11 +4621,7 @@ export interface RunHarnessInput {
     toolCalls: number;
   }) => void | Promise<void>;
   onLiveness?: (stage: "before_model" | "during_stream" | "after_tool" | "iteration_boundary") => void | Promise<void>;
-  /**
-   * Reduce what made a run fail to a code-shaped diagnostic for
-   * `HarnessFailure.causeCode`. A port failure is described by what its port
-   * threw, not by the wrapper that names the port. Must not throw.
-   */
+  /** Reduce a failed port's thrown value to a code for `HarnessFailure.causeCode`. Must not throw. */
   describeFailureCause?: (cause: unknown) => string;
   /**
    * Called immediately before Bind would accept a tool-less assistant turn as
@@ -4705,11 +4701,8 @@ export interface HarnessFailure {
   code: HarnessFailureCode;
   message: string;
   /**
-   * What the thrown value said, reduced to a diagnostic code by the host's
-   * `describeFailureCause`. `code` and `message` name the boundary that failed
-   * ("Run liveness renewal failed"); this names why. Absent when the host
-   * supplies no describer. Never the raw value: the failure crosses RPC and
-   * reaches logs, and a caught error's own text may hold member content.
+   * For a port failure, what the port threw, reduced to a code by the host's
+   * `describeFailureCause`. Never the raw value: it crosses RPC and reaches logs.
    */
   causeCode?: string;
 }
@@ -4769,8 +4762,7 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   // run starts a fresh one — which is exactly what happened on 2026-08-24,
   // where the next run in the same work stream completed.
   platform_limit_exceeded: "Rally hit a platform limit partway through this run. Trying again usually works — if it keeps happening, copy the request ID for support",
-  // Names the two remedies and who holds the first. Retrying cannot help until
-  // one of them happens, so the sentence must not invite it.
+  // Names both remedies; retrying cannot help until one happens.
   usage_allowance_exhausted: "Your organization has used this week's included usage. An administrator can turn on overage billing in Organization settings, or usage resumes when the weekly allowance resets",
 });
 

@@ -176,25 +176,21 @@ export function OrganizationUsageMenuItem({ api, onSelect }: {
 }
 
 /**
- * The rail's usage warning: red when Rally has stopped taking new work (the
- * week's included usage is spent and overage billing is off), yellow when it
- * is close to stopping. It sits above the
- * account tile because the remedy is in Settings, and it is the only notice a
- * person gets when the refusal landed in a Sidekick or a background agent.
- * Shown from the server's own admission decision (`allowanceExhausted`), never
- * re-derived here, so it clears the moment work would be admitted again.
- */
-/**
  * At or below this share of the week's allowance left, the rail warns ahead of
  * the stop. The number is the product owner's (set 2026-11-12), not derived.
  */
 export const USAGE_LOW_WARNING_PERCENT = 10;
 
+/**
+ * The rail's usage warning, above the account tile: red while new work is
+ * refused, yellow at or below `USAGE_LOW_WARNING_PERCENT` while running out
+ * would stop work. Driven by the server's admission decision, never re-derived.
+ */
 export function UsageLimitRailWarning({ api, onOpen }: {
   api: OrganizationUsageApi | null;
   onOpen: () => void;
 }): React.JSX.Element | null {
-  const state = useOrganizationUsage(api);
+  const state = useOrganizationUsage(api, { refetchOnWindowFocus: true });
   if (state.status !== 'ready') return null;
   const { usage } = state.reading;
   const reset = `${usageResetLabel(usage.weekResetsAt)}.`;

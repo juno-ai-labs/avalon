@@ -330,11 +330,7 @@ type RenderedSystemPrompt = {
   content: string;
 };
 
-/**
- * A limit that ends the run under its own failure code. Exported so a host port
- * can end a run on a limit it enforces (the usage allowance): `requiredPort`
- * lets it through rather than reporting it as the port failing.
- */
+/** A limit that ends the run under its own code; `requiredPort` lets a host port's through unwrapped. */
 export class HarnessLimitError extends Error {
   constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open" | "platform_limit_exceeded" | "context_length_exceeded">, message: string) {
     super(message);
@@ -2191,8 +2187,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           : "execution",
       code,
       message: error instanceof Error ? error.message : "Harness execution failed",
-      ...(input.describeFailureCause
-        ? { causeCode: input.describeFailureCause(error instanceof FatalHarnessPortError ? error.causeValue : error) }
+      // Only a port failure: its code names the port, and only the cause says why.
+      ...(input.describeFailureCause && error instanceof FatalHarnessPortError
+        ? { causeCode: input.describeFailureCause(error.causeValue) }
         : {}),
     };
     return {

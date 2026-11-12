@@ -71,30 +71,13 @@ accepted; lexical results remain available. These billing holds do not consume
 transport retries. OCR records the quota error and retries on the next explicit
 read instead of permanently caching it as a broken PDF.
 
-An agent run asks through `requireRunUsageAllowance` (`services/integrations.ts`),
-which ends the run as the limit `usage_allowance_exhausted` (failure kind
-`limit`). The check sits inside the harness's liveness port; thrown bare, the
-port would report itself broken and the member would read "could not save this
-run's progress". The Chat card for that code leads with **Open usage
-settings**, which opens Settings at the Organization's Usage section.
-
-`readUsageAllowance` is the decision itself, separate from the refusal: admission
-throws on it, and `readOrganizationUsage` reports it as `allowanceExhausted`,
-which the desktop rail shows as a red warning above the account tile with a
-tooltip saying what stopped and how to resume. It also reports
-`stopsAtAllowance` (limits enforced and overages not admitted), and while that
-holds the rail shows a yellow triangle at `USAGE_LOW_WARNING_PERCENT` (10%, the
-product owner's number) or less left, so the stop is seen before it lands. The rail reads that flag rather
-than the meter, so it clears the moment work would be admitted again (overages
-on, a plan change, the weekly reset); it refreshes on mount, on returning to
-the window, and when a run card shows the limit.
-
-Every refusal also asks `services/usage-allowance-notice.ts` to email the
-Organization's active owners and administrators. The delivery key
+An agent run refused here ends as `usage_allowance_exhausted`
+(`requireRunUsageAllowance`). `readUsageAllowance` is the one copy of the rule:
+admission throws on it, and the usage read reports it as `allowanceExhausted`
+and `stopsAtAllowance` for the desktop's rail warning. Each refusal also defers
+a once-per-week email to owners and administrators, keyed
 `usage_allowance_exhausted/<org>/<week start>/<user>` in the shared email
-receipts makes that once per allowance week per person, and `review` delivery
-claims the key before sending, so simultaneous refusals send once. A failed
-email is logged as `usage_allowance_email_failed` and never changes the refusal.
+receipts.
 
 ### Sending
 
@@ -385,32 +368,24 @@ An uncertain write may have committed: inspect before retrying.
 
 ### 2026-11-12 — An exhausted allowance is named, shown and emailed
 
-**What changed:** An agent run refused for usage now fails as
-`usage_allowance_exhausted` with its own message and a card that opens the
-Usage settings. The usage read reports `allowanceExhausted`, which drives a red
-rail warning above the account tile, and `stopsAtAllowance` a yellow one at 10%
-or less left. Owners and administrators get one email per allowance week when
-work is refused.
+**What changed:** A refused agent run fails as `usage_allowance_exhausted` with
+a card that opens the Usage settings; the usage read reports the admission
+decision for a red (refused) or yellow (10% or less left) rail warning; owners
+and administrators get one email per allowance week.
 
-**Why:** The day admission shipped, an Organization over its allowance with
-overages off had every run fail as `run_state_persistence_failed` ("could not
-save this run's progress — retrying is unlikely to help"). The refusal ran
-inside the harness's liveness port, which wrapped it as a port failure. Its
-owner held a $100,000 overage credit and could not tell why nothing worked, and
-Sidekick and background runs failed with nothing shown to anyone.
+**Why:** The day admission shipped, an Organization over its allowance had every
+run fail as `run_state_persistence_failed`, because the check runs inside the
+harness's liveness port and the port wrapped it. Sidekick and background runs
+failed with nothing shown to anyone.
 
-**Considered and rejected:** Driving the rail from the meter
-(`quotaRemainingPercent` 0 with `overage.billingEnabled` off). `billingEnabled`
-turns true only from the next billing period, so the warning would have stayed
-up after overages were switched on and work had resumed; the rail reads the
-admission decision instead. A new table for "emailed this week" was rejected
-in favour of the existing email receipts, whose delivery key already gives
+**Considered and rejected:** Driving the rail from the meter: `billingEnabled`
+turns true only from the next billing period, so the warning would outlast the
+fix. A new "emailed this week" table: the email receipts' key already gives
 once-per-key.
 
-**What a future change has to respect:** `readUsageAllowance` is the one
-decision; anything that warns about the allowance must read it, not re-derive
-it. The email is sent inline on the refusal path, so it only costs anything
-while the Organization is over its allowance.
+**What a future change has to respect:** Anything that warns about the
+allowance reads `readUsageAllowance`, never re-derives it. The email stays
+deferred: every hot path refuses through admission.
 
 ### 2026-11-12 — Payment-aware usage admission
 
