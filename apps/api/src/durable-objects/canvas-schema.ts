@@ -211,6 +211,8 @@ export const CANVAS_ARCHIVE_STATEMENTS: readonly string[] = [
 /** Durable archive fan-out entries share the existing per-object alarm store. */
 export const CANVAS_ARCHIVE_CONVERSATION_ALARM = "canvas_archive_conversation";
 export const CANVAS_ARCHIVE_ARTIFACT_ALARM = "canvas_archive_artifact";
+/** A discarded blank Canvas's Chat, erased by the Organization object until the Chat answers (`HostedCanvas.discardIfBlank`). */
+export const CANVAS_DISCARD_ERASE_ALARM = "canvas_discard_erase";
 
 /**
  * WorkspaceDO migration 144: a Sidekick's Canvas attachment is the one record
