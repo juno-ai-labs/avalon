@@ -22,6 +22,7 @@ conversation access. This module owns the serving projection and propagation;
 | `apps/api/src/artifacts/index.ts` | The shared gate for website routes, assets and published file bytes. |
 | `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Production modal adapter and atomic Save of both audiences. |
 | `apps/mcp/src/server.ts` | User-facing sharing fields and `get_artifact_link`. |
+| `apps/api/src/services/canvas-artifact-audience-tool.ts` | `set_artifact_audience`: a Canvas's Chat sets its own artifact audience as its person. |
 
 ## How it works
 
@@ -54,8 +55,19 @@ artifact fields; omitted artifact settings are preserved. A supplied artifact
 recipient list replaces that audience. Both policies commit in one transaction.
 The MCP tool requires `userIds` explicitly even for artifact-only changes;
 clients preserve editors by copying the current `participantUserIds`.
-Internal publishing agents direct a manager to the Canvas's Share screen to
-change the audience; the external MCP sharing tool is not available to them.
+Internal publishing agents set the artifact audience with
+`set_artifact_audience`, offered only in a Canvas's Chat with a person's
+principal and acting on that Canvas as that person. It calls
+`HostedCanvas.setArtifactAudience` through WorkspaceDO's
+`canvasSetArtifactAudience`, which changes `artifact_visibility` alone, to
+`public`, `workspace` or `editors`: the editor audience and named artifact
+users are untouched, so a caller that knows nothing of the person picker cannot
+clear it, and naming specific people stays with the Share screen. The same
+manager rule as Share applies and the editor floor still raises the stored
+value. The RPC returns `not_manager` or `not_found` rather than throwing,
+because an RPC reduces a thrown `ApiError` to a bare `Error` and the model is
+owed which refusal it was. A Sidekick run does not get the tool. The external
+MCP sharing tool is not available to internal agents.
 
 Each generated artifact's card in the Chat also changes `artifact_visibility`
 from a menu (`apps/desktop/src/renderer/screens/canvas.tsx`): it resends the
@@ -208,11 +220,33 @@ WorkspaceDO 146 and ArtifactHostDO 3 fixtures in separate events, proving retain
 publications, legacy-only public bootstrap, editor defaults for new Canvases,
 initial propagation intents and retained null-incarnation sessions. MCP tests
 exercise both sharing fields, legacy omission and stable link retrieval.
+The same Workers file drives `set_artifact_audience` through its production
+port: an editor who does not manage the Canvas is refused and the site keeps
+refusing anonymous visitors, the manager's call serves them after delivery, and
+the editor audience is unchanged.
 They also reject a missing editor list before any API update. The desktop's
 `screens/canvas.test.tsx` covers retrying a delayed artifact link in the open
 modal while preserving its audience draft.
 
 ## Changelog
+
+### 2026-11-12 — Publishing agents set the artifact audience
+
+**What changed:** A Canvas's Chat gained `set_artifact_audience`, which changes
+only `artifact_visibility` as the person typing, under the Share screen's
+manager rule. The site skills tell the agent to choose the most open audience
+the request allows, public by default, and to ask at the end whether the
+person wants it restricted.
+
+**Why:** New Canvases start with editors-only artifact access, so a site an
+agent built for the public stayed private until a manager found Share, and
+nothing in the run could fix it. Product decided sites default to public.
+Changing the Canvas default was rejected because it would open every Canvas,
+including those that publish nothing anyone meant to share; resending the full
+`setAudience` update from the tool was rejected because a tool that must echo
+the editor list and named recipients can clear them on a stale read. A future
+change must keep the tool narrower than Share: no editor changes, no named
+people, and no access for a run that does not act as a manager.
 
 ### 2026-11-11 — Canvas-owned artifact audiences with local serving admission
 

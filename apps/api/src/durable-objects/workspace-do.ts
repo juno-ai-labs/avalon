@@ -5593,6 +5593,39 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * Change who can open a Canvas's artifacts as a person named only by id,
+   * for an agent run acting as them; see `HostedCanvas.setArtifactAudience`.
+   * Their role comes from their relationship here, as `artifactDataWriteFacts`
+   * reads it. Widening or narrowing artifact access never changes who is in
+   * the Canvas's Chat, so no conversation socket closes.
+   */
+  async canvasSetArtifactAudience(input: {
+    workspaceId: string; canvasId: string; userId: string; artifactVisibility: "editors" | "workspace" | "public";
+  }) {
+    const request = parseRpcInput(z.strictObject({
+      workspaceId: WorkspaceIdSchema, canvasId: IdSchema, userId: UserIdSchema,
+      artifactVisibility: z.enum(["editors", "workspace", "public"]),
+    }), input, "canvas_set_artifact_audience");
+    const canvas = await this.hostedCanvas(request.canvasId, request.workspaceId);
+    const relationship = await this.readRelationship(request.workspaceId, request.userId);
+    const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+    // A refusal is returned rather than thrown: an RPC reduces a thrown
+    // ApiError to a bare Error, and the tool owes the model which one it was.
+    return this.canvasWrite(async () => {
+      try {
+        return { outcome: "set" as const, ...canvas.setArtifactAudience({
+          workspaceId: request.workspaceId, canvasId: request.canvasId,
+          actor: { userId: request.userId, actorRole }, artifactVisibility: request.artifactVisibility,
+        }) };
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 403) return { outcome: "not_manager" as const };
+        if (error instanceof ApiError && error.status === 404) return { outcome: "not_found" as const };
+        throw error;
+      }
+    });
+  }
+
+  /**
    * Run an audience change, then close the open conversation sockets of
    * everyone it took a parent's shared conversation away from.
    *

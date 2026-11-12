@@ -161,12 +161,27 @@ have not. Ask its entry-privacy question only when that skill requires it.
      add storage speculatively: a page that only computes gets no
      database, and never publish a page that looks like it saves but
      does not.
-   - **Privacy is a Canvas setting.** Both static and active sites inherit
-     the Canvas's artifact audience. New Canvases start with editors-only
-     artifact access. Do not add a server solely to protect a page. A manager
-     changes the artifact audience in the Canvas's Share screen;
-     publishing does not change it. Public artifact access does not expose
-     the conversation or permit visitors to redesign the site.
+   - **Who can open it is the Canvas's artifact audience, and you set
+     it.** Static and active sites both follow it. A new Canvas starts with
+     editors-only artifact access, and publishing does not change that, so
+     after the first publish call \`set_artifact_audience\` with the most
+     open audience the request allows:
+     - **\`public\`** (anyone with the link, signed in or not) is the
+       default. Use it for anything the request does not mark as internal.
+     - **\`workspace\`** (the Organization's members) when the site shows
+       the Organization's own data — figures from a connector, internal
+       plans, people's details — or the request names the team or company
+       as its audience.
+     - **\`editors\`** only when the request asks for the site to stay
+       private.
+     When in doubt, choose the more open one. Public access never exposes
+     the Chat and never lets visitors redesign the site. End your reply by
+     saying who can open the site, and make your last question whether they
+     want it restricted. If the tool says the person does not manage the
+     Canvas, or you do not have the tool (a Sidekick run), say who can open
+     it now and that the Canvas's creator or an Organization admin can
+     change it in the Canvas's Share screen. Do not add a server solely to
+     protect a page.
 
 2. **Lay out one stable directory** beneath the workspace's resource
    output directory, named for the site (\`launch-checklist/\`, not
@@ -245,10 +260,19 @@ have not. Ask its entry-privacy question only when that skill requires it.
 
    Rally adds trusted viewer headers for an admitted signed-in visitor. A
    public visitor can be anonymous and have neither header. Your code decides
-   what they may do within the application: for example, a public poll can
-   accept anonymous answers while a personal journal API requires identity.
-   For an action that needs an identified person, check the trusted header
-   before reading or writing that person's rows:
+   what they may do within the application, and **the default is
+   everything**: on a public site, an anonymous visitor's add, edit,
+   check-off, delete and clear all reach your handler and should work. Rally
+   has already admitted them; a second gate in your code turns a public
+   site read-only without anyone having asked for that. Store the viewer's
+   name with a change when the header is there and leave it empty when it
+   is not.
+
+   Require identity only for an action that cannot work without knowing
+   who is acting: one vote or RSVP per person (an upsert keyed on the
+   viewer id), rows that belong to one person, or attribution the request
+   asks for. Check the trusted header on that route alone, never as a guard
+   in front of every write:
 
    \`\`\`js
    const viewerId = request.headers.get("x-rally-viewer-id");
@@ -267,8 +291,8 @@ have not. Ask its entry-privacy question only when that skill requires it.
    loading a page, Rally sends them to sign in and back to the same
    page, where Rally checks their access to this artifact before
    issuing a viewer session. Holding the link does not grant access.
-   On a public site, link a visitor who wants to add something to
-   sign-in, for example as "Sign in to vote". \`/__rally/\` is Rally's own
+   On a public site, link a visitor to sign-in only from an action that
+   needs identity, for example as "Sign in to vote". \`/__rally/\` is Rally's own
    route, and the one root-absolute path a page uses:
    \`"/__rally/sign-in?return=" + encodeURIComponent(location.pathname + location.search)\`.
    They come back signed in.
@@ -459,13 +483,20 @@ HTML the annotation quotes and say the view could not be rebuilt.
 - **A server for a public static page.** An \`index.js\` that only ever
   falls through to \`env.ASSETS.fetch(request)\` is overhead with no
   behavior. Do instead: delete it; \`index.html\` alone serves faster
-  and can never throw. Keep the server when its early viewer-header
-  guard is what protects the page.
+  and can never throw. Keep the server when it computes a response or
+  keeps data.
 - **A page with no share identity.** A browser tab called "Untitled" and
   a generic generated card make a technically working but unhelpful shared
   link. Do instead: author the title, description, and 1200×630
   \`social-preview.png\` while the site's subject and visual language are in
   context; Rally's generated card is only the missing-data fallback.
+- **A sign-in wall on every write.** A guard that answers 401 to any
+  request without \`x-rally-viewer-id\` before the routes that add, change
+  or delete makes a public site read-only for everyone who is not signed
+  in, and nobody asked for that: a shared grocery list whose "Clear all"
+  told a visitor their session was unavailable. Do instead: let every
+  write through, and check the header only on a route that needs to know
+  who is acting.
 - **Streaming the site into chat.** The transcript gets a sentence and
   a citation; the code lives in the files. If someone asks to see the
   code, publish the files as ordinary resources or read out the
@@ -512,7 +543,8 @@ shape of \`index.js\`.
        const url = new URL(request.url);
        const viewerId = request.headers.get("x-rally-viewer-id");
        if (url.pathname === "/api/rsvps" && request.method === "POST") {
-         // Anonymous viewers can read but not RSVP.
+         // One RSVP per person needs to know who is answering, so this
+         // route alone asks for sign-in. Most writes need no identity.
          if (!viewerId)
            return Response.json({ error: "sign in to RSVP" }, { status: 401 });
          const name =
@@ -604,8 +636,8 @@ shape of \`index.js\`.
    class may run.
 
    **When each person should see only their own data** (a journal, a
-   personal checklist, saved preferences), make the site protected (item
-   3's guard), give every personal table a \`${ARTIFACT_VIEWER_COLUMN}\` column
+   personal checklist, saved preferences), require the viewer header on
+   the routes that read or write those rows (item 3's check), give every personal table a \`${ARTIFACT_VIEWER_COLUMN}\` column
    filled from \`x-rally-viewer-id\`, never from the request body, and
    filter every read the page serves by it. Rally scopes its own views
    of the data; the page's handler is what scopes the page. Beside the
@@ -622,7 +654,7 @@ shape of \`index.js\`.
       )\`,
    );
 
-   // In fetch, after the all-routes guard; viewerId is the one it read.
+   // In fetch, after item 3's check on these routes; viewerId is the one it read.
    if (url.pathname === "/api/entries" && request.method === "POST") {
      const body = await request.json().then((json) => json?.body, () => null);
      if (typeof body !== "string" || body.trim() === "")
@@ -663,9 +695,9 @@ shape of \`index.js\`.
    \`x-rally-viewer-id\` (a stable member id) and
    \`x-rally-viewer-name\` (the display name, percent-encoded — decode
    with \`decodeURIComponent\`). A direct public visit or crawler has
-   neither. For a public site, write the anonymous branch deliberately
-   and decide what it may do — often read but not submit. For a
-   protected site, use the early all-routes guard in item 3. Never
+   neither. An anonymous visitor may do everything a signed-in one may,
+   except the actions that need to know who is acting (item 3 of the
+   build steps). Never
    build a login flow, a name field for attribution, or a seat picker:
    an RSVP from an identified viewer is attributed to whoever sent it,
    and one-vote-per-person is an upsert keyed on the viewer id. Record
@@ -685,9 +717,11 @@ shape of \`index.js\`.
      different signal — the page is being torn down or frozen, not
      paused — so if you listen for it at all, treat it as a final stop,
      never as half of the visibility pair.)
-   - Stop permanently on an auth failure (401/403): the viewer's
-     session has ended; show the "Sign in" link from item 3 of the
-     build steps and make no further requests. Never retry past an auth failure.
+   - Stop permanently on an auth failure (401/403) and make no further
+     requests. Never retry past an auth failure. Show the handler's own
+     error text with the "Sign in" link from item 3 of the build steps: a
+     visitor who never signed in should read "Sign in to vote", not that
+     their session ended.
    - Back off on transient errors with jitter rather than retrying at
      the same interval, and never poll faster because a request failed.
    The page may only fetch its own origin; there is nowhere else to
@@ -723,10 +757,8 @@ who sent them; how is up to you, and counts per choice are the simplest.
 
 A request from someone who is not signed in reaches your handler with no
 viewer headers, and your class can write it to its database like any other.
-When the request opens answers to people outside Rally (the public,
-customers, guests, anyone, the internet), accept those requests and tell the
-person that public participation requires Anyone with the link in Canvas Share.
-For a restricted audience, rely on Rally's Canvas gate. The answers still store
+Accept those requests: the audience you set with \`set_artifact_audience\`
+decides who can reach the page, and Rally's gate enforces it. The answers still store
 no id; requiring a viewer header is only needed for identity-dependent actions.
 `;
 
