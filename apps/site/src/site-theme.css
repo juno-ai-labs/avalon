@@ -1,0 +1,39 @@
+/* The pencil site's shared paper, ink and type. Keep the homepage and reading pages together. */
+@font-face {
+  font-family: Geist;
+  src: url("./fonts/geist-latin-variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("./fonts/instrument-serif-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("./fonts/instrument-serif-latin-400-italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./fonts/geist-mono-latin-variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root {
+  color-scheme: light;
+  --paper: #fcfbf7;
+  --ink: #393d31;
+  --muted: #737869;
+  --line: #e4e4d8;
+  --green: #536547;
+  --green-hover: #3d5131;
+  --sage: #e8ecdd;
+  --body: Geist, Arial, sans-serif;
+  --display-font: "Instrument Serif", Georgia, serif;
+  --mono: "Geist Mono", ui-monospace, monospace;
+}
