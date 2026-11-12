@@ -1,5 +1,6 @@
-import { desktopBridge } from '../lib/platform';
-import { useState } from 'react';
+import { IconArrowUpRight } from '@tabler/icons-react';
+import { prepareExternalLink } from '../lib/external-link';
+import { useEffect, useRef, useState } from 'react';
 import type { BillingStatus, BillingCredits } from '@rally/contracts/billing';
 import type { OrganizationPlanApi } from '../lib/organization-usage';
 import { useLocalCacheScope } from '../lib/local-cache-scope';
@@ -9,7 +10,7 @@ type BillingProps = { api: OrganizationPlanApi; currentPlan: string; billing: Ex
 export function OrganizationBilling(props: BillingProps) {
   const scope = useLocalCacheScope();
   const key = `${scope}:${props.billing.subscribed ? 'portal' : 'checkout'}:${props.billing.paymentMethodReady}:${props.billing.overageEnabled}`;
-  // A subscription transition discards prepared links and in-flight responses,
+  // A subscription transition discards in-flight responses,
   // including a later transition back to checkout after cancellation.
   return <><BillingForm key={key} {...props} />
     {props.billing.creditsAvailable && props.api.getBillingCredits && <OverageCredits key={key} load={props.api.getBillingCredits.bind(props.api)} />}
@@ -46,17 +47,30 @@ function BillingForm({ api, billing, currentPlan }: BillingProps) {
   const [currency, setCurrency] = useState(offer?.currencies[0] ?? 'usd');
   const [overage, setOverage] = useState(billing.overageEnabled);
   const [busy, setBusy] = useState(false);
-  const requestKey = billing.subscribed ? 'portal' : `${offerId}:${currency}:${overage}`;
-  const [prepared, setPrepared] = useState<{ url: string; key: string } | null>(null);
-  const url = prepared?.key === requestKey ? prepared.url : null;
+  const pending = useRef<ReturnType<typeof prepareExternalLink> | null>(null);
+  useEffect(() => () => {
+    pending.current?.cancel();
+    pending.current = null;
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const open = async () => {
-    setBusy(true); setError(null); setPrepared(null);
+    if (pending.current) return;
+    setBusy(true); setError(null);
+    let link: ReturnType<typeof prepareExternalLink> | undefined;
     try {
+      link = prepareExternalLink();
+      pending.current = link;
       const result = billing.subscribed ? await api.createBillingPortal!() : await api.createBillingCheckout!(offerId, currency, overage);
-      setPrepared({ url: result.url, key: requestKey });
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Billing could not be opened'); }
-    finally { setBusy(false); }
+      if (pending.current === link) await link.open(result.url);
+    } catch (cause) {
+      link?.cancel();
+      if (!link || pending.current === link) setError(cause instanceof Error ? cause.message : 'Billing could not be opened');
+    } finally {
+      if (!link || pending.current === link) {
+        pending.current = null;
+        setBusy(false);
+      }
+    }
   };
   const saveOverages = async (enabled: boolean) => {
     setBusy(true); setError(null);
@@ -69,16 +83,15 @@ function BillingForm({ api, billing, currentPlan }: BillingProps) {
     {trial && <div className="settings-preference-row"><span className="settings-row-copy"><strong>{currentPlan} trial</strong><small>Subscription fees are waived until {new Date(billing.trialEndsAt).toLocaleDateString()}. {billing.paymentMethodReady ? 'Subscription fees resume afterward unless you cancel. Opted-in overages are charged during the trial.' : 'Add a payment method and billing address to continue afterward. Without billing details, your organization returns to Start. Usage pauses when the included allowance is used up.'}</small></span></div>}
     <div className="settings-preference-row">
       <span className="settings-row-copy"><strong>Organization billing</strong><small>{billing.subscribed ? `${currentPlan} · Subscription: ${billing.status}` : `${currentPlan}. Trial ${Date.parse(billing.trialEndsAt) < Date.now() ? 'ended' : 'ends'} ${new Date(billing.trialEndsAt).toLocaleDateString()}. One subscription for everyone; no seat charges.`}</small></span>
-      <Button disabled={busy || (!billing.subscribed && !offer)} onClick={() => void open()}>{busy ? 'Preparing…' : trial && !billing.paymentMethodReady ? 'Add billing details' : billing.subscribed ? 'Manage billing' : 'Continue to checkout'}</Button>
+      <button type="button" className="text-button billing-link" disabled={busy || (!billing.subscribed && !offer)} aria-busy={busy} onClick={() => void open()}><span>{busy ? 'Opening…' : trial && !billing.paymentMethodReady ? 'Add billing details' : billing.subscribed ? 'Manage billing' : 'Continue to checkout'}</span><IconArrowUpRight aria-hidden="true" size={16} /></button>
     </div>
-    {url && <div className="settings-preference-row"><span className="settings-row-copy"><strong>Secure billing is ready</strong><small>Open Stripe to complete your changes, then return here.</small></span><a className="button" href={url} target="_blank" rel="noopener noreferrer" onClick={(event) => { event.preventDefault(); void desktopBridge().openExternal(url).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Stripe could not be opened')); }}>Open Stripe</a></div>}
     {billing.subscribed && billing.overageAvailable && api.setBillingOverages && <label className="settings-preference-row"><span className="settings-row-copy"><strong>Bill usage beyond shared quota</strong><small>{billing.paymentMethodReady ? 'Optional. Overages remain billable during the free trial.' : 'Add a payment method and billing address in Stripe before enabling overages.'}</small></span><input type="checkbox" checked={overage} disabled={busy || (!billing.paymentMethodReady && !overage)} onChange={(event) => void saveOverages(event.target.checked)} /></label>}
     {!billing.subscribed && <>
       <div className="settings-preference-row"><span className="settings-row-copy"><strong>Plan</strong><small>Review pricing, discounts and taxes at checkout.</small></span>
-        <DropdownSelect ariaLabel="Billing plan" value={offerId} disabled={busy} options={billing.offers.map((o) => ({ value: o.id, label: o.name }))} onValueChange={(id) => { setPrepared(null); setOfferId(id); setCurrency(billing.offers.find((o) => o.id === id)!.currencies[0]!); setOverage(false); }} />
+        <DropdownSelect ariaLabel="Billing plan" value={offerId} disabled={busy} options={billing.offers.map((o) => ({ value: o.id, label: o.name }))} onValueChange={(id) => { setOfferId(id); setCurrency(billing.offers.find((o) => o.id === id)!.currencies[0]!); setOverage(false); }} />
       </div>
-      <div className="settings-preference-row"><strong>Currency</strong><DropdownSelect ariaLabel="Billing currency" value={currency} disabled={busy} options={(offer?.currencies ?? []).map((value) => ({ value, label: value.toUpperCase() }))} onValueChange={(value) => { setPrepared(null); setCurrency(value); setOverage(false); }} /></div>
-      {offer?.overageAvailable && currency === 'usd' && <label className="settings-preference-row"><span className="settings-row-copy"><strong>Bill usage beyond shared quota</strong><small>Optional. Charges appear on a later invoice after usage settles.</small></span><input type="checkbox" checked={overage} disabled={busy} onChange={(event) => { setPrepared(null); setOverage(event.target.checked); }} /></label>}
+      <div className="settings-preference-row"><strong>Currency</strong><DropdownSelect ariaLabel="Billing currency" value={currency} disabled={busy} options={(offer?.currencies ?? []).map((value) => ({ value, label: value.toUpperCase() }))} onValueChange={(value) => { setCurrency(value); setOverage(false); }} /></div>
+      {offer?.overageAvailable && currency === 'usd' && <label className="settings-preference-row"><span className="settings-row-copy"><strong>Bill usage beyond shared quota</strong><small>Optional. Charges appear on a later invoice after usage settles.</small></span><input type="checkbox" checked={overage} disabled={busy} onChange={(event) => { setOverage(event.target.checked); }} /></label>}
     </>}
     {error && <ErrorNotice>{error}</ErrorNotice>}
   </>;

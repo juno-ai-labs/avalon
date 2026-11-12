@@ -504,6 +504,18 @@ pre {
   color: var(--av-sys-color-text-default);
 }
 
+.billing-link {
+  color: var(--av-sys-color-accent-base);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.billing-link:hover:not(:disabled) {
+  color: var(--av-sys-color-accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* The shell's grouping treatment, unscoped.
    Every other rule that draws this look hangs off `.app-shell`, and a Radix
    portal mounts on `document.body`, outside it, so a lightbox drew the old
