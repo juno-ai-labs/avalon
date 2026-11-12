@@ -938,7 +938,7 @@ Sidekick's wizard as `sidekick_wizard`, gated like a Sidekick run (the site's
 Canvas attached to the Sidekick and open) and, like a run a person asked for,
 only as a person who can open that Canvas. The wizard's Canvas guide tells it
 to test a saved write on a row it can tell is a test, read it back, delete
-what the test added or changed and confirm none is left, so the person's first
+what the test added, restore what it changed and confirm none is left, so the person's first
 look at the app shows only their own data.
 
 **Why:** In a production Canvas, a grocery list's sorting Sidekick was
