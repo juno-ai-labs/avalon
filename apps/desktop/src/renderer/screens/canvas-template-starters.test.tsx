@@ -118,7 +118,7 @@ describe("an empty Canvas's templates", () => {
     ]);
 
     fireEvent.click(within(groups).getByRole('button', { name: 'Parents' }));
-    expect(within(starters).getAllByRole('button', { name: /calendar|grocery/u }).map((card) => card.querySelector('.canvas-starter-name')?.textContent))
+    expect(within(starters).getAllByRole('button', { name: /calendar|grocery/u }).map((card) => card.querySelector('.canvas-template-title')?.textContent))
       .toEqual(['School notifications and calendar', 'Shared grocery list', 'Family calendar feed']);
   });
 
