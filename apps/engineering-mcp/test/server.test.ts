@@ -1087,13 +1087,13 @@ describe("operations tools", () => {
     const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ac1");
     const global = regionalBinding("global"); const enterprise = regionalBinding("enterprise");
     vi.mocked(global.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "global", authorityGeneration: 1 } });
-    const credit = { id: "credgr_1", amountCents: 10000, availableCents: 7500, effectiveAt: "2026-11-01T00:00:00Z", expiresAt: null, voided: false };
+    const credit = { id: "credgr_1", amountCents: 10000, availableCents: 7500, effectiveAt: "2026-11-01T00:00:00Z", expiresAt: "2027-11-01T00:00:00Z", voided: false };
     vi.mocked(global.grantOverageCredit).mockResolvedValue(credit);
     vi.mocked(global.grantTrialMonths).mockResolvedValue({ subscriptionId: "sub_1", months: 2, previousFeeCoveredUntil: "2027-01-01T00:00:00Z", trialEndsAt: "2027-03-01T00:00:00Z" });
     vi.mocked(global.expireOverageCredit).mockResolvedValue({ ...credit, availableCents: 0 });
     vi.mocked(global.inspectOverageCredits).mockResolvedValue({ enabled: true, currency: "usd", availableCents: 7500, grants: [credit] });
     const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
-    const input = { orgId, operationId: "00000000-0000-7000-8000-000000000ac2", amountCents: 10000, reason: "Incident credit" };
+    const input = { orgId, operationId: "00000000-0000-7000-8000-000000000ac2", amountCents: 10000, reason: "Incident credit", expiresAt: "2027-11-01T00:00:00Z" };
     expect((await rpc(env, "tools/call", { name: "grant_overage_credit", arguments: input })).result).not.toHaveProperty("isError", true);
     expect(global.grantOverageCredit).toHaveBeenCalledWith(input, principal);
     const trial = { orgId, operationId: input.operationId, months: 2, reason: "Extra evaluation time" };
@@ -1105,6 +1105,20 @@ describe("operations tools", () => {
     expect(enterprise.grantOverageCredit).not.toHaveBeenCalled();
     expect((await rpc(env, "tools/call", { name: "grant_overage_credit", arguments: { ...input, amountCents: -1 } })).result).toMatchObject({ isError: true });
     expect(global.grantOverageCredit).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires an explicit expiration in the advertised credit tool and rejects missing, null, or invalid dates", async () => {
+    const global = regionalBinding("global");
+    const env = testEnv({ GLOBAL_INSPECTION: global });
+    expect((await rpc(env, "tools/list")).result).toMatchObject({ tools: expect.arrayContaining([
+      expect.objectContaining({ name: "grant_overage_credit", inputSchema: expect.objectContaining({ required: expect.arrayContaining(["expiresAt"]) }) }),
+    ]) });
+    const input = { orgId: "00000000-0000-7000-8000-000000000ac1", operationId: "00000000-0000-7000-8000-000000000ac2", amountCents: 10000, reason: "Incident credit" };
+    for (const expiresAt of [undefined, null, "", "not-a-date"]) {
+      expect((await rpc(env, "tools/call", { name: "grant_overage_credit", arguments: { ...input, expiresAt } })).result)
+        .toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringContaining("expiresAt") }] });
+    }
+    expect(global.grantOverageCredit).not.toHaveBeenCalled();
   });
 
   it("routes usage and plan changes to the owning region with the Access actor", async () => {
