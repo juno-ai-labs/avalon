@@ -50,10 +50,23 @@ describe("which runs are offered write_artifact_data", () => {
       .toEqual({ kind: "sidekick_run", sidekickId: "a", runId: "r" });
   });
 
+  it("offers it to a Sidekick's wizard run by a person, naming the Sidekick from the parent", () => {
+    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "automation", parentId: "s", substreamId: "0" }))
+      .toEqual({ kind: "sidekick_wizard", sidekickId: "s" });
+    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "automation", parentId: "s" }))
+      .toEqual({ kind: "sidekick_wizard", sidekickId: "s" });
+  });
+
   it("offers it to nobody else", () => {
-    // A Sidekick's wizard conversation, and a run child woken without its run.
-    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "automation", substreamId: "0" })).toBeNull();
-    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "automation", substreamId: "run-child" })).toBeNull();
+    // A wizard under Organization authority, a wizard's background agent, and
+    // a run child woken without its run.
+    expect(artifactDataWriteAccess({ executionPrincipal: { type: "workspace" }, parentKind: "automation", parentId: "s" }))
+      .toBeNull();
+    expect(artifactDataWriteAccess({
+      executionPrincipal: member, parentKind: "automation", parentId: "s", substreamId: "helper", backgroundAgent: true,
+    })).toBeNull();
+    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "automation", parentId: "s", substreamId: "run-child" }))
+      .toBeNull();
     // A background agent, whether a Canvas's or one a Sidekick run started.
     expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", substreamId: "0", backgroundAgent: true }))
       .toBeNull();

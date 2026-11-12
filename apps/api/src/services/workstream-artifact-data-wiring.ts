@@ -58,19 +58,24 @@ export function artifactDataReader(input: {
  *   resolve already.
  * - A Sidekick run (`automationRun` present): the sites of Canvases attached
  *   to that Sidekick, which WorkspaceDO answers per site.
+ * - A Sidekick's wizard (its conversation `"0"`, a person's principal): the
+ *   same attached sites, and only those its person can open now, so it can
+ *   check a write before the first real run makes one.
  *
- * Everyone else gets null: a Sidekick's wizard conversation, a background
- * agent, a loop under Organization authority, and any other parent kind. The
+ * Everyone else gets null: a background agent, a loop under Organization
+ * authority, and any other parent kind. The
  * answer is host-derived from the loop input, in the style of
  * `conversationToolAccess`; no model argument reaches it.
  */
 export type ArtifactDataWriteAccess =
   | { kind: "canvas_chat" }
-  | { kind: "sidekick_run"; sidekickId: string; runId: string };
+  | { kind: "sidekick_run"; sidekickId: string; runId: string }
+  | { kind: "sidekick_wizard"; sidekickId: string };
 
 export function artifactDataWriteAccess(input: {
   executionPrincipal: { type: string };
   parentKind: string;
+  parentId?: string | undefined;
   substreamId?: string | undefined;
   automationRun?: { automationId: string; runId: string } | undefined;
   automationDelegation?: unknown;
@@ -84,8 +89,11 @@ export function artifactDataWriteAccess(input: {
       ? { kind: "sidekick_run", sidekickId: input.automationRun.automationId, runId: input.automationRun.runId }
       : null;
   }
-  // A Chat writes as the person typing into it.
+  // A Chat and a wizard write as the person typing into it.
   if (input.executionPrincipal.type !== "user") return null;
+  if (input.parentKind === "automation" && (input.substreamId ?? "0") === "0" && input.parentId) {
+    return { kind: "sidekick_wizard", sidekickId: input.parentId };
+  }
   return isCanvasChat(input) ? { kind: "canvas_chat" } : null;
 }
 
@@ -194,17 +202,17 @@ export function createArtifactDataToolContext(
         const facts = await workspace.artifactDataWriteFacts({
           workspaceId: input.workspaceId,
           resourceId: match.id,
-          sidekickId: write.kind === "sidekick_run" ? write.sidekickId : null,
+          sidekickId: write.kind === "canvas_chat" ? null : write.sidekickId,
           userId: input.principal.type === "user" ? input.principal.userId : null,
           ...(write.kind === "sidekick_run" ? { runId: write.runId } : {}),
         });
         if (!facts) return { outcome: "not_found" };
         if (facts.canvasArchived) return { outcome: "canvas_archived" };
-        if (write.kind === "sidekick_run" && !facts.attachedToSidekick) return { outcome: "not_attached" };
-        // The attachment is where the Sidekick may write. Only a run somebody
-        // asked for under their own access also needs that person in the
-        // Canvas, which the object answers as `actorAdmitted`.
-        if (write.kind === "sidekick_run" && !facts.actorAdmitted) return { outcome: "not_found" };
+        if (write.kind !== "canvas_chat" && !facts.attachedToSidekick) return { outcome: "not_attached" };
+        // The attachment is where the Sidekick may write. A run somebody asked
+        // for under their own access, and a wizard, also need that person in
+        // the Canvas, which the object answers as `actorAdmitted`.
+        if (write.kind !== "canvas_chat" && !facts.actorAdmitted) return { outcome: "not_found" };
         // A Chat changes its own Canvas's sites. One from another Canvas,
         // attached here as context, is linked to this conversation and so
         // readable, and that link is not leave to write to it.
