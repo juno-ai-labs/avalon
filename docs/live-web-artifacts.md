@@ -198,6 +198,11 @@ checks that the artifact is active and its open Canvas is attached to the
 Sidekick, and atomically refuses another non-archived Sidekick's use of the
 same name on that app. A paused Sidekick retains its binding name.
 
+`publish_resource` returns the canonical `artifactId` alongside `resourceId`
+on its site result, including an unchanged republish. Canvas authoring gives
+the wizard that artifact ID to save the invocation trigger; the resource ID
+remains the address used by the artifact data tools.
+
 Generated server code submits tasks through
 `env.SIDEKICKS.shoppingOrganizer.send({ operationId, input: { item: "Greek yogurt" } })`;
 a `SiteData` handler uses `this.env.SIDEKICKS`. The host supplies the app's
@@ -216,7 +221,9 @@ submission, avoiding a request waiting on itself. Both retain
 `globalOutbound: null`, and no product credentials enter generated code.
 
 WorkspaceDO resolves the live accepted binding and admits an ordinary independent
-Sidekick run, with the input and app resource ID in its opening. Paused or
+Sidekick run, with the input and app resource ID in its opening. The model
+projection admits that opening as labelled, untrusted user-role task data when
+it is the run's trigger; the transcript system row alone is not model history. Paused or
 archived Sidekicks, removed bindings, detached or archived Canvases, and stale
 app versions refuse new admission. Runs retain the existing Sidekick principal,
 delegation, tools, account access and write rules. Invocation is permission to
@@ -939,7 +946,10 @@ the existing alarm and provisioning Queue. General artifact networking and
 new execution policies were rejected: app invocations retain normal Sidekick
 authority. Additional viewer privacy and write-deduplication mechanisms were
 explicitly deferred. Future changes must preserve host-derived app identity
-and avoid waiting for a run while holding its artifact facet request.
+and avoid waiting for a run while holding its artifact facet request. Site
+publication exposes its canonical artifact ID so authoring can bind the app
+without deriving an ID from its public hostname or confusing it with the
+resource ID; the live authoring walkthrough exposed that missing output.
 
 
 ### 2026-11-10 — One function holds the order of a site publish

@@ -166,6 +166,10 @@ describe("an app's dedicated Sidekicks", () => {
       bindingName: "shoppingOrganizer", operationId: "add-yogurt", resourceId, input: { item: "Greek yogurt" } } });
     expect(run.definition_revision).toBe(1);
     await runSidekickAlarms(env, workspaceId);
+    await expect.poll(() => provider.calls.length, { timeout: waitBudget() }).toBeGreaterThan(0);
+    expect(provider.calls[0]!.messages).toContainEqual(expect.objectContaining({
+      role: "user", content: expect.stringContaining('{"item":"Greek yogurt"}'),
+    }));
     await expect.poll(rows, { timeout: waitBudget() }).toEqual([{ name: "Greek yogurt", section: "dairy" }]);
     // Wait for the loop's final reply before the next reset closes its provider stream.
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(

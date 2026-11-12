@@ -397,7 +397,7 @@ describe("Terminal resource bridge", () => {
     expect(state.provider.writeFile).not.toHaveBeenCalled();
   });
 
-  it("upgrades an unchanged legacy site on its next publish", async () => {
+  it("returns the canonical artifact identity when upgrading and replaying a legacy site publish", async () => {
     const attachResource = vi.fn(async () => undefined);
     const state = fixture(attachResource);
     const fileSha256 = "b".repeat(64);
@@ -448,7 +448,7 @@ describe("Terminal resource bridge", () => {
       serverModuleSha256: null,
     });
 
-    expect(output.version).toBe(2);
+    expect(output).toMatchObject({ artifactId: ARTIFACT, resourceId: RESOURCE, version: 2 });
     expect(state.recordPublish).toHaveBeenCalledWith(expect.objectContaining({
       manifest: expect.objectContaining({ socialPreview: expect.any(Object) }),
     }));
@@ -464,6 +464,13 @@ describe("Terminal resource bridge", () => {
     expect(state.database.prepare(
       "SELECT current_version FROM artifact_registry WHERE artifact_id = ?",
     ).get(ARTIFACT)).toEqual({ current_version: 2 });
+    const replay = await state.bridge.publishSiteResource(context, { filePath: "site" }, {
+      mode: "static",
+      stateful: false,
+      files: [{ path: "index.html", bytes: new TextEncoder().encode("<h1>new</h1>"), sha256: fileSha256 }],
+      serverModuleSha256: null,
+    });
+    expect(replay).toMatchObject({ artifactId: ARTIFACT, resourceId: RESOURCE, version: 2 });
   });
 
   it("reports a published site's alias, and the same one when it republishes", async () => {
