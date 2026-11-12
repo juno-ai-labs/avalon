@@ -161,7 +161,7 @@ function readCookie(request: Request, name: string): string | null {
  * inside the API Worker, and a stateless active site's isolate is minted here.
  */
 export { ArtifactAssetLoopback } from "./asset-loopback";
-export { ArtifactSidekickLoopback } from "./sidekick-forwarder";
+export { ArtifactSidekickForwarder } from "./sidekick-forwarder";
 
 export default {
   async fetch(request: Request, env: ArtifactServingEnv, ctx: ExecutionContext): Promise<Response> {
@@ -585,7 +585,7 @@ async function runArtifactModule(
       },
       env: {
         ASSETS: assetLoopback(ctx, artifactId, manifest),
-        SIDEKICKS: ctx.exports.ArtifactSidekickLoopback({
+        SIDEKICKS: ctx.exports.ArtifactSidekickForwarder({
           props: ArtifactSidekickAddressSchema.parse({ workspaceId: admitted.workspaceId, artifactId, artifactVersion: manifest.artifactVersion }),
         }),
       },

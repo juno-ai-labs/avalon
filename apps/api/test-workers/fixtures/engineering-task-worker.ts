@@ -1,4 +1,4 @@
-export { ArtifactSidekickLoopback as ArtifactSidekickForwarder } from "../../src/artifacts/sidekick-forwarder";
+export { ArtifactSidekickForwarder } from "../../src/artifacts/sidekick-forwarder";
 // The pool discovers loopback entrypoints from named exports; export * does
 // not expose ArtifactAssetLoopback (or the regional bridges) to ctx.exports.
 export {

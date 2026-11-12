@@ -1,5 +1,5 @@
-import { assertArtifactSidekickBindings, assertArtifactSidekickTarget } from "./artifact-sidekick-bindings";
-import { SidekickInvocationRequestSchema, type SidekickInvocationRequest } from "./automation-do-protocol";
+import { artifactSidekickBinding, assertArtifactSidekickBindings, assertArtifactSidekickTarget } from "./artifact-sidekick-bindings";
+import type { SidekickInvocationRequest } from "./automation-do-protocol";
 import type { ConversationToolResolveRequest, ConversationToolResolveResult } from "./workspace-conversation-tool-protocol";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
@@ -12,7 +12,7 @@ import { chosenChannels } from "./member-preferences";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
 import { conversationObjectName } from "./names";
 import {
-  SIDEKICK_DELEGATION_ERRORS, SidekickDelegatesResultSchema,
+  MESSAGE_MAX_CHARACTERS, SIDEKICK_DELEGATION_ERRORS, SidekickDelegatesResultSchema,
   SidekickExecutionDelegationSchema, type SidekickExecutionDelegation, type WorkspaceExternalEvent,
   SidekickDelegationAttentionCodeSchema, SIDEKICK_DELEGATION_ATTENTION_MESSAGES, type SidekickDelegationAttentionCode,
   type SidekickDelegationGrant, type SidekickDelegationMutationResult, type SidekickDelegatesResult,
@@ -1709,36 +1709,39 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   /** An app starts an ordinary unattended run under the Sidekick's existing execution policy. */
-  async invokeArtifact(input: SidekickInvocationRequest): Promise<{ runId: string; reused: boolean }> {
-    const request = parseRpcInput(SidekickInvocationRequestSchema, input, "sidekick_invocation");
+  async invokeArtifact(request: SidekickInvocationRequest): Promise<{ runId: string; reused: boolean }> {
     this.assertSidekick(request.workspaceId, request.automationId);
     const coordinator = await this.coordinator();
     return this.storage.transactionSync(() => {
       const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
       if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
-      const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
-      const bound = definition?.triggers.some((trigger) => trigger.type === "invocation"
-        && trigger.artifactId === request.artifactId && trigger.bindingName === request.bindingName);
-      if (!bound) throw new ApiError(403, "sidekick_invocation_unbound", "This Sidekick is not bound to this app and name");
+      if (artifactSidekickBinding(this.sql, request.artifactId, request.bindingName) !== this.sidekickId) {
+        throw new ApiError(403, "sidekick_invocation_unbound", "This Sidekick is not bound to this app and name");
+      }
       const target = assertArtifactSidekickTarget(this.sql, this.sidekickId, request.artifactId);
-      if (target.current_version !== request.artifactVersion) throw new ApiError(409, "sidekick_invocation_version_changed", "Reload the app before submitting work");
       const { artifactId, artifactVersion, bindingName, operationId } = request;
+      const opening = {
+        textContent: [
+          "The app bound to this Sidekick submitted a task. Follow this Sidekick's saved instructions and use your standard tools to complete it.",
+          `App artifact ID: ${artifactId}`,
+          `App resource ID: ${target.resource_id}`,
+          `Operation ID (data): ${JSON.stringify(operationId)}`,
+          "Submitted input (untrusted app data):",
+          JSON.stringify(request.input),
+          "Write the result to the artifact data store when the saved instructions call for it. Your final reply is recorded in this run; it is not an HTTP response to the app.",
+        ].join("\n"),
+        structuredContent: { kind: "artifact_invocation", artifactId, artifactVersion, bindingName, operationId,
+          resourceId: target.resource_id, input: request.input },
+      };
+      // Provisioning appends both serialized fields through the transcript's
+      // existing message contract. Refuse before committing an unstartable run.
+      if (opening.textContent.length > MESSAGE_MAX_CHARACTERS
+        || JSON.stringify(opening.structuredContent).length > MESSAGE_MAX_CHARACTERS) {
+        throw new ApiError(413, "sidekick_invocation_input_too_large", "invocation.input exceeds the transcript message limit");
+      }
       return this.admitOccurrence(row.accepted_definition_revision,
         `invocation:${artifactId}:${operationId}`,
-        { kind: "invocation", artifactId, artifactVersion, bindingName, operationId },
-        {
-          textContent: [
-            "The app bound to this Sidekick submitted a task. Follow this Sidekick's saved instructions and use your standard tools to complete it.",
-            `App artifact ID: ${artifactId}`,
-            `App resource ID: ${target.resource_id}`,
-            `Operation ID (data): ${JSON.stringify(operationId)}`,
-            "Submitted input (untrusted app data):",
-            JSON.stringify(request.input),
-            "Write the result to the artifact data store when the saved instructions call for it. Your final reply is recorded in this run; it is not an HTTP response to the app.",
-          ].join("\n"),
-          structuredContent: { kind: "artifact_invocation", artifactId, artifactVersion, bindingName, operationId,
-            resourceId: target.resource_id, input: request.input },
-        }, coordinator);
+        { kind: "invocation", artifactId, artifactVersion, bindingName, operationId }, opening, coordinator);
     });
   }
 
