@@ -459,6 +459,33 @@ describe("Canvas artifact access propagated to local serving", () => {
     ).toBe(true);
   });
 
+  it("stores Organization-wide artifact access whenever the Organization edits, from any caller", async () => {
+    const audience = (
+      visibility: "creator" | "workspace",
+      artifactVisibility?: "editors" | "public",
+    ) =>
+      workspace().canvasSetAudience({
+        workspaceId,
+        canvasId: CANVAS,
+        actor: { userId: OWNER, actorRole: "member" },
+        update: {
+          visibility,
+          userIds: [],
+          ...(artifactVisibility ? { artifactVisibility } : {}),
+        },
+      });
+    await share("editors");
+    // An API or MCP caller asks for a narrower artifact audience than its editors.
+    expect((await audience("workspace", "editors")).artifactVisibility).toBe(
+      "workspace",
+    );
+    // Omitting it on the way back keeps what was stored, so this reads the row.
+    expect((await audience("creator")).artifactVisibility).toBe("workspace");
+    expect((await audience("workspace", "public")).artifactVisibility).toBe(
+      "public",
+    );
+  });
+
   it("uses site manifests to recognize upgraded archives and never replaces site serving with a file", async () => {
     await share("public");
     await runInDurableObject(workspace(), (_instance, state) => {
