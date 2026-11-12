@@ -266,9 +266,10 @@ have not. Ask its entry-privacy question only when that skill requires it.
    everything**: on a public site, an anonymous visitor's add, edit,
    check-off, delete and clear all reach your handler and should work. Rally
    has already admitted them; a second gate in your code turns a public
-   site read-only without anyone having asked for that. Store the viewer's
-   name with a change when the header is there and leave it empty when it
-   is not.
+   site read-only without anyone having asked for that. Where the request
+   wants to know who made a change, store the viewer's name when the header
+   is there and leave it empty when it is not; on an anonymous page store
+   neither, even when the header is there (item 7 of **Stateful sites**).
 
    Require identity only for an action that cannot work without knowing
    who is acting: one vote or RSVP per person (an upsert keyed on the

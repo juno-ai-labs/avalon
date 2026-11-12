@@ -543,6 +543,29 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect(detail.participantUserIds).toEqual([READER]);
   });
 
+  it("refuses set_artifact_audience from a creator who has left the Organization", async () => {
+    await workspace().applyMemberStatus({
+      workspaceId,
+      sequence: 1,
+      removed: true,
+      relationship: {
+        workspaceId,
+        userId: OWNER,
+        incarnation: "owner-incarnation",
+        revision: 2,
+        accessClass: "member",
+        role: "member",
+        status: "active",
+      },
+    });
+    await expect(
+      createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER })
+        .execute({ audience: "public", personAsked: true }, {} as never),
+    ).rejects.toMatchObject({ code: "canvas_not_found" });
+    await sync(SITE_HOST, SITE);
+    expect((await visit("quiet-blue-river-garden")).status).toBe(401);
+  });
+
   it("never lets an agent's default reopen artifacts a manager restricted in Share", async () => {
     const call = (personAsked: boolean) =>
       createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER })

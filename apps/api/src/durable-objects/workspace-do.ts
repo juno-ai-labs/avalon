@@ -5618,7 +5618,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }), input, "canvas_set_artifact_audience");
     const canvas = await this.hostedCanvas(request.canvasId, request.workspaceId);
     const relationship = await this.readRelationship(request.workspaceId, request.userId);
-    const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
+    // A creator's id outlives their membership; only someone still in the
+    // Organization may change who opens its artifacts.
+    if (relationship?.status !== "active") return { outcome: "not_found" as const };
+    const actorRole = relationship.accessClass === "member" ? relationship.role ?? "member" : null;
     return this.canvasWrite(async () => {
       try {
         return canvas.setArtifactAudience({

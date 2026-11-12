@@ -19,7 +19,8 @@ const ArgumentsSchema = z.strictObject({
   audience: z.enum(["public", "workspace", "editors"]).describe(
     "Who can open this Canvas's published sites and files. "
     + "\"public\": anyone with the link, signed in or not. "
-    + "\"workspace\": members of this Organization. "
+    + "\"workspace\": members of this Organization, plus anyone already named in the Canvas's Share screen, guests included; "
+    + "remove those people in Share if they must lose access. "
     + "\"editors\": only the people who can open this Canvas's Chat.",
   ),
   personAsked: z.boolean().describe(
