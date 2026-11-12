@@ -155,6 +155,11 @@ export class CanvasService {
     await (await this.workspace()).canvasArchive({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });
   }
 
+  /** Archive a Canvas this person made and left blank; see `HostedCanvas.discardIfBlank`. */
+  async discardIfBlank(canvasId: string): Promise<{ discarded: boolean }> {
+    return (await this.workspace()).canvasDiscardIfBlank({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });
+  }
+
   async setAudience(canvasId: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
     return (await this.workspace()).canvasSetAudience({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), update });
   }

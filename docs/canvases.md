@@ -27,7 +27,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasUpdate` (the title and the appearance), `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Conversation object migration 83: its root row admits the `canvas` parent kind. |
 | `apps/api/src/services/canvas-service.ts` | `createCanvas`: the directory row, then the Chat's object, bootstrapped and provisioned with the creator seated; `CanvasService`, the routes' service. |
-| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/archive`, `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /canvases/pinned-order` orders personal Canvas pins for members and guests. |
+| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/archive`, `POST /canvases/:id/discard` (archive one its creator left blank), `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /canvases/pinned-order` orders personal Canvas pins for members and guests. |
 | `apps/api/src/services/integrations.ts` | `canvasRunContextMessage`: the `CANVAS CONTEXT` message a run in a Canvas's Chat is given. |
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
@@ -920,6 +920,29 @@ Canvas tombstone of their own (migration 3), so delayed pointer writes or open
 code minting cannot undo archive delivery. Existing anonymous public-site reads
 retain their publication policy; authenticated sessions are withdrawn.
 
+### Discarding a blank Canvas
+
+Leaving a Canvas with nothing in it archives it, so pressing New Canvas and
+going elsewhere does not leave an **Untitled Canvas** in the list. The
+desktop and browser screen (`screens/canvas.tsx`) learns from
+`ConversationSurface`'s `onBlankChange` whether the Chat is blank: no message,
+no run, no send in flight, nothing typed or attached in the composer, and no
+opening prompt. When the screen unmounts while that holds, it calls
+`POST /canvases/:id/discard`. It skips a Canvas whose create has not
+succeeded, since New Canvas retries that id and a create of an archived id is
+refused. The unmount is deferred one tick, so StrictMode's second mount
+cancels it.
+
+`HostedCanvas.discardIfBlank` judges blank again inside the archive's
+transaction, so a stale or offline client cannot archive a Canvas with content.
+It archives only for the creator, and only while the Canvas is still settled as
+**Untitled Canvas** with no chosen appearance, no writer Sidekick, creator-only
+visibility, no Chat projection past ordinal 0, no artifact, no other
+participant, no attached Sidekick and nobody's pin. Otherwise it answers
+`discarded: false`, never an error: nobody asked for the tidy-up. The archive
+itself is the one `archive` writes (`archiveRow`). The route answers 204
+either way.
+
 ## Data model
 
 | Table | Keyed by | Holds |
@@ -960,6 +983,26 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-12 — Archive a Canvas left blank
+
+**What changed:** Leaving a Canvas whose Chat and composer are empty archives
+it through `POST /canvases/:id/discard`, which archives only if
+`HostedCanvas.discardIfBlank` finds it blank in the same transaction.
+
+**Why:** New Canvas makes the Canvas at once, before anything is typed, so
+every abandoned click left an Untitled Canvas in the list.
+
+**Considered and rejected:** Deciding blank on the client alone: it cannot see
+a message still being projected or a change from another window, and an
+archive that removes real content is a failure nobody would notice. Deferring
+creation until the first message: it puts creation latency back before the
+first keystroke, which the 2026-11-11 entry removed.
+
+**Consequences:** Discard reuses archive, so a discarded Canvas is a retained
+tombstone, not a deleted row. Anything a future change lets a person put into
+a Canvas (a new kind of content or setting) must be added to the blank check,
+or leaving would archive it.
 
 ### 2026-11-12 — The naming pass chooses a Canvas's icon again
 
