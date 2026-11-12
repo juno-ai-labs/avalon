@@ -1,4 +1,4 @@
-import { requireUsageAllowance } from "./usage-admission";
+import { requireUsageAllowance, isUsageAllowanceExhausted } from "./usage-admission";
 import { agentModelTraceFeature } from "@rally/contracts/runtime-config";
 import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
 import { connectorAuthorizationStatus } from "@rally/contracts";
@@ -1712,7 +1712,12 @@ export async function classifyWorkstreamMessage(
     defer: (promise: Promise<unknown>) => void;
   },
 ): Promise<AddressingClassification> {
-  await requireUsageAllowance(env, input.workspaceId);
+  try { await requireUsageAllowance(env, input.workspaceId); }
+  catch (error) {
+    if (!isUsageAllowanceExhausted(error)) throw error;
+    logStructuredEvent(env, "warn", "addressing_usage_paused", { workspace_id: input.workspaceId, error_code: "usage_allowance_exhausted" });
+    return { classification: "human_only", confidence: 0, rationaleCode: "insufficient_signal" };
+  }
   const traceId = crypto.randomUUID();
   const diagnostics = createClassifierDiagnosticSink(env, {
     role: "addressing_classifier",

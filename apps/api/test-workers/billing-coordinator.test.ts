@@ -4,7 +4,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { HonoAppEnv } from '../src/env';
 import { billingAccount } from '../src/services/billing';
-import { stripeWebhookRoutes } from '../src/routes/billing';
+import { initializeOrganizationBilling } from '../src/services/billing-coordination';
+import { stripeWebhookRoutes, billingRoutes } from '../src/routes/billing';
+import { asUserId, asWorkspaceId } from '@rally/contracts';
 import { errorHandler } from '../src/middleware/errors';
 import billingMigration from '../../../packages/db/migrations/0131_billing.sql?raw';
 import signupMigration from '../../../packages/db/migrations/0132_signup_trials.sql?raw';
@@ -160,7 +162,8 @@ it('creates a no-card signup trial through the actor and refreshes payment readi
     }
     throw new Error(`Unexpected provider call: ${url}`);
   });
-  expect(await stub().refresh(ORG)).toMatchObject({ status: 'trialing', payment_method_ready: 0 });
+  expect(initializeOrganizationBilling(configured, ORG)).toBeUndefined();
+  await expect.poll(async () => env.DB.prepare('SELECT status, payment_method_ready FROM billing_accounts WHERE workspace_id = ?').bind(ORG).first()).toEqual({ status: 'trialing', payment_method_ready: 0 });
   expect(await env.DB.prepare('SELECT plan FROM workspaces WHERE id = ?').bind(ORG).first()).toEqual({ plan: 'growth' });
   expect(await env.DB.prepare('SELECT subscription_id FROM billing_signup_trials WHERE workspace_id = ?').bind(ORG).first()).toEqual({ subscription_id: 'sub_signup' });
   await expect(Promise.resolve(stub().overages(ORG, true))).rejects.toMatchObject({ code: 'billing_overage_unavailable' });
@@ -170,4 +173,49 @@ it('creates a no-card signup trial through the actor and refreshes payment readi
   expect((await app.request('/webhook', { method: 'POST', body, headers: { 'stripe-signature': await signature(body) } }, configured)).status).toBe(200);
   expect(await env.DB.prepare('SELECT payment_method_ready FROM billing_accounts WHERE workspace_id = ?').bind(ORG).first()).toEqual({ payment_method_ready: 1 });
   expect(creates).toBe(1);
+});
+
+
+it('refreshes payment readiness for legacy billing settings through the actor', async () => {
+  await env.DB.prepare("UPDATE billing_accounts SET subscription_id='sub_legacy', status='active', offer_id='grow', currency='usd'").run();
+  const subscription = { id: 'sub_legacy', customer: 'cus_1', status: 'active', currency: 'usd', metadata: { offer_id: 'grow' }, items: { data: [{ price: { id: 'price_grow' } }] } };
+  vi.stubGlobal('fetch', async (url: string) => {
+    if (url.includes('/customers/cus_1')) return Response.json({ invoice_settings: { default_payment_method: 'pm_card' } });
+    if (url.includes('/subscriptions?')) return Response.json({ data: [subscription], has_more: false });
+    throw new Error(`Unexpected provider call: ${url}`);
+  });
+  const app = new Hono<HonoAppEnv>(); app.onError(errorHandler);
+  app.use('*', async (c, next) => { c.set('auth', { sessionId: 'session', userId: asUserId('01900000-0000-7000-8000-000000000001'), workspaceId: asWorkspaceId(ORG), region: 'global', role: 'owner' }); await next(); });
+  app.route('/billing', billingRoutes);
+  const response = await app.request('/billing', {}, testEnv());
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ enabled: true, subscribed: true, paymentMethodReady: true });
+});
+
+
+it('keeps overage consent visible and revocable after the payment method is removed', async () => {
+  const configured = { ...testEnv(), BILLING_CONFIG: JSON.stringify({ ...JSON.parse(config), enforceUsageLimits: true,
+    offers: [{ id: 'grow', name: 'Grow', plan: 'growth', priceId: 'price_grow', currencies: ['usd'], overagePriceId: 'price_overage' }] }) };
+  await runInDurableObject(stub(), instance => { Object.defineProperty(instance, 'env', { value: configured, configurable: true }); });
+  await env.DB.prepare("UPDATE billing_accounts SET subscription_id='sub_legacy', status='active', offer_id='grow', currency='usd'").run();
+  const subscription = { id: 'sub_legacy', customer: 'cus_1', status: 'active', currency: 'usd', metadata: { offer_id: 'grow', overage_enabled: 'true' }, items: { data: [{ price: { id: 'price_grow' } }] } };
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url.includes('/customers/cus_1')) return Response.json({ invoice_settings: { default_payment_method: null } });
+    if (url.includes('/subscriptions?')) return Response.json({ data: [subscription], has_more: false });
+    if (url.endsWith('/subscriptions/sub_legacy') && init?.method === 'POST') {
+      subscription.metadata.overage_enabled = new URLSearchParams(String(init.body)).get('metadata[overage_enabled]')!;
+      return Response.json(subscription);
+    }
+    throw new Error(`Unexpected provider call: ${url}`);
+  });
+  const app = new Hono<HonoAppEnv>(); app.onError(errorHandler);
+  app.use('*', async (c, next) => { c.set('auth', { sessionId: 'session', userId: asUserId('01900000-0000-7000-8000-000000000001'), workspaceId: asWorkspaceId(ORG), region: 'global', role: 'owner' }); await next(); });
+  app.route('/billing', billingRoutes);
+  const response = await app.request('/billing', {}, configured);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ paymentMethodReady: false, overageEnabled: true });
+  expect(await env.DB.prepare('SELECT overage_started_at FROM billing_accounts WHERE workspace_id = ?').bind(ORG).first()).toEqual({ overage_started_at: null });
+  const disabled = await app.request('/billing/overages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: false }) }, configured);
+  expect(disabled.status).toBe(200);
+  expect(await disabled.json()).toEqual({ enabled: false });
 });

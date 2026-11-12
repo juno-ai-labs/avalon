@@ -34,8 +34,9 @@ billingRoutes.get("/", async (c) => {
   if (!c.env.BILLING_CONFIG) return c.json({ enabled: false });
   const env = await resolveBillingEnvironment(c.env);
   const config = billingConfig(env);
-  const account = await (config.enforceUsageLimits || config.signupTrial
-    ? refreshOrganizationBilling(env, getAuth(c).workspaceId) : billingAccount(env, getAuth(c).workspaceId));
+  const cached = await billingAccount(env, getAuth(c).workspaceId);
+  const account = config.enforceUsageLimits || config.signupTrial || hasLiveSubscription(cached)
+    ? await refreshOrganizationBilling(env, getAuth(c).workspaceId, true) : cached;
   return c.json(
     BillingStatusSchema.parse({
       enabled: true,
@@ -47,8 +48,7 @@ billingRoutes.get("/", async (c) => {
       trialEndsAt: new Date(account.trial_ends_at * 1000).toISOString(),
       overageEnabled:
         account.overage_enabled === 1 &&
-        ["active", "trialing"].includes(account.status) &&
-        account.overage_started_at !== null,
+        ["active", "trialing"].includes(account.status),
       offers: config.offers
         .filter((o) => o.enabled)
         .map((o) => ({
