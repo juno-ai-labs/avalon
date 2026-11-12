@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { canvasMark } from '../components/canvas-mark';
+import { CanvasTemplateMark } from '../components/canvas-template-picker';
 import { CanvasSharingStatus } from '../components/canvas-sharing-status';
 import { AvatarStack, Button, EmptyState, TitleSkeleton } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
@@ -138,7 +139,7 @@ function CanvasMarketplace({ onStart }: { onStart: (prompt: string) => void }): 
     <ul className="dashboard-grid">
       {templates.map((template) => <li key={template.name}>
         <button className="dashboard-card canvas-template-card" onClick={() => onStart(template.prompt)} type="button">
-          <span className="canvas-template-title">{template.name}</span>
+          <span className="canvas-template-title"><CanvasTemplateMark template={template} />{template.name}</span>
           <ArrowUpRight aria-hidden="true" size={16} />
           <span className="canvas-template-description">{template.description}</span>
         </button>
