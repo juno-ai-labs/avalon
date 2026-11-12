@@ -109,6 +109,10 @@ export function useOrganizationUsage(api: OrganizationUsageApi | null): Organiza
     enabled: Boolean(api),
     // Opening the surface is the refresh; only a plan change is pushed.
     refetchOnMount: 'always',
+    // Overage billing is turned on in the Settings window, which pushes
+    // nothing here. Coming back to this window is when the rail's usage
+    // warning has to notice, so a return refreshes the read.
+    refetchOnWindowFocus: true,
   });
 
   useEffect(() => {

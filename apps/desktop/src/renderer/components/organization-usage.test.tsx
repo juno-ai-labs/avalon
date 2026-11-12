@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllLocalCache } from '../lib/local-cache';
 import { LocalCacheScopeProvider } from '../lib/local-cache-scope';
 import { usageCacheSlice, type OrganizationPlanApi, type OrganizationUsageApi } from '../lib/organization-usage';
-import { OrganizationUsageMenuItem, UsageSettingsSection } from './organization-usage';
+import { OrganizationUsageMenuItem, UsageLimitRailWarning, UsageSettingsSection } from './organization-usage';
 
 const SCOPE = 'user-1:global:workspace-1';
 
@@ -407,4 +407,22 @@ it('does not describe previously billable usage as waived after cancellation', a
   expect(screen.queryByText('Not billed')).not.toBeInTheDocument();
   fireEvent.focus(screen.getByText('Usage total'));
   expect(await screen.findByRole('tooltip')).toHaveTextContent('Charges for earlier opted-in usage may still appear after cancellation.');
+});
+
+describe('The rail warning when Rally stops taking new work', () => {
+  it('shows above the account tile while the allowance is spent, explains why, and opens Settings', async () => {
+    const onOpen = vi.fn();
+    render(wrap(<UsageLimitRailWarning api={apiAnswering({ ...usage(0), allowanceExhausted: true })} onOpen={onOpen} />));
+    const warning = await screen.findByRole('button', { name: /^Usage limit reached\./ });
+    expect(warning.getAttribute('aria-label')).toBe("Usage limit reached. This week's included usage is used up and overage billing is off, so Rally, Sidekicks and background agents are paused. An administrator can turn on overage billing in Settings. Resets Thursday, October 8 at 9:00 AM.");
+    fireEvent.click(warning);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows nothing once work would be admitted, even with the meter at zero', async () => {
+    const api = apiAnswering({ ...usage(0), allowanceExhausted: false });
+    render(wrap(<UsageLimitRailWarning api={api} onOpen={vi.fn()} />));
+    await waitFor(() => expect(api.getWorkspaceUsage).toHaveBeenCalled());
+    expect(screen.queryByRole('button')).toBeNull();
+  });
 });
