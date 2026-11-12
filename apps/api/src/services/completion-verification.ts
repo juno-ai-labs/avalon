@@ -1,8 +1,13 @@
 import {
-  COMPLETION_VERIFICATION_SOURCE, completionConversationContext, completionVerificationPrompt,
-  type judgeCompletionStop, type ModelMessage, type CompletionState,
+  COMPLETION_VERIFICATION_SOURCE,
+  completionConversationContext,
+  type judgeCompletionStop,
+  type ModelMessage,
+  type CompletionState,
 } from "@rally/agent-harness";
 import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
+import { COMPLETION_EVIDENCE_COVERAGE } from "@rally/prompts/api/completion-evidence-coverage";
+import { completionVerificationPrompt } from "@rally/prompts/harness/completion-verification-nudge";
 
 /** Re-read lifecycle after network I/O. Persistence of the returned derived
  * message consumes recovery atomically with its delivery to the model. */
@@ -26,7 +31,7 @@ export async function completionVerificationNudge(input: {
     triggering_request: snapshot.trigger ?? { id: input.runId, text: "", origin: "unresolved_activation" },
     linked_context: context, candidate_final: input.assistantContent, tool_receipts: snapshot.receipts,
     context_status: snapshot.trigger?.text ? "resolved" : "unresolved",
-    evidence_coverage: "Exact trigger and candidate final; all conversation text retained in the acting model's current projection, including compaction checkpoints and in-run input. Current-execution receipt statuses and summaries; no full tool payloads or post-decision outcomes. Older compacted details may be unavailable.",
+    evidence_coverage: COMPLETION_EVIDENCE_COVERAGE,
   };
   const decision = await input.judge(state);
   input.signal.throwIfAborted();

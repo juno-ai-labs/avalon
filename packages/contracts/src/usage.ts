@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { RegionSchema } from "./regions";
+import { PLAN_IDS, type PlanId } from "./plans";
+
+export { PLAN_IDS, PLANS, weeklyQuotaMicrousd, type PlanId } from "./plans";
 
 /**
  * Usage quota metering: the plans, the metered activities, the event the
@@ -8,27 +11,10 @@ import { RegionSchema } from "./regions";
  * comes from docs/PRDs/2026-10-03_usage-quota-metering/prd.md.
  */
 
-// Keep existing persisted IDs compatible; display names are Start and Grow.
-export const PLAN_IDS = ["starter", "growth", "max", "ultra"] as const;
 export const PlanIdSchema = z.enum(PLAN_IDS);
-export type PlanId = z.infer<typeof PlanIdSchema>;
-
-export const PLANS: Readonly<Record<PlanId, { name: string; monthlyPriceUsd: number; includedUsageUsd: number }>> = {
-  starter: { name: "Start", monthlyPriceUsd: 0, includedUsageUsd: 40 },
-  growth: { name: "Grow", monthlyPriceUsd: 100, includedUsageUsd: 200 },
-  max: { name: "Max", monthlyPriceUsd: 250, includedUsageUsd: 500 },
-  ultra: { name: "Ultra", monthlyPriceUsd: 1000, includedUsageUsd: 2000 },
-};
 
 /** Below this percentage left, the meter turns to the warning color (PRD decision 13). */
 export const LOW_QUOTA_PERCENT = 20;
-
-const MICROUSD_PER_USD = 1_000_000;
-
-/** Allocate one quarter of the included usage each week, including the free plan. */
-export function weeklyQuotaMicrousd(plan: PlanId): number {
-  return (PLANS[plan].includedUsageUsd * MICROUSD_PER_USD) / 4;
-}
 
 export const METERED_ACTIVITIES = [
   "agent_run",

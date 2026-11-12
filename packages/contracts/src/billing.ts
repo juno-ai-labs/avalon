@@ -4,6 +4,7 @@ import { PlanIdSchema } from './usage';
 export const BillingStatusSchema = z.discriminatedUnion('enabled', [
   z.object({ enabled: z.literal(false) }),
   z.object({ enabled: z.literal(true), status: z.string(), subscribed: z.boolean(), trialEndsAt: z.string(), overageEnabled: z.boolean(), creditsAvailable: z.boolean().optional(),
+    currency: z.string().nullable().optional(), offerId: z.string().nullable().optional(),
     paymentMethodReady: z.boolean().optional(), overageAvailable: z.boolean().optional(),
     offers: z.array(z.object({ id: z.string(), name: z.string(), plan: PlanIdSchema, currencies: z.array(z.string()), overageAvailable: z.boolean() })),
   }),
@@ -26,7 +27,7 @@ export const GrantOverageCreditSchema = z.strictObject({
   operationId: z.uuid().describe('A fresh UUID for this grant; reuse it and identical arguments after an uncertain outcome.'),
   amountCents: z.number().int().positive().describe('USD cents of promotional overage credit, not effective usage or plan allowance.'),
   reason: z.string().trim().min(1).max(500), // Stripe metadata value limit.
-  expiresAt: z.iso.datetime({ offset: true }).optional(),
+  expiresAt: z.iso.datetime({ offset: true }).describe('Required expiration in the future, at most two calendar years from grant creation (UTC).'),
 });
 export type GrantOverageCredit = z.infer<typeof GrantOverageCreditSchema>;
 

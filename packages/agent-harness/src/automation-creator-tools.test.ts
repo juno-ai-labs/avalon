@@ -9,10 +9,10 @@ import {
   rememberAutomationResourceSearchResult,
   rememberAutomationToolTest,
   customToolIdentityHash,
-  CUSTOM_TOOLS_GUIDE,
   type AutomationCreatorToolHost,
 } from "./automation-creator-tools";
 import { AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS } from "./index";
+import { CUSTOM_TOOLS_GUIDE } from "@rally/prompts/harness/custom-tools-guide";
 
 function host(overrides: Partial<AutomationCreatorToolHost> = {}): AutomationCreatorToolHost {
   return {

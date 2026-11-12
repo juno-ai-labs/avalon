@@ -101,13 +101,16 @@ it('recovers a price-scoped grant after a lost response beyond Stripe idempotenc
   const writes = provider.writes.filter(write => write.path === 'billing/credit_grants');
   expect(writes).toHaveLength(1);
   expect(Object.fromEntries(writes[0]!.fields)).toMatchObject({ category: 'promotional', 'amount[monetary][value]': '10000',
-    'applicability_config[scope][prices][0][id]': 'price_overage', 'metadata[reason]': 'Service incident' });
+    'applicability_config[scope][prices][0][id]': 'price_overage', 'metadata[reason]': 'Service incident', expires_at: '1801440000' });
   expect(writes[0]!.fields.has('applicability_config[scope][price_type]')).toBe(false);
   expect(db.prepare('SELECT stripe_grant_id FROM billing_credit_operations').get()).toEqual({ stripe_grant_id: 'credgr_1' });
   await expect(grantOverageCredit(env, ORG, { ...input, amountCents: 20000 })).rejects.toMatchObject({ code: 'billing_credit_operation_conflict' });
   expect((await readOverageCredits(env, ORG)).availableCents).toBe(7500);
   expect(db.prepare('SELECT plan FROM workspaces WHERE id = ?').get(ORG)).toEqual({ plan: 'starter' });
   expect(db.prepare('SELECT subscription_id, overage_enabled FROM billing_accounts').get()).toEqual({ subscription_id: null, overage_enabled: 0 });
+  vi.setSystemTime(new Date('2027-02-02T00:00:00Z'));
+  expect(await grantOverageCredit(env, ORG, input)).toMatchObject({ id: 'credgr_1', expiresAt: '2027-02-01T00:00:00.000Z' });
+  expect(provider.writes.filter(write => write.path === 'billing/credit_grants')).toHaveLength(1);
 });
 
 it('expires only an owned overage grant and reflects Stripe balance changes without a local balance', async () => {
@@ -124,12 +127,70 @@ it('expires only an owned overage grant and reflects Stripe balance changes with
   expect(provider.writes.map(write => write.path)).toEqual(['billing/credit_grants/credgr_1/expire']);
 });
 
+it.each([null, 'credgr_legacy'])('recovers a legacy grant by operation ID with saved Stripe ID %s without issuing credit', async (stripeGrantId) => {
+  const { env, db, provider } = await seed();
+  const saved = JSON.stringify({ request: { operationId: OPERATION, amountCents: 10000, reason: 'Legacy credit' }, priceId: 'price_overage', meterId: 'mtr_overage' });
+  db.prepare('INSERT INTO billing_credit_operations(workspace_id, operation_id, request_json, stripe_grant_id) VALUES (?, ?, ?, ?)')
+    .run(ORG, OPERATION, saved, stripeGrantId);
+  provider.grants = [stripeGrant({ id: 'credgr_other' }), stripeGrant({ id: 'credgr_legacy',
+    metadata: stripeGrantId ? {} : { receipt: `overage-credit:global:${ORG}:${OPERATION}` },
+  })];
+  vi.setSystemTime(new Date('2027-01-20T00:00:00Z')); // Receipt lookup must outlive Stripe idempotency retention.
+  expect(await readOverageCredits(env, ORG, OPERATION)).toEqual({ enabled: true, currency: 'usd', availableCents: 10000,
+    grants: [{ id: 'credgr_legacy', amountCents: 10000, availableCents: 10000, effectiveAt: '2026-12-20T12:15:00.000Z', expiresAt: null, voided: false }],
+  });
+  expect(provider.writes).toEqual([]);
+  expect(db.prepare('SELECT request_json, stripe_grant_id FROM billing_credit_operations').all()).toEqual([{ request_json: saved, stripe_grant_id: stripeGrantId }]);
+});
+
+it('keeps operation recovery scoped to the organization and never issues a missing legacy grant', async () => {
+  const { env, db, provider } = await seed();
+  db.prepare('INSERT INTO billing_credit_operations(workspace_id, operation_id, request_json) VALUES (?, ?, ?)')
+    .run(ORG, OPERATION, JSON.stringify({ request: { operationId: OPERATION, amountCents: 10000, reason: 'Legacy credit' }, priceId: 'price_overage', meterId: 'mtr_overage' }));
+  provider.grants = [stripeGrant({ id: 'credgr_unrelated' })];
+  expect(await readOverageCredits(env, ORG, OPERATION)).toEqual({ enabled: true, currency: 'usd', availableCents: 0, grants: [] });
+  await expect(readOverageCredits(env, ORG, '01900000-0000-7000-8000-0000000000cc')).rejects.toMatchObject({ code: 'billing_credit_operation_not_found' });
+  await expect(readOverageCredits(env, 'other-org', OPERATION)).rejects.toMatchObject({ code: 'billing_credit_operation_not_found' });
+  expect(provider.writes).toEqual([]);
+  expect(db.prepare('SELECT stripe_grant_id FROM billing_credit_operations').all()).toEqual([{ stripe_grant_id: null }]);
+});
+
 it('rejects a past expiry and a meter with a price incompatible with credit grants before issuing money', async () => {
   const { env, provider } = await seed();
   await expect(grantOverageCredit(env, ORG, { operationId: OPERATION, amountCents: 100, reason: 'Test', expiresAt: '2020-01-01T00:00:00Z' })).rejects.toMatchObject({ code: 'billing_credit_expiry_past' });
   vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => input.includes('/prices/') ? Response.json({ currency: 'usd', unit_amount_decimal: '100', billing_scheme: 'per_unit', transform_quantity: null, recurring: null }) : provider.fetch(input, init));
-  await expect(grantOverageCredit(env, ORG, { operationId: OPERATION, amountCents: 100, reason: 'Test' })).rejects.toMatchObject({ code: 'billing_overage_credit_price_invalid' });
+  await expect(grantOverageCredit(env, ORG, { operationId: OPERATION, amountCents: 100, reason: 'Test', expiresAt: '2027-02-01T00:00:00Z' })).rejects.toMatchObject({ code: 'billing_overage_credit_price_invalid' });
   expect(provider.writes).toEqual([]);
+});
+
+it.each([
+  ['2026-12-20T12:15:00Z', 'billing_credit_expiry_past'],
+  ['2026-12-20T12:15:00.500Z', 'billing_credit_expiry_past'],
+  ['2028-12-20T12:15:00.001Z', 'billing_credit_expiry_too_late'],
+  ['2028-12-20T04:15:01-08:00', 'billing_credit_expiry_too_late'],
+])('rejects expiry %s before persisting a grant or issuing money', async (expiresAt, code) => {
+  const { env, db, provider } = await seed();
+  await expect(grantOverageCredit(env, ORG, { operationId: OPERATION, amountCents: 100, reason: 'Test', expiresAt })).rejects.toMatchObject({ code });
+  expect(db.prepare('SELECT COUNT(*) AS count FROM billing_credit_operations').get()).toEqual({ count: 0 });
+  expect(provider.writes).toEqual([]);
+});
+
+it.each([
+  ['2026-12-21T12:15:00Z', '2026-12-21T12:15:00.000Z'],
+  ['2028-06-20T12:15:00Z', '2028-06-20T12:15:00.000Z'],
+  ['2028-12-20T04:15:00-08:00', '2028-12-20T12:15:00.000Z'],
+])('issues credit with the chosen expiry %s, up to the inclusive two-year boundary', async (expiresAt, expected) => {
+  const { env } = await seed();
+  expect(await grantOverageCredit(env, ORG, { operationId: OPERATION, amountCents: 100, reason: 'Test', expiresAt })).toMatchObject({ expiresAt: expected });
+});
+
+it('clamps the two-year expiration limit from leap day to February 28', async () => {
+  const { env, provider } = await seed();
+  vi.setSystemTime(new Date('2028-02-29T12:15:00Z'));
+  const input = { operationId: OPERATION, amountCents: 100, reason: 'Test' };
+  await expect(grantOverageCredit(env, ORG, { ...input, expiresAt: '2030-03-01T00:00:00Z' })).rejects.toMatchObject({ code: 'billing_credit_expiry_too_late' });
+  expect(provider.writes).toEqual([]);
+  expect(await grantOverageCredit(env, ORG, { ...input, expiresAt: '2030-02-28T12:15:00Z' })).toMatchObject({ expiresAt: '2030-02-28T12:15:00.000Z' });
 });
 
 it('routes settled overages through a discount-free metered subscription and replays the absolute hour after a lost response', async () => {
@@ -186,7 +247,7 @@ it('ignores overage subscriptions for entitlements and first-paid eligibility', 
   expect(db.prepare('SELECT plan FROM workspaces').get()).toEqual({ plan: 'starter' });
 });
 
-it.each(['member', 'support', 'owner'] as const)('exposes credit balances only to administrators outside support sessions: %s', async role => {
+it.each(['member', 'support', 'owner'] as const)('exposes credit balances to members outside support sessions: %s', async role => {
   const { env, provider } = await seed(); provider.grants = [stripeGrant()];
   const app = new Hono<HonoAppEnv>(); app.onError(errorHandler);
   app.use('*', async (c, next) => {
@@ -195,8 +256,8 @@ it.each(['member', 'support', 'owner'] as const)('exposes credit balances only t
   });
   app.route('/billing', billingRoutes);
   const response = await app.request('/billing/credits', {}, env);
-  expect(response.status).toBe(role === 'owner' ? 200 : 403);
-  if (role === 'owner') expect(await response.json()).toMatchObject({ availableCents: 10000, grants: [{ id: 'credgr_1' }] });
+  expect(response.status).toBe(role === 'support' ? 403 : 200);
+  if (role !== 'support') expect(await response.json()).toMatchObject({ availableCents: 10000, grants: [{ id: 'credgr_1' }] });
   // Customer administrators have no HTTP grant or expiry endpoint.
   expect((await app.request('/billing/credits', { method: 'POST', body: JSON.stringify({ amountCents: 10000 }) }, env)).status).toBe(role === 'owner' ? 404 : 403);
 });

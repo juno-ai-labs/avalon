@@ -1,6 +1,8 @@
 import { pageNumber, type HelpChapter, type HelpPage, type HelpSite } from './content';
 import { OG_HEIGHT, OG_WIDTH, ogImagePath } from './og';
 import type { HelpHeading } from './markdown';
+import { renderHomeIllustration } from '../../src/home-illustrations';
+import { externalArrow } from '../../src/site-icons';
 
 export const SITE_ORIGIN = 'https://rallywith.ai';
 
@@ -85,7 +87,7 @@ function pager(site: HelpSite, page: HelpPage): string {
   return `<nav class="pager" aria-label="Previous and next">${link(site.pages[index - 1], 'prev')}${link(site.pages[index + 1], 'next')}</nav>`;
 }
 
-function articleHeader(page: HelpPage): string {
+function articleHeader(page: HelpPage, site: HelpSite): string {
   const { title, description } = page.frontMatter;
   const chapter = page.chapter;
   let eyebrow = 'Rally Help Center';
@@ -96,7 +98,13 @@ function articleHeader(page: HelpPage): string {
   } else if (page.kind === 'page' && chapter) {
     eyebrow = `<a href="${chapter.intro.url}">Chapter ${chapter.number} · ${navLabel(chapter.intro)}</a> / ${pageNumber(page)}`;
   }
-  return `<header>${numeral}<p class="eyebrow">${eyebrow}${draftBadge(page)}</p><h1 id="top">${escapeHtml(title)}</h1><p class="lede">${escapeHtml(description)}</p></header>`;
+  const copy = `${numeral}<p class="eyebrow">${eyebrow}${draftBadge(page)}</p><h1 id="top">${escapeHtml(title)}</h1><p class="lede">${escapeHtml(description)}</p>`;
+  if (page.kind === 'home') {
+    const firstChapter = site.chapters[0];
+    return `<header class="help-cover"><div>${copy}${firstChapter ? `<a class="help-start" href="${firstChapter.intro.url}">Start with the basics ${externalArrow}</a>` : ''}</div>`
+      + `<figure class="help-vignette">${renderHomeIllustration('sidekick')}<figcaption>A little help goes a long way.</figcaption></figure></header>`;
+  }
+  return `<header>${copy}</header>`;
 }
 
 export const documentTitle = (page: HelpPage): string => `${page.frontMatter.title} · Rally Help`;
@@ -137,7 +145,8 @@ export function renderLayout({ site, page, html, headings, assets }: LayoutInput
   const head = [
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
-    '<meta name="color-scheme" content="light dark">',
+    '<meta name="color-scheme" content="light">',
+    '<meta name="theme-color" content="#fcfbf7">',
     `<title>${escapeHtml(documentTitle(page))}</title>`,
     `<meta name="description" content="${escapeHtml(description)}">`,
     `<link rel="canonical" href="${canonical}">`,
@@ -170,15 +179,16 @@ export function renderLayout({ site, page, html, headings, assets }: LayoutInput
 <head>
 ${head}
 </head>
-<body class="help">
+<body class="help${page.kind === 'home' ? ' help-home' : ''}">
 <a class="skip" href="#content">Skip to content</a>
 <header class="top"><button class="menu" type="button" aria-controls="chapters" aria-expanded="false" aria-label="Chapters"><i></i></button><a class="brand" href="/"><img src="/brand/rally-mark-ink.svg" width="22" height="22" alt="">rally</a><a class="section" href="/help/">Help</a><button class="find" type="button" data-search>Search the manual<kbd>/</kbd></button><nav class="links" aria-label="Rally"><a href="mailto:help@rallywith.ai?subject=Rally%20support">Contact support</a><a class="cta" href="/">rallywith.ai</a></nav></header>
 <div class="shell">
 <main id="content" tabindex="-1">
 <article class="${page.kind}" data-md="${page.markdownUrl}">
-${articleHeader(page)}
+${articleHeader(page, site)}
+${page.kind === 'home' ? extras : ''}
 <div class="prose">${html}</div>
-${extras}
+${page.kind === 'home' ? '' : extras}
 <footer>${pager(site, page)}</footer>
 </article>
 </main>

@@ -1,9 +1,10 @@
 # Site fonts
 
-The marketing pages (`src/landing.css`) set headlines in Instrument Serif,
-body text in Geist and labels in Geist Mono (see
-`docs/site-design-system.md`). The help center (`src/help.css`) still sets
-Barlow. The site's Content-Security-Policy allows fonts from `'self'` only, so
+The pencil homepage, blog, Trust Center and Help Center share the fonts in
+`src/site-theme.css`: Instrument Serif headlines, Geist body text, and Geist
+Mono for code. Earlier marketing pages use the same families through
+`src/landing.css`; older auxiliary pages and comparison social cards retain
+Barlow (see `docs/site-design-system.md`). The site's Content-Security-Policy allows fonts from `'self'` only, so
 the faces ship here and Vite fingerprints them into `/assets/`, which
 `public/_headers` caches as immutable.
 
@@ -22,7 +23,15 @@ with the fonts. The licences are in `public/fonts/` (`OFL.txt` for Barlow,
 `OFL-instrument-serif.txt`, `OFL-geist.txt` and `OFL-geist-mono.txt`), so the build
 publishes them beside the site that serves the fonts.
 
-The social cards drawn at build time (`src/social-cards.ts`) read Barlow from
+The earlier comparison cards (`src/social-cards.ts`) read Barlow from
 the `@fontsource/barlow` and `@fontsource/barlow-semi-condensed` dev
 dependencies instead, as WOFF rather than WOFF2, because `opentype.js` cannot
 decompress WOFF2. Keep those packages on the version in the table above.
+
+The pencil blog and help previews use `instrument-serif-regular.ttf`,
+`geist-regular.ttf`, and `geist-semibold.ttf` in `reading-card.ts`. These are
+build-only static derivatives of the local WOFF2 faces, retaining their OFL
+licenses. They were produced with FontTools: load `TTFont`, instantiate the
+Geist `wght` axis at 400/600 with `instantiateVariableFont`, set `flavor = None`,
+and save as TTF. No font conversion or network request is needed during a site
+build; update these derivatives alongside any WOFF2 font replacement.

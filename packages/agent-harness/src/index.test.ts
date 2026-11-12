@@ -23,10 +23,8 @@ import {
   OpenRouterClient,
   openRouterProviderError,
   rejectToolModesBeforeCall,
-  renderAddressingMessages,
   runHarness,
   AmbiguousExternalWriteError,
-  type AddressingContextMessage,
   type AzureModelPricing,
   type BindLoopTransition,
   type BindLoopProjectionState,
@@ -46,6 +44,7 @@ import {
   type StructuredModelDiagnostic,
 } from "./index";
 import { providerRequestView, providerStreamResponse, responsesStreamResponse, sseBody } from "./test-support/responses-stream";
+import { renderAddressingMessages, type AddressingContextMessage } from "@rally/prompts/harness/addressing";
 
 describe("transport retry backoff", () => {
   const httpFailure = (retryAfterMs: number | null): InferenceAttemptError => ({
@@ -1901,7 +1900,7 @@ describe("agent harness", () => {
       failure: { code: "usage_allowance_exhausted", kind: "limit" },
     });
     expect(memberSafeHarnessFailureMessage("usage_allowance_exhausted"))
-      .toBe("Your organization has used this week's included usage. An administrator can turn on overage billing in Organization settings, or usage resumes when the weekly allowance resets");
+      .toBe("Your organization has used this week's included usage. An administrator can turn on overage billing in Settings under Billing, or usage resumes when the weekly allowance resets");
     expect(fetcher).not.toHaveBeenCalled();
   });
 

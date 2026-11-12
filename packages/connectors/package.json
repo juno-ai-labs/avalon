@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@rally/contracts": "workspace:*",
+    "@rally/prompts": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

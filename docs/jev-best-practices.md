@@ -532,7 +532,12 @@ field-named schema rejection and the owned deadline and knows nothing about any
 one decision, and a confidence cascade (`cascade.ts`), which returns which stage
 answered. Every other model-backed decision runs through
 `runStructuredInference`. A new caller adds a state shape and a question, not a
-transport.
+transport. Each caller's question, and any fixed text its state carries for the judge
+to read, is a prompt: it lives in
+[`packages/prompts/harness/`](../packages/prompts/harness/)
+(or the sending package's folder of `@rally/prompts`), one file per question
+with its closed set of choices, per
+[`writing-prompts.md`](writing-prompts.md#where-a-prompt-lives).
 
 A decision is a candidate when all five are true. The first two are
 [the decision contract](#start-with-the-decision-contract); the last three are

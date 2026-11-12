@@ -23,7 +23,8 @@ are in
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/usage.ts` | The single source for plans, metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
+| `packages/contracts/src/plans.ts` | The plan catalog and weekly allocation, shared by the product and public site; dependency-free so native Node site builds can consume it without loading the runtime schemas. |
+| `packages/contracts/src/usage.ts` | Re-exports the catalog and owns metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
 | `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only D1 ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`, `publishOrganizationUsage`, `pruneUsageEvents` and `USAGE_EVENTS_D1_RETENTION_DAYS`. |
 | `apps/api/src/services/usage-admission.ts` | `readUsageAllowance` (the admission decision) and `requireUsageAllowance` (the refusal). |
 | `apps/api/src/services/usage-allowance-notice.ts` | The once-a-week email to owners and administrators when work is refused. |
@@ -34,7 +35,7 @@ are in
 | `packages/db/usage-migrations/` | `usage_events`, `usage_rollups` and `usage_plan_changes`, in `USAGE_DB` (`avalon-<region>-usage`). Applied by `pnpm --filter @rally/api db:usage:migrate` (local, part of `db:migrate`) and `db:usage:migrate:remote` (deploy). |
 | `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
 | `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, `useSetOrganizationPlan`, `applyPushedOrganizationUsage`, the `usage` local-cache slice, and the formatters. `lib/workspace-socket.tsx` applies the push, marks the meter stale on every subscribe answer, and relays both to the Settings window as `usage`. |
-| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage with its plan picker, the account menu's meter (a full row right under Settings), and the rail's `UsageLimitRailWarning`. |
+| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Billing with its plan picker, the account menu's meter (a full row right under Settings), and the rail's `UsageLimitRailWarning`. |
 | `packages/ui/src/components/primitives.tsx` (`Meter`) | The shared meter primitive and its `cmp.meter.*` tokens. |
 
 Each call site emits next to where its cost is already known; searching for
@@ -169,12 +170,14 @@ has a nonzero allowance. Each weekly allocation is one quarter of the advertised
 allowance; the existing seven-day reset cadence is unchanged (this is not an exact
 calendar-month spending cap). Both meters turn the warning colour below 20% left.
 Overage is priced at cost. These product values live in
-`packages/contracts/src/usage.ts`. Stored IDs `starter` and `growth` remain
+`packages/contracts/src/plans.ts`, re-exported by `usage.ts` so its existing
+consumers retain the same API. The public homepage uses this catalog directly
+at build time, avoiding a separate set of prices and allowances. Stored IDs `starter` and `growth` remain
 compatible and display as Start and Grow; Max and Ultra use `max` and `ultra`.
 
 Every new workspace starts on Start, with no payment or checkout required.
-Administrators use Stripe checkout when billing is enabled; otherwise the existing
-plan picker remains available. Operators use the engineering MCP. All paths reach
+Administrators open Settings → Organization → Billing to use Stripe checkout
+when billing is enabled; otherwise the existing plan picker remains available. Operators use the engineering MCP. All paths reach
 `setWorkspacePlan`. `setWorkspacePlan` records the change in `usage_plan_changes` (with the plan it
 replaced) and rewrites `quota_microusd` on the current week's rollups, in one
 `USAGE_DB` transaction, so the meter re-prices the current week at once. Then it
@@ -370,7 +373,7 @@ An uncertain write may have committed: inspect before retrying.
 ### 2026-11-12 — An exhausted allowance is named, shown and emailed
 
 **What changed:** A refused agent run fails as `usage_allowance_exhausted` with
-a card that opens the Usage settings; the usage read reports the admission
+a card that opens the Billing settings; the usage read reports the admission
 decision for a red (refused) or yellow (10% or less left) rail warning; owners
 and administrators get one email per allowance week.
 

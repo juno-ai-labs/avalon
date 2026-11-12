@@ -24,7 +24,7 @@ widening what counts as math, and before moving where either function is called.
 | `packages/contracts/src/model-markdown.ts` | `normalizeModelMarkdown` and `normalizeModelText`, the command table, and the rules deciding what is math. Exported as `@rally/contracts/model-markdown`. |
 | `packages/contracts/src/markdown-code.ts` | Which lines are code — the rule this module reads rather than states. See [`markdown-code.md`](markdown-code.md). |
 | `packages/contracts/src/model-markdown.test.ts` | The behavioural suite, including the cases that must *not* be rewritten. |
-| `packages/agent-harness/src/prompts/response-formatting.ts` | `RESPONSE_FORMATTING_POLICY`, the prompt section that asks for none of this to be necessary. |
+| `packages/prompts/harness/response-formatting.ts` | `RESPONSE_FORMATTING_POLICY`, the prompt section that asks for none of this to be necessary. |
 
 The call sites, each on the path from stored text to a reader:
 

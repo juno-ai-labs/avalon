@@ -63,11 +63,11 @@ Tagged links on the landing page, by `data-site-action` id:
 
 | Id | Link | Action · placement |
 | --- | --- | --- |
-| `sign-in-header` | Header sign-in button, its label rolling between Sign in to Rally and Sign up for Rally, on every device | primary_cta · header |
-| `web-app-hero` | Hero Sign up now (app.rallywith.ai), the left and primary button | secondary_cta · hero |
-| `web-app-offer` | Sign up in the pilot offer card (app.rallywith.ai), which slides in two seconds after the page loads | primary_cta · offer |
-| `download-hero` | Hero Download the macOS app, before Linux, hidden on touch-only devices | download · hero |
-| `download-linux-hero` | Hero Download for Linux, below macOS, hidden on touch-only devices | download · hero |
+| `sign-in-header` | Homepage Open Rally link; rolling sign-in button on the supporting pages | primary_cta · header |
+| `web-app-hero` | Homepage Get started for free and closing invitation (app.rallywith.ai); primary web entry in `/start-fast/` | secondary_cta · hero |
+| `web-app-offer` | Homepage inline browser-entry link under pricing; retains the historical offer action | primary_cta · offer |
+| `download-hero` | Homepage macOS text link; desktop download button on `/start-fast/` | download · hero |
+| `download-linux-hero` | Homepage Linux (.deb) text link; desktop download button on `/start-fast/` | download · hero |
 | `download-pricing-start` / `-grow` / `-max` / `-ultra` | Start for free and paid-plan Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Pricing contact link (emails Katherine) | founder_contact · pricing · enterprise |
 | `demo-request` | Ask for a demo (emails Katherine and Alex), in the home page's Sidekicks band and the `/sidekicks/` hero | demo_request · sidekicks |
@@ -84,15 +84,7 @@ session storage before removing the URL field, so refreshing before sign-in
 keeps the landing attribution. Authentication retires it. See
 [`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
 
-The pilot offer card is on `/` only, not `/start-fast/`. It advertises two months
-without subscription fees on an Organization's first paid subscription while the
-pilot is enabled; included usage remains available and optional overages are billed
-separately. Eligibility and redemption are server-side, described in
-[`stripe-billing.md`](stripe-billing.md). There is no visitor-specific deadline or
-`pilotOfferFirstSeen` query parameter. Closing the card or following its link keeps
-it away in that browser (`rally.site.pilot-offer-dismissed.v1` in local storage).
-Neither its appearance nor its close is reported. Remove the card when ending the
-pilot campaign; billing configuration does not rebuild the static site.
+The homepage has no offer card; `web-app-offer` identifies its inline browser-entry link under pricing.
 
 Not reported as site events: scrolling, section views, header nav clicks, the
 "See pricing" and product-page links. The `/canvases/` and `/sidekicks/` pages count as page
@@ -104,8 +96,9 @@ its id live there, not in `index.html`. The `/compare/` pages share the header
 (`sign-in-header`) and the footer, and count as page class `landing` with
 their own `$pathname`; see [`landing-comparisons.md`](landing-comparisons.md).
 
-`/start-fast/` is a variant of the home page whose hero puts the web app first and the Mac app second; everything below
-the hero is shared with `/` through `apps/site/src/landing-sections.html`. It
+`/start-fast/` retains the earlier landing design and its sections in
+`apps/site/src/landing-sections.html`; the illustrated homepage has independent
+markup in `index.html`. The variant
 uses the same link ids, so compare the two by `$pathname`, which every page view
 and click now carries. It is `noindex`, so search engines never list it beside `/`.
 
