@@ -624,6 +624,17 @@ const GOOGLE_PAGE_TOKEN_SCHEMA = {
 const GOOGLE_PAGE_TOKEN_ARGUMENT = z.string().min(1).max(2_000).nullish()
   .transform((value) => value ?? undefined);
 
+/**
+ * The longest free-text `query` each Google search tool accepts, read by both
+ * its advertised `maxLength` and its executor's parse. Only the parse held the
+ * number until a model sent `gmail.search` a query of more than 2,000
+ * characters: it had been told there was no limit, and was then refused for
+ * obeying the schema. The values are unchanged from what the parse already
+ * enforced.
+ */
+const GOOGLE_TEXT_QUERY_MAX_LENGTH = 2_000;
+const DRIVE_SEARCH_QUERY_MAX_LENGTH = 1_000;
+
 const emailContentFields = {
   to: z.array(z.string().email()).min(1).describe("Primary recipients for a new email, as full addresses supplied by the person or resolved with gmail.find_contacts. Reply tools resolve their recipient automatically unless to overrides it."),
   cc: z.array(z.string().email()).nullish().describe("Copied recipients, as full email addresses. Omit or send null for none. They see each other and the primary recipients."),
@@ -853,6 +864,7 @@ export const googleTools: ToolDefinition[] = [
         query: {
           type: "string",
           minLength: 1,
+          maxLength: GOOGLE_TEXT_QUERY_MAX_LENGTH,
           description:
             "Gmail search query. Supports Gmail's operators, for example from:dana@example.com, to:, cc:, subject:, newer_than:30d, older_than:1y, has:attachment, in:anywhere, is:unread, and OR / parentheses / \"quoted phrases\". Prefer an operator query over bare keywords, which match message bodies and return far too much.",
         },
@@ -1004,6 +1016,7 @@ export const googleTools: ToolDefinition[] = [
         query: {
           type: "string",
           minLength: 1,
+          maxLength: GOOGLE_TEXT_QUERY_MAX_LENGTH,
           description: "Plain text matched against an event's title, description, location, and attendees. Omit it to get every event in the window. It is not a query language, so operators written into it are matched literally and return nothing rather than filtering.",
         },
         maxResults: { type: "integer", minimum: 1, maximum: 100, description: "Maximum occurrences to return in one page. Defaults to 25." },
@@ -1046,6 +1059,7 @@ export const googleTools: ToolDefinition[] = [
         query: {
           type: "string",
           minLength: 1,
+          maxLength: DRIVE_SEARCH_QUERY_MAX_LENGTH,
           description: "Plain text matched against file names and file contents. Omit it to browse by fileType, modifiedAfter, and orderBy alone — for example the most recently modified spreadsheet.",
         },
         fileType: {
@@ -2869,7 +2883,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "gmail.search") {
         const args = z.strictObject({
-          query: z.string().min(1).max(2_000),
+          query: z.string().min(1).max(GOOGLE_TEXT_QUERY_MAX_LENGTH),
           maxResults: z.number().int().min(1).max(25).default(10),
           pageToken: GOOGLE_PAGE_TOKEN_ARGUMENT
         }).parse(rawArgs);
@@ -3142,7 +3156,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             calendarId: z.string().min(1).max(1_024).optional().describe("Calendar ID, primary, or an unambiguous name from list_calendars. Omit for the configured calendar."),
             timeMin: z.string().datetime({ offset: true }),
             timeMax: z.string().datetime({ offset: true }),
-            query: z.string().min(1).max(2_000).optional(),
+            query: z.string().min(1).max(GOOGLE_TEXT_QUERY_MAX_LENGTH).optional(),
             maxResults: z.number().int().min(1).max(100).default(25),
             pageToken: GOOGLE_PAGE_TOKEN_ARGUMENT
           })
@@ -3509,7 +3523,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "drive.search") {
         const args = z.strictObject({
-          query: z.string().min(1).max(1_000).optional(),
+          query: z.string().min(1).max(DRIVE_SEARCH_QUERY_MAX_LENGTH).optional(),
           fileType: z.enum(GOOGLE_DRIVE_FILE_TYPES).optional(),
           modifiedAfter: z.string().datetime({ offset: true }).optional(),
           orderBy: z.enum(["relevance", "modified"]).default("relevance"),
