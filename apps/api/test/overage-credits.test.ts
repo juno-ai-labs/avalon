@@ -64,7 +64,7 @@ class StripeProvider {
       if (this.loseGrantResponse) { this.loseGrantResponse = false; throw new Error('response_lost'); }
       return Response.json(grant);
     }
-    if (path === 'billing/credit_grants') return Response.json({ data: this.grants, has_more: false });
+    if (path === 'billing/credit_grants') return Response.json({ data: [...this.grants, { ...stripeGrant(), id: 'credgr_general', applicability_config: { scope: { price_type: 'metered', prices: null } } }], has_more: false });
     if (path === 'billing/credit_grants/credgr_1/expire') {
       this.available = 0; this.grants[0]!.expires_at = Math.floor(Date.now() / 1000); return Response.json(this.grants[0]);
     }

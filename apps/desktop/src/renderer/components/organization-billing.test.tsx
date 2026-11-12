@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import type { BillingCredits } from '@rally/contracts/billing';
 import { LocalCacheScopeProvider } from '../lib/local-cache-scope';
 import { OrganizationBilling } from './organization-billing';
 import type { OrganizationPlanApi } from '../lib/organization-usage';
@@ -61,9 +62,9 @@ it('reads remaining credits from Stripe on demand and shows an explicit error on
 
 
 it('discards an in-flight credit balance when switching organizations', async () => {
-  let resolve!: (credits: { enabled: boolean; currency: 'usd'; availableCents: number; grants: [] }) => void;
+  let resolve!: (credits: BillingCredits) => void;
   const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(),
-    getBillingCredits: vi.fn(() => new Promise((done) => { resolve = done; })) };
+    getBillingCredits: vi.fn(() => new Promise<BillingCredits>((done) => { resolve = done; })) };
   const billing = { enabled: true as const, status: 'active', subscribed: true, trialEndsAt: '2020-01-01T00:00:00Z', overageEnabled: true, offers: [], creditsAvailable: true };
   const view = render(<LocalCacheScopeProvider scope="org-a"><OrganizationBilling api={api} currentPlan="Grow plan" billing={billing} /></LocalCacheScopeProvider>);
   fireEvent.click(screen.getByRole('button', { name: 'View credits' }));
