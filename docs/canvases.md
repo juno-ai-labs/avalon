@@ -149,7 +149,12 @@ person who may open the Canvas may open the artifact; additional artifact-only u
 
 The sharing modal has two independent audiences: **Who can edit** (the Chat
 and publication) and **Who can interact with artifacts** (published output).
-Editors always have artifact access. A manager saves both in one transaction;
+Editors always have artifact access. Choosing Organization editors moves a
+narrower artifact audience (Editors only or Specific people) up to the
+Organization in the form, since those editors already reach the artifacts and a
+narrower label would misstate who can use them; Anyone with the link is left as
+it is, and the manager can still change the artifact audience before saving.
+The two audiences stay independent in storage. A manager saves both in one transaction;
 artifact hosts receive the changed policy through the existing Cloudflare Queue.
 [Canvas artifact access](canvas-artifact-access.md) owns propagation and serving.
 The standalone component preview remains available with
@@ -957,6 +962,19 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-12 — Organization editors widen the artifact audience
+
+Picking Everyone in the Organization under Who can edit left the artifact
+audience on Editors only. That was not wrong on access (editors reach the
+artifacts) but the form then read as if the artifacts were private, and a
+manager who wanted the Organization to use them had to pick it twice. The form
+now moves Editors only or Specific people up to the Organization on that pick.
+It only changes the draft, not the stored model, so the two audiences remain
+independent and the manager can override before saving. Anyone with the link is
+never narrowed. Switching editors back does not narrow the artifact audience
+again: undoing a choice the manager may have kept on purpose would surprise more
+than it helps.
 
 ### 2026-11-11 — App invocation does not imply automatic upkeep
 
