@@ -2186,6 +2186,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           : "execution",
       code,
       message: error instanceof Error ? error.message : "Harness execution failed",
+      ...(input.describeFailureCause
+        ? { causeCode: input.describeFailureCause(error instanceof FatalHarnessPortError ? error.causeValue : error) }
+        : {}),
     };
     return {
       ...outcome("failed", streamedContent || content, model, state, routedAttempts),

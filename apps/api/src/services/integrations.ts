@@ -4434,6 +4434,7 @@ export async function runWorkstreamHarness(
         await liveness.pulse(stage, stage === "after_tool");
       }
     },
+    describeFailureCause: describeHarnessFailureCause,
     findCompletedToolResult: (toolCallId, inputHash, policyIdentity) => findCompletedToolResult(toolCallId, inputHash, policyIdentity),
     resolveToolEffectIntentId: toolEffectIntents.resolve,
     onEvent: async (event: HarnessEvent) => {
@@ -9759,10 +9760,21 @@ export const __integrationTesting = {
  * no longer finds every question a run asked. A stop the person asked for logs
  * nothing.
  */
+/**
+ * Why a harness port failed, as a code a log may keep. The harness names the
+ * port ("Run liveness renewal failed"); this names what the port threw — a
+ * usage refusal, a fence mismatch, a revoked membership — which is the
+ * difference between one query and a day's diagnosis. A thrown message that is
+ * prose collapses to the fallback: it may hold member content.
+ */
+export function describeHarnessFailureCause(cause: unknown): string {
+  return diagnosticErrorCode(cause, "unclassified_cause");
+}
+
 export function logHarnessRunOutcome(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "harnessRunId" | "workspaceId" | "parentId">,
-  outcome: { status: string; failure?: { code?: string; kind?: string; message?: string } | null | undefined },
+  outcome: { status: string; failure?: { code?: string; kind?: string; message?: string; causeCode?: string } | null | undefined },
   stoppedByUser: boolean,
 ): void {
   if (outcome.status === "completed" || stoppedByUser) return;
@@ -9782,5 +9794,6 @@ export function logHarnessRunOutcome(
     failure_code: outcome.failure?.code ?? null,
     failure_kind: outcome.failure?.kind ?? null,
     failure_message: outcome.failure?.message?.slice(0, 500) ?? null,
+    failure_cause_code: outcome.failure?.causeCode ?? null,
   });
 }
