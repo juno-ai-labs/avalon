@@ -2693,7 +2693,7 @@ function ConversationSurfaceContent({
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
               message={latestRunFailureMessage}
               onRetry={() => retry.mutate()}
-              onOpenUsageSettings={() => { void desktopBridge().openSettings('workspace'); }}
+              onOpenUsageSettings={() => { void desktopBridge().openSettings('billing'); }}
               requestId={detail.latestHarnessRun.requestId ?? detail.latestHarnessRun.id}
               retrying={retry.isPending}
             />

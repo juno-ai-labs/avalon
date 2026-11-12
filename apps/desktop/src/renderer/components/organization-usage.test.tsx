@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { OrganizationUsage } from '@rally/contracts/usage';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -97,7 +97,8 @@ describe('Usage in Settings', () => {
     expect(screen.getByText('Start plan')).toBeVisible();
     expect(screen.getByText('72% left')).toBeVisible();
     expect(screen.getByText('Resets Thursday, October 8 at 9:00 AM. Shared by everyone in Juno Labs.')).toBeVisible();
-    expect(screen.queryByText('Usage beyond quota this month')).not.toBeInTheDocument();
+    expect(screen.getByText('Usage beyond quota this month')).toBeVisible();
+    expect(screen.getByText('$0.00')).toBeVisible();
   });
 
   it('lets an administrator move the Organization to another plan and repaints from the answer', async () => {
@@ -213,7 +214,7 @@ describe('Usage in Settings', () => {
   it('draws an empty track and says it is checking while nothing is cached', () => {
     renderSection(pendingApi);
 
-    expect(screen.getByRole('status')).toHaveTextContent('Checking usage…');
+    expect(screen.getAllByRole('status').some((status) => status.textContent === 'Checking usage…')).toBe(true);
     expect(screen.queryByRole('meter')).not.toBeInTheDocument();
     expect(document.querySelector('.meter .meter-fill')).toBeNull();
   });
@@ -245,7 +246,7 @@ describe('Usage in Settings', () => {
   it('fetches again each time the section opens', async () => {
     const api = apiAnswering(usage(80), usage(61));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const section = <QueryClientProvider client={client}><UsageSettingsSection api={api} canChangePlan organizationName="Juno Labs" /></QueryClientProvider>;
+    const section = <QueryClientProvider client={client}><Tooltip.Provider><UsageSettingsSection api={api} canChangePlan organizationName="Juno Labs" /></Tooltip.Provider></QueryClientProvider>;
     const first = render(section);
     await screen.findByText('80% left');
     first.unmount();
@@ -261,7 +262,7 @@ describe('Usage in Settings', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const section = (openRequest: number): React.JSX.Element => (
       <QueryClientProvider client={client}>
-        <UsageSettingsSection api={api} canChangePlan openRequest={openRequest} organizationName="Juno Labs" />
+        <Tooltip.Provider><UsageSettingsSection api={api} canChangePlan openRequest={openRequest} organizationName="Juno Labs" /></Tooltip.Provider>
       </QueryClientProvider>
     );
     const { rerender } = render(section(3));
@@ -372,9 +373,8 @@ describe('Usage in the Organization menu', () => {
 it('keeps the plan picker disabled when billing status fails and retries explicitly', async () => {
   const api: OrganizationPlanApi = { ...apiAnswering(usage(72)), getBillingStatus: vi.fn(async () => { throw new Error('Billing read failed'); }) };
   renderSection(api);
-  expect(await screen.findByText(/Billing could not be loaded/)).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
-  expect(screen.getByRole('combobox', { name: 'Plan' })).toBeDisabled();
+  expect(await screen.findByText('Billing read failed')).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'Billing plan' })).toBeDisabled();
   vi.mocked(api.getBillingStatus!).mockResolvedValue({ enabled: false });
   fireEvent.click(screen.getByRole('button', { name: 'Retry billing' }));
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'Plan' })).not.toBeDisabled());
@@ -386,7 +386,7 @@ it('refreshes billing after returning from hosted checkout while Settings stays 
     trialEndsAt: '2020-01-01T00:00:00Z', overageEnabled: false, offers: [{ id: 'start', name: 'Start', plan: 'starter' as const, currencies: ['usd'], overageAvailable: false }] })) };
   renderSection(api);
   expect(await screen.findByText('Continue to checkout')).toBeVisible();
-  expect(screen.getByText(/Start plan. Trial ended/)).toBeVisible();
+  expect(screen.getByText(/No subscription. One subscription for everyone/)).toBeVisible();
   subscribed = true;
   fireEvent(window, new Event('focus'));
   expect(await screen.findByText('Manage billing')).toBeVisible();
@@ -394,10 +394,30 @@ it('refreshes billing after returning from hosted checkout while Settings stays 
 });
 
 
-it('keeps the plan picker disabled while billing status is unknown', async () => {
+it('shows a plan skeleton and disables billing actions while billing status is unknown', async () => {
   const api: OrganizationPlanApi = { ...apiAnswering(usage(72)), getBillingStatus: () => new Promise(() => undefined) };
   renderSection(api);
-  expect(await screen.findByRole('combobox', { name: 'Plan' })).toBeDisabled();
+  expect(await screen.findByText('Loading plan…')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Manage billing' })).toBeDisabled();
+});
+
+it('shows the Stripe plan after returning from a plan change even if usage still reports the old plan', async () => {
+  let offerId = 'grow';
+  const oldUsage = { ...usage(72), plan: 'growth' as const };
+  const api: OrganizationPlanApi = { ...apiAnswering(oldUsage), createBillingPortal: vi.fn(),
+    getBillingStatus: vi.fn(async () => ({ enabled: true as const, subscribed: true, status: 'active', offerId, currency: 'usd',
+      trialEndsAt: '2020-01-01T00:00:00Z', overageEnabled: false, offers: [
+        { id: 'grow', name: 'Grow', plan: 'growth' as const, currencies: ['usd'], overageAvailable: true },
+        { id: 'ultra', name: 'Ultra', plan: 'ultra' as const, currencies: ['usd'], overageAvailable: true },
+      ] })) };
+  renderSection(api);
+  expect(await screen.findByText('Grow plan · Subscription: active')).toBeVisible();
+  offerId = 'ultra';
+  fireEvent(window, new Event('focus'));
+  expect(await screen.findByText('Ultra plan · Subscription: active')).toBeVisible();
+  expect(screen.getByText('Ultra', { exact: true })).toBeVisible();
+  expect(screen.queryByRole('combobox', { name: 'Billing plan' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Manage billing' })).toBeEnabled();
 });
 
 it('does not describe previously billable usage as waived after cancellation', async () => {
@@ -414,7 +434,7 @@ describe('The rail warning when Rally stops taking new work', () => {
     const onOpen = vi.fn();
     render(wrap(<UsageLimitRailWarning api={apiAnswering({ ...usage(0), allowanceExhausted: true })} onOpen={onOpen} />));
     const warning = await screen.findByRole('button', { name: /^Usage limit reached\./ });
-    expect(warning.getAttribute('aria-label')).toBe("Usage limit reached. This week's included usage is used up and overage billing is off, so Rally, Sidekicks and background agents are paused. An administrator can turn on overage billing in Settings. Resets Thursday, October 8 at 9:00 AM.");
+    expect(warning.getAttribute('aria-label')).toBe("Usage limit reached. This week's included usage is used up and overage billing is off, so Rally, Sidekicks and background agents are paused. An administrator can turn on overage billing in Settings under Billing. Resets Thursday, October 8 at 9:00 AM.");
     fireEvent.click(warning);
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
@@ -422,7 +442,7 @@ describe('The rail warning when Rally stops taking new work', () => {
   it('warns at 10% or less left while running out would stop work', async () => {
     render(wrap(<UsageLimitRailWarning api={apiAnswering({ ...usage(10), allowanceExhausted: false, stopsAtAllowance: true })} onOpen={vi.fn()} />));
     const warning = await screen.findByRole('button', { name: /^Usage running low\./ });
-    expect(warning.getAttribute('aria-label')).toBe("Usage running low. 10% of this week's included usage is left. When it runs out, Rally, Sidekicks and background agents pause unless an administrator turns on overage billing in Settings. Resets Thursday, October 8 at 9:00 AM.");
+    expect(warning.getAttribute('aria-label')).toBe("Usage running low. 10% of this week's included usage is left. When it runs out, Rally, Sidekicks and background agents pause unless an administrator turns on overage billing in Settings under Billing. Resets Thursday, October 8 at 9:00 AM.");
   });
 
   it('does not warn at 11% left, or when overages keep work going', async () => {
@@ -444,4 +464,36 @@ describe('The rail warning when Rally stops taking new work', () => {
     await waitFor(() => expect(api.getWorkspaceUsage).toHaveBeenCalled());
     expect(screen.queryByRole('button')).toBeNull();
   });
+});
+
+it('loads billing and credits independently when usage fails', async () => {
+  const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn().mockRejectedValue(new Error('Usage unavailable')), setWorkspacePlan: vi.fn(),
+    getBillingStatus: vi.fn(async () => ({ enabled: true as const, status: 'active', subscribed: true, trialEndsAt: '2026-01-01T00:00:00Z', overageEnabled: false, offers: [] })),
+    getBillingCredits: vi.fn(async () => ({ enabled: true, currency: 'usd' as const, availableCents: 4200, grants: [] })), createBillingPortal: vi.fn() };
+  renderSection(api);
+  expect(await screen.findByText("Usage isn't available right now.")).toBeVisible();
+  expect(await screen.findByRole('button', { name: 'Manage billing' })).toBeEnabled();
+  expect(await screen.findByText(/\$42.00 available/)).toBeVisible();
+  expect(screen.getByText('Usage beyond quota this month')).toBeVisible();
+});
+
+it('disables billing changes while offline even if no usage value was loaded', async () => {
+  const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn().mockRejectedValue(new Error('Usage unavailable')), setWorkspacePlan: vi.fn(),
+    getBillingStatus: vi.fn(async () => ({ enabled: true as const, status: 'active', subscribed: true, trialEndsAt: '2026-01-01T00:00:00Z', overageEnabled: false,
+      currency: 'usd', overageAvailable: true, paymentMethodReady: true, offers: [] })), createBillingPortal: vi.fn(), setBillingOverages: vi.fn(async (enabled) => ({ enabled })) };
+  renderSection(api);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Manage billing' })).toBeEnabled());
+  expect(screen.getByRole('checkbox')).toBeEnabled();
+  fireEvent.click(screen.getByRole('checkbox'));
+  await waitFor(() => {
+    expect(screen.getByRole('checkbox')).toBeEnabled();
+    expect(screen.getByRole('checkbox')).toBeChecked();
+  });
+  act(() => onlineManager.setOnline(false));
+  const toggle = screen.getByRole('checkbox');
+  expect(toggle).toBeDisabled();
+  expect(toggle).toBeChecked();
+  expect(toggle.parentElement).toHaveAttribute('aria-label', 'Connect to the internet to change billing.');
+  expect(screen.getByRole('button', { name: 'Manage billing' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Try again' })).toHaveAttribute('aria-disabled', 'true');
 });

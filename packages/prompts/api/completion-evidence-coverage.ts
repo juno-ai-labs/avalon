@@ -1,0 +1,2 @@
+/** What evidence the completion judge's JEV state carries, and what it leaves out, as the judge reads it. */
+export const COMPLETION_EVIDENCE_COVERAGE = "Exact trigger and candidate final; all conversation text retained in the acting model's current projection, including compaction checkpoints and in-run input. Current-execution receipt statuses and summaries; no full tool payloads or post-decision outcomes. Older compacted details may be unavailable.";

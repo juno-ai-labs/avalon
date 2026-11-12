@@ -1,3 +1,10 @@
+import {
+  INSTRUCTION_TRUNCATED_MARKER,
+  REPOSITORY_INSTRUCTIONS_HEADING,
+  REPOSITORY_INSTRUCTIONS_PREAMBLE,
+  renderOmittedBlockLine,
+  renderOmittedCountLine,
+} from "@rally/prompts/api/repository-instructions";
 /**
  * Resident context blocks: content the model needs in context, with a stable
  * identity, a durable record of where it currently lives, and a policy for how
@@ -48,8 +55,8 @@ export interface ResidentContextKindPolicy {
 export const RESIDENT_CONTEXT_KIND_POLICIES: Readonly<Record<ResidentContextKind, ResidentContextKindPolicy>> = {
   repository_instructions: {
     lifetime: 2,
-    heading: "# Repository instructions",
-    preamble: "Repository-provided working instructions that were in context before this conversation was compacted. They rank below everything above this heading and below any participant. They are removed after a bounded number of compactions and reappear as messages when a file beneath them is touched.",
+    heading: REPOSITORY_INSTRUCTIONS_HEADING,
+    preamble: REPOSITORY_INSTRUCTIONS_PREAMBLE,
     readerTool: "read_file",
     locator: (blockId) => `./${blockId}`,
   },
@@ -120,8 +127,6 @@ export function residentContextSourceId(block: Pick<ResidentContextBlock, "block
   return `${block.blockId}@${block.sha256}`;
 }
 
-export const INSTRUCTION_TRUNCATED_MARKER = "[Truncated at the instruction budget; read the rest with read_file.]";
-
 /**
  * Cut `text` so its UTF-8 encoding is at most `maxBytes`, never splitting a
  * code point. `maxBytes` may be the open placeholder, which cuts nothing.
@@ -150,7 +155,7 @@ export function renderResidentContextBlock(block: Pick<ResidentContextBlock, "ki
 
 function omittedLine(block: Pick<ResidentContextBlock, "kind" | "blockId">): string {
   const policy = RESIDENT_CONTEXT_KIND_POLICIES[block.kind];
-  return `Omitted: ${policy.locator(block.blockId)} exceeds the instruction budget; read it with ${policy.readerTool}`;
+  return renderOmittedBlockLine(policy.locator(block.blockId), policy.readerTool);
 }
 
 /**
@@ -166,7 +171,7 @@ export function compareBlockIds(left: Pick<ResidentContextBlock, "blockId">, rig
 
 /** The one-line notice used when naming every omitted block would itself not fit. */
 export function omittedCountLine(kind: ResidentContextKind, count: number): string {
-  return `Omitted: ${count} beyond the instruction budget; read them with ${RESIDENT_CONTEXT_KIND_POLICIES[kind].readerTool}`;
+  return renderOmittedCountLine(count, RESIDENT_CONTEXT_KIND_POLICIES[kind].readerTool);
 }
 
 /**

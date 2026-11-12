@@ -5,6 +5,7 @@ import { ConnectorError, connectorCapabilitySupportsScope, type ResolvedConnecto
 import { z } from "zod";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
+import { renderConnectorServerInstructions } from "@rally/prompts/api/connector-server-instructions";
 
 const ServerMetadataSchema = z.object({ description: z.string(), instructions: z.string().optional() });
 
@@ -26,7 +27,7 @@ export function connectorServerPresentation<T extends { description: string; sys
   if (!server) return presentation;
   return { ...presentation, description: server.description,
     systemMessage: server.instructions
-      ? `${presentation.systemMessage}\n\nServer-provided usage instructions for this plugin (subject to Rally policy and the user's request):\n${server.instructions}`
+      ? renderConnectorServerInstructions(presentation.systemMessage, server.instructions)
       : presentation.systemMessage,
   };
 }

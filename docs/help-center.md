@@ -28,9 +28,9 @@ the machinery.
 | `apps/site/worker/index.ts` | The site's only Worker code. It runs for `/`, `/help` and `/help/*` alone (`run_worker_first` in `wrangler.jsonc`): on the homepage it sets the landing CSP (`worker/landing-csp.ts`); under `/help/` it answers `Accept: text/markdown` with the page's Markdown copy and adds the discovery headers. |
 | `apps/site/build/help/plugin.ts` | The Vite plugin: serves pages on request under `vite dev`, and emits every output during `vite build`, linking the `help` entry's hashed script and stylesheet, and naming other entries a page script loads itself (`entryMeta`, the PostHog SDK) in meta tags. |
 | `apps/site/src/help.ts`, `src/help-search.ts` | The browser script: phone menu, copy buttons, the outline's current-section marker, and search. Ranking lives in `help-search.ts` so it can be tested without a DOM. |
-| `apps/site/build/help/og.ts` | Each page's social card: a 1200×630 PNG laid out by Satori and rasterized by resvg (WebAssembly), named by a hash of its words. |
+| `apps/site/build/help/og.ts` | Each page's social card: a 1200×630 PNG drawn by the shared pencil-site `reading-card.ts`, named by a hash of its words and design version. |
 | `apps/site/public/_redirects` | Sends every retired `/support/...` address, and the trailing-slash address of each help page renamed since, to the page that now covers its subject. A page for a removed feature, and a removed page's slashless and `.md` copies, answer 404. Wildcard rules go last: Cloudflare counts every rule after the first wildcard against its 100-rule dynamic limit. |
-| `apps/site/src/help.css` | All styling. Colours and type are `--help-*` tokens; the light and dark themes are the only places colours are set. |
+| `apps/site/src/help.css` | Manual layout and `--help-*` semantic tokens, importing the shared pencil-site fonts and palette from `site-theme.css`. |
 
 ## How it works
 
@@ -94,8 +94,8 @@ copies, so an agent reading one page can follow the manual without HTML.
 
 Every page names its own card in `og:image` and `twitter:image`, with its
 size and alt text. The card shows the chapter, the page number, the title and
-the description in the landing page's type on its dark ground; chapter openers
-and the cover set the title in capitals with the chapter number behind it.
+the description on warm paper in the same Instrument Serif and Geist type as
+the page, with the shared blue Sidekick vignette. Titles keep their sentence case.
 `renderOgImages` draws them in `generateBundle`, about a tenth of a second
 each, and `vite dev` draws one on request. The file name carries a hash of the
 card's words and `DESIGN_VERSION`, so `_headers` caches `/help/_og/*` as
@@ -141,11 +141,16 @@ the site, classed as `support` in `telemetry.ts`.
 
 ### Theming
 
-`help.css` reads every colour and font from `--help-*` custom properties. There
-are two themes, light and dark, chosen by `prefers-color-scheme`; setting
-`data-theme="light"` or `"dark"` on `<html>` forces one. A new look is a change
-to those token blocks, not to the rules below them. Type is the landing page's:
-Barlow for text, Barlow Semi Condensed for display, and a monospace for labels.
+`help.css` imports `site-theme.css`, sharing the homepage's warm paper, ink,
+sage, Instrument Serif and Geist faces. The manual stays light in either system
+appearance, matching the illustrated site. `--help-*` properties map that palette
+to the reading interface and keep separate colors for alerts and syntax.
+
+The cover uses an open two-column chapter directory, the shared Sidekick
+illustration, and the original introduction below the directory. Inner pages
+keep the article first in the source, chapters on the left and the outline on
+the right. Small screens keep the existing menu and move Markdown actions below
+the article. The shared SVG arrow avoids missing glyphs in the local font subset.
 
 ## Invariants
 
@@ -215,10 +220,24 @@ anchor failures, the real `help/` folder, search ranking, and the Worker's
 its own folder under the system temp directory and removes it afterwards.
 
 Visual changes are checked in a browser: `pnpm --filter @rally/site build`,
-`vite preview`, and Playwright screenshots in light and dark at desktop and
-phone widths.
+`vite preview`, and Playwright screenshots at desktop and phone widths, checking that both system
+appearance preferences retain the light paper theme.
 
 ## Changelog
+
+### 2026-11-12 — Share the local-font preview renderer
+
+**What changed:** Help previews use the blog's `reading-card.ts` renderer and
+checked-in TTF derivatives in place of the separate Satori/resvg path. A new
+design version refreshes immutable card URLs.
+
+**Why:** Maintaining two preview layouts and font-loading paths would let their
+appearance diverge. The shared renderer fits text to the card before rasterizing
+it, using the site's own type and artwork without a browser or network request.
+
+**Consequences:** Maintain the static font derivatives alongside their WOFF2
+sources and bump `DESIGN_VERSION` when card rendering changes. The PNG-boundary
+regressions in `test/reading-card.test.ts` cover long titles and unbroken words.
 
 ### 2026-11-09 — Wildcard redirects go last, and only renamed pages redirect
 

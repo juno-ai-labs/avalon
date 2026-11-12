@@ -29,6 +29,7 @@ import {
   Bell,
   Brain,
   ChevronRight,
+  CreditCard,
   Ellipsis,
   Plug,
   RefreshCcw,
@@ -414,6 +415,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       // Its own page beneath Organization: the roster, guests and invitations
       // are a place people are sent to directly, from the account menu.
       { id: 'members', label: 'Members', icon: UsersRound, child: true },
+      { id: 'billing', label: 'Billing', icon: CreditCard, child: true },
       // Its own top-level page rather than part of Organization: the Terminal
       // egress policy is a review-then-confirm flow that stops running
       // sandboxes, which does not belong in the middle of a list of names,
@@ -1268,7 +1270,7 @@ export function WorkspaceSettingsScreen({
     // page was last shown; `connection` without one lands on Connections.
     setConnectionPageId(null);
     setActiveSection(nextSection);
-    if (nextSection === 'workspace') setUsageRequest((count) => count + 1);
+    if (nextSection === 'billing') setUsageRequest((count) => count + 1);
   }), [bridge]);
 
   useEffect(() => {
@@ -1749,7 +1751,6 @@ export function WorkspaceSettingsScreen({
                   queryKey={['memory', 'organization', workspace.id]}
                   read={(signal) => api.getOrganizationMemory(signal)}
                 />}
-                <UsageSettingsSection api={api ?? null} canChangePlan={isAdmin} organizationName={workspace.name} openRequest={usageRequest} />
                 <div className="settings-pane-heading settings-pane-heading-spaced">
                   <h2><SettingLabel setting={settings.workspaceAccess} /></h2>
                   <p>Leaving removes this organization from your Rally account on every device.</p>
@@ -1931,6 +1932,12 @@ export function WorkspaceSettingsScreen({
                     )}
                   </div>
                 )}
+              </section>
+            )}
+
+            {activeSection === 'billing' && (
+              <section aria-labelledby="settings-title" className="settings-pane">
+                <UsageSettingsSection api={api ?? null} canChangePlan={isAdmin} organizationName={workspace.name} openRequest={usageRequest} billingAccessReason={session?.impersonator ? "Billing is unavailable during support sessions." : undefined} />
               </section>
             )}
 

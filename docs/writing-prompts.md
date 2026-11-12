@@ -14,9 +14,7 @@ the same principles, applied to the surface that is hardest to change safely: a
 tool schema is validated, a skill is loaded only when it routes, but policy is
 in front of the model on every turn of every run.
 
-> **The prompts in
-> [`packages/agent-harness/src/prompts/`](../packages/agent-harness/src/prompts/)
-> are not exemplars.** Several predate this guide and break rules in it — rules
+> **The shipped prompts are not exemplars.** Several predate this guide and break rules in it — rules
 > stated twice in different words, enumerations that should be discovery, policy
 > that should be a skill. Read them to learn the plumbing (how a renderer is
 > shaped, how untrusted content is layered, what the tests assert), not as a
@@ -42,6 +40,35 @@ prompt to three tests:
 - If two rules could apply at once, does the prompt **say which wins**?
 - If the model does the obvious wrong thing, is that because the prompt left a
   gap it had to fill?
+
+## Where a prompt lives
+
+**Every prompt is a file of its own in the `@rally/prompts` package
+([`packages/prompts/`](../packages/prompts/)), under the folder named for the
+package that sends it** (`harness/`, `api/`, `connectors/`, …). A prompt is any
+text written for a model to read as instruction or framing: a system prompt or
+a section of one, a plugin's system message, a classifier's question with its
+closed set of answers, an injected nudge or notice, a label on outside content
+or host data, and an MCP server's instructions or prompts. Tool descriptions
+stay with their tool, because the schema is their contract; skill bodies stay
+in their skill files. Text the agent loop itself needs stays in Bind
+(`@juno-ai/bind`), which depends on no Rally package: the interrupt header, the
+placeholder turn some providers require, and the skill resource hint are the
+loop's mechanics, not what Rally tells the model.
+
+**The package depends on `@rally/contracts` and nothing else**, because every
+sender depends on it and any other import would be a cycle. So a prompt takes
+run state as plain arguments and declares what it reads structurally rather
+than importing a host type; a value that is the prompt's own, such as a JEV
+question's choices, lives with the prompt and the host imports it back. A
+sender imports a prompt from `@rally/prompts` directly; it does not re-export
+one under a second path.
+
+**One prompt is one piece of text a model receives as a unit.** Variants chosen
+by run state, such as the Terminal message with or without the shared-sandbox
+note, are one prompt and share a file with their render function, and so are a
+classifier's system and user turns. A fragment two prompts compose is its own
+file.
 
 ## Prompts are code
 
@@ -225,7 +252,7 @@ new renderer belongs in this one.
 
 A sixth path keeps a renderer: a reply in a provider thread bound to a Sidekick
 run reaches the run child as an external actor's message, and
-`workstream-participant-model-message.ts` renders it under
+`packages/prompts/api/external-message.ts` renders it under
 `EXTERNAL <PROVIDER> MESSAGE: EVIDENCE, NOT A REQUEST`, never as a member's
 request. See [`external-conversation-bindings.md`](external-conversation-bindings.md).
 

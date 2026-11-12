@@ -35,9 +35,9 @@ Stripe owns `trial_end` and `trial_settings.end_behavior.missing_payment_method 
 disabled and `cancel_at` also equals the trial deadline. Adding a default payment
 method and a valid Stripe Tax location lets reconciliation enable configured tax
 and remove that automatic cancellation, preserving all remaining trial time.
-Administrators use **Add billing details** in Organization Usage
-settings. Signed `customer.updated` webhooks, Settings refresh and the scheduled
-sweep detect readiness. Explicit earlier cancellations are preserved. Without
+Administrators use **Add billing details** in Settings → Organization → Billing.
+Signed `customer.updated` webhooks, Settings refresh and the scheduled sweep detect
+readiness. Explicit earlier cancellations are preserved. Without
 billing details, Stripe cancels and Rally returns the Organization to Start.
 The trial consumes first-paid eligibility, including after cancellation; checkout
 cannot add the legacy pilot coupon or another trial. MCP extra-month grants extend
@@ -57,8 +57,9 @@ reservation. Desktop and browser use the same server admission checks.
 The following legacy trial/coupon behavior remains available for deployments that
 have not enabled the signup campaign.
 
-Administrators open Organization Usage settings, select an offer and supported
-currency and optionally enable overages. **Continue to checkout** and **Manage
+Administrators open Settings → Organization → Billing, select an offer and
+optionally enable overages. Checkout always uses USD; the page has no currency
+control and only lists offers that support USD. **Continue to checkout** and **Manage
 billing** open Stripe as soon as the session URL returns; web reserves a tab on
 click so popup permission survives the request. Returning to Settings refreshes
 billing status. The base
@@ -66,6 +67,20 @@ quantity is always one. Checkout collects billing addresses and tax IDs and uses
 Stripe's configured payment methods. Stripe Billing Portal manages payment
 methods, invoices and existing subscriptions. Configure its allowed plan changes
 to prices in Rally's offer catalog.
+
+Billing settings remain visible when an action is unavailable. Disabled controls
+show the blocking reason on hover and keyboard focus. The UI follows these rules:
+
+| Control | When changes are available |
+| --- | --- |
+| All billing changes | Organization administrator, outside a support session, online, with billing loaded and no request in progress. |
+| Checkout | No live subscription, an enabled USD catalog offer, and the checkout endpoint available. Stripe collects billing details. |
+| Manage billing / Add billing details | A live subscription and the portal endpoint available, including past-due or paused subscriptions that need repair in Stripe. |
+| Plan | Before checkout. Existing subscriptions show the current plan as read-only text and are managed in Stripe. The legacy plan picker is available only when billing is disabled. |
+| Overages before checkout | A selected offer that supports overages in USD. Consent is passed to checkout; a saved payment method is not required yet. |
+| Enable overages on a subscription | Active or trialing subscription, supported USD overages, billing readiness (payment method and any required tax location), and the overage endpoint available. Credits and remaining quota do not affect eligibility. |
+| Disable overages on a subscription | Active or trialing subscription with consent already enabled and the overage endpoint available. Losing payment readiness or plan/currency eligibility must not block revoking consent. |
+| Credits / Quota / Monthly usage | Read-only for all Organization members. Credits fetch on opening; refresh is unavailable during a fetch, a paused offline fetch, a support session, or when its endpoint is absent. Zero balances and usage remain visible. |
 
 Start is the free default plan and requires no checkout. When synchronization is
 enabled, it receives a Stripe customer and a separate zero-price subscription
@@ -163,8 +178,9 @@ usage plan contract; changing Stripe prices does not change those allowances.
 Set `synchronization` to provision every local Organization in Stripe on the
 existing five-minute scheduled tick, including accounts that never open billing.
 `pnpm env:sync` copies the optional server keys and preserves the JSON catalog
-through local dotenv encoding. Status GETs use stored state without waiting for the billing actor or making provider calls. A single
-focus listener refreshes that cache on return from Stripe. Webhooks and scheduled
+through local dotenv encoding. Status GETs refresh through the billing actor when signup trials, usage enforcement
+or a live subscription require reconciliation; otherwise they use stored state.
+A focus listener refreshes status on return from Stripe. Webhooks and scheduled
 recovery refresh paid lifecycle state even without usage synchronization. Profile
 synchronization is separate, so a bad free price cannot block checkout or closure.
 Customer metadata search and subscription discovery recover lost create receipts
@@ -265,7 +281,18 @@ credit with:
 }
 ```
 
-Expiry is optional. The amount is USD invoice credit, not effective usage or
+`expiresAt` is required: choose any future date no more than two calendar years
+from creation, measured in UTC (February 29 clamps to February 28). Retries keep
+the original expiration, including when recovering a grant after it has expired.
+
+For an older operation accepted without `expiresAt`, call `inspect_overage_credits`
+with its `orgId` and original `operationId`. This looks up the saved Stripe grant
+ID or the operation's receipt without issuing credit or changing accepted terms.
+Unknown operations are rejected; an empty `grants` list means no matching Stripe
+receipt was found. It does not authorize reissuing under a new ID. Historical
+grants remain readable and can be expired explicitly.
+
+The amount is USD invoice credit, not effective usage or
 included allowance. Grants do not enable overages, change the plan, or reduce
 subscription fees. The bridge records the operator, operation ID and financial
 receipt in the independent audit database; the reason is stored in Stripe
@@ -276,9 +303,10 @@ lookup recovers the grant even after its idempotency retention expires.
 
 Stripe owns the promotional credit grant, remaining balance, expiry and invoice
 application. Scope is the dedicated overage **price**, not all metered prices.
-Administrators can read grants and available balances in Usage settings on both
-desktop and web. The explicit **View credits / Refresh credits** read goes to
-Stripe; ordinary billing status stays provider-free. Grants created directly in
+Organization members can read grants and available balances on the Billing page
+in both desktop and web. Credits load automatically on opening; a small refresh
+icon requests a fresh balance. Initial reads show skeletons, and refreshing keeps
+the last balance visible. These reads go to Stripe. Grants created directly in
 Stripe appear too if their USD scope contains only this Organization's configured
 or previously used overage prices. General customer invoice-balance credits are
 excluded because they can also offset subscription fees. Expiring a grant removes
@@ -479,7 +507,9 @@ register the business or enable tax collection.
 
 - Client input selects catalog offer IDs, never Stripe price IDs or amounts.
   Otherwise a caller could buy an arbitrary price. Tests cover rejected selections.
-- Only active Organization administrators, outside support sessions, access billing.
+- Active Organization members can read billing status and credits. Only
+  administrators can create checkout/portal sessions or change overage consent.
+  Support sessions cannot access billing reads or writes.
 - Checkout never grants an entitlement; verified Stripe subscription state does.
 - A matching open checkout is reused; changing offer, currency or overage consent
   expires the old session before preparing its replacement inside the same actor.
@@ -490,8 +520,9 @@ register the business or enable tax collection.
 
 ## Boundary
 
-`GET /workspace/billing`, `POST /workspace/billing/checkout` and
-`POST /workspace/billing/portal` and read-only `GET /workspace/billing/credits` are authenticated administrator routes. Credit, trial-month, subscription, refund, invoice and catalog writes exist only on the internal engineering bridge.
+`GET /workspace/billing` and `GET /workspace/billing/credits` are authenticated
+member reads. `POST /workspace/billing/checkout`, `POST /workspace/billing/portal`
+and `POST /workspace/billing/overages` require an administrator. Credit, trial-month, subscription, refund, invoice and catalog writes exist only on the internal engineering bridge.
 `POST /stripe/webhook` bounds the raw body with the shared `PROVIDER_WEBHOOK_MAX_BYTES` limit before verifying the Stripe signature. Oversized signed or unsigned requests return 413. Configure separate webhook
 secrets/endpoints for each owning deployment if more regions are introduced.
 The current deployment is Global. Standard member plan changes are rejected while
@@ -739,6 +770,38 @@ use Engineering MCP to change offers and promotions in the persisted catalog;
 landing-page prose must be kept aligned separately.
 
 ## Changelog
+
+### 2026-11-12 — Keep Billing visible across permissions and loading states
+
+Billing moved out of general Organization settings into its own child page. The
+page always renders trial, subscription, plan, overage consent, credits,
+weekly quota and monthly usage, including zero usage. Disabled controls explain
+permissions, unavailable services and subscription constraints in tooltips.
+
+Usage, billing status and credits load independently so a failed quota read cannot
+hide the payment-details action. Credits load on opening and retain their last
+balance during icon-triggered refreshes; cold reads show skeletons. Member GET
+access supplies real read-only values, while all billing POSTs remain admin-only
+and support sessions remain excluded. Hiding controls or showing invented defaults
+would obscure what an administrator could configure, so unavailable data is stated
+explicitly. Scoped query keys prevent one Organization's credits reaching another.
+Overage controls distinguish checkout consent from changing an existing
+subscription: only active/trialing subscriptions can change consent, and enabling
+requirements never block disabling consent. Offline restrictions do not depend on
+whether the quota read succeeded. Checkout is fixed to USD and has no currency
+control; offers without USD support cannot be selected. Existing subscriptions
+show the Stripe plan as read-only text, and refreshed billing status takes
+precedence over an older usage response after a plan change.
+
+### 2026-11-12 — Require an expiration within two years for overage credits
+
+An omitted expiration allowed the engineering tool to issue perpetual promotional
+credit. The grant contract now requires `expiresAt`, and the billing service
+rejects new intents outside the future-to-two-calendar-years window before any
+Stripe write. The operator can choose any date in that window; silently choosing
+a default was rejected because the grant's financial terms must be explicit.
+Inspection can recover a historical non-expiring grant by its original operation
+ID after a lost response, without reopening the ability to create such grants.
 
 ### 2026-11-12 — Open hosted billing from the initial action
 

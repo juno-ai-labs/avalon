@@ -57,6 +57,7 @@ import { observabilityQueryInputSchema, queryObservability } from "./observabili
 import { organizationPage, organizationPageInputSchema } from "./organizations";
 import { userPage, userPageInputSchema } from "./users";
 import { acceptsTasks, createTaskCarrier, registerTaskMethods, type EngineeringTaskInput } from "./tasks";
+import { ENGINEERING_MCP_SERVER_INSTRUCTIONS } from "@rally/prompts/engineering-mcp/server-instructions";
 
 type ToolResult = {
   content: [{ type: "text"; text: string }];
@@ -225,16 +226,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     version: "1.0.0",
     description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; administer billing, create organizations and send messages as a selected Rally user.",
   }, {
-    instructions: [
-      "Use these tools for Rally engineering investigations and requested administration.",
-      "Product names differ from storage: an Organization is a workspace, a Canvas's Chat is its conversation (its id is a workstream id in storage, substream 0), and a Sidekick is an automation, whose shared conversation has the Sidekick's id.",
-      "Resolve the exact organization, user and conversation before investigating. Start with the list/search tools and inspect database schemas before querying rows; bind SQL values with placeholders.",
-      "For participant-visible content use read_canvas_chat or read_sidekick_conversation as the selected user and follow pagination. Those reads omit internal tools and thinking; use the exact conversation's inspection SQL and observability tools when diagnosing execution failures.",
-      "SQL tools can mutate production data. Use read-only queries for investigations; make changes only within the user's request. For creation and message sends, reuse the same operationId and arguments after an uncertain outcome rather than creating a second operation.",
-      "For billing, inspect_org_billing and inspect_billing_catalog establish current resources and catalog revisions. Use the dedicated billing tools rather than SQL for financial changes. Reuse operationId and identical arguments after uncertainty; new IDs can issue additional refunds or credits. Catalog changes affect future signups, while existing subscription changes are explicit.",
-      "Filter logs and analytical queries to the relevant time window and identifiers. Never expose credentials, OAuth codes, socket tickets or unrelated private content found in diagnostic data.",
-      "Separate verified durable state, observed tool results and inference from hypotheses, and distinguish a local change from a merged or deployed fix.",
-    ].join("\n\n"),
+    instructions: ENGINEERING_MCP_SERVER_INSTRUCTIONS,
   });
 
   server.registerTool("provision_user_password", {
@@ -588,14 +580,14 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     TrialMonthsGrantSchema.parse(await (await organizationBinding(env, request.orgId)).grantTrialMonths(request, principal))));
 
   server.registerTool("inspect_overage_credits", {
-    description: "Read an Organization's overage-only USD credit grants and available balances from Stripe. Includes grants made directly in Stripe with the dedicated overage price scope; does not include general invoice credits.",
+    description: "Read an Organization's overage-only USD credit grants and available balances from Stripe. Includes grants made directly in Stripe with the dedicated overage price scope; does not include general invoice credits. Supply operationId to recover the result of a previously accepted grant after an uncertain response, including legacy non-expiring grants. This only looks up the existing Stripe grant: it never issues credit or changes its terms. An unknown operation is rejected; an empty grants list means no matching Stripe receipt was found, not permission to reissue under a new ID.",
     inputSchema: InspectEngineeringCreditsInputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "inspect_overage_credits", { workspace_id: request.orgId }, async () =>
     BillingCreditsSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOverageCredits(request))));
 
   server.registerTool("grant_overage_credit", {
-    description: "Issue promotional USD credit for an Organization's future overage invoices in Stripe. Requires configured metered overage billing. amountCents is invoice dollars in cents, not effective usage. Never offsets plan fees or alters included usage. Supply a reason and optionally expiresAt. Reuse the same operationId and arguments after an uncertain outcome; a new ID issues another financial grant.",
+    description: "Issue promotional USD credit for an Organization's future overage invoices in Stripe. Requires configured metered overage billing. amountCents is invoice dollars in cents, not effective usage. Never offsets plan fees or alters included usage. Supply a reason and expiresAt, which must be in the future and within two calendar years (UTC). Non-expiring grants are not supported. Reuse the same operationId and arguments after an uncertain outcome; a new ID issues another financial grant. For legacy operations accepted without expiresAt, recover by operationId with inspect_overage_credits instead.",
     inputSchema: GrantEngineeringCreditInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "grant_overage_credit", { workspace_id: request.orgId, operation_id: request.operationId }, async () =>

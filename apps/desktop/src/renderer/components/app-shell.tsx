@@ -357,7 +357,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         accountMenu={(<>
           {/* The meter reads `/workspace/usage`, which refuses a guest. */}
           {guestSession ? null : (
-            <UsageLimitRailWarning api={api ?? null} onOpen={() => { void desktopBridge().openSettings('workspace'); }} />
+            <UsageLimitRailWarning api={api ?? null} onOpen={() => { void desktopBridge().openSettings('billing'); }} />
           )}
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
@@ -365,7 +365,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             activeUsage={guestSession ? null : (
               <OrganizationUsageMenuItem
                 api={api ?? null}
-                onSelect={() => { void desktopBridge().openSettings('workspace'); }}
+                onSelect={() => { void desktopBridge().openSettings('billing'); }}
               />
             )}
             attention={workspaceAttention.data ?? {}}
