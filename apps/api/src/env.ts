@@ -1,3 +1,4 @@
+import type { BillingCoordinatorDO } from "./durable-objects/billing-coordinator-do";
 import type { FeatureFlagEnvironment } from "@rally/contracts/runtime-config";
 import { configuredRegions } from "@rally/contracts/regions";
 import { RegionSchema } from "@rally/contracts/regions";
@@ -70,6 +71,7 @@ export interface Env extends FeatureFlagEnvironment {
   TELEMETRY_DELIVERY?: TelemetryDeliveryRpcBinding;
   SUBSTREAM_AGENTS: DurableObjectNamespace<AgentLoopDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
+  BILLING_COORDINATORS: DurableObjectNamespace<BillingCoordinatorDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   /** One supervisor per live web artifact, named by the artifact's own id. */
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
@@ -440,6 +442,7 @@ const EnvContractSchema = z.object({
   TELEMETRY_DELIVERY: binding<TelemetryDeliveryRpcBinding>().optional(),
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<AgentLoopDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
+  BILLING_COORDINATORS: binding<DurableObjectNamespace<BillingCoordinatorDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ARTIFACT_HOSTS: binding<DurableObjectNamespace<ArtifactHostDO>>(),
   ARTIFACT_LOADER: binding<WorkerLoader>().optional(),

@@ -5,7 +5,6 @@ import {
   type PlanId,
 } from "@rally/contracts/usage";
 import type { Env } from "../env";
-import { runtimeDeferral } from "../lib/defer";
 import { ApiError } from "../lib/api-error";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { billingConfig } from "./billing-config";
@@ -17,6 +16,7 @@ import {
 } from "./usage-metering";
 import {
   ensureStripeCustomer,
+  archiveStripeFreeSubscription,
   synchronizeStripeProfile,
   synchronizeStripeUsage,
 } from "./stripe-billing-sync";
@@ -26,8 +26,10 @@ export interface BillingAccount {
   customer_id: string | null;
   subscription_id: string | null;
   free_subscription_id: string | null;
+  free_subscription_closed: number;
   trial_award_synced_end: number | null;
   checkout_generation: string;
+  checkout_request_json: string | null;
   status: string;
   offer_id: string | null;
   currency: string | null;
@@ -47,13 +49,14 @@ export const hasLiveSubscription = (account: BillingAccount) =>
 export async function billingAccount(
   env: Env,
   workspaceId: string,
+  includeClosed = false,
 ): Promise<BillingAccount> {
   const config = billingConfig(env);
   await env.DB.prepare(
     `INSERT INTO billing_accounts (workspace_id, checkout_generation, trial_started_at, trial_ends_at,
     trial_base_ends_at, team_trial_ends_at, team_trial_members)
     SELECT id, ?, unixepoch(created_at), unixepoch(created_at) + ?, unixepoch(created_at) + ?, unixepoch(created_at) + ?, ?
-    FROM workspaces WHERE id = ? AND region = ? AND abandoned_at IS NULL
+    FROM workspaces WHERE id = ? AND region = ? AND (abandoned_at IS NULL OR ?)
     ON CONFLICT(workspace_id) DO NOTHING`,
   )
     .bind(
@@ -64,6 +67,7 @@ export async function billingAccount(
       config.teamTrialMembers,
       workspaceId,
       env.AVALON_REGION,
+      includeClosed ? 1 : 0,
     )
     .run();
   // Counts are recorded when members qualify and survive later departures.
@@ -91,42 +95,6 @@ export async function billingAccount(
   return account;
 }
 
-// An ownership claim, not a timed lease. Never steal it from a slow Stripe request.
-// If a Worker is terminated, an operator may clear the token only after fencing
-// the old invocation (see docs/stripe-billing.md). A guessed timeout is unsafe.
-export async function withBillingLock<T>(
-  env: Env,
-  workspaceId: string,
-  work: () => Promise<T>,
-): Promise<T> {
-  const operation = (async () => {
-    const token = crypto.randomUUID();
-    const claimed = await env.DB.prepare(
-      `UPDATE billing_accounts SET sync_token = ?
-      WHERE workspace_id = ? AND sync_token IS NULL RETURNING workspace_id`,
-    )
-      .bind(token, workspaceId)
-      .first();
-    if (!claimed)
-      throw new ApiError(
-        409,
-        "billing_busy",
-        "Billing is updating; please retry",
-      );
-    try {
-      return await work();
-    } finally {
-      await env.DB.prepare(
-        "UPDATE billing_accounts SET sync_token = NULL WHERE workspace_id = ? AND sync_token = ?",
-      )
-        .bind(workspaceId, token)
-        .run();
-    }
-  })();
-  runtimeDeferral(operation);
-  return operation;
-}
-
 export const SubscriptionSchema = z.object({
   id: z.string(),
   customer: z.string(),
@@ -150,7 +118,7 @@ export const SubscriptionSchema = z.object({
 });
 type Subscription = z.infer<typeof SubscriptionSchema>;
 
-/** All callers hold the account claim. Price metadata disambiguates shared-price offers. */
+/** All production callers run inside the account actor. Price metadata disambiguates shared-price offers. */
 async function reconcileSubscription(
   env: Env,
   account: BillingAccount,
@@ -198,14 +166,39 @@ async function reconcileSubscription(
     subscription.currency === "usd" &&
     Boolean(offer.overagePriceId);
   const now = Math.floor(Date.now() / 1000);
-  const same = account.subscription_id === subscription.id;
-  const previousStart = same ? account.overage_started_at : null;
-  const startedAt =
-    overage && subscription.status === "active"
-      ? (previousStart ??
-        Math.max(subscription.start_date ?? now, subscription.trial_end ?? 0))
-      : previousStart;
-  if (overage && startedAt !== null) {
+  const eligible = overage && subscription.status === "active";
+  const open = await env.DB.prepare(
+    `SELECT starts_at, price_id FROM billing_intervals
+    WHERE subscription_id = ? AND ends_at IS NULL`,
+  )
+    .bind(subscription.id)
+    .first<{ starts_at: number; price_id: string }>();
+  if (open && (!eligible || open.price_id !== offer.overagePriceId)) {
+    await closeBillableInterval(
+      env,
+      account.workspace_id,
+      subscription.id,
+      subscription.status === "canceled" ? (subscription.ended_at ?? now) : now,
+      billingConfig(env).offers.find((o) => o.id === account.offer_id)?.plan ??
+        offer.plan,
+    );
+  }
+  let startedAt: number | null = null;
+  if (eligible) {
+    const prior = await env.DB.prepare(
+      `SELECT starts_at FROM billing_terms WHERE subscription_id = ?`,
+    )
+      .bind(subscription.id)
+      .first();
+    startedAt =
+      open && open.price_id === offer.overagePriceId
+        ? open.starts_at
+        : prior
+          ? now
+          : Math.max(
+              subscription.start_date ?? now,
+              subscription.trial_end ?? 0,
+            );
     await env.DB.prepare(
       `INSERT INTO billing_terms(subscription_id, workspace_id, customer_id, price_id, starts_at)
       VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
@@ -217,6 +210,12 @@ async function reconcileSubscription(
         offer.overagePriceId!,
         startedAt,
       )
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO billing_intervals(subscription_id, starts_at, price_id)
+      VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+    )
+      .bind(subscription.id, startedAt, offer.overagePriceId!)
       .run();
   }
   await reconcileCancellation(env, subscription, offer.plan);
@@ -254,6 +253,124 @@ async function reconcileSubscription(
   await publishOrganizationUsage(env, account.workspace_id);
 }
 
+async function closeBillableInterval(
+  env: Env,
+  workspaceId: string,
+  subscriptionId: string,
+  cutoff: number,
+  plan: PlanId,
+) {
+  const workspace = await env.DB.prepare(
+    "SELECT created_at FROM workspaces WHERE id = ?",
+  )
+    .bind(workspaceId)
+    .first<{ created_at: string }>();
+  const week = new Date(
+    usageWeekStart(Date.parse(workspace!.created_at), cutoff * 1000 - 1),
+  ).toISOString();
+  const rollup = await env.USAGE_DB.prepare(
+    `SELECT quota_microusd FROM usage_rollups
+    WHERE workspace_id = ? AND week_start = ? ORDER BY period_start DESC LIMIT 1`,
+  )
+    .bind(workspaceId, week)
+    .first<{ quota_microusd: number }>();
+  await env.DB.prepare(
+    `UPDATE billing_intervals SET ends_at = ?, cutoff_quota_microusd = ?
+    WHERE subscription_id = ? AND ends_at IS NULL`,
+  )
+    .bind(
+      cutoff,
+      rollup?.quota_microusd ?? weeklyQuotaMicrousd(plan),
+      subscriptionId,
+    )
+    .run();
+}
+
+/** A paid invoice is activation evidence, including zero-total pilot invoices.
+ * A canceled incomplete subscription or an unconverted free trial has none. */
+async function recoverCanceledTerms(env: Env, subscription: Subscription) {
+  if (
+    subscription.status !== "canceled" ||
+    subscription.metadata.billing_role === "free_record" ||
+    subscription.metadata.overage_enabled !== "true" ||
+    subscription.currency !== "usd"
+  )
+    return;
+  if (
+    await env.DB.prepare(
+      "SELECT 1 FROM billing_terms WHERE subscription_id = ?",
+    )
+      .bind(subscription.id)
+      .first()
+  )
+    return;
+  const account = await env.DB.prepare(
+    "SELECT workspace_id FROM billing_accounts WHERE customer_id = ?",
+  )
+    .bind(subscription.customer)
+    .first<{ workspace_id: string }>();
+  const candidates = billingConfig(env).offers.filter((o) =>
+    subscription.items.data.some((i) => i.price.id === o.priceId),
+  );
+  const offer =
+    candidates.find((o) => o.id === subscription.metadata.offer_id) ??
+    (candidates.length === 1 ? candidates[0] : undefined);
+  if (!account || !offer?.overagePriceId) return;
+  let after = "";
+  const activationFloor = Math.max(
+    subscription.start_date ?? 0,
+    subscription.trial_end ?? 0,
+  );
+  let activation: number | null = null;
+  do {
+    const page = await stripe(
+      env,
+      `invoices?subscription=${subscription.id}&status=paid&limit=100${after ? `&starting_after=${after}` : ""}`,
+      z.object({
+        has_more: z.boolean(),
+        data: z.array(
+          z.object({
+            id: z.string(),
+            lines: z.object({
+              data: z.array(
+                z.object({
+                  type: z.string(),
+                  period: z.object({ start: z.number(), end: z.number() }),
+                }),
+              ),
+            }),
+          }),
+        ),
+      }),
+    );
+    for (const invoice of page.data)
+      for (const line of invoice.lines.data) {
+        // Trial invoices cover [start, trial_end); they do not prove activation.
+        if (
+          line.type === "subscription" &&
+          line.period.start >= activationFloor &&
+          line.period.end > line.period.start &&
+          line.period.start < (subscription.ended_at ?? Infinity)
+        )
+          activation = Math.min(activation ?? Infinity, line.period.start);
+      }
+    after = page.has_more ? page.data.at(-1)!.id : "";
+  } while (after);
+  if (activation !== null)
+    await env.DB.prepare(
+      `INSERT INTO billing_terms(subscription_id, workspace_id, customer_id, price_id, starts_at)
+    VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+    )
+      .bind(
+        subscription.id,
+        account.workspace_id,
+        subscription.customer,
+        offer.overagePriceId,
+        activation,
+      )
+      .run();
+}
+
 /** Old cancellations close their own terms without changing current entitlement. */
 async function reconcileCancellation(
   env: Env,
@@ -261,6 +378,7 @@ async function reconcileCancellation(
   plan?: PlanId,
 ) {
   if (subscription.status !== "canceled") return;
+  await recoverCanceledTerms(env, subscription);
   const term = await env.DB.prepare(
     `SELECT t.workspace_id, t.cutoff_quota_microusd, w.created_at
     FROM billing_terms t JOIN workspaces w ON w.id = t.workspace_id WHERE t.subscription_id = ?`,
@@ -302,6 +420,12 @@ async function reconcileCancellation(
     `UPDATE billing_terms SET ends_at = COALESCE(ends_at, ?),
     cutoff_quota_microusd = COALESCE(cutoff_quota_microusd, ?)
     WHERE subscription_id = ?`,
+  )
+    .bind(cutoff, quota, subscription.id)
+    .run();
+  await env.DB.prepare(
+    `UPDATE billing_intervals SET ends_at = ?, cutoff_quota_microusd = ?
+    WHERE subscription_id = ? AND ends_at IS NULL`,
   )
     .bind(cutoff, quota, subscription.id)
     .run();
@@ -352,7 +476,7 @@ async function subscriptionHistory(env: Env, customerId: string) {
   return { live, hasPaidSubscription };
 }
 
-async function refreshUnderLock(env: Env, account: BillingAccount) {
+async function refreshBillingState(env: Env, account: BillingAccount) {
   if (!account.customer_id) {
     await reconcileUnpaidPlan(env, account.workspace_id);
     return { ...account, hasPaidSubscription: false };
@@ -395,9 +519,7 @@ async function reconcileUnpaidPlan(env: Env, workspaceId: string) {
 
 export async function refreshBillingAccount(env: Env, workspaceId: string) {
   await billingAccount(env, workspaceId);
-  return withBillingLock(env, workspaceId, async () =>
-    refreshUnderLock(env, await billingAccount(env, workspaceId)),
-  );
+  return refreshBillingState(env, await billingAccount(env, workspaceId));
 }
 
 const OpenSessionsSchema = z.object({
@@ -416,6 +538,40 @@ const openSessions = (env: Env, customerId: string) =>
     `checkout/sessions?customer=${customerId}&status=open&limit=1`,
     OpenSessionsSchema,
   );
+
+const CheckoutRequestSchema = z.object({
+  key: z.string(),
+  fields: z.record(z.string(), z.string()),
+});
+async function sendCheckoutRequest(
+  env: Env,
+  workspaceId: string,
+  request: z.infer<typeof CheckoutRequestSchema>,
+) {
+  try {
+    return await stripe(
+      env,
+      "checkout/sessions",
+      StripeUrlSchema,
+      request.fields,
+      request.key,
+    );
+  } catch (error) {
+    // A validation rejection never created a session. Let corrected catalog
+    // configuration start a new attempt; transport/5xx/409 outcomes stay pending.
+    if (
+      error instanceof ApiError &&
+      error.code === "stripe_http_400" &&
+      error.diagnosticCode?.includes(":invalid_request_error")
+    )
+      await env.DB.prepare(
+        "UPDATE billing_accounts SET checkout_request_json = NULL, checkout_generation = ? WHERE workspace_id = ?",
+      )
+        .bind(crypto.randomUUID(), workspaceId)
+        .run();
+    throw error;
+  }
+}
 
 export async function createCheckout(
   env: Env,
@@ -439,146 +595,174 @@ export async function createCheckout(
       "Overage billing is unavailable for this plan or currency",
     );
   await billingAccount(env, workspaceId);
-  return withBillingLock(env, workspaceId, async () => {
-    const workspace = await env.DB.prepare(
-      "SELECT abandoned_at FROM workspaces WHERE id = ?",
-    )
-      .bind(workspaceId)
-      .first<{ abandoned_at: string | null }>();
-    if (!workspace || workspace.abandoned_at)
-      throw new ApiError(
-        409,
-        "billing_workspace_closed",
-        "Organization is closed",
-      );
-    const initial = await billingAccount(env, workspaceId);
-    const customerId = await ensureStripeCustomer(env, initial);
-    const account = await refreshUnderLock(env, {
-      ...initial,
-      customer_id: customerId,
-    });
-    // Recovery applies the plan too, then takes the administrator straight to management.
-    if (hasLiveSubscription(account))
-      return createBillingPortal(env, workspaceId);
-    const pilotCouponId =
-      !account.hasPaidSubscription && offer.plan !== "starter"
-        ? config.pilotCouponId
-        : undefined;
-    const trialEndsAt =
-      pilotCouponId || account.hasPaidSubscription ? 0 : account.trial_ends_at;
-    const pending = (await openSessions(env, customerId)).data[0];
-    if (pending) {
-      if (
-        pending.metadata.offer_id !== offerId ||
-        pending.currency !== currency ||
-        pending.metadata.overage_enabled !== String(overage)
-      ) {
-        throw new ApiError(
-          409,
-          "billing_checkout_pending",
-          "Complete or let the existing checkout expire before choosing another offer",
-        );
-      }
-      if (
-        (pending.metadata.pilot_coupon_id ?? "") === (pilotCouponId ?? "") &&
-        Number(pending.metadata.trial_ends_at) >= trialEndsAt
-      )
-        return { url: pending.url };
-      await stripe(
-        env,
-        `checkout/sessions/${pending.id}/expire`,
-        StripeIdSchema,
-        {},
-        `expire:${pending.id}`,
-      );
-      await env.DB.prepare(
-        "UPDATE billing_accounts SET checkout_generation = ? WHERE workspace_id = ?",
-      )
-        .bind(crypto.randomUUID(), workspaceId)
-        .run();
-    }
-    // The persisted generation identifies this attempt. An uncertain Stripe
-    // response recovers through the open-session query before another write.
-    const attempt = await env.DB.prepare(
-      "SELECT checkout_generation FROM billing_accounts WHERE workspace_id = ?",
-    )
-      .bind(workspaceId)
-      .first<{ checkout_generation: string }>();
-    if (pilotCouponId) {
-      // A two-month coupon on an annual price would waive the entire annual
-      // invoice. The pilot is for monthly subscriptions only.
-      const price = await stripe(
-        env,
-        `prices/${offer.priceId}`,
-        z.object({
-          recurring: z
-            .object({ interval: z.string(), interval_count: z.number() })
-            .nullable(),
-        }),
-      );
-      if (
-        price.recurring?.interval !== "month" ||
-        price.recurring.interval_count !== 1
-      ) {
-        throw new ApiError(
-          409,
-          "billing_pilot_requires_monthly_price",
-          "The pilot offer requires a monthly subscription price",
-        );
-      }
-    }
-    const fields: Record<string, string> = {
-      mode: "subscription",
-      customer: customerId,
-      currency,
-      payment_method_collection: "always",
-      "metadata[offer_id]": offerId,
-      "metadata[overage_enabled]": String(overage),
-      "metadata[trial_ends_at]": String(trialEndsAt),
-      "line_items[0][price]": offer.priceId,
-      "line_items[0][quantity]": "1",
-      success_url: config.returnUrl,
-      cancel_url: config.returnUrl,
-      "automatic_tax[enabled]": String(config.automaticTax),
-      "tax_id_collection[enabled]": "true",
-      billing_address_collection: "required",
-      "customer_update[address]": "auto",
-      "customer_update[name]": "auto",
-      "subscription_data[metadata][workspace_id]": workspaceId,
-      "subscription_data[metadata][offer_id]": offer.id,
-      "subscription_data[metadata][paid_subscription]": String(
-        offer.plan !== "starter",
-      ),
-      "subscription_data[metadata][overage_enabled]": String(overage),
-    };
-    if (pilotCouponId) {
-      fields["discounts[0][coupon]"] = pilotCouponId;
-      fields["metadata[pilot_coupon_id]"] = pilotCouponId;
-      fields["subscription_data[metadata][pilot_coupon_id]"] = pilotCouponId;
-    } else if (offer.couponId) fields["discounts[0][coupon]"] = offer.couponId;
-    else fields.allow_promotion_codes = "true";
-    // Stripe requires trial_end at least 48 hours ahead. Use a stable duration
-    // near expiry so retries do not change an idempotent request's parameters.
-    if (trialEndsAt > Date.now() / 1000 + 172800)
-      fields["subscription_data[trial_end]"] = String(trialEndsAt);
-    else if (trialEndsAt > Date.now() / 1000)
-      fields["subscription_data[trial_period_days]"] = "2";
-    const session = await stripe(
-      env,
-      "checkout/sessions",
-      StripeUrlSchema,
-      fields,
-      `checkout:${workspaceId}:${attempt!.checkout_generation}:${offerId}:${currency}:${overage}:${trialEndsAt}:${account.subscription_id ?? "first"}:${pilotCouponId ?? "none"}`,
+  const workspace = await env.DB.prepare(
+    "SELECT abandoned_at FROM workspaces WHERE id = ?",
+  )
+    .bind(workspaceId)
+    .first<{ abandoned_at: string | null }>();
+  if (!workspace || workspace.abandoned_at)
+    throw new ApiError(
+      409,
+      "billing_workspace_closed",
+      "Organization is closed",
     );
-    // The next new checkout (after expiration/cancellation) must not reuse this
-    // session's idempotency key. Lost writes recover through Stripe's open list.
+  const initial = await billingAccount(env, workspaceId);
+  const customerId = await ensureStripeCustomer(env, initial);
+  const account = await refreshBillingState(env, {
+    ...initial,
+    customer_id: customerId,
+  });
+  // Recovery applies the plan too, then takes the administrator straight to management.
+  if (hasLiveSubscription(account)) {
+    await env.DB.prepare(
+      "UPDATE billing_accounts SET checkout_request_json = NULL WHERE workspace_id = ?",
+    )
+      .bind(workspaceId)
+      .run();
+    return createBillingPortal(env, workspaceId);
+  }
+  const pilotCouponId =
+    !account.hasPaidSubscription && offer.plan !== "starter"
+      ? config.pilotCouponId
+      : undefined;
+  const trialEndsAt =
+    pilotCouponId || account.hasPaidSubscription ? 0 : account.trial_ends_at;
+  let pending = (await openSessions(env, customerId)).data[0];
+  if (account.checkout_request_json) {
+    const outstanding = CheckoutRequestSchema.parse(
+      JSON.parse(account.checkout_request_json),
+    );
+    if (!pending) {
+      // Replay the exact outstanding request even if the administrator now
+      // wants different terms. Stripe may still be processing its first send.
+      const recovered = await sendCheckoutRequest(
+        env,
+        workspaceId,
+        outstanding,
+      );
+      pending = {
+        ...recovered,
+        currency: outstanding.fields.currency!,
+        metadata: Object.fromEntries(
+          Object.entries(outstanding.fields)
+            .filter(([key]) => key.startsWith("metadata["))
+            .map(([key, value]) => [key.slice(9, -1), value]),
+        ),
+      };
+    }
+    await env.DB.prepare(
+      "UPDATE billing_accounts SET checkout_request_json = NULL, checkout_generation = ? WHERE workspace_id = ?",
+    )
+      .bind(crypto.randomUUID(), workspaceId)
+      .run();
+  }
+  if (pending) {
+    if (
+      pending.metadata.offer_id === offerId &&
+      pending.currency === currency &&
+      pending.metadata.overage_enabled === String(overage) &&
+      (pending.metadata.pilot_coupon_id ?? "") === (pilotCouponId ?? "") &&
+      Number(pending.metadata.trial_ends_at) >= trialEndsAt
+    )
+      return { url: pending.url };
+    await stripe(
+      env,
+      `checkout/sessions/${pending.id}/expire`,
+      StripeIdSchema,
+      {},
+      `expire:${pending.id}`,
+    );
     await env.DB.prepare(
       "UPDATE billing_accounts SET checkout_generation = ? WHERE workspace_id = ?",
     )
       .bind(crypto.randomUUID(), workspaceId)
       .run();
-    return { url: session.url };
-  });
+  }
+  await archiveStripeFreeSubscription(env, account);
+  // The persisted generation identifies this attempt. An uncertain Stripe
+  // response recovers through the open-session query before another write.
+  const attempt = await env.DB.prepare(
+    "SELECT checkout_generation FROM billing_accounts WHERE workspace_id = ?",
+  )
+    .bind(workspaceId)
+    .first<{ checkout_generation: string }>();
+  if (pilotCouponId) {
+    // A two-month coupon on an annual price would waive the entire annual
+    // invoice. The pilot is for monthly subscriptions only.
+    const price = await stripe(
+      env,
+      `prices/${offer.priceId}`,
+      z.object({
+        recurring: z
+          .object({ interval: z.string(), interval_count: z.number() })
+          .nullable(),
+      }),
+    );
+    if (
+      price.recurring?.interval !== "month" ||
+      price.recurring.interval_count !== 1
+    ) {
+      throw new ApiError(
+        409,
+        "billing_pilot_requires_monthly_price",
+        "The pilot offer requires a monthly subscription price",
+      );
+    }
+  }
+  const fields: Record<string, string> = {
+    mode: "subscription",
+    customer: customerId,
+    currency,
+    payment_method_collection: "always",
+    "metadata[offer_id]": offerId,
+    "metadata[overage_enabled]": String(overage),
+    "metadata[trial_ends_at]": String(trialEndsAt),
+    "line_items[0][price]": offer.priceId,
+    "line_items[0][quantity]": "1",
+    success_url: config.returnUrl,
+    cancel_url: config.returnUrl,
+    "automatic_tax[enabled]": String(config.automaticTax),
+    "tax_id_collection[enabled]": "true",
+    billing_address_collection: "required",
+    "customer_update[address]": "auto",
+    "customer_update[name]": "auto",
+    "subscription_data[metadata][workspace_id]": workspaceId,
+    "subscription_data[metadata][offer_id]": offer.id,
+    "subscription_data[metadata][paid_subscription]": String(
+      offer.plan !== "starter",
+    ),
+    "subscription_data[metadata][overage_enabled]": String(overage),
+  };
+  if (pilotCouponId) {
+    fields["discounts[0][coupon]"] = pilotCouponId;
+    fields["metadata[pilot_coupon_id]"] = pilotCouponId;
+    fields["subscription_data[metadata][pilot_coupon_id]"] = pilotCouponId;
+  } else if (offer.couponId) fields["discounts[0][coupon]"] = offer.couponId;
+  else fields.allow_promotion_codes = "true";
+  // Stripe requires trial_end at least 48 hours ahead. Use a stable duration
+  // near expiry so retries do not change an idempotent request's parameters.
+  if (trialEndsAt > Date.now() / 1000 + 172800)
+    fields["subscription_data[trial_end]"] = String(trialEndsAt);
+  else if (trialEndsAt > Date.now() / 1000)
+    fields["subscription_data[trial_period_days]"] = "2";
+  const request = {
+    fields,
+    key: `checkout:${workspaceId}:${attempt!.checkout_generation}`,
+  };
+  await env.DB.prepare(
+    "UPDATE billing_accounts SET checkout_request_json = ? WHERE workspace_id = ?",
+  )
+    .bind(JSON.stringify(request), workspaceId)
+    .run();
+  const session = await sendCheckoutRequest(env, workspaceId, request);
+  // The next new checkout (after expiration/cancellation) must not reuse this
+  // session's idempotency key. Lost writes recover through Stripe's open list.
+  await env.DB.prepare(
+    "UPDATE billing_accounts SET checkout_generation = ?, checkout_request_json = NULL WHERE workspace_id = ?",
+  )
+    .bind(crypto.randomUUID(), workspaceId)
+    .run();
+  return { url: session.url };
 }
 
 export async function createBillingPortal(env: Env, workspaceId: string) {
@@ -606,35 +790,33 @@ export async function syncSubscription(
     logWarn(env, "billing_webhook_unowned", { customer_id: customerId });
     return;
   }
-  await withBillingLock(env, account.workspace_id, async () => {
-    const current = await billingAccount(env, account.workspace_id);
-    const subscription = await stripe(
-      env,
-      `subscriptions/${subscriptionId}`,
-      SubscriptionSchema,
+  const current = await billingAccount(env, account.workspace_id);
+  const subscription = await stripe(
+    env,
+    `subscriptions/${subscriptionId}`,
+    SubscriptionSchema,
+  );
+  if (subscription.customer !== current.customer_id) {
+    throw new ApiError(
+      409,
+      "billing_customer_mismatch",
+      "Subscription customer does not match",
     );
-    if (subscription.customer !== current.customer_id) {
-      throw new ApiError(
-        409,
-        "billing_customer_mismatch",
-        "Subscription customer does not match",
-      );
-    }
-    if (subscription.metadata.billing_role === "free_record") {
-      await synchronizeStripeProfile(env, current);
+  }
+  if (subscription.metadata.billing_role === "free_record") {
+    await synchronizeStripeProfile(env, current);
+    return;
+  }
+  await reconcileCancellation(env, subscription);
+  if (current.subscription_id && current.subscription_id !== subscriptionId) {
+    // Old cancellation deliveries must not downgrade a later subscription.
+    if (
+      hasLiveSubscription(current) ||
+      ["canceled", "incomplete_expired"].includes(subscription.status)
+    )
       return;
-    }
-    await reconcileCancellation(env, subscription);
-    if (current.subscription_id && current.subscription_id !== subscriptionId) {
-      // Old cancellation deliveries must not downgrade a later subscription.
-      if (
-        hasLiveSubscription(current) ||
-        ["canceled", "incomplete_expired"].includes(subscription.status)
-      )
-        return;
-    }
-    await reconcileSubscription(env, current, subscription);
-  });
+  }
+  await reconcileSubscription(env, current, subscription);
 }
 
 /** Closing and checkout share ownership until membership is removed. */
@@ -643,6 +825,14 @@ export async function withOrganizationBillingClosure<T>(
   workspaceId: string,
   close: () => Promise<T>,
 ): Promise<T> {
+  const closed = await env.DB.prepare(
+    `SELECT w.abandoned_at, b.workspace_id AS account_id
+    FROM workspaces w LEFT JOIN billing_accounts b ON b.workspace_id = w.id
+    WHERE w.id = ? AND w.region = ?`,
+  )
+    .bind(workspaceId, env.AVALON_REGION)
+    .first<{ abandoned_at: string | null; account_id: string | null }>();
+  if (closed?.abandoned_at && !closed.account_id) return close();
   if (!env.BILLING_CONFIG) {
     const existing = await env.DB.prepare(
       "SELECT customer_id FROM billing_accounts WHERE workspace_id = ?",
@@ -658,39 +848,38 @@ export async function withOrganizationBillingClosure<T>(
     return close();
   }
   await billingAccount(env, workspaceId);
-  return withBillingLock(env, workspaceId, async () => {
-    const account = await refreshUnderLock(
-      env,
-      await billingAccount(env, workspaceId),
+  const account = await refreshBillingState(
+    env,
+    await billingAccount(env, workspaceId),
+  );
+  if (
+    hasLiveSubscription(account) ||
+    account.checkout_request_json ||
+    (account.customer_id &&
+      (await openSessions(env, account.customer_id)).data.length)
+  ) {
+    throw new ApiError(
+      409,
+      "billing_closure_blocked",
+      "Cancel the subscription or pending checkout before closing this organization",
     );
-    if (
-      hasLiveSubscription(account) ||
-      (account.customer_id &&
-        (await openSessions(env, account.customer_id)).data.length)
-    ) {
-      throw new ApiError(
-        409,
-        "billing_closure_blocked",
-        "Cancel the subscription or pending checkout before closing this organization",
-      );
+  }
+  const result = await close();
+  // Closing must not depend on reporting configuration. Retry cleanup in cron.
+  if (account.customer_id) {
+    try {
+      await synchronizeStripeProfile(env, account);
+    } catch (error) {
+      logWarn(env, "billing_profile_cleanup_failed", {
+        workspace_id: workspaceId,
+        error_code: diagnosticErrorCode(
+          error,
+          "billing_profile_cleanup_failed",
+        ),
+      });
     }
-    const result = await close();
-    // Closing must not depend on reporting configuration. Retry cleanup in cron.
-    if (account.customer_id) {
-      try {
-        await synchronizeStripeProfile(env, account);
-      } catch (error) {
-        logWarn(env, "billing_profile_cleanup_failed", {
-          workspace_id: workspaceId,
-          error_code: diagnosticErrorCode(
-            error,
-            "billing_profile_cleanup_failed",
-          ),
-        });
-      }
-    }
-    return result;
-  });
+  }
+  return result;
 }
 
 interface BillingTerm {
@@ -710,127 +899,144 @@ export async function billClosedOverage(
   workspaceId: string,
   now = Date.now(),
 ) {
-  await withBillingLock(env, workspaceId, async () => {
-    const terms = await env.DB.prepare(
-      "SELECT * FROM billing_terms WHERE workspace_id = ?",
+  const terms = await env.DB.prepare(
+    "SELECT * FROM billing_terms WHERE workspace_id = ?",
+  )
+    .bind(workspaceId)
+    .all<BillingTerm>();
+  for (const term of terms.results) {
+    if (term.final_invoice_id) {
+      if (!term.final_invoice_finalized)
+        await finalizeCanceledOverage(env, term);
+      continue;
+    }
+    const startsAt = term.starts_at * 1000;
+    const cutoff = term.ends_at === null ? null : term.ends_at * 1000;
+    const settledThrough =
+      now - billingConfig(env).settlementDelayDays * DAY * 1000;
+    const last = await env.DB.prepare(
+      "SELECT MAX(period_end) AS last_end FROM billing_overages WHERE subscription_id = ?",
     )
-      .bind(workspaceId)
-      .all<BillingTerm>();
-    for (const term of terms.results) {
-      if (term.final_invoice_id) {
-        if (!term.final_invoice_finalized)
-          await finalizeCanceledOverage(env, term);
-        continue;
-      }
-      const startsAt = term.starts_at * 1000;
-      const cutoff = term.ends_at === null ? null : term.ends_at * 1000;
-      const settledThrough =
-        now - billingConfig(env).settlementDelayDays * DAY * 1000;
-      const last = await env.DB.prepare(
-        "SELECT MAX(period_end) AS last_end FROM billing_overages WHERE subscription_id = ?",
+      .bind(term.subscription_id)
+      .first<{ last_end: string | null }>();
+    let cursor = last?.last_end ? Date.parse(last.last_end) : startsAt;
+    while (cursor < settledThrough && (cutoff === null || cursor < cutoff)) {
+      const periodUsage = await readOrganizationUsage(env, workspaceId, cursor);
+      if (!periodUsage) break;
+      const periodStart = periodUsage.overage.periodStart;
+      const naturalEnd = Date.parse(periodUsage.overage.periodEndsAt);
+      const end = Math.min(naturalEnd, cutoff ?? naturalEnd);
+      if (end > settledThrough) break;
+      // Each new activation/resumption waives its partial period. At most one
+      // interval can own a period's start; later resumptions cannot bill a gap.
+      const interval = await env.DB.prepare(
+        `SELECT ends_at, cutoff_quota_microusd, price_id FROM billing_intervals
+        WHERE subscription_id = ? AND starts_at <= ? AND (ends_at IS NULL OR ends_at > ?)
+        ORDER BY starts_at DESC LIMIT 1`,
       )
-        .bind(term.subscription_id)
-        .first<{ last_end: string | null }>();
-      let cursor = last?.last_end ? Date.parse(last.last_end) : startsAt;
-      while (cursor < settledThrough && (cutoff === null || cursor < cutoff)) {
-        const usage = await readOrganizationUsage(
-          env,
-          workspaceId,
-          cursor,
-          cutoff !== null && cutoff <= settledThrough
-            ? { at: cutoff, quotaMicrousd: term.cutoff_quota_microusd! }
-            : undefined,
-        );
-        if (!usage) break;
-        const naturalEnd = Date.parse(usage.overage.periodEndsAt);
-        const end = Math.min(naturalEnd, cutoff ?? naturalEnd);
-        if (end > settledThrough) break;
-
-        // Preserve the free partial activation period. A cancellation tail in a
-        // later period is charged only through the recorded Stripe ended_at.
-        if (Date.parse(usage.overage.periodStart) >= startsAt) {
-          await env.DB.prepare(
-            `INSERT INTO billing_overages(workspace_id, subscription_id, period_start, period_end, amount_microusd, price_id)
-            VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-          )
-            .bind(
-              workspaceId,
-              term.subscription_id,
-              usage.overage.periodStart,
-              new Date(end).toISOString(),
-              usage.overage.amountMicrousd,
-              term.price_id,
-            )
-            .run();
-        }
-        cursor = end;
-      }
-      const pending = await env.DB.prepare(
-        "SELECT * FROM billing_overages WHERE subscription_id = ? AND invoice_item_id IS NULL",
-      )
-        .bind(term.subscription_id)
-        .all<{
-          period_start: string;
-          period_end: string;
-          amount_microusd: number;
+        .bind(
+          term.subscription_id,
+          Date.parse(periodStart) / 1000,
+          Date.parse(periodStart) / 1000,
+        )
+        .first<{
+          ends_at: number | null;
+          cutoff_quota_microusd: number | null;
           price_id: string;
         }>();
-      for (const row of pending.results) {
-        let itemId = "zero";
-        if (row.amount_microusd > 0) {
-          const receipt = `overage:${term.subscription_id}:${row.period_start}`;
-          let after = "";
-          let existing: string | undefined;
-          do {
-            const page = await stripe(
-              env,
-              `invoiceitems?customer=${term.customer_id}&created[gte]=${Math.floor(Date.parse(row.period_end) / 1000)}&limit=100${after ? `&starting_after=${after}` : ""}`,
-              z.object({
-                has_more: z.boolean(),
-                data: z.array(
-                  z.object({
-                    id: z.string(),
-                    metadata: z.record(z.string(), z.string()),
-                  }),
-                ),
-              }),
-            );
-            existing = page.data.find(
-              (item) => item.metadata.receipt === receipt,
-            )?.id;
-            after = page.has_more ? page.data.at(-1)!.id : "";
-          } while (after && !existing);
-          const item = existing
-            ? { id: existing }
-            : await stripe(
-                env,
-                "invoiceitems",
-                StripeIdSchema,
-                {
-                  customer: term.customer_id,
-                  ...(cutoff === null
-                    ? { subscription: term.subscription_id }
-                    : {}),
-                  price: row.price_id,
-                  quantity: String(row.amount_microusd),
-                  "metadata[receipt]": receipt,
-                  discountable: "false",
-                  description: `Rally usage beyond shared quota — period starting ${row.period_start}`,
-                },
-                receipt,
-              );
-          itemId = item.id;
-        }
+      const intervalEnd =
+        interval?.ends_at === null || !interval
+          ? null
+          : interval.ends_at * 1000;
+      const usage =
+        intervalEnd !== null && intervalEnd < naturalEnd
+          ? await readOrganizationUsage(env, workspaceId, cursor, {
+              at: intervalEnd,
+              quotaMicrousd: interval!.cutoff_quota_microusd!,
+            })
+          : periodUsage;
+      if (Date.parse(periodStart) >= startsAt) {
         await env.DB.prepare(
-          "UPDATE billing_overages SET invoice_item_id = ? WHERE subscription_id = ? AND period_start = ?",
+          `INSERT INTO billing_overages(workspace_id, subscription_id, period_start, period_end, amount_microusd, price_id)
+          VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
         )
-          .bind(itemId, term.subscription_id, row.period_start)
+          .bind(
+            workspaceId,
+            term.subscription_id,
+            periodStart,
+            new Date(end).toISOString(),
+            interval ? usage!.overage.amountMicrousd : 0,
+            interval?.price_id ?? term.price_id,
+          )
           .run();
       }
-      if (cutoff !== null && cutoff <= settledThrough)
-        await finalizeCanceledOverage(env, term);
+      cursor = end;
     }
-  });
+    const pending = await env.DB.prepare(
+      "SELECT * FROM billing_overages WHERE subscription_id = ? AND invoice_item_id IS NULL",
+    )
+      .bind(term.subscription_id)
+      .all<{
+        period_start: string;
+        period_end: string;
+        amount_microusd: number;
+        price_id: string;
+      }>();
+    for (const row of pending.results) {
+      let itemId = "zero";
+      if (row.amount_microusd > 0) {
+        const receipt = `overage:${term.subscription_id}:${row.period_start}`;
+        let after = "";
+        let existing: string | undefined;
+        do {
+          const page = await stripe(
+            env,
+            `invoiceitems?customer=${term.customer_id}&created[gte]=${Math.floor(Date.parse(row.period_end) / 1000)}&limit=100${after ? `&starting_after=${after}` : ""}`,
+            z.object({
+              has_more: z.boolean(),
+              data: z.array(
+                z.object({
+                  id: z.string(),
+                  metadata: z.record(z.string(), z.string()),
+                }),
+              ),
+            }),
+          );
+          existing = page.data.find(
+            (item) => item.metadata.receipt === receipt,
+          )?.id;
+          after = page.has_more ? page.data.at(-1)!.id : "";
+        } while (after && !existing);
+        const item = existing
+          ? { id: existing }
+          : await stripe(
+              env,
+              "invoiceitems",
+              StripeIdSchema,
+              {
+                customer: term.customer_id,
+                ...(cutoff === null
+                  ? { subscription: term.subscription_id }
+                  : {}),
+                price: row.price_id,
+                quantity: String(row.amount_microusd),
+                "metadata[receipt]": receipt,
+                discountable: "false",
+                description: `Rally usage beyond shared quota — period starting ${row.period_start}`,
+              },
+              receipt,
+            );
+        itemId = item.id;
+      }
+      await env.DB.prepare(
+        "UPDATE billing_overages SET invoice_item_id = ? WHERE subscription_id = ? AND period_start = ?",
+      )
+        .bind(itemId, term.subscription_id, row.period_start)
+        .run();
+    }
+    if (cutoff !== null && cutoff <= settledThrough)
+      await finalizeCanceledOverage(env, term);
+  }
 }
 
 async function finalizeCanceledOverage(env: Env, term: BillingTerm) {
@@ -908,50 +1114,94 @@ async function finalizeCanceledOverage(env: Env, term: BillingTerm) {
     .run();
 }
 
-export async function settleBillingAccounts(env: Env) {
-  if (!env.BILLING_CONFIG) return;
-  const synchronization = billingConfig(env).synchronization;
-  const accounts = await env.DB.prepare(
-    `SELECT w.id AS workspace_id FROM workspaces w
-    LEFT JOIN billing_accounts b ON b.workspace_id = w.id
-    WHERE w.region = ? AND (w.abandoned_at IS NULL
-      OR (b.customer_id IS NOT NULL AND b.free_subscription_closed = 0 AND ?)
-      OR EXISTS (SELECT 1 FROM billing_terms t WHERE t.workspace_id = w.id AND t.final_invoice_finalized = 0))`,
-  )
-    .bind(env.AVALON_REGION, synchronization ? 1 : 0)
-    .all<{ workspace_id: string }>();
-  for (const account of accounts.results) {
+/** Run inside the organization's BillingCoordinatorDO. Reporting never gates collection. */
+export async function settleBillingAccount(env: Env, workspaceId: string) {
+  await billingAccount(env, workspaceId, true);
+  try {
+    await refreshBillingAccount(env, workspaceId);
+    await billClosedOverage(env, workspaceId);
+  } catch (error) {
+    logWarn(env, "billing_settlement_failed", {
+      workspace_id: workspaceId,
+      error_code: diagnosticErrorCode(error, "billing_settlement_failed"),
+    });
+  }
+  if (!billingConfig(env).synchronization) return;
+  // A broken free-price/profile configuration must not strand the usage outbox.
+  for (const synchronize of [
+    synchronizeStripeProfile,
+    synchronizeStripeUsage,
+  ]) {
     try {
-      await refreshBillingAccount(env, account.workspace_id);
-      await billClosedOverage(env, account.workspace_id);
+      await synchronize(env, await billingAccount(env, workspaceId));
     } catch (error) {
-      logWarn(env, "billing_settlement_failed", {
-        workspace_id: account.workspace_id,
-        error_code: diagnosticErrorCode(error, "billing_settlement_failed"),
+      logWarn(env, "billing_synchronization_failed", {
+        workspace_id: workspaceId,
+        error_code: diagnosticErrorCode(
+          error,
+          "billing_synchronization_failed",
+        ),
       });
     }
-    // Reporting is independent of invoice collection and paid lifecycle recovery.
-    if (synchronization) {
-      try {
-        await withBillingLock(env, account.workspace_id, async () => {
-          await synchronizeStripeProfile(
-            env,
-            await billingAccount(env, account.workspace_id),
-          );
-          await synchronizeStripeUsage(
-            env,
-            await billingAccount(env, account.workspace_id),
-          );
-        });
-      } catch (error) {
-        logWarn(env, "billing_synchronization_failed", {
-          workspace_id: account.workspace_id,
-          error_code: diagnosticErrorCode(
-            error,
-            "billing_synchronization_failed",
-          ),
-        });
-      }
-    }
   }
+}
+
+/** The membership fence is committed inside the same actor as Checkout. */
+export async function closeOrganizationBilling(
+  env: Env,
+  workspaceId: string,
+  actorUserId: string | null,
+) {
+  return withOrganizationBillingClosure(env, workspaceId, async () => {
+    if (actorUserId === null) {
+      const at = new Date().toISOString();
+      await env.DB.prepare(
+        `UPDATE workspaces SET abandoned_at = ?, updated_at = ?
+        WHERE id = ? AND region = ? AND abandoned_at IS NULL`,
+      )
+        .bind(at, at, workspaceId, env.AVALON_REGION)
+        .run();
+      return;
+    }
+    const at = new Date().toISOString();
+    const abandonment = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE workspaces SET abandoned_at = ?, updated_at = ?
+           WHERE id = ? AND abandoned_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM workspace_members actor
+               WHERE actor.workspace_id = workspaces.id AND actor.user_id = ?
+                 AND actor.status = 'active'
+             )
+             AND 1 = (
+               SELECT COUNT(*) FROM workspace_members active_member
+               WHERE active_member.workspace_id = workspaces.id
+                 AND active_member.status = 'active'
+             )`,
+      ).bind(at, at, workspaceId, actorUserId),
+      env.DB.prepare(
+        `UPDATE workspace_members SET status = 'suspended'
+           WHERE workspace_id = ? AND user_id = ? AND status = 'active'
+             AND EXISTS (
+               SELECT 1 FROM workspaces
+               WHERE id = ? AND abandoned_at = ?
+             )`,
+      ).bind(workspaceId, actorUserId, workspaceId, at),
+      env.DB.prepare(
+        `UPDATE workspace_invitations SET revoked_at = ?
+           WHERE workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM workspaces
+               WHERE id = ? AND abandoned_at = ?
+             )`,
+      ).bind(at, workspaceId, workspaceId, at),
+    ]);
+
+    if (Number(abandonment[0]?.meta?.changes ?? 0) !== 1)
+      throw new ApiError(
+        409,
+        "membership_changed",
+        "The organization membership changed while closing it. Check it and try again.",
+      );
+  });
 }

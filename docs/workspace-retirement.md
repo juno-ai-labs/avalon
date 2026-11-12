@@ -156,9 +156,10 @@ answering in the form its caller reads.
 ### The operator door
 
 `retireWorkspaceForOperator` checks the regional workspace row before writing
-`abandoned_at` and walking the object graph. The billing closure guard shares
-checkout ownership and refuses a live paid subscription or open checkout before
-the fence removes access to the Billing Portal. See [billing](stripe-billing.md). The engineering MCP's `retire_org`
+`abandoned_at` and walking the object graph. The billing actor commits the closure fence in the same serialized operation as
+its subscription check, shares checkout ownership and refuses a live paid subscription or open checkout before
+the fence removes access to the Billing Portal. Already abandoned Organizations
+without a billing account can resume retirement without creating one. See [billing](stripe-billing.md). The engineering MCP's `retire_org`
 resolves exactly one region and passes the authenticated Access subject through
 its private service binding. Independent audit attempt/result rows record the
 operator. A cross-region ID is refused rather than used to create new tombstones.

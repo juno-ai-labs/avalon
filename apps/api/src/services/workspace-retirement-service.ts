@@ -1,4 +1,4 @@
-import { withOrganizationBillingClosure } from "./billing";
+import { closeOrganizationBilling } from "./billing-coordination";
 import {
   asSubstreamId,
   asWorkspaceId,
@@ -297,9 +297,7 @@ export async function retireWorkspaceForOperator(
   // it"). Without it a retired workspace still admitted sign-in and still sent
   // invitation email. Idempotent, so a resumed pass leaves the first instant.
   const retiredAt = Date.now();
-  await withOrganizationBillingClosure(env, workspaceId, () => env.DB.prepare(
-    "UPDATE workspaces SET abandoned_at = ?, updated_at = ? WHERE id = ? AND region = ? AND abandoned_at IS NULL",
-  ).bind(new Date(retiredAt).toISOString(), new Date(retiredAt).toISOString(), workspaceId, env.AVALON_REGION).run());
+  await closeOrganizationBilling(env, workspaceId, null);
   return retireWorkspaceGraph(env, {
     workspaceId: asWorkspaceId(workspaceId),
     retiredAt,

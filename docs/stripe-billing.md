@@ -10,7 +10,8 @@ current behavior until `BILLING_CONFIG` is supplied.
 ## Where the code lives
 
 `apps/api/src/services/billing.ts` owns the lifecycle, with `billing-config.ts` and
-`stripe.ts` beside it. `stripe-billing-sync.ts` synchronizes free-account trial
+`stripe.ts` beside it. `billing-coordination.ts` routes writes to the regional
+`BillingCoordinatorDO`, one actor per Organization. `stripe-billing-sync.ts` synchronizes free-account trial
 records, allowance metadata and usage meters. The HTTP boundary is `routes/billing.ts`, the D1 schema is
 `packages/db/migrations/0131_billing.sql`, and the shared desktop/browser UI is
 `apps/desktop/src/renderer/components/organization-billing.tsx`.
@@ -68,7 +69,7 @@ campaign is disabled. Re-subscribing after a paid subscription also cannot resta
 the remaining no-card trial.
 
 Signed subscription webhooks and scheduled/checkout recovery use the same reconciliation
-path under an Organization ownership claim. Active/trialing subscriptions select
+path inside the Organization billing actor. Active/trialing subscriptions select
 the configured offer; other states return to `unpaidPlan` (default `starter`).
 Organizations without a subscription return to the unpaid plan, including legacy
 self-service upgrades. An engineering-MCP plan change records an explicit override
@@ -78,20 +79,30 @@ replacing the current subscription; late old events close only their own terms.
 Offer metadata disambiguates offers sharing a price, and a price-only match must
 be unique. Unknown customers/other deployments are acknowledged and logged.
 
-Both self-service closure and operator retirement hold the same claim as checkout. A live subscription or
+Both self-service closure and operator retirement execute their D1 closure fence inside the same actor as checkout. A live subscription or
 open checkout blocks closure before the last member loses access. Restore billing
 configuration before closing an Organization with a previously created customer.
-Closure never provisions a customer. It cancels an existing zero-price record;
+Synchronous closure never provisions a customer. Background reporting can create
+one for retained usage from an Organization closed before its first sync. It cancels an existing zero-price record;
 failed cleanup retries in the background. Closed accounts leave the sweep once
-free-record cleanup and final paid invoices finish.
+free-record cleanup and final paid invoices finish, but pending usage hours independently re-enroll
+them, including queued usage that arrives after cleanup. Retirement can resume for
+an already abandoned Organization with no billing account without provisioning one.
 
 Optional USD overages use the existing weekly quota and anniversary-month ledger.
 The first partial period after consent/paid activation is free. A scheduled job
 snapshots every fully closed period after the configured settlement delay (14 days
 by default, matching maximum usage queue retention) and adds an invoice item to
-the subscription's next invoice. Terms start at Stripe activation (after any subscription trial), without waiting
+the subscription's next invoice. Billable intervals stop when consent is removed, the plan/currency no longer supports
+overages, or the subscription leaves active status. Resumption starts a new interval
+and waives its first partial period; suspended gaps never become debt. The prior
+interval retains its cutoff and quota before any entitlement downgrade.
+Terms start at Stripe activation (after any subscription trial), without waiting
 for an unused no-card deadline. Paid terms are stored per subscription, independently
-of the current account. Cancellation records Stripe's `ended_at` and the quota
+of the current account. If activation was missed before cancellation, paid Stripe
+subscription invoice periods recover the start, including zero-total pilot invoices.
+A trial-only invoice or an unpaid incomplete subscription does not prove activation.
+Cancellation records Stripe's `ended_at` and the quota
 from the cutoff week's recorded quota, falling back to that subscription's
 offer if no rollup exists. After the delay, the final partial month is calculated from
 retained usage events through that cutoff; later usage is excluded. A final
@@ -110,13 +121,15 @@ usage plan contract; changing Stripe prices does not change those allowances.
 
 Set `synchronization` to provision every local Organization in Stripe on the
 existing five-minute scheduled tick, including accounts that never open billing.
-Status GETs use stored state without the write claim or provider calls. A single
+`pnpm env:sync` copies the optional server keys and preserves the JSON catalog
+through local dotenv encoding. Status GETs use stored state without waiting for the billing actor or making provider calls. A single
 focus listener refreshes that cache on return from Stripe. Webhooks and scheduled
 recovery refresh paid lifecycle state even without usage synchronization. Profile
 synchronization is separate, so a bad free price cannot block checkout or closure.
 Customer metadata search and subscription discovery recover lost create receipts
 beyond Stripe's idempotency window without scanning all customers. Search is
-eventually consistent; the stable creation key covers immediate retries. The Organization claim serializes all external writes.
+eventually consistent; the stable creation key covers immediate retries. The Organization actor serializes all external writes. Usage reporting runs even if
+profile synchronization fails; an empty usage outbox makes no meter-definition calls.
 
 The separate zero-price subscription has `billing_role=free_record`. It records
 the no-card trial and earned team extension; its metadata keeps the original
@@ -124,7 +137,11 @@ start, base deadline, team deadline and qualification rule even when initial syn
 happens after expiry. A persisted award receipt prevents repeatedly applying the
 same deadline, so subsequent edits to the free-record trial deadline in Stripe
 refresh Rally's checkout cache. Paid subscriptions and pilot coupons retain their
-existing lifecycle. Customer metadata shows the current plan, included allowance,
+existing lifecycle. Before Checkout, the free subscription is canceled and retained
+as award history, releasing Stripe's active-subscription currency restriction. A durable
+marker prevents cron recreating it while Checkout is pending. If paid checkout happened
+before the free record existed, awards are recorded on the Stripe customer without
+creating a conflicting free subscription. Customer metadata shows the current plan, included allowance,
 weekly allocation, quota anchor, paid/free subscription IDs, available pilot
 coupon, meter IDs and pending/failed usage-hour counts. Metadata reflects the
 latest profile sync, so delivery counts may lag one scheduled tick.
@@ -188,7 +205,6 @@ Stripe documents the ingestion window and asynchronous processing in
   Stripe's 35-day ingestion window cannot be silently copied into a new meter.
   Use the retained audit history for an operator-led financial adjustment where
   needed; a current-timestamp event is not a historical backfill.
-- Keep the existing non-expiring Organization claim recovery procedure below.
 
 ## Invariants
 
@@ -196,7 +212,8 @@ Stripe documents the ingestion window and asynchronous processing in
   Otherwise a caller could buy an arbitrary price. Tests cover rejected selections.
 - Only active Organization administrators, outside support sessions, access billing.
 - Checkout never grants an entitlement; verified Stripe subscription state does.
-- One open checkout is reused; changing an offer while one is open is refused.
+- A matching open checkout is reused; changing offer, currency or overage consent
+  expires the old session before preparing its replacement inside the same actor.
 - Overage receipts are immutable in quantity and price. Retrying cannot reprice an
   already charged period. Tests cover replay and pre-consent exclusion.
 - Billing does not run on the inference request path. A Stripe outage cannot fail
@@ -223,15 +240,19 @@ request fields; arbitrary metadata keys and provider messages are withheld. Each
 Organization's scheduled failure is logged with its workspace ID and does not
 stop the next Organization.
 
-Concurrent operations return `billing_busy`. Ownership does **not** expire: no
-clock deadline can allow a slow Stripe request and its replacement to both write.
-Claimed work is registered with runtime `waitUntil`, so closing the client does
-not immediately cancel cleanup. A hard-terminated Worker, or work exceeding the
-platform grace period, can still leave `sync_token` set. Recovery requires an operator to
-fence the original invocation (stop the old deployment and ensure it cannot resume)
-then clear that token. Do not clear a token merely because it is old. Automatic
-lease takeover was removed instead of assigning another guessed duration. Stripe
-session/receipt discovery recovers uncertain external writes after release.
+Billing writes run to completion inside one `BillingCoordinatorDO` per Organization.
+Concurrent calls receive `billing_busy` and can retry once the current operation
+finishes. Its actor-local busy flag is released even on failure. Runtime restart
+destroys both the executing code and that flag,
+so no D1 lock survives a crash and no guessed lease can overlap a live writer.
+Interactive calls use RPC because the administrator needs the URL or closure result;
+the scheduled sweep retries unfinished D1/Stripe receipts on its next tick. Provider
+writes still require idempotency and receipt discovery: actor serialization cannot
+make Stripe and D1 one transaction. Checkout saves its exact request before sending it. After an uncertain result,
+recovery discovers the open session or replays that same request and idempotency key
+before accepting changed terms; an incompatible session is then expired. An
+outstanding request also blocks closure until recovered. Billing actors remain reachable after the
+Organization's content objects are retired, so late usage and final invoices can finish.
 
 Unknown/ambiguous prices fail reconciliation: retain retired offers with
 `enabled: false`. Extraordinary usage arriving after settlement needs manual
@@ -244,8 +265,10 @@ Recover from the retained usage lakehouse before collecting that exceptional tai
 
 `apps/api/test/billing.test.ts` exercises real migrated SQLite and a fake Stripe
 HTTP service: eligibility, checkout recovery, lifecycle transitions, authorization,
-serialization, old-subscription cutoffs, lazy trial awards, operator retirement,
-lock-free status reads and isolated settlement.
+billable intervals, missed activation, old-subscription cutoffs, lazy trial awards, operator retirement,
+provider-free status reads and isolated settlement.
+`test-workers/billing-coordinator.test.ts` exercises real actor serialization,
+restart recovery after an uncertain provider response, and signed webhook dispatch/tampering through Hono and the actor.
 `test/stripe-billing-sync.test.ts` covers profile recovery, awards, first-paid
 eligibility, hourly delivery, delayed aggregation, replay, concurrent updates,
 retention, terminal expiry, closed-account cleanup and settlement continuing
@@ -365,9 +388,16 @@ identifiers for at least 24 hours. The audit ledger stays durable; reconciliatio
 is background work and deliberately does not gate invoice collection.
 Qualification counts are recorded before lazy account creation, so departures
 cannot erase earned trials and old guest join dates cannot earn new ones. Status
-reads avoid the writer claim, and paid recovery precedes settlement independently
+reads avoid the actor writer, and paid recovery precedes settlement independently
 of reporting. Customer search replaces account-wide scans; finalized terms and
 expired usage revisions stop repeating work. Explicit operator plan overrides
 survive paid-state reconciliation.
+Per-Organization actors replace crash-stranding D1 claims; a lease timeout was
+rejected because it cannot prove a slow external writer has stopped. Explicit
+billable intervals preserve earlier obligations while excluding suspended gaps.
+Canceled history can recover missed activation from paid invoice evidence. Free
+subscriptions are archived at checkout to release currency locks, and the outbox
+keeps closed Organizations eligible for usage reporting. These boundaries are
+independent of the requested removal of the usage-reconciliation collection gate.
 Future changes must preserve pre-consent exclusion, cancellation cutoffs and
 permanent charge receipts.

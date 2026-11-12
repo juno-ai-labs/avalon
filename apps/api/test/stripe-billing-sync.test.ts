@@ -1,3 +1,4 @@
+import { billingAccountsToSettle } from '../src/services/billing-coordination';
 import '../../../tests/isolated-region';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
@@ -5,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import type { UsageEvent } from '@rally/contracts/usage';
 import type * as UsageModule from '../src/services/usage-metering';
 import { applyUsageBatch, pruneUsageEvents } from '../src/services/usage-metering';
-import { billingAccount, createCheckout, settleBillingAccounts, withBillingLock, withOrganizationBillingClosure } from '../src/services/billing';
+import { billingAccount, createCheckout, settleBillingAccount, withOrganizationBillingClosure } from '../src/services/billing';
 import { synchronizeStripeProfile, synchronizeStripeUsage } from '../src/services/stripe-billing-sync';
 import { createTestEnv } from './helpers/cloudflare-test';
 import { migratedSqliteDatabase, migratedUsageSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
@@ -110,20 +111,20 @@ function fixture() {
     const event: UsageEvent = { v: 1, eventId: id, workspaceId: WORKSPACE, region: 'global', activity: 'agent_run', occurredAt, costMicrousd: cost, model: null, refs: {} };
     await applyUsageBatch(env, [event, event], new Date().toISOString());
   };
-  const syncUsage = async () => withBillingLock(env, WORKSPACE, async () => synchronizeStripeUsage(env, await billingAccount(env, WORKSPACE)));
+  const syncUsage = async () => synchronizeStripeUsage(env, await billingAccount(env, WORKSPACE));
   return { db, usage, env, server, add, syncUsage };
 }
 
 it('provisions a free account and synchronizes its earned team award without consuming the pilot', async () => {
   const { db, env, server } = fixture();
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, WORKSPACE);
   expect(server.writes.filter((request) => request.path === 'subscriptions')).toHaveLength(1);
   expect(server.writes.find((request) => request.path === 'subscriptions')!.body.get('trial_end')).toBe(String(Date.parse('2026-11-24') / 1000));
   for (const id of ['two', 'three']) {
     db.prepare("INSERT INTO users(id,google_subject,email,name,created_at,updated_at) VALUES (?,?,?,?,'2026-11-10','2026-11-10')").run(id, id, `${id}@example.test`, id);
     db.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,access_class,joined_at) VALUES (?,?,'member','active','member','2026-11-11T00:00:00Z')").run(WORKSPACE, id);
   }
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, WORKSPACE);
   const award = server.writes.find((request) => request.path === 'subscriptions/sub_1');
   expect(award!.body.get('trial_end')).toBe(String(Date.parse('2027-01-09') / 1000));
   expect(award!.body.get('metadata[team_trial_awarded]')).toBe('true');
@@ -135,22 +136,22 @@ it('provisions a free account and synchronizes its earned team award without con
 
 it('recovers customers and free records after lost local receipts beyond Stripe idempotency retention', async () => {
   const { db, env, server } = fixture();
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, WORKSPACE);
   db.prepare('UPDATE billing_accounts SET customer_id = NULL, free_subscription_id = NULL, trial_award_synced_end = NULL').run();
   vi.setSystemTime(new Date('2026-11-13'));
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, WORKSPACE);
   expect(server.writes.filter((request) => request.path === 'customers')).toHaveLength(1);
   expect(server.writes.filter((request) => request.path === 'subscriptions')).toHaveLength(1);
   expect(db.prepare('SELECT customer_id, free_subscription_id FROM billing_accounts').get()).toEqual({ customer_id: 'cus_1', free_subscription_id: 'sub_1' });
 });
 
 it('reads a Stripe-edited trial deadline without overwriting it on the next synchronization', async () => {
-  const { env, server } = fixture(); await settleBillingAccounts(env);
+  const { env, server } = fixture(); await settleBillingAccount(env, WORKSPACE);
   server.subscriptions.get('sub_1')!.trial_end = Date.parse('2026-12-01') / 1000;
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, WORKSPACE);
   const account = await billingAccount(env, WORKSPACE);
   expect(account.trial_ends_at).toBe(Date.parse('2026-12-01') / 1000);
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, WORKSPACE);
   expect(server.writes.filter((request) => request.path === 'subscriptions/sub_1')).toHaveLength(0);
 });
 
@@ -162,8 +163,8 @@ it('refuses a nonzero price for the no-card record before creating a subscriptio
 
 it('reports all free-period usage once and replaces an hour with the complete late-arrival total', async () => {
   const { env, usage, server, add } = fixture();
-  await add('first'); await settleBillingAccounts(env);
-  await add('late', 2_000_000); await settleBillingAccounts(env);
+  await add('first'); await settleBillingAccount(env, WORKSPACE);
+  await add('late', 2_000_000); await settleBillingAccount(env, WORKSPACE);
   expect(server.writes.filter((request) => request.path === 'billing/meter_events').map((request) => request.body.get('payload[value]'))).toEqual(['1000000', '3000000']);
   expect(usage.prepare('SELECT amount_microusd, revision, sent_revision, confirmed_revision FROM billing_usage_hours').all())
     .toEqual([{ amount_microusd: 3_000_000, revision: 2, sent_revision: 2, confirmed_revision: 2 }]);
@@ -173,16 +174,16 @@ it('keeps Rally-paid usage separate from Organization usage', async () => {
   const { env, usage, server, add } = fixture(); await add('org', 2_000_000);
   usage.prepare(`INSERT INTO usage_events(event_id,workspace_id,activity,occurred_at,cost_microusd,organization_pays,received_at)
     VALUES ('rally',?,'agent_run','2026-11-10T12:20:00Z',700000,0,'2026-11-11')`).run(WORKSPACE);
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, WORKSPACE);
   expect(server.writes.filter((request) => request.path === 'billing/meter_events').map((request) => [request.body.get('event_name'), request.body.get('payload[value]')]))
     .toEqual([['mtr_rally', '700000'], ['mtr_org', '2000000']]);
 });
 
 it('replays an uncertain send after 24 hours as an absolute total instead of adding usage twice', async () => {
   const { env, usage, server, add } = fixture(); await add('one');
-  server.controls.loseMeterReply = true; await settleBillingAccounts(env);
+  server.controls.loseMeterReply = true; await settleBillingAccount(env, WORKSPACE);
   expect(usage.prepare('SELECT confirmed_revision FROM billing_usage_hours').get()).toEqual({ confirmed_revision: 0 });
-  vi.setSystemTime(new Date('2026-11-13')); await settleBillingAccounts(env);
+  vi.setSystemTime(new Date('2026-11-13')); await settleBillingAccount(env, WORKSPACE);
   const sends = server.writes.filter((request) => request.path === 'billing/meter_events');
   expect(sends).toHaveLength(2);
   expect(sends.map((request) => request.body.get('payload[value]'))).toEqual(['1000000', '1000000']);
@@ -191,19 +192,19 @@ it('replays an uncertain send after 24 hours as an absolute total instead of add
 
 it('records reconciliation as pending until Stripe aggregation catches up', async () => {
   const { env, usage, server, add, syncUsage } = fixture(); await add('one');
-  server.controls.lag = true; await settleBillingAccounts(env);
+  server.controls.lag = true; await settleBillingAccount(env, WORKSPACE);
   expect(usage.prepare('SELECT error_code FROM billing_usage_hours').get()).toEqual({ error_code: 'billing_usage_unreconciled' });
   server.controls.lag = false; await syncUsage();
   expect(usage.prepare('SELECT confirmed_revision, error_code FROM billing_usage_hours').get()).toEqual({ confirmed_revision: 1, error_code: null });
 });
 
 it('continues overage settlement when background Stripe usage synchronization fails', async () => {
-  const { db, env, server, add } = fixture(); await add('overage', 50_000_000); await settleBillingAccounts(env);
+  const { db, env, server, add } = fixture(); await add('overage', 50_000_000); await settleBillingAccount(env, WORKSPACE);
   db.prepare(`INSERT INTO billing_terms(subscription_id,workspace_id,customer_id,price_id,starts_at)
     VALUES ('sub_paid',?,'cus_1','price_overage',unixepoch('2026-11-10'))`).run(WORKSPACE);
   server.controls.rawMeter = true;
   vi.setSystemTime(new Date('2026-12-26'));
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, WORKSPACE);
   const invoice = server.writes.find((request) => request.path === 'invoiceitems');
   expect(invoice).toBeDefined();
   expect(invoice!.body.get('quantity')).toBe('40000000');
@@ -219,7 +220,7 @@ it('refuses raw meters whose retries would count usage twice', async () => {
 
 it('retains unsendable history and continues reporting recent usage without changing timestamps', async () => {
   const { env, usage, server, add } = fixture();
-  await add('old', 900_000, '2026-09-01T12:00:00Z'); await add('recent'); await settleBillingAccounts(env);
+  await add('old', 900_000, '2026-09-01T12:00:00Z'); await add('recent'); await settleBillingAccount(env, WORKSPACE);
   expect(usage.prepare('SELECT error_code FROM billing_usage_hours ORDER BY hour_start').all())
     .toEqual([{ error_code: 'billing_usage_timestamp_expired' }, { error_code: null }]);
   expect(server.writes.filter((request) => request.path === 'billing/meter_events').map((request) => request.body.get('timestamp'))).toEqual([String(HOUR)]);
@@ -271,19 +272,78 @@ it('records expired usage once instead of rewriting it on every tick', async () 
 
 it('keeps checkout available when a free-record profile is misconfigured', async () => {
   const { env, server } = fixture();
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, WORKSPACE);
   server.subscriptions.get('sub_1')!.items.data[0]!.price.unit_amount = 100;
   expect(await createCheckout(env, WORKSPACE, 'grow', 'usd', false)).toEqual({ url: 'https://checkout.stripe.com/paid' });
 });
 
 it('cancels the free record at closure and stops sweeping a fully settled closed organization', async () => {
   const { db, env, server } = fixture();
-  await settleBillingAccounts(env);
+  await settleBillingAccount(env, WORKSPACE);
   await withOrganizationBillingClosure(env, WORKSPACE, async () => {
     db.prepare("UPDATE workspaces SET abandoned_at = '2026-11-11'").run();
   });
   expect(server.subscriptions.get('sub_1')!.status).toBe('canceled');
   const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
-  await settleBillingAccounts(env);
+  expect(await billingAccountsToSettle(env)).toEqual([]);
   expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('reports late usage after closed-organization cleanup has finished', async () => {
+  const { db, env, usage, add, server } = fixture();
+  await settleBillingAccount(env, WORKSPACE);
+  await withOrganizationBillingClosure(env, WORKSPACE, async () => { db.prepare("UPDATE workspaces SET abandoned_at = '2026-11-11'").run(); });
+  expect(await billingAccountsToSettle(env)).toEqual([]);
+  await add('late-after-close', 9_000_000);
+  expect(await billingAccountsToSettle(env)).toEqual([WORKSPACE]);
+  await settleBillingAccount(env, WORKSPACE);
+  expect(usage.prepare('SELECT confirmed_revision FROM billing_usage_hours').get()).toEqual({ confirmed_revision: 1 });
+  expect(server.writes.filter(r => r.path === 'billing/meter_events').map(r => r.body.get('payload[value]'))).toEqual(['9000000']);
+  expect(await billingAccountsToSettle(env)).toEqual([]);
+});
+
+it('reports usage even when free profile synchronization fails and does no meter reads when idle', async () => {
+  const { env, usage, server, add, syncUsage } = fixture();
+  server.controls.freeAmount = 100;
+  await add('despite-profile-failure', 3_000_000);
+  await settleBillingAccount(env, WORKSPACE);
+  expect(usage.prepare('SELECT confirmed_revision FROM billing_usage_hours').get()).toEqual({ confirmed_revision: 1 });
+  const fetcher = vi.mocked(fetch); fetcher.mockClear();
+  await syncUsage();
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('archives the free subscription before foreign-currency checkout and preserves its award history', async () => {
+  const { env, db, server } = fixture();
+  const config = JSON.parse(env.BILLING_CONFIG!); config.offers[0].currencies.push('eur'); env.BILLING_CONFIG = JSON.stringify(config);
+  await settleBillingAccount(env, WORKSPACE);
+  await createCheckout(env, WORKSPACE, 'grow', 'eur', false);
+  expect(server.subscriptions.get('sub_1')!.status).toBe('canceled');
+  expect(server.subscriptions.get('sub_1')!.metadata.awarded_trial_ends_at).toBe(String(Date.parse('2026-11-24') / 1000));
+  await synchronizeStripeProfile(env, await billingAccount(env, WORKSPACE));
+  expect(server.subscriptions.size).toBe(1);
+  expect(db.prepare('SELECT free_subscription_closed FROM billing_accounts').get()).toEqual({ free_subscription_closed: 1 });
+  expect(server.writes.find(r => r.path === 'checkout/sessions')!.body.get('currency')).toBe('eur');
+});
+
+it('records awards on the customer without creating a conflicting free subscription when paid checkout came first', async () => {
+  const { db, env, server } = fixture();
+  await billingAccount(env, WORKSPACE);
+  server.customers.set('cus_eur', { id: 'cus_eur', metadata: {} });
+  db.prepare("UPDATE billing_accounts SET customer_id = 'cus_eur', subscription_id = 'sub_eur', currency = 'eur', status = 'active'").run();
+  await synchronizeStripeProfile(env, await billingAccount(env, WORKSPACE));
+  expect(server.subscriptions.size).toBe(0);
+  expect(server.customers.get('cus_eur')!.metadata.awarded_trial_ends_at).toBe(String(Date.parse('2026-11-24') / 1000));
+});
+
+it('provisions a reporting customer for a closed organization that missed its first Stripe synchronization', async () => {
+  const { db, env, usage, add, server } = fixture();
+  await add('closed-before-first-tick', 4_000_000);
+  db.prepare("UPDATE workspaces SET abandoned_at = '2026-11-11'").run();
+  expect(await billingAccountsToSettle(env)).toEqual([WORKSPACE]);
+  await settleBillingAccount(env, WORKSPACE);
+  expect(usage.prepare('SELECT confirmed_revision FROM billing_usage_hours').get()).toEqual({ confirmed_revision: 1 });
+  expect(server.customers.size).toBe(1);
+  expect(server.subscriptions.size).toBe(0);
+  expect(server.customers.get('cus_1')!.metadata.awarded_trial_ends_at).toBe(String(Date.parse('2026-11-24') / 1000));
 });

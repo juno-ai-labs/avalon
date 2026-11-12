@@ -1,3 +1,4 @@
+import { createBillingPortal, createCheckout, syncSubscription } from "../services/billing-coordination";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   BillingStatusSchema,
@@ -17,9 +18,6 @@ import { billingConfig } from "../services/billing-config";
 import {
   billingAccount,
   hasLiveSubscription,
-  createBillingPortal,
-  createCheckout,
-  syncSubscription,
 } from "../services/billing";
 import { verifyStripeSignature } from "../services/stripe";
 
