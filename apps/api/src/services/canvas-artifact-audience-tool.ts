@@ -1,16 +1,10 @@
 /**
- * `set_artifact_audience`: a Canvas's Chat changes who can open the Canvas's
+ * `set_artifact_audience`: a Canvas's Chat sets who can open the Canvas's
  * published artifacts, as the person typing into it.
  *
  * Publishing agents default a site to the most open audience the request
  * allows (`building-live-sites`), and a new Canvas starts with editors-only
- * artifact access, so without this tool a public site stayed private until a
- * manager found the Share screen. It sets only the artifact audience: the
- * editor audience, and naming specific people, stay with the Share screen.
- * Only a Canvas manager may change it, exactly as through Share; anyone else
- * gets a refusal that says who can.
- *
- * See `docs/canvas-artifact-access.md`.
+ * artifact access. See `docs/canvas-artifact-access.md`.
  */
 import { asWorkspaceId } from "@rally/contracts";
 import type { HarnessTool } from "@rally/agent-harness";
@@ -28,18 +22,15 @@ const ArgumentsSchema = z.strictObject({
     + "\"workspace\": members of this Organization. "
     + "\"editors\": only the people who can open this Canvas's Chat.",
   ),
+  personAsked: z.boolean().describe(
+    "true only when the person asked in this conversation to change who can open this Canvas's artifacts. "
+    + "false when you are choosing a default after publishing; then nothing changes if an audience was already chosen.",
+  ),
 });
 
-/** What the tool needs from the host; the WorkspaceDO call in production. */
-export interface ArtifactAudiencePort {
-  set(audience: "public" | "workspace" | "editors"): Promise<
-    | { outcome: "set"; artifactVisibility: "editors" | "participants" | "workspace" | "public" }
-    | { outcome: "not_manager" }
-    | { outcome: "not_found" }
-  >;
-}
+const AUDIENCE_WORDS = { public: "anyone with the link", workspace: "the Organization", participants: "specific people", editors: "the Canvas's editors" } as const;
 
-export function createArtifactAudienceTool(port: ArtifactAudiencePort): HarnessTool {
+export function createArtifactAudienceTool(env: Env, input: { workspaceId: string; canvasId: string; userId: string }): HarnessTool {
   return {
     definition: {
       name: "set_artifact_audience",
@@ -51,14 +42,15 @@ export function createArtifactAudienceTool(port: ArtifactAudiencePort): HarnessT
       ].join(" "),
       capability: "workstream.artifacts.audience",
       mode: "write",
-      // Setting a value twice leaves the same value, but nothing dedupes the
-      // call itself, so an interrupted one is recorded rather than replayed.
+      // Nothing dedupes the call itself, so an interrupted one is recorded rather than replayed.
       idempotency: "record_before_execute",
       inputSchema: z.toJSONSchema(ArgumentsSchema) as Record<string, unknown>,
     },
     execute: async (raw: unknown) => {
       const args = ArgumentsSchema.parse(raw);
-      const result = await port.set(args.audience);
+      const workspaceId = asWorkspaceId(input.workspaceId);
+      const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
+      const result = await workspace.canvasSetArtifactAudience({ ...input, artifactVisibility: args.audience, personAsked: args.personAsked });
       if (result.outcome === "not_manager") {
         const reason = "Only the Canvas's creator or an Organization owner or admin can change who opens its artifacts, from the Canvas's Share screen.";
         throw new ArtifactDataToolError("artifact_audience_not_manager",
@@ -69,26 +61,27 @@ export function createArtifactAudienceTool(port: ArtifactAudiencePort): HarnessT
           "This Canvas is archived or no longer exists, so its artifact audience cannot change.",
           { reason: "The Canvas is archived or no longer exists." });
       }
-      const raised = result.artifactVisibility !== args.audience;
+      const words = AUDIENCE_WORDS[result.artifactVisibility];
+      if (result.outcome === "kept") {
+        return {
+          output: {
+            audience: result.artifactVisibility,
+            changed: false,
+            note: `Someone already chose who can open this Canvas's artifacts, so it stays open to ${words}. `
+              + "Tell the person, and ask whether they want it changed; call again with personAsked true only if they say so.",
+          },
+          summary: `Artifacts stay open to ${words}`,
+        };
+      }
       return {
         output: {
           audience: result.artifactVisibility,
-          ...(raised ? { note: "The Canvas's Chat is open to the whole Organization, so its artifacts cannot be narrower than that." } : {}),
+          changed: true,
+          ...(result.artifactVisibility !== args.audience
+            ? { note: "The Canvas's Chat is open to the whole Organization, so its artifacts cannot be narrower than that." } : {}),
         },
-        summary: `Artifacts open to ${result.artifactVisibility === "public" ? "anyone with the link"
-          : result.artifactVisibility === "workspace" ? "the Organization" : "the Canvas's editors"}`,
+        summary: `Artifacts open to ${words}`,
       };
-    },
-  };
-}
-
-/** The production port: the run's own Canvas, as the person the Chat runs as. */
-export function artifactAudiencePort(env: Env, input: { workspaceId: string; canvasId: string; userId: string }): ArtifactAudiencePort {
-  return {
-    async set(audience) {
-      const workspaceId = asWorkspaceId(input.workspaceId);
-      const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
-      return workspace.canvasSetArtifactAudience({ ...input, artifactVisibility: audience });
     },
   };
 }

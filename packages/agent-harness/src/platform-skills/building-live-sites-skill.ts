@@ -162,26 +162,28 @@ have not. Ask its entry-privacy question only when that skill requires it.
      database, and never publish a page that looks like it saves but
      does not.
    - **Who can open it is the Canvas's artifact audience, and you set
-     it.** Static and active sites both follow it. A new Canvas starts with
+     it.** Static and active sites both follow it, and so does every other
+     artifact this Canvas has published. A new Canvas starts with
      editors-only artifact access, and publishing does not change that, so
-     after the first publish call \`set_artifact_audience\` with the most
-     open audience the request allows:
+     after publishing call \`set_artifact_audience\` with \`personAsked:
+     false\` and the most open audience the Canvas's artifacts allow:
      - **\`public\`** (anyone with the link, signed in or not) is the
-       default. Use it for anything the request does not mark as internal.
-     - **\`workspace\`** (the Organization's members) when the site shows
-       the Organization's own data — figures from a connector, internal
-       plans, people's details — or the request names the team or company
-       as its audience.
-     - **\`editors\`** only when the request asks for the site to stay
-       private.
+       default.
+     - **\`workspace\`** (the Organization's members) when this site, or
+       anything else this Canvas has published, shows the Organization's
+       own data — figures from a connector, internal plans, people's
+       details — or the request names the team or company as the audience.
+     - **\`editors\`** only when the request asks for it to stay private.
      When in doubt, choose the more open one. Public access never exposes
-     the Chat and never lets visitors redesign the site. End your reply by
-     saying who can open the site, and make your last question whether they
-     want it restricted. If the tool says the person does not manage the
-     Canvas, or you do not have the tool (a Sidekick run), say who can open
-     it now and that the Canvas's creator or an Organization admin can
-     change it in the Canvas's Share screen. Do not add a server solely to
-     protect a page.
+     the Chat and never lets visitors redesign the site. If the result says
+     \`changed: false\`, someone already chose the audience: leave it. Use
+     \`personAsked: true\` only when the person asks you to change who can
+     open it. End your reply by saying who can open the site, and make your
+     last question whether they want that changed. If the tool says the
+     person does not manage the Canvas, or you do not have the tool (a
+     Sidekick run), say who can open it now and that the Canvas's creator
+     or an Organization admin can change it in the Canvas's Share screen.
+     Do not add a server solely to protect a page.
 
 2. **Lay out one stable directory** beneath the workspace's resource
    output directory, named for the site (\`launch-checklist/\`, not

@@ -51,15 +51,17 @@ does. The request's own words decide, in this order:
 4. **Shared.** Any other app that saves what people add: a vote, an RSVP list,
    a sign-up sheet, a kudos wall, a shared board.
 
-**Who can open the site** is the Canvas's artifact audience, which you set
-with \`set_artifact_audience\` after the first publish. Choose the most open
-one the request allows: \`public\` (anyone with the link) by default,
-\`workspace\` for a site that shows the Organization's own data (a dashboard of
-connected data, internal plans) or that the request says is for the team or
-company, and \`editors\` only when the request asks for it to stay private.
-When in doubt, choose the more open one, and make your last question whether
-they want it restricted. Static and active sites both follow it; do not add a
-server just for access control. Follow \`building-live-sites\` for viewer identity and app-specific
+**Who can open the site** is the Canvas's artifact audience, which also covers
+everything else this Canvas has published. After publishing, set it with
+\`set_artifact_audience\` and \`personAsked: false\`, choosing the most open one
+those artifacts allow: \`public\` (anyone with the link) by default,
+\`workspace\` when the site or anything else here shows the Organization's own
+data (a dashboard of connected data, internal plans) or the request says it is
+for the team or company, and \`editors\` only when the request asks for it to
+stay private. When in doubt, choose the more open one. If someone already
+chose an audience, the tool leaves it; say so. Make your last question whether
+they want who can open it changed. Static and active sites both follow it; do
+not add a server just for access control. Follow \`building-live-sites\` for viewer identity and app-specific
 rules. A dashboard storing data you
 retrieve is not an app collecting people's entries and needs no entry-privacy
 question. Site protection does not by itself hide each person's entries from
