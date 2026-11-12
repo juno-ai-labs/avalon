@@ -36,7 +36,10 @@ export type ClientRequestHeaders = (name: string) => string | undefined;
  * leaves out of that socket's payload what a served build older than a
  * feature's contract cannot parse (`SOURCE_ACTIVITY_CLIENT_CONTRACT`).
  */
-export function requireCurrentClientContract(header: ClientRequestHeaders): number | null {
+export function requireCurrentClientContract(
+  header: ClientRequestHeaders,
+  minimumContract = MINIMUM_SERVED_CLIENT_CONTRACT,
+): number | null {
   const declared = readRallyHeader(header, RALLY_HEADERS.CLIENT_CONTRACT);
   if (declared === undefined) {
     if (header("origin") === undefined) return null;
@@ -44,7 +47,7 @@ export function requireCurrentClientContract(header: ClientRequestHeaders): numb
   }
   if (!/^\d+$/u.test(declared)) throw clientUpdateRequired();
   const version = Number(declared);
-  if (!Number.isSafeInteger(version) || version < MINIMUM_SERVED_CLIENT_CONTRACT) {
+  if (!Number.isSafeInteger(version) || version < minimumContract) {
     throw clientUpdateRequired();
   }
   return version;

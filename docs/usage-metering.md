@@ -153,7 +153,9 @@ Settings window as the relay-only name `usage`. The push is not replayed: the
 desktop marks the meter stale on every subscribe answer and relays `usage`
 then too.
 
-A new rollup row's quota is computed inside the consumer's insert from
+A new rollup row first inherits any existing sibling row's quota for the same
+week, preserving the catalog version across an anniversary-month split. Without
+a sibling, its quota is computed inside the consumer's insert from
 `usage_plan_changes`: the latest change before the row's week ended, else the
 plan the first later change replaced, else the plan `DB` holds. Past weeks
 therefore keep the plan they had, even for an event that arrives late.
@@ -332,8 +334,10 @@ The requested Start/Grow/Max/Ultra catalog separates price from included usage:
 Start must provide $40 of effective usage even though its price is zero. Weekly
 allocation remains one quarter of the allowance. Usage migration 0003 preserves
 plan history while removing its obsolete two-plan CHECK constraints; PlanIdSchema
-owns validation, as it already does for workspaces. Existing rollups and charge
-receipts retain their recorded quotas; new rollups use the updated catalog.
+owns validation, as it already does for workspaces. Existing weeks and charge receipts retain their recorded quotas: a new monthly
+segment of an existing week inherits its sibling quota. New weeks use the
+updated catalog. Engineering changes mark an explicit plan override; paid-state
+reconciliation preserves it while resetting legacy self-service unpaid upgrades.
 
 Billing can request a historical cutoff with the quota captured before downgrade.
 The cutoff week's costs come from retained usage events, excluding work performed

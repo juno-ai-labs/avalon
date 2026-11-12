@@ -63,8 +63,11 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  * `12` reads pending access requests and their email delivery state in previews.
  * `13` reads a denied access request's `decidedAt` in the Canvas access read.
  * `14` reads an Activity row of kind `source_request`, `source_approved` or `source_declined`.
+ * `15` reads Start/Grow/Max/Ultra usage plans.
  */
-export const CLIENT_CONTRACT_VERSION = 14;
+export const CLIENT_CONTRACT_VERSION = 15;
+/** First build that parses Max and Ultra in usage snapshots. */
+export const USAGE_PLANS_CLIENT_CONTRACT = 15;
 /**
  * First client contract that opens a guest relationship. A desktop before it
  * asks member-only routes for every stored workspace, so it is not offered one.

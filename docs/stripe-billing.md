@@ -39,9 +39,11 @@ The no-card trial starts at Organization creation. Defaults match the landing
 page: 14 days, extended to 60 total days when three active members (the creator
 and two teammates) join before expiry. Guests and pending invitations do not
 qualify. The extension is earned once before a subscription is created; leaving
-and rejoining cannot restart it. Membership triggers persist earned awards; the
-first billing read also checks durable join times, so a day-15 read can recognize
-a team formed on day 13. Open checkouts with older trial terms are expired and
+and rejoining cannot restart it. Membership triggers retain the active-member count at each qualifying transition,
+even before a billing account exists. The first billing read can recover a team
+formed on day 13 after a teammate leaves. Guest promotion and reactivation count
+when they happen, not at an older join date. Existing relationships are first
+recorded at migration; earlier membership transitions cannot be reconstructed. Open checkouts with older trial terms are expired and
 recreated; a trialing subscription is extended if an older hosted checkout completed. Existing Organizations do not receive a new trial.
 Stripe requires at least 48 hours for an explicit trial end; checkout in the last
 two days rounds the remaining trial up to 48 hours, preserving the free trial.
@@ -65,31 +67,40 @@ records the pilot coupon so reconciliation preserves its treatment after the
 campaign is disabled. Re-subscribing after a paid subscription also cannot restart
 the remaining no-card trial.
 
-Signed subscription webhooks and status/checkout recovery use the same reconciliation
+Signed subscription webhooks and scheduled/checkout recovery use the same reconciliation
 path under an Organization ownership claim. Active/trialing subscriptions select
 the configured offer; other states return to `unpaidPlan` (default `starter`).
-No running work is suspended. Canceled and incomplete-expired subscriptions allow
-fresh checkout; late events for older subscriptions cannot replace a current one.
+Organizations without a subscription return to the unpaid plan, including legacy
+self-service upgrades. An engineering-MCP plan change records an explicit override
+that reconciliation preserves. No running work is suspended. Canceled and incomplete-expired subscriptions allow
+fresh checkout. Recovery reads all history pages and closes canceled terms before
+replacing the current subscription; late old events close only their own terms.
 Offer metadata disambiguates offers sharing a price, and a price-only match must
 be unique. Unknown customers/other deployments are acknowledged and logged.
 
-Closing an Organization holds the same claim as checkout. A live subscription or
+Both self-service closure and operator retirement hold the same claim as checkout. A live subscription or
 open checkout blocks closure before the last member loses access. Restore billing
 configuration before closing an Organization with a previously created customer.
+Closure never provisions a customer. It cancels an existing zero-price record;
+failed cleanup retries in the background. Closed accounts leave the sweep once
+free-record cleanup and final paid invoices finish.
 
 Optional USD overages use the existing weekly quota and anniversary-month ledger.
 The first partial period after consent/paid activation is free. A scheduled job
 snapshots every fully closed period after the configured settlement delay (14 days
 by default, matching maximum usage queue retention) and adds an invoice item to
-the subscription's next invoice. Paid terms are stored per subscription, independently
+the subscription's next invoice. Terms start at Stripe activation (after any subscription trial), without waiting
+for an unused no-card deadline. Paid terms are stored per subscription, independently
 of the current account. Cancellation records Stripe's `ended_at` and the quota
-before downgrade. After the delay, the final partial month is calculated from
+from the cutoff week's recorded quota, falling back to that subscription's
+offer if no rollup exists. After the delay, the final partial month is calculated from
 retained usage events through that cutoff; later usage is excluded. A final
 standalone invoice includes remaining pending items for this Organization's Stripe
 customer, uses the saved payment method when available, and is finalized for
 collection. Re-subscription preserves the previous subscription's settlement.
-Prices and quantities are frozen in permanent
-receipts. A retry first searches Stripe invoice-item metadata since the closed period ended, even beyond Stripe's
+A recorded final invoice retries finalization without recalculating usage, so
+expired raw history cannot reopen an already snapshotted obligation. Prices and
+quantities are frozen in permanent receipts. A retry first searches Stripe invoice-item metadata since the closed period ended, even beyond Stripe's
 24-hour idempotency retention, before issuing another write. No current-period
 estimate is charged. Currency conversion is not guessed: non-USD plans cannot opt
 into overages yet. The existing weekly allowance values remain defined by the
@@ -99,9 +110,13 @@ usage plan contract; changing Stripe prices does not change those allowances.
 
 Set `synchronization` to provision every local Organization in Stripe on the
 existing five-minute scheduled tick, including accounts that never open billing.
-Billing reads and checkout also synchronize the profile. Stripe customer and
-subscription discovery recover lost create receipts beyond Stripe's idempotency
-window. The Organization claim serializes all external writes.
+Status GETs use stored state without the write claim or provider calls. A single
+focus listener refreshes that cache on return from Stripe. Webhooks and scheduled
+recovery refresh paid lifecycle state even without usage synchronization. Profile
+synchronization is separate, so a bad free price cannot block checkout or closure.
+Customer metadata search and subscription discovery recover lost create receipts
+beyond Stripe's idempotency window without scanning all customers. Search is
+eventually consistent; the stable creation key covers immediate retries. The Organization claim serializes all external writes.
 
 The separate zero-price subscription has `billing_role=free_record`. It records
 the no-card trial and earned team extension; its metadata keeps the original
@@ -147,7 +162,8 @@ credit grants. Synchronization is eventual, and its pending/error state matters
 when comparing the two systems.
 
 Stripe accepts usage timestamps only within the past 35 days. Older unsent hours
-remain in the outbox with `billing_usage_timestamp_expired`; they are never
+remain in the outbox with terminal `billing_usage_timestamp_expired`; later ticks
+skip them while diagnostics continue to count them. They are never
 re-timestamped into today's usage. Events already pruned before migration 0004
 remain in the lakehouse and rollups, not in Stripe's event history. This provider
 boundary means historical completeness cannot be claimed simply by enabling the
@@ -209,7 +225,9 @@ stop the next Organization.
 
 Concurrent operations return `billing_busy`. Ownership does **not** expire: no
 clock deadline can allow a slow Stripe request and its replacement to both write.
-A terminated Worker can leave `sync_token` set. Recovery requires an operator to
+Claimed work is registered with runtime `waitUntil`, so closing the client does
+not immediately cancel cleanup. A hard-terminated Worker, or work exceeding the
+platform grace period, can still leave `sync_token` set. Recovery requires an operator to
 fence the original invocation (stop the old deployment and ensure it cannot resume)
 then clear that token. Do not clear a token merely because it is old. Automatic
 lease takeover was removed instead of assigning another guessed duration. Stripe
@@ -226,10 +244,12 @@ Recover from the retained usage lakehouse before collecting that exceptional tai
 
 `apps/api/test/billing.test.ts` exercises real migrated SQLite and a fake Stripe
 HTTP service: eligibility, checkout recovery, lifecycle transitions, authorization,
-serialization, cancellation cutoffs and isolated settlement.
+serialization, old-subscription cutoffs, lazy trial awards, operator retirement,
+lock-free status reads and isolated settlement.
 `test/stripe-billing-sync.test.ts` covers profile recovery, awards, first-paid
 eligibility, hourly delivery, delayed aggregation, replay, concurrent updates,
-retention and settlement continuing through sync failures.
+retention, terminal expiry, closed-account cleanup and settlement continuing
+through sync failures.
 `test-workers/usage-ledger.test.ts` proves the hourly outbox and rollup remain
 atomic when queue batches overlap on real D1. The usage and
 access-revocation suites cover their shared boundaries. Renderer tests cover the
@@ -238,7 +258,10 @@ Live Stripe and a full authenticated desktop/browser flow remain activation chec
 
 ## Configuration and activation
 
-1. Apply regional and usage D1 migrations, including usage migration 0003 for
+1. Max/Ultra usage requires desktop/browser contract 15. Older clients receive
+   `client_update_required` on those usage reads and skip those socket snapshots;
+   other plans and app activity retain their existing compatibility.
+   Apply regional and usage D1 migrations, including usage migration 0003 for
    Max/Ultra plan history and 0004 for the permanent hourly usage outbox. Keep billing disabled until setup is complete.
 2. Create recurring organization prices in Stripe for Grow, Max, Ultra and negotiated
    offers. Add currency options to those
@@ -340,5 +363,11 @@ hold the billing record before checkout and through free usage. Hourly absolute
 values were chosen over raw-event retries because Stripe only deduplicates event
 identifiers for at least 24 hours. The audit ledger stays durable; reconciliation
 is background work and deliberately does not gate invoice collection.
+Qualification counts are recorded before lazy account creation, so departures
+cannot erase earned trials and old guest join dates cannot earn new ones. Status
+reads avoid the writer claim, and paid recovery precedes settlement independently
+of reporting. Customer search replaces account-wide scans; finalized terms and
+expired usage revisions stop repeating work. Explicit operator plan overrides
+survive paid-state reconciliation.
 Future changes must preserve pre-consent exclusion, cancellation cutoffs and
 permanent charge receipts.

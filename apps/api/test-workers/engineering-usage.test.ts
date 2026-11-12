@@ -18,6 +18,7 @@ beforeEach(async () => {
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN plan TEXT NOT NULL DEFAULT 'starter'"),
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN created_at TEXT NOT NULL DEFAULT '2026-11-01T00:00:00Z'"),
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN updated_at TEXT"),
+    env.DB.prepare("ALTER TABLE workspaces ADD COLUMN billing_plan_override INTEGER NOT NULL DEFAULT 0"),
   ]);
   await env.USAGE_DB.exec(usageMigration.replace(/--[^\n]*\n/g, "").replace(/\s*\n\s*/g, " "));
 });
