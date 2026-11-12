@@ -156,20 +156,36 @@ export class CanvasService {
   }
 
   /**
-   * Delete a Canvas this person made and left blank. The Organization object
-   * decides and deletes its rows first: that commit is the delete, so the
-   * Canvas leaves every list at once. Its Chat's object is erased next. A
-   * failure there leaves only storage nothing names, and is thrown so it is
-   * logged. The D1 anchor and route stay: D1 refuses to delete an anchor
+   * Delete a Canvas this person made and left blank. Three objects' views of
+   * "blank" are joined in order:
+   *
+   * 1. The Organization object judges the Canvas (title, sharing, artifacts,
+   *    the Chat's projection), deleting nothing.
+   * 2. The Chat seals itself if it holds no message: only it knows a message
+   *    whose projection has not reached the parent, and sealed, it admits none.
+   * 3. The Organization object judges again and deletes its rows; that commit
+   *    is the delete. If the Canvas changed in between, the Chat is reopened.
+   * 4. The Chat erases its storage.
+   *
+   * A failure at step 4 leaves only storage nothing names, and is thrown so it
+   * is logged. The D1 anchor and route stay: D1 refuses to delete an anchor
    * (`workstreams_reject_post_cutover_delete`), and they hold only the id.
    */
   async discardIfBlank(canvasId: string): Promise<{ discarded: boolean }> {
     const workspaceId = asWorkspaceId(this.auth.workspaceId);
-    const result = await (await this.workspace()).canvasDiscardIfBlank({ workspaceId, canvasId, actor: this.actor() });
-    if (!result.discarded) return result;
+    const workspace = await this.workspace();
+    const request = { workspaceId, canvasId, actor: this.actor() };
+    if (!(await workspace.canvasDiscardIfBlank({ ...request, commit: false })).discarded) return { discarded: false };
     const chat = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
       conversationObjectName(this.env.AVALON_REGION, workspaceId, asWorkstreamId(canvasId)));
-    await chat.eraseBlankConversation({ workspaceId, parentId: canvasId });
+    const address = { workspaceId, parentId: canvasId };
+    if (!(await chat.sealBlankConversation(address)).sealed) return { discarded: false };
+    const result = await workspace.canvasDiscardIfBlank({ ...request, commit: true });
+    if (!result.discarded) {
+      await chat.unsealBlankConversation(address);
+      return result;
+    }
+    await chat.eraseBlankConversation(address);
     return result;
   }
 

@@ -193,6 +193,24 @@ describe("who can open a Canvas", () => {
     expect(await opens(guest(NEWCOMER))).toBe(true);
   });
 
+  it("counts a Canvas with a pending invitation as used, so leaving it blank does not delete it", async () => {
+    const untitled = asWorkstreamId(crypto.randomUUID());
+    await workspace().canvasCreate({
+      workspaceId: WORKSPACE_ID, canvasId: untitled, title: "Untitled Canvas", createdByUserId: CREATOR, authorityGeneration: 1,
+    });
+    const judge = () => workspace().canvasDiscardIfBlank({ workspaceId: WORKSPACE_ID, canvasId: untitled, actor: member(CREATOR), commit: false });
+    expect(await judge()).toEqual({ discarded: true });
+    const result = await workspace().createScopeInvitations({
+      operationId: crypto.randomUUID(), workspaceId: WORKSPACE_ID, parentId: untitled, actorUserId: CREATOR,
+      emails: ["newcomer@example.test"], targets: [{ kind: "workstream", workspaceId: WORKSPACE_ID, parentId: untitled }],
+      expiresAt: null,
+    });
+    expect(result).toMatchObject({ status: "created", invitations: [{ status: "pending" }] });
+    expect(await judge()).toEqual({ discarded: false });
+    expect(await workspace().canvasDiscardIfBlank({ workspaceId: WORKSPACE_ID, canvasId: untitled, actor: member(CREATOR), commit: true }))
+      .toEqual({ discarded: false });
+  });
+
   it("refuses an invitation from someone who does not manage the Canvas", async () => {
     await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
       update: { visibility: "participants", userIds: [MEMBER] } });

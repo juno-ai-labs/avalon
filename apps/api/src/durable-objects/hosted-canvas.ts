@@ -120,6 +120,9 @@ export function canvasArtifactKind(resourceType: string, mimeType: string | null
   return resourceType === "generated_site" ? "site" : mimeType === "application/zip" ? "archive" : "file";
 }
 export type CanvasActorRequest = z.infer<typeof CanvasActorRequestSchema>;
+/** `commit: false` only judges whether the Canvas is blank; `true` deletes it if it still is. */
+export const CanvasDiscardRequestSchema = CanvasActorRequestSchema.extend({ commit: z.boolean() });
+export type CanvasDiscardRequest = z.infer<typeof CanvasDiscardRequestSchema>;
 
 /** A retitle, an appearance choice, or both; the route refuses a body with neither. */
 export const CanvasUpdateRequestSchema = CanvasActorRequestSchema.extend({
@@ -225,7 +228,7 @@ export function canvasSummary(row: CanvasRow, report: InvalidCanvasAppearanceRep
 
 /**
  * Every row this object keeps for a blank Canvas, by its id. A blank Canvas has
- * no artifacts, Sidekicks, pins or Activity rows (`discardIfBlank` checks), so
+ * no artifacts, Sidekicks, pins, invitations or Activity rows (`discardIfBlank` checks), so
  * these are all it can have: its row, its creator's participation and read
  * cursor, its sharing revision, and its Chat's registration and projection.
  * The directory row goes first: the sharing triggers re-mark a Canvas only
@@ -462,16 +465,17 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    * Delete a Canvas its creator made and left with nothing in it, so leaving a
    * fresh Canvas unused does not leave an Untitled Canvas in their list.
    * Blank is judged here, in the delete's transaction, not by the client: a
-   * message, an artifact, a retitle or chosen look, a pin, a share or an
-   * attached Sidekick each keeps it. Anything else answers `discarded: false`
+   * message, an artifact, a retitle or chosen look, a pin, a share, a pending
+   * invitation or an attached Sidekick each keeps it. Anything else answers `discarded: false`
    * rather than refusing, since the caller only asked to tidy up.
    *
-   * This removes the rows this object holds for it. Its Chat's own object and
-   * its D1 anchor are the caller's to erase after this commits
-   * (`CanvasService.discardIfBlank`).
+   * The Chat's own messages are not visible here: this object holds only its
+   * projection, which can lag. So `CanvasService.discardIfBlank` asks once
+   * without `commit`, has the Chat seal itself if it holds nothing, then asks
+   * again with `commit`, which deletes the rows this object holds for it.
    */
-  discardIfBlank(input: CanvasActorRequest): { discarded: boolean } {
-    const request = parseRpcInput(CanvasActorRequestSchema, input, "canvas_discard");
+  discardIfBlank(input: CanvasDiscardRequest): { discarded: boolean } {
+    const request = parseRpcInput(CanvasDiscardRequestSchema, input, "canvas_discard");
     return this.storage.transactionSync(() => {
       const row = this.assertCanvas(request.workspaceId, request.canvasId, true);
       if (row.created_by_user_id !== request.actor.userId) {
@@ -488,10 +492,11 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
                OR EXISTS (SELECT 1 FROM canvas_participants WHERE canvas_id = ?1 AND user_id <> ?2)
                OR EXISTS (SELECT 1 FROM sidekick_conversation_attachments WHERE parent_kind = 'canvas' AND parent_id = ?1)
                OR EXISTS (SELECT 1 FROM workspace_pins WHERE item_kind = 'canvas' AND item_id = ?1)
-               OR EXISTS (SELECT 1 FROM workspace_activity_items WHERE parent_kind = 'canvas' AND parent_id = ?1) AS used`,
+               OR EXISTS (SELECT 1 FROM workspace_activity_items WHERE parent_kind = 'canvas' AND parent_id = ?1)
+               OR EXISTS (SELECT 1 FROM parent_invitations WHERE parent_id = ?1) AS used`,
           this.canvasId, row.created_by_user_id,
         ).one().used === 0;
-      if (!blank) return { discarded: false };
+      if (!blank || !request.commit) return { discarded: blank };
       for (const statement of CANVAS_DISCARD_STATEMENTS) this.sql.exec(statement, this.canvasId);
       this.host.alarms.cancel(CANVAS_NAMING_ALARM_KIND, this.canvasId);
       this.host.alarms.cancel(CANVAS_ARTIFACT_ACCESS_ALARM, this.canvasId);
