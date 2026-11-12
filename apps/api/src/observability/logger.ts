@@ -6,6 +6,7 @@ import type { HonoAppEnv } from "../env";
 import type { Env } from "../env";
 import { asApiError } from "../lib/api-error";
 import { ObjectPortError } from "../runtime/object-port-error";
+import { TerminalObjectPortError } from "../services/terminal/object-port-error";
 
 const REDACTED = "[REDACTED]";
 const sensitiveKey = /token|secret|authorization|cookie|credential|code_verifier|prompt|email_?body|connector_?content|file_?content|model_?context/i;
@@ -95,7 +96,9 @@ export function diagnosticErrorCode(error: unknown, fallback: string): string {
   // Also an object's ApiError, which arrives as a plain Error after its RPC hop.
   const api = asApiError(error);
   if (api) return api.diagnosticCode ?? api.code;
-  if (error instanceof ObjectPortError && STABLE_CODE.test(error.code)) return error.code;
+  if ((error instanceof ObjectPortError || error instanceof TerminalObjectPortError) && STABLE_CODE.test(error.code)) {
+    return error.code;
+  }
   if (error instanceof z.ZodError) return codeShaped(`${fallback}:${describeZodIssues(error)}`);
   if (!(error instanceof Error)) return fallback;
   const direct = error.message.trim();
