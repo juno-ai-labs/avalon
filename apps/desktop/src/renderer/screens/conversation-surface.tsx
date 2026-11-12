@@ -1032,6 +1032,7 @@ export interface ConversationSurfaceProps {
    * and browser tools, and no card offers the audience.
    */
   artifactSharing?: { publishedIds: readonly string[]; audience?: ArtifactAudienceControl | undefined } | undefined;
+  /**
    * Ways to start the conversation, drawn under the composer while it has no
    * messages: a Canvas's templates. Present, the empty conversation lifts its
    * composer to the middle of the pane with these under it, and the composer
