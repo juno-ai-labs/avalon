@@ -166,7 +166,9 @@ export async function applyUsageBatch(
       organizationPays ? 1 : 0, event.model, event.refs.userId ?? null, event.refs.workstreamId ?? null,
       event.refs.substreamId ?? null, event.refs.sidekickId ?? null, receivedAt,
     ));
-    // Runs only if the insert above added the event. A new row's quota is
+    // Preserve a sibling monthly segment's quota for this same week, including
+    // across catalog changes. Runs only if the insert above added the event.
+    // Without a sibling, a new row's quota is
     // the plan in force at the end of its week, read from
     // `usage_plan_changes` inside this statement: the latest change before
     // the week ended, else the plan the first later change replaced, else the
@@ -176,12 +178,14 @@ export async function applyUsageBatch(
     // quota, which only a plan change rewrites.
     statements.push(env.USAGE_DB.prepare(
       `INSERT INTO usage_rollups (workspace_id, week_start, period_start, quota_microusd, organization_microusd, rally_microusd)
-       SELECT ?, ?, ?, ${PLAN_QUOTA_SQL}, ?, ? WHERE changes() = 1
+       SELECT ?, ?, ?, COALESCE(
+         (SELECT quota_microusd FROM usage_rollups WHERE workspace_id = ? AND week_start = ? LIMIT 1),
+         ${PLAN_QUOTA_SQL}), ?, ? WHERE changes() = 1
        ON CONFLICT (workspace_id, week_start, period_start) DO UPDATE SET
          organization_microusd = organization_microusd + excluded.organization_microusd,
          rally_microusd = rally_microusd + excluded.rally_microusd`,
     ).bind(
-      event.workspaceId, weekStart, periodStart,
+      event.workspaceId, weekStart, periodStart, event.workspaceId, weekStart,
       event.workspaceId, weekEnd, event.workspaceId, weekEnd, plan,
       ...PLAN_QUOTA_BINDINGS,
       organizationPays ? event.costMicrousd : 0, organizationPays ? 0 : event.costMicrousd,
@@ -276,6 +280,7 @@ export async function setWorkspacePlan(
   workspaceId: string,
   plan: PlanId,
   nowMs: number,
+  operatorOverride = false,
 ): Promise<boolean> {
   // Only a workspace this region owns: a row for another region's workspace
   // can sit in the table, and its ledger is not here.
@@ -291,8 +296,8 @@ export async function setWorkspacePlan(
     env.USAGE_DB.prepare(`UPDATE usage_rollups SET quota_microusd = ? WHERE workspace_id = ? AND week_start = ?`)
       .bind(weeklyQuotaMicrousd(plan), workspaceId, weekStart),
   ]);
-  await env.DB.prepare(`UPDATE workspaces SET plan = ?, updated_at = ? WHERE id = ?`)
-    .bind(plan, at, workspaceId).run();
+  await env.DB.prepare(`UPDATE workspaces SET plan = ?, updated_at = ?, billing_plan_override = ? WHERE id = ?`)
+    .bind(plan, at, operatorOverride ? 1 : 0, workspaceId).run();
   return true;
 }
 

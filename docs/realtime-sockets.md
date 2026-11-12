@@ -864,6 +864,14 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 
 ## Changelog
 
+### 2026-11-12 — Four-plan client compatibility
+
+Max and Ultra extend a closed enum in usage snapshots. Contract 15 marks
+support: older sockets skip new-plan snapshots, and usage HTTP reads return
+`client_update_required` for those plans. Start/Grow reads and other Organization
+activity keep the existing minimum contract, avoiding a global client cutover
+for optional paid plans. Billing owns the plan policy and rollout details.
+
 ### 2026-11-09 — The sockets carry Canvases, Sidekicks and Activity, a pre-pivot desktop is refused, and the subscribe answer is authoritative
 
 **What changed:** A conversation ticket's `pk` may be `canvas`, and the route

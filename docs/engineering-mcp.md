@@ -568,7 +568,7 @@ Access identity is never silently mapped to a product user.
 | `inspect_queues` | Lists account queue backlog metrics and active dead-letter relationships; `deadLettersOnly` restricts the result. |
 | `inspect_dead_letters` | Non-consuming peek of a queue ID returned by the queue list, after revalidating that a live consumer names it as a dead-letter queue. No acknowledge, pull, replay, or delete operation is exposed. |
 | `inspect_usage_plan` | Resolves an Organization to exactly one region and reads its authoritative plan, quota remaining, reset, and overage. |
-| `change_usage_plan` | Uses the regional metering service, updates this week's quota and plan history, and publishes the new meter to connected clients. |
+| `change_usage_plan` | Uses the regional metering service, records an explicit override that Stripe reconciliation preserves, updates this week's quota and history, and publishes the new meter. |
 | `inspect_migration_progress` | Queries regional Worker logs for forced-migration outcomes, failures, invalid/deleted/misrouted commands, with optional run and object filters and provider pagination. |
 
 Queue inspection uses `apps/engineering-mcp/src/queues.ts`. Set the deployment

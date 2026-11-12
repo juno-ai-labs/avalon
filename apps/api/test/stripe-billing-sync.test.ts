@@ -5,8 +5,8 @@ import { readFileSync } from 'node:fs';
 import type { UsageEvent } from '@rally/contracts/usage';
 import type * as UsageModule from '../src/services/usage-metering';
 import { applyUsageBatch, pruneUsageEvents } from '../src/services/usage-metering';
-import { billingAccount, createCheckout, refreshBillingAccount, settleBillingAccounts, withBillingLock } from '../src/services/billing';
-import { synchronizeStripeUsage } from '../src/services/stripe-billing-sync';
+import { billingAccount, createCheckout, settleBillingAccounts, withBillingLock, withOrganizationBillingClosure } from '../src/services/billing';
+import { synchronizeStripeProfile, synchronizeStripeUsage } from '../src/services/stripe-billing-sync';
 import { createTestEnv } from './helpers/cloudflare-test';
 import { migratedSqliteDatabase, migratedUsageSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
@@ -40,6 +40,7 @@ function stripeServer() {
       if (init?.method !== 'POST') return Response.json({ data: [...customers.values()], has_more: false });
       const customer = { id: `cus_${customers.size + 1}`, metadata: metadata(body) }; customers.set(customer.id, customer); return Response.json(customer);
     }
+    if (path === 'customers/search') return Response.json({ data: [...customers.values()] });
     if (path.startsWith('customers/')) {
       const customer = customers.get(path.slice('customers/'.length))!;
       if (init?.method === 'POST') Object.assign(customer.metadata, metadata(body));
@@ -55,6 +56,7 @@ function stripeServer() {
     }
     if (path.startsWith('subscriptions/')) {
       const subscription = subscriptions.get(path.slice('subscriptions/'.length))!;
+      if (init?.method === 'DELETE') subscription.status = 'canceled';
       if (init?.method === 'POST') {
         Object.assign(subscription.metadata, metadata(body));
         if (body.has('trial_end')) subscription.trial_end = Number(body.get('trial_end'));
@@ -93,6 +95,7 @@ function stripeServer() {
 function fixture() {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-11T00:00:00Z'));
   const db = migratedSqliteDatabase(); const usage = migratedUsageSqliteDatabase(); databases.push(db, usage);
+  db.function('unixepoch', () => Math.floor(Date.now() / 1000));
   db.prepare("INSERT INTO users(id, google_subject, email, name, created_at, updated_at) VALUES ('owner','owner','owner@example.test','Owner','2026-11-10','2026-11-10')").run();
   db.prepare("INSERT INTO workspaces(id,name,slug,region,created_by_user_id,created_at,updated_at) VALUES (?,'Test','test','global','owner','2026-11-10T00:00:00Z','2026-11-10T00:00:00Z')").run(WORKSPACE);
   db.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,access_class,joined_at) VALUES (?,'owner','owner','active','member','2026-11-10T00:00:00Z')").run(WORKSPACE);
@@ -144,7 +147,8 @@ it('recovers customers and free records after lost local receipts beyond Stripe 
 it('reads a Stripe-edited trial deadline without overwriting it on the next synchronization', async () => {
   const { env, server } = fixture(); await settleBillingAccounts(env);
   server.subscriptions.get('sub_1')!.trial_end = Date.parse('2026-12-01') / 1000;
-  const account = await refreshBillingAccount(env, WORKSPACE);
+  await settleBillingAccounts(env);
+  const account = await billingAccount(env, WORKSPACE);
   expect(account.trial_ends_at).toBe(Date.parse('2026-12-01') / 1000);
   await settleBillingAccounts(env);
   expect(server.writes.filter((request) => request.path === 'subscriptions/sub_1')).toHaveLength(0);
@@ -152,7 +156,7 @@ it('reads a Stripe-edited trial deadline without overwriting it on the next sync
 
 it('refuses a nonzero price for the no-card record before creating a subscription', async () => {
   const { env, server } = fixture(); server.controls.freeAmount = 100;
-  await expect(refreshBillingAccount(env, WORKSPACE)).rejects.toMatchObject({ code: 'billing_free_price_invalid' });
+  await expect(synchronizeStripeProfile(env, await billingAccount(env, WORKSPACE))).rejects.toMatchObject({ code: 'billing_free_price_invalid' });
   expect(server.writes.filter((request) => request.path === 'subscriptions')).toHaveLength(0);
 });
 
@@ -207,7 +211,7 @@ it('continues overage settlement when background Stripe usage synchronization fa
 });
 
 it('refuses raw meters whose retries would count usage twice', async () => {
-  const { env, server, add, syncUsage } = fixture(); await add('one'); await refreshBillingAccount(env, WORKSPACE);
+  const { env, server, add, syncUsage } = fixture(); await add('one'); await synchronizeStripeProfile(env, await billingAccount(env, WORKSPACE));
   server.controls.rawMeter = true;
   await expect(syncUsage()).rejects.toMatchObject({ code: 'billing_usage_meter_invalid' });
   expect(server.writes.filter((request) => request.path === 'billing/meter_events')).toHaveLength(0);
@@ -225,7 +229,7 @@ it('retains unsendable history and continues reporting recent usage without chan
 });
 
 it('does not acknowledge an event that arrived during a Stripe send', async () => {
-  const { env, usage, add, syncUsage } = fixture(); await add('one'); await refreshBillingAccount(env, WORKSPACE);
+  const { env, usage, add, syncUsage } = fixture(); await add('one'); await synchronizeStripeProfile(env, await billingAccount(env, WORKSPACE));
   const provider = fetch;
   let added = false;
   vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
@@ -247,4 +251,39 @@ it('backfills the retained ledger before capturing new events in the same hourly
   expect(usage.prepare('SELECT amount_microusd, revision, confirmed_revision FROM billing_usage_hours').get()).toEqual({ amount_microusd: 2_000_000, revision: 1, confirmed_revision: 0 });
   await add('after', 3_000_000);
   expect(usage.prepare('SELECT amount_microusd, revision FROM billing_usage_hours').get()).toEqual({ amount_microusd: 5_000_000, revision: 2 });
+});
+
+it('records expired usage once instead of rewriting it on every tick', async () => {
+  const { env, usage, add, syncUsage } = fixture();
+  await add('old', 900_000, '2026-09-01T12:00:00Z');
+  await synchronizeStripeProfile(env, await billingAccount(env, WORKSPACE));
+  usage.exec(`CREATE TABLE expiry_writes (writes INTEGER NOT NULL);
+    INSERT INTO expiry_writes VALUES (0);
+    CREATE TRIGGER count_expiry_writes AFTER UPDATE OF error_code ON billing_usage_hours
+    WHEN NEW.error_code = 'billing_usage_timestamp_expired' BEGIN
+      UPDATE expiry_writes SET writes = writes + 1;
+    END;`);
+  await syncUsage(); await syncUsage();
+  expect(usage.prepare('SELECT writes FROM expiry_writes').get()).toEqual({ writes: 1 });
+  expect(usage.prepare('SELECT error_code, confirmed_revision FROM billing_usage_hours').get())
+    .toEqual({ error_code: 'billing_usage_timestamp_expired', confirmed_revision: 0 });
+});
+
+it('keeps checkout available when a free-record profile is misconfigured', async () => {
+  const { env, server } = fixture();
+  await settleBillingAccounts(env);
+  server.subscriptions.get('sub_1')!.items.data[0]!.price.unit_amount = 100;
+  expect(await createCheckout(env, WORKSPACE, 'grow', 'usd', false)).toEqual({ url: 'https://checkout.stripe.com/paid' });
+});
+
+it('cancels the free record at closure and stops sweeping a fully settled closed organization', async () => {
+  const { db, env, server } = fixture();
+  await settleBillingAccounts(env);
+  await withOrganizationBillingClosure(env, WORKSPACE, async () => {
+    db.prepare("UPDATE workspaces SET abandoned_at = '2026-11-11'").run();
+  });
+  expect(server.subscriptions.get('sub_1')!.status).toBe('canceled');
+  const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+  await settleBillingAccounts(env);
+  expect(fetcher).not.toHaveBeenCalled();
 });

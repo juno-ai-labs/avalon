@@ -326,7 +326,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       return auditedEngineeringWrite(this.env, trusted, {
         action: "change_usage_plan", orgId: request.orgId, operationId: crypto.randomUUID(),
       }, async () => {
-        if (!await setWorkspacePlan(this.env, request.orgId, request.plan, Date.now())) throw new Error("engineering_organization_not_found");
+        if (!await setWorkspacePlan(this.env, request.orgId, request.plan, Date.now(), true)) throw new Error("engineering_organization_not_found");
         this.ctx.waitUntil(publishOrganizationUsage(this.env, request.orgId));
         const usage = await readOrganizationUsage(this.env, request.orgId, Date.now());
         if (!usage) throw new Error("engineering_organization_not_found");
