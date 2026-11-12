@@ -9753,19 +9753,8 @@ export const __integrationTesting = {
 };
 
 /**
- * What a harness run that did not complete leaves in the log. The member-safe
- * terminal result deliberately strips a failure's detail, so it is recorded
- * here or nowhere: a Bind run that fails before its first inference attempt
- * leaves no other trace of why. A run that asked and waits (`needs_input`) has
- * not failed, so it is logged at its own code and level, and a failure search
- * no longer finds every question a run asked. A stop the person asked for logs
- * nothing.
- */
-/**
- * The usage allowance, as a harness run's ports ask it. An exhausted allowance
- * ends the run as the limit it is, under `usage_allowance_exhausted`; thrown
- * bare from a port, the harness reports the port as broken and the member reads
- * "could not save this run's progress", which is what happened on 2026-11-12.
+ * The usage allowance, as a harness run's ports ask it: an exhausted allowance
+ * ends the run as the limit `usage_allowance_exhausted`, not as the port failing.
  */
 export async function requireRunUsageAllowance(
   env: Parameters<typeof requireUsageAllowance>[0],
@@ -9780,16 +9769,22 @@ export async function requireRunUsageAllowance(
 }
 
 /**
- * Why a harness port failed, as a code a log may keep. The harness names the
- * port ("Run liveness renewal failed"); this names what the port threw — a
- * usage refusal, a fence mismatch, a revoked membership — which is the
- * difference between one query and a day's diagnosis. A thrown message that is
- * prose collapses to the fallback: it may hold member content.
+ * What a failed harness port threw, as a code a log may keep. A prose message
+ * collapses to the fallback: it may hold member content.
  */
 export function describeHarnessFailureCause(cause: unknown): string {
   return diagnosticErrorCode(cause, "unclassified_cause");
 }
 
+/**
+ * What a harness run that did not complete leaves in the log. The member-safe
+ * terminal result deliberately strips a failure's detail, so it is recorded
+ * here or nowhere: a Bind run that fails before its first inference attempt
+ * leaves no other trace of why. A run that asked and waits (`needs_input`) has
+ * not failed, so it is logged at its own code and level, and a failure search
+ * no longer finds every question a run asked. A stop the person asked for logs
+ * nothing.
+ */
 export function logHarnessRunOutcome(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "harnessRunId" | "workspaceId" | "parentId">,

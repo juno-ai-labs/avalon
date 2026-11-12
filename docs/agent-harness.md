@@ -1884,35 +1884,20 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ### 2026-11-12 — A failed port is logged with what it threw
 
-**What changed:** `HarnessFailure` gains an optional `causeCode`, filled by a
-new `describeFailureCause` input. For a port failure the harness describes what
-the port threw (`FatalHarnessPortError.causeValue`), not the wrapper. The API
-passes `describeHarnessFailureCause`, which is `diagnosticErrorCode`, and
-`workstream_harness_run_failed` logs the result as `failure_cause_code`.
+**What changed:** A port failure carries `causeCode`, from a new
+`describeFailureCause` input (the API passes `diagnosticErrorCode`), logged as
+`failure_cause_code`. `HarnessLimitError` is exported and `requiredPort` passes
+it through, so a host port can end a run under its own limit code.
 
-**Why:** On 2026-11-12 every run in one Organization failed with
-`run_state_persistence_failed` and the log said only "Run liveness renewal
-failed". The `before_model` liveness port runs three checks (usage allowance,
-lease heartbeat, run authority) and the log could not say which one threw. It
-was the new usage allowance refusing an Organization over its weekly allowance,
-found only by reading billing rows. `causeValue` held the answer all along and
-nothing read it.
+**Why:** A usage refusal inside the `before_model` liveness port surfaced as
+`run_state_persistence_failed` / "Run liveness renewal failed", and the log
+could not say which of that port's three checks threw.
 
-**Considered and rejected:** Putting the raw cause on `HarnessFailure`. The
-failure crosses RPC and reaches logs, and a caught error's text may hold member
-content. Reducing the cause inside the harness was also rejected: the codes
-worth keeping (`ApiError.code`, object port codes) are the host's types, and
-`diagnosticErrorCode` already knows them. A second copy is how two boundaries
-came to disagree on what a code looks like.
+**Considered and rejected:** The raw cause on `HarnessFailure`, which crosses
+RPC and may hold member content.
 
-**Also:** `HarnessLimitError` is exported, and `requiredPort` lets it through
-unwrapped, so a host port can end a run on a limit it enforces under that
-limit's own code. The usage allowance is the first: before this it reached the
-member as `run_state_persistence_failed`.
-
-**What a future change has to respect:** `describeFailureCause` must return a
-code, never prose, and must not throw. A host limit must be thrown as
-`HarnessLimitError`; anything else a port throws is still that port failing.
+**What a future change has to respect:** `describeFailureCause` returns a code
+and never throws; a host limit is thrown as `HarnessLimitError`.
 
 ### 2026-11-12 — A reply does not relay another agent's report or test coverage
 
