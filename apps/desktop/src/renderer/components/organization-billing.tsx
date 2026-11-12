@@ -75,9 +75,9 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
   const scope = useLocalCacheScope();
   const queryClient = useQueryClient();
   const billing = status?.enabled ? status : undefined;
-  const [offerId, setOfferId] = useState(billing?.offers[0]?.id ?? '');
-  const offer = billing?.offers.find((item) => item.id === offerId);
-  const [currency, setCurrency] = useState(offer?.currencies[0] ?? '');
+  const offers = billing?.offers.filter((item) => item.currencies.includes('usd')) ?? [];
+  const [offerId, setOfferId] = useState(offers[0]?.id ?? '');
+  const offer = offers.find((item) => item.id === offerId);
   const [overage, setOverage] = useState(billing?.overageEnabled ?? false);
   const [busy, setBusy] = useState(false);
   const pending = useRef<ReturnType<typeof prepareExternalLink> | null>(null);
@@ -94,9 +94,8 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
   const trial = subscribed && billing?.status === 'trialing';
   const actionReason = reason ?? (subscribed
     ? !api?.createBillingPortal ? 'Billing management is unavailable.' : undefined
-    : !offer ? 'No billing plans are available.' : !api?.createBillingCheckout ? 'Checkout is unavailable.' : undefined);
-  const planReason = reason ?? (subscribed ? 'Manage your subscribed plan in Stripe.' : !offer ? 'No billing plans are available.' : undefined);
-  const currencyReason = reason ?? (subscribed ? 'Currency is set when the subscription starts.' : !currency ? 'No billing currencies are available.' : undefined);
+    : !offer ? 'No billing plans are available in USD.' : !api?.createBillingCheckout ? 'Checkout is unavailable.' : undefined);
+  const planReason = reason ?? (subscribed ? 'Manage your subscribed plan in Stripe.' : !offer ? 'No billing plans are available in USD.' : undefined);
   const overageReason = reason ?? (subscribed
     ? !['active', 'trialing'].includes(billing?.status ?? '') ? 'An active or trialing subscription is required to change overages.'
       : !api?.setBillingOverages ? 'Overage changes are unavailable.'
@@ -105,8 +104,8 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
       : !billing?.overageAvailable ? 'Overages are unavailable for this plan.'
       : !billing.paymentMethodReady ? 'Add a payment method and billing address to enable overages.' : undefined
     : !api?.createBillingCheckout ? 'Checkout is unavailable.'
-      : !offer?.overageAvailable ? 'Overages are unavailable for this plan.'
-      : currency !== 'usd' ? 'Overages require billing in USD.' : undefined);
+      : !offer ? 'No billing plans are available in USD.'
+      : !offer.overageAvailable ? 'Overages are unavailable for this plan.' : undefined);
   const open = async () => {
     if (actionReason || pending.current || !api || !billing) return;
     setBusy(true); setError(null);
@@ -114,7 +113,7 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
     try {
       link = prepareExternalLink();
       pending.current = link;
-      const result = billing.subscribed ? await api.createBillingPortal!() : await api.createBillingCheckout!(offerId, currency, overage);
+      const result = billing.subscribed ? await api.createBillingPortal!() : await api.createBillingCheckout!(offerId, 'usd', overage);
       if (pending.current === link) await link.open(result.url);
     } catch (cause) {
       link?.cancel();
@@ -139,7 +138,6 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
   };
   const currentOffer = billing?.offers.find((item) => item.id === billing.offerId);
   const displayedPlan = subscribed ? billing?.offerId ?? 'current' : offerId || 'unavailable';
-  const displayedCurrency = subscribed ? billing?.currency ?? 'unavailable' : currency || 'unavailable';
   return <>
     <div className="settings-preference-row"><span className="settings-row-copy"><strong>Trial</strong>
       {loading ? <BillingSkeleton label="Loading trial…" /> : <small>{!billing ? 'Trial details are unavailable.' : trial
@@ -155,14 +153,8 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
     <div className="settings-preference-row"><span className="settings-row-copy"><strong>Plan</strong><small>{subscribed ? 'Manage your subscribed plan in Stripe.' : 'Review pricing, discounts and taxes at checkout.'}</small></span>
       {planControl ?? (loading ? <BillingSkeleton label="Loading plan…" /> : <BillingControl reason={planReason}><DropdownSelect ariaLabel="Billing plan" value={displayedPlan} disabled={Boolean(planReason)} options={subscribed
         ? [{ value: displayedPlan, label: currentOffer?.name ?? currentPlan ?? 'Unavailable' }]
-        : billing?.offers.length ? billing.offers.map((item) => ({ value: item.id, label: item.name })) : [{ value: displayedPlan, label: currentPlan ?? 'Unavailable' }]}
-        onValueChange={(id) => { setOfferId(id); setCurrency(billing?.offers.find((item) => item.id === id)?.currencies[0] ?? ''); setOverage(false); }} /></BillingControl>)}
-    </div>
-    <div className="settings-preference-row"><strong>Currency</strong>
-      {loading ? <BillingSkeleton label="Loading currency…" /> : <BillingControl reason={currencyReason}><DropdownSelect ariaLabel="Billing currency" value={displayedCurrency} disabled={Boolean(currencyReason)} options={subscribed || !currency
-        ? [{ value: displayedCurrency, label: displayedCurrency === 'unavailable' ? 'Unavailable' : displayedCurrency.toUpperCase() }]
-        : (offer?.currencies ?? []).map((value) => ({ value, label: value.toUpperCase() }))}
-        onValueChange={(value) => { setCurrency(value); setOverage(false); }} /></BillingControl>}
+        : offers.length ? offers.map((item) => ({ value: item.id, label: item.name })) : [{ value: displayedPlan, label: currentPlan ?? 'Unavailable' }]}
+        onValueChange={(id) => { setOfferId(id); setOverage(false); }} /></BillingControl>)}
     </div>
     <div className="settings-preference-row"><span className="settings-row-copy"><strong>Bill usage beyond shared quota</strong><small>Optional. Overages remain billable during a free trial.</small></span>
       <BillingControl reason={overageReason}><input aria-label="Bill usage beyond shared quota" type="checkbox" checked={overage} disabled={Boolean(overageReason)} onChange={(event) => { if (subscribed) void saveOverages(event.target.checked); else setOverage(event.target.checked); }} /></BillingControl>
