@@ -12,6 +12,8 @@
 .canvas-sharing-audience .action-tile { font-size: 13px; gap: 10px; min-height: 98px; padding: 18px 12px 12px; }
 .canvas-sharing-audience .canvas-sharing-use-options { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .canvas-sharing-audience .action-tile > span { max-width: 150px; }
+.canvas-sharing-audience .canvas-share-option-unavailable { cursor: not-allowed; opacity: 0.45; }
+.canvas-sharing-audience .action-tile.canvas-share-option-unavailable:hover { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-subtle); }
 .canvas-sharing-form .canvas-share-note { margin: 0; }
 .canvas-sharing-chips { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 .canvas-sharing-person { align-items: center; background: var(--av-sys-color-surface-sunken); border-radius: var(--av-sys-size-radius-pill); display: inline-flex; font-size: 13px; gap: 8px; min-height: 36px; padding: 5px 10px 5px 6px; }

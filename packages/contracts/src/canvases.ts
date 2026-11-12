@@ -23,6 +23,22 @@ export type CanvasId = z.infer<typeof CanvasIdSchema>;
 export const CanvasVisibilitySchema = z.enum(["creator", "participants", "workspace"]);
 export type CanvasVisibility = z.infer<typeof CanvasVisibilitySchema>;
 
+/**
+ * The artifact audience a Canvas with these editors may hold. Organization
+ * editors already reach the artifacts, so an artifact audience narrower than
+ * the Organization ("editors", "participants") would misstate who can use
+ * them; it is raised to "workspace". "public" is wider and stays. Every
+ * writer (the sharing form, the API, the MCP tool) goes through this.
+ */
+export function canvasArtifactVisibilityFloor<
+  T extends z.infer<typeof CanvasArtifactVisibilitySchema>,
+>(visibility: CanvasVisibility, artifactVisibility: T): T | "workspace" {
+  return visibility === "workspace" &&
+    (artifactVisibility === "editors" || artifactVisibility === "participants")
+    ? "workspace"
+    : artifactVisibility;
+}
+
 /** Who last changed a Canvas: a person (their id), Rally, or a Sidekick (its id). */
 export const CanvasEditorSchema = z.strictObject({
   kind: z.enum(["person", "rally", "sidekick"]),
