@@ -1,6 +1,8 @@
+import { BillingCreditsSchema, OverageCreditSchema } from "@rally/contracts/billing";
 import { inspectQueues, peekDeadLetters } from "./queues";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import {
+  InspectEngineeringCreditsInputSchema, GrantEngineeringCreditInputSchema, ExpireEngineeringCreditInputSchema,
   InspectEngineeringOrgSettingsInputSchema,
   UpdateEngineeringOrgSettingsInputSchema,
   EngineeringOrgSettingsResultSchema,
@@ -535,6 +537,27 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "update_org_settings", { workspace_id: request.orgId, model_selector_visible: request.modelSelectorVisible }, async () =>
     EngineeringOrgSettingsResultSchema.parse(await (await organizationBinding(env, request.orgId)).updateOrganizationSettings(request, principal))));
+
+  server.registerTool("inspect_overage_credits", {
+    description: "Read an Organization's overage-only USD credit grants and available balances from Stripe. Includes grants made directly in Stripe with the dedicated overage price scope; does not include general invoice credits.",
+    inputSchema: InspectEngineeringCreditsInputSchema.shape,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, (request) => tool(principal, "inspect_overage_credits", { workspace_id: request.orgId }, async () =>
+    BillingCreditsSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOverageCredits(request))));
+
+  server.registerTool("grant_overage_credit", {
+    description: "Issue promotional USD credit for an Organization's future overage invoices in Stripe. Requires configured metered overage billing. amountCents is invoice dollars in cents, not effective usage. Never offsets plan fees or alters included usage. Supply a reason and optionally expiresAt. Reuse the same operationId and arguments after an uncertain outcome; a new ID issues another financial grant.",
+    inputSchema: GrantEngineeringCreditInputSchema.shape,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, (request) => tool(principal, "grant_overage_credit", { workspace_id: request.orgId, operation_id: request.operationId }, async () =>
+    OverageCreditSchema.parse(await (await organizationBinding(env, request.orgId)).grantOverageCredit(request, principal))));
+
+  server.registerTool("expire_overage_credit", {
+    description: "Expire the unused balance of an Organization's overage-only Stripe credit grant now. Cannot recover credits already applied to finalized invoices. Retry with the same grantId after an uncertain outcome.",
+    inputSchema: ExpireEngineeringCreditInputSchema.shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  }, (request) => tool(principal, "expire_overage_credit", { workspace_id: request.orgId, grant_id: request.grantId }, async () =>
+    OverageCreditSchema.parse(await (await organizationBinding(env, request.orgId)).expireOverageCredit(request, principal))));
 
   server.registerTool("inspect_usage_plan", {
     description: "Read an Organization's current plan, weekly quota remaining and reset, and current-period overage from its owning region's authoritative usage ledger.",

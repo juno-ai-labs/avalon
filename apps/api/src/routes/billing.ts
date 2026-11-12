@@ -3,6 +3,7 @@ import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   BillingStatusSchema,
   BillingUrlSchema,
+  BillingCreditsSchema,
 } from "@rally/contracts/billing";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -20,6 +21,7 @@ import {
   hasLiveSubscription,
 } from "../services/billing";
 import { verifyStripeSignature } from "../services/stripe";
+import { readOverageCredits } from "../services/overage-credits";
 
 export const billingRoutes = new Hono<HonoAppEnv>();
 billingRoutes.use("*", refuseSupportSession);
@@ -36,6 +38,7 @@ billingRoutes.get("/", async (c) => {
       enabled: true,
       status: account.status,
       subscribed: hasLiveSubscription(account),
+      creditsAvailable: Boolean(config.overageCredits),
       trialEndsAt: new Date(account.trial_ends_at * 1000).toISOString(),
       overageEnabled:
         account.overage_enabled === 1 &&
@@ -53,6 +56,7 @@ billingRoutes.get("/", async (c) => {
     }),
   );
 });
+billingRoutes.get("/credits", async (c) => c.json(BillingCreditsSchema.parse(await readOverageCredits(c.env, getAuth(c).workspaceId))));
 billingRoutes.post(
   "/checkout",
   zValidator(

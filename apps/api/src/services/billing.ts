@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { reportMeteredOverages, closeSettledOverageSubscriptions } from "./stripe-overages";
 import {
   weeklyQuotaMicrousd,
   usageWeekStart,
@@ -446,7 +447,7 @@ async function subscriptionHistory(env: Env, customerId: string) {
     live ??=
       page.data.find(
         (item) =>
-          item.metadata.billing_role !== "free_record" &&
+          !["free_record", "overage"].includes(item.metadata.billing_role ?? "") &&
           !["canceled", "incomplete_expired"].includes(item.status),
       ) ?? null;
     for (const subscription of page.data)
@@ -456,7 +457,7 @@ async function subscriptionHistory(env: Env, customerId: string) {
     // prices count as paid; keep their catalog entries for reconciliation.
     hasPaidSubscription ||= page.data.some(
       (item) =>
-        item.metadata.billing_role !== "free_record" &&
+        !["free_record", "overage"].includes(item.metadata.billing_role ?? "") &&
         item.status !== "incomplete_expired" &&
         (Boolean(item.metadata.pilot_coupon_id) ||
           item.metadata.paid_subscription === "true" ||
@@ -803,6 +804,7 @@ export async function syncSubscription(
       "Subscription customer does not match",
     );
   }
+  if (subscription.metadata.billing_role === "overage") return;
   if (subscription.metadata.billing_role === "free_record") {
     await synchronizeStripeProfile(env, current);
     return;
@@ -957,8 +959,8 @@ export async function billClosedOverage(
           : periodUsage;
       if (Date.parse(periodStart) >= startsAt) {
         await env.DB.prepare(
-          `INSERT INTO billing_overages(workspace_id, subscription_id, period_start, period_end, amount_microusd, price_id)
-          VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+          `INSERT INTO billing_overages(workspace_id, subscription_id, period_start, period_end, amount_microusd, price_id, meter_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
         )
           .bind(
             workspaceId,
@@ -967,13 +969,15 @@ export async function billClosedOverage(
             new Date(end).toISOString(),
             interval ? usage!.overage.amountMicrousd : 0,
             interval?.price_id ?? term.price_id,
+            billingConfig(env).overageCredits?.priceId === (interval?.price_id ?? term.price_id)
+              ? billingConfig(env).overageCredits!.meterId : null,
           )
           .run();
       }
       cursor = end;
     }
     const pending = await env.DB.prepare(
-      "SELECT * FROM billing_overages WHERE subscription_id = ? AND invoice_item_id IS NULL",
+      "SELECT * FROM billing_overages WHERE subscription_id = ? AND invoice_item_id IS NULL AND (meter_id IS NULL OR amount_microusd = 0)",
     )
       .bind(term.subscription_id)
       .all<{
@@ -1034,9 +1038,15 @@ export async function billClosedOverage(
         .bind(itemId, term.subscription_id, row.period_start)
         .run();
     }
-    if (cutoff !== null && cutoff <= settledThrough)
-      await finalizeCanceledOverage(env, term);
+    await reportMeteredOverages(env, workspaceId);
+    if (cutoff !== null && cutoff <= settledThrough) {
+      const legacy = await env.DB.prepare("SELECT 1 FROM billing_overages WHERE subscription_id = ? AND meter_id IS NULL AND amount_microusd > 0").bind(term.subscription_id).first();
+      const native = billingConfig(env).overageCredits?.priceId === term.price_id || await env.DB.prepare("SELECT 1 FROM billing_overages WHERE subscription_id = ? AND meter_id IS NOT NULL").bind(term.subscription_id).first();
+      if (native && !legacy) await env.DB.prepare("UPDATE billing_terms SET final_invoice_finalized = 1 WHERE subscription_id = ?").bind(term.subscription_id).run();
+      else await finalizeCanceledOverage(env, term);
+    }
   }
+  await closeSettledOverageSubscriptions(env, workspaceId);
 }
 
 async function finalizeCanceledOverage(env: Env, term: BillingTerm) {

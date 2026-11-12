@@ -568,6 +568,7 @@ Access identity is never silently mapped to a product user.
 | `inspect_queues` | Lists account queue backlog metrics and active dead-letter relationships; `deadLettersOnly` restricts the result. |
 | `inspect_dead_letters` | Non-consuming peek of a queue ID returned by the queue list, after revalidating that a live consumer names it as a dead-letter queue. No acknowledge, pull, replay, or delete operation is exposed. |
 | `inspect_usage_plan` | Resolves an Organization to exactly one region and reads its authoritative plan, quota remaining, reset, and overage. |
+| `inspect_overage_credits`, `grant_overage_credit`, `expire_overage_credit` | Read Stripe credit balances, issue promotional USD credit scoped only to the overage price, or expire unused credit. Writes go through the Organization billing actor and independent operator audit; grant retries reuse their operation ID. [Stripe billing](stripe-billing.md#overage-credits) owns configuration and financial semantics. |
 | `change_usage_plan` | Uses the regional metering service, records an explicit override that Stripe reconciliation preserves, updates this week's quota and history, and publishes the new meter. |
 | `inspect_migration_progress` | Queries regional Worker logs for forced-migration outcomes, failures, invalid/deleted/misrouted commands, with optional run and object filters and provider pagination. |
 
@@ -743,6 +744,15 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-12 — Administer overage credits in Stripe
+
+Added operator-only grant, inspect and expire tools, using the regional billing
+actor and independent attempt/result audit. Customer administrators can read
+balances but cannot issue their own credits. Stripe owns the financial ledger;
+Rally retains immutable operation receipts so retries cannot grant money twice.
+A separate customer-facing write route was rejected because Organization
+membership is not authority to issue promotional money.
 
 ### 2026-11-10 — Archive in an abandoned Organization, and name its refusal
 
