@@ -1,19 +1,17 @@
 import {
-  IconBuilding,
   IconCheck,
   IconCopy,
   IconLock,
   IconPencil,
   IconPlus,
   IconRefresh,
-  IconUsers,
   IconWorld,
   IconX,
 } from "@tabler/icons-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import type { WorkspaceMember } from "../lib/types";
-import { CANVAS_VISIBILITY_OPTIONS } from "../lib/canvas-sharing";
+import { ARTIFACT_VISIBILITY_OPTIONS, CANVAS_VISIBILITY_OPTIONS } from "../lib/canvas-sharing";
 import {
   Avatar,
   Badge,
@@ -60,16 +58,8 @@ const EDITOR_OPTIONS = [
   { value: "participants", ...CANVAS_VISIBILITY_OPTIONS.participants },
   { value: "workspace", ...CANVAS_VISIBILITY_OPTIONS.workspace },
 ] as const;
-const ARTIFACT_OPTIONS = [
-  { value: "editors", label: "Editors only", icon: IconLock },
-  { value: "participants", label: "Specific people", icon: IconUsers },
-  {
-    value: "workspace",
-    label: "Everyone in the Organization",
-    icon: IconBuilding,
-  },
-  { value: "public", label: "Anyone with the link", icon: IconWorld },
-] as const;
+const ARTIFACT_OPTIONS = (["editors", "participants", "workspace", "public"] as const)
+  .map((value) => ({ value, ...ARTIFACT_VISIBILITY_OPTIONS[value] }));
 
 function AudienceTiles<T extends string>({
   title,
