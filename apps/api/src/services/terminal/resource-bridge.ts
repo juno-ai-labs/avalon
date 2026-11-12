@@ -1279,6 +1279,7 @@ function siteOutput(
 ): TerminalPublishedSiteOutput {
   return {
     resourceId: row.id,
+    artifactId: site.artifactId,
     title: row.title,
     publishKind: "site",
     resourceType: "generated_site",

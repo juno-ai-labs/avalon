@@ -1,3 +1,4 @@
+import type { ArtifactSidekickInvocation } from "@rally/contracts";
 import {
   AutomationDraftSchema,
   AutomationRunReferenceV1Schema,
@@ -152,6 +153,8 @@ export const AutomationSetAudienceRequestSchema = z.strictObject({
   update: SidekickAudienceUpdateSchema,
 });
 export type AutomationSetAudienceRequest = z.input<typeof AutomationSetAudienceRequestSchema>;
+
+export type SidekickInvocationRequest = ArtifactSidekickInvocation & { automationId: string };
 
 export const AutomationRunNowRequestSchema = z.strictObject({
   ...Addressed,
@@ -378,7 +381,7 @@ export const SidekickRunRowProjectionSchema = z.strictObject({
   ...Addressed,
   runId: IdSchema,
   automationName: z.string().min(1).max(300),
-  triggerKind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+  triggerKind: z.enum(["manual", "schedule", "external_event", "invocation", "inbound_email"]),
   createdAt: z.number().int().nonnegative(),
   state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
   stepCount: z.number().int().nonnegative(),

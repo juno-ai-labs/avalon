@@ -32,6 +32,7 @@ const STATE_LABEL: Record<RunState, string> = {
 // said the run had asked a question when it had not.
 const TRIGGER_LABEL: Record<RunTrigger, string> = {
   manual: 'On request',
+  invocation: 'App request',
   schedule: 'Scheduled',
   external_event: 'Event',
   inbound_email: 'Email (retired)',

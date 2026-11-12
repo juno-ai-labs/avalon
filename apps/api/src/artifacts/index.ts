@@ -18,7 +18,7 @@ import type { Region } from "@rally/contracts/regions";
  * shared D1 route index. No regional product D1, provider secrets or
  * queues. A compromise of artifact code is contained by the isolate; a
  * compromise of this Worker exposes artifact content and viewer sessions, not
- * workspace authority.
+ * general workspace authority; it can submit work to explicitly app-bound Sidekicks.
  *
  * Request flow, in the order the fences apply:
  *
@@ -38,6 +38,8 @@ import type { Region } from "@rally/contracts/regions";
  */
 import {
   ARTIFACT_ANNOTATION_SCRIPT_PATH_PATTERN,
+  ArtifactSidekickAddressSchema,
+  type ArtifactSidekickDispatchBinding,
   ARTIFACT_RESERVED_PREFIX,
   ARTIFACT_SIGN_IN_PATH,
   artifactReturnPath,
@@ -102,6 +104,7 @@ export interface ArtifactServingEnv {
    */
   BROWSER_APP_ORIGIN?: string;
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
+  ARTIFACT_SIDEKICKS: ArtifactSidekickDispatchBinding;
   PLATFORM_DB: D1Database;
   PAYLOADS: R2Bucket;
   /** Cloudflare's Worker Loader, absent until the binding is provisioned. */
@@ -158,6 +161,7 @@ function readCookie(request: Request, name: string): string | null {
  * inside the API Worker, and a stateless active site's isolate is minted here.
  */
 export { ArtifactAssetLoopback } from "./asset-loopback";
+export { ArtifactSidekickForwarder } from "./sidekick-forwarder";
 
 export default {
   async fetch(request: Request, env: ArtifactServingEnv, ctx: ExecutionContext): Promise<Response> {
@@ -306,9 +310,11 @@ const artifactServer = {
         && checked.version !== undefined
         && checked.mode !== undefined
         && checked.stateful !== undefined
+        && checked.workspaceId
         && checked.manifest
       ) {
         admitted = {
+          workspaceId: checked.workspaceId,
           viewerId: checked.viewerId,
           viewerName: checked.viewerName,
           version: checked.version,
@@ -322,6 +328,7 @@ const artifactServer = {
       const state = await artifact.currentState();
       if (!state) return html(neutralPage(), 404);
       admitted = {
+        workspaceId: state.workspaceId,
         viewerId: null,
         viewerName: null,
         version: state.version,
@@ -393,6 +400,7 @@ function redirect(location: string): Response {
 }
 
 type Admitted = {
+  workspaceId: string;
   viewerId: string | null;
   viewerName: string | null;
   version: number;
@@ -535,7 +543,7 @@ async function servePriorVersion(
  * new isolate while an unchanged one reuses the warm cache — the loader's own
  * documented contract, expressed in the key rather than managed.
  *
- * The module receives exactly one binding and no ambient authority:
+ * The module receives asset and app-scoped Sidekick capabilities and no ambient authority:
  * `globalOutbound: null` makes `fetch()` and `connect()` throw, so a page's
  * server half cannot reach the network at all, and the viewer cookie is
  * stripped before the request crosses into it — artifact code never sees a
@@ -575,7 +583,12 @@ async function runArtifactModule(
         [ASSET_SHIM_MODULE]: ASSET_SHIM_SOURCE,
         "index.js": await module.text(),
       },
-      env: { ASSETS: assetLoopback(ctx, artifactId, manifest) },
+      env: {
+        ASSETS: assetLoopback(ctx, artifactId, manifest),
+        SIDEKICKS: ctx.exports.ArtifactSidekickForwarder({
+          props: ArtifactSidekickAddressSchema.parse({ workspaceId: admitted.workspaceId, artifactId, artifactVersion: manifest.artifactVersion }),
+        }),
+      },
       globalOutbound: null,
     };
   });
@@ -601,7 +614,7 @@ function forwardable(request: Request, admitted: Admitted): Request {
 }
 
 /**
- * The one binding an artifact's module holds: its own published files.
+ * The asset binding an artifact's module holds: its own published files.
  *
  * An RPC stub for an exported entrypoint, not an object with a method: the
  * loader's env serializer clones what it is given and rejects a value carrying

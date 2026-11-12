@@ -30,6 +30,20 @@ and [Versions and gradual deployments](https://developers.cloudflare.com/workers
 | Contracts | `src/services/document-processing-contract.ts`, `src/services/terminal/provider-rpc-contract.ts`, `src/telemetry/telemetry-delivery-contract.ts` | Typed RPC inputs and outputs imported by caller and callee. |
 | Rollout | `.github/workflows/deploy-api.yml` | Profiles, version upload, migration ordering, promotion, health, and retained evidence. |
 
+### Artifact Sidekick invocation
+
+The artifact-serving Worker binds `ARTIFACT_SIDEKICKS` to the regional API's
+named `ArtifactSidekickDispatcher` entrypoint. This narrow contract accepts
+app-scoped task admission and returns a run ID; it does not expose the API's
+other methods or secrets. Deploy the API export before the artifact Worker
+that names it; both direct deployment and versioned promotion use that order.
+Organization-wide lists preserve the released trigger vocabulary and advertise
+invocation through optional metadata, so older clients keep loading them.
+Invocation-specific definitions and history require matching desktop/browser
+clients. Stateful app facets use an API-local exported loopback instead.
+[Live artifacts](live-web-artifacts.md#calling-dedicated-sidekicks) owns runtime
+admission and binding behavior.
+
 ### Email Service
 
 Global uses the Wrangler `send_email` binding `EMAIL` for outgoing mail.
@@ -313,6 +327,15 @@ for Azure-bound models in its route plan; each
 resident Channel agent reads the window snapshot once.
 
 ## Changelog
+
+### 2026-11-11 — Bridge app invocations to Sidekick admission
+
+Added a named service binding from the artifact-serving Worker to a narrow API
+entrypoint. Stateless apps need durable run admission but the serving Worker
+must retain its minimal product bindings. A scoped service bridge supplies that
+capability while preserving the generated isolate's network fence. The API
+entrypoint is deployed and promoted before its artifact-serving caller.
+
 
 ### 2026-11-09 — Keep native outbound mail
 

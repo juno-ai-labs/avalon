@@ -35,6 +35,7 @@ import { RegionSchema } from "@rally/contracts/regions";
  */
 import {
   ArtifactManifestSchema,
+  ArtifactSidekickAddressSchema,
   artifactAssetKey,
   artifactIsolateId,
   type ArtifactManifest,
@@ -313,6 +314,7 @@ export interface ArtifactSessionCheck {
   ok: boolean;
   /** Why a request was refused, for the serving Worker's response choice. */
   reason?: "no_session" | "expired";
+  workspaceId?: string;
   viewerId?: string;
   viewerName?: string;
   version?: number;
@@ -541,6 +543,7 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     }
     return {
       ok: true,
+      workspaceId: state.workspace_id,
       viewerId: row.user_id,
       viewerName: row.display_name,
       version: state.current_version,
@@ -873,8 +876,8 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
           [ASSET_SHIM_MODULE]: ASSET_SHIM_SOURCE,
           "index.js": await module.text(),
         },
-        // One binding and no network: an RPC stub that reads this version's
-        // published files, and nothing else. The skill teaches
+        // Scoped bindings and no network: published files and asynchronous
+        // Sidekick admission for this app. The skill teaches
         // `this.env.ASSETS.fetch(request)` as the last line of `SiteData.fetch`,
         // and with an empty env every stateful site answered the routes its
         // model wrote and threw on its own `index.html`.
@@ -883,6 +886,9 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
         // serializer rejects a value carrying a function; the bucket behind it
         // stays in the API Worker.
         env: {
+          RALLY_SIDEKICKS: this.ctx.exports.ArtifactSidekickLoopback({
+            props: ArtifactSidekickAddressSchema.parse({ workspaceId: state.workspace_id, artifactId, artifactVersion: version }),
+          }),
           RALLY_ASSETS: this.ctx.exports.ArtifactAssetLoopback({
             props: {
               artifactId,
