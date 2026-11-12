@@ -121,9 +121,7 @@ canvasRoutes.post("/:id/archive", canvasIdParam, async (c) => {
   return c.body(null, 204);
 });
 
-// The client leaving a Canvas it made and never used; the object decides
-// whether it is blank, so a stale client cannot delete one with content.
-// It answers no content either way: the caller is leaving and has nothing to show.
+// See `CanvasService.discardIfBlank`.
 canvasRoutes.post("/:id/discard", canvasIdParam, async (c) => {
   await new CanvasService(c.env, getWorkspaceAuth(c)).discardIfBlank(c.req.valid("param").id);
   return c.body(null, 204);

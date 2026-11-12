@@ -985,8 +985,9 @@ export interface ConversationSurfaceProps {
   /** End the parent's optimistic lifecycle once the canonical conversation can send. */
   onConversationReady?: (() => void) | undefined;
   /**
-   * Whether the conversation has nothing in it: no message, no run, no send in
-   * flight, and nothing typed or attached in the composer. Reported on every
+   * Whether the conversation is known to have nothing in it: its history has
+   * loaded live with no message and no run, no send is in flight, and the
+   * composer's saved text and attachments have loaded empty. Reported on every
    * change, for a host that tidies up a conversation left unused.
    */
   onBlankChange?: (blank: boolean) => void;
@@ -2425,9 +2426,10 @@ function ConversationSurfaceContent({
     && workstreamShowsReadyState(transcript.length, Boolean(activeElicitation), shownDetail.harnessStatus);
   const starting = Boolean(renderStarters) && !withoutComposer && showsReadyState;
   useLayoutGlide(composerDockRef, starting);
-  const [draftEmpty, setDraftEmpty] = useState(true);
-  const blank = !openingPrompt && !sending && draftEmpty && attachmentDraft.attachments.length === 0
-    && workstreamShowsReadyState(transcript.length, Boolean(activeElicitation), routedDetail?.harnessStatus ?? 'completed');
+  const [draftEmpty, setDraftEmpty] = useState(false);
+  const blank = feedLive && routedDetail != null && !openingPrompt && !sending && draftEmpty
+    && attachmentDraft.restored && attachmentDraft.attachments.length === 0
+    && workstreamShowsReadyState(transcript.length, Boolean(activeElicitation), routedDetail.harnessStatus);
   useEffect(() => { onBlankChange?.(blank); }, [blank, onBlankChange]);
 
   const detail = routedDetail ?? openingDetail;

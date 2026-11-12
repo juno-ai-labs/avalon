@@ -922,57 +922,31 @@ retain their publication policy; authenticated sessions are withdrawn.
 
 ### Discarding a blank Canvas
 
-Leaving a Canvas with nothing in it deletes it outright, so pressing New
-Canvas and going elsewhere does not leave an **Untitled Canvas** in the list.
-Unlike an archive, no tombstone or Chat is retained. Only its id stays, in
-D1's `workstreams` anchor and `workstream_authority_routes` row: migration
-0079's `workstreams_reject_post_cutover_delete` trigger refuses any anchor
-delete, and routing and audit foreign keys point at it.
+Leaving a blank Canvas deletes it, so pressing New Canvas and going elsewhere
+does not leave an **Untitled Canvas** behind. What blank means is the query in
+`HostedCanvas.discardIfBlank`; the client (`screens/canvas.tsx`, from
+`ConversationSurface`'s `onBlankChange`) only skips the request for a Canvas it
+knows is in use, and reports blank only once the history, the saved draft and
+the saved attachments have all loaded.
 
-The desktop and browser screen (`screens/canvas.tsx`) learns from
-`ConversationSurface`'s `onBlankChange` whether the Chat is blank: no message,
-no run, no send in flight, nothing typed or attached in the composer, and no
-opening prompt. When the screen unmounts while that holds, it calls
-`POST /canvases/:id/discard`. It skips a Canvas whose create has not
-succeeded, since that create, or New Canvas retrying it, could land after the
-delete. The unmount is deferred one tick, so StrictMode's second mount cancels
-it.
+`CanvasService.discardIfBlank` runs in this order, because the parent's
+projection of the Chat can lag a message the Chat already holds:
 
-`CanvasService.discardIfBlank` joins two objects' views of blank, in order:
+1. The Organization object judges the Canvas, deleting nothing.
+2. The Chat seals itself against new messages if it holds none
+   (`AgentLoopDO.sealBlankConversation`).
+3. The Organization object judges again and deletes its rows. That commit is
+   the delete. If the Canvas changed in between, the Chat is reopened.
+4. The Chat erases its storage; it refuses if it is not sealed.
 
-1. `HostedCanvas.discardIfBlank` with `commit: false` judges the Canvas in the
-   Organization object, deleting nothing. It is blank only for the creator,
-   and only while the Canvas is active, still settled as **Untitled Canvas**,
-   with no chosen appearance, no writer Sidekick, creator-only visibility, no
-   Chat projection past ordinal 0, no artifact, no other participant, no
-   pending invitation, no attached Sidekick, nobody's pin and no Activity row.
-   Otherwise the answer is `discarded: false`, never an error: nobody asked
-   for the tidy-up.
-2. `AgentLoopDO.sealBlankConversation` has the Chat seal itself, in one
-   transaction, if it holds no transcript turn, no pending input, no input
-   being prepared, and is idle. Sealing sets the archive fence
-   (`workstream.archived_at`), so it admits no new message. This step exists
-   because the parent's projection can lag a message the Chat already holds,
-   for example one sent from a second window; only the Chat can say it is
-   empty.
-3. `discardIfBlank` with `commit: true` judges again and deletes every row the
-   Organization object keeps for the Canvas (`CANVAS_DISCARD_STATEMENTS`,
-   directory row first so the sharing triggers cannot re-mark it), cancelling
-   its naming and artifact-access alarms. This commit is the delete: the list
-   push drops the row. If the Canvas changed since step 1, nothing is deleted
-   and `unsealBlankConversation` reopens the Chat.
-4. `AgentLoopDO.eraseBlankConversation`, which refuses a Chat that is not
-   sealed, closes its sockets, deletes its alarm and all its storage, then
-   resets the instance so no cache outlives the rows.
+Only the id stays, in D1's `workstreams` anchor and `workstream_authority_routes`
+row: migration 0079's `workstreams_reject_post_cutover_delete` trigger refuses
+any anchor delete, and routing and audit foreign keys point at it.
 
-A failure at step 4 leaves storage that nothing names, and is thrown so it
-is logged. The route answers 204 either way.
-
-Effects the Chat queued before step 4 can still arrive. A Canvas's row is
-always written before its Chat exists, so `WorkspaceDO.receiveChildEffects`
-treats a Canvas effect with no row as one for a deleted Canvas: it
-acknowledges it unapplied and logs `canvas_effect_for_deleted_canvas`, rather
-than throwing `canvas_missing` into the dead-letter queue.
+A Canvas's row is always written before its Chat exists, so
+`WorkspaceDO.receiveChildEffects` treats a Chat effect for a Canvas with no row
+as one sent before a delete: it is acknowledged unapplied and logged as
+`canvas_effect_for_deleted_canvas`, not retried into the dead-letter queue.
 
 ## Data model
 
@@ -1017,34 +991,27 @@ why the refresh lease shares the owning object's transaction.
 
 ### 2026-11-12 — Delete a Canvas left blank
 
-**What changed:** Leaving a Canvas whose Chat and composer are empty deletes
-it through `POST /canvases/:id/discard`: its Organization-object rows and its
-Chat's Durable Object storage. Its D1 anchor, which holds only the id, stays
-because D1 refuses to delete one. `HostedCanvas.discardIfBlank`
-decides in the same transaction that deletes the rows, after the Chat has
-sealed itself against new messages because it holds none. A late Chat effect
-for a Canvas with no row is now acknowledged instead of thrown.
+**What changed:** Leaving a blank Canvas deletes it. See
+[Discarding a blank Canvas](#discarding-a-blank-canvas).
 
 **Why:** New Canvas makes the Canvas at once, before anything is typed, so
 every abandoned click left an Untitled Canvas in the list. A blank Canvas holds
-nothing worth keeping, so it is deleted rather than archived.
+nothing worth keeping.
 
 **Considered and rejected:** Archiving it: it kept a tombstone and a Chat
-object for every abandoned click. Deleting the D1 anchor too: migration 0079
-fences anchors against deletion, and lifting that fence is a separate
-decision. Deciding blank on the client alone:
-it cannot see a message still being projected or a change from another
-window, and a delete that removes real content is a failure nobody would
-notice. Judging from the parent's projection alone: it lags a message the
-Chat already holds. Deferring creation until the first message: it puts creation latency
-back before the first keystroke, which the 2026-11-11 entry removed.
+object for every abandoned click. Judging blank on the client alone, or from
+the parent's projection alone: both miss a message the Chat already holds, for
+example one sent from a second window, and a delete that removes real content
+is a failure nobody would notice. Deferring creation until the first message:
+it puts creation latency back before the first keystroke, which the 2026-11-11
+entry removed. Deleting the D1 anchor too: migration 0079 fences anchors
+against deletion, and lifting that fence is a separate decision.
 
 **Consequences:** Anything a future change lets a person put into a Canvas
-must be added to the blank check, or leaving would delete it. A table that
-starts keeping a row for every Canvas must join `CANVAS_DISCARD_STATEMENTS`;
-the discard test scans every table in both objects for the id. Treating
-a Canvas effect with no row as deleted depends on the row being written before
-the Chat is bootstrapped (`createCanvas`).
+must join the blank query, or leaving would delete it. A table that starts
+keeping a row per Canvas must join `CANVAS_DISCARD_STATEMENTS`. Treating a
+Chat effect for a missing Canvas as one for a deleted Canvas depends on
+`createCanvas` writing the row before bootstrapping the Chat.
 
 ### 2026-11-12 — The naming pass chooses a Canvas's icon again
 

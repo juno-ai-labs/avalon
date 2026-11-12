@@ -147,13 +147,8 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       if (mounted.current) setArchiving(false);
     }
   };
-  // Leaving a Canvas with nothing in it deletes it, so a Canvas made and never
-  // used does not stay in the list as Untitled Canvas. The server judges blank
-  // again in the delete's transaction; this only spares it the request for a
-  // Canvas the screen knows has something in it. One made with an opening
-  // prompt is not blank, though its message may not have landed yet; and one
-  // whose create has not succeeded is left alone, since that create, or New
-  // Canvas retrying it, could land after the delete and make it again.
+  // Leaving a blank Canvas deletes it (`CanvasService.discardIfBlank`). Skipped
+  // while its create is unfinished, which could land after the delete.
   const blank = useRef(false);
   const onBlankChange = useCallback((value: boolean) => { blank.current = value; }, []);
   const discardIfBlank = useRef<() => void>(() => undefined);
