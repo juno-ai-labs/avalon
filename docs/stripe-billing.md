@@ -265,7 +265,15 @@ credit with:
 }
 ```
 
-Expiry is optional. The amount is USD invoice credit, not effective usage or
+`expiresAt` is required: choose any future date no more than two calendar years
+from creation, measured in UTC (February 29 clamps to February 28). The billing
+service checks this before recording a new grant intent; retries keep the
+original expiration, including when recovering a grant after it has expired.
+Stripe receives the expiration at whole-second precision. Existing grants,
+including historical grants without an expiration, remain readable and can be
+expired explicitly; this rule does not rewrite them.
+
+The amount is USD invoice credit, not effective usage or
 included allowance. Grants do not enable overages, change the plan, or reduce
 subscription fees. The bridge records the operator, operation ID and financial
 receipt in the independent audit database; the reason is stored in Stripe
@@ -739,6 +747,16 @@ use Engineering MCP to change offers and promotions in the persisted catalog;
 landing-page prose must be kept aligned separately.
 
 ## Changelog
+
+### 2026-11-12 — Require an expiration within two years for overage credits
+
+An omitted expiration allowed the engineering tool to issue perpetual promotional
+credit. The grant contract now requires `expiresAt`, and the billing service
+rejects new intents outside the future-to-two-calendar-years window before any
+Stripe write. The operator can choose any date in that window; silently choosing
+a default was rejected because the grant's financial terms must be explicit.
+Retries preserve accepted terms, and inspection still supports historical
+non-expiring grants.
 
 ### 2026-11-12 — Open hosted billing from the initial action
 

@@ -90,7 +90,15 @@ export async function grantOverageCredit(env: Env, workspaceId: string, input: G
     const config = billingConfig(env);
     if (!config.overageCredits || !config.offers.some((offer) => offer.overagePriceId === config.overageCredits!.priceId))
       throw new ApiError(409, "billing_overage_credits_unavailable", "Configure a metered overage price before granting credits");
-    if (request.expiresAt && Date.parse(request.expiresAt) <= Date.now()) throw new ApiError(400, "billing_credit_expiry_past", "Credit expiry must be in the future");
+    const now = Date.now();
+    const expiresAt = Math.floor(Date.parse(request.expiresAt) / 1000) * 1000;
+    if (expiresAt <= now) throw new ApiError(400, "billing_credit_expiry_past", "expiresAt must be in the future");
+    // Credits must expire within two calendar years; clamp leap day to February 28.
+    // Check only new intents so retries retain the original financial terms.
+    const latestExpiry = new Date(now);
+    latestExpiry.setUTCFullYear(latestExpiry.getUTCFullYear() + 2);
+    if (latestExpiry.getUTCMonth() !== new Date(now).getUTCMonth()) latestExpiry.setUTCDate(0);
+    if (Date.parse(request.expiresAt) > latestExpiry.getTime()) throw new ApiError(400, "billing_credit_expiry_too_late", "expiresAt must be within two calendar years");
     await validateOverageMeter(env, config.overageCredits.priceId, config.overageCredits.meterId);
     saved = { request, ...config.overageCredits };
     await env.DB.prepare("INSERT INTO billing_credit_operations(workspace_id, operation_id, request_json) VALUES (?, ?, ?)")
@@ -108,7 +116,7 @@ export async function grantOverageCredit(env: Env, workspaceId: string, input: G
     "applicability_config[scope][prices][0][id]": saved.priceId,
     "metadata[receipt]": receipt, "metadata[workspace_id]": workspaceId, "metadata[region]": env.AVALON_REGION,
     "metadata[reason]": request.reason,
-    ...(request.expiresAt ? { expires_at: String(Math.floor(Date.parse(request.expiresAt) / 1000)) } : {}),
+    expires_at: String(Math.floor(Date.parse(request.expiresAt) / 1000)),
   }, receipt);
   await env.DB.prepare("UPDATE billing_credit_operations SET stripe_grant_id = ? WHERE workspace_id = ? AND operation_id = ?")
     .bind(grant.id, workspaceId, request.operationId).run();

@@ -595,7 +595,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
     BillingCreditsSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOverageCredits(request))));
 
   server.registerTool("grant_overage_credit", {
-    description: "Issue promotional USD credit for an Organization's future overage invoices in Stripe. Requires configured metered overage billing. amountCents is invoice dollars in cents, not effective usage. Never offsets plan fees or alters included usage. Supply a reason and optionally expiresAt. Reuse the same operationId and arguments after an uncertain outcome; a new ID issues another financial grant.",
+    description: "Issue promotional USD credit for an Organization's future overage invoices in Stripe. Requires configured metered overage billing. amountCents is invoice dollars in cents, not effective usage. Never offsets plan fees or alters included usage. Supply a reason and expiresAt, which must be in the future and within two calendar years (UTC). Non-expiring grants are not supported. Reuse the same operationId and arguments after an uncertain outcome; a new ID issues another financial grant.",
     inputSchema: GrantEngineeringCreditInputSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "grant_overage_credit", { workspace_id: request.orgId, operation_id: request.operationId }, async () =>
