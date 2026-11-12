@@ -1,7 +1,7 @@
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { AddCanvasSidekickRequest, AddedCanvasSidekick, CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
-import { workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { createAutomation } from "./automation-service";
@@ -153,6 +153,39 @@ export class CanvasService {
 
   async archive(canvasId: string): Promise<void> {
     await (await this.workspace()).canvasArchive({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });
+  }
+
+  /**
+   * Delete a Canvas this person made and left blank, joining two objects'
+   * views of blank in order:
+   *
+   * 1. The Organization object judges the Canvas (title, sharing, artifacts,
+   *    the Chat's projection), deleting nothing.
+   * 2. The Chat seals itself if it holds no message and no other client has
+   *    it open: only it knows a message whose projection has not reached the
+   *    parent, or a second window, and sealed, it admits no message.
+   * 3. The Organization object judges again and deletes its rows; that commit
+   *    is the delete. If the Canvas changed in between, the Chat is reopened.
+   * 4. The Chat erases its storage, from an alarm entry step 3 commits, so it
+   *    retries until it lands (`CANVAS_DISCARD_ERASE_ALARM`).
+   *
+   * The D1 anchor and route stay: D1 refuses to delete an anchor
+   * (`workstreams_reject_post_cutover_delete`), and they hold only the id.
+   */
+  async discardIfBlank(canvasId: string, leavingTicketId?: string): Promise<{ discarded: boolean }> {
+    const workspaceId = asWorkspaceId(this.auth.workspaceId);
+    const workspace = await this.workspace();
+    const request = { workspaceId, canvasId, actor: this.actor() };
+    if (!(await workspace.canvasDiscardIfBlank({ ...request, commit: false })).discarded) return { discarded: false };
+    const chat = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
+      conversationObjectName(this.env.AVALON_REGION, workspaceId, asWorkstreamId(canvasId)));
+    const address = { workspaceId, parentId: canvasId };
+    if (!(await chat.sealBlankConversation({ ...address, ...(leavingTicketId ? { leavingTicketId } : {}) })).sealed) {
+      return { discarded: false };
+    }
+    const result = await workspace.canvasDiscardIfBlank({ ...request, commit: true });
+    if (!result.discarded) await chat.unsealBlankConversation(address);
+    return result;
   }
 
   async setAudience(canvasId: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {

@@ -408,6 +408,18 @@ function canvasRows(frames: Array<Record<string, unknown>>): Row[] {
   return sync.sidebar?.canvases?.items ?? [];
 }
 
+/** Every table in an object's SQLite with a row whose text names this id, in any column. */
+function tablesNaming(sql: SqlStorage, id: string): string[] {
+  return sql.exec<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'",
+  ).toArray().map(({ name }) => name).filter((name) => {
+    const columns = sql.exec<{ name: string }>(`SELECT name FROM pragma_table_info('${name}')`).toArray().map((column) => column.name);
+    if (columns.length === 0) return false;
+    const where = columns.map((column) => `instr(CAST("${column}" AS TEXT), ?) > 0`).join(" OR ");
+    return sql.exec(`SELECT 1 FROM "${name}" WHERE ${where} LIMIT 1`, ...columns.map(() => id)).toArray().length > 0;
+  });
+}
+
 /**
  * The Canvas rows a client holds: the subscribe payload, then each push whose
  * waterline is newer than the last one applied, as the desktop's sidebar list
@@ -493,6 +505,144 @@ describe("the Canvas list", () => {
     await expect.poll(() => clientCanvasRows(creator.frames).map((row) => row.id), { timeout: waitBudget() }).toEqual([]);
     await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id), { timeout: waitBudget() }).toEqual([]);
   });
+
+  it("deletes a Canvas its creator left blank from every store and list, and keeps one with a message, a title, or a reader who is not its creator", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const creator = await connect(CREATOR);
+    const blank = (await service.create({})).canvasId;
+    const said = (await service.create({})).canvasId;
+    const titled = (await service.create({})).canvasId;
+    await expect.poll(() => clientCanvasRows(creator.frames).map((row) => row.id).sort(), { timeout: waitBudget() })
+      .toEqual([blank, said, titled].sort());
+
+    const client = await new ConversationService(TEST_ENV, auth(CREATOR)).writableClient(said, "0");
+    await client.createMessage({ text: "Plan the December pricing launch.", clientMessageId: "canvas-discard-said",
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+    await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, said))));
+    await service.update(titled, { title: "Mine" });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: blank,
+      actor: { userId: CREATOR, actorRole: "member" }, update: { visibility: "workspace", userIds: [] } });
+    // A reader who did not make it never discards it, even while it is empty.
+    expect(await new CanvasService(TEST_ENV, auth(MEMBER)).discardIfBlank(blank)).toEqual({ discarded: false });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: blank,
+      actor: { userId: CREATOR, actorRole: "member" }, update: { visibility: "creator", userIds: [] } });
+
+    const chatOf = (canvasId: string) => env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    // What its Chat sent before the delete and the Queue has not delivered yet.
+    const late = await pendingChildEffects(chatOf(blank));
+    expect(late.length).toBeGreaterThan(0);
+
+    expect(await service.discardIfBlank(said)).toEqual({ discarded: false });
+    expect(await service.discardIfBlank(titled)).toEqual({ discarded: false });
+    expect(await service.discardIfBlank(blank)).toEqual({ discarded: true });
+    await expect.poll(() => clientCanvasRows(creator.frames).map((row) => row.id).sort(), { timeout: waitBudget() })
+      .toEqual([said, titled].sort());
+    await expect(service.detail(blank)).rejects.toMatchObject({ code: "canvas_not_found" });
+    // Once its erase alarm has run, neither the Organization's object nor its
+    // Chat's still names it. The kept Canvas is the scan's control.
+    await runDurableObjectAlarm(workspace());
+    await expect.poll(() => runInDurableObject(workspace(), (_instance, state) => tablesNaming(state.storage.sql, blank)),
+      { timeout: waitBudget() }).toEqual([]);
+    expect(await runInDurableObject(workspace(), (_instance, state) => tablesNaming(state.storage.sql, said))).toContain("canvas_directory");
+    await expect.poll(() => runInDurableObject(chatOf(blank), (_instance, state) => tablesNaming(state.storage.sql, blank)),
+      { timeout: waitBudget() }).toEqual([]);
+    expect(await runInDurableObject(chatOf(said), (_instance, state) => tablesNaming(state.storage.sql, said))).not.toEqual([]);
+    // Delivered after the delete, it is acknowledged rather than retried into
+    // the dead-letter queue, and writes nothing back.
+    expect(await consumeEffectBodies(TEST_ENV, late)).toEqual({ acked: late.length, retried: 0 });
+    expect(await runInDurableObject(workspace(), (_instance, state) => tablesNaming(state.storage.sql, blank))).toEqual([]);
+    creator.socket.close(1000, "done");
+  }));
+
+  it("keeps a blank-looking Canvas whose Chat holds a message its projection has not delivered yet, and leaves the Chat open", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({});
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    // Sent from another window: the Chat holds it, the Canvas has not heard yet.
+    const client = await new ConversationService(TEST_ENV, auth(CREATOR)).writableClient(canvasId, "0");
+    await client.createMessage({ text: "Keep this.", clientMessageId: "canvas-discard-race-1",
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+    expect(await workspace().canvasDiscardIfBlank({ workspaceId: WORKSPACE_ID, canvasId,
+      actor: { userId: CREATOR, actorRole: "member" }, commit: false })).toEqual({ discarded: true });
+
+    expect(await service.discardIfBlank(canvasId)).toEqual({ discarded: false });
+    expect((await service.detail(canvasId)).id).toBe(canvasId);
+    const said = () => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ content: string }>(
+      "SELECT content FROM canonical_conversation_turn_details WHERE author_type = 'member' ORDER BY sequence_number").toArray()
+      .map((row) => row.content));
+    expect(await said()).toEqual(["Keep this."]);
+    // Still open: the next message is admitted, into the transcript or the
+    // queue behind the run the first one started.
+    await client.createMessage({ text: "And this.", clientMessageId: "canvas-discard-race-2",
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+    expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec(
+      `SELECT 1 FROM canonical_conversation_turn_details WHERE client_message_id = ?1
+        UNION ALL SELECT 1 FROM pending_loop_inputs WHERE client_message_id = ?1`, "canvas-discard-race-2").toArray().length)).toBe(1);
+  }));
+
+  it("keeps a blank Canvas another window still has open, and deletes it once only the leaving one did", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({});
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    const open = async (ticketId: string) => {
+      await new ConversationService(TEST_ENV, auth(CREATOR)).authorizeViewer(canvasId);
+      const response = await chat.fetch("https://substream.test/socket", { headers: {
+        Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-workstream-id": canvasId,
+        "x-rally-substream-id": "0", "x-rally-user-id": CREATOR, "x-rally-session-id": `session-${CREATOR}`,
+        "x-rally-socket-ticket-id": ticketId, "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+        "x-rally-socket-after-sequence": "0",
+      } });
+      expect(response.status, response.status === 101 ? "" : await response.text()).toBe(101);
+      const socket = response.webSocket!;
+      const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve));
+      socket.accept();
+      return { socket, closed };
+    };
+    const leaving = crypto.randomUUID();
+    await open(leaving);
+    const second = await open(crypto.randomUUID());
+
+    expect(await service.discardIfBlank(canvasId, leaving)).toEqual({ discarded: false });
+    expect((await service.detail(canvasId)).id).toBe(canvasId);
+
+    second.socket.close(1000, "left");
+    await expect.poll(async () => (await service.discardIfBlank(canvasId, leaving)).discarded, { timeout: waitBudget() }).toBe(true);
+    await expect(service.detail(canvasId)).rejects.toMatchObject({ code: "canvas_not_found" });
+  }));
+
+  it("erases a discarded Canvas's Chat from an alarm committed with the delete, once it can, and again harmlessly", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const { canvasId } = await service.create({});
+    // A fresh stub each time: one that saw the Chat reset is broken for good.
+    const chat = () => env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    // The erase cannot run yet: as if the Worker died after the delete committed.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`CREATE TRIGGER hold_canvas_discard_erase AFTER INSERT ON _internal_durable_alarms
+        WHEN NEW.kind = 'canvas_discard_erase' BEGIN
+        UPDATE _internal_durable_alarms SET retry_at = ${Date.now() + 60_000}
+         WHERE kind = NEW.kind AND alarm_key = NEW.alarm_key; END`);
+    });
+    expect(await service.discardIfBlank(canvasId)).toEqual({ discarded: true });
+    await expect(service.detail(canvasId)).rejects.toMatchObject({ code: "canvas_not_found" });
+    expect(await runInDurableObject(chat(), (_instance, state) => tablesNaming(state.storage.sql, canvasId))).not.toEqual([]);
+
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("DROP TRIGGER hold_canvas_discard_erase");
+      state.storage.sql.exec("UPDATE _internal_durable_alarms SET retry_at = 0 WHERE kind = 'canvas_discard_erase'");
+    });
+    await runDurableObjectAlarm(workspace());
+    await expect.poll(() => runInDurableObject(chat(), (_instance, state) => tablesNaming(state.storage.sql, canvasId)),
+      { timeout: waitBudget() }).toEqual([]);
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT 1 FROM _internal_durable_alarms WHERE kind = 'canvas_discard_erase'").toArray())).toEqual([]);
+    // A retry after the erase landed finds nothing to erase.
+    // Its reset can reach the caller before its answer, as the alarm allows for.
+    await chat().eraseBlankConversation({ workspaceId: WORKSPACE_ID, parentId: canvasId })
+      .catch((error: unknown) => { if (!String(error).includes("conversation_erased")) throw error; });
+    await expect.poll(() => runInDurableObject(chat(), (_instance, state) => tablesNaming(state.storage.sql, canvasId)),
+      { timeout: waitBudget() }).toEqual([]);
+  }));
 
   it("lists a Canvas to whoever may open it, unread to a participant who has not opened it", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });

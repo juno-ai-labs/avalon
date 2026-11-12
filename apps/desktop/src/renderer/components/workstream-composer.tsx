@@ -3,7 +3,7 @@ import { AnnotationsSchema } from '@rally/contracts';
 import { AnnotationChips, useAnnotationDraft } from './artifact-annotations';
 import clsx from 'clsx';
 import { LoaderCircle, Square, UserPlus } from 'lucide-react';
-import { type ReactNode, type RefObject, useMemo, useRef, useState } from 'react';
+import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import type { MentionIdentity } from '../lib/api';
 import type { RealtimeDictationApi } from '../lib/use-realtime-dictation';
 import {
@@ -151,6 +151,8 @@ interface WorkstreamComposerProps {
   onAttach?: (files: FileList | File[]) => void;
   /** Every edit to the draft, for a host that clears its own notice on one. */
   onDraftChange?: (value: string) => void;
+  /** Whether the box is known to hold no text: false until the saved draft has been read. Reported on every change. */
+  onDraftEmptyChange?: (empty: boolean) => void;
   onOpenAttachment: (preview: AttachmentPreview) => void;
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
@@ -207,6 +209,7 @@ export function WorkstreamComposer({
   onSend,
   onAttach,
   onDraftChange,
+  onDraftEmptyChange,
   onOpenAttachment,
   onRemoveAttachment,
   onRetryAttachment,
@@ -231,11 +234,14 @@ export function WorkstreamComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRevisionRef = useRef(0);
   const {
+    loaded: draftLoaded,
     text,
     setText,
     mentions: selectedMentions,
     setMentions: setSelectedMentions,
   } = useDraftText(draftKey);
+  const draftEmpty = draftLoaded && text.trim() === '';
+  useEffect(() => { onDraftEmptyChange?.(draftEmpty); }, [draftEmpty, onDraftEmptyChange]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);

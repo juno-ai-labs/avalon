@@ -27,7 +27,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasUpdate` (the title and the appearance), `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Conversation object migration 83: its root row admits the `canvas` parent kind. |
 | `apps/api/src/services/canvas-service.ts` | `createCanvas`: the directory row, then the Chat's object, bootstrapped and provisioned with the creator seated; `CanvasService`, the routes' service. |
-| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/archive`, `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /canvases/pinned-order` orders personal Canvas pins for members and guests. |
+| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/archive`, `POST /canvases/:id/discard` (delete one its creator left blank), `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /canvases/pinned-order` orders personal Canvas pins for members and guests. |
 | `apps/api/src/services/integrations.ts` | `canvasRunContextMessage`: the `CANVAS CONTEXT` message a run in a Canvas's Chat is given. |
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
@@ -920,6 +920,40 @@ Canvas tombstone of their own (migration 3), so delayed pointer writes or open
 code minting cannot undo archive delivery. Existing anonymous public-site reads
 retain their publication policy; authenticated sessions are withdrawn.
 
+### Discarding a blank Canvas
+
+Leaving a blank Canvas deletes it, so pressing New Canvas and going elsewhere
+does not leave an **Untitled Canvas** behind. What blank means is the query in
+`HostedCanvas.discardIfBlank`; the client (`screens/canvas.tsx`, from
+`ConversationSurface`'s `onBlankChange`) only skips the request for a Canvas it
+knows is in use, and reports blank only once the history, the saved draft and
+the saved attachments have all loaded.
+
+`CanvasService.discardIfBlank` runs in this order, because the parent's
+projection of the Chat can lag a message the Chat already holds:
+
+1. The Organization object judges the Canvas, deleting nothing.
+2. The Chat seals itself against new messages if it holds none and no other
+   client has it open (`AgentLoopDO.sealBlankConversation`). The leaving
+   client names its own socket by the ticket it opened with, since that socket
+   may still be closing.
+3. The Organization object judges again and deletes its rows. That commit is
+   the delete. If the Canvas changed in between, the Chat is reopened.
+4. The Chat erases its storage; it refuses if it is not sealed. Step 3 commits
+   an alarm entry (`CANVAS_DISCARD_ERASE_ALARM`) that runs the erase and
+   retries it until it lands, so an interrupted erase never leaves the Chat's
+   storage for good. A retry after a success finds no identity and wipes the
+   empty schema it opened.
+
+Only the id stays, in D1's `workstreams` anchor and `workstream_authority_routes`
+row: migration 0079's `workstreams_reject_post_cutover_delete` trigger refuses
+any anchor delete, and routing and audit foreign keys point at it.
+
+A Canvas's row is always written before its Chat exists, so
+`WorkspaceDO.receiveChildEffects` treats a Chat effect for a Canvas with no row
+as one sent before a delete: it is acknowledged unapplied and logged as
+`canvas_effect_for_deleted_canvas`, not retried into the dead-letter queue.
+
 ## Data model
 
 | Table | Keyed by | Holds |
@@ -960,6 +994,32 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-12 — Delete a Canvas left blank
+
+**What changed:** Leaving a blank Canvas deletes it. See
+[Discarding a blank Canvas](#discarding-a-blank-canvas).
+
+**Why:** New Canvas makes the Canvas at once, before anything is typed, so
+every abandoned click left an Untitled Canvas in the list. A blank Canvas holds
+nothing worth keeping.
+
+**Considered and rejected:** Archiving it: it kept a tombstone and a Chat
+object for every abandoned click. Judging blank on the client alone, or from
+the parent's projection alone: both miss a message the Chat already holds, or
+a second window still open on it, and a delete that removes real content
+is a failure nobody would notice. Deferring creation until the first message:
+it puts creation latency back before the first keystroke, which the 2026-11-11
+entry removed. Deleting the D1 anchor too: migration 0079 fences anchors
+against deletion, and lifting that fence is a separate decision.
+
+**Consequences:** Anything a future change lets a person put into a Canvas
+must join the blank query, or leaving would delete it. A table that starts
+keeping a row per Canvas must join `CANVAS_DISCARD_STATEMENTS`. Treating a
+Chat effect for a missing Canvas as one for a deleted Canvas depends on
+`createCanvas` writing the row before bootstrapping the Chat. The Chat's erase
+runs from an alarm entry the delete commits, so `eraseBlankConversation` must
+stay safe to run again on an object it already erased.
 
 ### 2026-11-12 — The naming pass chooses a Canvas's icon again
 

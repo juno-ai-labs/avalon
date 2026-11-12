@@ -220,6 +220,16 @@ describe('useFileAttachments', () => {
     expect(api.deleteDraftResource).not.toHaveBeenCalled();
   });
 
+  it('says it has restored only once the saved attachments have been read, so an empty list before then is not empty', async () => {
+    let release!: () => void;
+    holdRead = new Promise((resolve) => { release = resolve; });
+    const { result } = renderHook(() => useFileAttachments(apiMock(), draftKey));
+
+    expect(result.current).toMatchObject({ restored: false, attachments: [] });
+    await act(async () => release());
+    await waitFor(() => expect(result.current.restored).toBe(true));
+  });
+
   it('finishes an upload that was interrupted before the draft was recorded', async () => {
     const uploadResource = vi.fn()
       .mockRejectedValueOnce(new Error('offline'))

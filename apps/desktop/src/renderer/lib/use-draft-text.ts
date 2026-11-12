@@ -17,6 +17,8 @@ interface DraftSnapshot {
 }
 
 export interface DraftText {
+  /** Whether the saved draft for this key has been read, so an empty `text` means empty. */
+  loaded: boolean;
   text: string;
   setText: Dispatch<SetStateAction<string>>;
   mentions: MentionIdentity[];
@@ -45,6 +47,7 @@ export function useDraftText(draftKey: string): DraftText {
   const [text, setTextState] = useState('');
   const [mentions, setMentionsState] = useState<MentionIdentity[]>(NO_MENTIONS);
   const hydrated = useRef(false);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const edited = useRef(false);
   const pending = useRef<DraftSnapshot | null>(null);
   const latest = useRef<DraftSnapshot>({ draftKey, text, mentions, epoch: draftCacheEpoch() });
@@ -78,6 +81,7 @@ export function useDraftText(draftKey: string): DraftText {
     void readDraftText(draftKey).then((cached) => {
       if (cancelled) return;
       hydrated.current = true;
+      setLoadedKey(draftKey);
       // A draft the user has already started typing over is theirs, not the
       // cache's, however late the read lands. Whatever they typed while the
       // read was in flight is saved here, since the save effect stood down
@@ -146,5 +150,5 @@ export function useDraftText(draftKey: string): DraftText {
     void writeDraftText(releasedKey, '', NO_MENTIONS, epoch);
   }, []);
 
-  return { text, setText, mentions, setMentions, releaseDraft };
+  return { loaded: loadedKey === draftKey, text, setText, mentions, setMentions, releaseDraft };
 }
