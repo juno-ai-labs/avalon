@@ -157,7 +157,7 @@ import {
   type OnboardingJourney,
   type UpdateOnboardingJourney,
 } from "@rally/contracts";
-import { RALLY_HEADERS, SOURCE_ACTIVITY_CLIENT_CONTRACT, readRallyHeader } from "@rally/contracts/http-headers";
+import { RALLY_HEADERS, SOURCE_ACTIVITY_CLIENT_CONTRACT, USAGE_PLANS_CLIENT_CONTRACT, readRallyHeader } from "@rally/contracts/http-headers";
 import type { OrganizationUsage, WorkspaceUsageEvent } from "@rally/contracts/usage";
 
 import { sendInteractive } from "../services/interactive-queue";
@@ -7640,6 +7640,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // A guest is not a member: `GET /workspace/usage` refuses them, so the
       // plan and overage are not theirs to be sent either.
       if (!attachment?.subscribed || viewerOf(attachment).accessClass === "guest") continue;
+      if ((usage.plan === "max" || usage.plan === "ultra") && (attachment.clientContract ?? 0) < USAGE_PLANS_CLIENT_CONTRACT) continue;
       try {
         socket.send(payload);
         sent += 1;

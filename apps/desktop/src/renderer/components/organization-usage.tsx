@@ -93,7 +93,7 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
   const { usage, fetchedAt } = reading;
   const setPlan = useSetOrganizationPlan(api);
   const scope = useLocalCacheScope();
-  const billing = useQuery({ queryKey: ['organization-billing', scope], queryFn: () => api!.getBillingStatus!(), enabled: canChangePlan && Boolean(api?.getBillingStatus), refetchOnWindowFocus: 'always' });
+  const billing = useQuery({ queryKey: ['organization-billing', scope], queryFn: () => api!.getBillingStatus!(), enabled: canChangePlan && Boolean(api?.getBillingStatus), refetchOnWindowFocus: false });
   useEffect(() => {
     if (!canChangePlan || !api?.getBillingStatus) return;
     const refresh = () => { void billing.refetch(); };

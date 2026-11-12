@@ -107,8 +107,10 @@ Boolean `workspaces.model_selector_visible` (`0`/`1`, default `0`); see
 
 D1 migration `0131_billing.sql` adds Organization billing accounts, per-subscription
 paid terms, membership-triggered trial awards and permanent overage receipts.
-Accounts also retain the zero-price Stripe trial-record ID and last synchronized
-award deadline. [Stripe billing](stripe-billing.md) owns their lifecycle.
+Membership qualification counts persist before account creation and survive
+departures. Accounts retain the zero-price Stripe trial-record ID, cleanup receipt
+and last synchronized award deadline; paid terms retain final-invoice completion.
+`workspaces.billing_plan_override` preserves explicit engineering overrides. [Stripe billing](stripe-billing.md) owns their lifecycle.
 
 ## Message issue reports
 

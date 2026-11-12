@@ -383,3 +383,32 @@ it.each([
   expect(usage.prepare('SELECT quota_microusd FROM usage_rollups').get()).toEqual({ quota_microusd: quota });
   expect(await readOrganizationUsage(env, WORKSPACE, Date.parse('2026-10-03'))).toMatchObject({ plan, quotaRemainingPercent: remaining });
 });
+
+it('preserves a historical weekly quota across a month boundary after the plan catalog changes', async () => {
+  const { env, usage } = seed();
+  usage.prepare(`INSERT INTO usage_rollups(workspace_id,week_start,period_start,quota_microusd,organization_microusd,rally_microusd)
+    VALUES (?, '2026-10-29T09:00:00.000Z', '2026-10-01T09:00:00.000Z', 200000000, 100000000, 0)`).run(WORKSPACE);
+  await applyUsageBatch(env, [event('late-sibling', { occurredAt: '2026-11-02T10:00:00.000Z', costMicrousd: 20_000_000 })], RECEIVED);
+  expect(usage.prepare('SELECT quota_microusd FROM usage_rollups ORDER BY period_start').all())
+    .toEqual([{ quota_microusd: 200_000_000 }, { quota_microusd: 200_000_000 }]);
+  expect((await readOrganizationUsage(env, WORKSPACE, Date.parse('2026-11-02T12:00:00Z')))!.overage.amountMicrousd).toBe(0);
+});
+
+it('gates new-plan HTTP snapshots by client contract without blocking legacy plans', async () => {
+  const { database, env } = seed();
+  database.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,joined_at) VALUES (?,?,'owner','active',?)").run(WORKSPACE, OWNER, CREATED);
+  const app = new Hono<HonoAppEnv>();
+  app.use('*', requireAuth); app.route('/workspace', workspaceRoutes); app.onError(errorHandler);
+  const routeEnv = createTestEnv({ ...env, APP_ENV: 'development', RALLY_DEV_AUTH: 'true' });
+  const read = (contract: string) => app.request('/workspace/usage', { headers: {
+    'x-rally-dev-user-id': OWNER, 'x-rally-dev-workspace-id': WORKSPACE, 'x-rally-client-contract': contract,
+  } }, routeEnv);
+  expect((await read('14')).status).toBe(200);
+  database.prepare("UPDATE workspaces SET plan = 'ultra'").run();
+  const refused = await read('14');
+  expect(refused.status).toBe(426);
+  expect(await refused.json()).toMatchObject({ error: { code: 'client_update_required' } });
+  const current = await read('15');
+  expect(current.status).toBe(200);
+  expect(await current.json()).toMatchObject({ plan: 'ultra' });
+});

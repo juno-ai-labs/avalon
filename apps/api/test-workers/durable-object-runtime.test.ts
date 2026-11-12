@@ -824,6 +824,35 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("omits new-plan usage from pre-billing sockets while delivering it to current members", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const old = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060c");
+    await runInDurableObject(stub, (_instance, state) => {
+      const [socket] = state.getWebSockets();
+      socket!.serializeAttachment({ ...(socket!.deserializeAttachment() as object), clientContract: 15 });
+    });
+    const legacy = await openWorkspaceSocket(stub, "00000000-0000-7000-8000-00000000060d");
+    const heard: unknown[] = [];
+    legacy.addEventListener("message", (event) => {
+      const decoded = JSON.parse(String(event.data)) as { type?: string };
+      if (decoded.type === "workspace_usage") heard.push(decoded);
+    });
+    try {
+      const message = nextMessageOfType(old, "workspace_usage");
+      expect(await stub.publishUsage({ plan: "ultra", quotaRemainingPercent: 80,
+        weekResetsAt: "2026-11-15T00:00:00.000Z",
+        overage: { amountMicrousd: 0, periodStart: "2026-11-01T00:00:00.000Z", periodEndsAt: "2026-12-01T00:00:00.000Z", billed: false },
+      }, "2026-11-11T00:00:00.000Z", WORKSPACE_ID, "wnam")).toBe(1);
+      expect(await message).toMatchObject({ type: "workspace_usage", usage: { plan: "ultra" } });
+      expect(heard).toEqual([]);
+    } finally {
+      old.close(1000, "test complete");
+      legacy.close(1000, "test complete");
+    }
+  });
+
   it("distinguishes an invalid workspace frame from access revocation and logs only its shape", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(

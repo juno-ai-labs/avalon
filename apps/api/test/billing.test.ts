@@ -21,6 +21,7 @@ const workspace = '01900000-0000-7000-8000-0000000000aa';
 function seed() {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-11T00:00:00Z'));
   const db = migratedSqliteDatabase(); const usage = migratedUsageSqliteDatabase(); databases.push(db, usage);
+  db.function('unixepoch', () => Math.floor(Date.now() / 1000));
   db.prepare("INSERT INTO users(id, google_subject, email, name, created_at, updated_at) VALUES ('owner','owner','owner@example.test','Owner','2026-11-10','2026-11-10')").run();
   db.prepare("INSERT INTO workspaces(id,name,slug,region,created_by_user_id,created_at,updated_at) VALUES (?,'Test','test','global','owner','2026-11-10T00:00:00Z','2026-11-10T00:00:00Z')").run(workspace);
   db.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,access_class,joined_at) VALUES (?,'owner','owner','active','member','2026-11-10T00:00:00Z')").run(workspace);
@@ -47,6 +48,7 @@ describe('organization billing', () => {
     const requests: { url: string; body: URLSearchParams }[] = [];
     let open: Record<string, unknown> | null = null;
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/customers/search?')) return Response.json({ data: [] });
       if (url.includes('/subscriptions?')) return Response.json({ data: [], has_more: false });
       if (url.includes('/checkout/sessions?')) return Response.json({ data: open ? [open] : [] });
       const body = new URLSearchParams(String(init?.body ?? ''));
@@ -440,7 +442,7 @@ it('settles pre-cancellation usage through a final invoice and excludes later us
   db.prepare("UPDATE billing_accounts SET subscription_id = 'sub_1', status = 'active', overage_enabled = 1, overage_started_at = unixepoch('2026-11-25')").run();
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(subscription({ status: 'canceled', ended_at: Date.parse('2027-01-15') / 1000 }))));
   await syncSubscription(env, 'cus_1', 'sub_1');
-  expect(db.prepare('SELECT ends_at,cutoff_quota_microusd FROM billing_terms').get()).toEqual({ ends_at: Date.parse('2027-01-15') / 1000, cutoff_quota_microusd: 10000000 });
+  expect(db.prepare('SELECT ends_at,cutoff_quota_microusd FROM billing_terms').get()).toEqual({ ends_at: Date.parse('2027-01-15') / 1000, cutoff_quota_microusd: 50000000 });
   const { applyUsageBatch } = await import('../src/services/usage-metering');
   for (const [id, at, cost] of [['before', '2026-12-15T12:00:00.000Z', 300000000], ['tail', '2027-01-12T12:00:00.000Z', 300000000], ['after', '2027-01-16T12:00:00.000Z', 500000000]] as const) {
     await applyUsageBatch(env, [{ v: 1, eventId: id, workspaceId: workspace, region: 'global', activity: 'agent_run', occurredAt: at, costMicrousd: cost, model: null, refs: {} }], at);
@@ -460,7 +462,7 @@ it('settles pre-cancellation usage through a final invoice and excludes later us
   }));
   await settleBillingAccounts(env);
   await settleBillingAccounts(env);
-  expect(quantities).toEqual(['290000000', '290000000']);
+  expect(quantities).toEqual(['290000000', '250000000']);
   expect(finalized).toBe(true);
   expect(seen.filter((r) => r.url.endsWith('/invoices'))).toHaveLength(1);
   expect(seen.find((r) => r.url.endsWith('/invoices'))!.body.get('default_payment_method')).toBe('pm_saved');
@@ -474,6 +476,8 @@ it('continues settlement after another organization has a held billing claim', a
   const other = '01900000-0000-7000-8000-0000000000bb';
   db.prepare("INSERT INTO workspaces(id,name,slug,region,created_by_user_id,created_at,updated_at) VALUES (?,'Other','other','global','owner','2026-11-10T00:00:00Z','2026-11-10T00:00:00Z')").run(other);
   await billingAccount(env, other);
+  db.prepare("UPDATE billing_accounts SET customer_id = 'cus_other' WHERE workspace_id = ?").run(other);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [], has_more: false })));
   for (const id of [workspace, other]) db.prepare("INSERT INTO billing_terms(subscription_id,workspace_id,customer_id,price_id,starts_at) VALUES (?,?,'cus_1','price_overage',unixepoch('2026-11-25'))").run(`sub_${id}`,id);
   db.prepare("UPDATE billing_accounts SET sync_token = 'held' WHERE workspace_id = ?").run(workspace);
   vi.setSystemTime(new Date('2027-01-30'));
@@ -488,4 +492,130 @@ it('refuses closure while an uncompleted checkout could still create a subscript
   })));
   await expect(withOrganizationBillingClosure(env, workspace, close)).rejects.toMatchObject({ code: 'billing_closure_blocked' });
   expect(close).not.toHaveBeenCalled();
+});
+
+it.each(['guest', 'suspended'] as const)('does not award an expired trial when old %s relationships become members', async (kind) => {
+  const { db, env } = seed();
+  for (const id of ['two', 'three']) {
+    db.prepare("INSERT INTO users(id,google_subject,email,name,created_at,updated_at) VALUES (?,?,?,?,?,?)").run(id, id, `${id}@example.test`, id, '2026-11-10', '2026-11-10');
+    db.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,access_class,joined_at) VALUES (?,?,?,?,?,'2026-11-10')")
+      .run(workspace, id, kind === 'guest' ? null : 'member', kind === 'guest' ? 'active' : 'suspended', kind === 'guest' ? 'guest' : 'member');
+  }
+  vi.setSystemTime(new Date('2026-11-25'));
+  db.prepare("UPDATE workspace_members SET status = 'active', access_class = 'member', role = 'member'").run();
+  expect((await billingAccount(env, workspace)).trial_extended).toBe(0);
+});
+
+it('retains an earned trial when a member departs before the first billing read', async () => {
+  const { db, env } = seed();
+  vi.setSystemTime(new Date('2026-11-23'));
+  addTeam(db);
+  db.prepare("DELETE FROM workspace_members WHERE user_id = 'three'").run();
+  vi.setSystemTime(new Date('2026-11-25'));
+  expect((await billingAccount(env, workspace)).trial_ends_at).toBe(Date.parse('2027-01-09') / 1000);
+});
+
+it('closes old terms during replacement recovery and a delayed cancellation cannot downgrade the replacement', async () => {
+  const { db, env } = await accountFixture();
+  db.prepare("INSERT INTO billing_terms(subscription_id,workspace_id,customer_id,price_id,starts_at) VALUES ('sub_old',?,'cus_1','price_overage',unixepoch('2026-11-10'))").run(workspace);
+  db.prepare("UPDATE billing_accounts SET subscription_id = 'sub_old', status = 'active'").run();
+  const old = subscription({ id: 'sub_old', status: 'canceled', ended_at: Date.parse('2026-11-11') / 1000 });
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => Response.json(url.includes('/subscriptions?')
+    ? { data: url.includes('starting_after=') ? [old] : [subscription({ id: 'sub_new' })], has_more: !url.includes('starting_after=') } : old)));
+  await refreshBillingAccount(env, workspace);
+  expect(db.prepare('SELECT ends_at, cutoff_quota_microusd FROM billing_terms').get())
+    .toEqual({ ends_at: 1794355200, cutoff_quota_microusd: 50_000_000 });
+  await syncSubscription(env, 'cus_1', 'sub_old');
+  expect(db.prepare('SELECT subscription_id FROM billing_accounts').get()).toEqual({ subscription_id: 'sub_new' });
+  expect(db.prepare('SELECT plan FROM workspaces').get()).toEqual({ plan: 'growth' });
+});
+
+it('recovers activation in checkout-only cron and starts overages before an unused team deadline', async () => {
+  const { db, env } = await accountFixture();
+  addTeam(db);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [subscription({
+    start_date: Date.parse('2026-11-10') / 1000, metadata: { offer_id: 'grow', overage_enabled: 'true' },
+  })], has_more: false })));
+  await settleBillingAccounts(env);
+  expect(db.prepare('SELECT starts_at FROM billing_terms').get()).toEqual({ starts_at: 1794268800 });
+  expect(db.prepare('SELECT plan FROM workspaces').get()).toEqual({ plan: 'growth' });
+});
+
+it('recovers an uncertain customer creation without optional synchronization', async () => {
+  const { env } = seed();
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes('/customers/search?')) return Response.json({ data: [{ id: 'cus_recovered', metadata: { workspace_id: workspace, region: 'global' } }] });
+    if (url.includes('/subscriptions?')) return Response.json({ data: [], has_more: false });
+    if (url.includes('/checkout/sessions?')) return Response.json({ data: [] });
+    if (url.endsWith('/checkout/sessions')) {
+      expect(new URLSearchParams(String(init?.body)).get('customer')).toBe('cus_recovered');
+      return Response.json({ id: 'cs_recovered', url: 'https://checkout.stripe.com/recovered' });
+    }
+    throw new Error('Unexpected customer creation');
+  });
+  vi.stubGlobal('fetch', fetcher);
+  expect(await createCheckout(env, workspace, 'start', 'usd', false)).toEqual({ url: 'https://checkout.stripe.com/recovered' });
+});
+
+it('retries a final invoice without recalculating expired cancellation history', async () => {
+  const { db, env } = await accountFixture();
+  db.prepare("UPDATE workspaces SET created_at = '2025-12-10T00:00:00Z'").run();
+  db.prepare(`INSERT INTO billing_terms(subscription_id,workspace_id,customer_id,price_id,starts_at,ends_at,cutoff_quota_microusd,final_invoice_id)
+    VALUES ('sub_old',?,'cus_1','price_overage',unixepoch('2026-01-10'),unixepoch('2026-01-11'),10000000,'in_final')`).run(workspace);
+  const writes: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') { writes.push(url); return Response.json({ id: 'in_final' }); }
+    return Response.json({ status: 'draft' });
+  }));
+  await billClosedOverage(env, workspace);
+  expect(writes).toEqual(['https://api.stripe.com/v1/invoices/in_final/finalize']);
+});
+
+it('resets unpaid legacy plans while preserving explicit operator overrides', async () => {
+  const { db, env } = await accountFixture();
+  const { setWorkspacePlan } = await import('../src/services/usage-metering');
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [], has_more: false })));
+  db.prepare("UPDATE workspaces SET plan = 'growth'").run();
+  await refreshBillingAccount(env, workspace);
+  expect(db.prepare('SELECT plan FROM workspaces').get()).toEqual({ plan: 'starter' });
+  await setWorkspacePlan(env, workspace, 'ultra', Date.now(), true);
+  await refreshBillingAccount(env, workspace);
+  expect(db.prepare('SELECT plan FROM workspaces').get()).toEqual({ plan: 'ultra' });
+});
+
+it('reads billing status while another writer holds the claim without contacting Stripe', async () => {
+  const { db, env } = await accountFixture();
+  db.prepare("UPDATE billing_accounts SET sync_token = 'writer'").run();
+  const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+  const app = new Hono<HonoAppEnv>(); app.onError(errorHandler);
+  app.use('*', async (c, next) => {
+    c.set('auth', { sessionId: 'session', userId: asUserId('01900000-0000-7000-8000-000000000001'), workspaceId: asWorkspaceId(workspace), region: 'global', role: 'owner' });
+    await next();
+  });
+  app.route('/billing', billingRoutes);
+  const response = await app.request('/billing', {}, env);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ enabled: true, status: 'none' });
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('closes a never-billed organization without provisioning Stripe records', async () => {
+  const { env } = seed();
+  const config = JSON.parse(env.BILLING_CONFIG!);
+  config.synchronization = { freePriceId: 'price_bad', organizationMeterId: 'mtr_org', rallyMeterId: 'mtr_rally' };
+  env.BILLING_CONFIG = JSON.stringify(config);
+  const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+  expect(await withOrganizationBillingClosure(env, workspace, async () => 'closed')).toBe('closed');
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('blocks operator retirement before locking paying members out of their portal', async () => {
+  const { db, env } = await accountFixture();
+  const { retireWorkspaceForOperator } = await import('../src/services/workspace-retirement-service');
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [subscription()], has_more: false })));
+  let failure: unknown;
+  try { await retireWorkspaceForOperator(env, workspace, { operatorId: 'operator' }); }
+  catch (error) { failure = error; }
+  expect(db.prepare('SELECT abandoned_at FROM workspaces').get()).toEqual({ abandoned_at: null });
+  expect(failure).toMatchObject({ code: 'billing_closure_blocked' });
 });
