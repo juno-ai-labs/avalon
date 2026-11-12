@@ -8745,12 +8745,12 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 
 /* An empty Canvas with starters: a fourth row under the dock centres the
    composer. See docs/conversation-surfaces.md#starting-an-empty-canvas-from-a-template. */
-.workstream-screen.is-starting { grid-template-rows: 55px minmax(0, 1fr) auto minmax(max-content, 1fr); }
-.workstream-screen.is-starting:has(> .title-pill-header) { grid-template-rows: 64px minmax(0, 1fr) auto minmax(max-content, 1fr); }
+.workstream-screen.is-starting { grid-template-rows: 55px minmax(0, 1fr) auto minmax(0, 1fr); }
+.workstream-screen.is-starting:has(> .title-pill-header) { grid-template-rows: 64px minmax(0, 1fr) auto minmax(0, 1fr); }
 .workstream-screen.is-starting .transcript-column { display: flex; flex-direction: column; justify-content: flex-end; padding-bottom: var(--space-2); }
 .workstream-screen.is-starting .transcript-column .empty-state { margin: 0 auto; padding-bottom: var(--space-4); }
 
-.conversation-starters { container: conversation-starters / inline-size; min-width: 0; padding: var(--space-2) 16px var(--space-8); }
+.conversation-starters { container: conversation-starters / inline-size; min-height: 0; min-width: 0; overflow-y: auto; padding: var(--space-2) 16px var(--space-8); }
 .canvas-starters { display: grid; gap: 10px; margin: 0 auto; max-width: var(--composer-width); width: 100%; }
 .canvas-starters-groups { display: flex; flex-wrap: wrap; gap: 2px; }
 .canvas-starters-groups button { background: none; border: 0; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); cursor: pointer; font: inherit; font-size: 13px; padding: 4px 9px; }
@@ -8760,28 +8760,29 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .canvas-starters-cards { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
 @container conversation-starters (width < 480px) { .canvas-starters-cards { grid-template-columns: minmax(0, 1fr); } }
 
-/* Typing fades the starters out (`:placeholder-shown` is an empty draft);
-   visibility follows, delayed going out, so hidden cards leave the tab order
-   without cutting the fade short. Delays: opacity, transform, visibility. */
-.canvas-starters-groups,
-.canvas-starters .canvas-template-card {
-  --starter-delay: 0ms;
-  transition: opacity 340ms cubic-bezier(.4, 0, .2, 1), transform 340ms cubic-bezier(.4, 0, .2, 1), visibility 0s linear;
-  transition-delay: var(--starter-delay), var(--starter-delay), 0s;
-}
-.canvas-starters-cards > li:nth-child(1) .canvas-template-card { --starter-delay: 40ms; }
-.canvas-starters-cards > li:nth-child(2) .canvas-template-card { --starter-delay: 80ms; }
-.canvas-starters-cards > li:nth-child(3) .canvas-template-card { --starter-delay: 120ms; }
-.canvas-starters-cards > li:nth-child(n + 4) .canvas-template-card { --starter-delay: 160ms; }
+/* Typing hides the starters (`:placeholder-shown` is an empty draft). */
 .workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) :is(.canvas-starters-groups, .canvas-template-card) {
   opacity: 0;
   pointer-events: none;
-  transition-delay: var(--starter-delay), var(--starter-delay), calc(var(--starter-delay) + 340ms);
   visibility: hidden;
 }
-.workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters-groups { transform: translateY(4px); }
-.workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters .canvas-template-card { transform: translateY(6px); }
-@media (prefers-reduced-motion: reduce) {
+/* And fades them, unless motion is reduced: visibility follows the fade,
+   delayed going out, so hidden cards leave the tab order without cutting it
+   short. Delays: opacity, transform, visibility. */
+@media (prefers-reduced-motion: no-preference) {
   .canvas-starters-groups,
-  .canvas-starters .canvas-template-card { transition-duration: 0s; transition-delay: 0s; }
+  .canvas-starters .canvas-template-card {
+    --starter-delay: 0ms;
+    transition: opacity 340ms cubic-bezier(.4, 0, .2, 1), transform 340ms cubic-bezier(.4, 0, .2, 1), visibility 0s linear;
+    transition-delay: var(--starter-delay), var(--starter-delay), 0s;
+  }
+  .canvas-starters-cards > li:nth-child(1) .canvas-template-card { --starter-delay: 40ms; }
+  .canvas-starters-cards > li:nth-child(2) .canvas-template-card { --starter-delay: 80ms; }
+  .canvas-starters-cards > li:nth-child(3) .canvas-template-card { --starter-delay: 120ms; }
+  .canvas-starters-cards > li:nth-child(n + 4) .canvas-template-card { --starter-delay: 160ms; }
+  .workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) :is(.canvas-starters-groups, .canvas-template-card) {
+    transition-delay: var(--starter-delay), var(--starter-delay), calc(var(--starter-delay) + 340ms);
+  }
+  .workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters-groups { transform: translateY(4px); }
+  .workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters .canvas-template-card { transform: translateY(6px); }
 }
