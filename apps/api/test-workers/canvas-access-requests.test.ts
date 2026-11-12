@@ -241,6 +241,16 @@ describe("asking to open a Canvas", () => {
     expect(await ask()).toEqual({ status: "already_participant" });
   });
 
+  it("counts a Canvas someone asked to open as used, so leaving it blank does not delete it", async () => {
+    const untitled = crypto.randomUUID();
+    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: untitled, title: "Untitled Canvas", createdByUserId: CREATOR, authorityGeneration: 1 });
+    const discard = (commit: boolean) => workspace().canvasDiscardIfBlank({ workspaceId: WORKSPACE_ID, canvasId: untitled, actor: member(CREATOR), commit });
+    expect(await discard(false)).toEqual({ discarded: true });
+    await workspace().canvasRequestAccess({ workspaceId: WORKSPACE_ID, canvasId: untitled, actor: member(REQUESTER), request: {} });
+    expect(await discard(false)).toEqual({ discarded: false });
+    expect(await discard(true)).toEqual({ discarded: false });
+  });
+
   it("refuses a guest and someone who does not decide, by name, and an id that is no Canvas as not found", async () => {
     const guest = { userId: GUEST, actorRole: null };
     expect(await refusal((instance) => instance.canvasRequestAccess({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: guest, request: {} })))

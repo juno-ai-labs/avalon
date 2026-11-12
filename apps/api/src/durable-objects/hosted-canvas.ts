@@ -59,7 +59,8 @@ import {
   type CanvasAccessSubject,
 } from "./canvas-access-requests";
 import { attachSidekickConversation } from "./workspace-sidekick-conversation-storage";
-import { CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
+import { CANVAS_ARCHIVE_ARTIFACT_ALARM, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_DISCARD_ERASE_ALARM, CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
+import { CANVAS_ARTIFACT_ACCESS_ALARM } from "./canvas-artifact-access";
 import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { canvasTitleFromOpening } from "../services/canvas-naming";
@@ -119,6 +120,9 @@ export function canvasArtifactKind(resourceType: string, mimeType: string | null
   return resourceType === "generated_site" ? "site" : mimeType === "application/zip" ? "archive" : "file";
 }
 export type CanvasActorRequest = z.infer<typeof CanvasActorRequestSchema>;
+/** `commit: false` only judges whether the Canvas is blank; `true` deletes it if it still is. */
+export const CanvasDiscardRequestSchema = CanvasActorRequestSchema.extend({ commit: z.boolean() });
+export type CanvasDiscardRequest = z.infer<typeof CanvasDiscardRequestSchema>;
 
 /** A retitle, an appearance choice, or both; the route refuses a body with neither. */
 export const CanvasUpdateRequestSchema = CanvasActorRequestSchema.extend({
@@ -221,6 +225,23 @@ export function canvasSummary(row: CanvasRow, report: InvalidCanvasAppearanceRep
   });
 }
 
+
+/**
+ * Every row this object keeps for a blank Canvas. The directory row goes first:
+ * the sharing triggers re-mark a Canvas only while it exists. A table that
+ * starts keeping a row per Canvas belongs here; the discard test scans every
+ * table for the id.
+ */
+const CANVAS_DISCARD_STATEMENTS = [
+  "DELETE FROM canvas_directory WHERE canvas_id = ?",
+  "DELETE FROM canvas_participants WHERE canvas_id = ?",
+  "DELETE FROM canvas_artifact_users WHERE canvas_id = ?",
+  "DELETE FROM canvas_artifact_access_state WHERE canvas_id = ?",
+  "DELETE FROM sidekick_children WHERE sidekick_id = ?",
+  "DELETE FROM sidekick_child_projections WHERE sidekick_id = ?",
+  "DELETE FROM sidekick_child_receipts WHERE sidekick_id = ?",
+  "DELETE FROM sidekick_viewer_reads WHERE sidekick_id = ?",
+] as const;
 
 /**
  * One Canvas's parent state, scoped to a `canvas_id` inside `WorkspaceDO`'s
@@ -433,6 +454,48 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         `SELECT DISTINCT recipient_user_id FROM workspace_activity_items WHERE parent_kind = 'canvas' AND parent_id = ?`,
         this.canvasId,
       ).toArray()) this.host.noteActivityChanged(recipient.recipient_user_id);
+    });
+  }
+
+  /**
+   * Whether a Canvas is blank as this object sees it, and with `commit`, delete
+   * its rows if so. The query below is the definition of blank; anything a
+   * person can put into a Canvas must appear in it. Not blank is an answer,
+   * not a refusal. The Chat's own messages are not visible here (its
+   * projection lags), so `CanvasService.discardIfBlank` asks the Chat between
+   * the two calls.
+   */
+  discardIfBlank(input: CanvasDiscardRequest): { discarded: boolean } {
+    const request = parseRpcInput(CanvasDiscardRequestSchema, input, "canvas_discard");
+    return this.storage.transactionSync(() => {
+      const row = this.assertCanvas(request.workspaceId, request.canvasId, true);
+      if (row.created_by_user_id !== request.actor.userId) {
+        if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
+        return { discarded: false };
+      }
+      const blank = row.archived_at === null && row.title === UNTITLED_CANVAS && row.title_status === "settled"
+        && row.appearance_json === null && row.writer_sidekick_id === null && row.visibility === "creator"
+        && this.sql.exec<{ used: number }>(
+          `SELECT EXISTS (SELECT 1 FROM sidekick_child_projections
+                     WHERE sidekick_id = ?1 AND COALESCE(json_extract(effect_json, '$.latestAttentionOrdinal'), 0) > 0)
+               OR EXISTS (SELECT 1 FROM canvas_artifacts WHERE canvas_id = ?1)
+               OR EXISTS (SELECT 1 FROM artifact_registry WHERE workstream_id = ?1)
+               OR EXISTS (SELECT 1 FROM canvas_participants WHERE canvas_id = ?1 AND user_id <> ?2)
+               OR EXISTS (SELECT 1 FROM sidekick_conversation_attachments WHERE parent_kind = 'canvas' AND parent_id = ?1)
+               OR EXISTS (SELECT 1 FROM workspace_pins WHERE item_kind = 'canvas' AND item_id = ?1)
+               OR EXISTS (SELECT 1 FROM parent_invitations WHERE parent_id = ?1)
+               OR EXISTS (SELECT 1 FROM canvas_access_requests WHERE canvas_id = ?1) AS used`,
+          this.canvasId, row.created_by_user_id,
+        ).one().used === 0;
+      if (!blank || !request.commit) return { discarded: blank };
+      for (const statement of CANVAS_DISCARD_STATEMENTS) this.sql.exec(statement, this.canvasId);
+      this.host.alarms.cancel(CANVAS_NAMING_ALARM_KIND, this.canvasId);
+      this.host.alarms.cancel(CANVAS_ARTIFACT_ACCESS_ALARM, this.canvasId);
+      // The Chat's erase commits with the delete and retries until it lands,
+      // so a failed or interrupted erase never leaves its storage for good.
+      this.host.alarms.schedule({ kind: CANVAS_DISCARD_ERASE_ALARM, key: this.canvasId, dueAt: Date.now() });
+      this.host.noteCanvasDirectoryChanged(this.canvasId);
+      return { discarded: true };
     });
   }
 

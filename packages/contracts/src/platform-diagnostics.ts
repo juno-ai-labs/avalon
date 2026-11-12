@@ -40,6 +40,21 @@ const PLATFORM_ERRORS: readonly (readonly [RegExp, string])[] = [
   [/: syntax error/u, "sqlite_syntax_error"],
 ];
 
+/**
+ * A schema trigger's `RAISE(ABORT, '<reason>')`, as D1 and SQLite report it:
+ * `D1_ERROR: <reason>: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)`.
+ * The reason is a string our own migrations wrote, so a code-shaped one is
+ * named; a sentence (a few older triggers raise prose) is not copied.
+ */
+const TRIGGER_ABORT = /^(?:D1_[A-Z_]{1,40}: )?(.+): SQLITE_CONSTRAINT \(extended: SQLITE_CONSTRAINT_TRIGGER\)$/u;
+const TRIGGER_REASON = /^[a-z][a-z0-9_]{0,79}$/u;
+
+function triggerAbortCode(message: string): string | null {
+  const reason = TRIGGER_ABORT.exec(message)?.[1];
+  if (reason === undefined) return null;
+  return TRIGGER_REASON.test(reason) ? `sqlite_trigger_abort:${reason}` : "sqlite_trigger_abort";
+}
+
 /** D1's own prefix (`D1_ERROR`, `D1_TYPE_ERROR`, …): a closed platform vocabulary. */
 const D1_PREFIX = /^(D1_[A-Z_]{1,40}):/u;
 
@@ -61,6 +76,8 @@ export function platformErrorCode(error: unknown): string | null {
   const messages = [error.message, messageOf((error as Error & { cause?: unknown }).cause)]
     .filter((message): message is string => message !== null);
   for (const message of messages) {
+    const trigger = triggerAbortCode(message);
+    if (trigger) return trigger;
     for (const [pattern, code] of PLATFORM_ERRORS) if (pattern.test(message)) return code;
   }
   if ((error as Error & { overloaded?: unknown }).overloaded === true) return "durable_object_overloaded";
