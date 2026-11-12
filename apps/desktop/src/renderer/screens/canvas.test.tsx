@@ -829,6 +829,29 @@ describe('CanvasScreen', () => {
     await waitFor(()=>expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS,{visibility:'participants',userIds:[MAYA],artifactVisibility:'public',artifactUserIds:[],expectedRevision:7}));
   });
 
+  it('retries an artifact link after publication catches up without closing Share or losing the draft', async () => {
+    const url = 'https://quiet-blue-river-garden-g.rallyusercontent.com';
+    let finish: ((value: { artifactId: string; canonicalUrl: string }) => void) | undefined;
+    artifactLink.mockRejectedValueOnce(new ApiError('Not published yet', 404, 'artifact_not_found'))
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Artifact link couldn’t be loaded');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    const dialog = screen.getByRole('dialog', { name: 'Share Canvas' });
+    const artifactControls = within(dialog).getByRole('group', { name: 'Who can interact with artifacts' });
+    fireEvent.click(within(artifactControls).getByRole('radio', { name: 'Anyone with the link' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retry link' }));
+    await waitFor(() => expect(artifactLink).toHaveBeenCalledTimes(2));
+    expect(within(dialog).getByRole('button', { name: 'Getting link…' })).toBeDisabled();
+    await act(async () => { finish?.({ artifactId: '00000000-0000-7000-8000-0000000000b2', canonicalUrl: url }); });
+    expect(await within(dialog).findByRole('textbox', { name: 'Artifact link' })).toHaveValue(url);
+    expect(within(artifactControls).getByRole('radio', { name: 'Anyone with the link' })).toBeChecked();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy link' }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(url));
+  });
+
   it('changes who can open it from Share, for a manager', async () => {
     setCanvasAudience.mockResolvedValue(detail({ visibility: 'participants', participantUserIds: [MAYA] }));
     renderCanvas();

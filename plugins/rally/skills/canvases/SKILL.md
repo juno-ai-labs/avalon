@@ -40,7 +40,9 @@ use the `publishing` skill: publish it, do not paste it into a message.
 
 - `list_people` turns names into user ids.
 - `set_canvas_audience` replaces the whole list: read `get_canvas` first and
-  send everyone who should keep access. `workspace` visibility opens it to the
+  send everyone who should keep access. `userIds` is required even when only
+  changing artifact access: copy the current `participantUserIds` to preserve
+  editors, including guests. `workspace` visibility opens it to the
   whole Organization for editing and conversation access.
 - `artifactVisibility` separately controls all published artifacts: `editors`,
   `participants`, `workspace`, or `public`. Use `artifactUserIds` for selected

@@ -52,6 +52,15 @@ allocator and route directory, with no change to routing.
 guest claims or access approvals. Older API clients may omit the fence and the
 artifact fields; omitted artifact settings are preserved. A supplied artifact
 recipient list replaces that audience. Both policies commit in one transaction.
+The MCP tool requires `userIds` explicitly even for artifact-only changes;
+clients preserve editors by copying the current `participantUserIds`.
+Internal publishing agents direct a manager to the Canvas's Share screen to
+change the audience; the external MCP sharing tool is not available to them.
+
+The Share modal shows the most recently updated artifact's stable link. A link
+lookup can fail while publication is still propagating. The modal retains a
+loading/retry control so a manager can retrieve the link without closing Share
+or losing audience edits.
 
 ### Durable propagation
 
@@ -191,6 +200,9 @@ WorkspaceDO 146 and ArtifactHostDO 3 fixtures in separate events, proving retain
 publications, legacy-only public bootstrap, editor defaults for new Canvases,
 initial propagation intents and retained null-incarnation sessions. MCP tests
 exercise both sharing fields, legacy omission and stable link retrieval.
+They also reject a missing editor list before any API update. The desktop's
+`screens/canvas.test.tsx` covers retrying a delayed artifact link in the open
+modal while preserving its audience draft.
 
 ## Changelog
 

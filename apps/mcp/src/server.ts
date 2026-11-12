@@ -334,11 +334,11 @@ export function createRallyMcpServer(api: RallyApi): McpServer {
 
   server.registerTool("set_canvas_audience", {
     title: "Change Canvas editors and artifact access",
-    description: "Replace Canvas editors and optionally artifact access. visibility/userIds controls who can read the conversation, send messages and change artifacts: creator, participants, or workspace. artifactVisibility controls published artifacts only: editors, participants, workspace, or public (anonymous). Editors always have artifact access. artifactUserIds names additional artifact recipients, who may also be editors; it does not grant conversation access. Each supplied list replaces that audience. Read get_canvas and list_people first; pass sharingRevision as expectedRevision to avoid overwriting concurrent edits. Omitted artifact settings are preserved. Public access applies to all published artifacts in the Canvas. Propagation is asynchronous over Cloudflare Queues. Only Canvas managers can change sharing.",
+    description: "Replace Canvas editors and optionally artifact access. visibility/userIds controls who can read the conversation, send messages and change artifacts: creator, participants, or workspace. userIds is required and replaces the whole editor list besides the creator. Read get_canvas first; for an artifact-only change, keep its visibility and copy participantUserIds into userIds so existing editors, including guests, retain access. Send [] only to remove all explicitly selected editors. artifactVisibility controls published artifacts only: editors, participants, workspace, or public (anonymous). Editors always have artifact access. artifactUserIds names additional artifact recipients, who may also be editors; it does not grant conversation access. Each supplied list replaces that audience. Use list_people to resolve names; pass sharingRevision as expectedRevision to avoid overwriting concurrent edits. Omitted artifact settings are preserved. Public access applies to all published artifacts in the Canvas. Propagation is asynchronous over Cloudflare Queues. Only Canvas managers can change sharing.",
     inputSchema: {
       canvasId: CanvasId,
       visibility: CanvasVisibilitySchema,
-      userIds: z.array(z.string().uuid()).default([]),
+      userIds: z.array(z.string().uuid()),
       artifactVisibility: CanvasArtifactVisibilitySchema.optional(),
       artifactUserIds: z.array(z.string().uuid()).optional(),
       expectedRevision: z.number().int().nonnegative().optional(),

@@ -187,6 +187,16 @@ function ConnectedCanvasSharingDialog({
         artifactUserIds: canvas.artifactUserIds ?? [],
       }}
       artifactLink={link.data?.canonicalUrl}
+      artifactLinkStatus={
+        firstArtifact && !link.data
+          ? link.isFetching
+            ? "pending"
+            : link.isError
+              ? "error"
+              : undefined
+          : undefined
+      }
+      onRetryArtifactLink={() => { void link.refetch(); }}
       onOpenChange={onOpenChange}
       onSave={save}
       saveFailure={failure}
