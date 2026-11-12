@@ -130,13 +130,11 @@ export type CanvasUpdateRequest = z.input<typeof CanvasUpdateRequestSchema>;
 export const CanvasSetAudienceRequestSchema = CanvasActorRequestSchema.extend({ update: CanvasAudienceUpdateSchema });
 export type CanvasSetAudienceRequest = z.input<typeof CanvasSetAudienceRequestSchema>;
 
-/**
- * Who can open the Canvas's artifacts, set without naming anyone: the editor
- * audience and any named artifact users are left as they are. Naming specific
- * people stays with `setAudience`, which owns the person picker's list.
- */
+/** Who can open the Canvas's artifacts, set without naming anyone; see `HostedCanvas.setArtifactAudience`. */
 export const CanvasSetArtifactAudienceRequestSchema = CanvasActorRequestSchema.extend({
   artifactVisibility: z.enum(["editors", "workspace", "public"]),
+  /** False for an agent's default, which changes only an audience nobody has chosen yet. */
+  personAsked: z.boolean(),
 });
 export type CanvasSetArtifactAudienceRequest = z.input<typeof CanvasSetArtifactAudienceRequestSchema>;
 
@@ -161,6 +159,8 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
   appearance_json: string | null;
   archived_at: number | null;
   artifact_visibility: "editors" | "participants" | "workspace" | "public";
+  /** 1 once a person, or an agent at a person's word or by its own default, set the artifact audience (migration 148). */
+  artifact_visibility_chosen: 0 | 1;
   sharing_revision: number;
 }
 
@@ -389,7 +389,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     return this.sql.exec<CanvasRow>(
       `SELECT canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, last_editor_kind,
               last_editor_id, writer_sidekick_id, writer_run_id, last_writer_run_id, visibility, authority_generation,
-              title_status, appearance_json, archived_at, artifact_visibility, sharing_revision
+              title_status, appearance_json, archived_at, artifact_visibility, artifact_visibility_chosen, sharing_revision
          FROM canvas_directory WHERE canvas_id = ?`,
       this.canvasId,
     ).toArray()[0] ?? null;
@@ -807,8 +807,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         this.sql.exec('DELETE FROM canvas_artifact_users WHERE canvas_id=?',this.canvasId);
         for (const userId of artifactUserIds) this.sql.exec('INSERT INTO canvas_artifact_users(canvas_id,user_id) VALUES(?,?)',this.canvasId,userId);
       }
-      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, artifact_visibility = ? WHERE canvas_id = ?`,
-        request.update.visibility, storedArtifacts, this.canvasId);
+      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, artifact_visibility = ?,
+          artifact_visibility_chosen = MAX(artifact_visibility_chosen, ?) WHERE canvas_id = ?`,
+        request.update.visibility, storedArtifacts, request.update.artifactVisibility === undefined ? 0 : 1, this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
       this.host.noteAttachedCanvasChanged(this.canvasId);
     });
@@ -822,27 +823,37 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }
 
   /**
-   * Change only who can open the Canvas's artifacts, for a manager. The editor
-   * audience, and the named artifact users "workspace" honours, stay as they
-   * are, so a caller that knows nothing of the person picker cannot clear it.
-   * Returns the audience stored, which the editor floor
-   * (`canvasArtifactVisibilityFloor`) may have raised above the one asked for.
+   * Change only who can open the Canvas's artifacts, for a manager, leaving
+   * the editor audience and named artifact users as they are: a caller that
+   * knows nothing of the person picker cannot clear it.
+   *
+   * The audience covers every artifact the Canvas has published, so an
+   * agent's default (`personAsked: false`) changes it only while nobody has
+   * chosen one. Otherwise a later site would reopen a memo a manager had
+   * restricted. `kept` reports the audience left in place.
    */
-  setArtifactAudience(input: CanvasSetArtifactAudienceRequest): { artifactVisibility: "editors" | "participants" | "workspace" | "public" } {
+  setArtifactAudience(input: CanvasSetArtifactAudienceRequest): {
+    outcome: "set" | "kept"; artifactVisibility: "editors" | "participants" | "workspace" | "public";
+  } {
     const request = parseRpcInput(CanvasSetArtifactAudienceRequestSchema, input, "canvas_set_artifact_audience");
     return this.host.storage.transactionSync(() => {
       const row = this.assertCanvas(request.workspaceId, request.canvasId);
       if (!this.manages(row, request.actor)) throw canvasReaderAllows(row, request.actor, this.sql) ? forbidden() : notFound();
+      if (!request.personAsked && row.artifact_visibility_chosen === 1) {
+        return { outcome: "kept" as const, artifactVisibility: row.artifact_visibility };
+      }
       const stored = canvasArtifactVisibilityFloor(row.visibility, request.artifactVisibility);
+      // As in `setAudience`: rows kept under "editors" grant nothing, and a
+      // raise from "editors" must not revive them.
+      if (stored !== row.artifact_visibility && row.artifact_visibility === "editors") {
+        this.sql.exec("DELETE FROM canvas_artifact_users WHERE canvas_id=?", this.canvasId);
+      }
+      this.sql.exec("UPDATE canvas_directory SET artifact_visibility = ?, artifact_visibility_chosen = 1 WHERE canvas_id = ?", stored, this.canvasId);
       if (stored !== row.artifact_visibility) {
-        // As in `setAudience`: rows kept under "editors" grant nothing, and a
-        // raise from "editors" must not revive them.
-        if (row.artifact_visibility === "editors") this.sql.exec("DELETE FROM canvas_artifact_users WHERE canvas_id=?", this.canvasId);
-        this.sql.exec("UPDATE canvas_directory SET artifact_visibility = ? WHERE canvas_id = ?", stored, this.canvasId);
         this.host.noteCanvasDirectoryChanged(this.canvasId);
         this.host.noteAttachedCanvasChanged(this.canvasId);
       }
-      return { artifactVisibility: stored };
+      return { outcome: "set" as const, artifactVisibility: stored };
     });
   }
 

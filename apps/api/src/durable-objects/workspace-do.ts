@@ -4464,6 +4464,16 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: [...SIDEKICK_SOURCE_SCHEMA_STATEMENTS, ...SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS],
 }, { version: 147, description: 'separate Canvas artifact audiences and durably propagate local serving access',
   statements: CANVAS_ARTIFACT_ACCESS_STATEMENTS,
+}, {
+  version: 148,
+  description: "record whether anyone has chosen a Canvas's artifact audience, so an agent's default never overrides a choice",
+  // Every existing Canvas counts as chosen: its audience may be a manager's
+  // deliberate choice, and nothing stored says otherwise.
+  statements: [
+    `ALTER TABLE canvas_directory ADD COLUMN artifact_visibility_chosen INTEGER NOT NULL DEFAULT 0
+      CHECK(artifact_visibility_chosen IN (0,1))`,
+    `UPDATE canvas_directory SET artifact_visibility_chosen = 1`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {
@@ -5593,31 +5603,31 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Change who can open a Canvas's artifacts as a person named only by id,
-   * for an agent run acting as them; see `HostedCanvas.setArtifactAudience`.
-   * Their role comes from their relationship here, as `artifactDataWriteFacts`
-   * reads it. Widening or narrowing artifact access never changes who is in
-   * the Canvas's Chat, so no conversation socket closes.
+   * Change who can open a Canvas's artifacts as a person named only by id, for
+   * an agent run acting as them; see `HostedCanvas.setArtifactAudience`. Their
+   * role comes from their relationship, as `artifactDataWriteFacts` reads it.
+   * Artifact access never changes who is in the Chat, so no socket closes.
    */
   async canvasSetArtifactAudience(input: {
-    workspaceId: string; canvasId: string; userId: string; artifactVisibility: "editors" | "workspace" | "public";
+    workspaceId: string; canvasId: string; userId: string;
+    artifactVisibility: "editors" | "workspace" | "public"; personAsked: boolean;
   }) {
     const request = parseRpcInput(z.strictObject({
       workspaceId: WorkspaceIdSchema, canvasId: IdSchema, userId: UserIdSchema,
-      artifactVisibility: z.enum(["editors", "workspace", "public"]),
+      artifactVisibility: z.enum(["editors", "workspace", "public"]), personAsked: z.boolean(),
     }), input, "canvas_set_artifact_audience");
     const canvas = await this.hostedCanvas(request.canvasId, request.workspaceId);
     const relationship = await this.readRelationship(request.workspaceId, request.userId);
     const actorRole = relationship?.status === "active" && relationship.accessClass === "member" ? relationship.role ?? "member" : null;
-    // A refusal is returned rather than thrown: an RPC reduces a thrown
-    // ApiError to a bare Error, and the tool owes the model which one it was.
     return this.canvasWrite(async () => {
       try {
-        return { outcome: "set" as const, ...canvas.setArtifactAudience({
-          workspaceId: request.workspaceId, canvasId: request.canvasId,
-          actor: { userId: request.userId, actorRole }, artifactVisibility: request.artifactVisibility,
-        }) };
+        return canvas.setArtifactAudience({
+          workspaceId: request.workspaceId, canvasId: request.canvasId, actor: { userId: request.userId, actorRole },
+          artifactVisibility: request.artifactVisibility, personAsked: request.personAsked,
+        });
       } catch (error) {
+        // Returned, not thrown: an RPC reduces a thrown ApiError to a bare
+        // Error, and the tool owes the model which refusal it was.
         if (error instanceof ApiError && error.status === 403) return { outcome: "not_manager" as const };
         if (error instanceof ApiError && error.status === 404) return { outcome: "not_found" as const };
         throw error;

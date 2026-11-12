@@ -21,7 +21,7 @@ import {
 } from "@rally/contracts";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
-import { artifactAudiencePort, createArtifactAudienceTool } from "../src/services/canvas-artifact-audience-tool";
+import { createArtifactAudienceTool } from "../src/services/canvas-artifact-audience-tool";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import {
@@ -514,24 +514,23 @@ describe("Canvas artifact access propagated to local serving", () => {
   });
 
   it("lets a Chat's manager open its site to the public with set_artifact_audience, and refuses an editor who does not manage it", async () => {
-    // READER is an editor of the Canvas, not its manager.
+    // READER is an editor of the Canvas, not its manager. Leaving the artifact
+    // audience out keeps the new Canvas's default unchosen.
     await workspace().canvasSetAudience({
       workspaceId,
       canvasId: CANVAS,
       actor: { userId: OWNER, actorRole: "member" },
-      update: { visibility: "participants", userIds: [READER], artifactVisibility: "editors" },
+      update: { visibility: "participants", userIds: [READER] },
     });
-    const tool = (userId: string) =>
-      createArtifactAudienceTool(artifactAudiencePort(env, { workspaceId, canvasId: CANVAS, userId }));
-    const call = (userId: string) =>
-      tool(userId).execute({ audience: "public" }, {} as never);
+    const call = (userId: string, personAsked = false) =>
+      createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId })
+        .execute({ audience: "public", personAsked }, {} as never);
 
     await expect(call(READER)).rejects.toMatchObject({ code: "artifact_audience_not_manager" });
     await sync(SITE_HOST, SITE);
     expect((await visit("quiet-blue-river-garden")).status).toBe(401);
 
-    const result = await call(OWNER);
-    expect(result.output).toEqual({ audience: "public" });
+    expect((await call(OWNER)).output).toEqual({ audience: "public", changed: true });
     await sync(SITE_HOST, SITE);
     expect((await visit("quiet-blue-river-garden")).status).toBe(200);
     const detail = await workspace().canvasDetail({
@@ -542,6 +541,24 @@ describe("Canvas artifact access propagated to local serving", () => {
     // The editor audience is left as it was.
     expect(detail.visibility).toBe("participants");
     expect(detail.participantUserIds).toEqual([READER]);
+  });
+
+  it("never lets an agent's default reopen artifacts a manager restricted in Share", async () => {
+    const call = (personAsked: boolean) =>
+      createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER })
+        .execute({ audience: "public", personAsked }, {} as never);
+    // A manager restricts the Canvas's artifacts in Share.
+    await share("editors");
+
+    // A later site's default leaves it alone.
+    expect((await call(false)).output).toMatchObject({ audience: "editors", changed: false });
+    await sync(SITE_HOST, SITE);
+    expect((await visit("quiet-blue-river-garden")).status).toBe(401);
+
+    // The person asking for it in the Chat still changes it.
+    expect((await call(true)).output).toEqual({ audience: "public", changed: true });
+    await sync(SITE_HOST, SITE);
+    expect((await visit("quiet-blue-river-garden")).status).toBe(200);
   });
 
   it("uses site manifests to recognize upgraded archives and never replaces site serving with a file", async () => {
