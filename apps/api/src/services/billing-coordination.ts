@@ -9,6 +9,19 @@ const coordinator = (env: Env, workspaceId: string) =>
     `${env.AVALON_REGION}:billing:${workspaceId}`,
   );
 
+export const refreshOrganizationBilling = (env: Env, workspaceId: string) => coordinator(env, workspaceId).refresh(workspaceId);
+export const setBillingOverages = (env: Env, workspaceId: string, enabled: boolean) => coordinator(env, workspaceId).overages(workspaceId, enabled);
+
+/** Signup survives a provider outage; the scheduled actor retries the same
+ * persisted award. Healthy signups receive Grow before their seed work starts. */
+export async function initializeOrganizationBilling(env: Env, workspaceId: string): Promise<void> {
+  if (!env.BILLING_CONFIG) return;
+  try { await refreshOrganizationBilling(env, workspaceId); }
+  catch (error) {
+    logWarn(env, "billing_signup_pending", { workspace_id: workspaceId, error_code: diagnosticErrorCode(error, "billing_signup_failed") });
+  }
+}
+
 export const createCheckout = (
   env: Env,
   workspaceId: string,

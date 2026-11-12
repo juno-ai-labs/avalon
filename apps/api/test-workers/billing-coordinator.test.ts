@@ -7,6 +7,7 @@ import { billingAccount } from '../src/services/billing';
 import { stripeWebhookRoutes } from '../src/routes/billing';
 import { errorHandler } from '../src/middleware/errors';
 import billingMigration from '../../../packages/db/migrations/0131_billing.sql?raw';
+import signupMigration from '../../../packages/db/migrations/0132_signup_trials.sql?raw';
 import usageMigration from '../../../packages/db/usage-migrations/0001_usage_ledger.sql?raw';
 
 const ORG = '00000000-0000-7000-8000-00000000b111';
@@ -29,6 +30,8 @@ beforeEach(async () => {
     CREATE TABLE IF NOT EXISTS workspace_members (workspace_id TEXT, user_id TEXT, status TEXT, access_class TEXT);
     CREATE TABLE IF NOT EXISTS workspace_invitations (workspace_id TEXT, revoked_at TEXT, accepted_at TEXT);`);
   if (!(await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE name = 'billing_accounts'").first())) await env.DB.exec(billingMigration.replace(/--[^\n]*\n/g, '').replace(/\s*\n\s*/g, ' '));
+  if (!(await env.DB.prepare("SELECT 1 FROM sqlite_master WHERE name = 'billing_signup_trials'").first())) await env.DB.exec(signupMigration.replace(/--[^\n]*\n/g, '').replace(/\s*\n\s*/g, ' '));
+  await env.DB.prepare('DELETE FROM billing_signup_trials WHERE workspace_id = ?').bind(ORG).run();
   await env.USAGE_DB.exec(usageMigration.replaceAll('CREATE TABLE ', 'CREATE TABLE IF NOT EXISTS ').replaceAll('CREATE INDEX ', 'CREATE INDEX IF NOT EXISTS ').replace(/--[^\n]*\n/g, '').replace(/\s*\n\s*/g, ' '));
   await env.DB.prepare('DELETE FROM billing_accounts WHERE workspace_id = ?').bind(ORG).run();
   await env.DB.prepare('DELETE FROM workspaces WHERE id = ?').bind(ORG).run();
@@ -129,4 +132,42 @@ it('rejects oversized unsigned Stripe webhooks before buffering their full strea
   });
   expect((await app.request('/webhook', { method: 'POST', body }, configured)).status).toBe(413);
   expect(canceled).toBe(true); expect(provider).not.toHaveBeenCalled();
+});
+
+it('creates a no-card signup trial through the actor and refreshes payment readiness from a signed customer webhook', async () => {
+  const configured = { ...testEnv(), BILLING_CONFIG: JSON.stringify({ ...JSON.parse(config), automaticTax: true, enforceUsageLimits: true,
+    signupTrial: { offerId: 'grow', currency: 'usd', months: 2, startsAt: new Date(Date.now() - 86400000).toISOString() } }) };
+  await env.DB.prepare('UPDATE workspaces SET created_at = ? WHERE id = ?').bind(new Date().toISOString(), ORG).run();
+  await runInDurableObject(stub(), instance => { Object.defineProperty(instance, 'env', { value: configured, configurable: true }); });
+  let ready = false;
+  let sub: { id: string; customer: string; status: string; currency: string; trial_end: number; cancel_at: number | null; metadata: Record<string, string>; items: { data: { price: { id: string; unit_amount: number } }[] } } | null = null;
+  let creates = 0;
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url.includes('/prices/')) return Response.json({ recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' } });
+    if (url.includes('/subscriptions?')) return Response.json({ data: sub ? [sub] : [], has_more: false });
+    if (url.includes('/customers/cus_1')) return Response.json({ invoice_settings: { default_payment_method: ready ? 'pm_card' : null }, tax: { automatic_tax: ready ? 'supported' : 'unrecognized_location' } });
+    const fields = new URLSearchParams(String(init?.body ?? ''));
+    if (url.endsWith('/subscriptions') && init?.method === 'POST') {
+      creates++;
+      sub = { id: 'sub_signup', customer: 'cus_1', status: 'trialing', currency: 'usd', trial_end: Number(fields.get('trial_end')), cancel_at: Number(fields.get('cancel_at')),
+        metadata: Object.fromEntries([...fields].filter(([key]) => key.startsWith('metadata[')).map(([key, value]) => [key.slice(9, -1), value])),
+        items: { data: [{ price: { id: 'price_grow', unit_amount: 10000 } }] } };
+      return Response.json(sub);
+    }
+    if (url.endsWith('/subscriptions/sub_signup') && sub) {
+      if (init?.method === 'POST') { sub.cancel_at = null; sub.metadata.signup_trial_conversion_pending = 'false'; }
+      return Response.json(sub);
+    }
+    throw new Error(`Unexpected provider call: ${url}`);
+  });
+  expect(await stub().refresh(ORG)).toMatchObject({ status: 'trialing', payment_method_ready: 0 });
+  expect(await env.DB.prepare('SELECT plan FROM workspaces WHERE id = ?').bind(ORG).first()).toEqual({ plan: 'growth' });
+  expect(await env.DB.prepare('SELECT subscription_id FROM billing_signup_trials WHERE workspace_id = ?').bind(ORG).first()).toEqual({ subscription_id: 'sub_signup' });
+  await expect(Promise.resolve(stub().overages(ORG, true))).rejects.toMatchObject({ code: 'billing_overage_unavailable' });
+  ready = true;
+  const app = new Hono<HonoAppEnv>(); app.onError(errorHandler); app.route('/webhook', stripeWebhookRoutes);
+  const body = JSON.stringify({ type: 'customer.updated', data: { object: { id: 'cus_1' } } });
+  expect((await app.request('/webhook', { method: 'POST', body, headers: { 'stripe-signature': await signature(body) } }, configured)).status).toBe(200);
+  expect(await env.DB.prepare('SELECT payment_method_ready FROM billing_accounts WHERE workspace_id = ?').bind(ORG).first()).toEqual({ payment_method_ready: 1 });
+  expect(creates).toBe(1);
 });

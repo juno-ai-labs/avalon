@@ -1,3 +1,4 @@
+import { requireUsageAllowance } from "./usage-admission";
 import { z } from "zod";
 import { judgeSemanticTriggerCondition, type HarnessTool } from "@rally/agent-harness";
 import {
@@ -139,6 +140,7 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
         summary: "No recent events to test the filter on" };
       }
       const traceId = crypto.randomUUID();
+      await requireUsageAllowance(env, input.workspaceId);
       const results = await Promise.all(events.map(async (event) => {
         const decision = await judgeSemanticTriggerCondition({
           typesafeApiKey: env.TYPESAFE_API_KEY!, condition: args.condition,

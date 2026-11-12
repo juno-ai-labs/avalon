@@ -13,10 +13,48 @@ current behavior until `BILLING_CONFIG` is supplied.
 `stripe.ts` beside it. `billing-coordination.ts` routes writes to the regional
 `BillingCoordinatorDO`, one actor per Organization. `stripe-billing-sync.ts` synchronizes free-account trial
 records, allowance metadata and usage meters. `overage-credits.ts` owns operator credits and Stripe balance reads; `trial-months.ts` extends subscription-fee trials through the engineering MCP; `stripe-overages.ts` delivers eligible overages to their dedicated Stripe meter. The HTTP boundary is `routes/billing.ts`, the D1 schema is
-`packages/db/migrations/0131_billing.sql`, and the shared desktop/browser UI is
+`packages/db/migrations/0131_billing.sql` and `0132_signup_trials.sql`, and the shared desktop/browser UI is
 `apps/desktop/src/renderer/components/organization-billing.tsx`.
 
 ## How it works
+
+With `signupTrial` enabled, creating an Organization automatically provisions its
+Stripe customer and monthly paid-plan subscription before seed work starts. The
+standard campaign selects Grow for two calendar months, with no card required.
+The deadline is anchored to Organization creation and clamped at month end.
+`startsAt` is a rollout cutoff: existing Organizations and engineering plan
+overrides do not receive a retroactive award. `signup-trial.ts` persists the exact
+request before creation; Stripe history and the receipt recover uncertain writes
+without restarting the clock. Signup survives a provider outage and the scheduled
+billing sweep retries provisioning. Pending awards retain their original terms
+when campaign configuration changes.
+
+Stripe owns `trial_end` and `trial_settings.end_behavior.missing_payment_method =
+"cancel"`. Since a new customer has no billing address, automatic tax is initially
+disabled and `cancel_at` also equals the trial deadline. Adding a default payment
+method and a valid Stripe Tax location lets reconciliation enable configured tax
+and remove that automatic cancellation, preserving all remaining trial time.
+Administrators use **Add billing details → Open Stripe** in Organization Usage
+settings. Signed `customer.updated` webhooks, Settings refresh and the scheduled
+sweep detect readiness. Explicit earlier cancellations are preserved. Without
+billing details, Stripe cancels and Rally returns the Organization to Start.
+The trial consumes first-paid eligibility, including after cancellation; checkout
+cannot add the legacy pilot coupon or another trial. MCP extra-month grants extend
+both the trial and its automatic cancellation deadline.
+
+`enforceUsageLimits: true` checks the exact recorded weekly Organization-paid cost
+before new provider work. Included Grow usage remains available during the trial.
+Overages require billing readiness and explicit administrator opt-in through
+`POST /workspace/billing/overages`; first consent starts then, never retroactively.
+Opted-in overages retain the existing settlement policy and separate metered
+subscription, so the base-fee trial does not waive them. Without that opt-in, new
+paid work stops at the included allowance until reset. Admission uses Rally's
+ledger, with no Stripe calls on the inference path. Already admitted work can
+finish and queued metering can lag; this is not an exact concurrent spending
+reservation. Desktop and browser use the same server admission checks.
+
+The following legacy trial/coupon behavior remains available for deployments that
+have not enabled the signup campaign.
 
 Administrators open Organization Usage settings, select an offer and supported
 currency, optionally enable overages, and prepare Stripe Checkout. A direct
@@ -595,7 +633,7 @@ work, not effects of merging the code alone.
    prices; amounts and tax behavior live in Stripe.
 3. Set Worker secrets `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` using the
    secret store, never a `VITE_` variable. Subscribe the webhook to
-   `customer.subscription.created`, `.updated` and `.deleted`.
+   `customer.subscription.created`, `.updated`, `.deleted`, and `customer.updated`.
 4. Enable the Billing Portal, Stripe Tax registrations in the jurisdictions where
    required, and supported payment methods. Worldwide availability is subject to
    Stripe's country, currency and payment-method coverage.
@@ -610,7 +648,8 @@ work, not effects of merging the code alone.
   "teamTrialDays": 60,
   "teamTrialMembers": 3,
   "settlementDelayDays": 14,
-  "pilotCouponId": "coupon_REPLACE_PILOT",
+  "enforceUsageLimits": true,
+  "signupTrial": {"offerId":"grow","currency":"usd","months":2,"startsAt":"2026-11-13T00:00:00Z"},
   "synchronization": {
     "freePriceId": "price_REPLACE_FREE_RECORD",
     "organizationMeterId": "mtr_REPLACE_ORGANIZATION",
@@ -650,7 +689,21 @@ records remain zero-price, team awards update their trial, the pilot remains
 available at paid checkout, and repeated hourly totals replace rather than add.
 Omitting `synchronization` preserves the earlier checkout-only integration.
 
-To enable the two-month pilot, create a Stripe coupon with `percent_off: 100`,
+For the automatic no-card campaign, apply migration 0132 and deploy the API before
+setting `signupTrial` and `enforceUsageLimits`. Choose the actual rollout timestamp
+for `startsAt`; the example date is not a required campaign start. The selected
+price must be monthly and licensed. Enable payment-method and billing-address
+updates in the Billing Portal and preserve trials when changing plans. No new
+product or coupon is required. Set `pilotCouponId: null` in an existing persisted
+catalog (or omit the Worker field before catalog publication) when replacing the
+legacy checkout offer. Existing discounts remain intact.
+
+`configure_billing_catalog` can publish `signupTrial` with its offer, currency,
+calendar-month count and cutoff; `signupTrial: null` disables new awards. Omitting
+it preserves the current campaign. Existing awards and pending persisted requests
+retain their terms. `enforceUsageLimits` remains deployment configuration.
+
+To enable the legacy checkout-only two-month pilot, create a Stripe coupon with `percent_off: 100`,
 `duration: "repeating"`, and `duration_in_months: 2`, then add its ID as the top-level
 `pilotCouponId` in `BILLING_CONFIG`. Use monthly prices (`interval: "month"`,
 `interval_count: 1`); checkout rejects annual/multi-month pilot prices because a
@@ -683,6 +736,19 @@ use Engineering MCP to change offers and promotions in the persisted catalog;
 landing-page prose must be kept aligned separately.
 
 ## Changelog
+
+### 2026-11-12 — Automatic Grow signup trial and usage admission
+
+New Organizations can receive two calendar months of Grow in Stripe without a
+card or an operator remembering to apply an offer. A native base-subscription
+trial supports this while the separate overage subscription keeps consented
+usage billable. Stripe Tax needs a customer location even for a free trial, so
+conversion stays scheduled for cancellation until billing details are ready;
+reconciliation then enables tax without shortening the trial. Persisted award
+requests and Stripe history prevent duplicate awards across outages and campaign
+edits. Shared server admission stops new paid work at the recorded weekly quota
+unless payment-backed overages are enabled; in-flight work and ledger delivery
+remain asynchronous. MCP extensions preserve the same automatic expiry behavior.
 
 ### 2026-11-11 — Organization subscriptions and optional usage settlement
 

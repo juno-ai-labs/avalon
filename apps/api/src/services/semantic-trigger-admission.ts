@@ -1,3 +1,4 @@
+import { requireUsageAllowance } from "./usage-admission";
 import {
   judgeSemanticTriggerConditions,
   type SemanticTriggerDecision,
@@ -84,6 +85,7 @@ export async function admitExternalEventWithSemanticGate(
   // question of the same event, and differ only in whose sentence it is.
   const judge = async (conditions: readonly string[], feature: "semantic-trigger-gate" | "sidekick-source-gate"): Promise<SemanticTriggerDecision> => {
     if (!env.TYPESAFE_API_KEY) return { admit: false, code: "classifier_unavailable", confidence: null, model: null };
+    await requireUsageAllowance(env, input.workspaceId);
     const traceId = crypto.randomUUID();
     return judgeSemanticTriggerConditions({
       typesafeApiKey: env.TYPESAFE_API_KEY,
