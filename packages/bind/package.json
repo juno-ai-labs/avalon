@@ -24,7 +24,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@rally/prompts": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {
