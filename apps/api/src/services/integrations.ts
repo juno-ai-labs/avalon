@@ -79,6 +79,7 @@ import {
   type HarnessPlugin,
   type HarnessSkill,
   HarnessToolEffectUnresolvedError,
+  HarnessLimitError,
   type HarnessToolContext,
   type HarnessToolResult,
   type HarnessToolReplayRefusal,
@@ -4083,7 +4084,7 @@ export async function runWorkstreamHarness(
       compaction: {
           contextWindowTokensByModel: await contextWindowPreparation.get(),
           prepare: async () => {
-            await requireUsageAllowance(env, input.workspaceId);
+            await requireRunUsageAllowance(env, input.workspaceId);
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
@@ -4409,7 +4410,7 @@ export async function runWorkstreamHarness(
       // work is independently authorized by beforeToolCall above. Treating
       // archive as a renewal failure masks Bind's durable stop transition.
       if (stage === "before_model") {
-        await requireUsageAllowance(env, input.workspaceId);
+        await requireRunUsageAllowance(env, input.workspaceId);
         const authorityStartedAt = Date.now();
         await Promise.all([
           liveness.pulse(stage, true).then(() => {
@@ -9760,6 +9761,24 @@ export const __integrationTesting = {
  * no longer finds every question a run asked. A stop the person asked for logs
  * nothing.
  */
+/**
+ * The usage allowance, as a harness run's ports ask it. An exhausted allowance
+ * ends the run as the limit it is, under `usage_allowance_exhausted`; thrown
+ * bare from a port, the harness reports the port as broken and the member reads
+ * "could not save this run's progress", which is what happened on 2026-11-12.
+ */
+export async function requireRunUsageAllowance(
+  env: Parameters<typeof requireUsageAllowance>[0],
+  workspaceId: string,
+): Promise<void> {
+  try {
+    await requireUsageAllowance(env, workspaceId);
+  } catch (error) {
+    if (!isUsageAllowanceExhausted(error)) throw error;
+    throw new HarnessLimitError("usage_allowance_exhausted", "The organization's included weekly usage is used up");
+  }
+}
+
 /**
  * Why a harness port failed, as a code a log may keep. The harness names the
  * port ("Run liveness renewal failed"); this names what the port threw — a

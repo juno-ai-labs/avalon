@@ -10,6 +10,7 @@ import {
 import type { InferenceAttemptError } from "@juno-ai/bind/routing";
 import {
   __testing,
+  HarnessLimitError,
   applyBindLoopTransition,
   AzureOpenAIClient,
   canonicalToolInputHash,
@@ -1883,6 +1884,24 @@ describe("agent harness", () => {
         causeCode: "usage_allowance_exhausted",
       },
     });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("ends a run on a limit a host port enforces, not as the port failing", async () => {
+    const fetcher = vi.fn(async () => streamResponse([])) as typeof fetch;
+    const result = await runHarness({
+      ...runInput(fetcher),
+      onLiveness: async () => {
+        throw new HarnessLimitError("usage_allowance_exhausted", "The organization's included weekly usage is used up");
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      failure: { code: "usage_allowance_exhausted", kind: "limit" },
+    });
+    expect(memberSafeHarnessFailureMessage("usage_allowance_exhausted"))
+      .toBe("Your organization has used this week's included usage. An administrator can turn on overage billing in Organization settings, or usage resumes when the weekly allowance resets");
     expect(fetcher).not.toHaveBeenCalled();
   });
 

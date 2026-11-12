@@ -210,7 +210,13 @@ export const HarnessFailureCodeSchema = z.enum([
   // reporting `tool_receipt_persistence_failed` when nothing about the receipt
   // had failed. Same reasoning as the two provider arms above — the code exists
   // so the failure names the system that produced it.
-  "platform_limit_exceeded"
+  "platform_limit_exceeded",
+  // The Organization's included weekly usage is spent and overages are off, so
+  // Rally declined to start model work. Not a defect and not retryable: the
+  // remedy is an administrator's billing setting or the weekly reset. Until
+  // 2026-11-12 this reached members as `run_state_persistence_failed`, because
+  // the check runs inside the liveness port and the port wrapped it.
+  "usage_allowance_exhausted",
 ]);
 export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
 

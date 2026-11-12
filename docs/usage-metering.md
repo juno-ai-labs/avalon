@@ -25,6 +25,8 @@ are in
 | --- | --- |
 | `packages/contracts/src/usage.ts` | The single source for plans, metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
 | `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only D1 ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`, `publishOrganizationUsage`, `pruneUsageEvents` and `USAGE_EVENTS_D1_RETENTION_DAYS`. |
+| `apps/api/src/services/usage-admission.ts` | `readUsageAllowance` (the admission decision) and `requireUsageAllowance` (the refusal). |
+| `apps/api/src/services/usage-allowance-notice.ts` | The once-a-week email to owners and administrators when work is refused. |
 | `apps/api/src/durable-objects/workspace-do.ts` (`publishUsage`) | Sends the meter after a plan change to every subscribed member socket as `workspace_usage` (`WorkspaceUsageEventSchema`), never a guest's, and drops a meter read before the last one sent. |
 | `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, applies the batch to D1, then sends it to the usage lakehouse, logs `usage_batch_applied`. `usageLakehouseRecord` shapes the R2 row. |
 | `apps/api/src/routes/workspace.ts` | `GET /workspace/usage`, for every member role, and `PUT /workspace/plan`, for administrators (`WorkspaceService.setPlan`). |
@@ -32,7 +34,7 @@ are in
 | `packages/db/usage-migrations/` | `usage_events`, `usage_rollups` and `usage_plan_changes`, in `USAGE_DB` (`avalon-<region>-usage`). Applied by `pnpm --filter @rally/api db:usage:migrate` (local, part of `db:migrate`) and `db:usage:migrate:remote` (deploy). |
 | `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
 | `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, `useSetOrganizationPlan`, `applyPushedOrganizationUsage`, the `usage` local-cache slice, and the formatters. `lib/workspace-socket.tsx` applies the push, marks the meter stale on every subscribe answer, and relays both to the Settings window as `usage`. |
-| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage with its plan picker, and the account menu's meter (a full row right under Settings). |
+| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Usage with its plan picker, the account menu's meter (a full row right under Settings), and the rail's `UsageLimitRailWarning`. |
 | `packages/ui/src/components/primitives.tsx` (`Meter`) | The shared meter primitive and its `cmp.meter.*` tokens. |
 
 Each call site emits next to where its cost is already known; searching for
@@ -68,6 +70,28 @@ Cloudflare's 12-hour maximum), acknowledging only after the new delivery is
 accepted; lexical results remain available. These billing holds do not consume
 transport retries. OCR records the quota error and retries on the next explicit
 read instead of permanently caching it as a broken PDF.
+
+An agent run asks through `requireRunUsageAllowance` (`services/integrations.ts`),
+which ends the run as the limit `usage_allowance_exhausted` (failure kind
+`limit`). The check sits inside the harness's liveness port; thrown bare, the
+port would report itself broken and the member would read "could not save this
+run's progress". The Chat card for that code leads with **Open usage
+settings**, which opens Settings at the Organization's Usage section.
+
+`readUsageAllowance` is the decision itself, separate from the refusal: admission
+throws on it, and `readOrganizationUsage` reports it as `allowanceExhausted`,
+which the desktop rail shows as a red warning above the account tile with a
+tooltip saying what stopped and how to resume. The rail reads that flag rather
+than the meter, so it clears the moment work would be admitted again (overages
+on, a plan change, the weekly reset); it refreshes on mount, on returning to
+the window, and when a run card shows the limit.
+
+Every refusal also asks `services/usage-allowance-notice.ts` to email the
+Organization's active owners and administrators. The delivery key
+`usage_allowance_exhausted/<org>/<week start>/<user>` in the shared email
+receipts makes that once per allowance week per person, and `review` delivery
+claims the key before sending, so simultaneous refusals send once. A failed
+email is logged as `usage_allowance_email_failed` and never changes the refusal.
 
 ### Sending
 
@@ -355,6 +379,34 @@ An uncertain write may have committed: inspect before retrying.
 
 
 ## Changelog
+
+### 2026-11-12 — An exhausted allowance is named, shown and emailed
+
+**What changed:** An agent run refused for usage now fails as
+`usage_allowance_exhausted` with its own message and a card that opens the
+Usage settings. The usage read reports `allowanceExhausted`, which drives a red
+rail warning above the account tile. Owners and administrators get one email per
+allowance week when work is refused.
+
+**Why:** The day admission shipped, an Organization over its allowance with
+overages off had every run fail as `run_state_persistence_failed` ("could not
+save this run's progress — retrying is unlikely to help"). The refusal ran
+inside the harness's liveness port, which wrapped it as a port failure. Its
+owner held a $100,000 overage credit and could not tell why nothing worked, and
+Sidekick and background runs failed with nothing shown to anyone.
+
+**Considered and rejected:** Driving the rail from the meter
+(`quotaRemainingPercent` 0 with `overage.billingEnabled` off). `billingEnabled`
+turns true only from the next billing period, so the warning would have stayed
+up after overages were switched on and work had resumed; the rail reads the
+admission decision instead. A new table for "emailed this week" was rejected
+in favour of the existing email receipts, whose delivery key already gives
+once-per-key.
+
+**What a future change has to respect:** `readUsageAllowance` is the one
+decision; anything that warns about the allowance must read it, not re-derive
+it. The email is sent inline on the refusal path, so it only costs anything
+while the Organization is over its allowance.
 
 ### 2026-11-12 — Payment-aware usage admission
 
