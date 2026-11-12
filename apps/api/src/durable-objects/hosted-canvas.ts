@@ -308,8 +308,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
 
   /**
    * Title a Canvas made with no title from the message that opened its Chat
-   * (`canvasTitleFromOpening`) without changing the date already recorded for
-   * the message. The write requires `naming`, so a person's manual title
+   * (`canvasTitleFromOpening`), and give it the icon chosen beside the title
+   * when nobody has chosen one, without changing the date already recorded
+   * for the message. The write requires `naming`, so a person's manual title
    * stands. An empty model response settles the existing title.
    */
   async nameFromOpening(): Promise<void> {
@@ -320,15 +321,23 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     // A first message of attachments alone says nothing to title from; the
     // Canvas waits, and a person's next text message arms the entry again.
     if (!opening) return;
-    const title = await canvasTitleFromOpening(this.env, {
+    const named = await canvasTitleFromOpening(this.env, {
       workspaceId: row.workspace_id, canvasId: this.canvasId, userId: opening.author_user_id, opening: opening.text_content,
     });
     this.host.storage.transactionSync(() => {
       const settled = this.sql.exec(
         `UPDATE canvas_directory SET title = COALESCE(?, title), title_status = 'settled'
           WHERE canvas_id = ? AND title_status = 'naming' RETURNING canvas_id`,
-        title, this.canvasId,
+        named?.title ?? null, this.canvasId,
       ).toArray().length === 1;
+      // The icon fills only an unchosen one, read again after the model's
+      // await: a person who picked an icon meanwhile keeps theirs.
+      const current = settled && named?.icon ? this.row() : null;
+      const appearance = current ? canvasAppearance(current, canvasAppearanceReporter(this.host.env)) : null;
+      if (appearance?.icon === null && named?.icon) {
+        this.sql.exec(`UPDATE canvas_directory SET appearance_json = ? WHERE canvas_id = ?`,
+          JSON.stringify({ ...appearance, icon: named.icon }), this.canvasId);
+      }
       if (settled) {
         this.host.noteCanvasDirectoryChanged(this.canvasId);
         this.host.noteAttachedCanvasChanged(this.canvasId);

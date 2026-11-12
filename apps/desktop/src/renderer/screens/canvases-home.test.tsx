@@ -65,7 +65,8 @@ describe('CanvasesHomeScreen', () => {
       canvas('00000000-0000-7000-8000-0000000000c4', 'Chat only'),
     ]));
     const card = (title: string): HTMLElement => screen.getByRole('link', { name: title }).closest('li')!;
-    for (const [title, glyph] of [['Chosen', 'flag'], ['Unchosen', 'file-text'], ['Archive', 'archive'], ['Chat only', 'panels-top-left']] as const) {
+    // An unchosen icon is the one placeholder, whatever its newest artifact is.
+    for (const [title, glyph] of [['Chosen', 'flag'], ['Unchosen', 'panels-top-left'], ['Archive', 'panels-top-left'], ['Chat only', 'panels-top-left']] as const) {
       expect(card(title).querySelectorAll('.dashboard-card-preview svg')).toHaveLength(1);
       expect(card(title).querySelector('.dashboard-card-preview svg')).toHaveClass(`lucide-${glyph}`);
       expect(card(title).querySelector('h3 svg')).toBeNull();
