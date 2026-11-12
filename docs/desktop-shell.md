@@ -53,18 +53,24 @@ Each attached Canvas pill shows its actual icon and colour (`canvasMark`) from
 its attachment summary, with the full title on hover and in its accessible name;
 the visible title is truncated after 30 characters.
 
-On the Canvases dashboard, members can open **Marketplace** from the right end
-of the filter row, including before they have made a Canvas. A second row picks
-from **Developers**, **Product managers**, **Parents**, and **Recruiters**.
-It starts on **Developers** and shows that category's templates in place of
-the Canvas list. Closing Marketplace restores the previous filter and any
-unsent **Start from a prompt** text. Selecting a filter switches to its list.
+On the Canvases dashboard, members open **Marketplace** from the header,
+beside **New Canvas**, including before they have made a Canvas. It replaces
+the page rather than filtering it: the heading becomes **Marketplace** with a
+**Canvases** button back, the search and filter row go, and the one row left
+picks from **Developers**, **Product managers**, **Parents**, and
+**Recruiters**, starting on **Developers**. Going back restores the previous
+filter and any unsent **Start from a prompt** text. At phone width, where the
+sheet's bar carries the title and New Canvas, the header still shows the
+Marketplace button, and the Marketplace's own title and way back.
 `apps/desktop/src/renderer/lib/canvas-templates.ts` orders the catalog. Each
 Markdown file in `packages/skills/marketplace-skills/` supplies its card's `name`,
-`description`, and category `tags`. The builds check tags against
+`description`, `icon` and `color` (its card's mark, from the Canvas appearance
+catalog; it never becomes the started Canvas's mark), and category `tags`. The builds check tags against
 `canvas-template-categories.ts`. Each starter is tagged with its own directory.
 Selecting a template creates and opens a Canvas with the Markdown body sent
 as the creator's first Chat message through the **Start from a prompt** flow.
+An empty Canvas offers the same templates under its composer
+([`conversation-surfaces.md`](conversation-surfaces.md#starting-an-empty-canvas-from-a-template)).
 
 ### Electron navigation history
 
@@ -477,6 +483,26 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-12 — The Marketplace is a page, opened from the header
+
+**What changed:** Marketplace left the filter row for a secondary button
+beside New Canvas. Opening it swaps the page's heading for **Marketplace** with
+a way back and hides the search and filters, so its categories are the only
+row.
+
+**Why:** Open, it stacked a second row of pills under the filters, each with
+its own dark selected pill, and nothing said which row did what. The filters
+narrow a person's own Canvases; the Marketplace is somewhere else.
+
+**Considered and rejected:** Swapping the two rows in place kept a single row
+but still changed its meaning under the person and kept Marketplace looking
+like a filter. Dropping the categories for headings was left for when the
+catalog outgrows one screen the other way.
+
+**Consequences:** The phone rule that hides this page's header now keeps the
+parts the sheet's bar lacks; a new header control has to choose which side of
+that rule it is on.
 
 ### 2026-11-11 — Start a Canvas from the Marketplace
 

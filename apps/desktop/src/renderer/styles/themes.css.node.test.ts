@@ -210,7 +210,10 @@ describe('token references', () => {
     '--tile-ring',
     // A Sidekick's details column, which its header also keeps clear of:
     // layout, the same in every theme.
-    '--sidekick-details-width'];
+    '--sidekick-details-width',
+    // How long one of an empty Canvas's template cards waits before fading,
+    // set per card so the four fade in a stagger. Motion, not a theme's.
+    '--starter-delay'];
 
   // Set at runtime rather than in CSS: some by components as inline styles,
   // three by libraries on their own elements. They cannot be checked from this

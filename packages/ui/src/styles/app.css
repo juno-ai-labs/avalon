@@ -6940,22 +6940,30 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-needs-input-badge { background: var(--av-sys-color-badge-base); border-radius: 6px; color: var(--av-sys-color-badge-on); display: inline-block; font-size: 12px; font-weight: 600; margin-left: 10px; padding: 2px 7px; vertical-align: 2px; }
 /* Canvases home (screens/canvases-home.tsx): the Sidekicks library's layout, with Canvas marks and who is in each. */
 .canvases-home-group + .canvases-home-group { margin-top: 32px; }
-.canvas-marketplace-toggle { align-items: center; display: inline-flex; gap: 8px; margin-inline-start: auto; }
-.canvas-dashboard-filters:has(.canvas-marketplace-toggle[aria-pressed=true]) { margin-bottom: 12px; }
+.sidekicks-library-heading .button-secondary { align-items: center; display: inline-flex; gap: 8px; }
+.canvases-home-back { align-items: center; background: none; border: 0; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-flex; font: inherit; font-size: 13px; gap: 2px; margin: 0 0 6px -6px; padding: 3px 8px 3px 4px; }
+.canvases-home-back:hover { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .canvas-marketplace { margin-bottom: 36px; }
-.canvas-template-categories { margin: 0 0 16px; }
+.canvas-template-categories { margin: 0 0 24px; }
 @container dashboard-home (width < 640px) {
   .canvas-dashboard-filters { gap: 6px; }
   .canvas-dashboard-filters button { padding-inline: 12px; }
 }
 @container dashboard-home (width < 480px) {
   .canvas-dashboard-filters button, .canvas-template-categories button { font-size: 13px; padding-inline: 8px; }
-  .canvas-marketplace-toggle svg { display: none; }
 }
 /* At phone width the sheet's bar is this screen's header, holding its title,
    New Canvas and Search, so the page does not draw them a second time. */
 /* Every section home, the Canvases and the Sidekicks homes alike. */
 @media (max-width: 640px) { .sidekicks-library > .sidekicks-library-heading { display: none; } }
+/* Except what the bar does not carry: the Marketplace button, and the
+   Marketplace's own title and way back. New Canvas and the Canvases title are
+   the bar's. */
+@media (max-width: 640px) {
+  .dashboard-home > .sidekicks-library-heading.canvases-home-heading { display: flex; margin-bottom: 20px; }
+  .canvases-home-heading .canvases-home-new,
+  .canvases-home-heading .canvases-home-title.is-collapsible { display: none; }
+}
 /* A 150px preview filled with the Canvas's tint and its centered glyph, above
    its title and who and when. */
 /* Three columns, as design.html §1 draws them in its 1024px main pane, once the
@@ -6974,9 +6982,21 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .dashboard-card:has(.dashboard-card-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .canvas-template-card { align-content: start; color: inherit; cursor: pointer; display: grid; font: inherit; gap: 8px 12px; grid-template-columns: minmax(0, 1fr) auto; height: 100%; padding: 16px; text-align: start; width: 100%; }
 .canvas-template-card:disabled { cursor: default; opacity: .65; }
-.canvas-template-card svg, .canvas-template-description { color: var(--av-sys-color-text-muted); }
-.canvas-template-title { font-weight: 600; }
-.canvas-template-description { font-size: 14px; grid-column: 1 / -1; }
+.canvas-template-card:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
+.canvas-template-description { color: var(--av-sys-color-text-muted); font-size: 14px; grid-column: 1 / -1; }
+.canvas-template-audience { color: var(--av-sys-color-text-subtle); font-size: 11.5px; grid-column: 1 / -1; }
+/* A long name wraps; its mark and the send circle stay level with its first line. */
+.canvas-template-title { align-items: flex-start; display: flex; font-weight: 600; gap: 10px; }
+.canvas-template-title > .identity-tile { flex: none; margin-block: -2px; }
+/* The composer's Send: quiet at rest, as the microphone is, and Send's own
+   colours on the card under the pointer or the keyboard. */
+.canvas-template-send { align-items: center; align-self: start; background: var(--av-cmp-control-background-quiet); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-sys-color-text-muted); display: flex; flex: none; height: 28px; justify-content: center; margin-top: -4px; transition: background-color 120ms ease, color 120ms ease; width: 28px; }
+.canvas-template-card:is(:hover, :focus-visible):not(:disabled) .canvas-template-send { background: var(--av-cmp-composer-send-background); color: var(--av-cmp-composer-send-foreground); }
+@media (prefers-reduced-motion: reduce) { .canvas-template-send { transition: none; } }
+/* Compact: under an empty Canvas's composer, where it is one of four. */
+.canvas-template-card.is-compact { gap: 4px; padding: 11px 12px; }
+.canvas-template-card.is-compact .canvas-template-title { font-size: 13.5px; gap: 8px; }
+.canvas-template-card.is-compact .canvas-template-description { font-size: 12.5px; line-height: 1.45; }
 .dashboard-card-preview { border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; display: grid; height: 150px; overflow: hidden; place-items: center; position: relative; }
 .canvas-card-presence { left: 12px; pointer-events: none; position: absolute; top: 12px; }
 .canvas-card-indicators { align-items: flex-end; display: flex; flex-direction: column; gap: 8px; position: absolute; right: 12px; top: 12px; }
@@ -8721,4 +8741,48 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
+}
+
+/* An empty Canvas with starters: a fourth row under the dock centres the
+   composer. See docs/conversation-surfaces.md#starting-an-empty-canvas-from-a-template. */
+.workstream-screen.is-starting { grid-template-rows: 55px minmax(0, 1fr) auto minmax(0, 1fr); }
+.workstream-screen.is-starting:has(> .title-pill-header) { grid-template-rows: 64px minmax(0, 1fr) auto minmax(0, 1fr); }
+.workstream-screen.is-starting .transcript-column { display: flex; flex-direction: column; justify-content: flex-end; padding-bottom: var(--space-2); }
+.workstream-screen.is-starting .transcript-column .empty-state { margin: 0 auto; padding-bottom: var(--space-4); }
+
+.conversation-starters { container: conversation-starters / inline-size; min-height: 0; min-width: 0; overflow-y: auto; padding: var(--space-2) 16px var(--space-8); }
+.canvas-starters { display: grid; gap: 10px; margin: 0 auto; max-width: var(--composer-width); width: 100%; }
+.canvas-starters-groups { display: flex; flex-wrap: wrap; gap: 2px; }
+.canvas-starters-groups button { background: none; border: 0; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); cursor: pointer; font: inherit; font-size: 13px; padding: 4px 9px; }
+.canvas-starters-groups button:hover,
+.canvas-starters-groups button[aria-pressed=true] { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.canvas-starters-groups button[aria-pressed=true] { font-weight: 600; }
+.canvas-starters-cards { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
+@container conversation-starters (width < 480px) { .canvas-starters-cards { grid-template-columns: minmax(0, 1fr); } }
+
+/* Typing hides the starters (`:placeholder-shown` is an empty draft). */
+.workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) :is(.canvas-starters-groups, .canvas-template-card) {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+/* And fades them, unless motion is reduced: visibility follows the fade,
+   delayed going out, so hidden cards leave the tab order without cutting it
+   short. Delays: opacity, transform, visibility. */
+@media (prefers-reduced-motion: no-preference) {
+  .canvas-starters-groups,
+  .canvas-starters .canvas-template-card {
+    --starter-delay: 0ms;
+    transition: opacity 340ms cubic-bezier(.4, 0, .2, 1), transform 340ms cubic-bezier(.4, 0, .2, 1), visibility 0s linear;
+    transition-delay: var(--starter-delay), var(--starter-delay), 0s;
+  }
+  .canvas-starters-cards > li:nth-child(1) .canvas-template-card { --starter-delay: 40ms; }
+  .canvas-starters-cards > li:nth-child(2) .canvas-template-card { --starter-delay: 80ms; }
+  .canvas-starters-cards > li:nth-child(3) .canvas-template-card { --starter-delay: 120ms; }
+  .canvas-starters-cards > li:nth-child(n + 4) .canvas-template-card { --starter-delay: 160ms; }
+  .workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) :is(.canvas-starters-groups, .canvas-template-card) {
+    transition-delay: var(--starter-delay), var(--starter-delay), calc(var(--starter-delay) + 340ms);
+  }
+  .workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters-groups { transform: translateY(4px); }
+  .workstream-screen.is-starting:not(:has(.composer-dock textarea:placeholder-shown)) .canvas-starters .canvas-template-card { transform: translateY(6px); }
 }
