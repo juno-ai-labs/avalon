@@ -760,7 +760,10 @@ refunds and invoice corrections now use that same boundary, with explicit resour
 ownership and immutable request receipts. Catalog writes route to a dedicated
 regional billing actor and require a revision, preserving retired mappings and
 keeping Portal choices aligned with Checkout. Raw Stripe proxy calls were rejected
-because they would bypass those ownership and recovery rules.
+because they would bypass those ownership and recovery rules. Billing tools retain
+strict schemas through MCP registration so unsupported flags cannot silently turn
+a preview request into a financial write. Catalog inspection includes live amounts,
+intervals, tax behavior, currency options and coupon terms for informed edits.
 
 ### 2026-11-10 — Archive in an abandoned Organization, and name its refusal
 

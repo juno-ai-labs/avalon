@@ -115,3 +115,18 @@ it('dispatches only valid signed subscription webhooks through the real billing 
   expect((await request(body, signed)).status).toBe(200);
   expect(await env.DB.prepare('SELECT plan FROM workspaces').first()).toEqual({ plan: 'growth' });
 });
+
+
+it('rejects oversized unsigned Stripe webhooks before buffering their full stream', async () => {
+  const app = new Hono<HonoAppEnv>(); app.onError(errorHandler); app.route('/webhook', stripeWebhookRoutes);
+  const provider = vi.fn(); vi.stubGlobal('fetch', provider);
+  const configured = { ...testEnv(), PROVIDER_WEBHOOK_MAX_BYTES: '8' };
+  expect((await app.request('/webhook', { method: 'POST', headers: { 'content-length': '9' }, body: '123456789' }, configured)).status).toBe(413);
+  let canceled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) { controller.enqueue(new TextEncoder().encode('123456789')); },
+    cancel() { canceled = true; },
+  });
+  expect((await app.request('/webhook', { method: 'POST', body }, configured)).status).toBe(413);
+  expect(canceled).toBe(true); expect(provider).not.toHaveBeenCalled();
+});

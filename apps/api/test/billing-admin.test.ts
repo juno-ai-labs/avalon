@@ -6,7 +6,7 @@ import { migratedSqliteDatabase, migratedUsageSqliteDatabase, sqliteD1 } from '.
 import { createTestEnv } from './helpers/cloudflare-test';
 import { billingAccount, createCheckout } from '../src/services/billing';
 import { administerOrgBilling, inspectOrgBilling } from '../src/services/billing-admin';
-import { administerBillingCatalog } from '../src/services/billing-catalog';
+import { administerBillingCatalog, inspectBillingCatalog } from '../src/services/billing-catalog';
 import { readBillingCatalog, resolveBillingEnvironment, billingConfig } from '../src/services/billing-config';
 
 const ORG = asWorkspaceId('01900000-0000-7000-8000-0000000000aa');
@@ -30,26 +30,32 @@ async function seed() {
   return { env, db, usage, provider };
 }
 class Provider {
-  writes: { path: string; fields: URLSearchParams }[] = [];
+  writes: { path: string; fields: URLSearchParams; key: string | null }[] = [];
   portalMetadata: Record<string,string> = {};
   loseResponse = false;
+  hideReceipts = false;
+  receipts = new Map<string, { request: string; response: string }>();
   reject = false;
   refundCustomer = 'cus_1';
   sub = { id: 'sub_paid', customer: 'cus_1', status: 'active', currency: 'usd', start_date: Date.parse('2026-11-01') / 1000, ended_at: null as number | null, trial_end: null as number | null,
-    cancel_at_period_end: false, cancel_at: null as number | null, metadata: { offer_id: 'grow', overage_enabled: 'true' } as Record<string,string>,
+    discounts: [] as { end: number | null; coupon: { id: string; duration: string } }[], cancel_at_period_end: false, cancel_at: null as number | null, metadata: { offer_id: 'grow', overage_enabled: 'true' } as Record<string,string>,
     items: { data: [{ id: 'si_1', quantity: 1, price: { id: 'price_grow', product: 'prod_grow', unit_amount: 10000 } }] } };
   prices = [this.price('price_grow','prod_grow',10000), this.price('price_max','prod_max',25000)];
-  coupons = [{ id: 'coupon_pilot', valid: true, percent_off: 100, duration: 'repeating', duration_in_months: 2, applies_to: { products: ['prod_grow','prod_max'] }, metadata: {} as Record<string,string> }];
+  coupons = [{ id: 'coupon_pilot', valid: true, amount_off: null, currency: null, percent_off: 100, duration: 'repeating', duration_in_months: 2, applies_to: { products: ['prod_grow','prod_max'] }, metadata: {} as Record<string,string> }];
   refunds: { id: string; status: string; amount: number; currency: string; metadata: Record<string,string> }[] = [];
   credits: typeof this.refunds = [];
   invoice = { id: 'in_1', customer: 'cus_1', status: 'open', currency: 'usd', total: 10000, amount_paid: 4000, amount_remaining: 6000, charge: 'ch_1', metadata: {} };
-  private price(id: string, product: string, amount: number) { return { id, product, active: true, unit_amount: amount, currency: 'usd', billing_scheme: 'per_unit', transform_quantity: null, recurring: { usage_type: 'licensed', interval: 'month', interval_count: 1 }, metadata: {} as Record<string,string> }; }
+  private price(id: string, product: string, amount: number) { return { id, product, active: true, unit_amount: amount, unit_amount_decimal: String(amount), tax_behavior: 'exclusive', currency_options: {} as Record<string, { unit_amount: number; unit_amount_decimal: string; tax_behavior: string }>, currency: 'usd', billing_scheme: 'per_unit', transform_quantity: null, recurring: { usage_type: 'licensed', interval: 'month', interval_count: 1 }, metadata: {} as Record<string,string> }; }
   async fetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
     const url = new URL(String(input)); const path = url.pathname.replace('/v1/',''); const fields = new URLSearchParams(String(init?.body ?? ''));
     const write = init?.method === 'POST' || init?.method === 'DELETE';
     const metadata = Object.fromEntries([...fields].filter(([key]) => key.startsWith('metadata[')).map(([key,value]) => [key.slice(9,-1),value]));
+    const key = new Headers(init?.headers).get('Idempotency-Key');
+    const request = `${init?.method}:${path}:${fields}`;
     if (write) {
-      this.writes.push({ path, fields });
+      this.writes.push({ path, fields, key });
+      const cached = key && this.receipts.get(key);
+      if (cached) { if (cached.request !== request) throw new Error('idempotency_arguments_changed'); return new Response(cached.response, { headers: { 'content-type': 'application/json' } }); }
       if (this.reject) return Response.json({ error: { type: 'invalid_request_error', code: 'parameter_invalid_integer' } }, { status: 400 });
     }
     let value: unknown;
@@ -68,7 +74,7 @@ class Provider {
       else value = { data: this.prices, has_more: false };
     } else if (path.startsWith('coupons/') && !write) value = this.coupons.find(coupon => coupon.id === path.slice(8));
     else if (path === 'coupons') {
-      if (write) { const coupon = { id: fields.get('id')!, valid: true, percent_off: Number(fields.get('percent_off')), duration: fields.get('duration')!, duration_in_months: Number(fields.get('duration_in_months')), applies_to: { products: [...fields].filter(([key]) => key.startsWith('applies_to')).map(([,value]) => value) }, metadata }; this.coupons.push(coupon); value = coupon; }
+      if (write) { const coupon = { id: fields.get('id')!, valid: true, amount_off: null, currency: null, percent_off: Number(fields.get('percent_off')), duration: fields.get('duration')!, duration_in_months: Number(fields.get('duration_in_months')), applies_to: { products: [...fields].filter(([key]) => key.startsWith('applies_to')).map(([,value]) => value) }, metadata }; this.coupons.push(coupon); value = coupon; }
       else value = { data: this.coupons, has_more: false };
     } else if (path === 'charges/ch_1') value = { id: 'ch_1', customer: this.refundCustomer, paid: true, amount: 10000, amount_refunded: this.refunds.reduce((sum,refund) => sum+refund.amount,0) };
     else if (path === 'refunds' || path === 'credit_notes') {
@@ -76,12 +82,13 @@ class Provider {
       if (write) {
         const item = { id: path === 'refunds' ? 're_1' : 'cn_1', status: path === 'refunds' ? 'succeeded' : 'issued', amount: Number(fields.get('amount')), currency: 'usd', metadata }; items.push(item); value = item;
         if (path === 'credit_notes') this.invoice.amount_remaining = Math.max(0,this.invoice.amount_remaining-item.amount);
-      } else value = { data: items, has_more: false };
+      } else value = { data: this.hideReceipts ? [] : items, has_more: false };
     } else if (path === 'invoices') value = { data: [this.invoice], has_more: false };
     else if (path.startsWith('invoices/in_1')) { if (write) this.invoice.status = path.endsWith('/void') ? 'void' : 'uncollectible'; value = this.invoice; }
     else if (path === 'billing_portal/configurations') value = { data: [{ id: 'bpc_default', active: true, is_default: true }] };
     else if (path === 'billing_portal/configurations/bpc_default') { if (write) this.portalMetadata = metadata; value = { id: 'bpc_default', metadata: this.portalMetadata }; }
     else throw new Error(`unexpected_provider_path:${path}`);
+    if (write && key) this.receipts.set(key, { request, response: JSON.stringify(value) });
     if (write && this.loseResponse) { this.loseResponse = false; throw new Error('response_lost'); }
     return Response.json(value);
   }
@@ -215,4 +222,66 @@ it('recovers a lost Portal publication after 24 hours before publishing Checkout
   vi.setSystemTime(new Date('2026-12-23T12:00:00Z'));
   expect(await administerBillingCatalog(env, request)).toMatchObject({ revision: 1 });
   expect((await readBillingCatalog(env)).pilotCouponId).toBe('coupon_pilot'); expect(provider.writes).toHaveLength(1);
+});
+
+
+it('keeps the same Stripe key and frozen refund arguments when receipt discovery lags within 24 hours', async () => {
+  const { env, provider } = await seed();
+  provider.loseResponse = true; provider.hideReceipts = true;
+  await expect(administerOrgBilling(env, refund)).rejects.toThrow('response_lost');
+  vi.setSystemTime(new Date('2026-12-20T13:00:00Z'));
+  expect(await administerOrgBilling(env, refund)).toMatchObject({ resourceId: 're_1', amountMinor: 2500 });
+  expect(provider.refunds).toHaveLength(1);
+  expect(provider.writes).toHaveLength(2);
+  expect(provider.writes.map(write => write.key)).toEqual([
+    `billing-admin:global:${ORG}:${operationId}`, `billing-admin:global:${ORG}:${operationId}`,
+  ]);
+  expect(provider.writes.map(write => Object.fromEntries(write.fields))).toEqual([0,1].map(() => ({ charge: 'ch_1', amount: '2500',
+    'metadata[rally_admin_operation]': `billing-admin:global:${ORG}:${operationId}`, 'metadata[rally_admin_reason]': reason,
+  })));
+  expect(provider.refunds).toHaveLength(1);
+});
+
+it('refuses coupons covering metered overages for subscription promotions and catalog publication', async () => {
+  const { env, provider } = await seed();
+  env.BILLING_CONFIG = JSON.stringify({ ...JSON.parse(env.BILLING_CONFIG!), overageCredits: { priceId: 'price_overage', meterId: 'mtr_overage' } });
+  provider.prices.push({ ...provider.prices[0]!, id: 'price_overage', product: 'prod_overage' });
+  provider.coupons[0]!.applies_to.products.push('prod_overage');
+  // Promotion preparation refreshes the account; disable consent for this scope
+  // test so that refresh does not provision a metered subscription first.
+  provider.sub.metadata.overage_enabled = 'false';
+  await expect(administerOrgBilling(env, { ...change, change: { type: 'promotion', couponId: 'coupon_pilot' } })).rejects.toMatchObject({ code: 'billing_coupon_includes_overages' });
+  await expect(administerBillingCatalog(env, { ...identity, region: 'global', kind: 'catalog', expectedRevision: 0,
+    catalog: { offers: [grow,max], pilotCouponId: 'coupon_pilot' } })).rejects.toMatchObject({ code: 'billing_coupon_includes_overages' });
+  expect(provider.writes).toHaveLength(0);
+});
+
+it('preserves existing repeating discounts when annual prices are published after the pilot ends', async () => {
+  const { env, provider } = await seed();
+  const annual = { ...grow, id: 'grow_annual', priceId: 'price_annual' };
+  provider.prices.push({ ...provider.prices[0]!, id: 'price_annual', recurring: { usage_type: 'licensed', interval: 'year', interval_count: 1 } });
+  provider.sub.discounts = [{ end: Date.parse('2027-01-01') / 1000, coupon: { id: 'coupon_pilot', duration: 'repeating' } }];
+  await administerBillingCatalog(env, { ...identity, region: 'global', kind: 'catalog', expectedRevision: 0,
+    catalog: { offers: [grow,max,annual], pilotCouponId: null } });
+  expect([...provider.writes[0]!.fields.values()]).not.toContain('price_annual');
+  await expect(administerOrgBilling(env, { ...change, change: { type: 'plan', offerId: 'grow_annual', proration: 'none' } })).rejects.toMatchObject({ code: 'billing_discount_requires_monthly_price' });
+  expect(provider.writes).toHaveLength(1);
+  provider.sub.discounts = [];
+  expect(await administerOrgBilling(env, { ...change, change: { type: 'plan', offerId: 'grow_annual', proration: 'none' } })).toMatchObject({ status: 'active' });
+  expect(provider.writes[1]!.fields.get('items[0][price]')).toBe('price_annual');
+  await expect(administerOrgBilling(env, { ...change, operationId: nextId, change: { type: 'promotion', couponId: 'coupon_pilot' } })).rejects.toMatchObject({ code: 'billing_discount_requires_monthly_price' });
+  await expect(administerBillingCatalog(env, { ...identity, operationId: nextId, region: 'global', kind: 'catalog', expectedRevision: 1,
+    catalog: { offers: [grow,max,{ ...annual, couponId: 'coupon_pilot' }], pilotCouponId: null } })).rejects.toMatchObject({ code: 'billing_discount_requires_monthly_price' });
+  expect(provider.writes).toHaveLength(2);
+});
+
+it('inspects live price currency options and coupon terms without publishing them', async () => {
+  const { env, provider } = await seed();
+  env.BILLING_CONFIG = JSON.stringify({ ...JSON.parse(env.BILLING_CONFIG!), pilotCouponId: 'coupon_pilot' });
+  provider.prices[0]!.currency_options.eur = { unit_amount: 9000, unit_amount_decimal: '9000', tax_behavior: 'inclusive' };
+  const result = await inspectBillingCatalog(env);
+  expect(result.prices[0]).toMatchObject({ id: 'price_grow', amountMinor: 10000, amountDecimal: '10000', currency: 'usd', taxBehavior: 'exclusive',
+    recurring: { interval: 'month', intervalCount: 1, usageType: 'licensed' }, currencyOptions: { eur: { amountMinor: 9000, amountDecimal: '9000', taxBehavior: 'inclusive' } } });
+  expect(result.coupons).toEqual([{ id: 'coupon_pilot', valid: true, percentOff: 100, amountOff: null, currency: null, duration: 'repeating', months: 2, productIds: ['prod_grow','prod_max'] }]);
+  expect(result.revision).toBe(0); expect(provider.writes).toHaveLength(0);
 });
