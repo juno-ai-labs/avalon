@@ -166,7 +166,8 @@ it('explains the automatic trial, collects billing details in Stripe, and enable
   expect(screen.getByText(/Without billing details, your organization returns to Start/)).toBeVisible();
   expect(screen.getByRole('checkbox')).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Add billing details' }));
-  expect(await screen.findByRole('link', { name: 'Open Stripe' })).toHaveAttribute('href', 'https://billing.stripe.com/card');
+  await waitFor(() => expect(openExternal).toHaveBeenCalledWith('https://billing.stripe.com/card'));
+  expect(screen.queryByText('Open Stripe')).toBeNull();
   view.rerender(<OrganizationBilling api={api} currentPlan="Grow" billing={{ ...billing, paymentMethodReady: true }} />);
   expect(screen.getByRole('checkbox')).toBeEnabled();
   fireEvent.click(screen.getByRole('checkbox'));
