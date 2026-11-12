@@ -130,6 +130,16 @@ export type CanvasUpdateRequest = z.input<typeof CanvasUpdateRequestSchema>;
 export const CanvasSetAudienceRequestSchema = CanvasActorRequestSchema.extend({ update: CanvasAudienceUpdateSchema });
 export type CanvasSetAudienceRequest = z.input<typeof CanvasSetAudienceRequestSchema>;
 
+/**
+ * Who can open the Canvas's artifacts, set without naming anyone: the editor
+ * audience and any named artifact users are left as they are. Naming specific
+ * people stays with `setAudience`, which owns the person picker's list.
+ */
+export const CanvasSetArtifactAudienceRequestSchema = CanvasActorRequestSchema.extend({
+  artifactVisibility: z.enum(["editors", "workspace", "public"]),
+});
+export type CanvasSetArtifactAudienceRequest = z.input<typeof CanvasSetArtifactAudienceRequestSchema>;
+
 export interface CanvasRow extends Record<string, SqlStorageValue> {
   canvas_id: string;
   workspace_id: string;
@@ -809,6 +819,31 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     await settleAdmittedAccessRequests(this.host, this.accessSubject({ ...row, visibility: request.update.visibility }), request.actor.userId,
       (userId) => request.update.visibility === "workspace" || named.has(userId));
     return this.detail({ workspaceId: request.workspaceId, canvasId: request.canvasId, actor: request.actor });
+  }
+
+  /**
+   * Change only who can open the Canvas's artifacts, for a manager. The editor
+   * audience, and the named artifact users "workspace" honours, stay as they
+   * are, so a caller that knows nothing of the person picker cannot clear it.
+   * Returns the audience stored, which the editor floor
+   * (`canvasArtifactVisibilityFloor`) may have raised above the one asked for.
+   */
+  setArtifactAudience(input: CanvasSetArtifactAudienceRequest): { artifactVisibility: "editors" | "participants" | "workspace" | "public" } {
+    const request = parseRpcInput(CanvasSetArtifactAudienceRequestSchema, input, "canvas_set_artifact_audience");
+    return this.host.storage.transactionSync(() => {
+      const row = this.assertCanvas(request.workspaceId, request.canvasId);
+      if (!this.manages(row, request.actor)) throw canvasReaderAllows(row, request.actor, this.sql) ? forbidden() : notFound();
+      const stored = canvasArtifactVisibilityFloor(row.visibility, request.artifactVisibility);
+      if (stored !== row.artifact_visibility) {
+        // As in `setAudience`: rows kept under "editors" grant nothing, and a
+        // raise from "editors" must not revive them.
+        if (row.artifact_visibility === "editors") this.sql.exec("DELETE FROM canvas_artifact_users WHERE canvas_id=?", this.canvasId);
+        this.sql.exec("UPDATE canvas_directory SET artifact_visibility = ? WHERE canvas_id = ?", stored, this.canvasId);
+        this.host.noteCanvasDirectoryChanged(this.canvasId);
+        this.host.noteAttachedCanvasChanged(this.canvasId);
+      }
+      return { artifactVisibility: stored };
+    });
   }
 
   // ---------------------------------------------------------------------------

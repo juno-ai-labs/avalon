@@ -170,6 +170,11 @@ const WORKSTREAM_PROSE: Record<string, ToolProse> = {
     settled: "Updated the site's data",
     failed: "Could not update the site's data",
   },
+  set_artifact_audience: {
+    started: "Changing who can open this Canvas's artifacts",
+    settled: "Changed who can open this Canvas's artifacts",
+    failed: "Could not change who can open this Canvas's artifacts",
+  },
   search_resource: {
     started: "Searching an attached resource",
     settled: "Searched an attached resource",

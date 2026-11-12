@@ -51,22 +51,27 @@ does. The request's own words decide, in this order:
 4. **Shared.** Any other app that saves what people add: a vote, an RSVP list,
    a sign-up sheet, a kudos wall, a shared board.
 
-"Private", "members-only" or "team-only" describing the **site** is controlled
-by the Canvas artifact audience, as is a dashboard displaying private connected
-data. Static and active sites both inherit it; do not add a server just for
-access control. Follow \`building-live-sites\` for viewer identity and app-specific
+**Who can open the site** is the Canvas's artifact audience, which you set
+with \`set_artifact_audience\` after the first publish. Choose the most open
+one the request allows: \`public\` (anyone with the link) by default,
+\`workspace\` for a site that shows the Organization's own data (a dashboard of
+connected data, internal plans) or that the request says is for the team or
+company, and \`editors\` only when the request asks for it to stay private.
+When in doubt, choose the more open one, and make your last question whether
+they want it restricted. Static and active sites both follow it; do not add a
+server just for access control. Follow \`building-live-sites\` for viewer identity and app-specific
 rules. A dashboard storing data you
 retrieve is not an app collecting people's entries and needs no entry-privacy
 question. Site protection does not by itself hide each person's entries from
 the other authorized viewers.
 
-**Who can answer.** When the request names people outside Rally (the public,
-customers, guests, clients, parents, anyone, the internet), visitors admitted by
-the Canvas artifact audience may submit, as the "Anonymous answers" section of \`building-live-sites\`
-shows. Otherwise people sign in with Rally to add entries; someone who follows
-the site's link signs in from the site and comes straight back. Reading always
-follows the Canvas artifact audience; anonymous access requires public artifact
-sharing. Building a site does not change that audience or expose its Chat.
+**Who can add and change entries.** Everyone the audience admits, signed in
+or not: on a public site an anonymous visitor can add, edit, check off and
+delete like anyone else. Ask for sign-in only on an action that needs to know
+who is acting: one vote or RSVP per person, each person's own entries, or a
+name the request wants recorded. Someone who follows the site's link signs in
+from the site and comes straight back. Setting the audience never exposes the
+Chat.
 
 **Ask only when the app saves what people add and the request does not say
 who sees it.** Then ask one question, right away and before writing any
@@ -107,6 +112,9 @@ needs it.
 - **Building first, asking later.** Changing shared entries into private ones
   means rewriting the site's storage. When you must ask, ask before the first
   file.
+- **Requiring sign-in for every change.** A shared list, board or sheet
+  works for anyone who can open it. Ask for sign-in only where the app needs
+  to know who acted.
 - **Treating sign-in as privacy.** Signing in tells the site who acted; it
   does not hide anyone's entries. Only a \`${ARTIFACT_VIEWER_COLUMN}\` column does.
 - **Asking when the answer is given.** If the request already says who uses
