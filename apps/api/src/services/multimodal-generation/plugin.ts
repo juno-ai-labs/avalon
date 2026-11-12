@@ -1,3 +1,4 @@
+import { requireUsageAllowance } from "../usage-admission";
 import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import type {
   HarnessPlugin,
@@ -104,6 +105,7 @@ export function createAvalonMultimodalGenerationPlugin(
       const replay = await resources.findPublished(resourceContext, operation, edit?.resourceId);
       if (replay) return toolResult(replay, operation);
 
+      await requireUsageAllowance(env, input.workspaceId);
       const pricing = await bestEffortPricing(env, context, operation, loadPricing);
       const requestedSize = arguments_.size ?? "auto";
       const editSources = edit
@@ -194,6 +196,7 @@ export function createAvalonMultimodalGenerationPlugin(
       const replay = await audioResources.findPublished(resourceContext);
       if (replay) return audioToolResult(replay);
 
+      await requireUsageAllowance(env, input.workspaceId);
       const pricing = await bestEffortAudioPricing(env, context, loadAudioPricing);
       const voice = arguments_.voice ?? MULTIMODAL_AUDIO_DEFAULT_VOICE;
       const providerResult = await audioClient.generate({

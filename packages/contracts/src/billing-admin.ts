@@ -8,7 +8,12 @@ export const BillingOfferSchema = z.strictObject({
   priceId: z.string().startsWith('price_'), currencies: z.array(z.string().regex(/^[a-z]{3}$/)).min(1),
   couponId: z.string().optional(), overagePriceId: z.string().startsWith('price_').optional(), enabled: z.boolean().default(true),
 });
-export const BillingCatalogSchema = z.strictObject({ offers: z.array(BillingOfferSchema).min(1), pilotCouponId: z.string().min(1).nullable() });
+export const SignupTrialSchema = z.strictObject({
+  offerId: z.string().min(1), currency: z.string().regex(/^[a-z]{3}$/),
+  months: z.number().int().positive(),
+  startsAt: z.iso.datetime({ offset: true }).describe('Only organizations created on or after this instant receive the automatic signup trial.'),
+});
+export const BillingCatalogSchema = z.strictObject({ offers: z.array(BillingOfferSchema).min(1), pilotCouponId: z.string().min(1).nullable(), signupTrial: SignupTrialSchema.nullable().optional() });
 export const BillingCatalogResultSchema = BillingCatalogSchema.extend({ revision: z.number().int().nonnegative() });
 const PriceAmountSchema = z.object({ amountMinor: z.number().nullable(), amountDecimal: z.string().nullable(), taxBehavior: z.string() });
 export const BillingCatalogInspectionSchema = BillingCatalogResultSchema.extend({

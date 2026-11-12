@@ -1,3 +1,4 @@
+import { requireUsageAllowance } from "./usage-admission";
 import { z } from "zod";
 import { isUnknownSocketEvent } from "@rally/contracts";
 import type { AuthContext, Env } from "../env";
@@ -276,6 +277,7 @@ export class RealtimeTranscriptionService {
       throw new ApiError(403, "socket_ticket_scope_mismatch", "The realtime ticket belongs to another region");
     }
 
+    await requireUsageAllowance(this.env, claims.workspaceId);
     const sessionId = await reserveTranscriptionSession(this.env, claims);
     // The realtime transcription stream reports no usage or price, so a
     // dictation session is metered as unpriced until a rate card exists.
