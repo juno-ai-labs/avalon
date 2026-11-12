@@ -34,7 +34,7 @@ const PLAN_OPTIONS = PLAN_IDS.map((plan) => ({
 export const USAGE_TOTAL_EXPLANATION = "This is usage beyond your allowance, not an invoice total. Charges for earlier opted-in usage may still appear after cancellation.";
 
 /**
- * Settings → Organization → Usage. Every member sees it, whatever their role:
+ * Settings → Organization → Billing. Every member sees it, whatever their role:
  * the quota is shared, so everyone spending it should be able to see it. Only
  * an administrator can change the plan; everyone else sees the picker locked.
  */
