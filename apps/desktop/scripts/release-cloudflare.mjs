@@ -7,23 +7,18 @@ export function cloudflareErrorCodes(body) {
 }
 
 /**
- * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
- * docs/adding-security-defensive-and-other-limits.md.
+ * Attempts at one `wrangler r2 object put` of any release object (immutable
+ * payloads, channel manifests, receipts and the publication record) that the
+ * Cloudflare API refused with a transient condition.
  *
- * Bounds: attempts at one `wrangler r2 object put` of a release payload that
- *   the Cloudflare API refused with a transient condition.
- * Without it: a Cloudflare API outage keeps the publisher re-sending a ~180 MiB
- *   payload until the release job's own `timeout-minutes` (90, in
- *   `.github/workflows/release-desktop-macos.yml`) kills the runner. Checked
- *   2026-11-12: that job timeout is the only bound on this loop today.
- * Direction: upper bound; the open value is +Infinity.
- * Trips: the publisher fails with the last attempt's Wrangler output, exactly
- *   as a single refused upload did before this retry existed.
- * Derive from: how long a Cloudflare API incident is worth waiting out on a
- *   held macOS runner against re-running the workflow, which is safe because a
- *   release that fails before publication leaves no tag (docs/runbook.md).
+ * Finite on purpose: an exhausted ceiling throws inside `withR2ReleaseLock`, so
+ * the lock is released and a later re-run starts clean. A job timeout or a
+ * cancelled run would instead leave the lock active and need manual recovery
+ * (docs/runbook.md). 10 matches `verifyR2Hash` in the publisher, on the same
+ * 1s-doubling, 30s-capped backoff (about 2.5 minutes of waiting); chosen in
+ * review of #1567.
  */
-export const R2_UPLOAD_MAX_ATTEMPTS = Number.POSITIVE_INFINITY;
+export const R2_UPLOAD_MAX_ATTEMPTS = 10;
 
 const TRANSIENT_HTTP_STATUS = /- (?:429|5\d\d): /;
 const TRANSIENT_NETWORK_FAILURE = /\b(?:fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|UND_ERR_SOCKET|socket hang up)\b/;
@@ -56,7 +51,7 @@ export async function runWranglerWithTransientRetry({
     if (result.code === 0) return result;
     if (index + 1 >= maxAttempts || !isTransientWranglerFailure(result)) return result;
     const delay = Math.min(1_000 * 2 ** index, 30_000);
-    onRetry({ attempt: index + 1, delay, result });
+    onRetry({ attempt: index + 1, delay });
     await sleep(delay);
   }
 }
