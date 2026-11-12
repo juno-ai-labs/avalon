@@ -617,7 +617,9 @@ values were chosen over raw-event retries because Stripe only deduplicates event
 identifiers for at least 24 hours. The audit ledger stays durable; reconciliation
 is background work and deliberately does not gate invoice collection.
 Qualification counts are recorded before lazy account creation, so departures
-cannot erase earned trials and old guest join dates cannot earn new ones. Status
+cannot erase earned trials and old guest join dates cannot earn new ones. Explicit
+conflict handling in the qualification triggers keeps same-second membership
+rejoins idempotent even inside an outer membership UPSERT. Status
 reads avoid the actor writer, and paid recovery precedes settlement independently
 of reporting. Customer search replaces account-wide scans; finalized terms and
 expired usage revisions stop repeating work. Explicit operator plan overrides

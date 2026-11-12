@@ -91,6 +91,8 @@ CREATE TABLE billing_overage_subscriptions (
 
 -- Record qualification at the actual transition, independent of lazy account creation.
 -- Counts retain earned eligibility after departure, without retaining user identities.
+-- Explicit UPSERT survives an outer membership UPSERT's conflict policy; OR IGNORE
+-- can be overridden and reject two identical qualifications within one second.
 CREATE TABLE billing_team_qualifications (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   qualified_at INTEGER NOT NULL,
@@ -102,16 +104,18 @@ INSERT INTO billing_team_qualifications(workspace_id, qualified_at, members)
   WHERE status = 'active' AND access_class = 'member' GROUP BY workspace_id;
 CREATE TRIGGER billing_member_insert AFTER INSERT ON workspace_members
 WHEN NEW.status = 'active' AND NEW.access_class = 'member' BEGIN
-  INSERT OR IGNORE INTO billing_team_qualifications(workspace_id, qualified_at, members)
+  INSERT INTO billing_team_qualifications(workspace_id, qualified_at, members)
     SELECT NEW.workspace_id, unixepoch(), COUNT(*) FROM workspace_members
-      WHERE workspace_id = NEW.workspace_id AND status = 'active' AND access_class = 'member';
+      WHERE workspace_id = NEW.workspace_id AND status = 'active' AND access_class = 'member'
+    ON CONFLICT (workspace_id, qualified_at, members) DO NOTHING;
 END;
 CREATE TRIGGER billing_member_update AFTER UPDATE OF status, access_class ON workspace_members
 WHEN NEW.status = 'active' AND NEW.access_class = 'member'
   AND (OLD.status <> 'active' OR OLD.access_class <> 'member') BEGIN
-  INSERT OR IGNORE INTO billing_team_qualifications(workspace_id, qualified_at, members)
+  INSERT INTO billing_team_qualifications(workspace_id, qualified_at, members)
     SELECT NEW.workspace_id, unixepoch(), COUNT(*) FROM workspace_members
-      WHERE workspace_id = NEW.workspace_id AND status = 'active' AND access_class = 'member';
+      WHERE workspace_id = NEW.workspace_id AND status = 'active' AND access_class = 'member'
+    ON CONFLICT (workspace_id, qualified_at, members) DO NOTHING;
 END;
 CREATE TRIGGER billing_team_trial_award AFTER INSERT ON billing_team_qualifications BEGIN
   UPDATE billing_accounts SET trial_extended = 1, trial_ends_at = MAX(trial_ends_at, team_trial_ends_at)
