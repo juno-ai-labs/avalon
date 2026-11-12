@@ -401,6 +401,25 @@ it('shows a plan skeleton and disables billing actions while billing status is u
   expect(screen.getByRole('button', { name: 'Manage billing' })).toBeDisabled();
 });
 
+it('shows the Stripe plan after returning from a plan change even if usage still reports the old plan', async () => {
+  let offerId = 'grow';
+  const oldUsage = { ...usage(72), plan: 'growth' as const };
+  const api: OrganizationPlanApi = { ...apiAnswering(oldUsage), createBillingPortal: vi.fn(),
+    getBillingStatus: vi.fn(async () => ({ enabled: true as const, subscribed: true, status: 'active', offerId, currency: 'usd',
+      trialEndsAt: '2020-01-01T00:00:00Z', overageEnabled: false, offers: [
+        { id: 'grow', name: 'Grow', plan: 'growth' as const, currencies: ['usd'], overageAvailable: true },
+        { id: 'ultra', name: 'Ultra', plan: 'ultra' as const, currencies: ['usd'], overageAvailable: true },
+      ] })) };
+  renderSection(api);
+  expect(await screen.findByText('Grow plan · Subscription: active')).toBeVisible();
+  offerId = 'ultra';
+  fireEvent(window, new Event('focus'));
+  expect(await screen.findByText('Ultra plan · Subscription: active')).toBeVisible();
+  expect(screen.getByText('Ultra', { exact: true })).toBeVisible();
+  expect(screen.queryByRole('combobox', { name: 'Billing plan' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Manage billing' })).toBeEnabled();
+});
+
 it('does not describe previously billable usage as waived after cancellation', async () => {
   const answer = usage(0, 12_400_000); answer.overage.billingEnabled = false;
   renderSection(apiAnswering(answer));

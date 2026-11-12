@@ -202,14 +202,14 @@ it('shows all billing controls to members, disables changes and explains why', a
   expect(await screen.findByText(/\$0.00 available/)).toBeVisible();
 });
 
-it('keeps the subscribed plan visible with its saved value and reason', () => {
+it('shows the subscribed plan as read-only text with Stripe management', () => {
   render(<OrganizationBilling canManage api={{ getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(), createBillingPortal: vi.fn() }} currentPlan="Grow plan"
     billing={{ ...billing, subscribed: true, currency: 'eur', offerId: 'grow', status: 'active' }} />);
-  const plan = screen.getByRole('combobox', { name: 'Billing plan' });
-  expect(plan).toBeDisabled();
-  expect(plan).toHaveTextContent('Grow');
+  expect(screen.queryByRole('combobox', { name: 'Billing plan' })).toBeNull();
+  expect(screen.getByText('Grow', { exact: true })).toBeVisible();
+  expect(screen.getByText('Manage your subscribed plan in Stripe.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Manage billing' })).toBeEnabled();
   expect(screen.queryByText('Currency', { exact: true })).toBeNull();
-  expect(plan.parentElement).toHaveAttribute('aria-label', 'Manage your subscribed plan in Stripe.');
   expect(screen.getByRole('checkbox')).toBeDisabled();
 });
 

@@ -76,7 +76,7 @@ show the blocking reason on hover and keyboard focus. The UI follows these rules
 | All billing changes | Organization administrator, outside a support session, online, with billing loaded and no request in progress. |
 | Checkout | No live subscription, an enabled USD catalog offer, and the checkout endpoint available. Stripe collects billing details. |
 | Manage billing / Add billing details | A live subscription and the portal endpoint available, including past-due or paused subscriptions that need repair in Stripe. |
-| Plan | Before checkout. Existing subscription plans are managed in Stripe. The legacy plan picker is available only when billing is disabled. |
+| Plan | Before checkout. Existing subscriptions show the current plan as read-only text and are managed in Stripe. The legacy plan picker is available only when billing is disabled. |
 | Overages before checkout | A selected offer that supports overages in USD. Consent is passed to checkout; a saved payment method is not required yet. |
 | Enable overages on a subscription | Active or trialing subscription, supported USD overages, billing readiness (payment method and any required tax location), and the overage endpoint available. Credits and remaining quota do not affect eligibility. |
 | Disable overages on a subscription | Active or trialing subscription with consent already enabled and the overage endpoint available. Losing payment readiness or plan/currency eligibility must not block revoking consent. |
@@ -789,7 +789,9 @@ Overage controls distinguish checkout consent from changing an existing
 subscription: only active/trialing subscriptions can change consent, and enabling
 requirements never block disabling consent. Offline restrictions do not depend on
 whether the quota read succeeded. Checkout is fixed to USD and has no currency
-control; offers without USD support cannot be selected.
+control; offers without USD support cannot be selected. Existing subscriptions
+show the Stripe plan as read-only text, and refreshed billing status takes
+precedence over an older usage response after a plan change.
 
 ### 2026-11-12 — Require an expiration within two years for overage credits
 
