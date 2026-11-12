@@ -37,8 +37,6 @@ import {
 } from "./limits";
 import { codeSystemMessage, renderCodeSystemMessage } from "@rally/prompts/api/code-plugin";
 import { CUSTOM_TOOLS_SYSTEM_MESSAGE } from "@rally/prompts/api/custom-tools-plugin";
-export { CUSTOM_TOOLS_SYSTEM_MESSAGE } from "@rally/prompts/api/custom-tools-plugin";
-export { CODE_API_FRAMING } from "@rally/prompts/api/code-plugin";
 export const CODE_SYSTEM_MESSAGE = codeSystemMessage(CODE_PROGRAM_DEADLINE_MS);
 
 const LogLineSchema = z.object({ level: z.string(), text: z.string() });

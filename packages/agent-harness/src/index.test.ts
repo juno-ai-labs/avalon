@@ -22,10 +22,8 @@ import {
   OpenRouterClient,
   openRouterProviderError,
   rejectToolModesBeforeCall,
-  renderAddressingMessages,
   runHarness,
   AmbiguousExternalWriteError,
-  type AddressingContextMessage,
   type AzureModelPricing,
   type BindLoopTransition,
   type BindLoopProjectionState,
@@ -45,6 +43,7 @@ import {
   type StructuredModelDiagnostic,
 } from "./index";
 import { providerRequestView, providerStreamResponse, responsesStreamResponse, sseBody } from "./test-support/responses-stream";
+import { renderAddressingMessages, type AddressingContextMessage } from "@rally/prompts/harness/addressing";
 
 describe("transport retry backoff", () => {
   const httpFailure = (retryAfterMs: number | null): InferenceAttemptError => ({

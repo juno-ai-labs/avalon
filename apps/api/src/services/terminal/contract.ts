@@ -7,7 +7,6 @@ import type {
 import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import { TERMINAL_PLUGIN_SYSTEM_MESSAGE } from "@rally/prompts/api/terminal-plugin";
-export { TERMINAL_PLUGIN_SYSTEM_MESSAGE } from "@rally/prompts/api/terminal-plugin";
 
 export const TERMINAL_PLUGIN_ID = "rally:terminal";
 

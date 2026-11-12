@@ -1,9 +1,9 @@
 import { COMPLETION_VERIFICATION_MODEL } from "@rally/contracts/runtime-config";
 import type { ModelMessage, OpenRouterTraceContext, StructuredModelDiagnostic } from "./index";
 import { askJev, jevFailureKind } from "./jev";
-import { answers, questions, type CompletionAnswer, type CompletionState } from "./completion-verification-question";
+import { answers, type CompletionAnswer, type CompletionState } from "./completion-verification-question";
 import { COMPLETION_CONTEXT_RELATION } from "@rally/prompts/harness/completion-verification-state";
-export { completionVerificationPrompt } from "@rally/prompts/harness/completion-verification-nudge";
+import { questions } from "@rally/prompts/harness/completion-verification-question";
 
 export type { CompletionState } from "./completion-verification-question";
 export const COMPLETION_VERIFICATION_SOURCE = "completion_verification";

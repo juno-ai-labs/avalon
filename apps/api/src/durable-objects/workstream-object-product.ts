@@ -1,12 +1,9 @@
-import { renderPersonalSystemPrompt } from "@rally/agent-harness";
 import { annotationCommentText } from "@rally/contracts";
 import { AnnotationsSchema, SidekickMessageIntentSchema, validateAnnotationAttachments } from "@rally/contracts";
 import { ResourceService } from "../services/resource-service";
 import { resolveShareableResources } from "../services/resource-share-rules";
 import { AGENT_MESSAGE_CONTENT_KIND } from "@rally/contracts";
 import { WorkstreamAppearanceSchema } from "@rally/contracts";
-import { renderAgentMessage } from "../services/agent-message-content";
-import { renderSidekickReviewNotice } from "../services/sidekick-review-notice";
 import { continuationSender } from "../services/sidekick-run-continuation";
 import type { SidekickRunContinuationSender } from "./automation-do-protocol";
 import {
@@ -46,7 +43,6 @@ import {
   type WorkspaceId,
   type WorkstreamId,
 } from "@rally/contracts";
-import type { AddressingContextMessage, PromptMessage } from "@rally/agent-harness";
 import type { ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
 import { stripPersonalSystemPrompt, truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
@@ -128,6 +124,11 @@ import {
 } from "./workstream-external-message-protocol";
 import { startReadCursorAtLatest } from "./member-attention";
 import { PERSONAL_SYSTEM_PROMPT_REASONS, PersonalSystemPromptRecordSchema } from "./personal-system-prompt";
+import { renderPersonalSystemPrompt } from "@rally/prompts/harness/personal";
+import { renderAgentMessage } from "@rally/prompts/api/agent-message";
+import { renderSidekickReviewNotice } from "@rally/prompts/api/sidekick-review-notice";
+import { type AddressingContextMessage } from "@rally/prompts/harness/addressing";
+import { type PromptMessage } from "@rally/prompts/harness/types";
 
 type SqlRow = Record<string, SqlStorageValue>;
 interface AttachmentResourceRow {

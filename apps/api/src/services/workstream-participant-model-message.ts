@@ -14,8 +14,6 @@ import { renderExternalEvidenceMessage, renderExternalRequestMessage } from "@ra
 import { renderImportedSourceMessage } from "@rally/prompts/api/imported-source-message";
 import { renderLeadingAssistantMessage } from "@rally/prompts/api/leading-assistant-message";
 import { OVERHEARD_HEADER } from "@rally/prompts/api/overheard-header";
-export { renderRunContinuationNote } from "@rally/prompts/api/run-continuation-note";
-export { providerDisplayName } from "@rally/prompts/api/provider-display-name";
 
 /**
  * Who produced a participant turn, as the model is told it.

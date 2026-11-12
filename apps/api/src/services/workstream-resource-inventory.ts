@@ -9,7 +9,6 @@ import {
   type VisibleWorkstreamResourceRow,
 } from "./workstream-resource-visibility";
 import { renderWorkstreamResourceInventoryAggregate } from "@rally/prompts/api/resource-inventory";
-export { renderWorkstreamResourceInventoryAggregate } from "@rally/prompts/api/resource-inventory";
 
 export const CHECKPOINT_TEMPLATE_VERSION = 1;
 

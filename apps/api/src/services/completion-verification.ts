@@ -1,9 +1,13 @@
 import {
-  COMPLETION_VERIFICATION_SOURCE, completionConversationContext, completionVerificationPrompt,
-  type judgeCompletionStop, type ModelMessage, type CompletionState,
+  COMPLETION_VERIFICATION_SOURCE,
+  completionConversationContext,
+  type judgeCompletionStop,
+  type ModelMessage,
+  type CompletionState,
 } from "@rally/agent-harness";
 import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
 import { COMPLETION_EVIDENCE_COVERAGE } from "@rally/prompts/api/completion-evidence-coverage";
+import { completionVerificationPrompt } from "@rally/prompts/harness/completion-verification-nudge";
 
 /** Re-read lifecycle after network I/O. Persistence of the returned derived
  * message consumes recovery atomically with its delivery to the model. */
