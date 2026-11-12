@@ -1,4 +1,5 @@
 import { closeOrganizationBilling as closeWithoutBilling } from "./billing";
+import type { GrantOverageCredit } from "@rally/contracts/billing";
 import type { Env } from "../env";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { billingConfig } from "./billing-config";
@@ -32,6 +33,11 @@ export const closeOrganizationBilling = (
     ? coordinator(env, workspaceId).close(workspaceId, actorUserId)
     : closeWithoutBilling(env, workspaceId, actorUserId);
 
+export const grantOverageCredit = (env: Env, workspaceId: string, input: GrantOverageCredit) =>
+  coordinator(env, workspaceId).grantCredit(workspaceId, input);
+export const expireOverageCredit = (env: Env, workspaceId: string, grantId: string) =>
+  coordinator(env, workspaceId).expireCredit(workspaceId, grantId);
+
 export async function syncSubscription(
   env: Env,
   customerId: string,
@@ -62,6 +68,7 @@ export async function billingAccountsToSettle(env: Env): Promise<string[]> {
     LEFT JOIN billing_accounts b ON b.workspace_id = w.id
     WHERE w.region = ? AND (w.abandoned_at IS NULL
       OR (b.customer_id IS NOT NULL AND b.free_subscription_closed = 0 AND ?)
+      OR EXISTS (SELECT 1 FROM billing_overage_subscriptions s WHERE s.workspace_id = w.id AND s.closed = 0)
       OR EXISTS (SELECT 1 FROM billing_terms t WHERE t.workspace_id = w.id AND t.final_invoice_finalized = 0))`,
   )
     .bind(env.AVALON_REGION, sync ? 1 : 0)

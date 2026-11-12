@@ -12,7 +12,7 @@ current behavior until `BILLING_CONFIG` is supplied.
 `apps/api/src/services/billing.ts` owns the lifecycle, with `billing-config.ts` and
 `stripe.ts` beside it. `billing-coordination.ts` routes writes to the regional
 `BillingCoordinatorDO`, one actor per Organization. `stripe-billing-sync.ts` synchronizes free-account trial
-records, allowance metadata and usage meters. The HTTP boundary is `routes/billing.ts`, the D1 schema is
+records, allowance metadata and usage meters. `overage-credits.ts` owns operator grants and Stripe balance reads; `stripe-overages.ts` delivers eligible overages to their dedicated Stripe meter. The HTTP boundary is `routes/billing.ts`, the D1 schema is
 `packages/db/migrations/0131_billing.sql`, and the shared desktop/browser UI is
 `apps/desktop/src/renderer/components/organization-billing.tsx`.
 
@@ -206,6 +206,100 @@ Stripe documents the ingestion window and asynchronous processing in
   Use the retained audit history for an operator-led financial adjustment where
   needed; a current-timestamp event is not a historical backfill.
 
+## Overage credits
+
+Rally's internal engineering MCP exposes `grant_overage_credit`,
+`inspect_overage_credits` and `expire_overage_credit`. These tools require the
+engineering Cloudflare Access identity; Organization membership never grants
+permission to issue money. For example, grant $100 of future overage invoice
+credit with:
+
+```json
+{
+  "orgId": "<organization UUID>",
+  "operationId": "<new UUID; reuse this on retries>",
+  "amountCents": 10000,
+  "reason": "Service incident credit",
+  "expiresAt": "2027-02-01T00:00:00Z"
+}
+```
+
+Expiry is optional. The amount is USD invoice credit, not effective usage or
+included allowance. Grants do not enable overages, change the plan, or reduce
+subscription fees. The bridge records the operator, operation ID and financial
+receipt in the independent audit database; the reason is stored in Stripe
+metadata and omitted from customer responses and operational logs. D1 stores
+immutable grant requests and Stripe IDs, not a second balance. On an uncertain
+outcome, reuse the same operation ID and arguments: paginated Stripe receipt
+lookup recovers the grant even after its idempotency retention expires.
+
+Stripe owns the promotional credit grant, remaining balance, expiry and invoice
+application. Scope is the dedicated overage **price**, not all metered prices.
+Administrators can read grants and available balances in Usage settings on both
+desktop and web. The explicit **View credits / Refresh credits** read goes to
+Stripe; ordinary billing status stays provider-free. Grants created directly in
+Stripe appear too if their USD scope contains only this Organization's configured
+or previously used overage prices. General customer invoice-balance credits are
+excluded because they can also offset subscription fees. Expiring a grant removes
+its unused balance; it does not reverse credit already applied to finalized invoices.
+
+Native [Stripe credit grants](https://docs.stripe.com/billing/subscriptions/usage-based/billing-credits)
+apply only to metered subscription items using Billing Meters, not one-time invoice
+items. Enable this path by creating a dedicated hourly pre-aggregated sum meter
+and a monthly recurring metered USD price of **$0.000001 per unit**
+(`unit_amount_decimal: "0.0001"` cents), with no quantity transform, the correct tax
+code and tax behavior. Add:
+
+```json
+"overageCredits": {
+  "priceId": "price_REPLACE_METERED_OVERAGE",
+  "meterId": "mtr_REPLACE_BILLABLE_OVERAGE"
+}
+```
+
+Set each participating offer's `overagePriceId` to that price. Never attach either
+all-usage reporting meter to this price: only settled, opted-in overages belong
+on the billable meter. Keep the overage product out of Portal plan changes and
+scope subscription-fee coupons to plan products. Use a new meter when changing
+the metered price, and retain the configuration until old terms settle. Existing
+grants remain scoped to their original price; changing prices does not transfer
+unspent credit automatically.
+
+Settlement keeps the weekly allowance, consent intervals, cancellation cutoff,
+first-partial-period waiver and configured delay. Positive closed-period receipts
+are submitted to a separate monthly Stripe subscription marked `billing_role=overage`.
+It has no fixed fee, copies the paid subscription's default payment method when
+present, and explicitly clears inherited customer discounts before reporting.
+It is excluded from plan entitlement, paid-pilot eligibility and Organization
+closure checks. This separate subscription permits delayed usage from a canceled
+plan to be invoiced as a credit-eligible metered item. The overage line is billed
+on its calendar-month invoice after settlement, which can be later than the base
+plan invoice. Stripe applies credits on finalization, after discounts and before
+tax; Stripe's normal invoice finalization delay must remain enabled so asynchronous
+meter events can arrive. While USD overage billing remains active, Stripe's
+active-subscription currency restrictions can delay checkout in another currency.
+
+The delivery timestamp is persisted after the metered subscription exists.
+Receipts are summed per customer/price/hour and sent as absolute hourly values;
+replays replace rather than add, including a response lost for more than 24 hours.
+Meter acceptance records delivery; **no Stripe usage-summary comparison gates
+collection**. The reporting-only reconciliation path stays independent. Once all
+paid terms are settled, Rally schedules the overage subscription to end at its
+period boundary; Stripe owns the final invoice and credit application. Native
+terms' `final_invoice_finalized` marker means settlement was handed to Stripe,
+not that payment succeeded. Failed scheduling remains eligible for the sweep.
+An externally canceled overage subscription or an unsent event older than Stripe's
+35-day ingestion window surfaces a named billing error for operator repair. Do not
+move an uncertain event into a new period: it may already have been charged.
+Review failed deliveries across invoice finalization against Stripe before a
+manual adjustment; late events cannot amend a finalized invoice.
+
+Before live activation, verify with Stripe test clocks: an unused grant, partial
+redemption and remaining balance, expiry, two fee-only pilot invoices, cancellation
+with delayed usage, no duplicate charge on replay, and correct tax treatment.
+Automated tests use Stripe HTTP doubles; no live Stripe resources are provisioned
+by a code deployment.
+
 ## Invariants
 
 - Client input selects catalog offer IDs, never Stripe price IDs or amounts.
@@ -222,7 +316,7 @@ Stripe documents the ingestion window and asynchronous processing in
 ## Boundary
 
 `GET /workspace/billing`, `POST /workspace/billing/checkout` and
-`POST /workspace/billing/portal` are authenticated administrator routes.
+`POST /workspace/billing/portal` and read-only `GET /workspace/billing/credits` are authenticated administrator routes. Grant/expiry writes exist only on the internal engineering bridge.
 `POST /stripe/webhook` accepts Stripe-signed requests. Configure separate webhook
 secrets/endpoints for each owning deployment if more regions are introduced.
 The current deployment is Global. Standard member plan changes are rejected while
@@ -273,6 +367,7 @@ restart recovery after an uncertain provider response, and signed webhook dispat
 eligibility, hourly delivery, delayed aggregation, replay, concurrent updates,
 retention, terminal expiry, closed-account cleanup and settlement continuing
 through sync failures.
+`test/overage-credits.test.ts` covers scoped grants, lost-response recovery, expiry, authorization, native metered settlement, cancellation and hourly replacement. `test-workers/overage-credits.test.ts` runs audited operator writes through the real billing actor and verifies serialization and regional fencing.
 `test-workers/usage-ledger.test.ts` proves the hourly outbox and rollup remain
 atomic when queue batches overlap on real D1. The usage and
 access-revocation suites cover their shared boundaries. Renderer tests cover the
@@ -359,7 +454,7 @@ For an automatic special, supply an offer's `couponId`; otherwise Checkout accep
 Stripe promotion codes. Disable new sales with `enabled: false`, retaining the
 price mapping. For overages, add `overagePriceId` pointing to a one-time USD price
 with `unit_amount_decimal: "0.0001"` cents (one micro-USD), tax behavior and product
-tax code configured. Do not use a recurring metered price here: settlement creates
+tax code configured. Without `overageCredits`, do not use a recurring metered price: settlement creates
 invoice items. Catalog changes need only Worker configuration and Stripe settings;
 landing-page prose must be kept aligned separately.
 
@@ -399,5 +494,10 @@ Canceled history can recover missed activation from paid invoice evidence. Free
 subscriptions are archived at checkout to release currency locks, and the outbox
 keeps closed Organizations eligible for usage reporting. These boundaries are
 independent of the requested removal of the usage-reconciliation collection gate.
-Future changes must preserve pre-consent exclusion, cancellation cutoffs and
-permanent charge receipts.
+Overage credit grants use Stripe's native financial ledger, administered through
+Rally's operator boundary. Broad customer invoice credits were rejected because
+they also pay subscription fees. Native grants require metered subscription items,
+so eligible overages use a separate monthly subscription that survives cancellation
+until the delayed usage settles. Absolute hourly delivery preserves retry safety
+without restoring a usage-reconciliation collection gate. Future changes must
+preserve pre-consent exclusion, cancellation cutoffs and permanent charge receipts.

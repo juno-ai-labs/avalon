@@ -23,6 +23,9 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     inspectOrganizationSettings: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationSettings"]>(),
     updateOrganizationSettings: vi.fn<EngineeringInspectionRpcBinding["updateOrganizationSettings"]>(),
     inspectOrganizationUsage: vi.fn<EngineeringInspectionRpcBinding["inspectOrganizationUsage"]>(),
+    inspectOverageCredits: vi.fn<EngineeringInspectionRpcBinding["inspectOverageCredits"]>(),
+    grantOverageCredit: vi.fn<EngineeringInspectionRpcBinding["grantOverageCredit"]>(),
+    expireOverageCredit: vi.fn<EngineeringInspectionRpcBinding["expireOverageCredit"]>(),
     changeOrganizationPlan: vi.fn<EngineeringInspectionRpcBinding["changeOrganizationPlan"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
@@ -305,6 +308,9 @@ describe("Rally engineering MCP tools", () => {
       "inspect_dead_letters",
       "inspect_org_settings",
       "update_org_settings",
+      "inspect_overage_credits",
+      "grant_overage_credit",
+      "expire_overage_credit",
       "inspect_usage_plan",
       "change_usage_plan",
       "inspect_migration_progress",
@@ -1023,6 +1029,26 @@ describe("operations tools", () => {
     expect(enterprise.updateOrganizationSettings).not.toHaveBeenCalled();
     expect((await rpc(env, "tools/call", { name: "update_org_settings", arguments: { orgId, modelSelectorVisible: "true" } })).result).toMatchObject({ isError: true });
     expect(global.updateOrganizationSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes overage credit tools to the owning region with the Access actor", async () => {
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ac1");
+    const global = regionalBinding("global"); const enterprise = regionalBinding("enterprise");
+    vi.mocked(global.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "global", authorityGeneration: 1 } });
+    const credit = { id: "credgr_1", amountCents: 10000, availableCents: 7500, effectiveAt: "2026-11-01T00:00:00Z", expiresAt: null, voided: false };
+    vi.mocked(global.grantOverageCredit).mockResolvedValue(credit);
+    vi.mocked(global.expireOverageCredit).mockResolvedValue({ ...credit, availableCents: 0 });
+    vi.mocked(global.inspectOverageCredits).mockResolvedValue({ enabled: true, currency: "usd", availableCents: 7500, grants: [credit] });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+    const input = { orgId, operationId: "00000000-0000-7000-8000-000000000ac2", amountCents: 10000, reason: "Incident credit" };
+    expect((await rpc(env, "tools/call", { name: "grant_overage_credit", arguments: input })).result).not.toHaveProperty("isError", true);
+    expect(global.grantOverageCredit).toHaveBeenCalledWith(input, principal);
+    expect((await rpc(env, "tools/call", { name: "inspect_overage_credits", arguments: { orgId } })).result).not.toHaveProperty("isError", true);
+    expect((await rpc(env, "tools/call", { name: "expire_overage_credit", arguments: { orgId, grantId: "credgr_1" } })).result).not.toHaveProperty("isError", true);
+    expect(global.expireOverageCredit).toHaveBeenCalledWith({ orgId, grantId: "credgr_1" }, principal);
+    expect(enterprise.grantOverageCredit).not.toHaveBeenCalled();
+    expect((await rpc(env, "tools/call", { name: "grant_overage_credit", arguments: { ...input, amountCents: -1 } })).result).toMatchObject({ isError: true });
+    expect(global.grantOverageCredit).toHaveBeenCalledTimes(1);
   });
 
   it("routes usage and plan changes to the owning region with the Access actor", async () => {

@@ -56,7 +56,28 @@ CREATE TABLE billing_overages (
   amount_microusd INTEGER NOT NULL,
   price_id TEXT NOT NULL,
   invoice_item_id TEXT,
+  meter_id TEXT,
+  meter_event_at INTEGER,
   PRIMARY KEY (subscription_id, period_start)
+);
+
+-- Request receipts only. Stripe owns grants, balances, expiry and redemption.
+CREATE TABLE billing_credit_operations (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  operation_id TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  stripe_grant_id TEXT,
+  PRIMARY KEY (workspace_id, operation_id)
+);
+-- A separate metered subscription keeps cancellation-tail usage billable and
+-- keeps subscription-fee coupons off overages. Stripe closes it at period end.
+CREATE TABLE billing_overage_subscriptions (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  price_id TEXT NOT NULL,
+  generation TEXT NOT NULL,
+  subscription_id TEXT,
+  closed INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (workspace_id, price_id)
 );
 
 -- Record qualification at the actual transition, independent of lazy account creation.
