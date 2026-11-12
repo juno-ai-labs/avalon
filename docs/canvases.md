@@ -149,14 +149,12 @@ person who may open the Canvas may open the artifact; additional artifact-only u
 
 The sharing modal has two independent audiences: **Who can edit** (the Chat
 and publication) and **Who can interact with artifacts** (published output).
-Editors always have artifact access. A manager saves both in one transaction;
+Editors always have artifact access. With Organization editors the artifact
+audience is at least the Organization (`canvasArtifactVisibilityFloor` in
+`@rally/contracts/canvases`, applied by `setAudience` and on create).
+A manager saves both in one transaction;
 artifact hosts receive the changed policy through the existing Cloudflare Queue.
 [Canvas artifact access](canvas-artifact-access.md) owns propagation and serving.
-The standalone component preview remains available with
-`pnpm --filter @rally/desktop preview:sharing` at
-`http://localhost:5175/sharing-preview.html`; its Save retains selections only
-in memory. The production Canvas screen uses the same presentation component
-with the real audience API, guest editor invitations and access requests.
 
 `canvasManages`: the creator, the Organization's owners and administrators,
 and for a Canvas a Sidekick writes, that Sidekick's managers
@@ -976,6 +974,27 @@ placeholder, so the icon is only ever the model's choice or a person's. The colo
 id-derived default, so two Canvases with the same icon still differ. A future
 change must keep the write conditional on an unchosen icon, so the pass never
 overrides a person's pick.
+
+### 2026-11-12 — Organization editors set a floor on the artifact audience
+
+Picking Everyone in the Organization under Who can edit left the artifact
+audience on Editors only, so the Canvas read as if its artifacts were private
+and a manager had to pick the Organization twice. The artifact audience is now
+never stored narrower than Organization editors: the Canvas Durable Object
+raises Editors only and Specific people to the Organization on every write, so
+an MCP or API caller cannot store the pair. It raises rather than rejects
+because released desktop builds send that pair. A raise from Editors only drops
+artifact recipients left over from an earlier choice, which grant nothing under
+Editors only but would grant access under the Organization; a raise from
+Specific people keeps them.
+
+The stored raise is one-way: moving editors off the Organization keeps it, since
+the row cannot tell a raise from a choice. The MCP tool tells callers to send
+the artifact audience when narrowing. The sharing form avoids the problem by
+keeping the manager's own choice in its draft and applying the floor only to
+what it shows and saves, so leaving Organization editors restores the earlier
+choice. Rows stored before the rule are not raised on read: reads report what
+access checks enforce, which differs for guests named as artifact users.
 
 ### 2026-11-11 — App invocation does not imply automatic upkeep
 

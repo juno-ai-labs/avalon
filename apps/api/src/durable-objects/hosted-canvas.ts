@@ -15,6 +15,7 @@ import {
   CanvasSidebarRowSchema,
   CanvasSidekickSchema,
   CanvasSummarySchema,
+  canvasArtifactVisibilityFloor,
   type CanvasSidekick,
   type CanvasSidebarRow,
   type CanvasAccess,
@@ -487,10 +488,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }): void {
     this.sql.exec(
       `INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at,
-         last_editor_kind, last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation, title_status)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+         last_editor_kind, last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation, title_status,
+         artifact_visibility)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
       this.canvasId, row.workspaceId, row.title, row.createdByUserId, row.createdAt, row.updatedAt,
       row.writer?.sidekickId ?? null, row.writer?.runId ?? null, row.visibility, row.authorityGeneration, row.titleStatus,
+      canvasArtifactVisibilityFloor(row.visibility, "editors"),
     );
     this.host.noteCanvasDirectoryChanged(this.canvasId);
   }
@@ -782,12 +785,20 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
           this.canvasId, userId, request.actor.userId, now,
         );
       }
-      if (request.update.artifactUserIds !== undefined) {
+      // An omitted artifact audience keeps the stored one, still subject to
+      // the floor Organization editors set (canvasArtifactVisibilityFloor).
+      const requestedArtifacts = request.update.artifactVisibility ?? currentRow.artifact_visibility ?? 'editors';
+      const storedArtifacts = canvasArtifactVisibilityFloor(request.update.visibility, requestedArtifacts);
+      // Recipient rows kept under "editors" grant nothing; "workspace" honours
+      // them. A raise from "editors" must not revive them, so it drops them
+      // unless the caller names its recipients.
+      const dropRecipients = requestedArtifacts === 'editors' && storedArtifacts !== 'editors';
+      if (request.update.artifactUserIds !== undefined || dropRecipients) {
         this.sql.exec('DELETE FROM canvas_artifact_users WHERE canvas_id=?',this.canvasId);
         for (const userId of artifactUserIds) this.sql.exec('INSERT INTO canvas_artifact_users(canvas_id,user_id) VALUES(?,?)',this.canvasId,userId);
       }
-      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, artifact_visibility = COALESCE(?,artifact_visibility) WHERE canvas_id = ?`,
-        request.update.visibility, request.update.artifactVisibility ?? null, this.canvasId);
+      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, artifact_visibility = ? WHERE canvas_id = ?`,
+        request.update.visibility, storedArtifacts, this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
       this.host.noteAttachedCanvasChanged(this.canvasId);
     });
