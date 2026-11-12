@@ -275,7 +275,7 @@ export function AutomationHeader({
             ? <p className="sidekick-profile-empty">{NOTHING_YET}</p>
             : <ul aria-label="Canvases it writes to" className="sidekick-canvas-links">
               {canvases.map((canvas) => <li key={canvas.id}>
-                <Link to={canvasRoute(canvas.id)}><CanvasMark kind={null} size={24} />{canvas.title}</Link>
+                <Link to={canvasRoute(canvas.id)}><CanvasMark size={24} />{canvas.title}</Link>
                 {/* The Canvas whose Chat made this Sidekick, among the ones it is attached to. */}
                 {canvas.id === automation.madeInCanvasId && <small className="sidekick-canvas-made">Made in this Canvas</small>}
               </li>)}

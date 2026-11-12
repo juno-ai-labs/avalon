@@ -394,7 +394,7 @@ function SidekickConversation({ id, name, draft, canvases, manages, embedded }: 
     renderHeader={() => <header className="sidekick-conversation-heading">
       {canvases.length > 0 && <ul aria-label="Canvases it made" className="sidekick-canvas-cards">
         {canvases.map((canvas) => <li key={canvas.id}><Link className="sidekick-canvas-card" to={canvasRoute(canvas.id)}>
-          <CanvasMark kind={null} size={28} />
+          <CanvasMark size={28} />
           <span><strong>{canvas.title}</strong><small>Canvas</small></span>
         </Link></li>)}
       </ul>}

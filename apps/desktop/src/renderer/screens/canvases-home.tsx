@@ -74,7 +74,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     // A server older than attaching sends none.
     const attachedSidekicks = canvas.sidekicks ?? [];
     const liveUpdating = isLiveUpdating(canvas);
-    const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.artifactKind, canvas.appearance);
+    const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.appearance);
     return <li className="dashboard-card" key={canvas.id}>
       <div aria-hidden="true" className="dashboard-card-preview" style={{ background: tint }}>
         <Icon aria-hidden="true" color={ink} size={44} />
