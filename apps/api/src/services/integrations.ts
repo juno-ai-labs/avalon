@@ -5228,11 +5228,17 @@ const RUN_CANVAS_UPDATING = "This Sidekick is attached to the Canvases above, so
   + "To change an artifact's files, import_resource it to its filePath, edit, and publish_resource that filePath with canvas set to the canvasId: "
   + "that is a new version, attributed to this Sidekick. Runs can overlap, so a run that republishes rebuilds the whole artifact from its sources rather than patching the last version. "
   + "conversation_post with the canvasId tells the people in that Canvas what changed.";
-/** What the wizard saves for the runs: it configures, and does not write the Canvas itself. */
-const WIZARD_CANVAS_UPDATING = "This Sidekick is attached to the Canvases above, so its runs may change their artifacts; you configure it and do not change them yourself. "
+/**
+ * What the wizard saves for the runs: it configures, and does not publish the
+ * Canvas's artifacts itself. It may check a row write it saves, since its
+ * `write_artifact_data` is held to the same attachment as a run's.
+ */
+const WIZARD_CANVAS_UPDATING = "This Sidekick is attached to the Canvases above, so its runs may change their artifacts; you configure it and do not publish them yourself. "
   + "Save instructions that name the canvasId and each artifact's resourceId. For an artifact with storesData true, have each run change rows with write_artifact_data, "
   + "naming the tables and columns (describe_artifact_data shows them): a row write is safe when runs overlap and makes no new version. "
-  + "Only for a change to an artifact's files, have a run import it to its filePath and publish_resource that filePath with canvas set to the canvasId, rebuilding it from its sources.";
+  + "Only for a change to an artifact's files, have a run import it to its filePath and publish_resource that filePath with canvas set to the canvasId, rebuilding it from its sources. "
+  + "Before you report a saved row write ready, run it once with write_artifact_data on a row you can tell is a test, read it back with query_artifact_data, then delete every row your test added, restore any row it changed, and confirm with query_artifact_data that no test data is left: "
+  + "the person's first look at the app must show only their own data.";
 
 /** One of a Canvas's artifacts as an agent is told of it; see `HostedCanvas.agentArtifacts`. */
 function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind: string; version: number; filePath: string | null; storesData: boolean }) {

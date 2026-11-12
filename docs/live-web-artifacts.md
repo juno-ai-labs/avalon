@@ -445,8 +445,13 @@ not offered the tool:
    needs that person to be able to open the Canvas now, and so does a call
    that names a run id with no run row
    ([`automation-lifecycle.md`](automation-lifecycle.md#who-a-run-acts-as)).
-3. **Nobody else**: not a Sidekick's wizard conversation, a background agent,
-   a Chat under Organization authority, or any other parent kind.
+3. **A Sidekick's wizard** (its conversation `"0"`, a person's principal) may
+   write under the Sidekick run's rule, attachment included, and only as a
+   person who can open the site's Canvas now. It is there to check a row write
+   it saves before the first real run makes one; its guide says to use a row it
+   can tell is a test and delete it after.
+4. **Nobody else**: not a background agent, a Chat under Organization
+   authority, or any other parent kind.
 
 The read resolution runs first, then one WorkspaceDO call,
 `artifactDataWriteFacts`, in place of the read path's registry lookup. A site
@@ -925,6 +930,31 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-12 — A Sidekick's wizard can check the row write it saves
+
+**What changed:** `artifactDataWriteAccess` offers `write_artifact_data` to a
+Sidekick's wizard as `sidekick_wizard`, gated like a Sidekick run (the site's
+Canvas attached to the Sidekick and open) and, like a run a person asked for,
+only as a person who can open that Canvas. The wizard's Canvas guide tells it
+to test a saved write on a row it can tell is a test, read it back, delete
+what the test added, restore what it changed and confirm none is left, so the person's first
+look at the app shows only their own data.
+
+**Why:** In a production Canvas, a grocery list's sorting Sidekick was
+activated with its write untested. The wizard could check its SQL only
+against a local copy, said live writes were untested, and the Canvas agent
+passed that on to the user. The 2026-11-10 entry that kept the wizard out
+rejected it because read access is granted widely. This gate does not use
+read access: it is the attachment rule a run already passes.
+
+**Considered and rejected:** A tool that sends one test input through the
+app's invocation path. It would also prove the trigger binding, but it is a new
+tool and its run's row is just as real. Leaving the wizard out, which ships
+each app Sidekick unchecked.
+
+**Consequences:** A wizard test writes the person's real data. Only the guide
+asks the wizard to remove the row: nothing enforces it.
 
 ### 2026-11-11 — Active apps invoke their dedicated Sidekicks
 
