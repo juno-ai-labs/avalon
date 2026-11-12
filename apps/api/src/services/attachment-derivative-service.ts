@@ -1,3 +1,5 @@
+import type { Env } from "../env";
+import { requireUsageAllowance, isUsageAllowanceExhausted } from "./usage-admission";
 import { ATTACHMENT_CONVERTER_TIMEOUT_MS, ATTACHMENT_PROCESSING_LEASE_MS, classifyAttachmentKind } from "@rally/contracts";
 import {
   convertOfficeDocument,
@@ -147,6 +149,7 @@ export async function buildAttachmentDerivative(
       extractorVersion: ATTACHMENT_TEXT_EXTRACTOR_VERSION,
     };
   } catch (error) {
+    if (isUsageAllowanceExhausted(error)) return { status: "failed", errorCode: "usage_allowance_exhausted" };
     if (error instanceof ConversionFailure) return { status: "failed", errorCode: error.code };
     return { status: "failed", errorCode: "conversion_failed" };
   }
@@ -179,7 +182,8 @@ export async function materializeAttachmentDerivative(
     };
   }
   if ((resource.modelContentStatus === "failed" || resource.modelContentStatus === "unsupported")
-    && resource.modelContentExtractorVersion === ATTACHMENT_TEXT_EXTRACTOR_VERSION) {
+    && resource.modelContentExtractorVersion === ATTACHMENT_TEXT_EXTRACTOR_VERSION
+    && resource.modelContentErrorCode !== "usage_allowance_exhausted") {
     return {
       status: resource.modelContentStatus,
       errorCode: resource.modelContentErrorCode ?? (resource.modelContentStatus === "unsupported"
@@ -384,9 +388,10 @@ export async function ocrPdfWithWorkersAi(
    * resource, or the connection a connector read the file through — and only
    * keeps the usage event id readable; the workspace is what is billed.
    */
-  metering: { env: Parameters<typeof emitInferenceUsage>[0]; workspaceId: string; sourceId: string },
+  metering: { env: Parameters<typeof emitInferenceUsage>[0] & Pick<Env, "DB" | "USAGE_DB" | "BILLING_CONFIG">; workspaceId: string; sourceId: string },
 ): Promise<AttachmentOcrText> {
   if (signal.aborted) throw signal.reason;
+  await requireUsageAllowance(metering.env, metering.workspaceId);
   const response = await ai.toMarkdown({
     name: title.toLowerCase().endsWith(".pdf") ? title : `${title}.pdf`,
     blob: new Blob([exactArrayBuffer(bytes)], { type: "application/pdf" }),
@@ -496,7 +501,7 @@ async function convertPdf(input: BuildAttachmentDerivativeInput): Promise<Conver
   try {
     ocr = await input.ocr(input.bytes, extracted.pageCount);
   } catch (error) {
-    if (error instanceof ConversionFailure) throw error;
+    if (isUsageAllowanceExhausted(error) || error instanceof ConversionFailure) throw error;
     throw new ConversionFailure("pdf_ocr_failed");
   }
   if (ocr.pages.length !== extracted.pageCount || ocr.pages.every((page) => page.trim().length === 0)) {

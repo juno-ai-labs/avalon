@@ -1,3 +1,4 @@
+import { requireUsageAllowance } from "./usage-admission";
 import { MEMORY_EMBEDDING_MODEL, agentModelTraceFeature } from "@rally/contracts/runtime-config";
 import {
   OpenRouterClient,
@@ -62,6 +63,7 @@ export async function runEmbeddingInference(
     signal?: AbortSignal;
   },
 ): Promise<EmbeddingResult> {
+  await requireUsageAllowance(env, input.context.workspaceId);
   const feature = input.feature;
   const substreamId = input.context.workstreamId
     ? input.context.substreamId ?? "0"
@@ -191,6 +193,7 @@ export async function runStructuredInference<T>(
   inputTokens: number | null;
   outputTokens: number | null;
 }> {
+  if (input.context.workspaceId) await requireUsageAllowance(env, input.context.workspaceId);
   const routing = input.routing
     ? AgentModelRoutingSchema.parse(input.routing)
     : await resolveAgentModelRouting(env, input.role, input.context, true);

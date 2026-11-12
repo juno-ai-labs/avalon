@@ -46,6 +46,29 @@ turn ID carries `:compaction:` is metered as `context_compaction`.
 
 ## How it works
 
+### Admission
+
+When billing sets `enforceUsageLimits`, `services/usage-admission.ts` compares the
+current anniversary week's exact Organization-paid micro-USD total with the
+current plan allowance before new paid provider work. It is shared by agent runs,
+structured inference, embeddings, classifiers, media generation, OCR and speech.
+Active/trialing subscriptions with a ready payment method and opted-in overages
+can continue beyond the quota. An expired no-card trial uses Start even while its
+Stripe cancellation webhook is delayed. Engineering plan overrides are retained.
+No Stripe request sits on this path. Calls already admitted may finish, and queued
+usage may not yet be in the ledger; this check does not reserve concurrent spend.
+The UI's rounded percentages do not decide admission. Configuration parsing is
+cached by its exact value; regional account and usage reads run concurrently.
+
+Quota exhaustion does not block human conversation: shared-message classification
+returns a human-only admission without a provider call. Semantic Sidekick gates
+return a named refusal for that event. Search embedding jobs preserve the named
+quota error and re-enqueue toward the weekly reset (each delivery delay respects
+Cloudflare's 12-hour maximum), acknowledging only after the new delivery is
+accepted; lexical results remain available. These billing holds do not consume
+transport retries. OCR records the quota error and retries on the next explicit
+read instead of permanently caching it as a broken PDF.
+
 ### Sending
 
 A call site calls `emitInferenceUsage` with the cost in cents as the provider or
@@ -332,6 +355,15 @@ An uncertain write may have committed: inspect before retrying.
 
 
 ## Changelog
+
+### 2026-11-12 — Payment-aware usage admission
+
+Automatic no-card Grow trials need to stop incurring new provider costs after
+included usage is exhausted. Shared admission checks use exact weekly ledger
+cost, allowing overages only with billing readiness and consent. Existing
+asynchronous metering stays intact, so in-flight work and delayed ledger events
+can exceed the threshold; enforcing exact concurrent reservations would require
+a separate mechanism. The Stripe integration owns payment and trial lifecycle.
 
 ### 2026-11-11 — Four plan allowances and cancellation cutoffs
 

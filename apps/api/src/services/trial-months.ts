@@ -1,3 +1,4 @@
+import { addBillingMonths } from "./billing-calendar";
 import { z } from "zod";
 import { GrantTrialMonthsSchema, TrialMonthsGrantSchema, type GrantTrialMonths, type TrialMonthsGrant } from "@rally/contracts/billing";
 import type { Env } from "../env";
@@ -17,19 +18,12 @@ const Subscription = z.object({
   }) })),
   items: z.object({ data: z.array(z.object({ price: z.object({ id: z.string(), product: z.string() }) })) }),
 });
+const automaticSignupCancellation = (sub: z.infer<typeof Subscription>) =>
+  sub.metadata.signup_trial_conversion_pending === "true" && sub.status === "trialing" &&
+  !sub.cancel_at_period_end && sub.cancel_at === sub.trial_end;
 interface Delivery { subscriptionId: string; customerId: string; previousEnd: number; trialEnd: number }
 interface Operation { request_json: string; delivery_json: string; result_json: string | null; error_code: string | null }
 const subscription = (env: Env, id: string) => stripe(env, `subscriptions/${encodeURIComponent(id)}?expand[]=discounts`, Subscription);
-
-/** Calendar months clamp to the last day of a shorter target month, in UTC. */
-function addMonths(at: number, months: number) {
-  const date = new Date(at * 1000); const day = date.getUTCDate();
-  date.setUTCDate(1); date.setUTCMonth(date.getUTCMonth() + months);
-  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
-  date.setUTCDate(Math.min(day, lastDay));
-  if (!Number.isFinite(date.getTime())) throw new ApiError(400, "billing_trial_months_date_invalid", "The requested months exceed supported calendar dates");
-  return date.getTime() / 1000;
-}
 
 async function planDelivery(env: Env, workspaceId: string, request: GrantTrialMonths): Promise<Delivery> {
   const open = await env.DB.prepare("SELECT 1 FROM workspaces WHERE id = ? AND region = ? AND abandoned_at IS NULL").bind(workspaceId, env.AVALON_REGION).first();
@@ -42,7 +36,7 @@ async function planDelivery(env: Env, workspaceId: string, request: GrantTrialMo
   const offer = config.offers.find(item => item.id === account.offer_id && item.plan !== "starter" && sub.items.data.some(line => line.price.id === item.priceId));
   if (!offer || sub.customer !== account.customer_id || sub.items.data.length !== 1 || !["active", "trialing"].includes(sub.status))
     throw new ApiError(409, "billing_trial_subscription_ineligible", "Additional free months require an active or trialing paid plan");
-  if (sub.cancel_at_period_end || sub.cancel_at !== null)
+  if (sub.cancel_at_period_end || (sub.cancel_at !== null && !automaticSignupCancellation(sub)))
     throw new ApiError(409, "billing_trial_subscription_canceling", "Resume the subscription before granting additional free months");
   const price = await stripe(env, `prices/${encodeURIComponent(offer.priceId)}`, z.object({ recurring: z.object({ interval: z.string(), interval_count: z.number(), usage_type: z.string() }).nullable() }));
   if (price.recurring?.interval !== "month" || price.recurring.interval_count !== 1 || price.recurring.usage_type !== "licensed")
@@ -58,7 +52,7 @@ async function planDelivery(env: Env, workspaceId: string, request: GrantTrialMo
       throw new ApiError(409, "billing_trial_discount_not_extendable", "A full once-only or indefinite fee waiver must be resolved before adding trial months");
     previousEnd = Math.max(previousEnd, discount.end);
   }
-  return { subscriptionId: sub.id, customerId: sub.customer, previousEnd, trialEnd: addMonths(previousEnd, request.months) };
+  return { subscriptionId: sub.id, customerId: sub.customer, previousEnd, trialEnd: addBillingMonths(previousEnd, request.months) };
 }
 
 /** Internal operator write, serialized with checkout and reconciliation. Stripe
@@ -92,11 +86,11 @@ export async function grantTrialMonths(env: Env, workspaceId: string, input: Gra
   // The marker and fixed deadline are one Stripe write. A delayed retry cannot
   // add another N months, shorten a later extension, or restart a canceled plan.
   if (sub.metadata.rally_trial_operation_id !== request.operationId && (sub.trial_end ?? 0) < saved.trialEnd) {
-    if (!["active", "trialing"].includes(sub.status) || sub.cancel_at_period_end || sub.cancel_at !== null || saved.trialEnd <= Date.now() / 1000)
+    if (!["active", "trialing"].includes(sub.status) || sub.cancel_at_period_end || (sub.cancel_at !== null && !automaticSignupCancellation(sub)) || saved.trialEnd <= Date.now() / 1000)
       return fail("billing_trial_grant_stale");
     try {
       await stripe(env, `subscriptions/${encodeURIComponent(saved.subscriptionId)}`, Subscription, {
-        trial_end: String(saved.trialEnd), proration_behavior: "none", "expand[0]": "discounts",
+        trial_end: String(saved.trialEnd), ...(automaticSignupCancellation(sub) ? { cancel_at: String(saved.trialEnd) } : {}), proration_behavior: "none", "expand[0]": "discounts",
         "metadata[rally_trial_operation_id]": request.operationId,
         "metadata[rally_trial_months]": String(request.months), "metadata[rally_trial_reason]": request.reason,
       }, `trial-months:${workspaceId}:${request.operationId}`);

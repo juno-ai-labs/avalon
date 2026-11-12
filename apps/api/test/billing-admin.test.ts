@@ -285,3 +285,16 @@ it('inspects live price currency options and coupon terms without publishing the
   expect(result.coupons).toEqual([{ id: 'coupon_pilot', valid: true, percentOff: 100, amountOff: null, currency: null, duration: 'repeating', months: 2, productIds: ['prod_grow','prod_max'] }]);
   expect(result.revision).toBe(0); expect(provider.writes).toHaveLength(0);
 });
+
+
+it('publishes, preserves and disables the automatic signup campaign through the versioned catalog', async () => {
+  const { env } = await seed();
+  const signupTrial = { offerId: 'grow', currency: 'usd', months: 2, startsAt: '2026-11-13T00:00:00Z' };
+  const request = { ...identity, region: 'global' as const, kind: 'catalog' as const, expectedRevision: 0, catalog: { offers: [grow,max], pilotCouponId: null, signupTrial } };
+  await administerBillingCatalog(env, request);
+  expect(billingConfig(await resolveBillingEnvironment(env)).signupTrial).toEqual(signupTrial);
+  await administerBillingCatalog(env, { ...request, operationId: nextId, expectedRevision: 1, catalog: { offers: [grow,max], pilotCouponId: null } });
+  expect(billingConfig(await resolveBillingEnvironment(env)).signupTrial).toEqual(signupTrial);
+  await administerBillingCatalog(env, { ...request, operationId: '01900000-0000-7000-8000-0000000000dd', expectedRevision: 2, catalog: { ...request.catalog, signupTrial: null } });
+  expect(billingConfig(await resolveBillingEnvironment(env)).signupTrial).toBeUndefined();
+});
