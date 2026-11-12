@@ -1,6 +1,4 @@
 import { modelAgentId } from "@rally/contracts";
-import type { z } from "zod";
-import type { AgentMessageContentSchema } from "../services/agent-message-content";
 
 /**
  * How an admitted agent message reads to the model that receives it.
@@ -18,7 +16,14 @@ import type { AgentMessageContentSchema } from "../services/agent-message-conten
  * which is what makes the model-facing attribution load-bearing rather than
  * cosmetic.
  */
-export function renderAgentMessage(content: z.infer<typeof AgentMessageContentSchema>, text: string): string {
+export function renderAgentMessage(content: {
+  notice?: "failed" | "finished_without_reply" | null | undefined;
+  noticeReason?: string | null | undefined;
+  senderAgentId: string;
+  messageId: string;
+  teamId: string;
+  attachmentIds: readonly string[];
+}, text: string): string {
   if (content.notice) {
     return [
       content.notice === "failed"

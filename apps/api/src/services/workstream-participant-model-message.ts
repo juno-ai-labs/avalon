@@ -1,5 +1,5 @@
 import { annotationModelSources } from "./annotation-model-sources";
-import { renderAnnotations } from "@rally/contracts";
+import { renderAnnotations } from "@rally/prompts/contracts/artifact-annotations";
 import { AutomationActivationV1Schema, ElicitationSchema, automationActivationName } from "@rally/contracts";
 import { z } from "zod";
 import type { ModelMessage } from "@rally/agent-harness";
@@ -9,12 +9,13 @@ import {
   buildAttachmentModelParts,
   type ModelAttachmentSource,
 } from "./attachment-model-content";
-import { ELICITATION_RESPONSE_INSTRUCTION } from "../prompts/elicitation-response";
-import { renderExternalEvidenceMessage, renderExternalRequestMessage } from "../prompts/external-message";
-import { renderImportedSourceMessage } from "../prompts/imported-source-message";
-import { renderLeadingAssistantMessage } from "../prompts/leading-assistant-message";
-import { OVERHEARD_HEADER } from "../prompts/overheard-header";
-export { renderRunContinuationNote } from "../prompts/run-continuation-note";
+import { ELICITATION_RESPONSE_INSTRUCTION } from "@rally/prompts/api/elicitation-response";
+import { renderExternalEvidenceMessage, renderExternalRequestMessage } from "@rally/prompts/api/external-message";
+import { renderImportedSourceMessage } from "@rally/prompts/api/imported-source-message";
+import { renderLeadingAssistantMessage } from "@rally/prompts/api/leading-assistant-message";
+import { OVERHEARD_HEADER } from "@rally/prompts/api/overheard-header";
+export { renderRunContinuationNote } from "@rally/prompts/api/run-continuation-note";
+export { providerDisplayName } from "@rally/prompts/api/provider-display-name";
 
 /**
  * Who produced a participant turn, as the model is told it.
@@ -327,10 +328,6 @@ function externalAttributedMessage(
       ? renderExternalEvidenceMessage(actor, content)
       : renderExternalRequestMessage(actor, content, overheard),
   };
-}
-
-export function providerDisplayName(provider: string): string {
-  return provider.length === 0 ? provider : `${provider[0]!.toLocaleUpperCase()}${provider.slice(1)}`;
 }
 
 export async function projectParticipantModelMessage(

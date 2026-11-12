@@ -63,6 +63,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@rally/prompts':
+        specifier: workspace:*
+        version: link:../../packages/prompts
       '@turbopuffer/turbopuffer':
         specifier: ^2.8.0
         version: 2.8.0
@@ -408,6 +411,9 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@rally/prompts':
+        specifier: workspace:*
+        version: link:../../packages/prompts
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -548,6 +554,9 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@rally/prompts':
+        specifier: workspace:*
+        version: link:../prompts
       '@rally/skills':
         specifier: workspace:*
         version: link:../skills
@@ -567,6 +576,9 @@ importers:
 
   packages/bind:
     dependencies:
+      '@rally/prompts':
+        specifier: workspace:*
+        version: link:../prompts
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -586,6 +598,9 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@rally/prompts':
+        specifier: workspace:*
+        version: link:../prompts
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -646,6 +661,9 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@rally/prompts':
+        specifier: workspace:*
+        version: link:../../packages/prompts
       agents:
         specifier: 0.22.0
         version: 0.22.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.5.4))(@modelcontextprotocol/server@2.0.0)(react@19.2.8)(rolldown@1.2.5)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))(zod@4.5.4)
@@ -674,6 +692,19 @@ importers:
       '@types/node':
         specifier: 26.4.0
         version: 26.4.0
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/prompts:
+    dependencies:
+      '@rally/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
       typescript:
         specifier: 'catalog:'
         version: 5.9.3

@@ -38,7 +38,7 @@ import {
   parseVerifiedLinearAgentSessionEvent,
   type LinearAgentProtocolCommand,
 } from "./linear-agent";
-import { LINEAR_SYSTEM_MESSAGE } from "./prompts/linear";
+import { LINEAR_SYSTEM_MESSAGE } from "@rally/prompts/connectors/linear";
 
 const LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql";
 const LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token";

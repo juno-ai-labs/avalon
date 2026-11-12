@@ -1,4 +1,4 @@
-import { GoogleFileWriteAuthorizationGuidance } from "@rally/connectors";
+import { GoogleFileWriteAuthorizationGuidance } from "../connectors/google-file-write-authorization";
 import { googleMeetingNotesGuidance } from "./google-meeting-notes-guidance";
 
 /**

@@ -1,4 +1,4 @@
-import type { ModelMessage } from "@rally/agent-harness";
+import type { PromptPartsMessage } from "../harness/types";
 
 /** System prompt for naming a pasted text file from its content. */
 const PASTED_TEXT_NAME_SYSTEM_PROMPT = [
@@ -9,7 +9,7 @@ const PASTED_TEXT_NAME_SYSTEM_PROMPT = [
 ].join(" ");
 
 /** The system policy and the file's opening sample, labelled untrusted. */
-export function renderPastedTextNameMessages(extension: string, sample: string): ModelMessage[] {
+export function renderPastedTextNameMessages(extension: string, sample: string): PromptPartsMessage[] {
   return [
     {
       role: "system",

@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { TRAILING_USER_PLACEHOLDER } from "../prompts/trailing-user-placeholder";
+import { TRAILING_USER_PLACEHOLDER } from "@rally/prompts/bind/trailing-user-placeholder";
 
 /**
  * Heuristic issues detected in a `messages` array before it's sent to the

@@ -6,8 +6,8 @@ import type {
 } from "@rally/agent-harness";
 import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
-import { TERMINAL_PLUGIN_SYSTEM_MESSAGE } from "../../prompts/terminal-plugin";
-export { TERMINAL_PLUGIN_SYSTEM_MESSAGE } from "../../prompts/terminal-plugin";
+import { TERMINAL_PLUGIN_SYSTEM_MESSAGE } from "@rally/prompts/api/terminal-plugin";
+export { TERMINAL_PLUGIN_SYSTEM_MESSAGE } from "@rally/prompts/api/terminal-plugin";
 
 export const TERMINAL_PLUGIN_ID = "rally:terminal";
 

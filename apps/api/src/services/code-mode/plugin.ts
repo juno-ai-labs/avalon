@@ -35,10 +35,11 @@ import {
   CODE_PROGRAM_TOOL_TIMEOUT_MS,
   CODE_RESULT_MAX_BYTES,
 } from "./limits";
-import { CODE_SYSTEM_MESSAGE, renderCodeSystemMessage } from "../../prompts/code-plugin";
-import { CUSTOM_TOOLS_SYSTEM_MESSAGE } from "../../prompts/custom-tools-plugin";
-export { CUSTOM_TOOLS_SYSTEM_MESSAGE } from "../../prompts/custom-tools-plugin";
-export { CODE_API_FRAMING, CODE_SYSTEM_MESSAGE } from "../../prompts/code-plugin";
+import { codeSystemMessage, renderCodeSystemMessage } from "@rally/prompts/api/code-plugin";
+import { CUSTOM_TOOLS_SYSTEM_MESSAGE } from "@rally/prompts/api/custom-tools-plugin";
+export { CUSTOM_TOOLS_SYSTEM_MESSAGE } from "@rally/prompts/api/custom-tools-plugin";
+export { CODE_API_FRAMING } from "@rally/prompts/api/code-plugin";
+export const CODE_SYSTEM_MESSAGE = codeSystemMessage(CODE_PROGRAM_DEADLINE_MS);
 
 const LogLineSchema = z.object({ level: z.string(), text: z.string() });
 
@@ -438,7 +439,7 @@ export function createCodePlugin(options: {
       searchAliases: ["program", "script", "javascript", "compose", "calculate", "math", "loop", "filter"],
       description: CODE_PLUGIN_DESCRIPTION,
       systemMessage: CODE_SYSTEM_MESSAGE,
-      renderSystemMessage: (runtime) => renderCodeSystemMessage(renderCallableApi(callableTools(runtime, null))),
+      renderSystemMessage: (runtime) => renderCodeSystemMessage(renderCallableApi(callableTools(runtime, null)), CODE_PROGRAM_DEADLINE_MS),
       attachRuntimeView: (runtime) => {
         view = runtime;
       },

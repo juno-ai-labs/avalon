@@ -16,7 +16,7 @@ import { toolResultMessage } from "../plugins/tool-message";
 // Imported from the module, not the `tools` barrel: this subpath's runtime
 // graph is deliberately free of `zod`, which the barrel's siblings pull in.
 import { stripControlChars } from "../tools/control-chars";
-import { renderInterruptMessage } from "../prompts/interrupt";
+import { renderInterruptMessage } from "@rally/prompts/bind/interrupt";
 
 /**
  * The agent iteration engine: call the model, run the tools it asked for,

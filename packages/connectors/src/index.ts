@@ -110,8 +110,8 @@ import { createLinearConnector, type LinearConnectorConfig } from "./linear";
 import { createNotionConnector, type NotionConnectorConfig } from "./notion";
 import { createSlackConnector, type SlackConnectorConfig } from "./slack";
 import { createXConnector, type XConnectorConfig } from "./x";
-import { GENERIC_WEBHOOK_SYSTEM_MESSAGE } from "./prompts/generic-webhook";
-import { GOOGLE_SYSTEM_MESSAGE } from "./prompts/google";
+import { GENERIC_WEBHOOK_SYSTEM_MESSAGE } from "@rally/prompts/connectors/generic-webhook";
+import { GOOGLE_SYSTEM_MESSAGE } from "@rally/prompts/connectors/google";
 
 export {
   assertPrincipalAccess,
@@ -557,7 +557,7 @@ function googleRejectedArgument(
   return null;
 }
 
-export { GoogleFileWriteAuthorizationGuidance } from "./prompts/google-file-write-authorization";
+export { GoogleFileWriteAuthorizationGuidance } from "@rally/prompts/connectors/google-file-write-authorization";
 
 /**
  * The cursor parameter every paginated Google tool declares, and what it says.

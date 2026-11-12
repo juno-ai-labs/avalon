@@ -8,7 +8,7 @@ import type {
   SkillSummary,
   SkillWarn,
 } from "./types";
-import { renderSkillResourceHint } from "../prompts/skill-resource-hint";
+import { renderSkillResourceHint } from "@rally/prompts/bind/skill-resource-hint";
 
 /**
  * Tier 2 — resolving the bodies of the skills a run has loaded.

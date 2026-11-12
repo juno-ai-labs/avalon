@@ -36,8 +36,8 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { searchAudienceGroup, searchAudienceGroupIds } from "./search-audience";
 import { workspaceSearchIndex, type TextSearchCandidate } from "./text-search";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { POST_DEFAULT_SENTENCE, conversationsSystemMessage } from "../prompts/conversations-plugin";
-export { RUN_POST_INSTRUCTION, conversationsSystemMessage } from "../prompts/conversations-plugin";
+import { POST_DEFAULT_SENTENCE, conversationsSystemMessage } from "@rally/prompts/api/conversations-plugin";
+export { RUN_POST_INSTRUCTION, conversationsSystemMessage } from "@rally/prompts/api/conversations-plugin";
 
 /**
  * `rally:conversations`: list, read, and post to Rally conversations, with a

@@ -7,7 +7,7 @@ import { diagnosticErrorCode } from "../observability/logger";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-export { openingWithEventContent } from "../prompts/sidekick-event-content";
+export { openingWithEventContent } from "@rally/prompts/api/sidekick-event-content";
 
 /**
  * What an admitted event is about, read by the host for the run it started.
@@ -23,10 +23,8 @@ export { openingWithEventContent } from "../prompts/sidekick-event-content";
  * Never throws: content that cannot be read leaves the run its event and a
  * line saying why. `docs/sidekick-sources.md` owns the rule.
  */
-export type SidekickEventContent =
-  | { outcome: "read"; text: string; truncated: boolean }
-  | { outcome: "none" }
-  | { outcome: "unavailable"; code: string };
+import type { SidekickEventContent } from "@rally/prompts/api/sidekick-event-content";
+export type { SidekickEventContent };
 
 export async function readSidekickEventContent(
   env: Env,

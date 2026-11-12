@@ -5,7 +5,7 @@ import { ConnectorError, connectorCapabilitySupportsScope, type ResolvedConnecto
 import { z } from "zod";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
-import { renderConnectorServerInstructions } from "../prompts/connector-server-instructions";
+import { renderConnectorServerInstructions } from "@rally/prompts/api/connector-server-instructions";
 
 const ServerMetadataSchema = z.object({ description: z.string(), instructions: z.string().optional() });
 

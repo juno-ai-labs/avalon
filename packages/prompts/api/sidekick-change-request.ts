@@ -1,5 +1,5 @@
 import { SIDEKICK_CHANGE_REQUEST_HEADER, type WorkstreamWorkflowInput } from '@rally/contracts';
-import { providerDisplayName } from '../services/workstream-participant-model-message';
+import { providerDisplayName } from './provider-display-name';
 
 /**
  * The text the wizard reads for a run's change request. The host writes the
