@@ -2425,7 +2425,11 @@ sources, so they receive their own trigger while reusing the existing run
 engine, delegation, tools and lifecycle. Bindings live in accepted definitions,
 with one app per Sidekick and unique names per app; another registry would
 repeat authority already held by WorkspaceDO. Runs use existing write behavior,
-and the app receives only durable admission before the run executes.
+and the app receives only durable admission before the run executes. The
+opening is projected into model history as labelled user-role app data only
+when it is the selected trigger; storing it as a system transcript row alone
+hides the submitted input from the model. The live walkthrough caught that
+gap, so the workerd flow also asserts on the provider-facing input.
 
 
 ### 2026-11-10 — A Sidekick runs as itself, and delegation no longer decides what starts it
