@@ -24,7 +24,7 @@ import {
   type UsageReading,
 } from '../lib/organization-usage';
 import { Badge, Button, DropdownSelect, Meter, Tip } from './primitives';
-import { IconAlertCircle } from '@tabler/icons-react';
+import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react';
 import { RailItem } from './rail-item';
 
 const METER_LABEL = 'Weekly quota left';
@@ -176,26 +176,49 @@ export function OrganizationUsageMenuItem({ api, onSelect }: {
 }
 
 /**
- * The rail's warning that Rally has stopped taking new work: the week's
- * included usage is spent and overage billing is off. It sits above the
+ * The rail's usage warning: red when Rally has stopped taking new work (the
+ * week's included usage is spent and overage billing is off), yellow when it
+ * is close to stopping. It sits above the
  * account tile because the remedy is in Settings, and it is the only notice a
  * person gets when the refusal landed in a Sidekick or a background agent.
  * Shown from the server's own admission decision (`allowanceExhausted`), never
  * re-derived here, so it clears the moment work would be admitted again.
  */
+/**
+ * At or below this share of the week's allowance left, the rail warns ahead of
+ * the stop. The number is the product owner's (set 2026-11-12), not derived.
+ */
+export const USAGE_LOW_WARNING_PERCENT = 10;
+
 export function UsageLimitRailWarning({ api, onOpen }: {
   api: OrganizationUsageApi | null;
   onOpen: () => void;
 }): React.JSX.Element | null {
   const state = useOrganizationUsage(api);
-  if (state.status !== 'ready' || state.reading.usage.allowanceExhausted !== true) return null;
-  const explanation = `This week's included usage is used up and overage billing is off, so Rally, Sidekicks and background agents are paused. An administrator can turn on overage billing in Settings. ${usageResetLabel(state.reading.usage.weekResetsAt)}.`;
+  if (state.status !== 'ready') return null;
+  const { usage } = state.reading;
+  const reset = `${usageResetLabel(usage.weekResetsAt)}.`;
+  const warning = usage.allowanceExhausted === true
+    ? {
+        level: 'exhausted',
+        name: 'Usage limit reached',
+        explanation: `This week's included usage is used up and overage billing is off, so Rally, Sidekicks and background agents are paused. An administrator can turn on overage billing in Settings. ${reset}`,
+      }
+    : usage.stopsAtAllowance === true && usage.quotaRemainingPercent <= USAGE_LOW_WARNING_PERCENT
+      ? {
+          level: 'low',
+          name: 'Usage running low',
+          explanation: `${usage.quotaRemainingPercent}% of this week's included usage is left. When it runs out, Rally, Sidekicks and background agents pause unless an administrator turns on overage billing in Settings. ${reset}`,
+        }
+      : null;
+  if (!warning) return null;
+  const Icon = warning.level === 'exhausted' ? IconAlertCircle : IconAlertTriangle;
   return (
-    <Tip describesTrigger={false} label={explanation} side="right">
+    <Tip describesTrigger={false} label={warning.explanation} side="right">
       <RailItem
-        aria-label={`Usage limit reached. ${explanation}`}
+        aria-label={`${warning.name}. ${warning.explanation}`}
         className="navigation-rail-usage-warning"
-        icon={<IconAlertCircle aria-hidden="true" className="navigation-rail-usage-warning-icon" size={22} stroke={1.9} />}
+        icon={<Icon aria-hidden="true" className={`navigation-rail-usage-warning-icon is-${warning.level}`} size={22} stroke={1.9} />}
         label="Usage"
         onClick={onOpen}
       />

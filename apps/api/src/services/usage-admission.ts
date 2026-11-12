@@ -8,9 +8,14 @@ let configuration: { raw: string; value: ReturnType<typeof billingConfig> } | un
 
 export const isUsageAllowanceExhausted = (error: unknown): boolean => asApiError(error)?.code === "usage_allowance_exhausted";
 
+/**
+ * `stopsAtLimit` says whether reaching the allowance would refuse work at all:
+ * false where limits are not enforced or overages are admitted. It is what lets
+ * a client warn about a low allowance only when running out would matter.
+ */
 export type UsageAllowance =
-  | { exhausted: false }
-  | { exhausted: true; weekStart: string; resetsAt: number };
+  | { exhausted: false; stopsAtLimit: boolean }
+  | { exhausted: true; stopsAtLimit: true; weekStart: string; resetsAt: number };
 
 /**
  * Whether new paid work would be refused right now: the decision itself,
@@ -24,10 +29,10 @@ export async function readUsageAllowance(
   workspaceId: string,
   now = Date.now(),
 ): Promise<UsageAllowance> {
-  if (!env.BILLING_CONFIG) return { exhausted: false };
+  if (!env.BILLING_CONFIG) return { exhausted: false, stopsAtLimit: false };
   if (configuration?.raw !== env.BILLING_CONFIG) configuration = { raw: env.BILLING_CONFIG, value: billingConfig(env) };
   const config = configuration.value;
-  if (!config.enforceUsageLimits) return { exhausted: false };
+  if (!config.enforceUsageLimits) return { exhausted: false, stopsAtLimit: false };
   const [org, usage] = await Promise.all([env.DB.prepare(`SELECT w.plan, w.created_at, w.billing_plan_override,
     b.status, b.trial_ends_at, b.overage_enabled, b.overage_started_at, b.payment_method_ready
     FROM workspaces w LEFT JOIN billing_accounts b ON b.workspace_id = w.id WHERE w.id = ?`)
@@ -42,12 +47,12 @@ export async function readUsageAllowance(
   if (!org) throw new ApiError(404, "billing_account_not_found", "Organization not found");
   const trialExpiredWithoutPayment = org.status === "trialing" && (org.trial_ends_at ?? 0) <= now / 1000 && !org.payment_method_ready;
   const subscribed = ["active", "trialing"].includes(org.status ?? "") && !trialExpiredWithoutPayment;
-  if (subscribed && org.overage_enabled === 1 && org.payment_method_ready === 1 && org.overage_started_at !== null) return { exhausted: false };
+  if (subscribed && org.overage_enabled === 1 && org.payment_method_ready === 1 && org.overage_started_at !== null) return { exhausted: false, stopsAtLimit: false };
   const parsed = PlanIdSchema.safeParse(subscribed || org.billing_plan_override ? org.plan : config.unpaidPlan);
   if (!parsed.success) throw new ApiError(500, "billing_plan_invalid", "Organization plan is invalid");
   const week = new Date(usageWeekStart(Date.parse(org.created_at), now)).toISOString();
-  if (usage?.week_start !== week || usage.spent < weeklyQuotaMicrousd(parsed.data)) return { exhausted: false };
-  return { exhausted: true, weekStart: week, resetsAt: usageWeekEnd(Date.parse(org.created_at), now) };
+  if (usage?.week_start !== week || usage.spent < weeklyQuotaMicrousd(parsed.data)) return { exhausted: false, stopsAtLimit: true };
+  return { exhausted: true, stopsAtLimit: true, weekStart: week, resetsAt: usageWeekEnd(Date.parse(org.created_at), now) };
 }
 
 /** Admit new paid work against the recorded ledger. In-flight provider work
