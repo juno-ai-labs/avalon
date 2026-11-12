@@ -14,10 +14,10 @@ import {
   parseTerminalRegionConfiguration,
   TerminalArgumentSchemas,
   TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
-  TERMINAL_PLUGIN_SYSTEM_MESSAGE,
   TERMINAL_TOOL_NAMES,
   type TerminalToolExecutors,
 } from "./contract";
+import { renderTerminalPluginSystemMessage } from "../../prompts/terminal-plugin";
 import { canvasArtifactNoter, resolveTerminalPublicationHome, resolveTerminalRunScope, workspaceAgentOwnerLookup, type TerminalRunScope } from "./authority";
 import { TerminalSandboxCoordinator } from "./coordinator";
 import { createHarnessRunPortFactory } from "../../runtime/harness-run-port";
@@ -413,15 +413,9 @@ export async function createAvalonTerminalPlugin(
       workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)),
     )).terminalNetworkMode({ workspaceId: input.workspaceId }),
   );
-  const egressGuidance = policy.mode === "full_internet"
-    ? " Current workspace egress is Full internet."
-    : " Current workspace egress is Trusted only; a network failure may mean the destination is not approved, so ask a workspace owner to review Terminal network targets instead of trying to bypass it.";
-  const sidekickGuidance = input.parentKind === "automation"
-    ? " This Sidekick's wizard, activations, and background agents share one sandbox. Eligible delegates can use these shared files; changing the coordinating user or withdrawing a delegation does not erase earlier files. New resource imports still require the selected user's current access. Publications belong to its home conversation when it has one, so reuse the original site's path to update it. import_resource can resolve a known Rally resource ID using the execution user's read access even when the resource is not attached or listed. Try the known site ID before requesting an attachment; mentioning an ID does not change permissions. Activations can overlap; the mutation lease protects one tool call, not a whole workflow. Load tracking-seen-or-done-items and claim a shared output before a multi-step update; use separate directories for independent work."
-    : "";
   const plugin = createTerminalPlugin(
     observedExecutors,
-    `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${sidekickGuidance}${egressGuidance}`,
+    renderTerminalPluginSystemMessage({ sidekick: input.parentKind === "automation", fullInternet: policy.mode === "full_internet" }),
     {
       // Only `publish_resource` needs one: the other re-enterable Terminal
       // writes resolve their effect from the receipt, so re-entering them is
