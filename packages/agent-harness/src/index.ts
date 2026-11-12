@@ -4622,6 +4622,12 @@ export interface RunHarnessInput {
   }) => void | Promise<void>;
   onLiveness?: (stage: "before_model" | "during_stream" | "after_tool" | "iteration_boundary") => void | Promise<void>;
   /**
+   * Reduce what made a run fail to a code-shaped diagnostic for
+   * `HarnessFailure.causeCode`. A port failure is described by what its port
+   * threw, not by the wrapper that names the port. Must not throw.
+   */
+  describeFailureCause?: (cause: unknown) => string;
+  /**
    * Called immediately before Bind would accept a tool-less assistant turn as
    * the end of the run. Returning a non-empty string appends a model-only user
    * message to the live transcript and continues the same bounded loop.
@@ -4698,6 +4704,14 @@ export interface HarnessFailure {
     | "platform";
   code: HarnessFailureCode;
   message: string;
+  /**
+   * What the thrown value said, reduced to a diagnostic code by the host's
+   * `describeFailureCause`. `code` and `message` name the boundary that failed
+   * ("Run liveness renewal failed"); this names why. Absent when the host
+   * supplies no describer. Never the raw value: the failure crosses RPC and
+   * reaches logs, and a caught error's own text may hold member content.
+   */
+  causeCode?: string;
 }
 
 /**
