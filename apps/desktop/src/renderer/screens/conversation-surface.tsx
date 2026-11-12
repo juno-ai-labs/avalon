@@ -2732,7 +2732,7 @@ function ConversationSurfaceContent({
       {/* After the dock rather than in it, so the composer is the same element
           before and after the first message and only the rows around it change. */}
       {starting && renderStarters && <div className="conversation-starters">
-        {renderStarters({ send: sendStarter, disabled: sendBlocked || sending })}
+        {renderStarters({ send: sendStarter, disabled: sendBlocked || sending || attachmentDraft.uploading })}
       </div>}
 
       {railVariant === 'context' && panel?.kind === 'host' && (railOpen || railLeaving) && <RailSurface
