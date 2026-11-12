@@ -599,6 +599,35 @@ export class SiteData extends DurableObject {
     expect(await site.page()).toEqual([{ message_id: "m1", subject: "Subject m1" }]);
   });
 
+  it("lets a Sidekick's wizard change an attached Canvas's site only as a person who can open that Canvas", async () => {
+    await seedSidekick("0");
+    // The author's alone: the colleague cannot open it.
+    const privateRoom = asWorkstreamId(crypto.randomUUID());
+    await seedRoom(privateRoom, "Private");
+    const site = await statefulSite("wizard-inbox", privateRoom);
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: privateRoom,
+      resourceId: site.resourceId, attachedByUserId: AUTHOR_ID });
+    // Linked into a Canvas the colleague can open, the site is readable to them; its own Canvas still is not.
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId: site.resourceId, attachedByUserId: AUTHOR_ID });
+    await projectResourceAccess();
+    const wizard = (userId: typeof AUTHOR_ID) => writeTool({
+      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal: { type: "user", userId }, reader: userId,
+      write: { kind: "sidekick_wizard", sidekickId: AUTOMATION_ID },
+    });
+    // The author can read the site, and that is not enough before the Canvas is attached.
+    await expect(wizard(AUTHOR_ID)(site.resourceId, "m1")).rejects.toMatchObject({ code: "artifact_canvas_not_attached" });
+    expect(await site.page()).toEqual([]);
+
+    expect(await workspace().attachSidekickConversation({
+      workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID, userId: AUTHOR_ID, reference: privateRoom,
+    })).toMatchObject({ ok: true });
+    await expect(wizard(AUTHOR_ID)(site.resourceId, "m1")).resolves.toMatchObject({ output: { resource: site.resourceId } });
+    // A wizard turn by someone who cannot open the Canvas writes nothing through the attachment.
+    await expect(wizard(COLLEAGUE_ID)(site.resourceId, "m2")).rejects.toMatchObject({ code: "resource_not_found" });
+    expect(await site.page()).toEqual([{ message_id: "m1", subject: "Subject m1" }]);
+  });
+
   it("lets a Canvas's Chat change the rows of a site linked to that Canvas, and of no other site", async () => {
     const linked = await statefulSite("linked-inbox", ROOM_ID);
     // The same author's site in another Canvas: readable by them, not linked here.
