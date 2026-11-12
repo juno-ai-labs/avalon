@@ -35,9 +35,9 @@ Stripe owns `trial_end` and `trial_settings.end_behavior.missing_payment_method 
 disabled and `cancel_at` also equals the trial deadline. Adding a default payment
 method and a valid Stripe Tax location lets reconciliation enable configured tax
 and remove that automatic cancellation, preserving all remaining trial time.
-Administrators use **Add billing details** in Organization Usage
-settings. Signed `customer.updated` webhooks, Settings refresh and the scheduled
-sweep detect readiness. Explicit earlier cancellations are preserved. Without
+Administrators use **Add billing details** in Settings → Organization → Billing.
+Signed `customer.updated` webhooks, Settings refresh and the scheduled sweep detect
+readiness. Explicit earlier cancellations are preserved. Without
 billing details, Stripe cancels and Rally returns the Organization to Start.
 The trial consumes first-paid eligibility, including after cancellation; checkout
 cannot add the legacy pilot coupon or another trial. MCP extra-month grants extend
@@ -57,7 +57,7 @@ reservation. Desktop and browser use the same server admission checks.
 The following legacy trial/coupon behavior remains available for deployments that
 have not enabled the signup campaign.
 
-Administrators open Organization Usage settings, select an offer and supported
+Administrators open Settings → Organization → Billing, select an offer and supported
 currency and optionally enable overages. **Continue to checkout** and **Manage
 billing** open Stripe as soon as the session URL returns; web reserves a tab on
 click so popup permission survives the request. Returning to Settings refreshes

@@ -361,7 +361,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             activeUsage={guestSession ? null : (
               <OrganizationUsageMenuItem
                 api={api ?? null}
-                onSelect={() => { void desktopBridge().openSettings('workspace'); }}
+                onSelect={() => { void desktopBridge().openSettings('billing'); }}
               />
             )}
             attention={workspaceAttention.data ?? {}}
