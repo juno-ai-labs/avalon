@@ -90,6 +90,7 @@ const MCP_ROUTES: ReadonlyArray<readonly [method: string, path: RegExp]> = [
   ["POST", new RegExp(`^/conversations/${ID}/substreams/0/messages$`, "u")],
   ["PATCH", new RegExp(`^/conversations/${ID}/resources/${ID}$`, "u")],
   ["POST", /^\/sharing$/u],
+  ["GET", new RegExp(`^/resources/${ID}/artifact/link$`, "u")],
   ["GET", /^\/workspace$/u],
   ["GET", /^\/workspace\/members$/u],
 ];

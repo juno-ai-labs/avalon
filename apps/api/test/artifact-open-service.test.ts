@@ -38,7 +38,7 @@ interface Fixture {
 function fixture(input: Fixture = {}) {
   const readProfile = vi.fn();
   const openForViewer = vi.fn(async () => ({ code: "c".repeat(64) }));
-  const metadata: ResourceReadMetadata = { resource: { uploaded_by_user_id: input.author ?? null }, placementAffinity: input.placementError ? null : 'wnam', artifact: input.registryRow === undefined
+  const metadata: ResourceReadMetadata = { canEditArtifact: null, resource: { uploaded_by_user_id: input.author ?? null }, placementAffinity: input.placementError ? null : 'wnam', artifact: input.registryRow === undefined
     ? { artifact_id: ARTIFACT, workstream_id: WORKSTREAM, mode: "active", stateful: 1, hostname_stub: HOSTNAME_STUB }
     : input.registryRow };
   const checkAccess = vi.spyOn(AuthorizationService.prototype, "readResource").mockImplementation(async () => {
@@ -106,6 +106,13 @@ async function refusal(run: () => Promise<unknown>): Promise<ApiError> {
 }
 
 describe("minting access to a live artifact", () => {
+  it('returns a shareable address without creating a viewer session or reading a profile',async()=>{
+    const {service,openForViewer,readProfile}=fixture();
+    expect(await service.link(RESOURCE)).toEqual({artifactId:ARTIFACT,canonicalUrl:`https://${HOSTNAME_STUB}-g.rallyusercontent.test`});
+    expect(openForViewer).not.toHaveBeenCalled();
+    expect(readProfile).not.toHaveBeenCalled();
+  });
+
   it("puts the code in the fragment and nowhere else", async () => {
     // A fragment is never sent to a server, which is what keeps the code out of
     // the invocation log, Logpush, and every trace span.

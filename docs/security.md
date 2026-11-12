@@ -1,5 +1,9 @@
 # Security model
 
+## Published artifact boundary
+
+Canvas artifact users can use published outputs without reading or conversing in the Canvas. All published content requests are admitted from the serving host’s local access snapshot, including static files and assets. Missing projections fail closed. Identity sessions do not preserve superseded access; membership incarnations bind them to projected readers. Source updates propagate through the existing access Queue with eventual consistency. See [Canvas artifact access](canvas-artifact-access.md).
+
 This document owns Rally's trust boundaries: what is treated as untrusted, what
 each trusted component is trusted *for*, and the mechanisms that keep the two
 apart — renderer isolation, OAuth and session handling, connector credential
@@ -1379,6 +1383,14 @@ receive no application bridge. See
 [artifact annotations](artifact-annotations.md) for the protocol.
 
 ## Changelog
+
+### 2026-11-11 — Separate artifact use from Canvas editing
+
+**What changed:** Canvas artifact users can use published outputs without reading or conversing in the Canvas. All published content requests are admitted from the serving host’s local access snapshot, including static files and assets. Missing projections fail closed. Identity sessions do not preserve superseded access; membership incarnations bind them to projected readers. Source updates propagate through the existing access Queue with eventual consistency. See [Canvas artifact access](canvas-artifact-access.md).
+
+**Why:** Artifact audiences can be broader than editors. Queue-delivered local
+checks preserve low-latency serving without per-request cross-DO or D1
+authorization calls, accepting propagation delay.
 
 ### 2026-11-09 — Desktop release builds receive the existing session key from Actions
 

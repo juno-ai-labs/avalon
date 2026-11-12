@@ -90,6 +90,40 @@ describe("the OAuth surface", () => {
 });
 
 describe("the Canvas tools", () => {
+  it('updates editor and artifact audiences through the shared route with a revision fence', async()=>{
+    const detail={...sidebarRow({id:CANVAS,title:'Launch',visibility:'participants',updatedAt:'2026-11-11T12:00:00Z',artifactKind:null,unread:false,pinnedPosition:null}),
+      participantUserIds:[USER],artifacts:[],canManage:true,artifactVisibility:'public',artifactUserIds:[],sharingRevision:9};
+    const upstream=api(async request=>{
+      expect(`${request.method} ${new URL(request.url).pathname}`).toBe(`POST /canvases/${CANVAS}/audience`);
+      expect(await request.json()).toEqual({visibility:'participants',userIds:[USER],artifactVisibility:'public',artifactUserIds:[],expectedRevision:8});
+      return Response.json(detail);
+    });
+    const {body}=await rpc(upstream.binding,call('set_canvas_audience',{canvasId:CANVAS,visibility:'participants',userIds:[USER],artifactVisibility:'public',artifactUserIds:[],expectedRevision:8}));
+    expect(body.result?.isError).not.toBe(true);
+    expect(JSON.parse(body.result!.content[0]!.text)).toMatchObject({artifactVisibility:'public',artifactUserIds:[],sharingRevision:9});
+  });
+
+  it('leaves artifact settings omitted for an older editor-only audience update',async()=>{
+    const upstream=api(async request=>{
+      expect(await request.json()).toEqual({visibility:'creator',userIds:[]});
+      return Response.json({...sidebarRow({id:CANVAS,title:'Launch',visibility:'creator',updatedAt:'2026-11-11T12:00:00Z',artifactKind:null,unread:false,pinnedPosition:null}),
+        participantUserIds:[],artifacts:[],canManage:true,artifactVisibility:'public',artifactUserIds:[],sharingRevision:10});
+    });
+    const {body}=await rpc(upstream.binding,call('set_canvas_audience',{canvasId:CANVAS,visibility:'creator'}));
+    expect(JSON.parse(body.result!.content[0]!.text).artifactVisibility).toBe('public');
+  });
+
+  it('gets an artifact-only share link without requesting its Canvas or minting a viewer session',async()=>{
+    const resourceId='0190a000-0000-7000-8000-0000000000bb';
+    const upstream=api(request=>{
+      expect(`${request.method} ${new URL(request.url).pathname}`).toBe(`GET /resources/${resourceId}/artifact/link`);
+      return Response.json({artifactId:resourceId,canonicalUrl:'https://quiet-blue-river-garden-g.rallyusercontent.com'});
+    });
+    const {body}=await rpc(upstream.binding,call('get_artifact_link',{resourceId}));
+    expect(JSON.parse(body.result!.content[0]!.text)).toEqual({artifactId:resourceId,canonicalUrl:'https://quiet-blue-river-garden-g.rallyusercontent.com'});
+    expect(upstream.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("lists the reader's Canvases through the product route, as the connected person, asking Rally to filter by title", async () => {
     const bearer = live();
     const upstream = api((request) => {

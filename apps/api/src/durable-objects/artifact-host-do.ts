@@ -1,3 +1,4 @@
+import { ArtifactAccessSnapshotSchema, PublishedArtifactFileSchema, type ArtifactAccessSnapshot, type PublishedArtifactFile } from '@rally/contracts/artifact-access';
 import { revocationClosesSession } from "../services/access-revocation";
 import { RegionSchema } from "@rally/contracts/regions";
 /**
@@ -18,18 +19,16 @@ import { RegionSchema } from "@rally/contracts/regions";
  * work stream, which version, which bucket prefix) comes from this object once
  * it is addressed.
  *
- * Access is admitted before a viewer session is created. After that, this
- * object trusts the durable session until an explicit revocation removes it or
- * its fixed lifetime expires:
+ * Viewer sessions establish identity. Each request is admitted against the
+ * latest Canvas audience projected into this object's SQLite:
  *
  * - *Session and membership revocation is a D1 fact*, so it arrives on the
  *   access-revocation queue like every other one. This object joins that
  *   fan-out at the **workspace** hop, because `artifact_registry` lives beside
  *   the resource authority in `WorkspaceDO` and only the object holding a list
  *   can name its children.
- * - Resource visibility is resolved by the canonical authorization service
- *   before `openForViewer`; ordinary artifact requests do not poll that
- *   authority again.
+ * - Canvas audience snapshots arrive through the same Queue. Ordinary content
+ *   requests read only local policy and identity, without polling the source.
  *
  * See `docs/live-web-artifacts.md`.
  */
@@ -80,9 +79,8 @@ import {
 
 const MIGRATION_COMPONENT = "artifact_host";
 
-// Migration 1 retains the former per-request visibility columns. New sessions
-// record their admission there, but serving trusts the session until explicit
-// revocation or expiry. Keep this explanation outside the published SQL:
+// Migration 1 retains the former per-session visibility columns. Migration 4
+// separates session identity from the current local audience. Keep this outside the published SQL:
 // migration statement bytes, including SQL comments, are immutable receipts.
 export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
   version: 1,
@@ -154,7 +152,13 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
   `CREATE TABLE archived_canvases (workspace_id TEXT NOT NULL, canvas_id TEXT NOT NULL,
      PRIMARY KEY (workspace_id, canvas_id)) STRICT`,
 ]
-}];
+}, { version: 4, description: 'local Canvas artifact access and generic published files', statements: [
+  `CREATE TABLE artifact_access(id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT NOT NULL, canvas_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision>0), snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json))) STRICT`,
+  `CREATE TABLE published_file(id INTEGER PRIMARY KEY CHECK(id=1), workspace_id TEXT NOT NULL, canvas_id TEXT NOT NULL,
+    publication_json TEXT NOT NULL CHECK(json_valid(publication_json))) STRICT`,
+  `ALTER TABLE viewer_sessions ADD COLUMN membership_incarnation TEXT`,
+]}];
 
 /**
  * How long a viewer session lives, fixed from mint and never sliding.
@@ -268,6 +272,7 @@ export const ArtifactOpenRequestSchema = z.strictObject({
   userId: z.string().uuid(),
   appSessionId: z.string().min(1).max(200).nullable(),
   displayName: z.string().max(300),
+  membershipIncarnation: z.string().min(1).optional(),
 });
 
 /**
@@ -309,6 +314,11 @@ export type ArtifactPageResult =
   | { ok: true; rows: ArtifactRow[] }
   | { ok: false; reason: "no_artifact_data" }
   | { ok: false; reason: "table_refused"; detail: string };
+
+type ArtifactAdmissionIdentity = {viewerId:string|null;viewerName:string|null;editor:boolean;revision:number};
+export type ArtifactRequestAdmission = {allowed:false;status:401|403|404|503}
+  | ({allowed:true;kind:'site';workspaceId:string;version:number;mode:'static'|'active';stateful:boolean;manifest:ArtifactManifest} & ArtifactAdmissionIdentity)
+  | ({allowed:true;kind:'file';file:PublishedArtifactFile} & ArtifactAdmissionIdentity);
 
 export interface ArtifactSessionCheck {
   ok: boolean;
@@ -407,6 +417,8 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   async recordPublish(publish: ArtifactPublish): Promise<{ advanced: boolean }> {
     await this.initialized;
     const input = ArtifactPublishSchema.parse(publish);
+    const access = this.accessSnapshot();
+    if (access && (access.workspaceId !== input.workspaceId || access.canvasId !== input.workstreamId)) throw new Error('artifact_publish_owner_mismatch');
     if (this.canvasArchived()) throw new Error("canvas_archived");
     const now = Date.now();
     // One synchronous event: nothing interleaves between this read and the
@@ -466,8 +478,8 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     this.state.storage.sql.exec(
       `INSERT INTO viewer_sessions (
          session_sha256, user_id, app_session_id, display_name,
-         issued_at, expires_at, code_sha256, code_expires_at, visibility_checked_at, visible
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+         issued_at, expires_at, code_sha256, code_expires_at, visibility_checked_at, visible, membership_incarnation
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
       // The session digest is a placeholder until redemption swaps in the
       // cookie's own digest; the primary key needs a value now and this row is
       // unreachable without the code.
@@ -480,6 +492,7 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       codeDigest,
       now + ARTIFACT_OPEN_CODE_LIFETIME_MS,
       now,
+      input.membershipIncarnation ?? this.accessSnapshot()?.users.find(person => person.userId === input.userId)?.incarnation ?? null,
     );
     return { code };
   }
@@ -551,6 +564,83 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       stateful: state.stateful === 1,
       manifest: ArtifactManifestSchema.parse(JSON.parse(state.manifest_json)),
     };
+  }
+
+  private accessSnapshot(): ArtifactAccessSnapshot | null {
+    const row = this.state.storage.sql.exec<{ snapshot_json: string }>('SELECT snapshot_json FROM artifact_access WHERE id=1').toArray()[0];
+    return row ? ArtifactAccessSnapshotSchema.parse(JSON.parse(row.snapshot_json)) : null;
+  }
+
+  /** Complete snapshots are replaceable, monotonic and bound to one immutable owner. */
+  async applyAccessSnapshot(input: ArtifactAccessSnapshot): Promise<{ applied: boolean }> {
+    await this.initialized;
+    const snapshot = parseRpcInput(ArtifactAccessSnapshotSchema,input,'artifact_access_snapshot');
+    const prior = this.accessSnapshot();
+    const state = this.stateRow();
+    const file = this.state.storage.sql.exec<{workspace_id:string;canvas_id:string}>('SELECT workspace_id,canvas_id FROM published_file WHERE id=1').toArray()[0];
+    const owner = prior ? {workspaceId:prior.workspaceId,canvasId:prior.canvasId}
+      : state ? {workspaceId:state.workspace_id,canvasId:state.workstream_id}
+        : file ? {workspaceId:file.workspace_id,canvasId:file.canvas_id} : null;
+    if (owner && (owner.workspaceId!==snapshot.workspaceId || owner.canvasId!==snapshot.canvasId)) throw new Error('artifact_access_owner_mismatch');
+    if (prior && prior.revision >= snapshot.revision) return {applied:false};
+    if (prior?.archived && !snapshot.archived) return {applied:false};
+    this.state.storage.transactionSync(()=>{
+      this.state.storage.sql.exec(`INSERT INTO artifact_access(id,workspace_id,canvas_id,revision,snapshot_json) VALUES(1,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,snapshot_json=excluded.snapshot_json
+        WHERE excluded.revision>artifact_access.revision`,snapshot.workspaceId,snapshot.canvasId,snapshot.revision,JSON.stringify(snapshot));
+      if(snapshot.archived) this.state.storage.sql.exec('INSERT INTO archived_canvases(workspace_id,canvas_id) VALUES(?,?) ON CONFLICT DO NOTHING',snapshot.workspaceId,snapshot.canvasId);
+    });
+    return {applied:true};
+  }
+
+  async recordFilePublication(input: {workspaceId:string;canvasId:string;revision:number;file:PublishedArtifactFile}): Promise<void> {
+    await this.initialized;
+    const request=parseRpcInput(z.strictObject({workspaceId:z.string().uuid(),canvasId:z.string().uuid(),revision:z.number().int().positive(),file:PublishedArtifactFileSchema}),input,'artifact_file_publication');
+    const access=this.accessSnapshot();
+    if(!access || access.workspaceId!==request.workspaceId || access.canvasId!==request.canvasId) throw new Error('artifact_file_owner_mismatch');
+    if(access.archived || this.canvasArchived() || access.revision!==request.revision) return;
+    const existing=this.state.storage.sql.exec<{publication_json:string}>('SELECT publication_json FROM published_file WHERE id=1').toArray()[0];
+    const prior=existing ? PublishedArtifactFileSchema.parse(JSON.parse(existing.publication_json)) : null;
+    if(prior && Math.max(...prior.versions.map(version=>version.version))>Math.max(...request.file.versions.map(version=>version.version))) return;
+    this.state.storage.sql.exec(`INSERT INTO published_file(id,workspace_id,canvas_id,publication_json) VALUES(1,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET publication_json=excluded.publication_json`,request.workspaceId,request.canvasId,JSON.stringify(request.file));
+  }
+
+  /** The serving door. All authorization reads are from this object's own SQLite. */
+  async admitRequest(input: {session: string|null}): Promise<ArtifactRequestAdmission> {
+    await this.initialized;
+    const request=parseRpcInput(z.strictObject({session:z.string().nullable()}),input,'artifact_request_admission');
+    let viewer: {user_id:string;display_name:string;membership_incarnation:string|null}|null=null;
+    if(request.session) {
+      const digest=await sha256Hex(new TextEncoder().encode(request.session));
+      viewer=this.state.storage.sql.exec<{user_id:string;display_name:string;membership_incarnation:string|null}>(
+        // Legacy sessions have no membership incarnation. Treat them as signed
+        // out so private-site navigation can bootstrap a current identity.
+        'SELECT user_id,display_name,membership_incarnation FROM viewer_sessions WHERE session_sha256=? AND redeemed_at IS NOT NULL AND expires_at>? AND membership_incarnation IS NOT NULL',digest,Date.now()).toArray()[0]??null;
+    }
+    // Read after the digest await: a snapshot that arrived meanwhile takes effect now.
+    const access=this.accessSnapshot();
+    if(!access) return {allowed:false,status:503};
+    if(access.archived || this.canvasArchived()) return {allowed:false,status:404};
+    const person=viewer ? access.users.find(user=>user.userId===viewer.user_id && user.incarnation===viewer.membership_incarnation) : null;
+    if(!person && !access.public) return {allowed:false,status:viewer?403:401};
+    const identity={viewerId:person?viewer!.user_id:null,viewerName:person?viewer!.display_name:null,editor:person?.editor??false,revision:access.revision};
+    const file=this.state.storage.sql.exec<{publication_json:string}>('SELECT publication_json FROM published_file WHERE id=1').toArray()[0];
+    if(file) return {allowed:true,kind:'file',...identity,file:PublishedArtifactFileSchema.parse(JSON.parse(file.publication_json))};
+    const state=this.stateRow();
+    if(!state) return {allowed:false,status:404};
+    return {allowed:true,kind:'site',workspaceId:state.workspace_id,...identity,version:state.current_version,mode:state.mode,stateful:state.stateful===1,
+      manifest:ArtifactManifestSchema.parse(JSON.parse(state.manifest_json))};
+  }
+
+  async publicationAddress(): Promise<{workspaceId:string;resourceId:string}|null> {
+    await this.initialized;
+    const access=this.accessSnapshot();
+    if(access?.archived || this.canvasArchived()) return null;
+    const state=this.stateRow();
+    if(state) return {workspaceId:state.workspace_id,resourceId:state.resource_id};
+    const file=this.state.storage.sql.exec<{workspace_id:string;publication_json:string}>('SELECT workspace_id,publication_json FROM published_file WHERE id=1').toArray()[0];
+    return file ? {workspaceId:file.workspace_id,resourceId:PublishedArtifactFileSchema.parse(JSON.parse(file.publication_json)).resourceId} : null;
   }
 
   /** Read the current manifest and execution shape for public serving and version routing. */

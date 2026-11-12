@@ -149,6 +149,8 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
   /** The chosen icon and colour, `WorkstreamAppearanceSchema` JSON; null until someone chooses (migration 137). */
   appearance_json: string | null;
   archived_at: number | null;
+  artifact_visibility?: "editors" | "participants" | "workspace" | "public";
+  sharing_revision?: number;
 }
 
 /** What a hosted Canvas needs from the Organization object that holds it. */
@@ -367,7 +369,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     return this.sql.exec<CanvasRow>(
       `SELECT canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, last_editor_kind,
               last_editor_id, writer_sidekick_id, writer_run_id, last_writer_run_id, visibility, authority_generation,
-              title_status, appearance_json, archived_at
+              title_status, appearance_json, archived_at, artifact_visibility, sharing_revision
          FROM canvas_directory WHERE canvas_id = ?`,
       this.canvasId,
     ).toArray()[0] ?? null;
@@ -634,6 +636,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       ...canvasSummary(row, canvasAppearanceReporter(this.host.env)),
       runningActivity: canvasRunningActivity(this.sql, [this.canvasId]).get(this.canvasId),
       participantUserIds: this.participantUserIds(),
+      artifactVisibility: row.artifact_visibility ?? 'editors',
+      artifactUserIds: this.sql.exec<{ user_id: string }>('SELECT user_id FROM canvas_artifact_users WHERE canvas_id=? ORDER BY user_id', this.canvasId).toArray().map(person=>person.user_id),
+      sharingRevision: row.sharing_revision ?? 0,
       artifacts: this.artifacts(),
       sidekicks: this.sidekicks(request.actor),
       canManage,
@@ -745,8 +750,17 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     }
     await assertAudienceInOrganization((workspaceId, userId) => this.host.readRelationship(workspaceId, userId), row.workspace_id,
       userIds, () => new ApiError(422, "canvas_audience_not_member", "Everyone a Canvas is shared with must be in the Organization"));
+    const artifactUserIds = [...new Set(request.update.artifactUserIds ?? [])];
+    if (request.update.artifactVisibility !== undefined) await assertAudienceInOrganization(
+      (workspaceId, userId) => this.host.readRelationship(workspaceId,userId), row.workspace_id, artifactUserIds,
+      () => new ApiError(422,'canvas_artifact_audience_not_member','Artifact users must be in the Organization'));
     const now = Date.now();
     this.host.storage.transactionSync(() => {
+      const currentRow = this.assertCanvas(request.workspaceId,request.canvasId);
+      if (!this.manages(currentRow,request.actor)) throw forbidden();
+      if (request.update.expectedRevision !== undefined && request.update.expectedRevision !== (currentRow.sharing_revision ?? 0)) {
+        throw new ApiError(409,'canvas_sharing_changed','Sharing changed. Reload it before saving.');
+      }
       const kept = new Set<string>(userIds);
       const current = this.participantUserIds();
       for (const userId of current) {
@@ -759,8 +773,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
           this.canvasId, userId, request.actor.userId, now,
         );
       }
-      this.sql.exec(`UPDATE canvas_directory SET visibility = ? WHERE canvas_id = ?`,
-        request.update.visibility, this.canvasId);
+      if (request.update.artifactVisibility !== undefined) {
+        this.sql.exec('DELETE FROM canvas_artifact_users WHERE canvas_id=?',this.canvasId);
+        for (const userId of artifactUserIds) this.sql.exec('INSERT INTO canvas_artifact_users(canvas_id,user_id) VALUES(?,?)',this.canvasId,userId);
+      }
+      this.sql.exec(`UPDATE canvas_directory SET visibility = ?, artifact_visibility = COALESCE(?,artifact_visibility), sharing_revision=sharing_revision+1 WHERE canvas_id = ?`,
+        request.update.visibility, request.update.artifactVisibility ?? null, this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
       this.host.noteAttachedCanvasChanged(this.canvasId);
     });

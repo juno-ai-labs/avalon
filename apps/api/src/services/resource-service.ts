@@ -1,3 +1,4 @@
+import { contentDisposition } from '../lib/content-disposition';
 import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { resolveShareableResources } from './resource-share-rules';
@@ -134,6 +135,11 @@ export class ResourceService {
 
   private readResource(id: string) {
     return this.authorization.readResource(this.access.subject, id);
+  }
+
+  private async authorizeHistory(id: string): Promise<void> {
+    const metadata=await this.readResource(id);
+    if(metadata.canEditArtifact===false) throw new ApiError(404,'resource_not_found','Resource not found');
   }
 
   async list(input: ListResourcesInput) {
@@ -393,7 +399,7 @@ export class ResourceService {
   private async loadAnnotationTarget(id:string,version:number): Promise<{title:string;mimeType:string|null;image:ModelAttachmentSource|null}> {
     const revision = await this.loadVersion(id, version);
     if (!revision) throw new ApiError(404, 'resource_version_not_found', 'The annotated version does not exist');
-    await this.authorizeRead(id);
+    await this.authorizeHistory(id);
     const image = classifyAttachmentKind({ fileName: revision.title, mimeType: revision.mime_type }) === 'image'
       ? { id, resourceVersion:version, workspaceId: this.auth.workspaceId, fileName: `${revision.title} · v${version}`, mimeType: revision.mime_type ?? 'application/octet-stream', sizeBytes: 0,
           contentRef: revision.content_ref, contentSha256: revision.content_sha256, modelContentRef: revision.model_content_ref,
@@ -430,7 +436,7 @@ export class ResourceService {
   }
 
   async versions(id: string): Promise<ResourceRevision[]> {
-    await this.authorizeRead(id);
+    await this.authorizeHistory(id);
     const history = await (await this.workspaceDirectory()).listResourceVersions({
       workspaceId: this.auth.workspaceId,
       resourceId: id,
@@ -440,7 +446,7 @@ export class ResourceService {
   }
 
   async version(id: string, version: number): Promise<ResourceRevision> {
-    await this.authorizeRead(id);
+    await this.authorizeHistory(id);
     const row = await this.loadVersion(id, version);
     if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
     return (await this.namedAuthors([toResourceRevision(row)]))[0]!;
@@ -484,7 +490,7 @@ export class ResourceService {
     version: number,
     representation: "original" | "model",
   ): Promise<Response> {
-    await this.authorizeRead(id);
+    await this.authorizeHistory(id);
     const row = await this.loadVersion(id, version);
     if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
     const objectRef = representation === "model" ? row.model_content_ref : row.content_ref;
@@ -498,7 +504,7 @@ export class ResourceService {
 
   /** Same preview policy as current resources, bound to one immutable revision. */
   async versionPreview(id:string,version:number):Promise<Response> {
-    await this.authorizeRead(id);
+    await this.authorizeHistory(id);
     const row=await this.loadVersion(id,version);
     if(!row)throw new ApiError(404,'resource_version_not_found','Resource version not found');
     const mime=row.mime_type?.split(';',1)[0]?.trim().toLowerCase()??'';
@@ -518,7 +524,9 @@ export class ResourceService {
 
   /** Frozen HTML assets only: historical server modules are never executed. */
   async annotationSitePreview(id: string, version: number, pagePath: string): Promise<Response> {
-    const { artifact: registry } = await this.readResource(id);
+    const metadata=await this.readResource(id);
+    if(metadata.canEditArtifact===false) throw new ApiError(404,'resource_not_found','Resource not found');
+    const registry=metadata.artifact;
     const revision=await this.loadVersion(id,version);
     if(!revision||revision.mime_type!=='application/vnd.rally.site-manifest+json'||!revision.content_ref)throw new ApiError(404,'annotation_original_page_unavailable','The original page cannot be shown again');
     const original=await this.env.PAYLOADS.get(revision.content_ref);
@@ -1123,17 +1131,6 @@ function escapeLikePattern(value: string): string {
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string") return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
-}
-function safeFilename(value: string): string {
-  return value.replace(/[\r\n"\\]/gu, "_").slice(0, 180) || "attachment";
-}
-
-function contentDisposition(disposition: "attachment" | "inline", fileName: string): string {
-  const safe = safeFilename(fileName);
-  const asciiFallback = safe.replace(/[^\x20-\x7e]/gu, "_");
-  const encoded = encodeURIComponent(safe)
-    .replace(/[!'()*]/gu, (character) => `%${character.codePointAt(0)!.toString(16).toUpperCase()}`);
-  return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
 }
 
 export const __resourceServiceTesting = {

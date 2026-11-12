@@ -40,3 +40,9 @@ the built output (with its `index.html`) instead.
 Give the person the returned `url`. If they want others to see it, use the
 `canvases` skill's sharing steps. If a build was refused, show the error and
 fix the source rather than retrying unchanged.
+
+Use `get_artifact_link` with the published resourceId for its stable file/site
+URL. New files may need a moment for background delivery before that link is
+ready. Publishing does not make an artifact public: use `set_canvas_audience`
+to choose the artifact audience while preserving the editor audience. Changing
+artifact visibility applies to every published output in that Canvas.
