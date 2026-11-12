@@ -1,3 +1,4 @@
+import { requireUsageAllowance } from "../services/usage-admission";
 import { Hono } from "hono";
 import { z } from "zod";
 
@@ -17,6 +18,7 @@ export const speechRoutes = new Hono<HonoAppEnv>();
 speechRoutes.use("*", requireWorkspaceAuth);
 
 speechRoutes.post("/", zValidator("json", SpeechBodySchema), async (c) => {
+  await requireUsageAllowance(c.env, getWorkspaceAuth(c).workspaceId);
   const startedAt = Date.now();
   const speech = await streamMessageSpeech({
     env: c.env,

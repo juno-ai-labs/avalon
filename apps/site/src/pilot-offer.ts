@@ -4,7 +4,7 @@
  * they close it or follow its sign-up link.
  *
  * Eligibility is Organization-wide: billing automatically applies the pilot to
- * the first paid subscription while the campaign is enabled. Browser storage
+ * a new Organization’s Grow subscription while the campaign is enabled. Browser storage
  * controls dismissal only; it never decides financial eligibility.
  */
 const DISMISSED_KEY = 'rally.site.pilot-offer-dismissed.v1';

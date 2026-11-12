@@ -1,3 +1,4 @@
+import { requireUsageAllowance } from "./usage-admission";
 import { agentModelTraceFeature } from "@rally/contracts/runtime-config";
 import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
 import { connectorAuthorizationStatus } from "@rally/contracts";
@@ -1711,6 +1712,7 @@ export async function classifyWorkstreamMessage(
     defer: (promise: Promise<unknown>) => void;
   },
 ): Promise<AddressingClassification> {
+  await requireUsageAllowance(env, input.workspaceId);
   const traceId = crypto.randomUUID();
   const diagnostics = createClassifierDiagnosticSink(env, {
     role: "addressing_classifier",
@@ -4076,6 +4078,7 @@ export async function runWorkstreamHarness(
       compaction: {
           contextWindowTokensByModel: await contextWindowPreparation.get(),
           prepare: async () => {
+            await requireUsageAllowance(env, input.workspaceId);
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
@@ -4222,6 +4225,7 @@ export async function runWorkstreamHarness(
           }
         },
         judge: async (state) => {
+          await requireUsageAllowance(env, input.workspaceId);
           const traceId = crypto.randomUUID();
           const decision = await judgeCompletionStop({
             apiKey: env.TYPESAFE_API_KEY, state, signal: harnessSignal,
@@ -4400,6 +4404,7 @@ export async function runWorkstreamHarness(
       // work is independently authorized by beforeToolCall above. Treating
       // archive as a renewal failure masks Bind's durable stop transition.
       if (stage === "before_model") {
+        await requireUsageAllowance(env, input.workspaceId);
         const authorityStartedAt = Date.now();
         await Promise.all([
           liveness.pulse(stage, true).then(() => {

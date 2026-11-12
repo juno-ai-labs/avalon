@@ -1,3 +1,4 @@
+import { initializeOrganizationBilling } from "./billing-coordination";
 import { resolveModelSelectorVisibleForNewOrgs } from "./client-feature-flags";
 import { RegionSchema } from "@rally/contracts/regions";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
@@ -542,6 +543,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
    * a job that finds its Canvas already seeded does nothing.
    */
   private async seedNewOrganization(workspaceId: string, creatorUserId: string): Promise<void> {
+    await initializeOrganizationBilling(this.env, workspaceId);
     await Promise.all(NEW_ORGANIZATION_CANVAS_SEEDS.map((seed) =>
       enqueueCanvasSeed(this.env, { workspaceId, creatorUserId, seedKey: seed.key })));
   }
