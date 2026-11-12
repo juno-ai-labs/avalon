@@ -538,12 +538,12 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
   /**
    * Ask for the Canvases a new Organization starts with: today the Getting
    * Started guide (`docs/canvas-seeds.md`). A queued job each, so creation
-   * waits on a send and nothing else. Sent again on a replay of the
+   * waits on a send; billing provisioning continues in the background. Sent again on a replay of the
    * creation, because the first attempt may have stopped before this line;
    * a job that finds its Canvas already seeded does nothing.
    */
   private async seedNewOrganization(workspaceId: string, creatorUserId: string): Promise<void> {
-    await initializeOrganizationBilling(this.env, workspaceId);
+    initializeOrganizationBilling(this.env, workspaceId);
     await Promise.all(NEW_ORGANIZATION_CANVAS_SEEDS.map((seed) =>
       enqueueCanvasSeed(this.env, { workspaceId, creatorUserId, seedKey: seed.key })));
   }

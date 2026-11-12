@@ -168,7 +168,7 @@ async function reconcileSubscription(
       `trial:${subscription.id}:${account.trial_ends_at}`,
     );
   }
-  let paymentReady = false;
+  let paymentReady = account.payment_method_ready === 1;
   if (config.enforceUsageLimits || signup || checkPayment) {
     const customer = await stripe(env, `customers/${encodeURIComponent(subscription.customer)}?expand[]=tax`, z.object({
       invoice_settings: z.object({ default_payment_method: z.string().nullable() }),
@@ -839,7 +839,7 @@ export async function setBillingOverages(env: Env, workspaceId: string, enabled:
   const subscription = await stripe(env, `subscriptions/${account.subscription_id}`, SubscriptionSchema, { "metadata[overage_enabled]": String(enabled),
     ...(enabled && !account.overage_enabled ? { "metadata[overage_consent_at]": String(Math.floor(Date.now() / 1000)) } : {}),
   });
-  await reconcileSubscription(env, account, subscription);
+  await reconcileSubscription(env, account, subscription, true);
   return { enabled };
 }
 

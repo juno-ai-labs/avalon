@@ -6,6 +6,7 @@ import { seedInspectableWorkspace } from './helpers/engineering-inspection-fixtu
 import { billingAccount } from '../src/services/billing';
 import usageMigration from '../../../packages/db/usage-migrations/0001_usage_ledger.sql?raw';
 import billingMigration from '../../../packages/db/migrations/0131_billing.sql?raw';
+import signupMigration from '../../../packages/db/migrations/0132_signup_trials.sql?raw';
 
 const ORG = '00000000-0000-7000-8000-00000000fcb1';
 const USER = '00000000-0000-7000-8000-00000000fcb2';
@@ -29,6 +30,7 @@ beforeEach(async () => {
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN updated_at TEXT"),
   ]);
   await env.DB.exec(billingMigration.replace(/--[^\n]*\n/g, '').replace(/\s*\n\s*/g, ' '));
+  await env.DB.exec(signupMigration.replace(/--[^\n]*\n/g, '').replace(/\s*\n\s*/g, ' '));
   await env.USAGE_DB.exec(usageMigration.replace(/--[^\n]*\n/g, '').replace(/\s*\n\s*/g, ' '));
   await billingAccount(configured(), ORG);
   await env.DB.prepare("UPDATE billing_accounts SET customer_id = 'cus_1'").run();

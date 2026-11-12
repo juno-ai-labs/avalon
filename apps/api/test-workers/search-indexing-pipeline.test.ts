@@ -614,3 +614,26 @@ describe('index-served display attributes', () => {
     expect(messages().map((row) => row.archived)).toEqual([true, true]);
   });
 });
+
+
+it('defers quota-blocked semantic jobs without losing lexical search or consuming transport retries', async () => {
+  await seedResource();
+  await env.DB.exec(`CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, region TEXT, plan TEXT, created_at TEXT, updated_at TEXT, abandoned_at TEXT, billing_plan_override INTEGER DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS billing_accounts (workspace_id TEXT PRIMARY KEY, status TEXT, trial_ends_at INTEGER, overage_enabled INTEGER, overage_started_at INTEGER, payment_method_ready INTEGER);`);
+  await env.USAGE_DB.exec('CREATE TABLE IF NOT EXISTS usage_rollups (workspace_id TEXT, week_start TEXT, period_start TEXT, quota_microusd INTEGER, organization_microusd INTEGER, rally_microusd INTEGER, PRIMARY KEY(workspace_id, week_start, period_start))');
+  const created = new Date(Date.now() - 86400000).toISOString();
+  await env.DB.prepare("INSERT INTO workspaces (id,region,plan,created_at,updated_at) VALUES (?,'global','starter',?,?)").bind(workspaceId,created,created).run();
+  await env.USAGE_DB.prepare('INSERT INTO usage_rollups VALUES (?,?,?,10000000,10000000,0)').bind(workspaceId,created,created).run();
+  const send = vi.spyOn(env.ACTIVITY_QUEUE, 'send');
+  const result = await consume([resourceMessage()], { BILLING_CONFIG: JSON.stringify({ returnUrl: 'https://app.test', enforceUsageLimits: true,
+    offers: [{ id: 'grow', name: 'Grow', plan: 'growth', priceId: 'price_grow', currencies: ['usd'] }] }) });
+  expect(result.retryMessages).toEqual([]);
+  expect(result.explicitAcks).toEqual(['search-0']);
+  expect(embeddingInputs).toEqual([]);
+  expect(writes.some(write => !write.path.includes('-semantic-'))).toBe(true);
+  expect(send.mock.calls.length).toBeGreaterThan(0);
+  for (const [body, options] of send.mock.calls) {
+    expect(SearchEmbeddingBatchSchema.safeParse(body).success).toBe(true);
+    expect(options).toEqual({ delaySeconds: 43200 });
+  }
+});

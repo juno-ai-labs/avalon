@@ -152,3 +152,42 @@ it('blocks a real provider entry point before opening a request after the allowa
   await expect(runEmbeddingInference(env, { context: { workspaceId: ORG }, text: 'query', feature: 'search_embedding', inputType: 'search_query', dimensions: 1024, generationName: 'Search' })).rejects.toMatchObject({ code: 'usage_allowance_exhausted' });
   expect(provider).not.toHaveBeenCalled();
 });
+
+
+it('keeps payment readiness while a legacy subscription disables and re-enables overages', async () => {
+  const { env, provider, config } = seed(); await refreshBillingAccount(env, ORG);
+  env.BILLING_CONFIG = JSON.stringify({ ...config, signupTrial: undefined, enforceUsageLimits: false });
+  delete provider.sub!.metadata.signup_trial; delete provider.sub!.metadata.signup_trial_conversion_pending;
+  provider.sub!.status = 'active'; provider.sub!.cancel_at = null;
+  provider.customer.invoice_settings.default_payment_method = 'pm_card';
+  expect((await refreshBillingAccount(env, ORG, true)).payment_method_ready).toBe(1);
+  for (const enabled of [true, false, true]) {
+    expect(await setBillingOverages(env, ORG, enabled)).toEqual({ enabled });
+    expect((await refreshBillingAccount(env, ORG)).payment_method_ready).toBe(1);
+  }
+});
+
+it('keeps human conversation available and preserves the quota reason for background embedding', async () => {
+  const { env, usage } = seed(); await refreshBillingAccount(env, ORG);
+  usage.prepare("INSERT INTO usage_rollups(workspace_id,week_start,period_start,quota_microusd,organization_microusd,rally_microusd) VALUES (?, '2027-01-31T10:30:00.000Z','2027-01-31T10:30:00.000Z',50000000,50000000,0)").run(ORG);
+  const { classifyWorkstreamMessage } = await import('../src/services/integrations');
+  const { embedSearchDocuments } = await import('../src/services/search-embedding');
+  const provider = vi.fn(); vi.stubGlobal('fetch', provider);
+  expect(await classifyWorkstreamMessage(env, { workspaceId: ORG, workstreamId: 'canvas', userId: 'owner', message: 'Thanks, I will review it', activeTask: false, connectorMentions: [], humanMentions: [], recentMessages: [], defer: () => undefined })).toMatchObject({ classification: 'human_only' });
+  await expect(embedSearchDocuments(env, ORG, ['document'])).rejects.toMatchObject({ code: 'usage_allowance_exhausted', details: { retryAfterSeconds: 604800 } });
+  expect(provider).not.toHaveBeenCalled();
+});
+
+it('refuses a quota-blocked semantic trigger as policy instead of retrying a provider failure', async () => {
+  const { env, usage } = seed(); await refreshBillingAccount(env, ORG);
+  usage.prepare("INSERT INTO usage_rollups(workspace_id,week_start,period_start,quota_microusd,organization_microusd,rally_microusd) VALUES (?, '2027-01-31T10:30:00.000Z','2027-01-31T10:30:00.000Z',50000000,50000000,0)").run(ORG);
+  const { asWorkspaceId, asAutomationId } = await import('@rally/contracts');
+  const { admitExternalEventWithSemanticGate } = await import('../src/services/semantic-trigger-admission');
+  const provider = vi.fn(); vi.stubGlobal('fetch', provider);
+  const sidekick = { admitExternalEvent: vi.fn(async () => ({ admitted: false, outcomeCode: 'sidekick_semantic_condition_unjudged', judge: { conditions: ['Pull requests needing review'], connectorType: 'github' } })) };
+  expect(await admitExternalEventWithSemanticGate(env, { workspaceId: ORG, sidekick, defer: () => undefined, admission: {
+    workspaceId: asWorkspaceId(ORG), automationId: asAutomationId('01900000-0000-7000-8000-0000000000bb'), registrationId: '01900000-0000-7000-8000-0000000000cc', payloadHash: 'sha256:test',
+    event: { id: '01900000-0000-7000-8000-0000000000dd', eventSequence: 1, eventType: 'github.pull_request.opened', title: 'Review', summary: 'Review', textSnippet: 'Review', metadata: {}, occurredAt: Date.now(), audienceUserIds: [], audienceKind: 'workspace' },
+  } })).toEqual({ admitted: false, outcomeCode: 'usage_allowance_exhausted' });
+  expect(provider).not.toHaveBeenCalled();
+});
