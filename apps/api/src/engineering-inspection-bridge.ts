@@ -1,6 +1,6 @@
-import { BillingCreditsSchema, OverageCreditSchema } from "@rally/contracts/billing";
+import { BillingCreditsSchema, OverageCreditSchema, TrialMonthsGrantSchema } from "@rally/contracts/billing";
 import { readOverageCredits } from "./services/overage-credits";
-import { grantOverageCredit, expireOverageCredit } from "./services/billing-coordination";
+import { grantOverageCredit, expireOverageCredit, grantTrialMonths } from "./services/billing-coordination";
 import { readOrganizationSettings, updateOrganizationSettings } from "./services/organization-settings";
 import { publishWorkspaceSync } from "./services/workspace-realtime-service";
 import { readOrganizationUsage, setWorkspacePlan, publishOrganizationUsage } from "./services/usage-metering";
@@ -8,6 +8,7 @@ import { provisionUserPassword, revokeUserPassword } from "./services/password-l
 import { RegionSchema } from "@rally/contracts/regions";
 import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
+  GrantEngineeringTrialMonthsInputSchema,
   InspectEngineeringCreditsInputSchema, GrantEngineeringCreditInputSchema, ExpireEngineeringCreditInputSchema,
   InspectEngineeringOrgSettingsInputSchema,
   UpdateEngineeringOrgSettingsInputSchema,
@@ -307,6 +308,18 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         await publishWorkspaceSync(this.env, request.orgId, ["workspace_profile"]);
         return EngineeringOrgSettingsResultSchema.parse(result);
       }, () => ({ modelSelectorVisible: request.modelSelectorVisible }));
+    });
+  }
+
+  async grantTrialMonths(input: unknown, operator: unknown) {
+    return this.productOperation("grantTrialMonths", async () => {
+      const { orgId, ...request } = GrantEngineeringTrialMonthsInputSchema.parse(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      if (!(await this.resolveWorkspace({ workspaceId: orgId })).found) throw new Error("engineering_organization_not_found");
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "grant_trial_months", orgId, operationId: request.operationId,
+      }, async () => TrialMonthsGrantSchema.parse(await grantTrialMonths(this.env, orgId, request)),
+      (result) => ({ subscriptionId: result.subscriptionId, months: result.months, trialEndsAt: result.trialEndsAt }));
     });
   }
 

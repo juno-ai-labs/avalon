@@ -1,4 +1,5 @@
-import type { GrantOverageCredit } from "@rally/contracts/billing";
+import { grantTrialMonths } from "../services/trial-months";
+import type { GrantOverageCredit, GrantTrialMonths } from "@rally/contracts/billing";
 import { grantOverageCredit, expireOverageCredit } from "../services/overage-credits";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env";
@@ -67,6 +68,9 @@ export class BillingCoordinatorDO extends DurableObject<Env> {
     return this.serialize(workspaceId, () =>
       billing.settleBillingAccount(this.env, workspaceId),
     );
+  }
+  grantTrialMonths(workspaceId: string, input: GrantTrialMonths) {
+    return this.serialize(workspaceId, () => grantTrialMonths(this.env, workspaceId, input));
   }
   grantCredit(workspaceId: string, input: GrantOverageCredit) {
     return this.serialize(workspaceId, () => grantOverageCredit(this.env, workspaceId, input));

@@ -107,6 +107,8 @@ Boolean `workspaces.model_selector_visible` (`0`/`1`, default `0`); see
 
 D1 migration `0131_billing.sql` adds Organization billing accounts, per-subscription
 paid terms and billable intervals, membership-triggered trial awards and permanent overage receipts.
+`billing_trial_operations` retains fixed subscription-fee trial deadlines and delivery
+receipts, so retries cannot repeatedly add calendar months.
 `billing_credit_operations` stores immutable operator request receipts and Stripe
 grant IDs; balances and redemption remain in Stripe. `billing_overage_subscriptions`
 retains provisioning generations and cleanup markers for dedicated metered billing.
@@ -1105,7 +1107,9 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 ### 2026-11-12 — Retain Organization billing and financial delivery receipts
 
 Migration 0131 records trial qualification, paid consent intervals, immutable
-closed-period overages and operator credit requests. Native credit balances stay
+closed-period overages, operator credit requests and fixed trial-month grant
+deadlines. Trial receipts retain the original target so uncertain retries cannot
+award additional months repeatedly. Native credit balances stay
 in Stripe; local grant and metered-subscription receipts recover uncertain writes
 without relying on the provider's short idempotency retention. Dedicated metered
 overages keep credits off plan fees and preserve cancellation tails. A second

@@ -27,3 +27,15 @@ export const GrantOverageCreditSchema = z.strictObject({
   expiresAt: z.iso.datetime({ offset: true }).optional(),
 });
 export type GrantOverageCredit = z.infer<typeof GrantOverageCreditSchema>;
+
+export const GrantTrialMonthsSchema = z.strictObject({
+  operationId: z.uuid().describe('A fresh UUID for this award; reuse it and identical arguments after an uncertain response.'),
+  months: z.number().int().positive().describe('Calendar months of extra subscription-fee waiver after the existing paid/trial/pilot period. Overages remain billable.'),
+  reason: z.string().trim().min(1).max(500), // Stripe metadata value limit.
+});
+export type GrantTrialMonths = z.infer<typeof GrantTrialMonthsSchema>;
+export const TrialMonthsGrantSchema = z.object({
+  subscriptionId: z.string(), months: z.number().int().positive(),
+  previousFeeCoveredUntil: z.string(), trialEndsAt: z.string(),
+});
+export type TrialMonthsGrant = z.infer<typeof TrialMonthsGrantSchema>;
