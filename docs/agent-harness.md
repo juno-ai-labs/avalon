@@ -545,7 +545,7 @@ The agent trusts the user’s intent and builds the requested working result to 
 
 Every address, identifier, URL, name, date, and quoted fact in an outward-facing write must be sourced from a tool result in the run, the authorized task context, or a person in the conversation. Inferring a default settles a choice among safe options and never supplies an unheld fact, so an unsourceable value is a missing identifier that routes to a lookup or a question rather than a plausible placeholder. Identifiers are threaded through unchanged from the result that produced them and from the same connection, and a result carrying only identifiers is a step rather than an answer. These are platform policy and belong here rather than in any one connector's plugin message, because the same failure is available through every connector that writes.
 
-Substantial interactive work starts with a brief approach; updates then focus on changes to participants' expectations or decisions they need to make. Headless runs skip progress narration. Final responses lead with the result and omit padding while retaining requested detail and material caveats. The prompt owns the writing rules; its preference for natural language applies to style only and does not relax platform policy. Private reasoning is never emitted.
+Substantial interactive work starts with a brief approach; updates then focus on changes to participants' expectations or decisions they need to make. Headless runs skip progress narration. Final responses lead with the result and omit padding while retaining requested detail and material caveats. A reply describes what people can now see and do; how the work was built, checked or delegated (another agent's report, test coverage, tool limits, internal names and IDs) stays with the agent, and a caveat is stated as its effect on the person. The prompt owns the writing rules; its preference for natural language applies to style only and does not relax platform policy. Private reasoning is never emitted.
 
 The standing prompt names the product as it is: an Organization holds Canvases and Sidekicks, a Canvas's Chat is where its people ask Rally for work, and a Sidekick's shared conversation is where the people it is shared with read its runs and ask for more, each run in a conversation of its own. It names no Channel, Thread, Breakout or Space, and the task context's key for the title and objective is `conversation`. Every Sidekick run runs on the `self_delivery` surface, whose section says what the people in the Sidekick's shared conversation see (the final message is the reply on the run's row there, and nothing sends it anywhere else), that any send to a reader outside Rally is the run's own work, done with its tools, and that it sends nothing when the instructions ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. The `rally:conversations` plugin's run instruction says the same about the row and tells the run not to post that reply into the shared conversation again; a post is for another conversation. It says nothing about missing access: the activation section's ask-and-wait rule is the only statement of it, because the plugin's message renders later and an older report-and-finish wording there was the one a model followed. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the run rows.
 
@@ -1881,6 +1881,33 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-12 — A reply describes the result, not how it was built or checked
+
+**What changed:** The standing work prompt's communication rules gain one line:
+describe the result as what people can now see and do, keep another agent's
+report, test coverage, tool limits and internal names to the agent, and state a
+caveat only as its effect on the person. To stay under the prompt's fixed byte
+budget, the narration rule and the save-findings rule merge into the update
+rule, and the style line is shortened; their meaning is unchanged.
+
+**Why:** In a Canvas that built a shared grocery list, the Canvas agent
+delegated the list's sorting Sidekick to its authoring agent, which reported
+that live writes "remain untested" because its own tools could not write app
+data. The Canvas agent passed that on as "Its live add-to-classification flow
+hasn't yet been tested end to end". The existing rule against recounting the
+process did not stop it, because the model read a delegated report as a finding
+rather than as process. The reader cannot act on a note about what an agent
+tested; they can act on what the app will do.
+
+**Considered and rejected:** A line in `building-live-sites` only would cover
+the one path that failed, while any delegated report reaches the same reply.
+Telling authoring agents to stop reporting test gaps would hide them from the
+agent that needs them to decide what to say.
+
+**Consequences:** Agent-to-agent messages keep their full detail; only the
+person-facing reply is filtered. A real limit still reaches the person, phrased
+as what they will notice.
 
 ### 2026-11-11 — Task procedures have an owner outside the harness
 
