@@ -114,6 +114,8 @@ it('requires both a card and tax location, then converts without shortening free
   expect(await setBillingOverages(env, ORG, true)).toEqual({ enabled: true });
   expect(db.prepare('SELECT overage_started_at FROM billing_accounts').get()).toEqual({ overage_started_at: second('2027-01-31T11:30:00Z') });
   await expect(requireUsageAllowance(env, ORG)).resolves.toBeUndefined();
+  // Overages admit the work, so running out stops nothing and nothing warns.
+  expect(await readOrganizationUsage(env, ORG, Date.now())).toMatchObject({ allowanceExhausted: false, stopsAtAllowance: false });
   await setBillingOverages(env, ORG, false);
   await expect(requireUsageAllowance(env, ORG)).rejects.toMatchObject({ code: 'usage_allowance_exhausted' });
   vi.setSystemTime(new Date('2027-02-07T10:30:00Z'));
@@ -151,12 +153,12 @@ it('falls back to Start at expiry and never re-awards the promotion on later che
 it('ends an agent run on the exhausted allowance as a usage limit, not as a broken port', async () => {
   const { env, usage } = seed(); await refreshBillingAccount(env, ORG);
   await expect(requireRunUsageAllowance(env, ORG)).resolves.toBeUndefined();
-  expect((await readOrganizationUsage(env, ORG, Date.now()))?.allowanceExhausted).toBe(false);
+  expect(await readOrganizationUsage(env, ORG, Date.now())).toMatchObject({ allowanceExhausted: false, stopsAtAllowance: true });
   usage.prepare("INSERT INTO usage_rollups(workspace_id,week_start,period_start,quota_microusd,organization_microusd,rally_microusd) VALUES (?, '2027-01-31T10:30:00.000Z','2027-01-31T10:30:00.000Z',50000000,50000000,0)").run(ORG);
   const refusal = await requireRunUsageAllowance(env, ORG).then(() => null, (error: unknown) => error);
   expect(refusal).toBeInstanceOf(HarnessLimitError);
   expect(refusal).toMatchObject({ code: 'usage_allowance_exhausted' });
-  expect((await readOrganizationUsage(env, ORG, Date.now()))?.allowanceExhausted).toBe(true);
+  expect(await readOrganizationUsage(env, ORG, Date.now())).toMatchObject({ allowanceExhausted: true, stopsAtAllowance: true });
 });
 
 it('emails each owner and administrator once a week when the allowance runs out, and no plain member', async () => {

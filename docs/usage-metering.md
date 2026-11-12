@@ -81,7 +81,10 @@ settings**, which opens Settings at the Organization's Usage section.
 `readUsageAllowance` is the decision itself, separate from the refusal: admission
 throws on it, and `readOrganizationUsage` reports it as `allowanceExhausted`,
 which the desktop rail shows as a red warning above the account tile with a
-tooltip saying what stopped and how to resume. The rail reads that flag rather
+tooltip saying what stopped and how to resume. It also reports
+`stopsAtAllowance` (limits enforced and overages not admitted), and while that
+holds the rail shows a yellow triangle at `USAGE_LOW_WARNING_PERCENT` (10%, the
+product owner's number) or less left, so the stop is seen before it lands. The rail reads that flag rather
 than the meter, so it clears the moment work would be admitted again (overages
 on, a plan change, the weekly reset); it refreshes on mount, on returning to
 the window, and when a run card shows the limit.
@@ -385,8 +388,9 @@ An uncertain write may have committed: inspect before retrying.
 **What changed:** An agent run refused for usage now fails as
 `usage_allowance_exhausted` with its own message and a card that opens the
 Usage settings. The usage read reports `allowanceExhausted`, which drives a red
-rail warning above the account tile. Owners and administrators get one email per
-allowance week when work is refused.
+rail warning above the account tile, and `stopsAtAllowance` a yellow one at 10%
+or less left. Owners and administrators get one email per allowance week when
+work is refused.
 
 **Why:** The day admission shipped, an Organization over its allowance with
 overages off had every run fail as `run_state_persistence_failed` ("could not

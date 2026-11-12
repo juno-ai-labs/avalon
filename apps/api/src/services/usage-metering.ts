@@ -265,7 +265,11 @@ export async function readOrganizationUsage(
   if (billing) result.overage.billingEnabled = billing.overage_enabled === 1 && ['active', 'trialing'].includes(billing.status) && billing.overage_started_at !== null && billing.overage_started_at * 1000 <= period.start;
   // The same decision admission makes, so the client warns exactly while work is refused.
   // An Organization with no billing account is refused on the unpaid plan's quota too.
-  if (env.BILLING_CONFIG) result.allowanceExhausted = (await readUsageAllowance(env, workspaceId, nowMs)).exhausted;
+  if (env.BILLING_CONFIG) {
+    const allowance = await readUsageAllowance(env, workspaceId, nowMs);
+    result.allowanceExhausted = allowance.exhausted;
+    result.stopsAtAllowance = allowance.stopsAtLimit;
+  }
   return result;
 }
 
