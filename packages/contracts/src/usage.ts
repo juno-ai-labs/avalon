@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { RegionSchema } from "./regions";
-import { PLAN_IDS } from "./plans";
+import { PLAN_IDS, type PlanId } from "./plans";
 
-export { PLAN_IDS, PLANS, weeklyQuotaMicrousd } from "./plans";
+export { PLAN_IDS, PLANS, weeklyQuotaMicrousd, type PlanId } from "./plans";
 
 /**
  * Usage quota metering: the plans, the metered activities, the event the
@@ -12,7 +12,6 @@ export { PLAN_IDS, PLANS, weeklyQuotaMicrousd } from "./plans";
  */
 
 export const PlanIdSchema = z.enum(PLAN_IDS);
-export type PlanId = z.infer<typeof PlanIdSchema>;
 
 /** Below this percentage left, the meter turns to the warning color (PRD decision 13). */
 export const LOW_QUOTA_PERCENT = 20;

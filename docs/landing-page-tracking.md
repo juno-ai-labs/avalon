@@ -84,17 +84,7 @@ session storage before removing the URL field, so refreshing before sign-in
 keeps the landing attribution. Authentication retires it. See
 [`public-site-telemetry.md`](public-site-telemetry.md#browser-signup-attribution).
 
-The root homepage no longer mounts the pilot offer card or its script. Its
-`web-app-offer` action is the inline browser-entry link under pricing. The
-retained `pilot-offer.ts` implementation has no visitor-specific deadline or
-`pilotOfferFirstSeen` query parameter. When mounted, it advertises two months
-without subscription fees on an Organization's first paid subscription while
-the pilot is enabled; included usage remains available and optional overages
-are billed separately. Eligibility and redemption are server-side, described in
-[`stripe-billing.md`](stripe-billing.md). Closing the card or following its link
-keeps it away in that browser (`rally.site.pilot-offer-dismissed.v1` in local
-storage); neither its appearance nor its close is reported. Billing configuration
-does not rebuild the static site.
+The homepage has no offer card; `web-app-offer` identifies its inline browser-entry link under pricing.
 
 Not reported as site events: scrolling, section views, header nav clicks, the
 "See pricing" and product-page links. The `/canvases/` and `/sidekicks/` pages count as page
