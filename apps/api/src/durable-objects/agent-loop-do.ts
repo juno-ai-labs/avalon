@@ -8657,20 +8657,40 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return evicted;
   }
 
+  /** Whether this object is the named parent's conversation; an object with no identity names nothing. */
+  private namesParent(input: { workspaceId: string; parentId: string }): boolean {
+    const identity = this.objectStore.identity();
+    return identity !== null && identity.workspaceId === input.workspaceId && identity.parentId === input.parentId;
+  }
+
   /**
-   * Erase this conversation outright: its sockets, its alarm, and every stored
-   * row. Only for a blank Canvas's Chat whose parent has already deleted it
-   * (`CanvasService.discardIfBlank`), so nothing here is anybody's content.
-   * The instance's caches describe what was erased, so it resets itself once
-   * this call has answered; the next request to this name meets an empty
-   * object with no identity, which admits nobody.
+   * Close a blank Canvas's Chat to new messages if nothing was ever said in it
+   * (`WorkstreamObjectProductService.sealIfEmpty`). The first step of
+   * `CanvasService.discardIfBlank`: this object holds the messages, so it is
+   * the one that can say there are none.
+   */
+  async sealBlankConversation(input: { workspaceId: string; parentId: string }): Promise<{ sealed: boolean }> {
+    await this.initialized;
+    if (!this.namesParent(input)) return { sealed: false };
+    return { sealed: this.product.sealIfEmpty() };
+  }
+
+  /** Reopen a Chat `sealBlankConversation` closed, when its Canvas was not deleted after all. */
+  async unsealBlankConversation(input: { workspaceId: string; parentId: string }): Promise<void> {
+    await this.initialized;
+    if (this.namesParent(input)) this.product.unsealBlank();
+  }
+
+  /**
+   * Erase a sealed blank Chat outright: its sockets, its alarm, and every
+   * stored row. Its parent has already deleted the Canvas. The instance's
+   * caches describe what was erased, so it resets itself once this call has
+   * answered; the next request to this name meets an empty object with no
+   * identity, which admits nobody.
    */
   async eraseBlankConversation(input: { workspaceId: string; parentId: string }): Promise<void> {
     await this.initialized;
-    const identity = this.objectStore.identity();
-    if (identity && (identity.workspaceId !== input.workspaceId || identity.parentId !== input.parentId)) {
-      throw new Error("conversation_erase_identity_mismatch");
-    }
+    if (!this.namesParent(input) || !this.product.sealedBlank()) throw new Error("conversation_erase_not_sealed");
     for (const socket of this.state.getWebSockets()) {
       disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "This Canvas was deleted");
     }

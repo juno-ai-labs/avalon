@@ -633,6 +633,41 @@ export class WorkstreamObjectProductService {
     );
   }
 
+  /**
+   * For a blank Canvas about to be deleted: close admission, in the same
+   * transaction that finds nothing was ever said here. The parent's projection
+   * of this conversation can lag a message this object already holds, so this
+   * object, not the parent, is what says the conversation is empty. Closed is
+   * the archive fence (`archived_at`) without the archive's stop or wakeup
+   * work, since a conversation with no input has neither.
+   */
+  sealIfEmpty(): boolean {
+    return this.storage.transactionSync(() => {
+      if (this.activeInputPreparations.size > 0) return false;
+      const root = this.root();
+      if (root.archived_at !== null || root.exact_state !== "idle") return false;
+      const used = this.storage.sql.exec<{ used: number }>(
+        `SELECT EXISTS (SELECT 1 FROM canonical_conversation_turn_details)
+             OR EXISTS (SELECT 1 FROM pending_loop_inputs) AS used`,
+      ).one().used;
+      if (used !== 0) return false;
+      const now = Date.now();
+      this.storage.sql.exec(`UPDATE workstream SET archived_at = ?, updated_at = ? WHERE id = 1`, now, now);
+      return true;
+    });
+  }
+
+  /** Reopen a conversation `sealIfEmpty` closed, when its Canvas turned out not to be blank after all. */
+  unsealBlank(): void {
+    this.storage.sql.exec(`UPDATE workstream SET archived_at = NULL, updated_at = ? WHERE id = 1 AND exact_state = 'idle'`, Date.now());
+  }
+
+  /** Whether `sealIfEmpty` closed this conversation and nothing reopened it. */
+  sealedBlank(): boolean {
+    const root = this.root();
+    return root.archived_at !== null && root.exact_state === "idle";
+  }
+
   /** The owning parent closed this conversation; no viewer admission is needed. */
   archiveFromParent(): void {
     this.storage.transactionSync(() => {
