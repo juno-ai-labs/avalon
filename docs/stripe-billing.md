@@ -58,13 +58,10 @@ The following legacy trial/coupon behavior remains available for deployments tha
 have not enabled the signup campaign.
 
 Administrators open Organization Usage settings, select an offer and supported
-currency, optionally enable overages, and click **Continue to checkout ↗**. The
-link-styled action opens Stripe as soon as the URL is ready, without a second row
-or click. **Manage billing ↗** uses the same handoff. Desktop opens the system
-browser; web reserves a tab on the initial click to retain popup permission across
-the asynchronous request. Failed requests and abandoned forms close the reserved
-tab, and organization/subscription changes discard stale responses. Returning to
-Settings refreshes billing status. The base
+currency and optionally enable overages. **Continue to checkout** and **Manage
+billing** open Stripe as soon as the session URL returns; web reserves a tab on
+click so popup permission survives the request. Returning to Settings refreshes
+billing status. The base
 quantity is always one. Checkout collects billing addresses and tax IDs and uses
 Stripe's configured payment methods. Stripe Billing Portal manages payment
 methods, invoices and existing subscriptions. Configure its allowed plan changes
@@ -552,8 +549,7 @@ overages during trials. The workerd operator suite covers its audited MCP bridge
 `test-workers/usage-ledger.test.ts` proves the hourly outbox and rollup remain
 atomic when queue batches overlap on real D1. The usage and
 access-revocation suites cover their shared boundaries. Renderer tests cover the
-single-click checkout/portal handoff, slow responses, browser tab reservation,
-blocked popups, failure cleanup, stale responses, focus refresh and the legacy
+single-click handoff and its failure/cleanup paths, focus refresh and the legacy
 picker after a failed status read.
 Live Stripe and a full authenticated desktop/browser flow remain activation checks.
 
@@ -752,6 +748,10 @@ external arrow and open immediately when the API returns. Browser tab reservatio
 on the initial gesture preserves popup eligibility without pre-creating billing
 sessions or changing subscription state before the user acts. Pending handoffs
 are canceled when the form leaves its organization or subscription context.
+The platform adapter owns the shared reservation primitive for both immediate
+and deferred links; reserved tabs show a waiting message until navigation.
+
+PR: [#1580](https://github.com/juno-ai-labs/avalon/pull/1580).
 
 ### 2026-11-12 — Automatic Grow signup trial and usage admission
 
