@@ -120,7 +120,7 @@ function SidekickCanvasPill({ canvas, row }: {
   const title = source?.title ?? canvas.title;
   const characters = [...canvasTitleSegments.segment(title)];
   const label = characters.length > CARD_CANVAS_TITLE_GRAPHEMES ? `${characters.slice(0, CARD_CANVAS_TITLE_GRAPHEMES).map(({ segment }) => segment).join('').trimEnd()}…` : title;
-  const mark = source ? canvasMark(canvas.id, source.artifactKind ?? null, source.appearance) : null;
+  const mark = source ? canvasMark(canvas.id, source.appearance) : null;
   return <Link aria-label={`Canvas: ${title}`} className="sidekick-card-canvas" title={title} to={canvasRoute(canvas.id)}>
     {mark && <mark.icon aria-hidden="true" size={14} strokeWidth={1.9} style={{ color: mark.ink }} />}
     <span>{label}</span><IconArrowUpRight aria-hidden="true" size={14} stroke={1.9} />

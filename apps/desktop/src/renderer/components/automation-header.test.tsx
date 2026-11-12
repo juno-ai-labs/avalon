@@ -399,7 +399,7 @@ describe('what a Sidekick profile says it reaches', () => {
             canvases: [{
               id: '00000000-0000-7000-8000-0000000000c1', title: 'Checkout latency · Nov 6', createdByUserId: '00000000-0000-7000-8000-0000000000a1',
               createdAt: '2026-11-06T10:00:00.000Z', updatedAt: '2026-11-06T10:34:00.000Z', lastEditor: { kind: 'sidekick', id: 'automation-1' },
-              writerSidekickId: 'automation-1', visibility: 'creator',
+              writerSidekickId: 'automation-1', visibility: 'creator', appearance: { icon: 'flag', color: 'orange' },
             }] as NonNullable<AutomationDetail['canvases']>,
           }}
           {...actions()}
@@ -410,6 +410,9 @@ describe('what a Sidekick profile says it reaches', () => {
     expect(within(screen.getByRole('list', { name: 'Connections it uses' })).getByText('Pagerduty')).toBeInTheDocument();
     expect(within(screen.getByRole('list', { name: 'Canvases it writes to' })).getByRole('link', { name: 'Checkout latency · Nov 6' }))
       .toHaveAttribute('href', '/canvases/00000000-0000-7000-8000-0000000000c1');
+    // Each Canvas wears the icon chosen for it, as the sidebar draws it.
+    expect(within(screen.getByRole('link', { name: 'Checkout latency · Nov 6' })).getByText((_content, element) =>
+      element?.classList.contains('identity-tile-shape') ?? false).querySelector('svg')).toHaveClass('lucide-flag');
   });
 
   it('marks, among the Canvases it writes to, the one whose Chat made it', () => {

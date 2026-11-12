@@ -319,8 +319,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   if (!row && !canvas.data && !creation && !openedOptimistically) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
   const newestArtifact = canvas.data?.artifacts[0];
   const appearance = canvas.data?.appearance ?? row?.appearance;
-  const kind = canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null;
-  const mark = <CanvasMark appearance={appearance} id={id} kind={kind} size={24} />;
+  const mark = <CanvasMark appearance={appearance} id={id} size={24} />;
   // The mark is the palette's own button, as a Sidekick's hexagon is (the
   // pill's icon action, beside its menu trigger); the menu's Change appearance
   // opens the same palette from there.
@@ -332,7 +331,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     onChange={saveAppearance}
     onOpenChange={setChoosingAppearance}
     open={choosingAppearance}
-    renderGlyph={(chosen) => <CanvasMark appearance={chosen} id={id} kind={kind} size={24} />}
+    renderGlyph={(chosen) => <CanvasMark appearance={chosen} id={id} size={24} />}
   />;
   // Keep the common actions in the same tile row as an artifact's title menu.
   const menuItems = (panelOpen: boolean, openPanel?: ConversationHeaderContext['openPanel']): React.JSX.Element => <>

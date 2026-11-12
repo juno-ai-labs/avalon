@@ -161,7 +161,7 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
     const glyph = <span className={clsx('activity-row-glyph', `is-${item.kind}`)}>{GLYPHS[item.kind]}</span>;
     if (item.parentKind !== 'canvas') return glyph;
     const canvas = canvases?.find((row) => row.id === item.parentId);
-    const { icon, ink, tint } = canvasMark(item.parentId, canvas?.artifactKind ?? null, canvas?.appearance);
+    const { icon, ink, tint } = canvasMark(item.parentId, canvas?.appearance);
     return <span className="identity-tile activity-row-tile">
       {glyph}
       <CornerBadge badge={{ key: 'canvas', shape: 'sheet', fill: tint, ink, icon }} />

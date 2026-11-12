@@ -123,8 +123,19 @@ function heldReply(signal: AbortSignal | undefined): Response {
     },
   }), { headers: { "content-type": "text/event-stream" } });
 }
+/**
+ * The naming pass's answer, and whether it waits for the test before it
+ * answers. Plain flags, as `held` below, since the call runs inside the
+ * Workspace object.
+ */
+const naming = { icon: "rocket", holding: false, asked: false, released: false };
+async function namingReply(): Promise<{ say: string }> {
+  naming.asked = true;
+  while (naming.holding && !naming.released) await new Promise((resolve) => setTimeout(resolve, 10));
+  return { say: JSON.stringify({ title: "December pricing launch", icon: naming.icon }) };
+}
 const provider = useOpenRouterDouble((call) => namingCall(call)
-  ? { say: JSON.stringify({ title: "December pricing launch" }) }
+  ? namingReply()
   : call.stream && JSON.stringify(memberInputs(call)).includes(LONG_REPLY_PROMPT) ? { raw: heldReply(call.signal) }
     : call.stream && JSON.stringify(memberInputs(call)).includes(INTERIM_REPLY_PROMPT) ? { raw: responsesStreamResponse([
       { choices: [{ delta: { content: INTERIM_REPLY }, finish_reason: null }] },
@@ -729,13 +740,53 @@ describe("a Canvas's title and pin order", () => {
     await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, canvasId))));
     await expect.poll(async () => (await service.detail(canvasId)).titleStatus, { timeout: waitBudget() }).toBe("settled");
-    expect((await service.detail(canvasId)).title).toBe("December pricing launch");
+    expect(await service.detail(canvasId)).toMatchObject({ title: "December pricing launch", appearance: { icon: "rocket", color: null } });
     await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title, { timeout: waitBudget() })
       .toBe("December pricing launch");
     const naming = provider.calls.filter(namingCall);
     expect(naming).toHaveLength(1);
     expect(JSON.stringify(naming[0]!.messages)).toContain("Plan the December pricing launch");
     creator.socket.close(1000, "done");
+  }));
+
+  it("keeps an icon and colour chosen while the naming pass waits on the model", () => withNamingModel(async () => {
+    Object.assign(naming, { holding: true, asked: false, released: false });
+    try {
+      const { canvasId } = await new CanvasService(TEST_ENV, auth(CREATOR)).create({
+        prompt: { text: "Plan the December pricing launch.", clientMessageId: "canvas-name-held" },
+      });
+      const service = new CanvasService(TEST_ENV, auth(CREATOR));
+      await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, canvasId))));
+      await expect.poll(() => naming.asked, { timeout: waitBudget() }).toBe(true);
+      // A person dresses the Canvas while the model is still answering.
+      await service.update(canvasId, { appearance: { icon: "flag", color: "orange" } });
+      naming.released = true;
+      await expect.poll(async () => (await service.detail(canvasId)).titleStatus, { timeout: waitBudget() }).toBe("settled");
+      expect(await service.detail(canvasId)).toMatchObject({
+        title: "December pricing launch", appearance: { icon: "flag", color: "orange" },
+      });
+    } finally {
+      Object.assign(naming, { holding: false, released: true });
+    }
+  }));
+
+  it("keeps the title when the model names an icon off the menu", () => withNamingModel(async () => {
+    naming.icon = "not-an-icon";
+    try {
+      const { canvasId } = await new CanvasService(TEST_ENV, auth(CREATOR)).create({
+        prompt: { text: "Plan the December pricing launch.", clientMessageId: "canvas-name-off-menu" },
+      });
+      const service = new CanvasService(TEST_ENV, auth(CREATOR));
+      await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, canvasId))));
+      await expect.poll(async () => (await service.detail(canvasId)).titleStatus, { timeout: waitBudget() }).toBe("settled");
+      expect(await service.detail(canvasId)).toMatchObject({
+        title: "December pricing launch", appearance: { icon: null, color: null },
+      });
+    } finally {
+      naming.icon = "rocket";
+    }
   }));
 
   it("waits on an opening of attachments alone, then titles from a person's text and never from Rally's reply", () => withNamingModel(async () => {
@@ -779,9 +830,13 @@ describe("a Canvas's title and pin order", () => {
     expect(await service.detail(canvasId)).toMatchObject({ title: "Untitled Canvas", titleStatus: "naming" });
     expect(provider.calls.filter(namingCall)).toEqual([]);
 
+    // An icon somebody chose before the pass ran is theirs to keep.
+    await service.update(canvasId, { appearance: { icon: "flag" } });
     await say("human", "Plan the December pricing launch.");
     await name();
-    expect(await service.detail(canvasId)).toMatchObject({ title: "December pricing launch", titleStatus: "settled" });
+    expect(await service.detail(canvasId)).toMatchObject({
+      title: "December pricing launch", titleStatus: "settled", appearance: { icon: "flag", color: null },
+    });
     const naming = provider.calls.filter(namingCall);
     expect(naming).toHaveLength(1);
     expect(JSON.stringify(naming[0]!.messages)).toContain("Plan the December pricing launch.");
