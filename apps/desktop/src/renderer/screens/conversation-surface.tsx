@@ -43,6 +43,7 @@ import type { SubstreamInitialContext } from '@rally/contracts/substream-creatio
 import type { ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
+import { isSiteResource } from '../lib/site-resource';
 import type { ArtifactAudienceControl, ArtifactCardControls } from '../components/artifact-card-tools';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { conversationAnnotationScope, conversationDraftKey } from '../lib/draft-keys';
@@ -1025,10 +1026,11 @@ export interface ConversationSurfaceProps {
    */
   withoutComposer?: boolean;
   /**
-   * Who can open the parent's artifacts, for their cards in the feed. Only a
-   * Canvas has the setting; without it the cards offer only link and browser.
+   * A Canvas's artifact sharing, for the cards in its feed: the publications
+   * that have a link, and who can open them. Without it, only sites get link
+   * and browser tools, and no card offers the audience.
    */
-  artifactAudience?: ArtifactAudienceControl | undefined;
+  artifactSharing?: { publishedIds: readonly string[]; audience?: ArtifactAudienceControl | undefined } | undefined;
 }
 
 /**
@@ -1066,7 +1068,7 @@ function ConversationSurfaceContent({
   onComposerCancel,
   withoutComposer = false,
   embedded = false,
-  artifactAudience,
+  artifactSharing,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
@@ -1387,22 +1389,20 @@ function ConversationSurfaceContent({
   // Renaming is for what this conversation generated, not for a file somebody attached.
   const isGeneratedArtifact = (resourceId: string): boolean =>
     Boolean(routedDetail?.resources.some((resource) => resource.id === resourceId && resource.direction === 'artifact'));
-  // Citations resolve against the loaded work stream's resources, and the
-  // transcript needs this before the screen has decided it has a work stream to
-  // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
-  // which keeps the identity stable while there is nothing loaded. It is
-  // declared after the preview read because it now takes it: the embed card's
-  // excerpt is the same derivative the rail's panel shows.
-  // A generated artifact is a Canvas publication with a stable link; an
-  // attached file is not, so its card keeps no tools. The link never changes,
-  // so it is read once per artifact and shared with the Share panel's.
+  // Copy link and Open in browser need an artifact registry row. A Canvas
+  // lists the publications that have one; anywhere else only a site has one.
+  // Other generated resources (audio, video, Terminal diffs) and attached files
+  // have none, so their cards keep no tools. The link never changes, so it is
+  // read once per artifact, under the Share panel's own query key.
   // Keyed on the ids, not the array: socket snapshots replace the array when
   // nothing about it changed, and a new set would re-render every card.
-  const generatedArtifactKey = (routedDetail?.resources ?? NO_RESOURCES)
-    .filter((resource) => resource.direction === 'artifact').map((resource) => resource.id).join(' ');
-  const generatedArtifactIds = useMemo(() => new Set(generatedArtifactKey.split(' ')), [generatedArtifactKey]);
+  const linkedArtifactKey = (artifactSharing?.publishedIds
+    ?? (routedDetail?.resources ?? NO_RESOURCES).filter((resource) => resource.direction === 'artifact' && isSiteResource(resource)).map((resource) => resource.id)
+  ).join(' ');
+  const linkedArtifactIds = useMemo(() => new Set(linkedArtifactKey.split(' ')), [linkedArtifactKey]);
+  const artifactAudience = artifactSharing?.audience;
   const artifactControls = useCallback((resourceId: string): ArtifactCardControls | undefined => {
-    if (!api || !generatedArtifactIds.has(resourceId)) return undefined;
+    if (!api || !linkedArtifactIds.has(resourceId)) return undefined;
     return {
       link: async () => (await queryClient.fetchQuery({
         queryKey: ['artifact-link', resourceId],
@@ -1413,7 +1413,13 @@ function ConversationSurfaceContent({
       openInBrowser: async () => { await desktopBridge().openExternal((await api.openArtifact(resourceId)).openUrl); },
       audience: artifactAudience,
     };
-  }, [api, artifactAudience, generatedArtifactIds, queryClient]);
+  }, [api, artifactAudience, linkedArtifactIds, queryClient]);
+  // Citations resolve against the loaded work stream's resources, and the
+  // transcript needs this before the screen has decided it has a work stream to
+  // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
+  // which keeps the identity stable while there is nothing loaded. It is
+  // declared after the preview read because it now takes it: the embed card's
+  // excerpt is the same derivative the rail's panel shows.
   const citations = useCitations({
     artifact: artifactControls,
     loadResourceContent,

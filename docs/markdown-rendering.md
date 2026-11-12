@@ -471,14 +471,17 @@ browser opener and, on a Canvas, the Canvas's artifact audience
 (`artifact-card-tools.tsx`). With them the row (`.artifact-card`), not the
 button, draws the card, and the audience pill, **Copy link** and **Open in
 browser** sit inside its border beside the button, which cannot hold buttons.
-The conversation surface offers them for `direction: 'artifact'` resources
-only: an attached file has no Canvas publication and so no link. Image tiles
+The conversation surface offers them only where a link exists: in a Canvas,
+for the artifacts the Canvas lists as its publications (`CanvasDetail.artifacts`);
+elsewhere, for sites, which always have one. Other generated resources, such as
+audio, video, Terminal diffs, and attached files, have no registry row, so
+their cards keep no tools. Image tiles
 and stills get none. The audience is the Canvas's one setting, so the menu says
 it applies to every artifact in the Canvas; **Specific people…** opens the Share
 panel, the one person picker, and someone who cannot manage sharing sees the
 setting with no menu.
 
- — keeps numbered pills
+A citation rendered into a **still** — the saved card — keeps numbered pills
 instead of asterisks or icons, so they identify entries in its trailing source
 list. A still is rendered synchronously and photographed, so it asks for no
 icon at all: one arriving after the shutter is an empty box in the file somebody
