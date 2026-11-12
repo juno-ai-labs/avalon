@@ -1651,6 +1651,24 @@ surface that tells somebody about connector activity reads
 
 ## Changelog
 
+### 2026-11-12 — A Google search tool tells the model its query ceiling
+
+**What changed:** `gmail.search` and `calendar.list_events` now advertise
+`maxLength: 2000` on `query`, and `drive.search` advertises `maxLength: 1000`.
+Each number is one constant read by both the advertised schema and the
+executor's parse. The numbers are the ones the parse already enforced.
+
+**Why:** A run sent `gmail.search` a query of more than 2,000 characters. The
+schema it was shown had no ceiling, the parse refused it, and the failure
+logged at `error` as `schema_invalid:query:too_big`. Rally refused the model for
+following the schema. The cursor bound had the same split and was fixed the
+same way (the `pageToken` entries below).
+
+**Consequences:** A hand-written `inputSchema` beside a separate Zod parse is
+two declarations of one contract. A new bound on either side belongs in a shared
+constant, and the boundary test in `index.test.ts` drives each tool to its
+advertised limit and one past it.
+
 ### 2026-11-10 — An adapter can read what one activity is about
 
 **What changed:** Adapters gain an optional `readActivityContent`, and Google
