@@ -565,7 +565,7 @@ describe('Organization settings', () => {
       const sections = within(navigation).getAllByRole('button');
       expect(sections.map((button) => [button.textContent, button.getAttribute('aria-disabled') === 'true'])).toEqual([
         ['Account', false], ['Preferences', false], ['Memories', true], ['Notifications', true], ['Organization', true], ['Members', false],
-        ['Security', true], ['Connections', true], ['Application', false],
+        ['Billing', true], ['Security', true], ['Connections', true], ['Application', false],
       ]);
       fireEvent.click(within(navigation).getByRole('button', { name: 'Organization' }));
       expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
