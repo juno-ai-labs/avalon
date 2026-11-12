@@ -44,7 +44,6 @@ import {
   conversationToolAccess,
   conversationToolPorts,
   newestSearchHits,
-  conversationsSystemMessage,
   createConversationsPlugin,
   type ConversationIndexHit,
   type ConversationPostRequest,
@@ -53,6 +52,7 @@ import {
 import { stableWireToolName } from "../src/services/connector-tool-inventory";
 import { withToolPagination } from "../src/services/tool-pagination";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import { conversationsSystemMessage } from "@rally/prompts/api/conversations-plugin";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const CANVAS_ID = "00000000-0000-4000-8000-000000000002";

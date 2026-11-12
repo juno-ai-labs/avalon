@@ -15,7 +15,7 @@ import {
   type HarnessSkill,
 } from "./index";
 import { AUTOMATIONS_PLUGIN_ID } from "./automation-creator-tools";
-import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
+import { renderPromptSkillCatalog } from "./skill-catalog";
 import { providerRequestView, responsesStreamResponse } from "./test-support/responses-stream";
 
 const triage: HarnessSkill = {

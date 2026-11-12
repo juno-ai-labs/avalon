@@ -16,10 +16,8 @@ export {
 } from "./gateway";
 export { ENTRY_SOURCE, wrapProgram } from "./entry-module";
 export {
-  CODE_API_FRAMING,
   CODE_PLUGIN_DESCRIPTION,
   CODE_SYSTEM_MESSAGE,
-  CUSTOM_TOOLS_SYSTEM_MESSAGE,
   EntryResultSchema,
   createCodePlugin,
   createCustomToolsPlugin,
