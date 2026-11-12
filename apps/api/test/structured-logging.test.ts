@@ -81,6 +81,10 @@ describe("structured logging", () => {
   it("names a D1 or SQLite failure without copying the table, column or value it quotes", () => {
     const sentences: Array<[string, string]> = [
       ["D1_ERROR: D1 DB is overloaded. Too many requests queued.", "d1_overloaded"],
+      [
+        "D1_ERROR: Your account is generating too much load on D1 DBs. Please back off and try again later.",
+        "d1_account_overloaded",
+      ],
       ["D1_ERROR: D1 DB storage operation exceeded timeout which caused object to be reset.", "d1_storage_timeout"],
       ["D1_ERROR: Network connection lost.", "network_connection_lost"],
       ["D1_ERROR: UNIQUE constraint failed: memory_rows.Customer_Email: SQLITE_CONSTRAINT", "sqlite_unique_constraint"],

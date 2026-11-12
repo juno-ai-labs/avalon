@@ -23,6 +23,7 @@ const PLATFORM_ERRORS: readonly (readonly [RegExp, string])[] = [
   [/(?:^|: )Network connection lost/u, "network_connection_lost"],
   [/code had hung and would never generate a response/u, "worker_hung"],
   [/D1 DB is overloaded/u, "d1_overloaded"],
+  [/Your account is generating too much load on D1 DBs/u, "d1_account_overloaded"],
   [/D1 DB's isolate exceeded its memory limit/u, "d1_memory_limit_reset"],
   [/D1 DB exceeded its CPU time limit/u, "d1_cpu_limit_reset"],
   [/Internal error while starting up D1 DB storage/u, "d1_storage_startup_reset"],
