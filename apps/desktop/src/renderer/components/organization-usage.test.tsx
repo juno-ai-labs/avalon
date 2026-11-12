@@ -419,6 +419,25 @@ describe('The rail warning when Rally stops taking new work', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it('warns at 10% or less left while running out would stop work', async () => {
+    render(wrap(<UsageLimitRailWarning api={apiAnswering({ ...usage(10), allowanceExhausted: false, stopsAtAllowance: true })} onOpen={vi.fn()} />));
+    const warning = await screen.findByRole('button', { name: /^Usage running low\./ });
+    expect(warning.getAttribute('aria-label')).toBe("Usage running low. 10% of this week's included usage is left. When it runs out, Rally, Sidekicks and background agents pause unless an administrator turns on overage billing in Settings. Resets Thursday, October 8 at 9:00 AM.");
+  });
+
+  it('does not warn at 11% left, or when overages keep work going', async () => {
+    for (const answer of [
+      { ...usage(11), allowanceExhausted: false, stopsAtAllowance: true },
+      { ...usage(3), allowanceExhausted: false, stopsAtAllowance: false },
+    ]) {
+      const api = apiAnswering(answer);
+      const { unmount } = render(wrap(<UsageLimitRailWarning api={api} onOpen={vi.fn()} />));
+      await waitFor(() => expect(api.getWorkspaceUsage).toHaveBeenCalled());
+      await waitFor(() => expect(screen.queryByRole('button')).toBeNull());
+      unmount();
+    }
+  });
+
   it('shows nothing once work would be admitted, even with the meter at zero', async () => {
     const api = apiAnswering({ ...usage(0), allowanceExhausted: false });
     render(wrap(<UsageLimitRailWarning api={api} onOpen={vi.fn()} />));
