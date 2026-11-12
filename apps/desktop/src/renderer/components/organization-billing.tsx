@@ -1,6 +1,6 @@
 import { IconArrowUpRight } from '@tabler/icons-react';
 import { RefreshCcw } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { prepareExternalLink } from '../lib/platform';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { BillingStatus } from '@rally/contracts/billing';
@@ -72,6 +72,8 @@ function OverageCredits({ api, readDisabledReason }: Pick<BillingProps, 'api' | 
 }
 
 function BillingForm({ api, billing: status, currentPlan, canManage, loading, disabledReason, planControl }: BillingProps) {
+  const scope = useLocalCacheScope();
+  const queryClient = useQueryClient();
   const billing = status?.enabled ? status : undefined;
   const [offerId, setOfferId] = useState(billing?.offers[0]?.id ?? '');
   const offer = billing?.offers.find((item) => item.id === offerId);
@@ -96,10 +98,14 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
   const planReason = reason ?? (subscribed ? 'Manage your subscribed plan in Stripe.' : !offer ? 'No billing plans are available.' : undefined);
   const currencyReason = reason ?? (subscribed ? 'Currency is set when the subscription starts.' : !currency ? 'No billing currencies are available.' : undefined);
   const overageReason = reason ?? (subscribed
-    ? !billing?.overageAvailable ? 'Overages are unavailable for this subscription.'
+    ? !['active', 'trialing'].includes(billing?.status ?? '') ? 'An active or trialing subscription is required to change overages.'
       : !api?.setBillingOverages ? 'Overage changes are unavailable.'
-      : !billing.paymentMethodReady && !overage ? 'Add billing details to enable overages.' : undefined
-    : !offer?.overageAvailable ? 'Overages are unavailable for this plan.'
+      : overage ? undefined
+      : billing?.currency && billing.currency !== 'usd' ? 'Overages require billing in USD.'
+      : !billing?.overageAvailable ? 'Overages are unavailable for this plan.'
+      : !billing.paymentMethodReady ? 'Add a payment method and billing address to enable overages.' : undefined
+    : !api?.createBillingCheckout ? 'Checkout is unavailable.'
+      : !offer?.overageAvailable ? 'Overages are unavailable for this plan.'
       : currency !== 'usd' ? 'Overages require billing in USD.' : undefined);
   const open = async () => {
     if (actionReason || pending.current || !api || !billing) return;
@@ -123,7 +129,11 @@ function BillingForm({ api, billing: status, currentPlan, canManage, loading, di
   const saveOverages = async (enabled: boolean) => {
     if (overageReason || !api?.setBillingOverages) return;
     setBusy(true); setError(null);
-    try { const result = await api.setBillingOverages(enabled); setOverage(result.enabled); }
+    try {
+      const result = await api.setBillingOverages(enabled);
+      setOverage(result.enabled);
+      queryClient.setQueryData<BillingStatus>(['organization-billing', scope], (previous) => previous?.enabled ? { ...previous, overageEnabled: result.enabled } : previous);
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Overages could not be updated'); }
     finally { setBusy(false); }
   };

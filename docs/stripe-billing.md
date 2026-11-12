@@ -67,6 +67,20 @@ Stripe's configured payment methods. Stripe Billing Portal manages payment
 methods, invoices and existing subscriptions. Configure its allowed plan changes
 to prices in Rally's offer catalog.
 
+Billing settings remain visible when an action is unavailable. Disabled controls
+show the blocking reason on hover and keyboard focus. The UI follows these rules:
+
+| Control | When changes are available |
+| --- | --- |
+| All billing changes | Organization administrator, outside a support session, online, with billing loaded and no request in progress. |
+| Checkout | No live subscription, an enabled catalog offer and its supported currency, and the checkout endpoint available. Stripe collects billing details. |
+| Manage billing / Add billing details | A live subscription and the portal endpoint available, including past-due or paused subscriptions that need repair in Stripe. |
+| Plan / Currency | Before checkout. Existing subscription plans are managed in Stripe; the saved currency stays visible and locked. The legacy plan picker is available only when billing is disabled. |
+| Overages before checkout | A selected offer that supports overages in USD. Consent is passed to checkout; a saved payment method is not required yet. |
+| Enable overages on a subscription | Active or trialing subscription, supported USD overages, billing readiness (payment method and any required tax location), and the overage endpoint available. Credits and remaining quota do not affect eligibility. |
+| Disable overages on a subscription | Active or trialing subscription with consent already enabled and the overage endpoint available. Losing payment readiness or plan/currency eligibility must not block revoking consent. |
+| Credits / Quota / Monthly usage | Read-only for all Organization members. Credits fetch on opening; refresh is unavailable during a fetch, a paused offline fetch, a support session, or when its endpoint is absent. Zero balances and usage remain visible. |
+
 Start is the free default plan and requires no checkout. When synchronization is
 enabled, it receives a Stripe customer and a separate zero-price subscription
 record without collecting a card. This record is excluded from paid-subscription
@@ -770,6 +784,10 @@ access supplies real read-only values, while all billing POSTs remain admin-only
 and support sessions remain excluded. Hiding controls or showing invented defaults
 would obscure what an administrator could configure, so unavailable data is stated
 explicitly. Scoped query keys prevent one Organization's credits reaching another.
+Overage controls distinguish checkout consent from changing an existing
+subscription: only active/trialing subscriptions can change consent, and enabling
+requirements never block disabling consent. Offline restrictions do not depend on
+whether the quota read succeeded.
 
 ### 2026-11-12 — Require an expiration within two years for overage credits
 
