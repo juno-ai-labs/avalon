@@ -841,6 +841,23 @@ describe('CanvasScreen', () => {
     }));
   });
 
+  it('restores the stored artifact choice when editors leave the Organization, never saving a raise nobody picked', async () => {
+    getCanvas.mockResolvedValue(detail({ visibility: 'workspace', artifactVisibility: 'editors' }));
+    setCanvasAudience.mockResolvedValue(detail());
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    const artifactControls = within(within(dialog).getByRole('group', { name: 'Who can interact with artifacts' }));
+    expect(artifactControls.getByRole('radio', { name: /Everyone in the Organization/ })).toBeChecked();
+    fireEvent.click(editorControls(dialog).getByRole('radio', { name: 'Only you' }));
+    expect(artifactControls.getByRole('radio', { name: 'Editors only' })).toBeChecked();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, {
+      visibility: 'creator', userIds: [], artifactVisibility: 'editors', artifactUserIds: [], expectedRevision: 0,
+    }));
+  });
+
   it('saves public artifact use independently of the two editors and copies the artifact URL',async()=>{
     getCanvas.mockResolvedValue(detail({visibility:'participants',participantUserIds:[MAYA],sharingRevision:7}));
     setCanvasAudience.mockResolvedValue(detail({visibility:'participants',participantUserIds:[MAYA],artifactVisibility:'public',sharingRevision:8}));
