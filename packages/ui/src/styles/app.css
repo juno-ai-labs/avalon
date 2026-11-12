@@ -3801,13 +3801,18 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 @media (prefers-reduced-motion: reduce) { .resource-more-button { transition: none; } }
 /* A published artifact's card. The row draws the card so its tools can sit
    inside the border beside the card's own button, which cannot hold them. */
-.artifact-card { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: flex; gap: var(--space-1); margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; padding-right: var(--space-2); width: min(460px, 100%); }
+.artifact-card { align-items: center; background: var(--av-cmp-composer-background); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 0 var(--space-1); margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; padding-right: var(--space-2); width: min(460px, 100%); }
 .artifact-card:has(.citation-card:hover) { background-image: var(--hover-layer); }
-.artifact-card > .resource-more-shell { flex: 1 1 auto; min-width: 0; width: auto; }
-.artifact-card .citation-card.is-file { background: transparent; border: 0; flex: 1 1 auto; margin: 0; min-width: 0; width: auto; }
+.artifact-card > .resource-more-shell { flex: 1 1 180px; min-width: 0; width: auto; }
+.artifact-card .citation-card.is-file { background: transparent; border: 0; flex: 1 1 180px; margin: 0; min-width: 0; width: auto; }
 .artifact-card .citation-card.is-file:hover { background-image: none; }
-.citation-card-row .artifact-card { margin: 0; width: 100%; }
-.artifact-card-tools { align-items: center; display: inline-flex; flex: none; gap: 2px; }
+/* In a gallery a column is a thumbnail's width, too narrow for the tools, so a
+   card that carries them takes the whole row. */
+.citation-card-row > .citation-file-attachment:has(> .artifact-card) { grid-column: 1 / -1; }
+.citation-card-row .artifact-card { margin: 0; width: min(460px, 100%); }
+.citation-card-row .artifact-card .citation-card.is-file { width: auto; }
+/* Too narrow for one line (a two-column gallery), the tools wrap under the title. */
+.artifact-card-tools { align-items: center; display: inline-flex; flex: none; gap: 2px; margin-left: auto; padding-block: 4px; }
 .artifact-card-tools .icon-button { color: var(--av-sys-color-text-muted); height: 28px; width: 28px; }
 .artifact-audience-pill { align-items: center; background: transparent; border: .5px solid var(--av-cmp-composer-border-color); border-radius: 999px; color: var(--av-sys-color-text-subtle); cursor: pointer; display: inline-flex; font: inherit; font-size: 12px; gap: 3px; height: 24px; line-height: 16px; margin-right: 4px; padding: 0 7px 0 8px; white-space: nowrap; }
 .artifact-audience-pill:not(.is-static):hover, .artifact-audience-pill[data-state='open'] { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
