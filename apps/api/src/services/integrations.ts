@@ -13,6 +13,11 @@ import type { CompletionVerificationSnapshot } from "../durable-objects/completi
 import { AGENT_MESSAGE_CONTENT_KIND, agentIdForAddress, AgentIdSchema, ImportedMessageProvenanceSchema, SidekickReviewNoticeV1Schema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from '../prompts/agent-coordination-role';
 import { renderCorePluginSystemMessage } from "../prompts/core-plugin";
+import { renderAttachedCanvasesMessage } from "../prompts/attached-canvases";
+import { renderCanvasContextMessage } from "../prompts/canvas-context";
+import { renderSidekickActivationContextMessage } from "../prompts/sidekick-activation-context";
+import { renderSidekickTriggerContextMessage } from "../prompts/sidekick-trigger-context";
+import { renderSlackContextMessage } from "../prompts/slack-context";
 import { AGENT_REQUEST_GUIDANCE } from "../prompts/agent-request-guidance";
 import { renderAttachmentGroundingNudge } from "../prompts/attachment-grounding-nudge";
 import { CANVAS_CHAT_PUBLISHING_GUIDANCE } from "../prompts/canvas-chat-publishing";
@@ -5215,7 +5220,7 @@ async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput)
   if (!canvas) return null;
   return modelDerivative({
     role: "user",
-    content: `CANVAS CONTEXT (host-provided):\n${JSON.stringify({
+    content: renderCanvasContextMessage({
       canvasId: canvas.canvasId,
       title: canvas.title,
       artifacts: canvas.artifacts.map(agentCanvasArtifact),
@@ -5223,7 +5228,7 @@ async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput)
         sidekickId: sidekick.id, name: sidekick.name, status: sidekick.status, madeHere: sidekick.madeHere,
       })),
       publishing: CANVAS_CHAT_PUBLISHING_GUIDANCE,
-    })}`,
+    }),
   }, "canvas_context", input.triggerMessageId ?? input.harnessRunId);
 }
 
@@ -5280,13 +5285,12 @@ async function sidekickCanvasContextMessage(env: Env, input: WorkstreamWorkflowI
   if (canvases.length === 0) return null;
   return modelDerivative({
     role: "user",
-    content: `ATTACHED CANVASES (host-provided):
-${JSON.stringify({
+    content: renderAttachedCanvasesMessage({
       canvases: canvases.map((canvas) => ({
         canvasId: canvas.canvasId, title: canvas.title, artifacts: canvas.artifacts.map(agentCanvasArtifact),
       })),
       updating: input.automationRun ? RUN_CANVAS_UPDATING : WIZARD_CANVAS_UPDATING,
-    })}`,
+    }),
   }, "sidekick_canvas_context", input.triggerMessageId ?? input.automationRun?.runId ?? input.harnessRunId);
 }
 
@@ -5348,24 +5352,24 @@ async function loadRunPromptContext(
   if (input.automationRun) {
     additionalMessages.push(modelDerivative({
       role: "user",
-      content: `SIDEKICK ACTIVATION (host-provided execution context):\n${JSON.stringify({
+      content: renderSidekickActivationContextMessage({
         sidekickId: input.automationRun.automationId,
         runId: input.automationRun.runId,
         definitionRevision: input.automationRun.definitionRevision,
         trigger: input.automationRun.trigger,
-      })}`,
+      }),
     }, "run_context", input.automationRun.runId, input.automationRun.definitionRevision));
   }
   if (input.slackOrigin) {
     additionalMessages.push(modelDerivative(
       {
         role: "user",
-        content: `SLACK CONTEXT:\n${JSON.stringify({
+        content: renderSlackContextMessage({
           nearbyMessagesStatus: input.slackOrigin.nearbyMessagesStatus,
           nearbyMessages: input.slackOrigin.nearbyMessages,
           attachments: input.slackOrigin.attachments,
           appContext: input.slackOrigin.appContext,
-        })}`,
+        }),
       },
       "run_context",
       input.triggerMessageId ?? `slack-origin:${JSON.stringify([
@@ -5392,7 +5396,7 @@ async function loadRunPromptContext(
       metadata: activity.metadata,
     };
     triggerMessage = modelDerivative(
-      { role: "user", content: `SIDEKICK TRIGGER:\n${JSON.stringify(triggerContext)}` },
+      { role: "user", content: renderSidekickTriggerContextMessage(triggerContext) },
       "connector_activity",
       input.activityId,
     );
