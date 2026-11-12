@@ -26,17 +26,20 @@ const scenes = {
   },
 } as const;
 
-/** Each SVG clips its own quadrant while the browser downloads the artwork once. */
-export function renderHomeIllustration(scene: keyof typeof scenes): string {
+/** Shared geometry for both browser viewports and raster preview crops. */
+export function getIllustration(scene: keyof typeof scenes) {
   const { column, row, label } = scenes[scene];
   const width = artwork.width / 2;
   const height = artwork.height / 2;
-  const clip = `home-illustration-${scene}-clip`;
+  return { ...artwork, label, crop: { left: column * width, top: row * height, width, height } };
+}
 
+/** The SVG viewport clips its quadrant; repeating a scene creates no shared IDs. */
+export function renderHomeIllustration(scene: keyof typeof scenes): string {
+  const { src, width, height, label, crop } = getIllustration(scene);
   return (
-    `<svg class="home-illustration" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="860" height="650" role="img" aria-label="${label}" focusable="false">` +
-    `<defs><clipPath id="${clip}"><rect width="${width}" height="${height}"/></clipPath></defs>` +
-    `<g clip-path="url(#${clip})"><image href="${artwork.src}" width="${artwork.width}" height="${artwork.height}" x="${-column * width}" y="${-row * height}"/></g>` +
+    `<svg class="home-illustration" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${crop.width} ${crop.height}" width="860" height="650" overflow="hidden" role="img" aria-label="${label}" focusable="false">` +
+    `<image href="${src}" width="${width}" height="${height}" x="${-crop.left}" y="${-crop.top}"/>` +
     "</svg>"
   );
 }

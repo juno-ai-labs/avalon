@@ -23,7 +23,7 @@ are in
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/plans.ts` | The plan catalog and weekly allocation, shared by the product and public site; dependency-free so the site build can consume it directly. |
+| `packages/contracts/src/plans.ts` | The plan catalog and weekly allocation, shared by the product and public site; dependency-free so native Node site builds can consume it without loading the runtime schemas. |
 | `packages/contracts/src/usage.ts` | Re-exports the catalog and owns metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
 | `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only D1 ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`, `publishOrganizationUsage`, `pruneUsageEvents` and `USAGE_EVENTS_D1_RETENTION_DAYS`. |
 | `apps/api/src/durable-objects/workspace-do.ts` (`publishUsage`) | Sends the meter after a plan change to every subscribed member socket as `workspace_usage` (`WorkspaceUsageEventSchema`), never a guest's, and drops a meter read before the last one sent. |

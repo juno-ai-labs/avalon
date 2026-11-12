@@ -12,7 +12,7 @@ export const OG_HEIGHT = 630;
 
 // Bump to regenerate every card after a design change; it is part of each
 // file's hash, and the files are cached as immutable.
-const DESIGN_VERSION = '2-pencil';
+const DESIGN_VERSION = '3-pencil';
 
 interface Card {
   eyebrow: string;

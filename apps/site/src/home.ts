@@ -12,7 +12,7 @@ type Example = {
   heading: string;
   note: string;
   tasks: Task[];
-  completedTasks: Task[];
+  change: { kind: "complete"; index: number } | { kind: "append"; task: Task };
   receipt: string;
 };
 const examples: Record<ExampleId, Example> = {
@@ -38,16 +38,7 @@ const examples: Record<ExampleId, Example> = {
       { title: "Ship the new homepage", owner: "Maya", done: false },
       { title: "Send a little hello to the world", owner: "Theo", done: false },
     ],
-    completedTasks: [
-      {
-        title: "Find our first five design partners",
-        owner: "Maya",
-        done: true,
-      },
-      { title: "Polish the onboarding flow", owner: "Theo", done: true },
-      { title: "Ship the new homepage", owner: "Maya", done: true },
-      { title: "Send a little hello to the world", owner: "Theo", done: false },
-    ],
+    change: { kind: "complete", index: 2 },
     receipt:
       "Example run: Linear issue completed → launch plan updated to version 2.",
   },
@@ -67,16 +58,10 @@ const examples: Record<ExampleId, Example> = {
       { title: "Sketch the new onboarding flow", owner: "Theo", done: false },
       { title: "Set up the design partner calls", owner: "Maya", done: false },
     ],
-    completedTasks: [
-      { title: "Share the revised customer brief", owner: "Maya", done: true },
-      { title: "Sketch the new onboarding flow", owner: "Theo", done: false },
-      { title: "Set up the design partner calls", owner: "Maya", done: false },
-      {
-        title: "Bring a prototype to the next check-in",
-        owner: "Theo",
-        done: false,
-      },
-    ],
+    change: {
+      kind: "append",
+      task: { title: "Bring a prototype to the next check-in", owner: "Theo", done: false },
+    },
     receipt:
       "Example run: new Granola note → one new follow-up added in version 2.",
   },
@@ -100,16 +85,10 @@ const examples: Record<ExampleId, Example> = {
       { title: "A faster way to find your work", owner: "Theo", done: true },
       { title: "The little fixes that add up", owner: "Theo", done: true },
     ],
-    completedTasks: [
-      {
-        title: "A warmer welcome for new teammates",
-        owner: "Maya",
-        done: true,
-      },
-      { title: "A faster way to find your work", owner: "Theo", done: true },
-      { title: "The little fixes that add up", owner: "Theo", done: true },
-      { title: "A new homepage, out in the world", owner: "Maya", done: true },
-    ],
+    change: {
+      kind: "append",
+      task: { title: "A new homepage, out in the world", owner: "Maya", done: true },
+    },
     receipt:
       "Example run: Friday schedule → latest GitHub work added in version 2.",
   },
@@ -201,7 +180,10 @@ tabs.forEach((tab, index) => {
 });
 run?.addEventListener("click", () => {
   const example = examples[selected];
-  renderTasks(example.completedTasks);
+  const change = example.change;
+  renderTasks(change.kind === "complete"
+    ? example.tasks.map((task, index) => index === change.index ? { ...task, done: true } : task)
+    : [...example.tasks, change.task]);
   setText("version", "Version 2");
   setText("status", "Just updated");
   setText("receipt", example.receipt);

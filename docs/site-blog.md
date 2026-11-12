@@ -86,25 +86,6 @@ screenshot `/blog/` and a post at desktop and phone widths, and open a built
 
 ## Changelog
 
-### 2026-11-12 — Carry the pencil identity into the blog
-
-**What changed:** The index gains a pencil-illustrated cover, articles use a
-quiet serif/Geist reading layout, and the blog loads `reading.css` and the shared
-`site-theme.css`. Blog previews use the matching local-font pencil renderer.
-
-**Why:** The illustrated homepage established a new identity; reaching the blog
-should feel like staying on the same site while keeping long posts readable.
-
-**Considered and rejected:** Restyling the global `landing.css` would change
-product and comparison pages outside this request. The reading base instead
-serves the blog and Trust Center, while its font/palette source also serves the
-homepage and manual.
-
-**Consequences:** Post files, dates, slugs, Markdown copies and latest-post/summary
-behavior are unchanged. Check the index, an article, mobile wrapping and social
-cards when editing the new reading styles.
-
-
 ### 2026-10-01: Dated file names, a changelog index, and no header link
 
 **What changed:** Post files are named `YYYY-MM-DD-<title>.md`, and the date

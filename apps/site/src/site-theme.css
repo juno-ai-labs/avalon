@@ -28,7 +28,8 @@
   color-scheme: light;
   --paper: #fcfbf7;
   --ink: #393d31;
-  --muted: #737869;
+  /* Secondary text clears 4.5:1 on paper, sunken surfaces, and sage. */
+  --muted: #646b5b;
   --line: #e4e4d8;
   --green: #536547;
   --green-hover: #3d5131;

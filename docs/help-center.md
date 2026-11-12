@@ -220,31 +220,24 @@ anchor failures, the real `help/` folder, search ranking, and the Worker's
 its own folder under the system temp directory and removes it afterwards.
 
 Visual changes are checked in a browser: `pnpm --filter @rally/site build`,
-`vite preview`, and Playwright screenshots in light and dark at desktop and
-phone widths.
+`vite preview`, and Playwright screenshots at desktop and phone widths, checking that both system
+appearance preferences retain the light paper theme.
 
 ## Changelog
 
-### 2026-11-12 — Make the manual part of the pencil site
+### 2026-11-12 — Share the local-font preview renderer
 
-**What changed:** Shared paper/sage tokens and Instrument Serif/Geist replace
-the older Barlow light/dark theme. The cover adds the coordinated Sidekick scene
-and an open chapter directory above the introduction. Articles, search, tables,
-code and the mobile menu use the new palette. Social cards share the pencil-site
-renderer, with a new design version to refresh immutable image URLs.
+**What changed:** Help previews use the blog's `reading-card.ts` renderer and
+checked-in TTF derivatives in place of the separate Satori/resvg path. A new
+design version refreshes immutable card URLs.
 
-**Why:** The new homepage's organic identity needed to continue through help,
-while the manual still needs a readable article and useful navigation.
+**Why:** Maintaining two preview layouts and font-loading paths would let their
+appearance diverge. The shared renderer fits text to the card before rasterizing
+it, using the site's own type and artwork without a browser or network request.
 
-**Considered and rejected:** Loading the marketing page stylesheet would couple
-the manual's interface to unrelated product layouts. It imports only the shared
-fonts/palette and keeps its own semantic and functional styles instead.
-
-**Consequences:** URLs, Markdown content/copies, search ranking, stable heading
-anchors, copy actions and no-JavaScript navigation keep their existing contracts.
-Check the cover, chapter and article layouts, keyboard search, mobile menu, code
-and table overflow, and a social card alongside renderer tests.
-
+**Consequences:** Maintain the static font derivatives alongside their WOFF2
+sources and bump `DESIGN_VERSION` when card rendering changes. The PNG-boundary
+regressions in `test/reading-card.test.ts` cover long titles and unbroken words.
 
 ### 2026-11-09 — Wildcard redirects go last, and only renamed pages redirect
 
