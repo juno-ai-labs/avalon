@@ -136,7 +136,8 @@ API verifies the signature and the session on every call.
 | `add_canvas_sidekick` | `POST /canvases/:id/sidekicks`, the operation id as the Sidekick's id and its instructions' `clientMessageId` |
 | `send_canvas_message` | `POST /conversations/:id/substreams/0/messages` |
 | `update_canvas` | `PATCH /canvases/:id` |
-| `set_canvas_audience` | `POST /canvases/:id/audience` |
+| `set_canvas_audience` | `POST /canvases/:id/audience`: required editor visibility/userIds, optional artifactVisibility/artifactUserIds and expectedRevision. Even artifact-only changes send the complete current editor list; omission is rejected before calling the API. |
+| `get_artifact_link` | `GET /resources/:id/artifact/link`: stable URL without minting a viewer session |
 | `invite_canvas_guests` | `GET /workspace`, then `POST /sharing` |
 | `decide_canvas_access_request` | `POST /canvases/:id/access-requests/:userId/decision` |
 | `pin_canvas` | `POST /canvases/:id/pin` |
@@ -186,7 +187,9 @@ The answer is the artifact's id, title, kind, current version, the outcome,
 and the Canvas's link opened on it. A site with a server module (`index.js`)
 is refused: running code is Rally's to publish from its sandbox.
 
-`read_artifact` reads Rally's text form of a version. A published file's text
+`read_artifact` lets Canvas editors read Rally's text form of a version.
+Artifact-only users use `get_artifact_link` to open the published output;
+artifact access does not expose source or version history. A published file's text
 is extracted when someone first reads it, so the current version's first
 `model-content` read prepares it (through the same path as the app's
 preview); a version whose original is already text reads as its original.
@@ -451,6 +454,20 @@ endpoint forwards there. How to connect each client is in
 [`plugins/rally/README.md`](../plugins/rally/README.md).
 
 ## Changelog
+
+### 2026-11-11 — Configure artifact audiences and retrieve shareable links
+
+**What changed:** `get_canvas` returns both audiences and `sharingRevision`.
+`set_canvas_audience` accepts artifact visibility/recipients and an optional
+revision fence; omission preserves the prior artifact policy. `get_artifact_link`
+returns a stable file/site URL. Existing email invitations grant editor access.
+The MCP tool requires the full editor list explicitly: an artifact-only update
+copies `get_canvas.participantUserIds` into `userIds`, rather than turning an
+omitted list into an empty one and removing guest editors.
+
+**Why:** MCP clients must express public artifact use independently of the people
+allowed to converse and publish. Links must respect that policy without exposing
+single-use viewer credentials. Propagation is asynchronous.
 
 ### 2026-11-10 — A client can give a Canvas a Sidekick
 

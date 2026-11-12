@@ -1,5 +1,9 @@
 # Live web artifacts
 
+## Canvas artifact access
+
+Published websites and files now inherit the Canvas’s artifact audience. The serving host authorizes each request from a local versioned snapshot; public access is explicit. This replaces the earlier public-by-default fallback and session-as-permission model. Routing remains unchanged. See [Canvas artifact access](canvas-artifact-access.md).
+
 A **live artifact** is a directory a Canvas's Chat or a Sidekick run published that Rally also
 *serves publicly*, at a stable per-artifact HTTPS origin. A landing page, a
 dashboard, a calculator, a poll: the model
@@ -268,12 +272,11 @@ Fences apply in this order, all before any model-authored code runs:
    same-origin requests and genuine top-level navigations may; everything
    else, any method from any origin, proceeds anonymously. See
    [Invariants](#invariants).
-3. **Optional viewer session** — when a request is eligible and carries the
-   artifact cookie, it is checked against `ArtifactHostDO`. Admission already
-   proved resource access; ordinary page and asset requests trust that durable
-   session until explicit revocation removes it or its fixed lifetime expires.
-   A missing or expired session falls back to the public representation with no
-   identity headers.
+3. **Local admission** — `ArtifactHostDO.admitRequest` checks its locally
+   projected Canvas artifact policy and optional identity session. A valid
+   session supplies identity; the latest local policy supplies permission.
+   Anonymous requests need explicit public access. There is no cross-DO or
+   product D1 permission lookup while serving.
 
 Then `/__rally/*` paths are Rally's own (the access bootstrap, the redeem
 endpoint, prior-version mounts) and everything else is artifact content: assets
@@ -314,33 +317,17 @@ resource point lookup, rather than searching a page of attached sites. A
 Sidekick can query a site its execution user can read without attaching it;
 discovery remains limited to its related conversations.
 
-Artifact content is public by default. A direct browser, crawler, or unfurler
-can `GET` or `HEAD` the stable URL without a Rally session. The Worker reads the
-current manifest from `ArtifactHostDO`, strips any inbound cookie and viewer
-header before model code runs, and injects no identity. Static sites therefore
-cannot be private. A request without a session, a submission included, reaches
-model code with no identity, and the site's own code decides what to accept: a
-public poll takes it, a protected site answers 401. Because any request may
-write a site's storage this way, Trusted-only Terminal sandboxes can send
-data to a Rally site
-([`terminal-workspaces.md`](terminal-workspaces.md#invariants)).
+Published content inherits the owning Canvas's artifact audience. A static or
+active site's pages, assets and submissions are admitted by Rally before any
+model-authored code runs. Anonymous visitors are admitted only when the local
+snapshot explicitly permits public access. Static sites can therefore be private.
+Generated code can further restrict actions or individual rows; it cannot bypass
+Rally's gate. Public does not mean indexed: the existing `noindex` header remains.
 
-The four-word hostname is a readable routing label with roughly 30 bits of
-combinations, not an access secret. Search crawlers receive
-`X-Robots-Tag: noindex`, but that is indexing etiquette rather than a security
-boundary; anyone holding or discovering the URL can read the current site.
-
-An author who needs a protected site must publish an **active** site whose
-handler checks `x-rally-viewer-id` before every route and before its asset
-fallback, returning 401 when the header is absent. Rally injects that header
-only after the session flow below succeeds; inbound copies are stripped first.
-This makes the handler's check an authorization boundary rather than a
-guessable-URL convention. The site-building skill teaches this shape explicitly
-and uses it by default for private connected data. The session is scoped to the
-artifact and minted only after canonical resource authorization, including the
-Canvas audience for Canvas artifacts; signing into Rally or holding a link is
-not sufficient. Generated sites need no second Canvas membership lookup. This
-does not check each viewer's access at the original data provider.
+`ArtifactHostDO.admitRequest` checks its own SQLite snapshot and session records
+on every request. A missing snapshot or an unavailable host fails closed; it
+never becomes an anonymous public fallback. Queue propagation, file hosting and
+migration defaults are owned by [Canvas artifact access](canvas-artifact-access.md).
 
 **Signing in from the site itself.** Someone who follows a site's link
 directly has no viewer session. `/__rally/sign-in?return=<path>` sends them to
@@ -596,7 +583,7 @@ is the only place that can forward into it.
   cookie `SameSite=None; Partitioned`, kept for this artifact under that one
   top-level site; a top-level navigation keeps `Lax`. A browser that refuses
   the partitioned cookie, such as Safari, which blocks third-party cookies,
-  shows the public representation, where the site's own code decides what an
+  shows the representation admitted by the current Canvas policy, where the site's own code decides what an
   anonymous request may do. The shell's
   `frame-src` admits the whole artifact domain, so the serving Worker refuses
   a framed navigation that arrives `same-site`
@@ -774,20 +761,14 @@ facet that holds a stateful artifact's data. It does not own:
   per-artifact log (50 entries), which no client surface currently reads (see
   the changelog entry for 2026-09-10), so recovering it means asking for it
   back into chat.
-- **A viewer session is revoked or expires.** Its next eligible request receives
-  the anonymous public representation. A protected active site's own early
-  header guard then returns 401, which a page load turns into a redirect to
-  sign-in; a public site continues serving it. Resource-
-  scope changes do not poll canonical authorization from every page asset: the
-  admitted session assumes access until an explicit revocation removes it or
-  its fixed 24-hour lifetime ends.
-- **Viewer-session lookup fails.** Identity is an optional enhancement to public
-  serving, so a failed supervisor hop falls back to the anonymous representation
-  rather than making a browser with an old cookie less able to read than a
-  crawler. The failure emits a structured warning; a protected active site's
-  header guard still refuses the anonymous request, and its 401 is shown as it
-  is rather than sent to sign-in, which would only return to the same failed
-  check.
+- **A viewer session is revoked or expires.** Its next request has no admitted
+  identity. Public artifacts can continue anonymously; private ones refuse it
+  and document navigation can hand off to sign-in.
+- **The projected audience changes.** The next request is checked against the
+  new local snapshot even when the viewer cookie remains valid. Propagation
+  delay is accepted; sessions do not delay enforcement until their expiry.
+- **Local admission fails or a new host has no initial snapshot.** Serving returns 503,
+  never public content. A retry can succeed after recovery or queue delivery.
 - **`BROWSER_APP_ORIGIN` is unset or not a URL, or the host is a legacy UUID
   host.** There is nowhere to sign in: `/__rally/sign-in` answers the neutral
   404 and a protected site's 401 is shown as it is.
@@ -962,6 +943,13 @@ publication exposes its canonical artifact ID so authoring can bind the app
 without deriving an ID from its public hostname or confusing it with the
 resource ID; the live authoring walkthrough exposed that missing output.
 
+### 2026-11-11 — Separate artifact use from Canvas editing
+
+**What changed:** Published websites and files now inherit the Canvas’s artifact audience. The serving host authorizes each request from a local versioned snapshot; public access is explicit. This replaces the earlier public-by-default fallback and session-as-permission model. Routing remains unchanged. See [Canvas artifact access](canvas-artifact-access.md).
+
+**Why:** Artifact audiences can be broader than editors. Queue-delivered local
+checks preserve low-latency serving without per-request cross-DO or D1
+authorization calls, accepting propagation delay.
 
 ### 2026-11-10 — One function holds the order of a site publish
 

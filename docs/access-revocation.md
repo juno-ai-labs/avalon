@@ -1,5 +1,9 @@
 # Access revocation
 
+## Artifact access updates
+
+The existing access Queue also carries canvas_artifact_access_changed and artifact_access_sync. These propagate complete versioned access snapshots for both widening and narrowing. Source SQLite triggers durably schedule publication; consumers retry per-artifact delivery. Session revocation retains its existing protocol. Artifact serving makes no source-authority permission calls. See [Canvas artifact access](canvas-artifact-access.md).
+
 Every Rally socket is authorized once, when it connects, and then holds until
 something closes it. Nothing an object can observe tells it that a session was
 revoked or that a membership ended — those facts live in D1, with the Worker that
@@ -446,6 +450,14 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-11-11 — Separate artifact use from Canvas editing
+
+**What changed:** The existing access Queue also carries canvas_artifact_access_changed and artifact_access_sync. These propagate complete versioned access snapshots for both widening and narrowing. Source SQLite triggers durably schedule publication; consumers retry per-artifact delivery. Session revocation retains its existing protocol. Artifact serving makes no source-authority permission calls. See [Canvas artifact access](canvas-artifact-access.md).
+
+**Why:** Artifact audiences can be broader than editors. Queue-delivered local
+checks preserve low-latency serving without per-request cross-DO or D1
+authorization calls, accepting propagation delay.
 
 ### 2026-11-09 — Save Canvas archive fan-out before withdrawing admission
 

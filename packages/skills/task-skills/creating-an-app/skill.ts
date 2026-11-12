@@ -41,7 +41,7 @@ does. The request's own words decide, in this order:
    counter for pasted text, a word or reading-time counter, a unit or currency
    converter, a tip or loan calculator, a JSON or CSV formatter, a countdown
    timer, a color picker, a reference page or a dashboard of public data.
-   Anyone with the link can use it. **Build it without asking.** It may keep
+   Its Canvas artifact audience controls who can use it. **Build it without asking.** It may keep
    one person's preferences in their own browser, which needs no sign-in.
 2. **Anonymous.** The request says "anonymous", or answers should not record
    who sent them: an anonymous poll, survey or feedback box.
@@ -51,20 +51,22 @@ does. The request's own words decide, in this order:
 4. **Shared.** Any other app that saves what people add: a vote, an RSVP list,
    a sign-up sheet, a kudos wall, a shared board.
 
-"Private", "members-only" or "team-only" describing the **site** requires a
-protected site, as does a dashboard displaying private connected data. Follow
-\`building-live-sites\` for the guard and Rally's resource authorization;
-build and populate it using that protection. A dashboard storing data you
+"Private", "members-only" or "team-only" describing the **site** is controlled
+by the Canvas artifact audience, as is a dashboard displaying private connected
+data. Static and active sites both inherit it; do not add a server just for
+access control. Follow \`building-live-sites\` for viewer identity and app-specific
+rules. A dashboard storing data you
 retrieve is not an app collecting people's entries and needs no entry-privacy
 question. Site protection does not by itself hide each person's entries from
 the other authorized viewers.
 
 **Who can answer.** When the request names people outside Rally (the public,
-customers, guests, clients, parents, anyone, the internet), anyone with the
-link can submit, as the "Anonymous answers" section of \`building-live-sites\`
+customers, guests, clients, parents, anyone, the internet), visitors admitted by
+the Canvas artifact audience may submit, as the "Anonymous answers" section of \`building-live-sites\`
 shows. Otherwise people sign in with Rally to add entries; someone who follows
-the site's link signs in from the site and comes straight back. Reading stays
-open to anyone with the link unless the site needs protection as described above.
+the site's link signs in from the site and comes straight back. Reading always
+follows the Canvas artifact audience; anonymous access requires public artifact
+sharing. Building a site does not change that audience or expose its Chat.
 
 **Ask only when the app saves what people add and the request does not say
 who sees it.** Then ask one question, right away and before writing any

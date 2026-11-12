@@ -1,9 +1,9 @@
 /**
  * Minting one person's access to one live artifact.
  *
- * This is the only door into an artifact origin, and it is the place resource
- * visibility is checked *at open time*. The admitted viewer session is then the
- * serving capability until it is explicitly revoked or expires.
+ * This checks resource access before creating a viewer identity session.
+ * ArtifactHostDO checks that identity against its current local Canvas policy
+ * on every content request. Public artifacts also admit anonymous visitors.
  *
  * **What it returns is a URL whose code lives in the fragment.** A fragment is
  * never sent to a server, so the proof stays out of Cloudflare's invocation log,
@@ -72,7 +72,7 @@ export class ArtifactOpenService {
    * cannot represent a child-only share or exclude an unshared public parent.
    * Missing and forbidden artifacts have the same response.
    */
-  private async resolveAuthorized(resourceId: string) {
+  private async resolveAuthorized(resourceId: string, editorRequired = false) {
     const workspaceId = this.auth.workspaceId;
     if (!workspaceId) throw new ApiError(403, "workspace_required", "Choose a workspace before opening an artifact.");
     const metadata = await new AuthorizationService(this.regionalEnv, this.requestMembership)
@@ -83,6 +83,7 @@ export class ArtifactOpenService {
         }
         throw error;
       });
+    if (editorRequired && metadata.canEditArtifact === false) throw new ApiError(404,'artifact_not_found','That artifact does not exist here.');
     const row = metadata.artifact;
     if (!row) {
       throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
@@ -105,14 +106,16 @@ export class ArtifactOpenService {
     return { row, host, scope };
   }
 
-  /**
-   * Authorize a navigation and mint its single-use viewer grant.
-   *
-   * Inspection callers use `resolveAuthorized` alone because they neither need
-   * a migrated hostname nor a viewer session. Keeping those effects here
-   * prevents a read of artifact data or errors from creating a grant nobody
-   * will redeem.
-   */
+  /** Shareable address only: no viewer session is created. */
+  async link(resourceId: string): Promise<{artifactId:string;canonicalUrl:string}> {
+    const {row}=await this.resolveAuthorized(resourceId);
+    const hostname=row.hostname_stub===null ? await ensureArtifactHostname(this.regionalEnv,{workspaceId:this.auth.workspaceId,artifactId:row.artifact_id})
+      : ArtifactHostnameStubSchema.parse(row.hostname_stub);
+    if(row.hostname_stub===null) await this.env.DB.prepare('UPDATE artifact_registry SET hostname_stub=? WHERE workspace_id=? AND artifact_id=? AND hostname_stub IS NULL').bind(hostname,this.auth.workspaceId,row.artifact_id).run();
+    return {artifactId:row.artifact_id,canonicalUrl:artifactOrigin(hostname,this.env.AVALON_REGION,this.env.ARTIFACT_SERVING_DOMAIN)};
+  }
+
+  /** Authorize navigation and mint a single-use viewer identity bootstrap. */
   async open(resourceId: string): Promise<ArtifactOpenResult> {
     // The profile read overlaps authorization, but its failure is observed and
     // deferred so it cannot replace the concealed authorization response.
@@ -149,6 +152,7 @@ export class ArtifactOpenService {
       // name to attribute a vote to, and the session that authorized the open
       // carries only the identity, not the profile.
       displayName: displayName.value,
+      ...(this.requestMembership?.relationship ? {membershipIncarnation:this.requestMembership.relationship.incarnation} : {}),
     });
 
     const origin = artifactOrigin(
@@ -189,7 +193,7 @@ export class ArtifactOpenService {
   async describeData(resourceId: string): Promise<{
     tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
   }> {
-    const { row, host, scope } = await this.resolveAuthorized(resourceId);
+    const { row, host, scope } = await this.resolveAuthorized(resourceId, true);
     if (row.stateful !== 1) return { tables: [] };
     return await host.describeData(scope);
   }
@@ -205,7 +209,7 @@ export class ArtifactOpenService {
     rows: Record<string, unknown>[];
     csv: string;
   }> {
-    const { row, host, scope } = await this.resolveAuthorized(resourceId);
+    const { row, host, scope } = await this.resolveAuthorized(resourceId, true);
     if (row.stateful !== 1) return { rows: [], csv: "" };
     const page = await host.pageData(table, offset, DATA_PAGE_ROWS, scope);
     if (!page.ok) {
@@ -224,7 +228,7 @@ export class ArtifactOpenService {
   }[]> {
     // The same registry and parent authorization as navigation, without
     // minting a browser bootstrap code that this read never consumes.
-    const { host } = await this.resolveAuthorized(resourceId);
+    const { host } = await this.resolveAuthorized(resourceId, true);
     return await host.readErrors();
   }
 }

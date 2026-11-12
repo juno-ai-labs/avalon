@@ -1,5 +1,9 @@
 # Authorization
 
+## Canvas artifact audiences
+
+Canvas-owned generated resources are admitted from their owning Canvas’s artifact audience before uploader or attachment shortcuts. Conversation reads remain editor-only. Resource search uses an artifact group separate from the conversation group. Live serving uses queued local snapshots rather than canonical per-request source reads. See [Canvas artifact access](canvas-artifact-access.md).
+
 Rally's internal read authorization primitive composes canonical owner facts into
 an explicit decision. It serves member search and resource reads. Search trusts projected decisions across requests; other consumers use canonical resolution. Five-minute authorization freshness is a design goal, not a read deadline. The module does not admit
 participants or become a new canonical owner of memberships.
@@ -502,6 +506,14 @@ changelog is the record of why a guest is never admitted by Organization-wide
 scope.
 
 ## Changelog
+
+### 2026-11-11 — Separate artifact use from Canvas editing
+
+**What changed:** Canvas-owned generated resources are admitted from their owning Canvas’s artifact audience before uploader or attachment shortcuts. Conversation reads remain editor-only. Resource search uses an artifact group separate from the conversation group. Live serving uses queued local snapshots rather than canonical per-request source reads. See [Canvas artifact access](canvas-artifact-access.md).
+
+**Why:** Artifact audiences can be broader than editors. Queue-delivered local
+checks preserve low-latency serving without per-request cross-DO or D1
+authorization calls, accepting propagation delay.
 
 ### 2026-11-09 — Canvas archive precedes artifact ownership
 
