@@ -149,7 +149,7 @@ its own is a boundary that drifts.
 | `apps/api/src/durable-objects/agent-loop-do.ts` | `appendWatchedResourceEvent`, the other destination an external event is delivered to |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | `receiveChildEffects`, which every conversation effect crosses |
 | `apps/api/src/queues/activity-consumer.ts` | an effect envelope the consumer's contract refuses logs `effect_queue_message_invalid` with its failing paths, including unknown key names (the Queue's producers are our own objects, so they are the diagnosis of a deploy skew), where it logged `legacy_message_after_cutover` under a connector-event code; it is still acked |
-| `packages/contracts/src/platform-diagnostics.ts` | `platformErrorCode` names a Workers runtime, D1 or SQLite failure (`d1_overloaded`, `sqlite_unique_constraint`) from its fixed sentence or its `cause`, never copying the table, column or value the sentence quotes; `diagnosticErrorCode` and the engineering MCP read it |
+| `packages/contracts/src/platform-diagnostics.ts` | `platformErrorCode` names a Workers runtime, D1 or SQLite failure (`d1_overloaded`, `sqlite_unique_constraint`) from its fixed sentence or its `cause`, never copying the table, column or value the sentence quotes, and a trigger's `RAISE(ABORT, …)` by its reason when that reason is code-shaped (`sqlite_trigger_abort:workspace_do_authoritative`); `diagnosticErrorCode` and the engineering MCP read it |
 | `packages/connectors/src/observability.ts` | `connectorDiagnosticCode` is `connectorObservationErrorCode` plus the provider's HTTP status, its rate limit, or the platform failure behind a request that never completed (`provider_error:http_403:rate_limited`) |
 | `apps/api/src/lib/api-error.ts` | `ApiError.diagnosticCode` carries what a log may say beyond the public `code`, across an RPC hop and through every regional bridge envelope (`diagnosticCodeField`), and never into the response body; `request_failed` and `diagnosticErrorCode` log it |
 | `apps/api/src/middleware/validation.ts`, `apps/api/src/routes/canvases.ts` | `namedZValidator(label, message)` answers a route's schema rejection to its caller as `<label>_invalid:<path>:<issue>` with the route's own sentence as the message, where `zValidator` says `invalid_request`; the Canvas routes use it for a malformed Canvas id (`canvas_id_invalid:id:invalid_format`) and a retitle's `title` (`canvas_rename_invalid:title:too_small`) |
@@ -205,6 +205,29 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-11-12 — A D1 trigger's refusal is named by its reason
+
+**What changed:** `platformErrorCode` reads D1's trigger-abort sentence
+(`<reason>: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)`) and
+returns `sqlite_trigger_abort:<reason>` when the reason is code-shaped, and
+bare `sqlite_trigger_abort` when it is prose.
+
+**Why:** Migration 0079's anchor fence refused a Canvas delete with
+`workspace_do_authoritative`, and the request was logged as
+`internal_error:d1_error`: the reason was in the error and the log lost it.
+Every migration fence in this tree raises a reason, almost all code-shaped.
+
+**Considered and rejected:** Copying any reason: a few older triggers raise
+sentences, and only a code-shaped string is safe as a log field by this
+document's rule. A table of known reasons: the migrations already are that
+table, and a list here would go stale with the next fence.
+
+**Consequences:** A new trigger should raise a code-shaped reason (lowercase,
+digits, underscores, up to 80 characters) to be named. The pattern is matched
+before the constraint sentences, so a trigger refusal never reads as another
+constraint. The guard is `test-workers/d1-trigger-abort-diagnostics.test.ts`,
+which raises both kinds on real D1.
 
 ### 2026-10-19 — A conversation object's refusal is named by its code
 
