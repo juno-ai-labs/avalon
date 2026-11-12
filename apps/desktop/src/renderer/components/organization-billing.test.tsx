@@ -188,9 +188,9 @@ it('shows all billing controls to members, disables changes and explains why', a
   const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(),
     createBillingCheckout: vi.fn(), getBillingCredits: vi.fn(async () => ({ enabled: true, currency: 'usd' as const, availableCents: 0, grants: [] })) };
   render(<OrganizationBilling canManage={false} api={api} currentPlan="Grow plan" billing={billing} />);
-  for (const label of ['Trial', 'Organization billing', 'Plan', 'Currency', 'Bill usage beyond shared quota', 'Overage credits']) expect(screen.getByText(label, { exact: true })).toBeVisible();
+  for (const label of ['Trial', 'Organization billing', 'Plan', 'Bill usage beyond shared quota', 'Overage credits']) expect(screen.getByText(label, { exact: true })).toBeVisible();
   expect(screen.getByRole('combobox', { name: 'Billing plan' })).toBeDisabled();
-  expect(screen.getByRole('combobox', { name: 'Billing currency' })).toBeDisabled();
+  expect(screen.queryByRole('combobox', { name: 'Billing currency' })).toBeNull();
   expect(screen.getByRole('checkbox')).toBeDisabled();
   const checkout = screen.getByRole('button', { name: 'Continue to checkout' });
   expect(checkout).toBeDisabled();
@@ -202,24 +202,21 @@ it('shows all billing controls to members, disables changes and explains why', a
   expect(await screen.findByText(/\$0.00 available/)).toBeVisible();
 });
 
-it('keeps subscribed plan and currency visible with their saved values and reasons', () => {
+it('keeps the subscribed plan visible with its saved value and reason', () => {
   render(<OrganizationBilling canManage api={{ getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(), createBillingPortal: vi.fn() }} currentPlan="Grow plan"
     billing={{ ...billing, subscribed: true, currency: 'eur', offerId: 'grow', status: 'active' }} />);
   const plan = screen.getByRole('combobox', { name: 'Billing plan' });
   expect(plan).toBeDisabled();
   expect(plan).toHaveTextContent('Grow');
-  const currency = screen.getByRole('combobox', { name: 'Billing currency' });
-  expect(currency).toBeDisabled();
-  expect(currency).toHaveTextContent('EUR');
+  expect(screen.queryByText('Currency', { exact: true })).toBeNull();
   expect(plan.parentElement).toHaveAttribute('aria-label', 'Manage your subscribed plan in Stripe.');
-  expect(currency.parentElement).toHaveAttribute('aria-label', 'Currency is set when the subscription starts.');
   expect(screen.getByRole('checkbox')).toBeDisabled();
 });
 
 it('keeps every section visible with skeletons until billing and credits arrive', () => {
   render(<OrganizationBilling canManage api={{ getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(), getBillingCredits: () => new Promise(() => undefined) }} loading />);
-  for (const label of ['Trial', 'Organization billing', 'Plan', 'Currency', 'Bill usage beyond shared quota', 'Overage credits']) expect(screen.getByText(label, { exact: true })).toBeVisible();
-  expect(screen.getAllByRole('status')).toHaveLength(5);
+  for (const label of ['Trial', 'Organization billing', 'Plan', 'Bill usage beyond shared quota', 'Overage credits']) expect(screen.getByText(label, { exact: true })).toBeVisible();
+  expect(screen.getAllByRole('status')).toHaveLength(4);
   expect(screen.getByRole('button', { name: 'Manage billing' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Refresh credits' })).toHaveAttribute('aria-disabled', 'true');
 });
@@ -277,13 +274,22 @@ describe('overage billing eligibility', () => {
     await act(async () => { answer(); });
   });
 
+  it('always checks out in USD even when the catalog lists another currency first', async () => {
+    const { api: client, answer } = deferredCheckout();
+    render(<OrganizationBilling canManage api={client} billing={{ ...billing, offers: [{ ...billing.offers[0]!, currencies: ['eur', 'usd'] }] }} />);
+    expect(screen.queryByText('Currency', { exact: true })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' }));
+    expect(client.createBillingCheckout).toHaveBeenCalledWith('grow', 'usd', false);
+    await act(async () => { answer(); });
+  });
+
   it.each([
-    { currencies: ['eur'], overageAvailable: true, reason: 'Overages require billing in USD.' },
-    { currencies: ['usd'], overageAvailable: false, reason: 'Overages are unavailable for this plan.' },
-  ])('keeps checkout available when overages are disabled: $reason', ({ currencies, overageAvailable, reason }) => {
+    { currencies: ['eur'], overageAvailable: true, checkoutEnabled: false, reason: 'No billing plans are available in USD.' },
+    { currencies: ['usd'], overageAvailable: false, checkoutEnabled: true, reason: 'Overages are unavailable for this plan.' },
+  ])('applies USD checkout and overage availability: $reason', ({ currencies, overageAvailable, checkoutEnabled, reason }) => {
     const { api: client } = deferredCheckout();
     render(<OrganizationBilling canManage api={client} billing={{ ...billing, offers: [{ ...billing.offers[0]!, currencies, overageAvailable }] }} />);
-    expect(screen.getByRole('button', { name: 'Continue to checkout' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Continue to checkout' }).hasAttribute('disabled')).toBe(!checkoutEnabled);
     const toggle = screen.getByRole('checkbox');
     expect(toggle).toBeDisabled();
     expect(toggle.parentElement).toHaveAttribute('aria-label', reason);
