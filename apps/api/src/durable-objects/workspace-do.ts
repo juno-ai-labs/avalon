@@ -6214,12 +6214,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /** Host-scoped app invocation. Resolve the accepted binding before entering normal run admission. */
   async artifactInvokeSidekick(input: ArtifactSidekickInvocation) {
-    await this.initialized;
-    const request = parseRpcInput(ArtifactSidekickInvocationSchema, input, "artifact_invocation");
-    this.assertWorkspace(request.workspaceId);
-    const automationId = artifactSidekickBinding(this.state.storage.sql, request.artifactId, request.bindingName);
-    if (!automationId) throw new ApiError(404, "sidekick_invocation_unbound", "No Sidekick is bound to this app and name");
-    return this.sidekickCall(automationId, request.workspaceId, (sidekick) => sidekick.invokeArtifact({ ...request, automationId }));
+    try {
+      await this.initialized;
+      const request = parseRpcInput(ArtifactSidekickInvocationSchema, input, "artifact_invocation");
+      this.assertWorkspace(request.workspaceId);
+      const automationId = artifactSidekickBinding(this.state.storage.sql, request.artifactId, request.bindingName);
+      if (!automationId) throw new ApiError(404, "sidekick_invocation_unbound", "No Sidekick is bound to this app and name");
+      return await this.sidekickCall(automationId, request.workspaceId, (sidekick) => sidekick.invokeArtifact({ ...request, automationId }));
+    } catch (error) {
+      // Generated code receives this across RPC. Error.message is the stable
+      // transport; custom ApiError fields do not survive every runtime hop.
+      if (error instanceof ApiError) throw new Error(error.code, { cause: error });
+      throw error;
+    }
   }
 
   async sidekickRunNow(input: Parameters<HostedSidekick["runNow"]>[0]) {
@@ -8047,9 +8054,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
       author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string; last_run_at: number | null;
-      shared_with_user_ids: string; shared: number;
+      shared_with_user_ids: string; shared: number; trigger_kinds: string;
     }>(
-      `SELECT directory.*, ${AUTOMATION_AUDIENCE_SQL},
+      `SELECT directory.*, ${AUTOMATION_AUDIENCE_SQL}, ${AUTOMATION_TRIGGER_KINDS_SQL},
               EXISTS (SELECT 1 FROM sidekick_audience audience
                        WHERE audience.sidekick_id = directory.automation_id AND audience.user_id = ?2) AS shared,
               (SELECT MAX(created_at) FROM sidekick_runs WHERE sidekick_id = directory.automation_id) AS last_run_at

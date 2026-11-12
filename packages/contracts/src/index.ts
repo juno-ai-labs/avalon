@@ -1,3 +1,4 @@
+import { ArtifactIdSchema } from "./identifiers";
 export * from "./artifact-invocation";
 import { ArtifactSidekickBindingNameSchema } from "./artifact-invocation";
 import { AGENT_MODEL_OVERRIDES } from "./runtime-config";
@@ -1097,7 +1098,7 @@ export const WorkstreamContextSchema = z.object({
 });
 
 export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("invocation"), artifactId: IdSchema, bindingName: ArtifactSidekickBindingNameSchema }),
+  z.strictObject({ type: z.literal("invocation"), artifactId: ArtifactIdSchema, bindingName: ArtifactSidekickBindingNameSchema }),
   z.object({ type: z.literal("manual") }),
   z.object({
     type: z.literal("calendar"),
@@ -1589,6 +1590,8 @@ export const AutomationSummarySchema = z.object({
   running: z.boolean().optional(),
   pendingQuestion: z.string().nullable().optional(),
   triggerKinds: z.array(z.enum(["manual", "schedule", "external_event", "invocation"])).optional(),
+  /** Additive wire field: older clients keep their closed triggerKinds vocabulary. */
+  hasInvocationTrigger: z.boolean().optional(),
   /**
    * The IANA zone the schedule behind `nextRunAt` reads its wall-clock time
    * in, so a client formats `nextRunAt` the way the schedule's own summary

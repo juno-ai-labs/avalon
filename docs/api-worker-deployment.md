@@ -37,9 +37,10 @@ named `ArtifactSidekickDispatcher` entrypoint. This narrow contract accepts
 app-scoped task admission and returns a run ID; it does not expose the API's
 other methods or secrets. Deploy the API export before the artifact Worker
 that names it; both direct deployment and versioned promotion use that order.
-Release the matching desktop/browser clients before enabling app invocation in
-use: older installed clients have closed trigger schemas and cannot decode the
-new invocation definitions and history. Stateful app facets use an API-local exported loopback instead.
+Organization-wide lists preserve the released trigger vocabulary and advertise
+invocation through optional metadata, so older clients keep loading them.
+Invocation-specific definitions and history require matching desktop/browser
+clients. Stateful app facets use an API-local exported loopback instead.
 [Live artifacts](live-web-artifacts.md#calling-dedicated-sidekicks) owns runtime
 admission and binding behavior.
 

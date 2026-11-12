@@ -210,9 +210,19 @@ workspace, artifact ID and published version. Generated code chooses only the
 binding name and task data. The call resolves with `{ runId, reused }` after
 durable admission, so the route can return HTTP 202. It does not await inference
 or artifact writes. `operationId` identifies one submission across retries;
-reusing it on the same Sidekick and artifact returns the original run and input.
+reusing it on the same Sidekick and artifact returns the original run and input. Both
+serialized opening fields must fit the existing `MESSAGE_MAX_CHARACTERS`
+transcript limit before a run is committed; oversized payloads fail with
+`sidekick_invocation_input_too_large`. App code receives refusal codes in
+`Error.message`, including across both runtime paths.
 
-Stateless sites receive an exported `ArtifactSidekickLoopback` capability in
+Organization-wide Sidekick and Canvas lists keep the released `triggerKinds`
+vocabulary. Invocation is advertised through optional `hasInvocationTrigger`
+metadata; matching clients use it for the app-request label. Older clients can
+still read the lists while invocation-specific definition/history screens need
+a matching client.
+
+Stateless sites receive an exported `ArtifactSidekickForwarder` capability in
 the serving Worker. It calls the regional API's `ArtifactSidekickDispatcher`
 through the typed `ARTIFACT_SIDEKICKS` service binding. Stateful facets receive
 the API Worker's own scoped loopback, which reaches WorkspaceDO directly.
@@ -224,8 +234,9 @@ WorkspaceDO resolves the live accepted binding and admits an ordinary independen
 Sidekick run, with the input and app resource ID in its opening. The model
 projection admits that opening as labelled, untrusted user-role task data when
 it is the run's trigger; the transcript system row alone is not model history. Paused or
-archived Sidekicks, removed bindings, detached or archived Canvases, and stale
-app versions refuse new admission. Runs retain the existing Sidekick principal,
+archived Sidekicks, removed bindings, and detached or archived Canvases refuse
+new admission. The serving version is recorded as provenance; a republish does
+not invalidate the stable app binding. Runs retain the existing Sidekick principal,
 delegation, tools, account access and write rules. Invocation is permission to
 start that work; it does not reduce execution authority to this artifact or
 introduce viewer-specific execution. Sidekicks use standard data tools such as
@@ -843,7 +854,7 @@ from a real Canvas archive to its published site.
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-social-preview-runtime.test.ts` | `HTMLRewriter` on real workerd: active HTML receives metadata without buffering, while protected errors and JSON remain exact. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-asset-uploads.test.ts` | Real-R2 asset upload overlap, the assets-before-manifest barrier, generated tail assets, and failure draining. |
-| `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-sidekick-invocation.test.ts` | Stateful route admission followed by an ordinary Sidekick's standard artifact write; stateless production loader assembly and the actual named Service Binding; many Sidekicks per app, unique names, one app per Sidekick, rebind, pause, unbind, version and attachment checks. |
+| `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-sidekick-invocation.test.ts` | Stateful route admission followed by an ordinary Sidekick's standard artifact write; stateless production loader assembly and the actual named Service Binding; bounded opening admission, code-shaped refusals, compatible list metadata, many Sidekicks per app, unique names, rebind, pause, unbind, republish and attachment checks. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. Also scoped reads: a private table paged as one viewer's rows, search indexes however fed reading as empty, and free SQL refused on a site with a private table and allowed on one without. Also `writeData`: a committed write the site's own handler then reads with no new version, schema statements and reads refused, the database's own refusal returned with nothing written, a scoped writer refused on a site with private rows, and an archived Canvas's site taking no write. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/conversation-tools.test.ts`) | Which scope the data tools resolve for the author, another member and an unattended run; the write gate through the real tool, WorkspaceDO and facet (a Sidekick run refused until its own Sidekick has the site's Canvas attached and again once the Canvas is archived, a Canvas's Chat writing a linked site and no other); and `/browser/sites/resolve`'s 200, 403 (outside the Organization, or a member outside the audience of the site's Canvas) and 404. |
 

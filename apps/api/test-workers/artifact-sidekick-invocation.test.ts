@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  artifactAssetKey, asArtifactId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId,
+  MESSAGE_MAX_CHARACTERS, artifactAssetKey, asArtifactId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId,
   type ArtifactSidekickInvocation, type AutomationDraft,
 } from "@rally/contracts";
 import type * as TestWorker from "./fixtures/engineering-task-worker";
@@ -40,8 +40,12 @@ export class SiteData extends DurableObject {
   async fetch(request) {
     if (request.method === "POST") {
       const input = await request.json();
-      const result = await this.env.SIDEKICKS.shoppingOrganizer.send(input);
-      return Response.json(result, { status: 202 });
+      try {
+        const result = await this.env.SIDEKICKS.shoppingOrganizer.send(input);
+        return Response.json(result, { status: 202 });
+      } catch (error) {
+        return Response.json({ code: error.message }, { status: 400 });
+      }
     }
     return Response.json(this.ctx.storage.sql.exec("SELECT name, section FROM items").toArray());
   }
@@ -49,7 +53,11 @@ export class SiteData extends DurableObject {
 `;
 const STATELESS_SITE = `export default {
   async fetch(request, env) {
-    return Response.json(await env.SIDEKICKS.shoppingOrganizer.send(await request.json()), { status: 202 });
+    try {
+      return Response.json(await env.SIDEKICKS.shoppingOrganizer.send(await request.json()), { status: 202 });
+    } catch (error) {
+      return Response.json({ code: error.message }, { status: 400 });
+    }
   }
 };`;
 
@@ -187,7 +195,7 @@ describe("an app's dedicated Sidekicks", () => {
     resourceId = crypto.randomUUID();
     await publishApp(false, STATELESS_SITE);
     await save();
-    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation({ artifactId: oldArtifact })))).toContain("No Sidekick");
+    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation({ artifactId: oldArtifact })))).toBe("sidekick_invocation_unbound");
     const ctx = createExecutionContext();
     const props = { workspaceId, artifactId, artifactVersion: 1 };
     const loader = env.ARTIFACT_LOADER;
@@ -229,6 +237,53 @@ describe("an app's dedicated Sidekicks", () => {
     }));
     expect(namedThen.status).toBe(202);
     expect(await namedThen.json()).toMatchObject({ reused: false });
+    await workspace().sidekickPause({ workspaceId, automationId: sidekickId, actor });
+    const paused = await thenWorker.getEntrypoint().fetch(new Request("https://app.test/api/items", {
+      method: "POST", body: JSON.stringify({ operationId: "after-pause", input: { item: "milk" } }),
+    }));
+    expect(paused.status).toBe(400);
+    expect(await paused.json()).toEqual({ code: "sidekick_not_active" });
+  });
+
+  it("rejects oversized serialized openings before creating a run and returns a code to app code", async () => {
+    for (const input of [
+      { operationId: "oversized", input: { item: "a".repeat(MESSAGE_MAX_CHARACTERS) } },
+      { operationId: "escaped", input: { item: "\\".repeat(MESSAGE_MAX_CHARACTERS / 2) } },
+      { operationId: "o".repeat(MESSAGE_MAX_CHARACTERS), input: { item: "milk" } },
+    ]) {
+      const response = await host().fetchThroughFacet(new Request("https://app.test/api/items", {
+        method: "POST", body: JSON.stringify(input),
+      }));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ code: "sidekick_invocation_input_too_large" });
+    }
+    const runs = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM sidekick_runs").one().count);
+    expect(runs).toBe(0);
+    const valid = await host().fetchThroughFacet(new Request("https://app.test/api/items", {
+      method: "POST", body: JSON.stringify({ operationId: "fits", input: { item: "a".repeat(MESSAGE_MAX_CHARACTERS - 1_000) } }),
+    }));
+    expect(valid.status).toBe(202);
+  });
+
+  it("bounds serialized opening metadata independently of the rendered task text", async () => {
+    const bindingName = "b".repeat(MESSAGE_MAX_CHARACTERS);
+    await save(sidekickId, draft(bindingName));
+    const invoke = async () => { await workspace().artifactInvokeSidekick(invocation({ bindingName })); };
+    await expect(invoke()).rejects.toThrow("sidekick_invocation_input_too_large");
+    const runs = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM sidekick_runs").one().count);
+    expect(runs).toBe(0);
+  });
+
+  it("keeps Sidekick and Canvas list trigger vocabularies readable by older clients", async () => {
+    const listed = await workspace().listSidekickDirectoryForAuthorizedMember({ workspaceId, userId: author });
+    const summary = listed.items.find((item) => item.id === sidekickId);
+    expect(summary).toMatchObject({ triggerKinds: [], hasInvocationTrigger: true });
+    const canvases = await workspace().canvasListFor({ workspaceId, userId: author, accessClass: "member" });
+    expect(canvases.find((canvas) => canvas.id === canvasId)?.sidekicks).toContainEqual(expect.objectContaining({
+      id: sidekickId, triggerKinds: [], hasInvocationTrigger: true,
+    }));
   });
 
   it("binds several Sidekicks to one app and refuses duplicate names or a second app on a Sidekick", async () => {
@@ -244,22 +299,38 @@ describe("an app's dedicated Sidekicks", () => {
     expect(await refusal((instance) => instance.sidekickSaveDefinition({ workspaceId, automationId: second, actor,
       draft: draft(), evaluatorRules: null, submittedByRunId: null }))).toContain("invocation.bindingName");
     const twoApps = draft();
-    twoApps.triggers.push({ type: "invocation", artifactId: crypto.randomUUID(), bindingName: "anotherApp" });
+    twoApps.triggers.push({ type: "invocation", artifactId: asArtifactId(crypto.randomUUID()), bindingName: "anotherApp" });
     expect(await refusal((instance) => instance.sidekickSaveDefinition({ workspaceId, automationId: sidekickId, actor,
       draft: twoApps, evaluatorRules: null, submittedByRunId: null }))).toContain("triggers");
   });
 
-  it("honors pause, unbinding, version changes, and the existing attached-Canvas gate", async () => {
-    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation({ bindingName: "unknown" })))).toContain("No Sidekick");
+  it("honors pause, unbinding and Canvas attachment while retaining version as provenance", async () => {
+    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation({ bindingName: "unknown" })))).toBe("sidekick_invocation_unbound");
     await workspace().sidekickPause({ workspaceId, automationId: sidekickId, actor });
-    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation()))).toContain("active");
+    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation()))).toBe("sidekick_not_active");
+    const paused = await host().fetchThroughFacet(new Request("https://app.test/api/items", {
+      method: "POST", body: JSON.stringify({ operationId: "after-pause", input: { item: "milk" } }),
+    }));
+    expect(paused.status).toBe(400);
+    expect(await paused.json()).toEqual({ code: "sidekick_not_active" });
     await workspace().sidekickResume({ workspaceId, automationId: sidekickId, actor });
-    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation({ artifactVersion: 2 })))).toContain("Reload");
+    // Publication has moved the registry, while this facet is still serving v1.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE artifact_registry SET current_version = 2 WHERE artifact_id = ?", artifactId);
+    });
+    const accepted = await host().fetchThroughFacet(new Request("https://app.test/api/items", {
+      method: "POST", body: JSON.stringify({ operationId: "during-republish", input: { item: "milk" } }),
+    }));
+    expect(accepted.status).toBe(202);
+    const { runId } = await accepted.json<{ runId: string }>();
+    const provenance = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ trigger_json: string }>(
+      "SELECT trigger_json FROM sidekick_runs WHERE run_id = ?", runId).one().trigger_json);
+    expect(JSON.parse(provenance).artifactVersion).toBe(1);
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec("DELETE FROM sidekick_conversation_attachments WHERE automation_id = ?", sidekickId);
     });
-    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation()))).toContain("attached");
+    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation()))).toBe("sidekick_invocation_artifact_unavailable");
     await save(sidekickId, { ...draft(), triggers: [{ type: "manual" }] });
-    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation()))).toContain("No Sidekick");
+    expect(await refusal((instance) => instance.artifactInvokeSidekick(invocation()))).toBe("sidekick_invocation_unbound");
   });
 });

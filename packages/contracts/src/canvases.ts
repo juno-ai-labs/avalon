@@ -114,6 +114,8 @@ export const CanvasSidekickSchema = z.object({
   madeHere: z.boolean(),
   /** What wakes it; absent from an older Worker. Manual alone is not live updating. */
   triggerKinds: z.array(z.enum(["manual", "schedule", "external_event", "invocation"])).optional(),
+  /** Additive wire field: older clients keep their closed triggerKinds vocabulary. */
+  hasInvocationTrigger: z.boolean().optional(),
   /**
    * Whether the reader may open the Sidekick's own page: its audience, which
    * the Canvas does not decide. Present on a read made for a viewer (the

@@ -88,8 +88,17 @@ export function automationSummary(
     ...(row.run_state === undefined ? {} : { runState: row.run_state }),
     ...(row.running === undefined ? {} : { running: row.running === 1 }),
     ...(row.pending_question === undefined ? {} : { pendingQuestion: row.pending_question }),
-    ...(row.trigger_kinds === undefined ? {} : { triggerKinds: JSON.parse(row.trigger_kinds ?? "[]") as AutomationSummary["triggerKinds"] }),
+    ...(row.trigger_kinds === undefined ? {} : sidekickTriggerSummary(row.trigger_kinds ?? "[]")),
     ...(row.schedule_time_zone == null ? {} : { scheduleTimeZone: row.schedule_time_zone }),
+  };
+}
+
+/** Keep organization-wide list payloads readable by clients with closed trigger enums. */
+export function sidekickTriggerSummary(json: string): Pick<AutomationSummary, "triggerKinds" | "hasInvocationTrigger"> {
+  const kinds = JSON.parse(json) as NonNullable<AutomationSummary["triggerKinds"]>;
+  return {
+    triggerKinds: kinds.filter((kind) => kind !== "invocation"),
+    ...(kinds.includes("invocation") ? { hasInvocationTrigger: true } : {}),
   };
 }
 

@@ -337,7 +337,9 @@ recorded before the builder's retirement carry it, and no current client
 reports it. The entry points `sidebar_automation` and `automation_run_list`
 name how the page was reached. On the API, a run's outcome and its
 `agent_tool_started` events carry the automation id, the run id, and the
-trigger kind from the run's `automationRun` reference; the compiler-turn,
+trigger kind from the run's `automationRun` reference. `run_terminal` maps
+schedules to `scheduled`, external events to `activity`, and app requests to
+`invocation`, separately from manual runs; the compiler-turn,
 revision, template, and overview-reopen measurements went with the builder.
 Dimensions stay closed and content-free.
 
