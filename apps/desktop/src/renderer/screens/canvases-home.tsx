@@ -146,7 +146,7 @@ function CanvasMarketplace({ onStart }: { onStart: (prompt: string) => void }): 
       {templates.map((template) => <li key={template.name}>
         <button className="dashboard-card canvas-template-card" onClick={() => onStart(template.prompt)} type="button">
           <span className="canvas-template-title"><CanvasTemplateMark template={template} />{template.name}</span>
-          <ArrowUp aria-hidden="true" size={16} />
+          <span aria-hidden="true" className="canvas-template-send"><ArrowUp size={15} /></span>
           <span className="canvas-template-description">{template.description}</span>
         </button>
       </li>)}

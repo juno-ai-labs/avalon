@@ -6983,6 +6983,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-template-card { align-content: start; color: inherit; cursor: pointer; display: grid; font: inherit; gap: 8px 12px; grid-template-columns: minmax(0, 1fr) auto; height: 100%; padding: 16px; text-align: start; width: 100%; }
 .canvas-template-card:disabled { cursor: default; opacity: .65; }
 .canvas-template-card > svg, .canvas-template-description { color: var(--av-sys-color-text-muted); }
+/* The composer's Send, drawn the same: picking a card sends its prompt. */
+.canvas-template-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; flex: none; height: 28px; justify-content: center; width: 28px; }
 .canvas-template-title { align-items: center; display: flex; font-weight: 600; gap: 10px; }
 .canvas-template-description { font-size: 14px; grid-column: 1 / -1; }
 .dashboard-card-preview { border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; display: grid; height: 150px; overflow: hidden; place-items: center; position: relative; }
