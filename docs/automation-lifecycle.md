@@ -473,7 +473,7 @@ records where a running signal would come from.
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `runNow`, `runSeeded`, `admitConversationMessage`, `allowsManager`, `admitExternalEvent`, `readRunDefinition`, `readRunState`, `continueRun`, `runInputRefusal`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, `reviewDelivery`, `reviewDelivered`, the parent contract (`onChildCommonProjection` moves the run row, counts its finish and arms its notice), and the schedule, run, review, memory-table and `sidekick_run_notice` alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends. |
 | `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`, with `continuationSender`, who sent the input; `sidekickRunInputRefusal`, which a run child asks before it records an answer to the run's question; `continuationSource`, who continued the run and where; the refusal text the run's transcript records; `routeSidekickConversationMessage` with `SIDEKICK_MESSAGE_REFUSAL_TEXT`, the shared conversation's call to `admitConversationMessage` and what it says when a message started no run; and `sidekickAllowsManager`, which the shared conversation asks before it records an answer to the wizard. |
-| `apps/api/src/lib/conversation-message-opening.ts` | `conversationMessageOpening`: a shared-conversation message as the opening of the run it started, its sender named as data. |
+| `packages/prompts/api/conversation-message-opening.ts` | `conversationMessageOpening`: a shared-conversation message as the opening of the run it started, its sender named as data. |
 | `apps/api/src/services/sidekick-review.ts`, `sidekick-review-notice.ts` | `deliverSidekickReview`: the `sidekick_review` Queue message's consumer, which reads the notice from the Sidekick, admits it into the wizard's conversation and reports back; `sidekickReviewText` and `renderSidekickReviewNotice`, the sentence people read and the Rally-attributed framing the model reads. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | `claimPersistentLoopExecution`, which continues a run from a run child's pending input and, in the shared conversation, asks who answers a person's input; `refuseSidekickRunInput`, which settles one the Sidekick refused; and `admitSidekickReview`, which admits the review notice into the wizard's conversation and only there. |
 | `apps/api/src/services/workstream-participant-model-message.ts` | `renderRunContinuationNote`, and `externalInputFraming`, which renders outside text in a run child as evidence. |
@@ -1891,7 +1891,7 @@ original twelve marks through `GENERATED_APPEARANCE_ICON_KEYS`).
 
 Each pickable key carries a short description of what it draws, because the
 setup chat chooses an icon too and reads the same lines, rendered once by
-`WORKSTREAM_ICON_CATALOG` (`packages/agent-harness/src/prompts/icon-catalog.ts`)
+`WORKSTREAM_ICON_CATALOG` (`packages/prompts/harness/icon-catalog.ts`)
 under the picker's section headings. They are model-visible strings: plain
 words, no icon-library names, and **the drawing only, never what an icon is
 for**, since matching a mark to a Sidekick is the model's job. The exhaustive

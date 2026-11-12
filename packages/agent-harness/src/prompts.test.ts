@@ -14,8 +14,8 @@ import {
   renderWorkstreamSystemPrompt,
   renderMemoryDigest,
   type MemoryDigestFactInput,
-} from "./prompts";
-import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
+} from "@rally/prompts/harness";
+import { renderPromptPluginCatalog } from "@rally/prompts/harness/plugin-catalog";
 
 const currentDraft: AutomationDraft = {
   name: "Weekly engineering brief",

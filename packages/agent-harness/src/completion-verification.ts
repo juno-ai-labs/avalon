@@ -1,15 +1,15 @@
 import { COMPLETION_VERIFICATION_MODEL } from "@rally/contracts/runtime-config";
 import type { ModelMessage, OpenRouterTraceContext, StructuredModelDiagnostic } from "./index";
 import { askJev, jevFailureKind } from "./jev";
-import { answers, questions, type CompletionAnswer, type CompletionState } from "./completion-verification-question";
+import { answers, type CompletionAnswer, type CompletionState } from "./completion-verification-question";
+import { COMPLETION_CONTEXT_RELATION } from "@rally/prompts/harness/completion-verification-state";
+import { questions } from "@rally/prompts/harness/completion-verification-question";
 
 export type { CompletionState } from "./completion-verification-question";
 export const COMPLETION_VERIFICATION_SOURCE = "completion_verification";
 // User-selected policy, measured in evals/premature-stop. This is confidence
 // required to accept a stop, not confidence required to continue.
 export const COMPLETION_STOP_CONFIDENCE = 0.70;
-export const completionVerificationPrompt = "Review the latest user request and relevant earlier instructions against what you have actually delivered. If requested work remains and you can complete it with available tools, continue now and deliver it. Do not treat a plan or progress update as completion. Check existing artifacts and tool receipts before repeating any action. If already complete, briefly identify the delivered result. If blocked or waiting on existing work, state the specific dependency without starting duplicate work.";
-
 export function needsCompletionVerification(state: Pick<CompletionState, "context_status">, answer: CompletionAnswer | null, threshold = COMPLETION_STOP_CONFIDENCE): boolean {
   return state.context_status === "unresolved" || answer === null
     || answer.confidence <= threshold || answer.choice === "unclear"
@@ -25,7 +25,7 @@ export function completionConversationContext(messages: readonly ModelMessage[])
     const text = typeof message.content === "string" ? message.content
       : (message.content ?? []).flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
     return text ? [{ id: `context:${index}`, role: message.role, text,
-      relation: "Ordered conversation context available to the acting model; may include a compaction checkpoint or an in-run correction." }] : [];
+      relation: COMPLETION_CONTEXT_RELATION }] : [];
   });
 }
 

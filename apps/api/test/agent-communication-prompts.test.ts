@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { MESSAGE_MAX_CHARACTERS, SIDEKICK_CHANGE_FRAME_RESERVE } from '@rally/contracts';
 import { hasAvalonToolProse } from '@rally/agent-harness';
-import { agentCoordinationRoleGuidance, sidekickChangeRequestText } from '../src/services/agent-communication-prompts';
-import { renderAgentMessage } from "../src/services/agent-message-content";
+import { agentCoordinationRoleGuidance } from '@rally/prompts/api/agent-coordination-role';
+import { sidekickChangeRequestText } from '@rally/prompts/api/sidekick-change-request';
 import { createAgentCommunicationPlugin, type AgentCommunicationTools } from "../src/services/agent-communication-plugin";
+import { renderAgentMessage } from "@rally/prompts/api/agent-message";
 
 describe('agent coordination role guidance', () => {
   it.each(['canvas', 'automation'] as const)('identifies a worker under %s as background rather than a participant coordinator', parentKind => {

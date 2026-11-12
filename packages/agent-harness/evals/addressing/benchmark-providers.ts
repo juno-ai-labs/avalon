@@ -7,8 +7,9 @@ import {
   summarizeAddressingEvaluation,
   type AddressingEvaluationCase,
 } from "../../src/addressing-evaluation";
-import { classifyAddressingWithModel, renderAddressingMessages } from "../../src/index";
+import { classifyAddressingWithModel } from "../../src/index";
 import { assertProtectedEvaluationPaths, writePrivateFile } from "./secure-paths";
+import { renderAddressingMessages } from "@rally/prompts/harness/addressing";
 
 interface Options {
   dataset: string;

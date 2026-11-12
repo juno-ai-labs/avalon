@@ -1,7 +1,8 @@
 import type { SidekickReviewNoticeV1 } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 
-import { renderSidekickReviewNotice, sidekickReviewText } from "../src/services/sidekick-review-notice";
+import { sidekickReviewText } from "../src/services/sidekick-review-notice";
+import { renderSidekickReviewNotice } from "@rally/prompts/api/sidekick-review-notice";
 
 const NOTICE: SidekickReviewNoticeV1 = {
   kind: "sidekick_review_due",

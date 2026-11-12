@@ -2,7 +2,7 @@ import "../../../tests/isolated-region";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { classifyMessageAdmission, classifyMessageContinuation, classifyMessageContinuationWithTypeSafe } from "./message-continuation";
-import { renderMessageContinuationMessages } from "./prompts/message-continuation";
+import { renderMessageContinuationMessages } from "@rally/prompts/harness/message-continuation";
 
 const input = {
   apiKey: "openrouter-test",
