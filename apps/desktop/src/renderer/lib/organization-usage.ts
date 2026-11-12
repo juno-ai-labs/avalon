@@ -23,7 +23,7 @@ import { useLocalCacheScope } from './local-cache-scope';
 export type OrganizationUsageApi = Pick<RallyApi, 'getWorkspaceUsage'>;
 
 /** What Settings needs on top of the read: an administrator choosing the plan. */
-export type OrganizationPlanApi = OrganizationUsageApi & Pick<RallyApi, 'setWorkspacePlan'> & Partial<Pick<RallyApi, 'getBillingStatus' | 'createBillingCheckout' | 'createBillingPortal'>>;
+export type OrganizationPlanApi = OrganizationUsageApi & Pick<RallyApi, 'setWorkspacePlan'> & Partial<Pick<RallyApi, 'getBillingStatus' | 'getBillingCredits' | 'createBillingCheckout' | 'createBillingPortal'>>;
 
 /** One answer and when it arrived, which is what the offline label names. */
 export interface UsageReading {

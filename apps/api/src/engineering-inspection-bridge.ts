@@ -1,3 +1,6 @@
+import { BillingCreditsSchema, OverageCreditSchema } from "@rally/contracts/billing";
+import { readOverageCredits } from "./services/overage-credits";
+import { grantOverageCredit, expireOverageCredit } from "./services/billing-coordination";
 import { readOrganizationSettings, updateOrganizationSettings } from "./services/organization-settings";
 import { publishWorkspaceSync } from "./services/workspace-realtime-service";
 import { readOrganizationUsage, setWorkspacePlan, publishOrganizationUsage } from "./services/usage-metering";
@@ -5,6 +8,7 @@ import { provisionUserPassword, revokeUserPassword } from "./services/password-l
 import { RegionSchema } from "@rally/contracts/regions";
 import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
+  InspectEngineeringCreditsInputSchema, GrantEngineeringCreditInputSchema, ExpireEngineeringCreditInputSchema,
   InspectEngineeringOrgSettingsInputSchema,
   UpdateEngineeringOrgSettingsInputSchema,
   EngineeringOrgSettingsResultSchema,
@@ -303,6 +307,38 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         await publishWorkspaceSync(this.env, request.orgId, ["workspace_profile"]);
         return EngineeringOrgSettingsResultSchema.parse(result);
       }, () => ({ modelSelectorVisible: request.modelSelectorVisible }));
+    });
+  }
+
+  async inspectOverageCredits(input: unknown) {
+    return this.productOperation("inspectOverageCredits", async () => {
+      const { orgId } = InspectEngineeringCreditsInputSchema.parse(input);
+      if (!(await this.resolveWorkspace({ workspaceId: orgId })).found) throw new Error("engineering_organization_not_found");
+      return BillingCreditsSchema.parse(await readOverageCredits(this.env, orgId));
+    });
+  }
+
+  async grantOverageCredit(input: unknown, operator: unknown) {
+    return this.productOperation("grantOverageCredit", async () => {
+      const { orgId, ...request } = GrantEngineeringCreditInputSchema.parse(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      if (!(await this.resolveWorkspace({ workspaceId: orgId })).found) throw new Error("engineering_organization_not_found");
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "grant_overage_credit", orgId, operationId: request.operationId,
+      }, async () => OverageCreditSchema.parse(await grantOverageCredit(this.env, orgId, request)),
+      (result) => ({ grantId: result.id, amountCents: result.amountCents, expiresAt: result.expiresAt }));
+    });
+  }
+
+  async expireOverageCredit(input: unknown, operator: unknown) {
+    return this.productOperation("expireOverageCredit", async () => {
+      const request = ExpireEngineeringCreditInputSchema.parse(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      if (!(await this.resolveWorkspace({ workspaceId: request.orgId })).found) throw new Error("engineering_organization_not_found");
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "expire_overage_credit", orgId: request.orgId, operationId: `expire:${request.grantId}`,
+      }, async () => OverageCreditSchema.parse(await expireOverageCredit(this.env, request.orgId, request.grantId)),
+      (result) => ({ grantId: result.id, expiresAt: result.expiresAt }));
     });
   }
 

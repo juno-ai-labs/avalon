@@ -1,3 +1,5 @@
+import type { GrantOverageCredit } from "@rally/contracts/billing";
+import { grantOverageCredit, expireOverageCredit } from "../services/overage-credits";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -65,6 +67,12 @@ export class BillingCoordinatorDO extends DurableObject<Env> {
     return this.serialize(workspaceId, () =>
       billing.settleBillingAccount(this.env, workspaceId),
     );
+  }
+  grantCredit(workspaceId: string, input: GrantOverageCredit) {
+    return this.serialize(workspaceId, () => grantOverageCredit(this.env, workspaceId, input));
+  }
+  expireCredit(workspaceId: string, grantId: string) {
+    return this.serialize(workspaceId, () => expireOverageCredit(this.env, workspaceId, grantId));
   }
   close(workspaceId: string, actorUserId: string | null) {
     return this.serialize(workspaceId, () =>

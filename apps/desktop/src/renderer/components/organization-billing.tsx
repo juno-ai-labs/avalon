@@ -1,14 +1,43 @@
 import { desktopBridge } from '../lib/platform';
 import { useState } from 'react';
-import type { BillingStatus } from '@rally/contracts/billing';
+import type { BillingStatus, BillingCredits } from '@rally/contracts/billing';
 import type { OrganizationPlanApi } from '../lib/organization-usage';
+import { useLocalCacheScope } from '../lib/local-cache-scope';
 import { Button, DropdownSelect, ErrorNotice } from './primitives';
 
 type BillingProps = { api: OrganizationPlanApi; currentPlan: string; billing: Extract<BillingStatus, { enabled: true }> };
 export function OrganizationBilling(props: BillingProps) {
+  const scope = useLocalCacheScope();
+  const key = `${scope}:${props.billing.subscribed ? 'portal' : 'checkout'}`;
   // A subscription transition discards prepared links and in-flight responses,
   // including a later transition back to checkout after cancellation.
-  return <BillingForm key={props.billing.subscribed ? 'portal' : 'checkout'} {...props} />;
+  return <><BillingForm key={key} {...props} />
+    {props.billing.creditsAvailable && props.api.getBillingCredits && <OverageCredits key={key} load={props.api.getBillingCredits.bind(props.api)} />}
+  </>;
+}
+
+function OverageCredits({ load }: { load: () => Promise<BillingCredits> }) {
+  const [credits, setCredits] = useState<BillingCredits | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const refresh = async () => {
+    setBusy(true); setError(null); setCredits(null);
+    try { setCredits(await load()); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Credits could not be loaded'); }
+    finally { setBusy(false); }
+  };
+  const dollars = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
+  return <>
+    <div className="settings-preference-row">
+      <span className="settings-row-copy"><strong>Overage credits</strong><small>{credits ? `${dollars(credits.availableCents)} available for overage invoices. Subscription fees and included usage stay unchanged.` : 'Credits apply automatically to eligible overage invoices.'}</small></span>
+      <Button disabled={busy} onClick={() => void refresh()}>{busy ? 'Loading credits…' : credits ? 'Refresh credits' : 'View credits'}</Button>
+    </div>
+    {credits?.grants.map((grant) => <div className="settings-preference-row" key={grant.id}>
+      <span className="settings-row-copy"><strong>{dollars(grant.amountCents)} credit</strong><small>{grant.voided ? 'Voided' : grant.expiresAt ? `${Date.parse(grant.expiresAt) <= Date.now() ? 'Expired' : 'Expires'} ${new Date(grant.expiresAt).toLocaleDateString()}` : 'No expiry'}</small></span>
+      <span>{dollars(grant.availableCents)} available</span>
+    </div>)}
+    {error && <ErrorNotice>{error}</ErrorNotice>}
+  </>;
 }
 
 function BillingForm({ api, billing, currentPlan }: BillingProps) {

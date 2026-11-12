@@ -107,6 +107,10 @@ Boolean `workspaces.model_selector_visible` (`0`/`1`, default `0`); see
 
 D1 migration `0131_billing.sql` adds Organization billing accounts, per-subscription
 paid terms and billable intervals, membership-triggered trial awards and permanent overage receipts.
+`billing_credit_operations` stores immutable operator request receipts and Stripe
+grant IDs; balances and redemption remain in Stripe. `billing_overage_subscriptions`
+retains provisioning generations and cleanup markers for dedicated metered billing.
+Overage receipts retain their meter and delivery timestamp for absolute-hour replay.
 Membership qualification counts persist before account creation and survive
 departures. Accounts retain the zero-price Stripe trial-record ID, cleanup receipt
 and last synchronized award deadline; paid terms retain final-invoice completion.
@@ -1097,6 +1101,17 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-11-12 — Retain Organization billing and financial delivery receipts
+
+Migration 0131 records trial qualification, paid consent intervals, immutable
+closed-period overages and operator credit requests. Native credit balances stay
+in Stripe; local grant and metered-subscription receipts recover uncertain writes
+without relying on the provider's short idempotency retention. Dedicated metered
+overages keep credits off plan fees and preserve cancellation tails. A second
+local credit balance was rejected because it would create another financial
+authority. The regional billing actor serializes financial writes; these tables
+are audit and recovery data, not persistent runtime locks.
 
 ### 2026-11-09 — Persist opaque Cloudflare sending claims in D1
 

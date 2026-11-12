@@ -20,6 +20,12 @@ export const BillingConfigSchema = z
     // Applied once per Organization, on its first paid subscription. Stripe owns
     // the percentage and duration; omit to stop offering the pilot to new buyers.
     pilotCouponId: z.string().min(1).optional(),
+    // A dedicated monthly metered USD price. Native Stripe credit grants apply
+    // only to this overage price, never to the licensed plan subscription.
+    overageCredits: z.strictObject({
+      priceId: z.string().startsWith("price_"),
+      meterId: z.string().startsWith("mtr_"),
+    }).optional(),
     // Dedicated zero-price trial record and reporting-only hourly meters.
     synchronization: z
       .strictObject({
@@ -37,7 +43,7 @@ export const BillingConfigSchema = z
           priceId: z.string().startsWith("price_"),
           currencies: z.array(z.string().regex(/^[a-z]{3}$/)).min(1),
           couponId: z.string().optional(),
-          // A one-time USD price of $0.000001 per unit, for the existing micro-USD ledger.
+          // USD $0.000001 per unit; use overageCredits.priceId for native credits.
           overagePriceId: z.string().startsWith("price_").optional(),
           enabled: z.boolean().default(true),
         }),
@@ -45,6 +51,13 @@ export const BillingConfigSchema = z
       .min(1),
   })
   .superRefine((config, ctx) => {
+    if (config.overageCredits && config.offers.some((offer) => offer.priceId === config.overageCredits!.priceId)) {
+      ctx.addIssue({ code: "custom", path: ["overageCredits", "priceId"], message: "Overage credits must not apply to plan prices" });
+    }
+    if (config.overageCredits && config.synchronization &&
+      [config.synchronization.organizationMeterId, config.synchronization.rallyMeterId].includes(config.overageCredits.meterId)) {
+      ctx.addIssue({ code: "custom", path: ["overageCredits", "meterId"], message: "Billable overages require a dedicated meter" });
+    }
     if (new Set(config.offers.map((o) => o.id)).size !== config.offers.length) {
       ctx.addIssue({
         code: "custom",
