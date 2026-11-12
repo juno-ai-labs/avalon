@@ -27,6 +27,7 @@ const CANVAS = '00000000-0000-7000-8000-0000000000c1';
 
 const getCanvas = vi.hoisted(() => vi.fn());
 const archiveCanvas = vi.hoisted(() => vi.fn());
+const discardBlankCanvas = vi.hoisted(() => vi.fn());
 const setCanvasPinned = vi.hoisted(() => vi.fn());
 const artifactLink = vi.hoisted(() => vi.fn());
 const setCanvasAudience = vi.hoisted(() => vi.fn());
@@ -39,7 +40,7 @@ const requestCanvasAccess = vi.hoisted(() => vi.fn());
 const decideCanvasAccess = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({
-    api: { artifactLink, getCanvas, archiveCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
+    api: { artifactLink, getCanvas, archiveCanvas, discardBlankCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
     session: { user: { id: ME }, workspace: { id: WORKSPACE, region: 'global', role: 'member' } },
   }),
   useOptionalCollaborationSession: () => null,
@@ -63,6 +64,7 @@ vi.mock('./conversation-surface', () => ({
   ConversationOpeningSkeleton: ({ label }: { label: string }) => <p>{label}</p>,
   ConversationSurface: (props: ConversationSurfaceProps) => {
     const location = useLocation();
+    const navigate = useNavigate();
     const [panelOpen, setPanelOpen] = useState(false);
     const [hostPanel, setHostPanel] = useState<ConversationHostPanel | null>(null);
     surfaces.push({ props, requested: openResourceRequest(location.state)?.resourceId ?? null, expanded: expandRequest(location) !== null });
@@ -71,6 +73,7 @@ vi.mock('./conversation-surface', () => ({
       {props.composerActivity}
       {showStateHeader.current ? props.stateHeader : props.renderHeader?.({ presentUserIds: [ME, MAYA], panelOpen, openPanel: setHostPanel } as never)}
       <button onClick={() => setPanelOpen((open) => !open)} type="button">{panelOpen ? 'Close test panel' : 'Open test panel'}</button>
+      <button onClick={() => void navigate('/canvases')} type="button">Leave the Canvas</button>
     </div>;
   },
 }));
@@ -148,6 +151,7 @@ beforeEach(() => {
   window.localStorage.clear();
   getCanvas.mockReset().mockResolvedValue(detail());
   archiveCanvas.mockReset().mockResolvedValue(undefined);
+  discardBlankCanvas.mockReset().mockResolvedValue(undefined);
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
   setCanvasAudience.mockReset();
   artifactLink.mockReset().mockResolvedValue({artifactId:'00000000-0000-7000-8000-0000000000b2',canonicalUrl:'https://quiet-blue-river-garden-g.rallyusercontent.com'});
@@ -187,6 +191,29 @@ describe('CanvasScreen', () => {
     expect(await screen.findByRole('alertdialog')).toHaveTextContent('The Canvas could not be archived. Try again.');
     expect(screen.queryByText('Canvases home')).toBeNull();
     expect(dialog).toBeInTheDocument();
+  });
+
+  it('asks to discard a Canvas whose Chat was blank when the person left it', async () => {
+    getCanvas.mockResolvedValue(detail({ title: 'Untitled Canvas', artifacts: [] }));
+    renderCanvas();
+    await screen.findByRole('button', { name: 'Canvas menu: Untitled Canvas' });
+    act(() => lastSurface().props.onBlankChange?.(true));
+    expect(discardBlankCanvas).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Leave the Canvas' }));
+    expect(await screen.findByText('Canvases home')).toBeInTheDocument();
+    await waitFor(() => expect(discardBlankCanvas).toHaveBeenCalledWith(CANVAS));
+  });
+
+  it('keeps a Canvas left with something typed or said in its Chat', async () => {
+    getCanvas.mockResolvedValue(detail({ title: 'Untitled Canvas', artifacts: [] }));
+    renderCanvas();
+    await screen.findByRole('button', { name: 'Canvas menu: Untitled Canvas' });
+    act(() => lastSurface().props.onBlankChange?.(true));
+    act(() => lastSurface().props.onBlankChange?.(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave the Canvas' }));
+    expect(await screen.findByText('Canvases home')).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(discardBlankCanvas).not.toHaveBeenCalled();
   });
 
   it('offers no archive action to someone who cannot manage the Canvas', async () => {

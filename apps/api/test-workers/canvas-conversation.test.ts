@@ -494,6 +494,37 @@ describe("the Canvas list", () => {
     await expect.poll(() => clientCanvasRows(member.frames).map((row) => row.id), { timeout: waitBudget() }).toEqual([]);
   });
 
+  it("archives a Canvas its creator left blank off their list, and keeps one with a message, a title, or a reader who is not its creator", () => withNamingModel(async () => {
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    const creator = await connect(CREATOR);
+    const blank = (await service.create({})).canvasId;
+    const said = (await service.create({})).canvasId;
+    const titled = (await service.create({})).canvasId;
+    await expect.poll(() => clientCanvasRows(creator.frames).map((row) => row.id).sort(), { timeout: waitBudget() })
+      .toEqual([blank, said, titled].sort());
+
+    const client = await new ConversationService(TEST_ENV, auth(CREATOR)).writableClient(said, "0");
+    await client.createMessage({ text: "Plan the December pricing launch.", clientMessageId: "canvas-discard-said",
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+    await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, said))));
+    await service.update(titled, { title: "Mine" });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: blank,
+      actor: { userId: CREATOR, actorRole: "member" }, update: { visibility: "workspace", userIds: [] } });
+    // A reader who did not make it never discards it, even while it is empty.
+    expect(await new CanvasService(TEST_ENV, auth(MEMBER)).discardIfBlank(blank)).toEqual({ discarded: false });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: blank,
+      actor: { userId: CREATOR, actorRole: "member" }, update: { visibility: "creator", userIds: [] } });
+
+    expect(await service.discardIfBlank(said)).toEqual({ discarded: false });
+    expect(await service.discardIfBlank(titled)).toEqual({ discarded: false });
+    expect(await service.discardIfBlank(blank)).toEqual({ discarded: true });
+    await expect.poll(() => clientCanvasRows(creator.frames).map((row) => row.id).sort(), { timeout: waitBudget() })
+      .toEqual([said, titled].sort());
+    await expect(service.detail(blank)).rejects.toMatchObject({ code: "canvas_not_found" });
+    creator.socket.close(1000, "done");
+  }));
+
   it("lists a Canvas to whoever may open it, unread to a participant who has not opened it", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
     const creator = await connect(CREATOR);

@@ -984,6 +984,12 @@ export interface ConversationSurfaceProps {
   openingPrompt?: string;
   /** End the parent's optimistic lifecycle once the canonical conversation can send. */
   onConversationReady?: (() => void) | undefined;
+  /**
+   * Whether the conversation has nothing in it: no message, no run, no send in
+   * flight, and nothing typed or attached in the composer. Reported on every
+   * change, for a host that tidies up a conversation left unused.
+   */
+  onBlankChange?: (blank: boolean) => void;
   /** The parent must exist before opening its conversation socket. */
   connectionEnabled?: boolean;
   /** Already inside a panel: previews cover that slot without claiming the shell. */
@@ -1061,6 +1067,7 @@ function ConversationSurfaceContent({
   openingDetail,
   openingPrompt,
   onConversationReady,
+  onBlankChange,
   connectionEnabled = true,
   parentKind,
   parentId: id,
@@ -2418,6 +2425,10 @@ function ConversationSurfaceContent({
     && workstreamShowsReadyState(transcript.length, Boolean(activeElicitation), shownDetail.harnessStatus);
   const starting = Boolean(renderStarters) && !withoutComposer && showsReadyState;
   useLayoutGlide(composerDockRef, starting);
+  const [draftEmpty, setDraftEmpty] = useState(true);
+  const blank = !openingPrompt && !sending && draftEmpty && attachmentDraft.attachments.length === 0
+    && workstreamShowsReadyState(transcript.length, Boolean(activeElicitation), routedDetail?.harnessStatus ?? 'completed');
+  useEffect(() => { onBlankChange?.(blank); }, [blank, onBlankChange]);
 
   const detail = routedDetail ?? openingDetail;
   if (!detail) {
@@ -2691,6 +2702,7 @@ function ConversationSurfaceContent({
               ? 'Ask your Sidekick…'
               : 'Ask Rally or the people here…')}
             attachments={attachmentDraft.attachments}
+            onDraftEmptyChange={setDraftEmpty}
             error={sendError
               ?? attachmentDraft.error
               ?? (attachResource.error ? 'The resource couldn’t be added.' : undefined)

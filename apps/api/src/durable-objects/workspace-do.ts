@@ -5432,6 +5432,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /**
+   * Archive a Canvas its creator left blank; see `HostedCanvas.discardIfBlank`.
+   * Blank means no Sidekick is attached, so none of `canvasArchive`'s Sidekick
+   * follow-up is owed.
+   */
+  async canvasDiscardIfBlank(input: Parameters<HostedCanvas["discardIfBlank"]>[0]): Promise<{ discarded: boolean }> {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => {
+      const result = canvas.discardIfBlank(input);
+      if (result.discarded) this.broadcastPresence();
+      return result;
+    });
+  }
+
   /** Record an artifact a publish attached to a Canvas; `noted: false` for an id that is no Canvas. See `HostedCanvas.noteArtifact`. */
   async canvasNoteArtifact(input: Parameters<HostedCanvas["noteArtifact"]>[0]) {
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);

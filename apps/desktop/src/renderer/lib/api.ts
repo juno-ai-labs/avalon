@@ -1273,6 +1273,11 @@ export class RallyApi {
     return this.request(`/canvases/${encodeURIComponent(id)}`, { schema: CanvasDetailSchema, signal });
   }
 
+  /** Archive a Canvas this person made and left blank; the server judges blank, so this may archive nothing. */
+  async discardBlankCanvas(id: string): Promise<void> {
+    await this.requestVoid(`/canvases/${encodeURIComponent(id)}/discard`, { method: 'POST' });
+  }
+
   async archiveCanvas(id: string): Promise<void> {
     await this.requestVoid(`/canvases/${encodeURIComponent(id)}/archive`, { method: 'POST' });
   }
