@@ -533,6 +533,10 @@ edge or byte limit changes what that tool accepts too.
 
 ## Failure modes and limits
 
+Paid OCR preserves `usage_allowance_exhausted` as the derivative error. It is
+retryable on a later explicit read, unlike a permanently invalid PDF. Text-layer
+extraction and existing ready derivatives remain available without a model call.
+
 - Legacy opaque cursors are at most 2,048 characters. Invalid scope, purpose, signature,
   encoding, or shape returns `invalid_cursor`; an elapsed expiry returns
   `cursor_expired`.

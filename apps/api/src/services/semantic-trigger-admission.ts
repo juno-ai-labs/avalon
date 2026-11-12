@@ -1,3 +1,4 @@
+import { requireUsageAllowance, isUsageAllowanceExhausted } from "./usage-admission";
 import {
   judgeSemanticTriggerConditions,
   type SemanticTriggerDecision,
@@ -77,6 +78,11 @@ export async function admitExternalEventWithSemanticGate(
 ): Promise<SemanticTriggerAdmissionResult> {
   const first = await input.sidekick.admitExternalEvent(input.admission);
   if (!first.judge) return { admitted: first.admitted, outcomeCode: first.outcomeCode };
+  try { await requireUsageAllowance(env, input.workspaceId); }
+  catch (error) {
+    if (!isUsageAllowanceExhausted(error)) throw error;
+    return { admitted: false, outcomeCode: "usage_allowance_exhausted" };
+  }
   const plan = first.judge;
   const sourceConditions = plan.sourceConditions ?? [];
 

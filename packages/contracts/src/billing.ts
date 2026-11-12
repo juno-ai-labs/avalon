@@ -4,11 +4,13 @@ import { PlanIdSchema } from './usage';
 export const BillingStatusSchema = z.discriminatedUnion('enabled', [
   z.object({ enabled: z.literal(false) }),
   z.object({ enabled: z.literal(true), status: z.string(), subscribed: z.boolean(), trialEndsAt: z.string(), overageEnabled: z.boolean(), creditsAvailable: z.boolean().optional(),
+    paymentMethodReady: z.boolean().optional(), overageAvailable: z.boolean().optional(),
     offers: z.array(z.object({ id: z.string(), name: z.string(), plan: PlanIdSchema, currencies: z.array(z.string()), overageAvailable: z.boolean() })),
   }),
 ]);
 export type BillingStatus = z.infer<typeof BillingStatusSchema>;
 export const BillingUrlSchema = z.object({ url: HttpUrlSchema });
+export const BillingOveragePreferenceSchema = z.strictObject({ enabled: z.boolean() });
 
 export const OverageCreditSchema = z.object({
   id: z.string(), amountCents: z.number().int(), availableCents: z.number().int(),

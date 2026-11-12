@@ -1,4 +1,4 @@
-import { BillingOfferSchema, BillingCatalogResultSchema } from "@rally/contracts/billing-admin";
+import { BillingOfferSchema, BillingCatalogResultSchema, SignupTrialSchema } from "@rally/contracts/billing-admin";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import { PlanIdSchema } from "@rally/contracts/usage";
@@ -22,6 +22,8 @@ export const BillingConfigSchema = z
     // the percentage and duration. This bootstraps the pilot until a persisted
     // catalog overrides it; then publish pilotCouponId:null to stop new awards.
     pilotCouponId: z.string().min(1).optional(),
+    signupTrial: SignupTrialSchema.optional(),
+    enforceUsageLimits: z.boolean().default(false),
     // A dedicated monthly metered USD price. Native Stripe credit grants apply
     // only to this overage price, never to the licensed plan subscription.
     overageCredits: z.strictObject({
@@ -39,6 +41,9 @@ export const BillingConfigSchema = z
     offers: z.array(BillingOfferSchema).min(1),
   })
   .superRefine((config, ctx) => {
+    if (config.signupTrial && !config.offers.some(offer => offer.id === config.signupTrial!.offerId && offer.enabled && offer.plan !== "starter" && offer.currencies.includes(config.signupTrial!.currency))) {
+      ctx.addIssue({ code: "custom", path: ["signupTrial", "offerId"], message: "Signup trials require an enabled paid offer in the configured currency" });
+    }
     if (config.overageCredits && config.offers.some((offer) => offer.priceId === config.overageCredits!.priceId)) {
       ctx.addIssue({ code: "custom", path: ["overageCredits", "priceId"], message: "Overage credits must not apply to plan prices" });
     }
@@ -97,11 +102,11 @@ const resolved = Symbol('billingConfigurationSnapshot');
 export async function resolveBillingEnvironment(env: Env): Promise<Env> {
   if (!env.BILLING_CONFIG || (env as Env & { [resolved]?: boolean })[resolved]) return env;
   const catalog = await readBillingCatalog(env);
-  return Object.assign({ ...env, BILLING_CONFIG: JSON.stringify({ ...billingConfig(env), offers: catalog.offers, pilotCouponId: catalog.pilotCouponId ?? undefined }) }, { [resolved]: true });
+  return Object.assign({ ...env, BILLING_CONFIG: JSON.stringify({ ...billingConfig(env), offers: catalog.offers, pilotCouponId: catalog.pilotCouponId ?? undefined, signupTrial: catalog.signupTrial ?? undefined }) }, { [resolved]: true });
 }
 export async function readBillingCatalog(env: Env) {
   const base = billingConfig(env);
   const row = await env.DB.prepare('SELECT revision, catalog_json FROM billing_catalog WHERE region = ?').bind(env.AVALON_REGION)
     .first<{ revision: number; catalog_json: string }>();
-  return BillingCatalogResultSchema.parse(row ? { ...JSON.parse(row.catalog_json), revision: row.revision } : { offers: base.offers, pilotCouponId: base.pilotCouponId ?? null, revision: 0 });
+  return BillingCatalogResultSchema.parse(row ? { signupTrial: base.signupTrial, ...JSON.parse(row.catalog_json), revision: row.revision } : { offers: base.offers, pilotCouponId: base.pilotCouponId ?? null, ...(base.signupTrial ? { signupTrial: base.signupTrial } : {}), revision: 0 });
 }

@@ -605,3 +605,10 @@ describe("attachment derivative conversion", () => {
     expect(outbox.has(losingRefs[0]!)).toBe(true);
   });
 });
+
+it('preserves a quota refusal from OCR instead of reporting a broken PDF', async () => {
+  const { ApiError } = await import('../src/lib/api-error');
+  expect(await buildAttachmentDerivative({ bytes: new TextEncoder().encode('%PDF-1.7'), fileName: 'scan.pdf', mimeType: 'application/pdf',
+    pdfExtractor: async () => ({ pageCount: 1, pages: [''] }), ocr: async () => { throw new ApiError(403, 'usage_allowance_exhausted', 'Included usage is exhausted'); },
+  })).toEqual({ status: 'failed', errorCode: 'usage_allowance_exhausted' });
+});

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { signupTrialRequest, createSignupTrial, recordSignupTrial } from "./signup-trial";
 import { reportMeteredOverages, closeSettledOverageSubscriptions } from "./stripe-overages";
 import {
   weeklyQuotaMicrousd,
@@ -42,6 +43,7 @@ export interface BillingAccount {
   trial_extended: number;
   overage_enabled: number;
   overage_started_at: number | null;
+  payment_method_ready?: number;
 }
 const DAY = 86400;
 export const hasLiveSubscription = (account: BillingAccount) =>
@@ -106,6 +108,9 @@ export const SubscriptionSchema = z.object({
   ended_at: z.number().nullable().optional(),
   trial_end: z.number().nullable().optional(),
   default_payment_method: z.string().nullable().optional(),
+  default_source: z.string().nullable().optional(),
+  cancel_at_period_end: z.boolean().optional(),
+  cancel_at: z.number().nullable().optional(),
   metadata: z.record(z.string(), z.string()),
   items: z.object({
     data: z.array(
@@ -125,6 +130,7 @@ async function reconcileSubscription(
   env: Env,
   account: BillingAccount,
   subscription: Subscription,
+  checkPayment = false,
 ) {
   if (subscription.customer !== account.customer_id)
     throw new ApiError(
@@ -147,7 +153,8 @@ async function reconcileSubscription(
     );
   // A checkout can complete while the team award is being earned. Reconcile the
   // Stripe trial too, so opening an older hosted page cannot shorten the award.
-  const pilot = Boolean(subscription.metadata.pilot_coupon_id);
+  const signup = subscription.metadata.signup_trial === "true";
+  const pilot = Boolean(subscription.metadata.pilot_coupon_id) || signup;
   if (
     !pilot &&
     subscription.status === "trialing" &&
@@ -161,6 +168,32 @@ async function reconcileSubscription(
       `trial:${subscription.id}:${account.trial_ends_at}`,
     );
   }
+  let paymentReady = account.payment_method_ready === 1;
+  if (config.enforceUsageLimits || signup || checkPayment) {
+    const customer = await stripe(env, `customers/${encodeURIComponent(subscription.customer)}?expand[]=tax`, z.object({
+      invoice_settings: z.object({ default_payment_method: z.string().nullable() }),
+      default_source: z.string().nullable().optional(),
+      tax: z.object({ automatic_tax: z.string() }).nullable().optional(),
+    }));
+    paymentReady = Boolean(subscription.default_payment_method || subscription.default_source || customer.invoice_settings.default_payment_method || customer.default_source);
+    if (signup && subscription.metadata.signup_trial_conversion_pending === "true") {
+      const taxReady = !config.automaticTax || ["supported", "not_collecting"].includes(customer.tax?.automatic_tax ?? "");
+      paymentReady &&= taxReady;
+      if (paymentReady && subscription.status === "trialing" && !subscription.cancel_at_period_end &&
+        (subscription.cancel_at == null || subscription.cancel_at === subscription.trial_end)) {
+        subscription = await stripe(env, `subscriptions/${subscription.id}`, SubscriptionSchema, {
+          cancel_at: "", "automatic_tax[enabled]": String(config.automaticTax),
+          "metadata[signup_trial_conversion_pending]": "false",
+        }, `signup-conversion:${subscription.id}`);
+      } else if (!paymentReady && subscription.status === "trialing" && !subscription.cancel_at_period_end &&
+        subscription.trial_end && (subscription.cancel_at == null || subscription.cancel_at > subscription.trial_end)) {
+        subscription = await stripe(env, `subscriptions/${subscription.id}`, SubscriptionSchema, {
+          cancel_at: String(subscription.trial_end),
+        });
+      }
+    }
+  }
+  if (signup) await recordSignupTrial(env, account.workspace_id, subscription.id);
   const paid =
     subscription.status === "active" || subscription.status === "trialing";
   const overage =
@@ -168,7 +201,7 @@ async function reconcileSubscription(
     subscription.currency === "usd" &&
     Boolean(offer.overagePriceId);
   const now = Math.floor(Date.now() / 1000);
-  const eligible = overage && paid;
+  const eligible = overage && paid && (!(config.enforceUsageLimits || signup) || paymentReady);
   const open = await env.DB.prepare(
     `SELECT starts_at, price_id FROM billing_intervals
     WHERE subscription_id = ? AND ends_at IS NULL`,
@@ -197,7 +230,7 @@ async function reconcileSubscription(
         ? open.starts_at
         : prior
           ? now
-          : (subscription.start_date ?? now);
+          : Math.max(subscription.start_date ?? now, Number(subscription.metadata.overage_consent_at) || (signup ? now : 0));
     await env.DB.prepare(
       `INSERT INTO billing_terms(subscription_id, workspace_id, customer_id, price_id, starts_at)
       VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
@@ -237,7 +270,8 @@ async function reconcileSubscription(
   }
   await env.DB.prepare(
     `UPDATE billing_accounts SET subscription_id = ?, status = ?, offer_id = ?, currency = ?,
-    overage_enabled = ?, overage_started_at = ? WHERE workspace_id = ?`,
+    overage_enabled = ?, overage_started_at = ?, payment_method_ready = ?,
+    trial_ends_at = COALESCE(?, trial_ends_at) WHERE workspace_id = ?`,
   )
     .bind(
       subscription.id,
@@ -246,6 +280,8 @@ async function reconcileSubscription(
       subscription.currency,
       overage ? 1 : 0,
       startedAt,
+      paymentReady ? 1 : 0,
+      subscription.trial_end ?? null,
       account.workspace_id,
     )
     .run();
@@ -292,7 +328,8 @@ async function recoverCanceledTerms(env: Env, subscription: Subscription) {
     subscription.status !== "canceled" ||
     subscription.metadata.billing_role === "free_record" ||
     subscription.metadata.overage_enabled !== "true" ||
-    subscription.currency !== "usd"
+    subscription.currency !== "usd" ||
+    (subscription.metadata.signup_trial === "true" && !subscription.metadata.overage_consent_at)
   )
     return;
   if (
@@ -353,7 +390,8 @@ async function recoverCanceledTerms(env: Env, subscription: Subscription) {
       }
     after = page.has_more ? page.data.at(-1)!.id : "";
   } while (after);
-  if (activation !== null)
+  if (activation !== null) activation = Math.max(activation, Number(subscription.metadata.overage_consent_at) || 0);
+  if (activation !== null && activation < (subscription.ended_at ?? Infinity))
     await env.DB.prepare(
       `INSERT INTO billing_terms(subscription_id, workspace_id, customer_id, price_id, starts_at)
     VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
@@ -473,12 +511,24 @@ async function subscriptionHistory(env: Env, customerId: string) {
   return { live, hasPaidSubscription };
 }
 
-async function refreshBillingState(env: Env, account: BillingAccount) {
+async function refreshBillingState(env: Env, account: BillingAccount, checkPayment = false) {
+  const signup = await signupTrialRequest(env, account);
+  if (signup && !account.customer_id) {
+    account = { ...account, customer_id: await ensureStripeCustomer(env, account) };
+  }
   if (!account.customer_id) {
     await reconcileUnpaidPlan(env, account.workspace_id);
     return { ...account, hasPaidSubscription: false };
   }
   const history = await subscriptionHistory(env, account.customer_id);
+  if (signup && !history.hasPaidSubscription && !history.live) {
+    await archiveStripeFreeSubscription(env, account);
+    const id = await createSignupTrial(env, account, signup);
+    if (id) {
+      history.live = await stripe(env, `subscriptions/${id}`, SubscriptionSchema);
+      history.hasPaidSubscription = true;
+    }
+  }
   const subscription =
     history.live ??
     (hasLiveSubscription(account)
@@ -488,7 +538,7 @@ async function refreshBillingState(env: Env, account: BillingAccount) {
           SubscriptionSchema,
         )
       : null);
-  if (subscription) await reconcileSubscription(env, account, subscription);
+  if (subscription) await reconcileSubscription(env, account, subscription, checkPayment);
   else await reconcileUnpaidPlan(env, account.workspace_id);
   const { hasPaidSubscription } = history;
   return {
@@ -514,10 +564,10 @@ async function reconcileUnpaidPlan(env: Env, workspaceId: string) {
   }
 }
 
-export async function refreshBillingAccount(env: Env, workspaceId: string) {
+export async function refreshBillingAccount(env: Env, workspaceId: string, checkPayment = false) {
   env = await resolveBillingEnvironment(env);
   await billingAccount(env, workspaceId);
-  return refreshBillingState(env, await billingAccount(env, workspaceId));
+  return refreshBillingState(env, await billingAccount(env, workspaceId), checkPayment);
 }
 
 const OpenSessionsSchema = z.object({
@@ -621,7 +671,8 @@ export async function createCheckout(
     return createBillingPortal(env, workspaceId);
   }
   const pilotCouponId =
-    !account.hasPaidSubscription && offer.plan !== "starter"
+    !account.hasPaidSubscription && offer.plan !== "starter" &&
+      !await env.DB.prepare("SELECT 1 FROM billing_signup_trials WHERE workspace_id = ?").bind(workspaceId).first()
       ? config.pilotCouponId
       : undefined;
   const trialEndsAt =
@@ -773,6 +824,23 @@ export async function createBillingPortal(env: Env, workspaceId: string) {
     customer: account.customer_id,
     return_url: billingConfig(env).returnUrl,
   });
+}
+
+export async function setBillingOverages(env: Env, workspaceId: string, enabled: boolean) {
+  env = await resolveBillingEnvironment(env);
+  const account = await refreshBillingAccount(env, workspaceId, true);
+  if (!account.subscription_id || !["active", "trialing"].includes(account.status))
+    throw new ApiError(409, "billing_subscription_required", "Choose a plan before enabling overages");
+  const offer = billingConfig(env).offers.find(item => item.id === account.offer_id);
+  if (enabled && (!offer?.overagePriceId || account.currency !== "usd"))
+    throw new ApiError(409, "billing_overage_unavailable", "Overages are unavailable for this plan or currency");
+  if (enabled && !account.payment_method_ready)
+    throw new ApiError(409, "billing_payment_method_required", "Add a payment method and billing address in Stripe before enabling overages");
+  const subscription = await stripe(env, `subscriptions/${account.subscription_id}`, SubscriptionSchema, { "metadata[overage_enabled]": String(enabled),
+    ...(enabled && !account.overage_enabled ? { "metadata[overage_consent_at]": String(Math.floor(Date.now() / 1000)) } : {}),
+  });
+  await reconcileSubscription(env, account, subscription, true);
+  return { enabled };
 }
 
 export async function syncSubscription(

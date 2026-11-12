@@ -73,3 +73,21 @@ it('discards an in-flight credit balance when switching organizations', async ()
   expect(await screen.findByRole('button', { name: 'View credits' })).toBeVisible();
   expect(screen.queryByText(/999/)).toBeNull();
 });
+
+it('explains the automatic trial, collects billing details in Stripe, and enables overages only when ready', async () => {
+  const api: OrganizationPlanApi = { getWorkspaceUsage: vi.fn(), setWorkspacePlan: vi.fn(),
+    createBillingPortal: vi.fn(async () => ({ url: 'https://billing.stripe.com/card' })),
+    setBillingOverages: vi.fn(async enabled => ({ enabled })) };
+  const billing = { enabled: true as const, subscribed: true, status: 'trialing', trialEndsAt: '2027-03-31T10:30:00Z',
+    overageEnabled: false, overageAvailable: true, paymentMethodReady: false, offers: [] };
+  const view = render(<OrganizationBilling api={api} currentPlan="Grow" billing={billing} />);
+  expect(screen.getByText(/Without billing details, your organization returns to Start/)).toBeVisible();
+  expect(screen.getByRole('checkbox')).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Add billing details' }));
+  expect(await screen.findByRole('link', { name: 'Open Stripe' })).toHaveAttribute('href', 'https://billing.stripe.com/card');
+  view.rerender(<OrganizationBilling api={api} currentPlan="Grow" billing={{ ...billing, paymentMethodReady: true }} />);
+  expect(screen.getByRole('checkbox')).toBeEnabled();
+  fireEvent.click(screen.getByRole('checkbox'));
+  expect(api.setBillingOverages).toHaveBeenCalledWith(true);
+  expect(await screen.findByRole('checkbox', { checked: true })).toBeChecked();
+});
