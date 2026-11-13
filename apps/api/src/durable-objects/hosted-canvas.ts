@@ -513,12 +513,11 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }
 
   /**
-   * Bring a Canvas into existence with no artifacts. One a person makes opens
-   * to the Organization's default editor audience (`canvas-sharing-defaults.ts`),
-   * read in this transaction. One a Sidekick run makes opens to its creator
-   * alone and whoever the Sidekick is shared with, read live from the
-   * Sidekick, so nothing is copied and a personal Sidekick's output is not
-   * opened to the Organization. A replay answers `created: false`.
+   * Bring a Canvas into existence with no artifacts, open to the
+   * Organization's default editor audience (`canvas-sharing-defaults.ts`),
+   * read in this transaction. One a Sidekick run makes also admits whoever
+   * the Sidekick is shared with, read live from the Sidekick, so nothing is
+   * copied. A replay answers `created: false`.
    */
   create(input: z.input<typeof CanvasCreateRequestSchema>): { created: boolean; canvasId: string } {
     const request = parseRpcInput(CanvasCreateRequestSchema, input, "canvas_create");
@@ -548,7 +547,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       this.insertRow({
         workspaceId: request.workspaceId, title: request.title, createdByUserId: request.createdByUserId,
         createdAt: now, updatedAt: now, writer: request.writer ?? null,
-        visibility: request.writer ? "creator" : readCanvasSharingDefaults(this.sql).editors,
+        visibility: readCanvasSharingDefaults(this.sql).editors,
         authorityGeneration: request.authorityGeneration, titleStatus: request.titleStatus ?? "settled",
       });
       // A run's Canvas is attached to its Sidekick as it is made: the
