@@ -1,4 +1,3 @@
-import { MobileAuthStartSchema, MobileAuthTicketSchema, MobileAuthExchangeSchema } from '@rally/contracts/mobile-auth';
 import { PasswordLoginRequestSchema } from '@rally/contracts/password-login';
 import { passwordLogin } from '../services/password-login-service';
 import { UuidV7Schema } from '@rally/contracts/telemetry';
@@ -10,7 +9,7 @@ import { authBodyLimit } from "../middleware/auth-body-limit";
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
-import { StartSupportSessionRequestSchema, SupportPeopleSchema, SupportWorkspacesSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { MobileAuthStartSchema, MobileAuthExchangeSchema, MobileAuthTicketSchema, StartSupportSessionRequestSchema, SupportPeopleSchema, SupportWorkspacesSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { SupportAccessService } from "../services/support-access";
 import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import type { Env, HonoAppEnv } from "../env";
@@ -107,8 +106,7 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
   // a single-use, PKCE-bound ticket crosses that boundary; never the cookie.
   routes.post('/mobile/handoff', authBodyLimit, zValidator('json', MobileAuthStartSchema), async (c) => {
     const auth = await new BrowserSessionService(c.env).read(credential(c));
-    if (auth.impersonatorUserId) throw new ApiError(403, 'mobile_identity_required', 'Sign in with your own account');
-    const ticket = await new AuthService(c.env).issueLoginTicket({ userId: auth.userId, ...c.req.valid('json') });
+    const ticket = await new AuthService(c.env).issueLoginTicket({ userId: auth.userId, audience: 'browser', ...c.req.valid('json') });
     return c.json(MobileAuthTicketSchema.parse(ticket));
   });
   routes.post('/mobile/exchange', authBodyLimit, zValidator('json', MobileAuthExchangeSchema), async (c) => {

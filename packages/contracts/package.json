@@ -51,8 +51,7 @@
     "./usage": "./src/usage.ts",
     "./plans": "./src/plans.ts",
     "./message-issues": "./src/message-issues.ts",
-    "./runtime-config": "./src/runtime-config.ts",
-    "./mobile-auth": "./src/mobile-auth.ts"
+    "./runtime-config": "./src/runtime-config.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

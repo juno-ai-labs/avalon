@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { createApp } from '../src/app';
 import { sha256 } from '../src/lib/crypto';
 import { provisionUserPassword } from '../src/services/password-login-service';
+import { AuthService } from '../src/services/auth-service';
 import { createTestEnv } from './helpers/cloudflare-test';
 import { migratedSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 
@@ -39,6 +40,47 @@ beforeEach(async () => {
   cookie = signedIn.headers.get('set-cookie')!.split(';')[0]!;
 });
 afterEach(() => db.close());
+
+function desktopExchange(body: unknown) {
+  return createApp().request('https://api.example.test/auth/desktop/exchange', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }, env());
+}
+
+it('rejects mobile tickets at the bearer endpoint without consuming them', async () => {
+  const proof = { ...await ticket(), codeVerifier };
+  const rejected = await desktopExchange(proof);
+  expect(rejected.status).toBe(401);
+  expect(await rejected.json()).toMatchObject({ error: { code: 'invalid_login_ticket' } });
+  expect(rejected.headers.get('set-cookie')).toBeNull();
+  expect((await request('mobile/exchange', proof)).status).toBe(200);
+});
+
+it.each(['google', 'apple'] as const)('rejects %s desktop tickets at the cookie endpoint without consuming them', async (provider) => {
+  const issued = await new AuthService(env()).issueLoginTicket({
+    userId: USER, attemptId, codeChallenge: await sha256(codeVerifier), audience: 'desktop', provider,
+  });
+  const proof = { ...issued, codeVerifier };
+  const rejected = await request('mobile/exchange', proof);
+  expect(rejected.status).toBe(401);
+  expect(await rejected.json()).toMatchObject({ error: { code: 'invalid_login_ticket' } });
+  expect(rejected.headers.get('set-cookie')).toBeNull();
+  const completed = await desktopExchange(proof);
+  expect(completed.status).toBe(200);
+  expect(await completed.json()).toMatchObject({ accessToken: expect.any(String), refreshToken: expect.any(String), user: { id: USER } });
+});
+
+it.each(['pending', 'consumed', 'expired'])('returns a named conflict for a repeated %s handoff attempt', async (state) => {
+  const proof = { ...await ticket(), codeVerifier };
+  if (state === 'consumed') expect((await request('mobile/exchange', proof)).status).toBe(200);
+  if (state === 'expired') db.prepare("UPDATE desktop_login_tickets SET expires_at='2000-01-01T00:00:00.000Z'").run();
+  const repeated = await request('mobile/handoff', { attemptId, codeChallenge: await sha256('w'.repeat(43)) }, cookie);
+  expect(repeated.status).toBe(409);
+  expect(await repeated.json()).toMatchObject({ error: { code: 'attempt_already_used' } });
+  expect(db.prepare('SELECT COUNT(*) AS count FROM desktop_login_tickets').get()).toEqual({ count: 1 });
+  if (state === 'pending') expect((await request('mobile/exchange', proof)).status).toBe(200);
+  expect((await request('mobile/handoff', { attemptId: 'b'.repeat(43), codeChallenge: await sha256(codeVerifier) }, cookie)).status).toBe(200);
+});
 
 it('hands a separate WebView a single-use session cookie without returning bearer credentials', async () => {
   expect((await request('session')).status).toBe(401);
