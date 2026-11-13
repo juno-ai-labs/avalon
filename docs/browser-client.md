@@ -181,23 +181,11 @@ The redirect URI must be registered on Google's identity OAuth client; the
 
 ### Apple sign-in
 
-**Continue with Apple** sits under Google's button at the same size, with
-**Continue with email** the smaller option below both. It runs the same start,
-binding and callback as Google with `apple` in place of `google` in each path,
-cookie name and `#apple_error=<code>` fragment, and three differences:
-
-- **The callback is a cross-site POST.** Apple returns with `form_post` to
-  `/regional/<region>/browser/apple/callback`. The adapter's same-origin guard
-  refuses every other non-GET from another origin; this path alone is exempt,
-  and it is bound by the state cookie instead.
-- **Its state cookie is `SameSite=None`.** A `Lax` cookie does not ride a
-  cross-site POST, so the comparison would always fail. The session cookie the
-  callback sets stays `Lax`: a top-level navigation may set it, and the 303 to
-  the return path is a GET it rides.
-- **The Worker forwards it.** `deploymentCookies` passes `-apple-` state cookies
-  as well as `-google-` ones.
-
-[apple-login.md](apple-login.md) owns the provider side.
+**Continue with Apple** sits under Google's button at the same size and runs the
+same start, binding and callback, with `apple` in place of `google`. Apple
+returns with a cross-site POST, which changes the state cookie, the same-origin
+guard and the Worker's cookie forwarding; [apple-login.md](apple-login.md) owns
+those details.
 
 ### Development sign-in
 

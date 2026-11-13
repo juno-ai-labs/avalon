@@ -336,7 +336,7 @@ describe('single-platform desktop identity routing', () => {
     bridge.getSession.mockResolvedValue(enterpriseSession);
     // Main answers a reconnect under an active workspace with that same session.
     bridge.exchangeDesktopTicket.mockResolvedValue(enterpriseSession);
-    const beginGoogleLogin = vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+    const beginProviderLogin = vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     const client = renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -351,7 +351,8 @@ describe('single-platform desktop identity routing', () => {
       apiBaseUrl: 'https://api.rallywith.ai',
       region: 'global',
     });
-    expect(beginGoogleLogin).toHaveBeenCalledWith(
+    expect(beginProviderLogin).toHaveBeenCalledWith(
+      'google',
       'global',
       'rallywithai://auth/complete',
       { authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'challenge' } },
@@ -381,7 +382,7 @@ describe('single-platform desktop identity routing', () => {
     bridge.activateWorkspace
       .mockRejectedValueOnce(missingIdentity())
       .mockResolvedValueOnce(nextSession);
-    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+    vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     const getWorkspace = vi.spyOn(RallyApi.prototype, 'getWorkspace').mockResolvedValue({
       id: 'workspace-global', name: 'Global Studio', region: 'global', timezone: 'America/New_York',
@@ -415,7 +416,7 @@ describe('single-platform desktop identity routing', () => {
   it('fails the waiting switch with the sign-in failure when the browser callback reports one', async () => {
     bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity());
-    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+    vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -435,10 +436,32 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByText('enterprise:European Research')).toBeVisible();
   });
 
+  it('reconnects a device that signed in with Apple through Apple, and names Apple when it fails', async () => {
+    // What the sign-in screen records when the person chose Apple.
+    window.localStorage.setItem('rally.sign-in-provider', 'apple');
+    try {
+      bridge.getSession.mockResolvedValue(enterpriseSession);
+      bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity());
+      const begin = vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
+        .mockResolvedValue('https://appleid.apple.com/auth/authorize?state=opaque');
+      renderProvider();
+      expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+
+      const failure = observedActivateWorkspace!('global', 'workspace-global', undefined, { onSignInRequired: vi.fn() })
+        .then(() => null, (error: unknown) => error);
+      await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledWith('https://appleid.apple.com/auth/authorize?state=opaque'));
+      expect(begin).toHaveBeenCalledWith('apple', 'global', 'rallywithai://auth/complete', expect.anything());
+      await dispatchDeepLink(`rallywithai://auth/complete?error=apple_oauth_denied&region=global&attempt=${'a'.repeat(43)}`);
+      expect(((await failure) as Error).message).toBe('Apple sign-in was cancelled.');
+    } finally {
+      window.localStorage.removeItem('rally.sign-in-provider');
+    }
+  });
+
   it('reports a sign-in that never reached the browser under the row, not as an organization outage', async () => {
     bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity());
-    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+    vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
       .mockRejectedValue(new Error('Google authentication is not configured'));
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -461,7 +484,7 @@ describe('single-platform desktop identity routing', () => {
     bridge.createDesktopAuthAttempt
       .mockResolvedValueOnce({ attemptId: 'a'.repeat(43), codeChallenge: 'challenge' })
       .mockResolvedValueOnce({ attemptId: 'b'.repeat(43), codeChallenge: 'challenge' });
-    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+    vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -487,7 +510,7 @@ describe('single-platform desktop identity routing', () => {
       if (attemptId !== 'b'.repeat(43)) throw new Error('This sign-in attempt expired. Start sign-in again.');
       return enterpriseSession;
     });
-    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+    vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -516,7 +539,7 @@ describe('single-platform desktop identity routing', () => {
     bridge.createDesktopAuthAttempt
       .mockResolvedValueOnce({ attemptId: 'a'.repeat(43), codeChallenge: 'challenge' })
       .mockResolvedValueOnce({ attemptId: 'b'.repeat(43), codeChallenge: 'challenge' });
-    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+    vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
       .mockResolvedValueOnce('https://accounts.google.com/o/oauth2/v2/auth?state=opaque')
       .mockRejectedValueOnce(new Error('Google authentication is not configured'));
     renderProvider();
@@ -562,7 +585,7 @@ describe('single-platform desktop identity routing', () => {
         sessionListener?.(activated);
         return activated;
       });
-    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+    vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -599,7 +622,7 @@ describe('single-platform desktop identity routing', () => {
     bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.exchangeDesktopTicket.mockResolvedValue(enterpriseSession);
     bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity()).mockResolvedValueOnce(activated);
-    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+    vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
@@ -622,7 +645,7 @@ describe('single-platform desktop identity routing', () => {
     bridge.getSession.mockResolvedValue(enterpriseSession);
     bridge.exchangeDesktopTicket.mockResolvedValue(enterpriseSession);
     bridge.activateWorkspace.mockRejectedValueOnce(missingIdentity());
-    vi.spyOn(RallyApi.prototype, 'beginGoogleLogin')
+    vi.spyOn(RallyApi.prototype, 'beginProviderLogin')
       .mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     const client = renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();

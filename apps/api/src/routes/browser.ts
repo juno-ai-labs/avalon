@@ -18,6 +18,7 @@ import { browserOrigin } from "../lib/browser-origin";
 import { logEvent } from "../observability/logger";
 import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { zValidator } from "../middleware/validation";
+import { AppleCallbackFormSchema } from "../services/apple-identity";
 import { AuthService, issueAccessToken, verifyAccessToken, type IdentityCallbackExtras, type LoginProvider } from "../services/auth-service";
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import { deferOnboardingOutcome, onboardingFailureResult } from "./onboarding";
@@ -58,10 +59,6 @@ function stateCookie(env: Env, provider: LoginProvider, state: string) {
   // other. The state is base64url, which a cookie name may carry.
   return { name:`${cookie.name}-${provider}-${state}`,attributes:{ ...cookie.attributes,sameSite } };
 }
-
-/** Apple's `form_post` callback; `user` arrives on the first authorization only. */
-const AppleCallbackFormSchema = z.object({ code:z.string().optional(),state:z.string().optional(),error:z.string().optional(),
-  user:z.string().optional(),id_token:z.string().optional() });
 
 /** The cross-site POST a provider returns with. The same-origin guard below lets only these through. */
 const PROVIDER_POST_CALLBACKS = new Set(["/apple/callback"]);

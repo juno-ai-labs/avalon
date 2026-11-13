@@ -1,5 +1,6 @@
 import { PasswordSignInForm } from '../../desktop/src/renderer/components/password-sign-in-form';
 import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
+import { providerSignInError, type SignInProvider } from '../../desktop/src/renderer/lib/sign-in-provider';
 import { clearAllDrafts as clearAllDraftsOnly } from '../../desktop/src/renderer/lib/draft-cache';
 import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
 import { iosStandalone } from '../../desktop/src/renderer/lib/home-screen';
@@ -21,17 +22,7 @@ import { SiteOpening } from "./site-open";
 
 const initialRegion = configuredRegions[0]!;
 
-type SignInProvider = "google" | "apple";
 const providerName: Record<SignInProvider, string> = { google: "Google", apple: "Apple" };
-
-/** What a failed provider sign-in says, by the code the callback returned with. */
-function providerSignInError(provider: SignInProvider, code: string): string {
-  const name = providerName[provider];
-  if (code === `${provider}_oauth_denied`) return `${name} sign-in was cancelled.`;
-  if (code === `${provider}_state_mismatch` || code === "invalid_oauth_state") return `That ${name} sign-in expired. Try again.`;
-  if (code === `${provider}_email_in_use`) return `This ${name} account's email address is already used by another Rally account.`;
-  return `${name} sign-in did not complete. Try again or use your email.`;
-}
 
 /** Older strict start schemas reject the new optional analytics field before
  * any proof is created. Only that validation rejection gets a legacy retry. */
@@ -204,7 +195,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       const providerError = fragment.get(`${provider}_error`);
       if (!providerError) continue;
       history.replaceState(null, "", location.pathname);
-      setProviderNotice(providerSignInError(provider, providerError));
+      setProviderNotice(providerSignInError(provider, providerError, "Try again or use your email."));
     }
     const selectedRegion = ConfiguredRegionSchema.safeParse(target?.region ?? fragment.get("region") ?? initialRegion);
     const selected = selectedRegion.success ? selectedRegion.data : initialRegion;

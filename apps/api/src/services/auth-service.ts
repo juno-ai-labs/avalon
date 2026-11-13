@@ -272,7 +272,7 @@ export class AuthService {
    * caller binds the returned state to the browser with a cookie of its own.
    */
   async beginBrowserIdentity(input: { returnPath?: string | undefined; signupFlowId?: string | undefined },
-    provider: LoginProvider = "google"): Promise<{ url: string; state: string }> {
+    provider: LoginProvider): Promise<{ url: string; state: string }> {
     return this.startIdentity({
       provider,
       signupFlowId: input.signupFlowId,
@@ -284,7 +284,7 @@ export class AuthService {
     });
   }
 
-  async consumeBrowserIdentityCallback(code: string, state: string, provider: LoginProvider = "google",
+  async consumeBrowserIdentityCallback(code: string, state: string, provider: LoginProvider,
     extras: IdentityCallbackExtras = {}): Promise<{ session: Session; returnUrl: string }> {
     const credentials = this.requireProvider(provider);
     const row = await this.claimOAuthState(state, "browser_identity", provider);
@@ -294,7 +294,7 @@ export class AuthService {
     return { session, returnUrl: row.return_uri };
   }
 
-  async consumeBrowserIdentityDenial(state: string, provider: LoginProvider = "google"): Promise<string> {
+  async consumeBrowserIdentityDenial(state: string, provider: LoginProvider): Promise<string> {
     this.requireProvider(provider);
     const row = await this.claimOAuthState(state, "browser_identity", provider);
     observeSignup(this.env, { flowId: row.telemetry_flow_id, clientPlatform: 'browser' }, 'signup_failed', provider, { result: 'denied' });
@@ -456,7 +456,7 @@ export class AuthService {
     return {
       subject: claims.sub,
       email: claims.email,
-      name: typeof claims.name === "string" ? claims.name : claims.email.split("@")[0] ?? "Avalon user",
+      name: typeof claims.name === "string" ? claims.name : claims.email.split("@")[0] ?? "Rally user",
       avatarUrl: typeof claims.picture === "string" ? claims.picture : null,
     };
   }
@@ -466,9 +466,9 @@ export class AuthService {
     desktopAttemptId: string;
     desktopCodeChallenge: string;
     signupFlowId?: string | undefined;
-    provider?: LoginProvider;
+    provider: LoginProvider;
   }): Promise<string> {
-    const provider = input.provider ?? "google";
+    const provider = input.provider;
     this.requireProvider(provider);
     if (!/^[A-Za-z0-9_-]{43}$/u.test(input.desktopAttemptId)) {
       throw new ApiError(422, "invalid_desktop_attempt", "The desktop authentication attempt is invalid");
@@ -543,7 +543,7 @@ export class AuthService {
     return this.createSession(await this.loadIdentity(DEVELOPMENT_USER_ID, null));
   }
 
-  async consumeIdentityCallback(code: string, state: string, provider: LoginProvider = "google",
+  async consumeIdentityCallback(code: string, state: string, provider: LoginProvider,
     extras: IdentityCallbackExtras = {}): Promise<string> {
     const credentials = this.requireProvider(provider);
     const row = await this.claimOAuthState(state, "identity", provider);
@@ -585,7 +585,7 @@ export class AuthService {
     return target.toString();
   }
 
-  async consumeIdentityDenial(state: string, provider: LoginProvider = "google"): Promise<string> {
+  async consumeIdentityDenial(state: string, provider: LoginProvider): Promise<string> {
     this.requireProvider(provider);
     const row = await this.claimOAuthState(state, "identity", provider);
     const target = new URL(row.return_uri);

@@ -7,6 +7,7 @@ import { RallyMark, Button, ConnectorMark, ErrorNotice } from '../components/pri
 import { CreateOrganizationCard } from './create-organization';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
+import { rememberSignInProvider, type SignInProvider } from '../lib/sign-in-provider';
 import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
 import type { PendingWorkspaceInvitation } from '../lib/types';
 
@@ -46,7 +47,7 @@ export function SignInScreen(): React.JSX.Element {
     return signupFlow.current;
   };
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState<'google' | 'apple' | 'development' | null>(null);
+  const [starting, setStarting] = useState<SignInProvider | 'development' | null>(null);
   const [passwordChosen, setPasswordChosen] = useState(false);
 
   useEffect(() => {
@@ -60,7 +61,7 @@ export function SignInScreen(): React.JSX.Element {
     void ensureSignupFlow().then(flowId => api.observeSignupView(flowId)).catch(() => undefined);
   }, [api]);
 
-  const beginProviderLogin = async (provider: 'google' | 'apple'): Promise<void> => {
+  const beginProviderLogin = async (provider: SignInProvider): Promise<void> => {
     if (!api) return;
     setStarting(provider);
     setError(null);
@@ -73,10 +74,9 @@ export function SignInScreen(): React.JSX.Element {
         region: 'global',
       });
       attemptId = authAttempt.attemptId;
-      const input = { authAttempt, signupFlowId: await ensureSignupFlow() };
-      const url = provider === 'google'
-        ? await api.beginGoogleLogin('global', 'rallywithai://auth/complete', input)
-        : await api.beginProviderLogin(provider, 'global', 'rallywithai://auth/complete', input);
+      rememberSignInProvider(provider);
+      const url = await api.beginProviderLogin(provider, 'global', 'rallywithai://auth/complete',
+        { authAttempt, signupFlowId: await ensureSignupFlow() });
       await bridge.openExternal(url);
     } catch (caught) {
       if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);
