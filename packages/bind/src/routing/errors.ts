@@ -155,6 +155,19 @@ export function propagateOnly(
 }
 
 /**
+ * What one failed attempt does next: the matrix's answer, clamped to
+ * propagate-only once the attempt streamed output a caller cannot take back.
+ * The executor routes by it and a host records it, so both use this one rule.
+ */
+export function attemptDisposition(
+  error: InferenceAttemptError,
+  producedOutput: boolean,
+): FailureDisposition {
+  const disposition = failureDisposition(error);
+  return producedOutput ? propagateOnly(disposition) : disposition;
+}
+
+/**
  * The exhaustive failure → routing-behavior matrix (PRD §7.1). Pure; the
  * executor applies it, the circuit breaker consumes its `breaker` effect.
  */

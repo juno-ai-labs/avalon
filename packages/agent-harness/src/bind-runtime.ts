@@ -28,6 +28,7 @@ import {
 } from "@juno-ai/bind/plugins";
 import {
   INFERENCE_CAPABILITIES,
+  attemptDisposition,
   buildRoutePlan,
   canonicalModelIdSchema,
   categorizeHttpStatus,
@@ -35,10 +36,8 @@ import {
   computeConfiguredRatesCostCents,
   createCircuitBreaker,
   executeRoutePlan,
-  failureDisposition,
   isRetriableAttemptError,
   parseModelRouteRegistry,
-  propagateOnly,
   providerIdSchema,
   retryAfterMsFromHeaders,
   resolveProviderPolicy,
@@ -2435,13 +2434,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             isAbort: (value) => args.signal.aborted || (value instanceof Error && value.name === "AbortError"),
             asTransportFailure: classifyProviderFailure,
           });
-          // The executor clamps a failure that already streamed output to
-          // propagate-only; record that decision, not the unclamped matrix, or
-          // the ledger says "fallback" for the attempt that ended the turn.
+          // The executor's own decision, so the record never says "fallback"
+          // for an attempt that ended the turn.
           const producedOutput = textStream.producedOutput;
-          const disposition = producedOutput
-            ? propagateOnly(failureDisposition(classified))
-            : failureDisposition(classified);
+          const disposition = attemptDisposition(classified, producedOutput);
           await requiredPort("run_state_persistence_failed", "Inference attempt ledger persistence failed", () => args.input.onInferenceAttempt?.({
             inferenceRequestId,
             success: false,
