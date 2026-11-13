@@ -1077,13 +1077,7 @@ function modelDerivative(
   return { ...message, provenance };
 }
 
-/**
- * Context messages rendered from state that moves while their identity does
- * not: keyed on the message that woke the run, but carrying the Canvas's
- * current title and artifacts. A new Canvas is titled after its first turn, so
- * a Retry renders different text under the same id. The copy the run started
- * with is the one it keeps (`HarnessActivationInput.keepAdmittedOnReplay`).
- */
+/** Rendered from moving state; a replay keeps the admitted copy (`keepAdmittedOnReplay`). */
 const SNAPSHOT_ACTIVATION_SOURCE_KINDS: ReadonlySet<string> = new Set([
   "canvas_context",
   "sidekick_canvas_context",
