@@ -7,6 +7,9 @@ import { refreshBillingAccount, setBillingOverages, createCheckout } from '../sr
 import { grantTrialMonths } from '../src/services/trial-months';
 import { runEmbeddingInference } from '../src/services/structured-inference';
 import { requireUsageAllowance } from '../src/services/usage-admission';
+import { requireRunUsageAllowance } from '../src/services/integrations';
+import { readOrganizationUsage } from '../src/services/usage-metering';
+import { HarnessLimitError } from '@rally/agent-harness';
 
 // Stripe is external; entitlement SQL and award receipts use the real migrations.
 const ORG = '01900000-0000-7000-8000-0000000000aa';
@@ -111,6 +114,8 @@ it('requires both a card and tax location, then converts without shortening free
   expect(await setBillingOverages(env, ORG, true)).toEqual({ enabled: true });
   expect(db.prepare('SELECT overage_started_at FROM billing_accounts').get()).toEqual({ overage_started_at: second('2027-01-31T11:30:00Z') });
   await expect(requireUsageAllowance(env, ORG)).resolves.toBeUndefined();
+  // Overages admit the work, so running out stops nothing and nothing warns.
+  expect(await readOrganizationUsage(env, ORG, Date.now())).toMatchObject({ allowanceExhausted: false, stopsAtAllowance: false });
   await setBillingOverages(env, ORG, false);
   await expect(requireUsageAllowance(env, ORG)).rejects.toMatchObject({ code: 'usage_allowance_exhausted' });
   vi.setSystemTime(new Date('2027-02-07T10:30:00Z'));
@@ -144,6 +149,48 @@ it('falls back to Start at expiry and never re-awards the promotion on later che
   expect(provider.writes.filter(row => row.path === 'subscriptions')).toHaveLength(1);
 });
 
+
+it('ends an agent run on the exhausted allowance as a usage limit, not as a broken port', async () => {
+  const { env, usage } = seed(); await refreshBillingAccount(env, ORG);
+  await expect(requireRunUsageAllowance(env, ORG)).resolves.toBeUndefined();
+  expect(await readOrganizationUsage(env, ORG, Date.now())).toMatchObject({ allowanceExhausted: false, stopsAtAllowance: true });
+  usage.prepare("INSERT INTO usage_rollups(workspace_id,week_start,period_start,quota_microusd,organization_microusd,rally_microusd) VALUES (?, '2027-01-31T10:30:00.000Z','2027-01-31T10:30:00.000Z',50000000,50000000,0)").run(ORG);
+  const refusal = await requireRunUsageAllowance(env, ORG).then(() => null, (error: unknown) => error);
+  expect(refusal).toBeInstanceOf(HarnessLimitError);
+  expect(refusal).toMatchObject({ code: 'usage_allowance_exhausted' });
+  expect(await readOrganizationUsage(env, ORG, Date.now())).toMatchObject({ allowanceExhausted: true, stopsAtAllowance: true });
+});
+
+it('emails each owner and administrator once a week when the allowance runs out, and no plain member', async () => {
+  const { env, db, usage } = seed(); await refreshBillingAccount(env, ORG);
+  const sent: { to: string; subject: string; text: string }[] = [];
+  Object.assign(env, { APP_ENV: 'production', EMAIL_FROM: 'Rally <notices@example.test>', PUBLIC_WEB_BASE_URL: 'https://rally.example.test', BROWSER_APP_ORIGIN: 'https://app.example.test',
+    EMAIL: { send: async (message: { to: string; subject: string; text: string }) => { sent.push(message); return { messageId: `m${sent.length}` }; } } });
+  for (const [id, role] of [['owner', 'owner'], ['admin', 'admin'], ['member', 'member']] as const) {
+    if (id !== 'owner') db.prepare("INSERT INTO users(id,google_subject,email,name,created_at,updated_at) VALUES (?,?,?,?,'2027-01-31','2027-01-31')").run(id, id, `${id}@example.test`, `${id} person`);
+    db.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,joined_at) VALUES (?,?,?,'active','2027-01-31')").run(ORG, id, role);
+  }
+  usage.prepare("INSERT INTO usage_rollups(workspace_id,week_start,period_start,quota_microusd,organization_microusd,rally_microusd) VALUES (?, '2027-01-31T10:30:00.000Z','2027-01-31T10:30:00.000Z',50000000,50000000,0)").run(ORG);
+
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  // Two refusals at once: the email is deferred, so the second races the first.
+  await Promise.all([
+    expect(requireUsageAllowance(env, ORG)).rejects.toMatchObject({ code: 'usage_allowance_exhausted' }),
+    expect(requireUsageAllowance(env, ORG)).rejects.toMatchObject({ code: 'usage_allowance_exhausted' }),
+  ]);
+  await vi.waitFor(() => expect(sent).toHaveLength(2));
+  // A later refusal that week finds both receipts and sends nothing.
+  await expect(requireUsageAllowance(env, ORG)).rejects.toMatchObject({ code: 'usage_allowance_exhausted' });
+  await vi.advanceTimersByTimeAsync(50);
+
+  expect(sent.map((message) => message.to).sort()).toEqual(['admin@example.test', 'owner@example.test']);
+  expect(warn.mock.calls.map((call) => (call[0] as { event?: string }).event)).not.toContain('usage_allowance_email_failed');
+  expect(sent[0]).toMatchObject({ subject: "Org has used this week's included Rally usage" });
+  expect(sent[0]!.text).toContain('turn on overage billing in Settings, Organization, Billing');
+  // The desktop handoff and a browser link, since `/open` reaches only the desktop app.
+  expect(sent[0]!.text).toContain('Open usage settings in the Rally app: https://rally.example.test/open#target=');
+  expect(sent[0]!.text).toContain(`Open usage settings in your browser: https://app.example.test/app/workspaces/global/${ORG}#/settings?section=billing`);
+});
 
 it('blocks a real provider entry point before opening a request after the allowance is exhausted', async () => {
   const { env, usage } = seed(); await refreshBillingAccount(env, ORG);

@@ -41,7 +41,7 @@ import { PHONE_NAVIGATION_CONTROL, PhoneHeaderContext, type PhoneHeader } from '
 import { useSheetOpener } from '../lib/sheet-opener';
 import { IconSearch } from '@tabler/icons-react';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
-import { OrganizationUsageMenuItem } from './organization-usage';
+import { OrganizationUsageMenuItem, UsageLimitRailWarning } from './organization-usage';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
 import { KonamiEgg } from './easter-eggs/konami';
 import { useDeviceTimezoneSync } from '../lib/device-timezone';
@@ -354,7 +354,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onOpenSearch={api ? () => setSearchOpen(true) : undefined}
         // A desktop browser tab offers the Mac app, member or guest; a phone or tablet cannot run it.
         footerItems={host === 'browser' && MAC_APP_DOWNLOADABLE ? <MacDownloadLink /> : undefined}
-        accountMenu={(
+        accountMenu={(<>
+          {/* The meter reads `/workspace/usage`, which refuses a guest. */}
+          {guestSession ? null : (
+            <UsageLimitRailWarning api={api ?? null} onOpen={() => { void desktopBridge().openSettings('billing'); }} />
+          )}
           <WorkspaceAccountMenu
             activeWorkspace={activeWorkspace}
             // The meter reads `/workspace/usage`, which refuses a guest.
@@ -451,7 +455,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             workspaceErrors={workspaceErrors}
             workspaces={knownWorkspaces}
           />
-        )}
+        </>)}
         downloadedUpdate={downloadedUpdate}
         workspace={workspace}
       />

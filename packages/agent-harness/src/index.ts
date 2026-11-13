@@ -79,7 +79,7 @@ import { renderStructuredOutputRetryMessage } from "@rally/prompts/harness/struc
 export * from "./completion-verification";
 export { classifyMessageAdmission, classifyMessageContinuation, classifyMessageContinuationWithTypeSafe } from "./message-continuation";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
-export { AmbiguousExternalWriteError } from "./bind-runtime";
+export { AmbiguousExternalWriteError, HarnessLimitError } from "./bind-runtime";
 export {
   formatToolArgumentValidationError,
   modelToolArgumentSchema,
@@ -4549,6 +4549,8 @@ export interface RunHarnessInput {
     toolCalls: number;
   }) => void | Promise<void>;
   onLiveness?: (stage: "before_model" | "during_stream" | "after_tool" | "iteration_boundary") => void | Promise<void>;
+  /** Reduce a failed port's thrown value to a code for `HarnessFailure.causeCode`. Must not throw. */
+  describeFailureCause?: (cause: unknown) => string;
   /**
    * Called immediately before Bind would accept a tool-less assistant turn as
    * the end of the run. Returning a non-empty string appends a model-only user
@@ -4626,6 +4628,11 @@ export interface HarnessFailure {
     | "platform";
   code: HarnessFailureCode;
   message: string;
+  /**
+   * For a port failure, what the port threw, reduced to a code by the host's
+   * `describeFailureCause`. Never the raw value: it crosses RPC and reaches logs.
+   */
+  causeCode?: string;
 }
 
 /**
@@ -4683,6 +4690,8 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   // run starts a fresh one — which is exactly what happened on 2026-08-24,
   // where the next run in the same work stream completed.
   platform_limit_exceeded: "Rally hit a platform limit partway through this run. Trying again usually works — if it keeps happening, copy the request ID for support",
+  // Names both remedies; retrying cannot help until one happens.
+  usage_allowance_exhausted: "Your organization has used this week's included usage. An administrator can turn on overage billing in Settings under Billing, or usage resumes when the weekly allowance resets",
 });
 
 export function memberSafeHarnessFailureMessage(code: HarnessFailureCode): string {

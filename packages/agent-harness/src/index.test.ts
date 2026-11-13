@@ -10,6 +10,7 @@ import {
 import type { InferenceAttemptError } from "@juno-ai/bind/routing";
 import {
   __testing,
+  HarnessLimitError,
   applyBindLoopTransition,
   AzureOpenAIClient,
   canonicalToolInputHash,
@@ -1866,6 +1867,43 @@ describe("agent harness", () => {
     expect(uncommittedFetch).not.toHaveBeenCalled();
   });
 
+  it("names what a failed port threw, not only which port failed", async () => {
+    const fetcher = vi.fn(async () => streamResponse([])) as typeof fetch;
+    const result = await runHarness({
+      ...runInput(fetcher),
+      onLiveness: async () => { throw new Error("usage_allowance_exhausted"); },
+      describeFailureCause: (cause) => cause instanceof Error ? cause.message : "not_an_error",
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      failure: {
+        code: "run_state_persistence_failed",
+        message: "Run liveness renewal failed",
+        causeCode: "usage_allowance_exhausted",
+      },
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("ends a run on a limit a host port enforces, not as the port failing", async () => {
+    const fetcher = vi.fn(async () => streamResponse([])) as typeof fetch;
+    const result = await runHarness({
+      ...runInput(fetcher),
+      onLiveness: async () => {
+        throw new HarnessLimitError("usage_allowance_exhausted", "The organization's included weekly usage is used up");
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      failure: { code: "usage_allowance_exhausted", kind: "limit" },
+    });
+    expect(memberSafeHarnessFailureMessage("usage_allowance_exhausted"))
+      .toBe("Your organization has used this week's included usage. An administrator can turn on overage billing in Settings under Billing, or usage resumes when the weekly allowance resets");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("reports startup waits before provider dispatch without letting diagnostics stop the turn", async () => {
     const phases: string[] = [];
     const durations: number[] = [];
@@ -2551,6 +2589,19 @@ describe("agent harness", () => {
     expect(requests[1]!.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "user", content: "A durable steer" }),
     ]));
+  });
+
+  it("ends a run under the host's limit when the end-of-turn check refuses", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
+    }])) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      onTurnWouldEnd: () => {
+        throw new HarnessLimitError("usage_allowance_exhausted", "The organization's included weekly usage is used up");
+      },
+    })).resolves.toMatchObject({ status: "failed", failure: { code: "usage_allowance_exhausted", kind: "limit" } });
   });
 
   it("honors a safe-boundary stop before a tool-less host nudge can continue", async () => {

@@ -1882,6 +1882,23 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-11-12 — A failed port is logged with what it threw
+
+**What changed:** A port failure carries `causeCode`, from a new
+`describeFailureCause` input (the API passes `diagnosticErrorCode`), logged as
+`failure_cause_code`. `HarnessLimitError` is exported and `requiredPort` passes
+it through, so a host port can end a run under its own limit code.
+
+**Why:** A usage refusal inside the `before_model` liveness port surfaced as
+`run_state_persistence_failed` / "Run liveness renewal failed", and the log
+could not say which of that port's three checks threw.
+
+**Considered and rejected:** The raw cause on `HarnessFailure`, which crosses
+RPC and may hold member content.
+
+**What a future change has to respect:** `describeFailureCause` returns a code
+and never throws; a host limit is thrown as `HarnessLimitError`.
+
 ### 2026-11-12 — A reply does not relay another agent's report or test coverage
 
 **What changed:** The standing work prompt says never to relay, to people,

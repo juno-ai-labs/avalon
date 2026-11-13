@@ -1,6 +1,7 @@
 import { asHarnessRunId, asWorkspaceId } from '@rally/contracts';
 import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import { logHarnessRunOutcome } from '../src/services/integrations';
+import { ApiError } from '../src/lib/api-error';
+import { describeHarnessFailureCause, logHarnessRunOutcome } from '../src/services/integrations';
 import { createTestEnv } from './helpers/cloudflare-test';
 
 const env = createTestEnv({ LOG_LEVEL: 'debug', AVALON_REGION: 'global' });
@@ -25,6 +26,21 @@ describe('a harness run that did not complete, in the log', () => {
     logHarnessRunOutcome(env, input, { status: 'failed', failure: { code: 'provider_unavailable', kind: 'provider', message: 'upstream 503' } }, false);
     expect(logged(warn)).toMatchObject([{ event: 'workstream_harness_run_failed', outcome_status: 'failed',
       failure_code: 'provider_unavailable', failure_kind: 'provider', failure_message: 'upstream 503' }]);
+  });
+
+  it('logs why a port failed, as a code, beside the port that failed', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const refusal = new ApiError(403, 'usage_allowance_exhausted', "Your organization's included usage is used up.");
+    logHarnessRunOutcome(env, input, { status: 'failed', failure: { code: 'run_state_persistence_failed', kind: 'execution',
+      message: 'Run liveness renewal failed', causeCode: describeHarnessFailureCause(refusal) } }, false);
+    expect(logged(warn)).toMatchObject([{ event: 'workstream_harness_run_failed', failure_code: 'run_state_persistence_failed',
+      failure_message: 'Run liveness renewal failed', failure_cause_code: 'usage_allowance_exhausted' }]);
+  });
+
+  it('keeps a code a port threw on purpose and drops a prose message', () => {
+    expect(describeHarnessFailureCause(new Error('substream_loop_execution_fence_mismatch'))).toBe('substream_loop_execution_fence_mismatch');
+    expect(describeHarnessFailureCause(new Error('Ask Alex about the Acme pilot'))).toBe('unclassified_cause');
+    expect(describeHarnessFailureCause('not an error')).toBe('unclassified_cause');
   });
 
   it('logs nothing for a completed run or a stop the person asked for', () => {
