@@ -492,6 +492,16 @@ import {
   type MemberPreferencesReadRequest,
   type MemberPreferencesWriteRequest,
 } from "./member-preferences";
+import {
+  CANVAS_SHARING_DEFAULTS_STATEMENTS,
+  CanvasSharingDefaultsReadRequestSchema,
+  CanvasSharingDefaultsWriteRequestSchema,
+  readCanvasSharingDefaults,
+  saveCanvasSharingDefaults,
+  type CanvasSharingDefaultsReadRequest,
+  type CanvasSharingDefaultsWriteRequest,
+} from "./canvas-sharing-defaults";
+import type { CanvasSharingDefaults } from "@rally/contracts/canvases";
 import { HOSTED_PARENT_SCHEMA_STATEMENTS } from "./hosted-parent-schema";
 import { ReceiveChildEffectsRequestSchema, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
 import type { HostedConversation } from "./hosted-conversation";
@@ -4474,6 +4484,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       CHECK(artifact_visibility_chosen IN (0,1))`,
     `UPDATE canvas_directory SET artifact_visibility_chosen = 1`,
   ],
+}, {
+  version: 149,
+  description: "the audiences a new Canvas starts with, chosen by the Organization's administrators",
+  // See canvas-sharing-defaults.ts. No row is every default.
+  statements: CANVAS_SHARING_DEFAULTS_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -8580,6 +8595,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       Date.now(),
     );
     return storedMemberPreferences(stored);
+  }
+
+  /**
+   * The audiences a new Canvas starts with; see canvas-sharing-defaults.ts.
+   * Settings may ask before the Organization has any Canvas, so this binds
+   * the object's identity as `canvasCreate` does.
+   */
+  async canvasSharingDefaults(input: CanvasSharingDefaultsReadRequest): Promise<CanvasSharingDefaults> {
+    await this.initialized;
+    const request = parseRpcInput(CanvasSharingDefaultsReadRequestSchema, input, "canvas_sharing_defaults");
+    await this.ensureParentWorkspace(request.workspaceId);
+    return readCanvasSharingDefaults(this.state.storage.sql);
+  }
+
+  /** Save the defaults given; the caller has checked the person administers the Organization. */
+  async saveCanvasSharingDefaults(input: CanvasSharingDefaultsWriteRequest): Promise<CanvasSharingDefaults> {
+    await this.initialized;
+    const request = parseRpcInput(CanvasSharingDefaultsWriteRequestSchema, input, "save_canvas_sharing_defaults");
+    await this.ensureParentWorkspace(request.workspaceId);
+    return saveCanvasSharingDefaults(this.state.storage.sql, request.defaults, Date.now());
   }
 
   private memberPreferencesRow(userId: string) {

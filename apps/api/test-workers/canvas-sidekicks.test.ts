@@ -77,6 +77,8 @@ beforeEach(async () => {
     env.DB.prepare("INSERT INTO users (id, name) VALUES (?, 'Casey Creator')").bind(CREATOR),
     ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
   ]);
+  // About who may open a private Canvas: new Canvases here are private, not Organization-wide.
+  await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } });
   await workspace().canvasCreate({
     workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, title: "Inbox", createdByUserId: CREATOR, authorityGeneration: 1,
   });
@@ -91,6 +93,7 @@ beforeEach(async () => {
   await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE, authorUserId: CREATOR,
     scope: "personal", authorityGeneration: 1 });
 });
+
 
 describe("a Sidekick a Canvas's Chat made", () => {
   it("is attached to that Canvas as it is made, and the Canvas names it to everyone in it", async () => {
@@ -356,6 +359,15 @@ describe("where a Sidekick's run may publish", () => {
     await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE,
       userId: CREATOR, reference: OTHER_CANVAS_ID });
     expect(await waterlines()).toEqual(after);
+  });
+
+  it("opens a Canvas a run makes to its creator and the Sidekick's audience, not the Organization's default", async () => {
+    await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "workspace" } });
+    const runCanvas = asWorkstreamId(crypto.randomUUID());
+    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: runCanvas, title: "Digest", createdByUserId: CREATOR,
+      authorityGeneration: 1, writer: { sidekickId: MADE_ELSEWHERE, runId: crypto.randomUUID() } });
+    const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: runCanvas, actor: member(CREATOR) });
+    expect(detail.visibility).toBe("creator");
   });
 
   it("includes the Canvas an earlier run of it made", async () => {

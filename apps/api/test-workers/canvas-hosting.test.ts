@@ -2,7 +2,7 @@
 
 /**
  * A Canvas's directory row and who may open it, on the real Organization
- * object: a new Canvas opens to its creator alone; a participant, a member of
+ * object: a new Canvas opens to the Organization's default audience; a participant, a member of
  * an Organization-wide Canvas, a guest invited by email, and an owner or
  * administrator can open it; a member who is none of those, and a guest
  * outside its list, cannot; and only its creator and the Organization's
@@ -117,10 +117,29 @@ describe("who can open a Canvas", () => {
     expect(await opens(member(MEMBER))).toBe(true);
   });
 
-  it("opens a new Canvas to its creator alone, with no artifacts", async () => {
+  it("opens a new Canvas to the whole Organization by default, with no artifacts", async () => {
     const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) });
-    expect(detail).toMatchObject({ id: CANVAS_ID, title: "Launch plan", visibility: "creator", participantUserIds: [],
-      artifacts: [], canManage: true, lastEditor: null, writerSidekickId: null });
+    expect(detail).toMatchObject({ id: CANVAS_ID, title: "Launch plan", visibility: "workspace", participantUserIds: [],
+      artifactVisibility: "workspace", artifacts: [], canManage: true, lastEditor: null, writerSidekickId: null });
+    expect(await opens(member(MEMBER))).toBe(true);
+    expect(await opens(guest(OUTSIDER))).toBe(false);
+  });
+
+  it("opens a new Canvas to its creator alone once the Organization chooses that default", async () => {
+    expect(await workspace().canvasSharingDefaults({ workspaceId: WORKSPACE_ID }))
+      .toEqual({ editors: "workspace", artifacts: "public" });
+    expect(await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } }))
+      .toEqual({ editors: "creator", artifacts: "public" });
+    // Saving one default leaves the other as it was.
+    expect(await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { artifacts: "workspace" } }))
+      .toEqual({ editors: "creator", artifacts: "workspace" });
+    CANVAS_ID = asWorkstreamId(crypto.randomUUID());
+    await workspace().canvasCreate({
+      workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, title: "Private plan", createdByUserId: CREATOR, authorityGeneration: 1,
+    });
+    const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) });
+    // The artifact default is only a suggestion for now: a new Canvas's artifacts stay with its editors.
+    expect(detail).toMatchObject({ visibility: "creator", artifactVisibility: "editors" });
     expect(await opens(member(MEMBER))).toBe(false);
   });
 
@@ -156,7 +175,8 @@ describe("who can open a Canvas", () => {
     expect(await opens(guest(GUEST))).toBe(true);
     expect(await opens(guest(OUTSIDER))).toBe(false);
     const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) });
-    expect(detail).toMatchObject({ visibility: "participants", participantUserIds: [GUEST] });
+    // A guest is admitted from the list; an Organization-wide Canvas stays Organization-wide.
+    expect(detail).toMatchObject({ visibility: "workspace", participantUserIds: [GUEST] });
   });
 
   it("emails the invited guest the Canvas's own link, on the web app", async () => {

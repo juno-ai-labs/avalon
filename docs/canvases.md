@@ -23,6 +23,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/services/authorization-policy.ts` | `audienceAdmits`, the one audience rule, which `canvasAdmits` and `sidekickAdmits` apply over their own facts; `canvasManages`. |
 | `apps/api/src/durable-objects/canvas-schema.ts` | `WorkspaceDO` migration 137, the Canvas schema (`canvas_directory`, `canvas_participants`, `canvas_artifacts`, the `canvases` list waterline, and the copies that admit a Canvas among a Sidekick's conversation attachments, the pins and the retirement graph). |
 | `apps/api/src/durable-objects/hosted-conversation.ts` | `HostedConversation`: the conversation-parent contract one hosted conversation answers — authority, the viewer check, children, the children's effects, and each reader's read of `"0"`. A Canvas and a Sidekick both extend it. |
+| `apps/api/src/durable-objects/canvas-sharing-defaults.ts` | `WorkspaceDO` migration 149: the Organization's one `canvas_sharing_defaults` row, the audiences a new Canvas starts with, read by `HostedCanvas.create`. Served at `GET`/`PUT /workspace/canvas-sharing-defaults` (only an administrator saves) and shown under Settings → Organization preferences (`components/canvas-sharing-defaults-setting.tsx`). |
 | `apps/api/src/durable-objects/hosted-canvas.ts` | `HostedCanvas`: one Canvas's parent state inside `WorkspaceDO`, scoped to a `canvas_id` — creation, the read rule over a row (`canvasReaderAllows`), the audience, guest shares and authorization facts. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasUpdate` (the title and the appearance), `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Conversation object migration 83: its root row admits the `canvas` parent kind. |
@@ -133,8 +134,21 @@ the same rule a Sidekick's audience is, over a Canvas's facts:
   audience and so can open every Canvas; a creator who leaves does not strand
   one.
 
-A new Canvas is `creator`: its creator alone, and its writer Sidekick's
-audience when a run made it.
+A Canvas a person makes starts with the Organization's **Default Editor
+Audience**: `workspace` (Everyone in the Organization) unless an administrator
+chose `creator` under Settings → Organization preferences. Its artifact audience
+starts at the editors, which `canvasArtifactVisibilityFloor` raises to
+`workspace` for an Organization-wide Canvas. A Canvas a Sidekick run makes is
+`creator` whatever the default: its creator alone and its writer Sidekick's
+audience, so a personal Sidekick's output is not opened to the Organization.
+
+The defaults live in `canvas_sharing_defaults`, one row in the Organization's
+own object, so `create` reads them in its transaction with no extra round trip.
+A column left null was never chosen and reads as
+`DEFAULT_CANVAS_SHARING_DEFAULTS`. The **Default Artifact Audience** (Editors
+only, Everyone in the Organization, Anyone with a link; default Anyone with a
+link) is stored and shown but changes nothing yet: it is the audience Rally
+will suggest for a Canvas's artifacts.
 
 The conversation viewer check reads the person's role from their Organization
 relationship (a guest asks with `requireGrantAuthority`); only an active
@@ -994,6 +1008,26 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-13 — New Canvases open to the Organization by default
+
+**What changed:** A Canvas a person makes now opens to everyone in the
+Organization. Administrators choose the default under Organization preferences
+(**Default Editor Audience**: Creator or Everyone in the Organization), stored
+in WorkspaceDO migration 149's `canvas_sharing_defaults`. A second setting,
+**Default Artifact Audience**, is stored and shown but not applied yet. A blank
+Canvas whose audience names nobody (`creator` or `workspace`) is still
+discarded when its creator leaves it.
+
+**Why:** Product decided a Canvas is shared work by default. The default sits in
+the Organization's object rather than the D1 `workspaces` row beside the
+timezone, because `create` runs in that object and a D1 read would add a round
+trip to opening every new Canvas. Sidekick-run Canvases keep `creator`: a
+personal Sidekick's output reaching the whole Organization was not asked for.
+The blank check had required `creator`; left alone, every new Canvas would
+have counted as used and pressing New Canvas would have left an Untitled
+Canvas behind again. A future change that applies the artifact default must
+respect `artifact_visibility_chosen` the way `set_artifact_audience` does.
 
 ### 2026-11-12 — Delete a Canvas left blank
 

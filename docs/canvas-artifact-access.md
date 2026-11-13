@@ -192,7 +192,9 @@ cannot bypass the gate.
 
 WorkspaceDO migration 147 schedules initial propagation for existing Canvases
 and preserves public access for Canvases with existing registered publications.
-Only new Canvases default artifact access to editors. ArtifactHostDO migration
+Only new Canvases default artifact access to editors (raised to the
+Organization for one whose editors are the Organization, the default since
+2026-11-13; [Canvases](canvases.md#who-can-open-a-canvas)). ArtifactHostDO migration
 4 preserves existing published sites' public reach locally, so cold Organizations
 do not require a source wake to keep serving. Hosts created after migration
 remain closed until policy arrives. Existing hosts without a Canvas owner retain
