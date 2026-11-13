@@ -107,8 +107,10 @@ export function diagnosticErrorCode(error: unknown, fallback: string): string {
   if ((error instanceof ObjectPortError || error instanceof TerminalObjectPortError) && STABLE_CODE.test(error.code)) {
     return error.code;
   }
-  if (error instanceof TerminalProviderError && isCodeShaped(error.code)) {
-    return codeShaped(`${fallback}:${error.code}`);
+  // Never read a provider failure's message: it is Daytona's text, and the
+  // tagged-code parse below would copy a `(tenant.id)` out of it.
+  if (error instanceof TerminalProviderError) {
+    return isCodeShaped(error.code) ? codeShaped(`${fallback}:${error.code}`) : fallback;
   }
   if (error instanceof z.ZodError) return codeShaped(`${fallback}:${describeZodIssues(error)}`);
   if (!(error instanceof Error)) return fallback;

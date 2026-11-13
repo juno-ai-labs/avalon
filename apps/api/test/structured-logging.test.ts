@@ -81,6 +81,11 @@ describe("structured logging", () => {
       new TerminalProviderError(sentence, "failed for customer@example.com"),
       "terminal_provider_observation_failed",
     )).toBe("terminal_provider_observation_failed");
+    // Nor is the provider's sentence read for a code when the code is rejected.
+    expect(diagnosticErrorCode(
+      new TerminalProviderError("Sandbox lookup failed (customer.tenant_42)", "failed for customer@example.com"),
+      "terminal_provider_observation_failed",
+    )).toBe("terminal_provider_observation_failed");
   });
 
   it("names a Workers runtime failure behind the caller's own code without copying its sentence", () => {
