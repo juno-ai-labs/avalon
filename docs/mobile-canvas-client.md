@@ -146,12 +146,24 @@ There are two release surfaces:
 - **Native shell:** CI runs Expo export for iOS, Android, and web. This verifies
   JavaScript/assets only. `apps/mobile/eas.json` defines a `simulator` development
   profile (iOS Simulator and Android APK), with `expo-dev-client` for live
-  reload. The project is linked as `@juno-ai-labs/rally-mobile`, and EAS has produced
+  reload. The `preview` profile produces a standalone internal-distribution iPhone
+  IPA against `https://app.rallywith.ai`, without requiring Metro. The project is linked as `@juno-ai-labs/rally-mobile`, and EAS has produced
   both iOS Simulator and Android development builds. Store signing, a native release
   workflow, TestFlight/Play distribution, and EAS Update remain unconfigured. Bundle identifiers in `app.config.ts` are development
   configuration, not evidence of registered store apps.
 
-To enable native distribution, choose the owning Expo/Apple/Google accounts,
+For an installable iPhone build, register the phone under the Juno AI Labs Apple
+team with `eas device:create`, then configure iOS signing through `eas credentials`
+for the `preview` profile. Run `eas build --platform ios --profile preview` after
+the compatible browser deployment succeeds. Ad hoc provisioning includes only
+registered devices present when the profile was generated. For automated refresh,
+current EAS CLI supports `--non-interactive --refresh-ad-hoc-provisioning-profile`
+with an App Store Connect API key in Expo or the documented `EXPO_ASC_*` secret
+environment variables. A new device can require a refreshed profile and re-sign;
+a simulator archive cannot be installed on a phone. Store distribution remains
+separate from this internal build profile.
+
+To enable store distribution, choose the owning Expo/Apple/Google accounts,
 confirm the bundle identifiers, link the EAS project, configure development,
 preview and production build profiles, provide signing/store credentials through
 secret storage, and add the chosen submission workflow. Use production browser
@@ -261,7 +273,7 @@ corepack pnpm --filter @rally/mobile exec expo install --check
 corepack pnpm --filter @rally/mobile build
 ```
 
-`apps/browser/test/mobile-session.test.ts` checks account-bound organization restoration and the stale-empty artifact race. `apps/desktop/src/renderer/lib/api.test.ts` checks that a retried opening message sends the caller’s original receipt key and attachments. The pure protocol tests execute command injection with adversarial IDs, validate the bridge and artifact origin boundaries, and exercise pin ordering. Expo export compiles iOS, Android, and web bundles; it does not install or launch native apps. Browser host tests still exercise the real Worker transport and CSP. Renderer `browser-entry`, `browser-cookie-writers`, and `browser-collaboration` tests cover transient recovery, schema diagnostics, actual Web Locks ordering, hosted-site remounts, socket publication/head updates, metadata recovery, inline-chat return, mention confirmation, pending submission and edited creation retry.
+`apps/browser/test/mobile-session.test.ts` checks account-bound organization restoration and the stale-empty artifact race. `apps/desktop/src/renderer/lib/api.test.ts` checks that a retried opening message sends the caller’s original receipt key and attachments. The pure protocol tests execute command injection with adversarial IDs, validate the bridge and artifact origin boundaries, and exercise pin ordering. Expo export compiles iOS, Android, and web bundles; it does not install or launch native apps. Browser host tests still exercise the real Worker transport and CSP. Renderer `browser-entry`, `browser-cookie-writers`, and `browser-collaboration` tests cover transient recovery, schema diagnostics, cookie-writer ordering through a browser capability double, hosted-site remounts, socket publication/head updates, metadata recovery, inline-chat return, mention confirmation, pending submission and edited creation retry.
 
 ### Native verification (2026-11-13)
 
@@ -374,6 +386,7 @@ pins change. Its dynamic insertion fix is an unchanged merged upstream backport
 pending release. File-based native icons and React Navigation's documented
 predictive-Back opt-out address failures found on device. iPhone, Duo and Android
 acceptance is recorded separately from bundle/type checks above. Store
-distribution and OTA updates remain unconfigured.
+distribution and OTA updates remain unconfigured. A standalone internal iPhone
+profile targets production so a registered tester can install an IPA without Metro.
 
 Implemented in [#1589](https://github.com/juno-ai-labs/avalon/pull/1589).

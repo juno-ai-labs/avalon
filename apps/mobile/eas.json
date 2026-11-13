@@ -3,6 +3,18 @@
     "appVersionSource": "local"
   },
   "build": {
+    "preview": {
+      "developmentClient": false,
+      "distribution": "internal",
+      "environment": "preview",
+      "pnpm": "11.13.0",
+      "env": {
+        "EXPO_PUBLIC_RALLY_APP_URL": "https://app.rallywith.ai"
+      },
+      "ios": {
+        "image": "sdk-58"
+      }
+    },
     "simulator": {
       "developmentClient": true,
       "distribution": "internal",
