@@ -92,6 +92,12 @@ beforeEach(async () => {
     UNIQUE(region, artifact_id))`).run();
 });
 
+// These cases are about who may open a private Canvas, so the Organization
+// makes new Canvases private rather than taking the Organization-wide default.
+beforeEach(async () => {
+  await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } });
+});
+
 async function publisherCanvasArchive(canvasId: string): Promise<void> {
   await new CanvasService(TEST_ENV, auth(CREATOR)).archive(canvasId);
 }

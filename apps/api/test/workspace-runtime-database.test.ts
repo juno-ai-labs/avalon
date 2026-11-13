@@ -218,6 +218,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_resource_version_changes", // Filled by a resource_versions trigger, drained by the object after each write.
   "member_personal_system_prompts", // Read and written only by the personal system prompt RPCs.
   "member_preferences", // Read and written only by the member preference RPCs.
+  "canvas_sharing_defaults", // Read and written only by the Canvas sharing default RPCs and Canvas create.
   "workspace_directory_state",
   "workspace_external_event_registrations",
   "retired_meeting_resources", // Operator-only cleanup manifest.

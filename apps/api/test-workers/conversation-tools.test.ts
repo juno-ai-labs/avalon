@@ -207,6 +207,12 @@ beforeEach(async () => {
   await seedRoom(ROOM_ID, "Investors", [AUTHOR_ID, COLLEAGUE_ID]);
 });
 
+// These cases are about who may open a private Canvas, so the Organization
+// makes new Canvases private rather than taking the Organization-wide default.
+beforeEach(async () => {
+  await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } });
+});
+
 describe("configured failure destinations", () => {
   it("validates the default execution principal even when an administrator applies the definition", async () => {
     const destinationId = asWorkstreamId(crypto.randomUUID());

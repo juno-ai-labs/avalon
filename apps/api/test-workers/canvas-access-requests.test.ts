@@ -142,10 +142,13 @@ beforeEach(async () => {
       token: `${userId.slice(-2)}`.repeat(32), appVersion: "1",
     });
   }
+  // About who may open a private Canvas: new Canvases here are private, not Organization-wide.
+  await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } });
   await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, title: "Launch plan", createdByUserId: CREATOR, authorityGeneration: 1 });
   await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
     update: { visibility: "participants", userIds: [PARTICIPANT] } });
 });
+
 
 /** The alert the push consumer sends this person for this intent. */
 async function alertFor(recipientUserId: string, intentId: string): Promise<{ title: string; body: string; url: string }> {

@@ -6,6 +6,7 @@ import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstalla
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
 import { CopyButton, CopyField } from '../components/copy-button';
 import { SupportAccessSetting } from '../components/support-access-setting';
+import { CanvasSharingDefaultsSetting } from '../components/canvas-sharing-defaults-setting';
 import { ConnectedAppsSetting } from '../components/connected-apps-setting';
 import { MemoryFactList, useMemoryFacts } from '../components/memory-review';
 import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
@@ -1707,7 +1708,7 @@ export function WorkspaceSettingsScreen({
 
             {activeSection === 'workspace' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Organization preferences</h2><p>Review organization details and defaults shared by the Organization’s Sidekicks.</p></div>
+                <div className="settings-pane-heading"><h2>Organization preferences</h2><p>Review organization details and the defaults the Organization’s Canvases and Sidekicks start with.</p></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceIdentity} />
@@ -1735,6 +1736,7 @@ export function WorkspaceSettingsScreen({
                       variant="secondary"
                     />
                   </label>
+                  <CanvasSharingDefaultsSetting api={api ?? null} isAdmin={isAdmin} workspaceId={workspace.id} />
                   <SupportAccessSetting
                     api={api ?? null}
                     impersonating={Boolean(session?.impersonator)}
