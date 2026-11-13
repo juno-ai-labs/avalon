@@ -877,6 +877,14 @@ instead of rebuilding a different version or manually copying channel
 manifests. A missing compatibility manifest still fails closed when the
 checked-in site record says that version already shipped.
 
+Every Wrangler upload the publisher makes (payloads, channel manifests,
+receipts and the publication record) is retried while the Cloudflare API
+refuses it with a 429, a 5xx, or a dropped connection, backing off up to 30
+seconds between attempts, for at most `R2_UPLOAD_MAX_ATTEMPTS`; any other
+refusal fails at once. An exhausted retry fails inside the release lock and
+releases it, so rerun the workflow. Cancelling a publisher mid-retry leaves the
+lock held; recover it as described below.
+
 Every live publisher first atomically creates `${prefix}/release-publish.lock` in the release bucket with R2's conditional `If-None-Match: *` write. This remote mutex covers GitHub Actions and the documented local command, so a second publisher exits before it reads or changes release state. R2 does not provide conditional deletion, so the key persists: the owner conditionally changes its acquired ETag from `active` to `released`, and the next publisher conditionally changes that released ETag back to `active`. Every ownership transition is atomic, and a paused old process has no unconditional cleanup capable of changing a newer publisher's lock after manual recovery. If publication succeeds but marking the lock released fails, the release publisher reports that the release shipped and continues so the workflow can push the tag and release record; the scheduled Stable promoter instead fails because it has no post-publication record to finish. Either way the surviving active lock makes subsequent runs red until it is repaired. If a process or runner is terminated without cleanup, first confirm in GitHub Actions and the local release environment that no publisher or promoter is active. Inspect that exact R2 key's `state` and `owner` metadata, then delete only `${prefix}/release-publish.lock` and rerun the failed workflow. Never delete a lock merely because it is old: the lock deliberately has no guessed lease that could expire underneath a slow notarized release.
 
 ##### When a release does not happen
