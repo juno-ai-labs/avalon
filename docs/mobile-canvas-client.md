@@ -149,8 +149,13 @@ There are two release surfaces:
   reload. The `preview` profile produces a standalone internal-distribution iPhone
   IPA against `https://app.rallywith.ai`, without requiring Metro. The project is linked as `@juno-ai-labs/rally-mobile`, and EAS has produced
   both iOS Simulator and Android development builds. Store signing, a native release
-  workflow, TestFlight/Play distribution, and EAS Update remain unconfigured. Bundle identifiers in `app.config.ts` are development
-  configuration, not evidence of registered store apps.
+  workflow, TestFlight/Play distribution, and EAS Update remain unconfigured. The
+  iOS identifier is registered with Apple and EAS holds its distribution certificate
+  and ad hoc provisioning profile. This does not create an App Store listing.
+
+The physical iOS app uses `ai.rallywith.mobile`; Apple rejected the initial
+`ai.rally.mobile` development identifier for the Juno AI Labs team. The
+`rally-mobile` sign-in scheme remains unchanged.
 
 For an installable iPhone build, register the phone under the Juno AI Labs Apple
 team with `eas device:create`, then configure iOS signing through `eas credentials`
