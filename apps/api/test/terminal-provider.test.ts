@@ -277,7 +277,7 @@ describe("Daytona Terminal provider", () => {
     expect(observed.refreshData).toHaveBeenCalledTimes(2);
     expect(executeCommand).toHaveBeenNthCalledWith(
       1,
-      expect.stringMatching(/bash -lc .*sudo -n install.*sqlite3.*pnpm@11\.13\.0.*tsx@4\.20\.6.*AVALON_BOOTSTRAP_INSTALLED=/su),
+      expect.stringMatching(/bash -lc .*sudo -n install.*sqlite3.*pnpm@11\.13\.1.*tsx@4\.20\.6.*AVALON_BOOTSTRAP_INSTALLED=/su),
       undefined,
       undefined,
       120,

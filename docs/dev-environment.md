@@ -18,7 +18,7 @@ signed device build or deployment.
 ## Prerequisites
 
 - **Node.js 22 or newer**
-- **pnpm 11.13.0** — pinned by `packageManager`. Run `corepack enable` once;
+- **pnpm 11.13.1** — pinned by `packageManager`. Run `corepack enable` once;
   Corepack then honours the pin. A sandbox image that ships pnpm 10.x resolves
   dependencies differently from the pnpm that gates the pull request in CI.
 - No database server. D1 is SQLite, and `wrangler` runs it locally out of
@@ -262,7 +262,7 @@ pnpm --filter @rally/api exec -- wrangler dev --local \
   --enable-containers=false
 ```
 
-The `--` matters: without it pnpm 11.13.0 takes `--env-file` as its own option,
+The `--` matters: without it pnpm 11 takes `--env-file` as its own option,
 swallows the path, and fails before Wrangler sees it.
 
 That single-config session serves `GET /health` and little else a client needs:
