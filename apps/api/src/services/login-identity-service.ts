@@ -89,6 +89,13 @@ export async function persistVerifiedGoogleIdentity(db: D1Database, input: Verif
 }
 
 /**
+ * The account a provider identity already points to, when no Google subject
+ * backs it. Binds the provider and subject, in that order.
+ */
+const OWNED_ACCOUNT = `id = (SELECT user_id FROM user_login_identities WHERE provider = ? AND subject = ?)
+  AND google_subject IS NULL`;
+
+/**
  * Resolve a provider's verified identity for a provider with no column of its
  * own on `users` (every provider but Google, whose `google_subject` predates
  * `user_login_identities`). Apple is the first.
@@ -99,10 +106,13 @@ export async function persistVerifiedGoogleIdentity(db: D1Database, input: Verif
  * by an account that never verified it links to nothing, so the sign-in is
  * refused as `<provider>_email_in_use` rather than taking that account over.
  *
- * A returning sign-in changes nothing but `verified_at`. Unlike Google, the
- * provider's address does not replace the account's: a person who also signs
- * in with Google would otherwise have two providers rewriting one primary
- * address, and an Apple relay address is stable for the life of the link.
+ * A returning sign-in follows the provider's address only on an account with
+ * no Google link: the new address becomes the primary and only verified one,
+ * and the old one loses email sign-in, as a Google address change does.
+ * Otherwise a later owner of the old mailbox could sign in to this account by
+ * email, or link their own Google account to it. On a Google-linked account
+ * Google owns the address, so two providers never rewrite one primary. A new
+ * address another account holds refuses the sign-in as `<provider>_email_in_use`.
  */
 export async function persistVerifiedProviderIdentity(db: D1Database, provider: string, input: VerifiedLoginIdentity,
   signup?: SignupFlow): Promise<{ id: string; created: boolean }> {
@@ -120,11 +130,35 @@ export async function persistVerifiedProviderIdentity(db: D1Database, provider: 
     db.prepare(`INSERT INTO user_verified_emails (email, user_id, verified_at)
       SELECT email, id, ? FROM users WHERE id = ?`)
       .bind(at, candidateId),
+    // A returning sign-in on an account the provider alone backs follows the
+    // provider's address. These match nothing on a first sign-in, whose
+    // identity row is written last, or on a Google-linked account.
+    db.prepare(`UPDATE users SET email = ?, updated_at = ?
+      WHERE ${OWNED_ACCOUNT} AND email <> ?`)
+      .bind(email, at, provider, input.subject, email),
+    db.prepare(`DELETE FROM user_login_identities WHERE provider = 'email' AND subject <> ?
+      AND user_id IN (SELECT id FROM users WHERE ${OWNED_ACCOUNT})`)
+      .bind(email, provider, input.subject),
+    db.prepare(`DELETE FROM user_verified_emails WHERE email <> ?
+      AND user_id IN (SELECT id FROM users WHERE ${OWNED_ACCOUNT})`)
+      .bind(email, provider, input.subject),
+    db.prepare(`INSERT INTO user_verified_emails (email, user_id, verified_at)
+      SELECT email, id, ? FROM users WHERE ${OWNED_ACCOUNT}
+      ON CONFLICT(email) DO UPDATE SET verified_at = excluded.verified_at`)
+      .bind(at, provider, input.subject),
     db.prepare(`INSERT INTO user_login_identities (provider, subject, user_id, verified_at)
       SELECT ?, ?, user_id, ? FROM user_verified_emails WHERE email = ?
       ON CONFLICT(provider, subject) DO UPDATE SET verified_at = excluded.verified_at`)
       .bind(provider, input.subject, at, email),
-  ]);
+  ]).catch(async (error: unknown) => {
+    // Only the address move can fail on `users.email`: the new address is
+    // another account's. Any other failure is rethrown as it was.
+    const holder = await db.prepare(`SELECT 1 AS held FROM users WHERE email = ?
+      AND id IS NOT (SELECT user_id FROM user_login_identities WHERE provider = ? AND subject = ?) LIMIT 1`)
+      .bind(email, provider, input.subject).first<{ held: number }>();
+    if (holder) throw new ApiError(409, `${provider}_email_in_use`, "This sign-in's email address is already used by another Rally account");
+    throw error;
+  });
   const row = await db.prepare(`SELECT identity.user_id, u.signup_flow_id FROM user_login_identities identity
     JOIN users u ON u.id = identity.user_id WHERE identity.provider = ? AND identity.subject = ?`)
     .bind(provider, input.subject).first<{ user_id: string; signup_flow_id: string | null }>();

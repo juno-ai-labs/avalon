@@ -74,11 +74,14 @@ desktop's ticket exchange, which reads the provider from the ticket.
   names the exemption; adding to it is adding a cross-site entry point.
 - **Apple's `user` field names a new account and finds none.** Nothing signs it,
   so it is used for the name of a user being created and nothing else.
-- **A returning Apple sign-in does not rewrite the account's email.** Google's
-  does, because Google's address is the account's primary. An account may hold
-  both, and two providers rewriting one primary address would fight; Apple's
-  relay address is stable for the life of the link. If a person changes their
-  Apple address, the account keeps the one it had.
+- **Apple owns the account's address only when no Google link backs it.** On
+  an account with no `google_subject`, a returning Apple sign-in that reports a
+  new address makes it the primary and only verified one, and the old address
+  loses email sign-in, as a Google address change does. Without that, a later
+  owner of the old mailbox could sign in by email, or link their own Google
+  account, to this one. On a Google-linked account Google owns the address, so
+  two providers never rewrite one primary. A new address another account holds
+  refuses the sign-in with `apple_email_in_use`.
 - **An address held unverified links to nothing.** A user row with the email
   but no `user_verified_emails` entry refuses Apple sign-in with
   `apple_email_in_use`, as Google's sign-in refuses with `google_email_in_use`,
@@ -132,7 +135,8 @@ secret's claims, nonce refusal, the browser's cross-site POST and cookie,
 forged state, provider separation, cancellation, linking to an existing
 verified address, and the unconfigured answer.
 `apps/api/test/login-identity-service.test.ts` covers the unverified holder, the
-returning sign-in with a changed address, Apple-first then Google linking, and
+returning sign-in with a changed address and its collision, Apple-first then
+Google linking, and
 Apple staying connected after the Google address changes. The screens are covered in
 `onboarding.test.tsx` and `browser-entry.test.tsx`.
 
@@ -173,7 +177,10 @@ round trip before the sign-in screen could draw.
 
 Review moved the desktop's account reconnect off a hard-coded Google, which
 would have sent an Apple-only person, often with a relay address no Google
-account has, into another account or a dead end.
+account has, into another account or a dead end. Review also found that never
+following Apple's address left an Apple-only account's old address verified, a
+takeover path for that mailbox's next owner; Apple now owns the address where
+no Google link does.
 
 **Consequences:** A third provider is a new `LoginProvider` member, its
 credentials, its URL and token checks, a route pair, and a case in
