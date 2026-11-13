@@ -73,7 +73,7 @@ async function openFeed(parentId: string, userId: string): Promise<{ socket: Web
 }
 
 /** Every access-revocation message published while `run` ran. */
-async function publishedRevocations(run: () => Promise<unknown>, delivered?: (bodies: unknown[]) => boolean): Promise<unknown[]> {
+async function publishedRevocations(run: () => Promise<unknown>): Promise<unknown[]> {
   const bodies: unknown[] = [];
   const queue = env.ACCESS_REVOCATION_QUEUE;
   // Accepted, as a Queue with room answers: the consumer below is the delivery.
@@ -94,7 +94,6 @@ async function publishedRevocations(run: () => Promise<unknown>, delivered?: (bo
     return accepted;
   });
   await run();
-  if (delivered) await expect.poll(() => delivered(bodies)).toBe(true);
   return bodies;
 }
 
@@ -159,8 +158,9 @@ describe("narrowing a conversation's audience", () => {
     const hops = await publishedRevocations(async () => {
       await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: OWNER, actorRole: "member" } });
       await runDurableObjectAlarm(workspace());
-    }, (bodies) => bodies.length > 0);
-    expect(hops).toEqual(expect.arrayContaining([
+    });
+    // Artifact-access delivery can arrive first; wait for both Chat revocations.
+    await expect.poll(() => hops).toEqual(expect.arrayContaining([
       expect.objectContaining({ userId: OWNER, target: { scope: "substream", workstreamId: canvasId, substreamId: "0" } }),
       expect.objectContaining({ userId: REMOVED, target: { scope: "substream", workstreamId: canvasId, substreamId: "0" } }),
     ]));
@@ -189,8 +189,8 @@ describe("narrowing a conversation's audience", () => {
         state.storage.sql.exec(`UPDATE _internal_durable_alarms SET retry_at = 0 WHERE kind = 'canvas_archive_conversation'`);
       });
       await runDurableObjectAlarm(workspace());
-    }, (bodies) => bodies.length > 0);
-    expect(hops).toContainEqual(expect.objectContaining({ userId: OWNER,
+    });
+    await expect.poll(() => hops).toContainEqual(expect.objectContaining({ userId: OWNER,
       target: { scope: "substream", workstreamId: canvasId, substreamId: "0" } }));
     await drain(hops);
     // An automatically firing alarm may have won runDurableObjectAlarm's
