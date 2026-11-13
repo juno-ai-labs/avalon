@@ -1157,3 +1157,18 @@ describe("Bind host durability boundaries", () => {
     });
   });
 });
+
+describe("workstream activation inputs", () => {
+  const derived = (sourceKind: string) => ({
+    role: "user" as const,
+    content: "context",
+    provenance: { originKind: "derived" as const, sourceKind, sourceId: "message-1", sourceRevision: null },
+  });
+
+  it("keeps the admitted copy on replay only for context rendered from moving state", () => {
+    expect(__integrationTesting.workstreamActivationInput(derived("canvas_context")).keepAdmittedOnReplay).toBe(true);
+    expect(__integrationTesting.workstreamActivationInput(derived("sidekick_canvas_context")).keepAdmittedOnReplay).toBe(true);
+    expect(__integrationTesting.workstreamActivationInput(derived("run_context"))).not.toHaveProperty("keepAdmittedOnReplay");
+    expect(__integrationTesting.workstreamActivationInput(derived("connector_activity"))).not.toHaveProperty("keepAdmittedOnReplay");
+  });
+});

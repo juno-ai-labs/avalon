@@ -1544,6 +1544,12 @@ request did not ask OpenRouter for usage accounting, and is absent on every
 structured row; Azure rows were always priced correctly. Read an older row's
 spend from `input_tokens`/`output_tokens` and the model, not from this column.
 
+A failed `attempt` row's `disposition` is the routing decision actually made
+only from 2026-11-13. Before that, an attempt that had already streamed text
+reads `fallback` though the turn ended there. From that date the row carries
+`metadata.producedOutput`, and such an attempt reads `failed` (or `cancelled`
+or `defect`), never `retry` or `fallback`.
+
 Use `substream_id` to isolate the product conversation and `request_id` to
 isolate one API/harness run. `"0"` is the current main substream. An inline
 child remains in the same product substream as its root; identify it by its own
