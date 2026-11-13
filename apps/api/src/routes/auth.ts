@@ -24,6 +24,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { compatibleDesktopDeepLink, desktopHandoffUrl } from "../lib/desktop-handoff";
+import { AppleCallbackFormSchema } from "../services/apple-identity";
 import { AuthService, verifyAccessToken, type IdentityCallbackExtras, type LoginProvider } from "../services/auth-service";
 import { previewInvitation } from "../services/workspace-service";
 import { SupportAccessService } from "../services/support-access";
@@ -40,18 +41,9 @@ const callbackQuery = z.object({
   state: z.string().min(20),
   error: z.string().min(1).optional(),
 }).refine((value) => Boolean(value.code || value.error), { message: "Google returned neither a code nor an error" });
-/**
- * Apple's `form_post` callback. `user` arrives on the first authorization
- * only; `id_token` is posted too and ignored, since the token endpoint's own
- * copy is the one verified.
- */
-const appleCallbackForm = z.object({
-  code: z.string().min(1).optional(),
-  state: z.string().min(20),
-  error: z.string().min(1).optional(),
-  user: z.string().optional(),
-  id_token: z.string().optional(),
-}).refine((value) => Boolean(value.code || value.error), { message: "Apple returned neither a code nor an error" });
+/** The desktop holds Apple's callback to the same shape as Google's. */
+const appleCallbackForm = AppleCallbackFormSchema.extend({ state: z.string().min(20) })
+  .refine((value) => Boolean(value.code || value.error), { message: "Apple returned neither a code nor an error" });
 const logoutBody = z.object({ refreshToken: RefreshTokenSchema.optional() }).default({});
 const developmentSessionBody = z.object({ workspaceName: z.string().trim().min(2).max(120).optional() }).default({});
 

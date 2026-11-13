@@ -164,9 +164,7 @@ healthRoutes.get("/", async (c) => {
   } else {
     checks.googleLoginOAuth = { ok: true, message: "not required outside Global" };
   }
-  // Reported, never required: an unset Apple client leaves Apple sign-in
-  // answering `apple_oauth_not_configured` and every other sign-in working, so
-  // it must be visible here rather than fail the region.
+  // Reported, never required (`docs/apple-login.md#failure-modes-and-limits`).
   const appleLoginConfigured = appleCredentials(c.env) !== null;
   if (!isConfiguredRegion(c.env.AVALON_REGION) || c.env.AVALON_REGION === "global") {
     checks.appleLoginOAuth = { ok: appleLoginConfigured, message: appleLoginConfigured ? "configured" : "not configured" };

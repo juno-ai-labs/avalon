@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
 import type { PendingWorkspaceInvitation } from '../lib/types';
+import { rememberedSignInProvider, rememberSignInProvider } from '../lib/sign-in-provider';
 import {
   InvitationOnboarding,
   RegionOnboarding,
@@ -12,7 +13,6 @@ import {
 } from './onboarding';
 
 const api = vi.hoisted(() => ({
-  beginGoogleLogin: vi.fn(),
   beginProviderLogin: vi.fn(),
   observeSignupView: vi.fn(),
 }));
@@ -90,7 +90,7 @@ describe('identity-first onboarding screens', () => {
     api.observeSignupView.mockResolvedValue(undefined);
     sessionState.region = 'global';
     sessionState.workspaceName = '';
-    api.beginGoogleLogin.mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
+    api.beginProviderLogin.mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     bridge.createDesktopAuthAttempt.mockResolvedValue({
       attemptId: 'a'.repeat(43),
       codeChallenge: 'c'.repeat(43),
@@ -112,7 +112,8 @@ describe('identity-first onboarding screens', () => {
     await waitFor(() => expect(sessionState.selectRegion).toHaveBeenCalledWith('global'));
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
 
-    await waitFor(() => expect(api.beginGoogleLogin).toHaveBeenCalledWith(
+    await waitFor(() => expect(api.beginProviderLogin).toHaveBeenCalledWith(
+      'google',
       'global',
       'rallywithai://auth/complete',
       { authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) }, signupFlowId: telemetry.operationId },
@@ -124,7 +125,7 @@ describe('identity-first onboarding screens', () => {
     render(<SignInScreen />);
     await waitFor(() => expect(api.observeSignupView).toHaveBeenCalledWith('01a0ee73-d366-7fb9-b5c0-3ceb3156f70a'));
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
-    await waitFor(() => expect(api.beginGoogleLogin).toHaveBeenCalledWith('global', 'rallywithai://auth/complete', {
+    await waitFor(() => expect(api.beginProviderLogin).toHaveBeenCalledWith('google', 'global', 'rallywithai://auth/complete', {
       authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) },
       signupFlowId: '01a0ee73-d366-7fb9-b5c0-3ceb3156f70a',
     }));
@@ -139,7 +140,10 @@ describe('identity-first onboarding screens', () => {
       authAttempt: { attemptId: 'a'.repeat(43), codeChallenge: 'c'.repeat(43) },
       signupFlowId: telemetry.operationId,
     });
-    expect(api.beginGoogleLogin).not.toHaveBeenCalled();
+    expect(api.beginProviderLogin).toHaveBeenCalledTimes(1);
+    // A later reconnect of the account reopens Apple rather than Google.
+    expect(rememberedSignInProvider()).toBe('apple');
+    rememberSignInProvider('google');
   });
 
   it('keeps signup available when first-install telemetry cannot be read', async () => {
@@ -147,7 +151,7 @@ describe('identity-first onboarding screens', () => {
     render(<SignInScreen />);
     await waitFor(() => expect(api.observeSignupView).toHaveBeenCalledWith(telemetry.operationId));
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
-    await waitFor(() => expect(api.beginGoogleLogin).toHaveBeenCalledWith('global', 'rallywithai://auth/complete', expect.objectContaining({ signupFlowId: telemetry.operationId })));
+    await waitFor(() => expect(api.beginProviderLogin).toHaveBeenCalledWith('google', 'global', 'rallywithai://auth/complete', expect.objectContaining({ signupFlowId: telemetry.operationId })));
   });
 
   it('collects an organization name after authentication and defaults to Global', async () => {
