@@ -1,3 +1,4 @@
+import { MobileAuthStartSchema, MobileAuthTicketSchema, MobileAuthExchangeSchema } from '@rally/contracts/mobile-auth';
 import { PasswordLoginRequestSchema } from '@rally/contracts/password-login';
 import { passwordLogin } from '../services/password-login-service';
 import { UuidV7Schema } from '@rally/contracts/telemetry';
@@ -101,6 +102,20 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     }
     await next();
     c.header("Cache-Control","no-store");
+  });
+  // The system browser and native WebView have separate cookie stores. Only
+  // a single-use, PKCE-bound ticket crosses that boundary; never the cookie.
+  routes.post('/mobile/handoff', authBodyLimit, zValidator('json', MobileAuthStartSchema), async (c) => {
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    if (auth.impersonatorUserId) throw new ApiError(403, 'mobile_identity_required', 'Sign in with your own account');
+    const ticket = await new AuthService(c.env).issueLoginTicket({ userId: auth.userId, ...c.req.valid('json') });
+    return c.json(MobileAuthTicketSchema.parse(ticket));
+  });
+  routes.post('/mobile/exchange', authBodyLimit, zValidator('json', MobileAuthExchangeSchema), async (c) => {
+    const session = await new AuthService(c.env).exchangeDesktopTicket(c.req.valid('json'), 'browser');
+    const cookie = await new BrowserSessionService(c.env).register(session);
+    writeCookie(c, cookie.credential, cookie.expiresAt);
+    return c.json(BrowserSessionSchema.parse(cookie.session));
   });
   routes.post('/password', authBodyLimit, zValidator('json', PasswordLoginRequestSchema), async (c) => {
     const session = await passwordLogin(c.env, c.req.valid('json'));

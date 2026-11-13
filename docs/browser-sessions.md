@@ -13,7 +13,8 @@ and uses the existing ticketed conversation sockets.
 | `apps/api/src/services/browser-session-service.ts` | Registration (which claims shares waiting for the user's verified addresses), explicit workspace selection, renewal, metadata and logout. |
 | `apps/api/src/services/session-authentication.ts` | Shared ordinary-session, membership-incarnation and region checks. |
 | `apps/api/src/routes/browser.ts` | HttpOnly cookies, Origin checks and the cookie-to-API adapter. |
-| `apps/api/test/browser-sessions.test.ts` | Real migrated SQLite and HTTP protocol cases. |
+| `packages/contracts/src/mobile-auth.ts` | Native handoff request, ticket and PKCE exchange contracts. |
+| `apps/api/test/browser-sessions.test.ts`, `mobile-auth.test.ts`, `support-access.test.ts` | Real migrated SQLite and HTTP protocol cases, including the native handoff and support-session boundary. |
 
 ## How it works
 
@@ -81,6 +82,26 @@ same Global service as desktop, then registers the ordinary identity session and
 sets this adapter's cookie. JSON still contains metadata only, and the existing
 Origin and no-store policies apply. See [password sign-in](password-login.md).
 
+### Mobile system-browser handoff
+
+`POST /browser/mobile/handoff` requires the system browser's authenticated
+identity cookie and the ordinary Origin gate. It reads the root signed-in identity,
+never the represented user of a selected support workspace. It issues a single-use login ticket
+bound to the native attempt ID and S256 challenge. `POST /browser/mobile/exchange`
+requires the ticket, matching attempt, region and verifier, consumes the existing
+`desktop_login_tickets` row and registers an independent browser session. The
+WebView receives its cookie through Set-Cookie; JSON contains metadata only.
+These routes reuse the desktop ticket's two-minute expiry and burn-on-invalid-
+verifier semantics, with no migration or separate session store. Mobile handoff
+redemption does not report a second Google signup completion.
+
+The original system-browser session remains independent: signing out in the
+WebView revokes its own session and children. A cancelled or lost handoff starts
+again from the app, with a fresh verifier; tickets are not renewable or reusable.
+The native client must validate its callback and retain the verifier until
+redemption. The browser sign-in UI and native client ship separately from these
+backend routes.
+
 ## Invariants
 
 - A cookie authenticates a user; it does not grant workspace or conversation
@@ -137,6 +158,14 @@ against real D1 in workerd. Its minimal schema declares the runtime dependencies
 the Node suite separately applies the checked-in migrations.
 
 ## Changelog
+
+### 2026-11-12 — Hand system-browser sign-in back to the mobile WebView
+
+System authentication browsers cannot share their cookie jar with WKWebView or
+Android WebView. Reusing the existing PKCE login-ticket ledger gives the app its
+own ordinary cookie session without exposing durable credentials. Both handoff
+routes retain the browser Origin gate; the browser frontend and API must ship
+before the new native flow is usable in production.
 
 ### 2026-10-07 — Create an organization over the cookie
 
