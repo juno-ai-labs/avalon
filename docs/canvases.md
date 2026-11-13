@@ -1041,7 +1041,13 @@ list could have had it deleted under them. Creating as `creator` and applying
 the default on first use was rejected: it needs a second "chosen" flag for the
 editor audience to tell a person's `creator` from the pending default.
 Sharing an empty Canvas exactly as the default already does is
-indistinguishable from not sharing it, so that Canvas is discarded too. A future change that applies the artifact default must
+indistinguishable from not sharing it, so that Canvas is discarded too.
+Everyone a Canvas admits manages the Sidekicks its Chat made, so with
+Organization-wide Canvases every member can edit, pause, delete or re-share a
+Sidekick made in one, including one that runs as its author. Limiting that to
+the Canvas's named people was built in review and reverted: product accepts
+the risk to keep one rule, "access to the Canvas manages its Sidekicks", until
+it proves to be a problem. A future change that applies the artifact default must
 respect `artifact_visibility_chosen` the way `set_artifact_audience` does.
 
 ### 2026-11-12 — Delete a Canvas left blank
