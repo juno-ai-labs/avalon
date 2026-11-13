@@ -232,25 +232,27 @@ which raises both kinds on real D1.
 ### 2026-11-12 — A Terminal authority's refusal is named by its code
 
 **What changed:** `diagnosticErrorCode` answers a `TerminalObjectPortError`
-with its `code`, as it does an `ObjectPortError`; the class moved to
+with its declared `code`, as it does an `ObjectPortError`; the class moved to
 `services/terminal/object-port-error.ts` so the logger can read it without
-importing the port. Separately, the `AgentLoopDO` Terminal observation alarm
-logs `reason` and `stack` beside its code.
+importing the port.
 
-**Why:** 39 `terminal_provider_observation_failed` warnings on 2026-11-12
-named nothing beyond the fallback. That alarm runs its port over its own
-storage, so it never sees a `TerminalObjectPortError`: its failures are SQLite
-or provider-client sentences the code class cannot admit, hence `reason`, as
-`terminal_operation_commit_failed` already logs. Callers that do receive the
-typed error across RPC or the resident executor (the coordinator, the plugin)
-had the same blind spot in the helper.
+**Why:** Callers of the Terminal RPC port and resident executor receive a typed
+refusal whose human-readable message cannot pass the diagnostic code filter.
+The helper discarded the declared reason even though it was available. An
+investigation of Terminal observation warnings exposed this gap, but the alarm
+uses local storage and does not receive this typed error; its cause remains
+unproven by this change.
 
 **Considered and rejected:** Subclassing `ObjectPortError`: four call sites
 branch on `instanceof ObjectPortError` and would start matching Terminal
-failures.
+failures. Logging raw provider or SQLite messages from the alarm would widen
+logged data without establishing its cause.
 
-**Consequences:** The four Terminal codes are declared literals, so nothing
-new crosses to a caller. `reason` is operator-log only.
+**Consequences:** The four Terminal codes are declared literals and still pass
+the bare-code filter. Provider messages and stacks are not newly logged, and
+callers retain the existing error class identity and import path.
+
+Shipped in #1568.
 
 ### 2026-10-19 — A conversation object's refusal is named by its code
 
