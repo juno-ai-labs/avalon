@@ -1668,6 +1668,13 @@ split is known to remain elsewhere: the `fileId`, `documentId` and
 `pageToken` schema and parse each hard-code their 2,000. These were left as
 they are because real IDs and cursors are well under those caps.
 
+The advertised ceiling is part of each tool's surface hash. `preQueryCeilingTool`
+in `integrations.ts` therefore removes it from every historical surface
+(pre-pagination, pre-text-pagination, legacy). Without that, Google receipts
+recorded under those surfaces would stop replaying, which the frozen fixtures
+in `connector-tool-selection.test.ts` catch. Receipts recorded under the
+surface just before this one are fenced, like any schema change.
+
 Shipped in #1586.
 
 ### 2026-11-10 — An adapter can read what one activity is about
