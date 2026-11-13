@@ -36,6 +36,8 @@ on:
       - "config/analytics-events-lakehouse-stream-schema.json"
       - "config/usage-lakehouse.json"
       - "config/usage-lakehouse-stream-schema.json"
+      - "config/engineering-mcp-audit-lakehouse.json"
+      - "config/engineering-mcp-audit-lakehouse-stream-schema.json"
       - "scripts/wrangler-config.mjs"
       - "scripts/entry-point.mjs"
       - "scripts/check-regional-health.mjs"

@@ -110,8 +110,7 @@
   // receipt; without this binding every completed tool call dies in the
   // suite's one place production would have persisted it.
   "r2_buckets": [
-    { "binding": "PAYLOADS", "bucket_name": "avalon-do-runtime-test-payloads" },
-    { "binding": "ENGINEERING_AUDIT_LOG", "bucket_name": "avalon-do-runtime-test-engineering-audit-log" }
+    { "binding": "PAYLOADS", "bucket_name": "avalon-do-runtime-test-payloads" }
   ],
   "kv_namespaces": [
     { "binding": "FAVICON_CACHE", "id": "00000000000000000000000000000003" },

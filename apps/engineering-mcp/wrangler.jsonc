@@ -21,9 +21,9 @@
     "bindings": [{ "name": "ENGINEERING_TASKS", "class_name": "EngineeringTaskDO" }]
   },
   "migrations": [{ "tag": "engineering-tasks-v1", "new_sqlite_classes": ["EngineeringTaskDO"] }],
-  // Every tool call's audit record. The deploy creates the bucket when it is
-  // missing; see docs/engineering-mcp.md#tool-call-audit-log.
-  "r2_buckets": [{ "binding": "ENGINEERING_AUDIT_LOG", "bucket_name": "rally-engineering-mcp-audit-log" }],
+  // ENGINEERING_AUDIT_LAKEHOUSE, the tool-call audit Pipeline, is injected by
+  // scripts/deploy.mjs from config/engineering-mcp-audit-lakehouse.json; see
+  // docs/engineering-mcp.md#tool-call-audit-log.
   "services": [
     {
       "binding": "GLOBAL_INSPECTION",

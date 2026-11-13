@@ -57,7 +57,7 @@ import { observabilityQueryInputSchema, queryObservability } from "./observabili
 import { organizationPage, organizationPageInputSchema } from "./organizations";
 import { userPage, userPageInputSchema } from "./users";
 import { acceptsTasks, createTaskCarrier, registerTaskMethods, TASK_CARRIER, type EngineeringTaskInput } from "./tasks";
-import { logAuditWriteFailure, writeAuditEvent, writeAuditEventOrLog, type AuditEvent } from "./audit-log";
+import { auditFailureCode, logAuditWriteFailure, writeAuditEvent, writeAuditEventOrLog, type AuditEvent } from "./audit-log";
 import { ENGINEERING_MCP_SERVER_INSTRUCTIONS } from "@rally/prompts/engineering-mcp/server-instructions";
 
 type ToolResult = {
@@ -246,7 +246,7 @@ function auditEveryToolCall(server: McpServer, env: Env, principal: AccessPrinci
     } catch (error) {
       logAuditWriteFailure(principal, started, error);
       return {
-        content: [{ type: "text", text: "engineering_audit_unavailable: the tool did not run because its audit record could not be written" }],
+        content: [{ type: "text", text: `${auditFailureCode(error)}: the tool did not run because its audit record could not be written` }],
         isError: true,
       } satisfies ToolResult;
     }
