@@ -1,4 +1,5 @@
 import type { ProductAnalyticsPreference } from '@rally/contracts/telemetry';
+import type { SignInProvider } from './sign-in-provider';
 import { ProductAnalyticsPreferenceClient } from '../../common/product-analytics-preference';
 import { ArtifactLinkSchema } from '@rally/contracts/artifact-access';
 import { BillingStatusSchema, BillingUrlSchema, BillingCreditsSchema, BillingOveragePreferenceSchema } from '@rally/contracts/billing';
@@ -2270,17 +2271,9 @@ export class RallyApi {
     await this.requestVoid('/auth/signup/view', { method: 'POST', body: { flowId } });
   }
 
-  async beginGoogleLogin(
-    region: Region,
-    callbackUri: string,
-    input: { workspaceName?: string; invitationToken?: string; authAttempt: DesktopAuthAttempt; signupFlowId?: string },
-  ): Promise<string> {
-    return this.beginProviderLogin('google', region, callbackUri, input);
-  }
-
   /** Starts a provider sign-in; the returned URL is the provider's, opened in the system browser. */
   async beginProviderLogin(
-    provider: 'google' | 'apple',
+    provider: SignInProvider,
     region: Region,
     callbackUri: string,
     input: { workspaceName?: string; invitationToken?: string; authAttempt: DesktopAuthAttempt; signupFlowId?: string },

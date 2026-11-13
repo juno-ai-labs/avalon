@@ -20,6 +20,7 @@ is in [provider-apps.md](provider-apps.md#sign-in-with-apple) and the
 | `apps/api/src/routes/browser.ts` | Browser `POST /browser/apple/start` and `POST /browser/apple/callback`, the `SameSite=None` state cookie, and the same-origin exemption for the callback. |
 | `apps/browser/src/worker.tsx` | Forwards the `-apple-` state cookie with the deployment's own. |
 | `apps/desktop/src/renderer/screens/onboarding.tsx`, `apps/browser/src/entry.tsx` | The two buttons and the browser's `#apple_error` notice. |
+| `apps/desktop/src/renderer/lib/sign-in-provider.ts` | One wording for provider sign-in failures on both hosts, and the provider the desktop last signed in with. |
 | `packages/db/migrations/0133_desktop_ticket_login_provider.sql` | `desktop_login_tickets.login_provider`. |
 
 ## How it works
@@ -80,7 +81,14 @@ desktop's ticket exchange, which reads the provider from the ticket.
   Apple address, the account keeps the one it had.
 - **An address held unverified links to nothing.** A user row with the email
   but no `user_verified_emails` entry refuses Apple sign-in with
-  `verified_identity_required`, rather than being taken over.
+  `apple_email_in_use`, as Google's sign-in refuses with `google_email_in_use`,
+  rather than being taken over.
+- **The desktop reconnects through the provider it signed in with.** When the
+  account identity has to be restored (an account switch, an organization
+  creation, a link into another organization), the desktop opens the provider
+  it last started a sign-in with, kept in local storage. Nothing on the server
+  records it: the ticket exchange does not name the provider, so an abandoned
+  Apple start still counts, and a device with no record opens Google.
 
 ## Boundary
 
@@ -107,9 +115,8 @@ deployments with no change there.
 - **ID token.** `apple_id_token_invalid` (signature, issuer, audience, expiry,
   with JOSE's code as cause), `apple_nonce_mismatch`, `apple_identity_invalid`
   (no subject, no email, or an unverified email).
-- **Declined.** Apple posts `error=user_cancelled_authorize`; the browser shows
-  "Apple sign-in was cancelled." and the desktop shows the generic sign-in error
-  with the code `apple_oauth_denied`.
+- **Declined.** Apple posts `error=user_cancelled_authorize`, and both hosts
+  show "Apple sign-in was cancelled."
 - **Local development.** Apple accepts only HTTPS return URLs on verified
   domains, so the flow cannot be completed against a local stack. Tests stand in
   for Apple's token endpoint and keys.
@@ -164,7 +171,12 @@ in the production environment contract: it would 503 every Global route until
 they were set. Showing the button only when configured: it would cost a
 round trip before the sign-in screen could draw.
 
+Review moved the desktop's account reconnect off a hard-coded Google, which
+would have sent an Apple-only person, often with a relay address no Google
+account has, into another account or a dead end.
+
 **Consequences:** A third provider is a new `LoginProvider` member, its
-credentials, its URL and token checks, and a route pair. The browser's
+credentials, its URL and token checks, a route pair, and a case in
+`sign-in-provider.ts`. The browser's
 same-origin guard now has a named exemption. Telemetry's signup `method` gains
 `apple`.

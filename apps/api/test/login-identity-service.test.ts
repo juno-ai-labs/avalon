@@ -104,6 +104,21 @@ describe("verified login identities", () => {
       .toEqual([{ email: "adam@email.com", user_id: other.id }, { email: "adam@example.com", user_id: adam.id }]);
   });
 
+  it("does not call a failed first Google link a collision with the person's own account", async () => {
+    const db = database();
+    const binding = sqliteD1(db);
+    const own = await resolveVerifiedEmailIdentity(binding, "adam@example.com");
+    // A transient D1 failure: the batch rolls back, so the account it would
+    // have linked still has no Google subject when the failure is examined.
+    const transient = new Error("D1_ERROR: network connection lost");
+    const failing = new Proxy(binding, {
+      get: (target, key) => key === "batch" ? () => Promise.reject(transient) : Reflect.get(target, key),
+    });
+    await expect(persistVerifiedGoogleIdentity(failing, { subject: "google-adam", email: "adam@example.com", name: "Adam", avatarUrl: null }))
+      .rejects.toBe(transient);
+    expect(db.prepare("SELECT id, google_subject FROM users").all()).toEqual([{ id: own.id, google_subject: null }]);
+  });
+
   it("refuses a first Google sign-in whose address an account holds unverified", async () => {
     const db = database();
     db.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES ('unverified','raw@example.com','Raw','now','now')").run();
@@ -116,7 +131,7 @@ describe("verified login identities", () => {
     const db = database();
     db.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES ('unverified','raw@example.com','Raw','now','now')").run();
     await expect(persistVerifiedProviderIdentity(sqliteD1(db), "apple", { subject: "apple-raw", email: "raw@example.com", name: "Raw", avatarUrl: null }))
-      .rejects.toMatchObject({ code: "verified_identity_required" });
+      .rejects.toMatchObject({ code: "apple_email_in_use", status: 409 });
     expect(db.prepare("SELECT COUNT(*) AS identities FROM user_login_identities").get()).toEqual({ identities: 0 });
   });
 

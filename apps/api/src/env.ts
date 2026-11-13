@@ -204,13 +204,7 @@ export interface Env extends FeatureFlagEnvironment {
   /** Global only. `productionOnlySecrets` enforces them there; regional never carries them. */
   GOOGLE_OAUTH_CLIENT_ID?: string;
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
-  /**
-   * Global only: Sign in with Apple's web client (`docs/apple-login.md`). The
-   * client ID is the Services ID; the private key is the `.p8` key, PKCS #8
-   * PEM. Not in `productionOnlySecrets`: until all four are set, Apple sign-in
-   * answers `apple_oauth_not_configured` and `/health` says so, rather than
-   * taking the whole Global Worker down.
-   */
+  /** Global only, and optional: Sign in with Apple's web client (`docs/apple-login.md`). */
   APPLE_OAUTH_CLIENT_ID?: string;
   APPLE_OAUTH_TEAM_ID?: string;
   APPLE_OAUTH_KEY_ID?: string;

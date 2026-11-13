@@ -41,7 +41,8 @@ describe('organization and invitation API routing', () => {
       .mockResolvedValueOnce(json({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=invitation' }));
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://enterprise.api.rallywith.ai', null);
-    const organizationUrl = new URL(await api.beginGoogleLogin(
+    const organizationUrl = new URL(await api.beginProviderLogin(
+      'google',
       'enterprise',
       'rallywithai://auth/complete',
       {
@@ -60,7 +61,8 @@ describe('organization and invitation API routing', () => {
       desktopCodeChallenge: 'c'.repeat(43),
     });
 
-    const invitationUrl = new URL(await api.beginGoogleLogin(
+    const invitationUrl = new URL(await api.beginProviderLogin(
+      'google',
       'enterprise',
       'rallywithai://auth/complete',
       {

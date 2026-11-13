@@ -83,6 +83,18 @@ const AppleUserSchema = z.object({
   name: z.object({ firstName: z.string().optional(), lastName: z.string().optional() }).optional(),
 });
 
+/**
+ * Apple's `form_post` callback body. `user` arrives on the first
+ * authorization only. Apple also posts an `id_token`, which is left
+ * undeclared and so dropped: the token endpoint's own copy is the one verified.
+ */
+export const AppleCallbackFormSchema = z.object({
+  code: z.string().min(1).optional(),
+  state: z.string().optional(),
+  error: z.string().min(1).optional(),
+  user: z.string().optional(),
+});
+
 function nameFromUserField(user: string | undefined): string | null {
   if (!user) return null;
   let parsed: unknown;

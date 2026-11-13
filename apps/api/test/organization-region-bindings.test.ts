@@ -106,7 +106,7 @@ describe("organization region bindings", () => {
 
   it("refuses a second regional identity login", async () => {
     const database = new RecordingDatabase(invitation);
-    await expect(new AuthService(environment(database, "enterprise")).beginIdentity({
+    await expect(new AuthService(environment(database, "enterprise")).beginIdentity({ provider: "google",
       returnUri: "avalon://auth/complete",
       desktopAttemptId: "a".repeat(43),
       desktopCodeChallenge: "c".repeat(43),
@@ -128,7 +128,7 @@ describe("organization region bindings", () => {
     });
 
     try {
-      await expect(new AuthService(unconfigured).consumeIdentityCallback("code", "s".repeat(32)))
+      await expect(new AuthService(unconfigured).consumeIdentityCallback("code", "s".repeat(32), "google"))
         .rejects.toMatchObject({ status: 503, code: "google_oauth_not_configured" });
       // Refused before the single-use OAuth state is claimed, so a retry after
       // the deployment is fixed still has one to spend.

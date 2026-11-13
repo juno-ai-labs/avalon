@@ -51,7 +51,7 @@ describe("desktop sign-in across the scheme rename", () => {
   it("accepts the return URI a build shipped before the rename sends", async () => {
     const { env, bound } = identityFixture();
 
-    await new AuthService(env).beginIdentity({
+    await new AuthService(env).beginIdentity({ provider: "google",
       returnUri: LEGACY,
       desktopAttemptId: ATTEMPT,
       desktopCodeChallenge: ATTEMPT,
@@ -66,7 +66,7 @@ describe("desktop sign-in across the scheme rename", () => {
   it("accepts the return URI a current build sends", async () => {
     const { env, bound } = identityFixture();
 
-    await new AuthService(env).beginIdentity({
+    await new AuthService(env).beginIdentity({ provider: "google",
       returnUri: CURRENT,
       desktopAttemptId: ATTEMPT,
       desktopCodeChallenge: ATTEMPT,
@@ -87,7 +87,7 @@ describe("desktop sign-in across the scheme rename", () => {
       // The retired Sideline app's dedicated callback.
       "sideline://auth/complete",
     ]) {
-      await expect(new AuthService(env).beginIdentity({
+      await expect(new AuthService(env).beginIdentity({ provider: "google",
         returnUri,
         desktopAttemptId: ATTEMPT,
         desktopCodeChallenge: ATTEMPT,

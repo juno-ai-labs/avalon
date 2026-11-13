@@ -1116,8 +1116,8 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 
 **What changed:** `persistVerifiedGoogleIdentity` answers 409
 `google_email_in_use` when Google reports an address another Rally account
-already holds, and writes nothing. The browser says so; the desktop shows the
-code.
+already holds, and writes nothing. Apple's equivalent is `apple_email_in_use`.
+The desktop and the browser both say so in words.
 
 **Why:** Renaming a Google account to an address an older Rally account used,
 or a first Google sign-in with an address an account held unverified, failed on
@@ -1127,8 +1127,12 @@ locked out with no reason given.
 
 **Considered and rejected:** Checking for a holder before every write. It costs
 a query on every Google sign-in to name a rare case; the check now runs only
-after the write has failed. Merging the two accounts is a product decision and
-is not attempted.
+after the write has failed. Because the failed batch rolled back, the account
+its first statement would have linked reads as a holder too; the check excludes
+it (with `IS`, since an unverified address has no owner), or a transient D1
+error on a person's first Google sign-in would be reported as a collision with
+their own account. Merging the two accounts is a product decision and is not
+attempted.
 
 **Consequences:** The person still cannot sign in with Google until the other
 account gives up the address. A Google rename is still recorded only at the
