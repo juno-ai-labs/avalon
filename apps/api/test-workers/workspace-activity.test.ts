@@ -187,6 +187,12 @@ beforeEach(async () => {
   ]);
 });
 
+// These cases are about who may open a private Canvas, so the Organization
+// makes new Canvases private rather than taking the Organization-wide default.
+beforeEach(async () => {
+  await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } });
+});
+
 describe("a person's Activity", () => {
   it("removes an archived Canvas's Activity and unseen count from open workspace sockets", async () => {
     const canvasId = await sharedCanvas();

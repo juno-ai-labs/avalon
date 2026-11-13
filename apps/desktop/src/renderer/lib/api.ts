@@ -21,6 +21,7 @@ import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@ral
 import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type OrganizationNameSuggestion, type UpdateAccountOnboarding } from "@rally/contracts";
 
 import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
+import { CanvasSharingDefaultsSchema, type CanvasSharingDefaults, type CanvasSharingDefaultsUpdate } from "@rally/contracts/canvases";
 import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
 import { ConnectedMcpAppsSchema, type ConnectedMcpApps } from "@rally/contracts/mcp-oauth";
 
@@ -948,6 +949,16 @@ export class RallyApi {
    */
   updateWorkspace(input: { name?: string; timezone?: string }): Promise<{ name: string; timezone: string }> {
     return this.request('/workspace', { method: 'PATCH', body: input, schema: WireWorkspaceSchema });
+  }
+
+  /** The audiences a new Canvas starts with in this Organization. */
+  async getCanvasSharingDefaults(signal?: AbortSignal): Promise<CanvasSharingDefaults> {
+    return this.request('/workspace/canvas-sharing-defaults', { schema: CanvasSharingDefaultsSchema, signal });
+  }
+
+  /** Saves only the defaults given; an administrator's alone. */
+  async updateCanvasSharingDefaults(update: CanvasSharingDefaultsUpdate): Promise<CanvasSharingDefaults> {
+    return this.request('/workspace/canvas-sharing-defaults', { method: 'PUT', body: update, schema: CanvasSharingDefaultsSchema });
   }
 
   /** Rally access for this Organization (`docs/impersonation.md`). */

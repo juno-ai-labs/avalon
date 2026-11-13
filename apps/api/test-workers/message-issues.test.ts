@@ -71,6 +71,8 @@ beforeEach(async () => {
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
   ]);
   // The creator's alone: the other member cannot open it.
+  // About who may open a private Canvas: new Canvases here are private, not Organization-wide.
+  await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } });
   CANVAS_ID = (await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR_ID, title: 'Source' })).canvasId;
 }, 30_000);
 
@@ -143,3 +145,4 @@ describe('message issue reports on real workerd', () => {
       .toEqual({ reporter_user_id: OTHER_ID, parent_id: CANVAS_ID });
   });
 });
+

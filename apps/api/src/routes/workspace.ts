@@ -32,6 +32,7 @@ import {
   SocketTicketSchema,
   SupportAccessSchema,
 } from "@rally/contracts";
+import { CanvasSharingDefaultsSchema, CanvasSharingDefaultsUpdateSchema } from "@rally/contracts/canvases";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { requireCurrentClientContract } from "../lib/client-contract";
@@ -165,6 +166,13 @@ workspaceRoutes.put("/plan", zValidator("json", WorkspacePlanChangeSchema), asyn
 workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), async (c) =>
   c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).updateWorkspace(c.req.valid("json")))),
 );
+// The audiences a new Canvas starts with (`docs/canvases.md`). Every member
+// reads them; the service lets only an administrator change them.
+workspaceRoutes.get("/canvas-sharing-defaults", async (c) =>
+  c.json(CanvasSharingDefaultsSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getCanvasSharingDefaults())));
+workspaceRoutes.put("/canvas-sharing-defaults", zValidator("json", CanvasSharingDefaultsUpdateSchema), async (c) =>
+  c.json(CanvasSharingDefaultsSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).updateCanvasSharingDefaults(c.req.valid("json")))));
 // Rally access (`docs/impersonation.md`). Every member reads it; the service
 // lets only an administrator who is not a support session change it.
 workspaceRoutes.get("/support-access", async (c) =>

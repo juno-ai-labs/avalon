@@ -143,9 +143,12 @@ beforeEach(async () => {
   await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: SIDEKICK_ID, authorUserId: MANAGER, scope: "personal", authorityGeneration: 1 });
   await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
     `UPDATE automation_directory SET title = 'Deals' WHERE automation_id = ?`, SIDEKICK_ID));
+  // About who may open a private Canvas: new Canvases here are private, not Organization-wide.
+  await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } });
   await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, title: "Pipeline", createdByUserId: MANAGER, authorityGeneration: 1 });
   PERSON_MAIL = await connectGoogle(PERSON, "robin@example.com");
 });
+
 
 describe("the Sidekick source routes, for a signed-in person", () => {
   it("answers every one of them 401 without a session, and asks nobody", async () => {

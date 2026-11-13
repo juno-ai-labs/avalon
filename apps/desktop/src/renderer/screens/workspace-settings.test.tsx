@@ -23,6 +23,8 @@ const api = vi.hoisted(() => ({
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getSupportAccess: vi.fn(),
+  getCanvasSharingDefaults: vi.fn(),
+  updateCanvasSharingDefaults: vi.fn(),
   promoteWorkspaceGuest: vi.fn(),
   getConnections: vi.fn(),
   getGitHubRepositoryAccessSettings: vi.fn(),
@@ -317,6 +319,7 @@ describe('Organization settings', () => {
     settingsSectionRequest.listener = null;
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getSupportAccess.mockResolvedValue({ available: true, expiresAt: null });
+    api.getCanvasSharingDefaults.mockResolvedValue({ editors: 'workspace', artifacts: 'public' });
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
     api.getMyPersonalSystemPrompt.mockResolvedValue('');

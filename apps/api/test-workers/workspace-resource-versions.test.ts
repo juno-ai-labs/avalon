@@ -95,10 +95,9 @@ async function canvas(canvasId: string, title: string, visibility: "creator" | "
   if (!created.has(canvasId)) {
     created.add(canvasId);
     await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId, title, createdByUserId: OWNER, authorityGeneration: 1 });
-    if (visibility === "workspace") {
-      await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: OWNER, actorRole: "member" },
-        update: { visibility: "workspace", userIds: [] } });
-    }
+    // Set either way: a new Canvas starts with the Organization's default.
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: OWNER, actorRole: "member" },
+      update: { visibility, userIds: [] } });
   }
   for (const resourceId of resourceIds) {
     const { noted } = await workspace().canvasNoteArtifact({ workspaceId: WORKSPACE_ID, canvasId, resourceId,

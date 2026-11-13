@@ -145,6 +145,8 @@ export function workspaceSyncPublicationsForMutation(
   if (pathname === "/workspace") return organization("workspace_profile");
   // Rally access is shown beside the profile, to every administrator.
   if (pathname === "/workspace/support-access") return organization("workspace_profile");
+  // The Canvas sharing defaults are shown beside the profile too.
+  if (pathname === "/workspace/canvas-sharing-defaults") return organization("workspace_profile");
   if (pathname === "/connections" || pathname.startsWith("/connections/")) return connectionPublications(pathname);
   if (
     pathname.startsWith("/automations")
