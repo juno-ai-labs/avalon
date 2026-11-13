@@ -134,13 +134,15 @@ the same rule a Sidekick's audience is, over a Canvas's facts:
   audience and so can open every Canvas; a creator who leaves does not strand
   one.
 
-A Canvas a person makes starts with the Organization's **Default Editor
-Audience**: `workspace` (Everyone in the Organization) unless an administrator
-chose `creator` under Settings → Organization preferences. Its artifact audience
-starts at the editors, which `canvasArtifactVisibilityFloor` raises to
-`workspace` for an Organization-wide Canvas. A Canvas a Sidekick run makes is
-`creator` whatever the default: its creator alone and its writer Sidekick's
-audience, so a personal Sidekick's output is not opened to the Organization.
+A new Canvas, whether a person or a Sidekick run makes it, starts with the
+Organization's **Default Editor Audience**: `workspace` (Everyone in the
+Organization) unless an administrator chose `creator` under Settings →
+Organization preferences. A run's Canvas also admits its writer Sidekick's
+audience. Its artifact audience starts at the editors, which
+`canvasArtifactVisibilityFloor` raises to `workspace` for an Organization-wide
+Canvas, and stays unchosen, so a publishing agent's `set_artifact_audience`
+default (public for a site) still applies
+([Canvas artifact access](canvas-artifact-access.md)).
 
 The defaults live in `canvas_sharing_defaults`, one row in the Organization's
 own object, so `create` reads them in its transaction with no extra round trip.
@@ -1011,8 +1013,8 @@ why the refresh lease shares the owning object's transaction.
 
 ### 2026-11-13 — New Canvases open to the Organization by default
 
-**What changed:** A Canvas a person makes now opens to everyone in the
-Organization. Administrators choose the default under Organization preferences
+**What changed:** A new Canvas, a Sidekick run's included, now opens to
+everyone in the Organization. Administrators choose the default under Organization preferences
 (**Default Editor Audience**: Creator or Everyone in the Organization), stored
 in WorkspaceDO migration 149's `canvas_sharing_defaults`. A second setting,
 **Default Artifact Audience**, is stored and shown but not applied yet. A blank
@@ -1022,8 +1024,9 @@ discarded when its creator leaves it.
 **Why:** Product decided a Canvas is shared work by default. The default sits in
 the Organization's object rather than the D1 `workspaces` row beside the
 timezone, because `create` runs in that object and a D1 read would add a round
-trip to opening every new Canvas. Sidekick-run Canvases keep `creator`: a
-personal Sidekick's output reaching the whole Organization was not asked for.
+trip to opening every new Canvas. Sidekick-run Canvases follow the same
+default; keeping them `creator` was considered and rejected by product, so an
+Organization that wants a personal Sidekick's output private chooses `creator`.
 The blank check had required `creator`; left alone, every new Canvas would
 have counted as used and pressing New Canvas would have left an Untitled
 Canvas behind again. A future change that applies the artifact default must
