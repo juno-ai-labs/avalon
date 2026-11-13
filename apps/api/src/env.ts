@@ -109,6 +109,8 @@ export interface Env extends FeatureFlagEnvironment {
   USAGE_LAKEHOUSE?: Pipeline;
   APNS_AUTH_KEY?: string;
   APNS_KEY_ID?: string;
+  /** Firebase service account JSON for Android push; stored as a regional Worker secret. */
+  FCM_SERVICE_ACCOUNT_JSON?: string;
   /** Web Push VAPID public key, the base64url 65-byte uncompressed P-256 point. */
   WEB_PUSH_VAPID_PUBLIC_KEY?: string;
   /** Web Push VAPID private key, the base64url `d` of the same P-256 key. Secret. */

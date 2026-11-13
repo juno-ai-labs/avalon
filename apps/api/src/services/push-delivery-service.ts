@@ -1,3 +1,4 @@
+import { fcmAvailable } from './push/fcm-transport';
 import type { NotificationChannel } from "@rally/contracts";
 import type { PushDeliveryMessage } from "@rally/contracts/push-notifications";
 import type { Env } from "../env";
@@ -11,10 +12,10 @@ export async function pushEnabled(env: Env, subject: { userId: string; workspace
 }
 /** Enqueued only when a live device's own transport can send from this deployment. */
 export async function enqueuePushDelivery(env: Env, message: PushDeliveryMessage, delaySeconds = 0): Promise<boolean> {
-  if (!env.PUSH_DELIVERY_QUEUE || (!pushAvailable(env) && !webPushAvailable(env))
+  if (!env.PUSH_DELIVERY_QUEUE || (!pushAvailable(env) && !webPushAvailable(env) && !fcmAvailable(env))
     || !await pushEnabled(env, { userId: message.recipientUserId, workspaceId: message.workspaceId })) return false;
   const devices = await livePushDevices(env, message.recipientUserId);
-  if (!devices.some((device) => device.transport === "webpush" ? webPushAvailable(env) : pushAvailable(env))) return false;
+  if (!devices.some((device) => device.transport === "webpush" ? webPushAvailable(env) : device.transport === "fcm" ? fcmAvailable(env) : pushAvailable(env))) return false;
   await env.PUSH_DELIVERY_QUEUE.send(message, { delaySeconds });
   return true;
 }

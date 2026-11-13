@@ -1,5 +1,6 @@
+import { CrashUploadMetadataSchema } from '@rally/contracts/crash-reports';
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { requestDeferral } from "../lib/defer";
-import { RegionSchema } from "@rally/contracts/regions";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AnonymousTelemetryBatchSchema,
@@ -63,19 +64,6 @@ publicTelemetryRoutes.get("/route", async (c) => {
   ));
 });
 
-const CrashUploadMetadataSchema = z.strictObject({
-  uploadId: z.string().uuid().refine((value) => value[14] === "7"),
-  installationId: z.string().uuid().refine((value) => value[14] === "7"),
-  route: RegionSchema,
-  release: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u),
-  buildId: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._+-]+$/u),
-  platform: z.enum(["darwin", "win32", "linux"]),
-  architecture: z.enum(["arm64", "x64"]),
-  processRole: z.enum(["main", "renderer", "utility", "gpu", "unknown"]),
-  launchId: z.string().uuid().refine((value) => value[14] === "7"),
-  channel: z.enum(["development", "alpha", "beta", "stable"]),
-});
-
 export async function parseCrashUpload(c: Context<HonoAppEnv>) {
   let form: FormData;
   try {
@@ -97,8 +85,8 @@ export async function parseCrashUpload(c: Context<HonoAppEnv>) {
   let metadata: z.infer<typeof CrashUploadMetadataSchema>;
   try {
     metadata = CrashUploadMetadataSchema.parse(JSON.parse(encodedMetadata) as unknown);
-  } catch {
-    throw new ApiError(400, "crash_upload_invalid", "The crash report is invalid");
+  } catch (error) {
+    throw new ApiError(400, zodDiagnosticCode(error, 'crash_metadata') ?? 'crash_metadata_invalid_json', "The crash report is invalid");
   }
   let breadcrumbs: z.infer<typeof TelemetryBreadcrumbSidecarSchema> | undefined;
   if (encodedBreadcrumbs !== null) {

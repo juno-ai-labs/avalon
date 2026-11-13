@@ -1,5 +1,6 @@
 import { WorkstreamMessageAdmissionReceiptSchema, type CreateMessageRequestSchema, type WorkstreamMessageAdmissionReceipt } from '@rally/contracts';
-import type { ProductAnalyticsPreference } from '@rally/contracts/telemetry';
+import { CrashIngestResponseSchema, type ProductAnalyticsPreference } from '@rally/contracts/telemetry';
+import type { MobileCrashReport } from '@rally/contracts/crash-reports';
 import type { SignInProvider } from './sign-in-provider';
 import { ProductAnalyticsPreferenceClient } from '../../common/product-analytics-preference';
 import { ArtifactLinkSchema } from '@rally/contracts/artifact-access';
@@ -859,6 +860,15 @@ export class RallyApi {
 
   getProductAnalyticsPreference(signal?: AbortSignal): Promise<ProductAnalyticsPreference> {
     return this.productAnalyticsPreference.read(signal);
+  }
+
+  async uploadMobileCrash(report: MobileCrashReport, signal?: AbortSignal): Promise<void> {
+    const form = new FormData();
+    form.set('metadata', JSON.stringify({ ...report.metadata, owner: report.scope }));
+    form.set('dump', new Blob([JSON.stringify(report.payload)], { type: 'application/json' }), 'crash.json');
+    const response = await this.execute('/telemetry/crashes', { method: 'POST', body: form, signal });
+    if (!response.ok) return this.throwResponseError(response);
+    CrashIngestResponseSchema.parse(await response.json());
   }
 
   updateProductAnalyticsPreference(enabled: boolean, expectedVersion: number): Promise<ProductAnalyticsPreference> {
