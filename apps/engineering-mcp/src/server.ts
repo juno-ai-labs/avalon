@@ -56,7 +56,8 @@ import { LAKEHOUSE_TABLES, LAKEHOUSES, queryLakehouse } from "./lakehouse";
 import { observabilityQueryInputSchema, queryObservability } from "./observability";
 import { organizationPage, organizationPageInputSchema } from "./organizations";
 import { userPage, userPageInputSchema } from "./users";
-import { acceptsTasks, createTaskCarrier, registerTaskMethods, type EngineeringTaskInput } from "./tasks";
+import { acceptsTasks, createTaskCarrier, registerTaskMethods, TASK_CARRIER, type EngineeringTaskInput } from "./tasks";
+import { logAuditWriteFailure, writeAuditEvent, writeAuditEventOrLog, type AuditEvent } from "./audit-log";
 import { ENGINEERING_MCP_SERVER_INSTRUCTIONS } from "@rally/prompts/engineering-mcp/server-instructions";
 
 type ToolResult = {
@@ -190,6 +191,7 @@ async function tool(
     }));
     return typeof value === "string" ? { content: [{ type: "text", text: value }] } : jsonResult(value);
   } catch (error) {
+    const code = toolErrorCode(error, name);
     console.error(JSON.stringify({
       event: "engineering_mcp_tool_failed",
       actor_subject: principal.subject,
@@ -197,10 +199,76 @@ async function tool(
       tool: name,
       ...target,
       error_name: error instanceof Error ? error.name : typeof error,
-      error_code: toolErrorCode(error, name),
+      error_code: code,
     }));
-    return errorResult(error);
+    const result = errorResult(error);
+    failureCodes.set(result, code);
+    return result;
   }
+}
+
+/** The code `tool` logged for a failed result, so the audit record names it too. */
+const failureCodes = new WeakMap<object, string>();
+
+export function toolResultFailureCode(result: unknown): string | undefined {
+  return typeof result === "object" && result !== null ? failureCodes.get(result) : undefined;
+}
+
+const TaskCarrierIdSchema = z.object({ _meta: z.object({ [TASK_CARRIER]: z.object({ taskId: z.string() }) }) });
+
+function finishedEvent(result: unknown): Pick<Extract<AuditEvent, { event: "tool_call_finished" }>, "outcome" | "errorCode" | "taskId"> {
+  const task = TaskCarrierIdSchema.safeParse(result);
+  if (task.success) return { outcome: "task_created", taskId: task.data._meta[TASK_CARRIER].taskId };
+  const isError = z.object({ isError: z.literal(true) }).safeParse(result).success;
+  if (!isError) return { outcome: "succeeded" };
+  // Every failed result this server builds goes through `tool`, which names it.
+  return { outcome: "failed", errorCode: toolResultFailureCode(result) ?? "tool_failed" };
+}
+
+type ToolHandler = (...params: unknown[]) => unknown;
+
+/**
+ * Route every tool registration through the audit log, so no tool, including
+ * one added later, can run without a record. The started record is awaited
+ * before the handler runs and a failed write refuses the call: an operator
+ * console that can act unrecorded is the failure nobody would notice. The
+ * finished record follows the effect and only logs its own failure.
+ */
+function auditEveryToolCall(server: McpServer, env: Env, principal: AccessPrincipal, waitUntil?: (promise: Promise<unknown>) => void) {
+  const register = server.registerTool.bind(server) as (name: string, config: { inputSchema?: unknown }, handler: ToolHandler) => unknown;
+  const audited = (name: string, config: { inputSchema?: unknown }, handler: ToolHandler) => register(name, config, async (...params: unknown[]) => {
+    // The SDK passes (args, ctx) to a tool with an input schema and (ctx) otherwise.
+    const callArguments = config.inputSchema === undefined ? {} : params[0];
+    const callId = crypto.randomUUID();
+    const started: AuditEvent = { event: "tool_call_started", tool: name, callId, arguments: callArguments };
+    try {
+      await writeAuditEvent(env, principal, started);
+    } catch (error) {
+      logAuditWriteFailure(principal, started, error);
+      return {
+        content: [{ type: "text", text: "engineering_audit_unavailable: the tool did not run because its audit record could not be written" }],
+        isError: true,
+      } satisfies ToolResult;
+    }
+    const startedAt = Date.now();
+    const finish = async (event: ReturnType<typeof finishedEvent>) => {
+      const write = writeAuditEventOrLog(env, principal, {
+        event: "tool_call_finished", tool: name, callId, durationMs: Date.now() - startedAt, ...event,
+      });
+      // Off the response path when the request can outlive it; inline otherwise.
+      if (waitUntil) waitUntil(write); else await write;
+    };
+    let result: unknown;
+    try {
+      result = await handler(...params);
+    } catch (error) {
+      await finish({ outcome: "failed", errorCode: toolErrorCode(error, name) });
+      throw error;
+    }
+    await finish(finishedEvent(result));
+    return result;
+  });
+  server.registerTool = audited as McpServer["registerTool"];
 }
 
 const sqlInputSchema = {
@@ -212,7 +280,12 @@ const sqlInputSchema = {
   ),
 };
 
-export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal, onTaskCreated?: () => void): McpServer {
+export function createEngineeringMcpServer(
+  env: Env,
+  principal: AccessPrincipal,
+  onTaskCreated?: () => void,
+  waitUntil?: (promise: Promise<unknown>) => void,
+): McpServer {
   // Access also admits service assertions without a subject. They may execute
   // tools synchronously, but cannot share an "unknown" owner for stored data.
   const hasTaskOwner = hasStableAccessSubject(principal);
@@ -228,6 +301,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
   }, {
     instructions: ENGINEERING_MCP_SERVER_INSTRUCTIONS,
   });
+  auditEveryToolCall(server, env, principal, waitUntil);
 
   server.registerTool("provision_user_password", {
     description: "Provision or rotate a password for an existing Global identity user (resolve with search_users). Returns a generated password ONCE; deliver it only to the intended recipient through an appropriate private channel, never put it in logs or routine status updates. Each call replaces the previous password; if the response is lost, call again and use the latest result. Sign-in requires an independently verified primary email. Does not create an account, verify an email, grant Organization access, or end existing sessions.",
