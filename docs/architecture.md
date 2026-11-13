@@ -1,7 +1,7 @@
 # Architecture
 
 Rally is a pnpm TypeScript monorepo with a macOS/Linux Electron desktop client, a lite
-browser client, a Hono API Worker
+browser client, an Expo iOS/Android canvas client under development, a Hono API Worker
 across configured deployments,
 internal operator Workers, and shared packages that hold every contract and rule
 the surfaces agree on. This document is the map of how those surfaces fit
@@ -18,6 +18,8 @@ and the map points at it rather than absorbing it.
 ```text
 apps/
   desktop/                 Electron main, preload, React renderer, packaging
+  browser/                 Cookie-authenticated web host and mobile Canvas presentation
+  mobile/                  Expo native canvas shell; store distribution not configured
   api/                     Hono Worker, routes, services, DOs, Workflows, Queue
 packages/
   ui/                      Shared collaboration components, display helpers, styles and appearance
@@ -101,6 +103,14 @@ docs/                      Product, architecture, security, setup, runbooks
 4. **The engineering MCP** sits behind Cloudflare Access and verifies its
    assertions before exposing production tools. Usage-plan changes and
    retirement call audited regional methods; fleet migrations use the CLI.
+
+5. **`apps/mobile`** is the Expo iOS/Android canvas consumer. A shared native
+   sidebar and tab bar surround WebViews from the browser host. Authentication,
+   chat, and artifact authorization remain with the existing services. The
+   browser/native protocol is shared source; browser deployment watches it.
+   CI exports native bundles, but signed binaries, store submission, and OTA
+   updates are not configured. [`mobile-canvas-client.md`](mobile-canvas-client.md)
+   owns the implementation and release readiness.
 
 ### Request and event flow
 
@@ -819,6 +829,10 @@ kept as documents; changelog entries that cite one name it as text.
   `private-access.md` (private-access management was removed).
 
 ## Changelog
+
+### 2026-11-12 — Add the Expo canvas shell
+
+The new mobile client consumes browser-hosted Canvas content while owning native navigation. Sharing the browser protocol makes its changes browser deployment inputs; native bundle export is a separate CI check. The retired Swift client remains retired. Expo store distribution is a separate, unfinished release setup.
 
 ### 2026-11-10 — Retire internal administration apps
 

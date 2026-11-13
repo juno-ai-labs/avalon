@@ -1,3 +1,5 @@
+import { MobileCanvasApp } from './mobile';
+import { isMobileHost } from './mobile-bridge';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
@@ -190,7 +192,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   }), [api, getAccountOnboarding, identityApi, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   return <AppSessionValueProvider value={value} connectorSetup={connectorSetup}>
     <FaviconApiProvider>
-      <AccountOnboardingGate><WorkspaceApp /></AccountOnboardingGate>
+      <AccountOnboardingGate>{isMobileHost() ? <MobileCanvasApp /> : <WorkspaceApp />}</AccountOnboardingGate>
     </FaviconApiProvider>
   </AppSessionValueProvider>;
 }
@@ -214,7 +216,7 @@ export default function BrowserShell(props: {
   // once, before its router first reads the location.
   useState(() => {
     const next = shellLocation(location.pathname, location.hash, location.search);
-    if (next) history.replaceState(history.state, '', next);
+    if (next && !isMobileHost()) history.replaceState(history.state, '', next);
     // A tab opened as the former Sidekicks tab carries `?surface=sidekicks`,
     // which would mount the Sidekicks window and never let its close button
     // leave. Sidekicks is a route of this tab now (`window-surface.ts`).

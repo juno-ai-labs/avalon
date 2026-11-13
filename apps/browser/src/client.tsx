@@ -1,3 +1,6 @@
+import { MOBILE_SIGN_IN_PATH } from '../../mobile/src/auth-contract';
+import { MobileSignIn } from './mobile-sign-in';
+import { installMobileBridge } from './mobile-bridge';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { AppErrorBoundary } from "@rally/ui/components/app-error-boundary";
 import { reportJavascriptError } from "../../desktop/src/renderer/lib/telemetry";
@@ -24,6 +27,7 @@ function BrowserCollaboration({ region, session, onSignOut, onRevalidate }: { re
   return <Suspense fallback={<BrowserBoot />}><BrowserShell region={region as Region} session={collaborationSession} onSignOut={onSignOut} onRevalidate={onRevalidate} /></Suspense>;
 }
 
+installMobileBridge();
 installNotificationOpen();
 installTheme();
 watchSystemAppearance();
@@ -33,7 +37,9 @@ watchSystemAppearance();
 const root = document.getElementById("root");
 if (!root) throw new Error("Browser root is missing");
 createRoot(root).render(<ErrorNoticeProvider><AppErrorBoundary onError={(error) => reportJavascriptError(error, "react_boundary")}>
-  {location.pathname === "/connections/complete"
+  {location.pathname.startsWith(`${MOBILE_SIGN_IN_PATH}/`)
+    ? <MobileSignIn />
+    : location.pathname === "/connections/complete"
     ? <ConnectionComplete />
     : location.pathname === MCP_CONSENT_PATH
     ? <McpConsent />

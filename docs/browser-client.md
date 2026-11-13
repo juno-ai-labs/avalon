@@ -14,6 +14,7 @@ artifact serving remain release checks.
 | Path | Responsibility |
 | --- | --- |
 | `apps/browser/src/worker.tsx` | Static entry, asset delivery and regional service forwarding. |
+| `apps/browser/src/mobile-sign-in.tsx` | System-browser mobile sign-in, account selection and single-use return-to-app handoff. |
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google and password sign-in, session restore and workspace list. |
 | `apps/browser/src/mcp-consent.tsx` | The MCP consent page at `/app/oauth/authorize`: sign-in, then allow or deny an MCP client for one Organization ([`rally-mcp.md`](rally-mcp.md#consent)). |
 | `apps/browser/src/site-open.tsx` | The site-opening page a protected site sends a signed-out visitor to: finds the site's organization, opens it, opens the site and returns to the visitor's path. |
@@ -44,6 +45,8 @@ Product analytics. The shared protocol, consent scope and failure behavior are
 owned by [telemetry](telemetry.md#account-preference-in-the-web-app).
 
 ## How it works
+
+The Expo host selects the mobile presentation of the canonical `/canvases` and `/canvases/:id` routes through `?mobile=1` and a native bridge. It establishes its own cookie session through the system authentication browser and a PKCE-protected handoff, then reuses the shared chat components. `/app/mobile/sign-in/<attempt>/<challenge>` uses the ordinary entry form and preserves its binding through Google and email redirects. The native sidebar, artifact-first navigation, and optional local Vite API proxy are documented in [mobile-canvas-client.md](mobile-canvas-client.md).
 
 Vite builds the client and content-addressed assets. The Worker reads the built
 HTML through the assets binding unchanged; React mounts the collaboration SPA in
@@ -572,7 +575,8 @@ in `ALLOWED_ORIGINS` for realtime WebSocket upgrades.
 ### Production deployment
 
 `.github/workflows/deploy-browser.yml` builds, checks and deploys the browser on
-main changes to the host or its shared desktop/package dependencies. It reuses
+main changes to the host, its shared desktop/package dependencies, or
+`apps/mobile/src/protocol.ts`, which the host imports. It reuses
 `site-production` Cloudflare credentials and verifies the public entry routes.
 The deployment token needs Workers and zone permissions for the Custom Domain;
 `rallywith.ai` must be an active zone in the same account and `app` must not have
@@ -705,6 +709,10 @@ must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
+
+### 2026-11-12 — Serve the Expo canvas client
+
+The native mobile shell consumes a dedicated mobile route surface using the existing cookie session, Canvas API, composer, and artifact rendering. The browser keeps ownership of authentication and chat so mobile stays a thin consumer. Production framing policy remains unchanged; an optional Vite proxy supports the desktop preview.
 
 ### 2026-11-03 — A protected site's link signs you in and brings you back
 
