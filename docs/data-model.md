@@ -1112,6 +1112,28 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
 
+### 2026-11-13 — A Google address another account holds is refused by name
+
+**What changed:** `persistVerifiedGoogleIdentity` answers 409
+`google_email_in_use` when Google reports an address another Rally account
+already holds, and writes nothing. The browser says so; the desktop shows the
+code.
+
+**Why:** Renaming a Google account to an address an older Rally account used,
+or a first Google sign-in with an address an account held unverified, failed on
+`users.email`'s unique constraint. The raw D1 error became a generic failure in
+the browser and an unhandled 500 at the desktop callback, so the person was
+locked out with no reason given.
+
+**Considered and rejected:** Checking for a holder before every write. It costs
+a query on every Google sign-in to name a rare case; the check now runs only
+after the write has failed. Merging the two accounts is a product decision and
+is not attempted.
+
+**Consequences:** The person still cannot sign in with Google until the other
+account gives up the address. A Google rename is still recorded only at the
+next Google sign-in, so the old address keeps email sign-in until then.
+
 ### 2026-11-12 — Retain Organization billing and financial delivery receipts
 
 Migration 0131 records trial qualification, paid consent intervals, immutable

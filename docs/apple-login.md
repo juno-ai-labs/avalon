@@ -124,8 +124,9 @@ desktop flow through ticket exchange and its telemetry method, the client
 secret's claims, nonce refusal, the browser's cross-site POST and cookie,
 forged state, provider separation, cancellation, linking to an existing
 verified address, and the unconfigured answer.
-`apps/api/test/login-identity-service.test.ts` covers the unverified holder and
-the returning sign-in with a changed address. The screens are covered in
+`apps/api/test/login-identity-service.test.ts` covers the unverified holder, the
+returning sign-in with a changed address, Apple-first then Google linking, and
+Apple staying connected after the Google address changes. The screens are covered in
 `onboarding.test.tsx` and `browser-entry.test.tsx`.
 
 ```bash
