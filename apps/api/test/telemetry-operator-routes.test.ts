@@ -109,13 +109,13 @@ describe('regional telemetry operator routes', () => {
     database.close();
   });
 
-  it('streams an authorized raw dump while auditing only its opaque crash ID', async () => {
+  it.each([['dmp', 'MDMP', 'application/octet-stream'], ['mobile.json', '{"kind":"hermes"}', 'application/json']])('streams an authorized %s dump while auditing only its opaque crash ID', async (extension, content, contentType) => {
     const database = migratedObservabilityFixture();
     database.prepare(`INSERT INTO telemetry_crash_reports
       (crash_id, upload_id, installation_analytics_id, route, object_key, byte_size,
        content_sha256, release, build_id, platform, architecture, process_role,
        launch_id, channel, received_at, delete_at)
-      VALUES (?, ?, ?, 'global', 'telemetry/crashes/global/private.dmp', 4, 'hash',
+      VALUES (?, ?, ?, 'global', 'telemetry/crashes/global/private.${extension}', 4, 'hash',
               '1.0.0', 'build', 'darwin', 'arm64', 'main', ?, 'stable', ?, ?)`).run(
       crashId,
       '018f22f2-4c22-7abc-8def-0123456789af',
@@ -124,8 +124,9 @@ describe('regional telemetry operator routes', () => {
       '2026-08-12T20:00:00.000Z',
       '2099-01-01T00:00:00.000Z',
     );
-    const bytes = new TextEncoder().encode('MDMP');
-    const get = vi.fn(async () => ({
+    const bytes = new TextEncoder().encode(content);
+    const get = vi.fn(async (key: string) => ({
+      key,
       size: bytes.byteLength,
       httpEtag: 'etag',
       body: new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } }),
@@ -142,7 +143,8 @@ describe('regional telemetry operator routes', () => {
       environment,
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get('content-disposition')).toContain(`${crashId}.dmp`);
+    expect(response.headers.get('content-disposition')).toContain(`${crashId}.${extension}`);
+    expect(response.headers.get('content-type')).toBe(contentType);
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
     expect(database.prepare('SELECT crash_id, operator_id, result_code FROM telemetry_crash_access_audit').get())
       .toEqual({ crash_id: crashId, operator_id: supportId, result_code: 'found' });
