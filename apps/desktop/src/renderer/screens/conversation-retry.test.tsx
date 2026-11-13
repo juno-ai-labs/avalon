@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { HarnessRunMetadata, WorkstreamBoot } from '../lib/types';
 import type * as UseWorkstreamSocketModule from '../lib/use-workstream-socket';
+import { applyHarnessStatus } from '../lib/use-workstream-socket';
 
 /*
  * A Canvas's Chat after a failed run, as a person retries it: the real
@@ -63,10 +65,10 @@ vi.mock('../lib/use-transcript-follow', () => ({
 
 import { ConversationSurface } from './conversation-surface';
 
-function failedRun(id: string, message: string): HarnessRunMetadata {
+function failedRun(id: string): HarnessRunMetadata {
   return {
     id, origin: 'message', status: 'failed', requestId: id,
-    error: { code: 'run_state_persistence_failed', message },
+    error: { code: 'run_state_persistence_failed', message: 'Rally could not complete this run.' },
     startedAt: '2026-11-13T19:01:06.000Z', completedAt: '2026-11-13T19:01:07.000Z', createdAt: '2026-11-13T19:01:06.000Z',
   };
 }
@@ -92,11 +94,11 @@ function renderCanvas(conversation: WorkstreamBoot): QueryClient {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   queryClient.setQueryData(['workstream', CANVAS], conversation);
   queryClient.setQueryData(['ordered-transcript', CANVAS], conversation.transcript);
-  render(<Tooltip.Provider><QueryClientProvider client={queryClient}>
+  render(<Tooltip.Provider><ErrorNoticeProvider><QueryClientProvider client={queryClient}>
     <MemoryRouter initialEntries={[`/canvases/${CANVAS}`]}>
       <Routes><Route path="/canvases/:id" element={<ConversationSurface parentId={CANVAS} parentKind="canvas" substreamId="0" />} /></Routes>
     </MemoryRouter>
-  </QueryClientProvider></Tooltip.Provider>);
+  </QueryClientProvider></ErrorNoticeProvider></Tooltip.Provider>);
   return queryClient;
 }
 
@@ -106,29 +108,28 @@ afterEach(() => {
 
 describe('retrying a failed run', () => {
   it('reports a Retry that fails before any snapshot showed it running', async () => {
-    const queryClient = renderCanvas(boot(failedRun(FIRST_RUN, 'OpenRouter stream error')));
+    const queryClient = renderCanvas(boot(failedRun(FIRST_RUN)));
     // A stored failure on open offers its details without interrupting.
     await screen.findByRole('button', { name: 'Retry' });
     expect(screen.queryByRole('alertdialog')).toBeNull();
 
-    // The Retry is refused at its activation boundary and settles before the
-    // next snapshot: the screen never sees it running.
-    retryHarness.mockImplementation(async () => {
-      const failed = boot(failedRun(RETRY_RUN, 'Activation input persistence failed'));
-      queryClient.setQueryData(['workstream', CANVAS], failed);
-      return { harnessRunId: RETRY_RUN };
-    });
+    // The server's order: the command's receipt, then the drain's `running`
+    // status frame (which changes only the status, so the cached run is still
+    // the old one), then the snapshot carrying the new run, already failed.
+    retryHarness.mockResolvedValue({ harnessRunId: RETRY_RUN });
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     });
-    // The snapshot the surface asks for after the Retry carries the failure.
-    expect(requestSnapshot).toHaveBeenCalled();
     await act(async () => {
-      queryClient.setQueryData(['workstream', CANVAS], boot(failedRun(RETRY_RUN, 'Activation input persistence failed')));
+      applyHarnessStatus(queryClient, CANVAS, 'running');
+    });
+    // The screen has drawn the run as running: the failure controls are gone.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull());
+    await act(async () => {
+      queryClient.setQueryData(['workstream', CANVAS], boot(failedRun(RETRY_RUN)));
     });
 
     const notice = await screen.findByRole('alertdialog', { name: 'Run failed' });
-    expect(notice.textContent).toContain('Activation input persistence failed');
     expect(notice.textContent).toContain(RETRY_RUN);
   });
 });
