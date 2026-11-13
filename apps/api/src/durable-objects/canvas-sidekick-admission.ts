@@ -88,14 +88,11 @@ export function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor:
 }
 
 /**
- * Whether the Canvas whose Chat made a Sidekick lets this person manage it:
- * everyone the Canvas admits by name (its creator, participants, its writer
- * Sidekick's audience, owners and administrators), but never Organization-wide
- * visibility alone. A Sidekick may run as its author with their connectors, and
- * new Canvases default to Organization-wide, so opening the Canvas must not
- * also mean rewriting or re-sharing the Sidekick. A Sidekick made anywhere else
- * has no such Canvas and answers `false`; so does one whose Canvas was
- * archived, which archives the Sidekick with it.
+ * Whether the Canvas whose Chat made a Sidekick admits this person: the
+ * Canvas its `made_here` attachment names. A Sidekick made anywhere else has
+ * none and answers `false`; so does one whose Canvas was archived, which
+ * archives the Sidekick with it.
+
  */
 export function sidekickMadeInCanvasAdmits(sql: SqlStorage, sidekickId: string, actor: AdmissionActor): boolean {
   const canvas = sql.exec<CanvasAdmissionRow & Record<string, SqlStorageValue>>(
@@ -106,9 +103,7 @@ export function sidekickMadeInCanvasAdmits(sql: SqlStorage, sidekickId: string, 
         AND attachment.made_here = 1`,
     sidekickId,
   ).toArray()[0];
-  // An Organization-wide Canvas manages as one open to its named people does.
-  return canvas !== undefined && canvasReaderAllows(
-    canvas.visibility === "workspace" ? { ...canvas, visibility: "participants" } : canvas, actor, sql);
+  return canvas !== undefined && canvasReaderAllows(canvas, actor, sql);
 }
 
 /**
@@ -142,7 +137,7 @@ export function sidekickManagerAllows(
 
 /**
  * Who manages a Sidekick: `sidekickManagerAllows`, and everyone the Canvas
- * whose Chat made it admits by name (`sidekickMadeInCanvasAdmits`). Managing is not opening: such a person reads its
+ * whose Chat made it admits. Managing is not opening: such a person reads its
  * conversation and runs only once it is shared with them.
  */
 export function sidekickManages(

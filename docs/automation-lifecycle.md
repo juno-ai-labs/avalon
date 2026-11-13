@@ -484,7 +484,7 @@ records where a running signal would come from.
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /:id`, `GET /:id/delegation`, `POST /:id/delegation`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/audience`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
 | `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names no home conversation (`homeConversationId` is `null`: the run delivers its own result); and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a Canvas's Chat. |
 | `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | `sidekick_conversation_attachments` (WorkspaceDO migrations 86 and 144), the write that attaches a Sidekick to a Canvas, and the conversation scope a Sidekick reaches: its own conversation and its attached Canvases. |
-| `apps/api/src/durable-objects/canvas-sidekick-admission.ts` | Who opens a Canvas or a Sidekick and who manages a Sidekick, from WorkspaceDO's rows: `canvasReaderAllows`, `sidekickReaderAllows`, `sidekickManagerAllows`, `sidekickManages` (which adds everyone the Canvas that made it admits by name) and `sidekickAttachedToCanvas`. One module because the Canvas and Sidekick rules read each other. |
+| `apps/api/src/durable-objects/canvas-sidekick-admission.ts` | Who opens a Canvas or a Sidekick and who manages a Sidekick, from WorkspaceDO's rows: `canvasReaderAllows`, `sidekickReaderAllows`, `sidekickManagerAllows`, `sidekickManages` (which adds everyone the Canvas that made it admits) and `sidekickAttachedToCanvas`. One module because the Canvas and Sidekick rules read each other. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), `SidekickReviewNoticeV1` (the review row's structured content: counts and the sampled run ids), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
@@ -1749,13 +1749,10 @@ directory row and the attachment in one transaction, the attachment marked
 
 That mark is the whole of what ties the Sidekick to the Canvas:
 
-- **Everyone the Canvas admits by name manages it.** `sidekickManages` is
+- **Everyone the Canvas admits manages it.** `sidekickManages` is
   `sidekickManagerAllows` (author, run-as, and an Organization Sidekick's
   owners and administrators) or `canvasReaderAllows` over the Canvas its
-  `made_here` attachment names, guests of the Canvas included, with an
-  Organization-wide Canvas read as one open to its named people: the
-  Organization's visibility alone opens the Canvas, not the Sidekick's
-  management.
+  `made_here` attachment names, guests of the Canvas included.
   `HostedSidekick.managerAllows` applies it, so every managed action follows.
 - **Managing is not opening.** `sidekickReaderAllows` does not read the mark.
   Someone in the Canvas who is not someone the Sidekick is shared with
@@ -2410,21 +2407,6 @@ conversation-object SQLite; the vocabulary, `StatusDot`, the
 survive as described above.
 
 ## Changelog
-
-### 2026-11-13 — Organization-wide sharing no longer manages a Canvas's Sidekick
-
-**What changed:** `sidekickManages` reads the Canvas whose Chat made a
-Sidekick as open to its named people even when it is Organization-wide, so
-its creator, participants, writer Sidekick's audience and administrators
-still manage the Sidekick, and other members do not.
-
-**Why:** New Canvases now start Organization-wide
-([Canvases](canvases.md#who-can-open-a-canvas)). Left as it was, every member
-could rewrite, pause, delete or re-share a personal Sidekick made in a new
-Canvas, including one that runs as its author with their connectors, and
-share it with themselves to read its runs. Keeping new Canvases private was
-rejected by product. A future change to who manages through a Canvas must
-not let Organization visibility alone grant it.
 
 ### 2026-11-11 — Admit app-requested Sidekick runs
 
