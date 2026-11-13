@@ -8,12 +8,12 @@ import { RunFailureNotice } from './conversation-surface';
 
 const usageMessage = "Your organization has used this week's included usage. An administrator can turn on overage billing in Settings under Billing, or usage resumes when the weekly allowance resets";
 
-function renderNotice(code: string, message: string) {
+function renderNotice(code: string, message: string, { member = true } = {}) {
   const onRetry = vi.fn();
   const onOpenUsageSettings = vi.fn();
   const client = new QueryClient();
   render(<QueryClientProvider client={client}><Tooltip.Provider><ErrorNoticeProvider>
-    <RunFailureNotice automatic={false} code={code} message={message} onOpenUsageSettings={onOpenUsageSettings}
+    <RunFailureNotice automatic={false} code={code} message={message} {...(member ? { onOpenUsageSettings } : {})}
       onRetry={onRetry} requestId="01a1d1d9-7304-7cce-8635-bd885cc772d1" retrying={false} />
   </ErrorNoticeProvider></Tooltip.Provider></QueryClientProvider>);
   return { onRetry, onOpenUsageSettings };
@@ -31,6 +31,13 @@ describe('a failed run whose remedy is a setting', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Run details' }));
     expect(screen.getByRole('alertdialog', { name: 'Usage limit reached' })).toBeTruthy();
+  });
+
+  it('gives a guest, who cannot open Billing, the plain card with Retry first', () => {
+    renderNotice('usage_allowance_exhausted', usageMessage, { member: false });
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Run details', 'Retry']);
+    fireEvent.click(screen.getByRole('button', { name: 'Run details' }));
+    expect(screen.getByRole('alertdialog', { name: 'Run failed' })).toBeTruthy();
   });
 
   it('keeps Retry as the only action for any other failure', () => {
