@@ -27,6 +27,7 @@ import type {
   DesktopSession,
   RuntimeConfig,
 } from '../../common/desktop';
+import { providerSignInError, rememberedSignInProvider, signInProviderOfCode } from './sign-in-provider';
 import { accountReconnectRequired, workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
@@ -525,7 +526,9 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     settleAccountSignIn(null, new AccountSignInSupersededError());
     try {
       const identityApi = new RallyApi(configuredApiBase(runtime, 'global'), null);
-      const url = await identityApi.beginGoogleLogin(
+      // The provider this device signed in with, so an Apple account is not sent to Google.
+      const url = await identityApi.beginProviderLogin(
+        rememberedSignInProvider(),
         'global',
         'rallywithai://auth/complete',
         { authAttempt },
@@ -1259,9 +1262,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       }
       if (intent.status === 'failed') {
         if (intent.attemptId) await bridge.cancelDesktopAuthAttempt(intent.attemptId);
+        const provider = intent.errorCode ? signInProviderOfCode(intent.errorCode) : null;
         reportAccountSignInFailure(
           intent.attemptId,
-          `Sign in could not be completed: ${intent.errorCode?.replace(/[_-]+/gu, ' ') ?? 'unknown error'}`,
+          provider && intent.errorCode
+            ? providerSignInError(provider, intent.errorCode, 'Try again.')
+            : `Sign in could not be completed: ${intent.errorCode?.replace(/[_-]+/gu, ' ') ?? 'unknown error'}`,
         );
         return;
       }

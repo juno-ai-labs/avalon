@@ -162,6 +162,28 @@ Google show the unverified-app warning. Removing a scope from production still
 requires revoking tokens that retain it; this request boundary prevents a later
 connection from inheriting it.
 
+### Sign in with Apple
+
+Apple sign-in is identity only; it is not a connector. In the Apple Developer
+account register:
+
+1. An **App ID** with Sign in with Apple enabled, as the primary App ID.
+2. A **Services ID** (the OAuth `client_id`) grouped under that App ID, with
+   domains `api.rallywith.ai` and `app.rallywith.ai` and these Return URLs:
+
+| Purpose | Return URL |
+| --- | --- |
+| Desktop identity | `https://api.rallywith.ai/auth/apple/callback` |
+| Browser identity | `https://app.rallywith.ai/regional/global/browser/apple/callback` |
+
+3. A **key** with Sign in with Apple enabled. Its `.p8` file is
+   `APPLE_OAUTH_PRIVATE_KEY`; its Key ID is `APPLE_OAUTH_KEY_ID`.
+
+Apple accepts only HTTPS Return URLs on verified domains, so there is no local
+callback; [apple-login.md](apple-login.md) says what the tests stand in for.
+Register Rally's sending domain and addresses under **Sign in with Apple for
+Email Communication** so mail reaches people who hide their address.
+
 ### GitHub App
 
 Register `github.json` as one public GitHub App installable on any account. Upload
@@ -342,9 +364,11 @@ tests.
 
 ### Regional Worker secrets
 
-Install the platform login client **only on the Global Worker**:
+Install the platform login clients **only on the Global Worker**:
 
 - `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`
+- `APPLE_OAUTH_CLIENT_ID`, `APPLE_OAUTH_TEAM_ID`, `APPLE_OAUTH_KEY_ID`,
+  `APPLE_OAUTH_PRIVATE_KEY`
 
 Install the separate Google service connector client in **every** configured
 regional Worker (Global is the only one today), so each region can complete connector OAuth and refresh connector tokens:

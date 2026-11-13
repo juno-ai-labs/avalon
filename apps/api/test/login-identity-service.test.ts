@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { databaseThroughMigration } from "./helpers/migrated-schema";
-import { persistVerifiedGoogleIdentity, resolveVerifiedEmailIdentity } from "../src/services/login-identity-service";
+import { persistVerifiedGoogleIdentity, persistVerifiedProviderIdentity, resolveVerifiedEmailIdentity } from "../src/services/login-identity-service";
 
 const databases: DatabaseSync[] = [];
 function database() {
@@ -65,6 +65,101 @@ describe("verified login identities", () => {
     expect((await resolveVerifiedEmailIdentity(binding, google.email)).id).toBe(guest);
     expect(db.prepare("SELECT user_id FROM user_login_identities WHERE provider = 'google'").all()).toEqual([{ user_id: guest }]);
     expect(db.prepare("SELECT platform_user_id FROM users WHERE id = ?").get(guest)).toEqual({ platform_user_id: guest });
+  });
+
+  it("links a Google sign-in to the account an Apple sign-in created with the same address", async () => {
+    const db = database();
+    const binding = sqliteD1(db);
+    const apple = await persistVerifiedProviderIdentity(binding, "apple", { subject: "apple-adam", email: "adam@example.com", name: "Adam", avatarUrl: null });
+    expect(await persistVerifiedGoogleIdentity(binding, { subject: "google-adam", email: "Adam@Example.com", name: "Adam", avatarUrl: null }))
+      .toEqual({ id: apple.id, created: false });
+    expect(db.prepare("SELECT COUNT(*) AS users FROM users").get()).toEqual({ users: 1 });
+    expect(db.prepare("SELECT provider, user_id FROM user_login_identities ORDER BY provider").all())
+      .toEqual([{ provider: "apple", user_id: apple.id }, { provider: "google", user_id: apple.id }]);
+  });
+
+  it("keeps Apple connected, and the Google address primary, after the Google address changes", async () => {
+    const db = database();
+    const binding = sqliteD1(db);
+    const adam = await persistVerifiedGoogleIdentity(binding, { subject: "google-adam", email: "adam@example.com", name: "Adam", avatarUrl: null });
+    const apple = { subject: "apple-adam", email: "adam@example.com", name: "Adam", avatarUrl: null };
+    expect((await persistVerifiedProviderIdentity(binding, "apple", apple)).id).toBe(adam.id);
+    await persistVerifiedGoogleIdentity(binding, { subject: "google-adam", email: "adam@email.com", name: "Adam", avatarUrl: null });
+    // Apple still reports the old address; its own subject finds the account.
+    expect(await persistVerifiedProviderIdentity(binding, "apple", apple)).toEqual({ id: adam.id, created: false });
+    expect(db.prepare("SELECT email FROM users").all()).toEqual([{ email: "adam@email.com" }]);
+    expect(db.prepare("SELECT email FROM user_verified_emails").all()).toEqual([{ email: "adam@email.com" }]);
+  });
+
+  it("refuses a Google address change to an address another account holds, and changes nothing", async () => {
+    const db = database();
+    const binding = sqliteD1(db);
+    const adam = await persistVerifiedGoogleIdentity(binding, { subject: "google-adam", email: "adam@example.com", name: "Adam", avatarUrl: null });
+    const other = await resolveVerifiedEmailIdentity(binding, "adam@email.com");
+    await expect(persistVerifiedGoogleIdentity(binding, { subject: "google-adam", email: "adam@email.com", name: "Adam", avatarUrl: null }))
+      .rejects.toMatchObject({ code: "google_email_in_use", status: 409 });
+    expect(db.prepare("SELECT id, email FROM users ORDER BY email").all())
+      .toEqual([{ id: other.id, email: "adam@email.com" }, { id: adam.id, email: "adam@example.com" }]);
+    expect(db.prepare("SELECT email, user_id FROM user_verified_emails ORDER BY email").all())
+      .toEqual([{ email: "adam@email.com", user_id: other.id }, { email: "adam@example.com", user_id: adam.id }]);
+  });
+
+  it("does not call a failed first Google link a collision with the person's own account", async () => {
+    const db = database();
+    const binding = sqliteD1(db);
+    const own = await resolveVerifiedEmailIdentity(binding, "adam@example.com");
+    // A transient D1 failure: the batch rolls back, so the account it would
+    // have linked still has no Google subject when the failure is examined.
+    const transient = new Error("D1_ERROR: network connection lost");
+    const failing = new Proxy(binding, {
+      get: (target, key) => key === "batch" ? () => Promise.reject(transient) : Reflect.get(target, key),
+    });
+    await expect(persistVerifiedGoogleIdentity(failing, { subject: "google-adam", email: "adam@example.com", name: "Adam", avatarUrl: null }))
+      .rejects.toBe(transient);
+    expect(db.prepare("SELECT id, google_subject FROM users").all()).toEqual([{ id: own.id, google_subject: null }]);
+  });
+
+  it("refuses a first Google sign-in whose address an account holds unverified", async () => {
+    const db = database();
+    db.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES ('unverified','raw@example.com','Raw','now','now')").run();
+    await expect(persistVerifiedGoogleIdentity(sqliteD1(db), { subject: "google-raw", email: "raw@example.com", name: "Raw", avatarUrl: null }))
+      .rejects.toMatchObject({ code: "google_email_in_use" });
+    expect(db.prepare("SELECT id, google_subject FROM users").all()).toEqual([{ id: "unverified", google_subject: null }]);
+  });
+
+  it("refuses an Apple sign-in whose address belongs to an account that never verified it", async () => {
+    const db = database();
+    db.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES ('unverified','raw@example.com','Raw','now','now')").run();
+    await expect(persistVerifiedProviderIdentity(sqliteD1(db), "apple", { subject: "apple-raw", email: "raw@example.com", name: "Raw", avatarUrl: null }))
+      .rejects.toMatchObject({ code: "apple_email_in_use", status: 409 });
+    expect(db.prepare("SELECT COUNT(*) AS identities FROM user_login_identities").get()).toEqual({ identities: 0 });
+  });
+
+  it("follows a changed Apple address on an Apple-only account, so the old mailbox can no longer sign in", async () => {
+    const db = database();
+    const binding = sqliteD1(db);
+    const apple = { subject: "apple-subject", email: "adam@example.com", name: "Adam", avatarUrl: null };
+    const first = await persistVerifiedProviderIdentity(binding, "apple", apple);
+    expect(first.created).toBe(true);
+    expect((await resolveVerifiedEmailIdentity(binding, "adam@example.com")).id).toBe(first.id);
+    expect(await persistVerifiedProviderIdentity(binding, "apple", { ...apple, email: "adam@email.com" })).toEqual({ id: first.id, created: false });
+    expect(db.prepare("SELECT email FROM users WHERE id = ?").get(first.id)).toEqual({ email: "adam@email.com" });
+    expect(db.prepare("SELECT email FROM user_verified_emails WHERE user_id = ?").all(first.id)).toEqual([{ email: "adam@email.com" }]);
+    // Whoever holds the old mailbox next gets an account of their own, by email or by Google.
+    expect((await resolveVerifiedEmailIdentity(binding, "adam@example.com")).id).not.toBe(first.id);
+    expect((await resolveVerifiedEmailIdentity(binding, "adam@email.com")).id).toBe(first.id);
+  });
+
+  it("refuses an Apple address change to an address another account holds, and changes nothing", async () => {
+    const db = database();
+    const binding = sqliteD1(db);
+    const apple = { subject: "apple-subject", email: "adam@example.com", name: "Adam", avatarUrl: null };
+    const adam = await persistVerifiedProviderIdentity(binding, "apple", apple);
+    const other = await resolveVerifiedEmailIdentity(binding, "adam@email.com");
+    await expect(persistVerifiedProviderIdentity(binding, "apple", { ...apple, email: "adam@email.com" }))
+      .rejects.toMatchObject({ code: "apple_email_in_use", status: 409 });
+    expect(db.prepare("SELECT id, email FROM users ORDER BY email").all())
+      .toEqual([{ id: other.id, email: "adam@email.com" }, { id: adam.id, email: "adam@example.com" }]);
   });
 
   it("upgrades populated identities with foreign keys on, preserving membership, sessions and routes", async () => {

@@ -20,7 +20,7 @@ import { assertSafePublicUrl } from "../lib/public-web-url";
 const PERSONAL_MAIL_DOMAINS = new Set([
   "aol.com", "fastmail.com", "gmail.com", "gmx.com", "gmx.de", "gmx.net", "googlemail.com", "hey.com",
   "hotmail.com", "icloud.com", "live.com", "mac.com", "mail.com", "mail.ru", "me.com", "msn.com",
-  "outlook.com", "pm.me", "proton.me", "protonmail.com", "qq.com", "yahoo.com", "yandex.com",
+  "outlook.com", "pm.me", "privaterelay.appleid.com", "proton.me", "protonmail.com", "qq.com", "yahoo.com", "yandex.com",
   "yandex.ru", "zoho.com", "163.com",
 ]);
 

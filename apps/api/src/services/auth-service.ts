@@ -13,7 +13,8 @@ import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { publishSessionRevocations, type RevokedSessionRow } from "./access-revocation";
 import { logWarn } from "../observability/logger";
 import { openString, randomToken, sealString, sha256, timingSafeEqualText } from "../lib/crypto";
-import { persistVerifiedGoogleIdentity } from "./login-identity-service";
+import { persistVerifiedGoogleIdentity, persistVerifiedProviderIdentity, type VerifiedLoginIdentity } from "./login-identity-service";
+import { appleAuthorizeUrl, appleCredentials, exchangeAppleIdentity, type AppleCredentials } from "./apple-identity";
 import { prefetchOrganizationNameSuggestion } from "./organization-name-suggestion";
 import { supportOrganizationId, supportSessionLiveSql } from "./support-access";
 
@@ -84,8 +85,17 @@ function identityBootstrapWorkspaceId(): null {
   return null;
 }
 
+/**
+ * The OAuth providers a person can sign in with. Each is a web OAuth flow
+ * with the same desktop and browser halves; only the provider's own URLs,
+ * credentials and token checks differ. Email and password sign-in are not
+ * OAuth and live elsewhere.
+ */
+export type LoginProvider = "google" | "apple";
+
 interface OAuthStateRow {
   id: string;
+  provider: string;
   telemetry_flow_id: string | null;
   region: Region;
   purpose: string;
@@ -227,26 +237,31 @@ function allowedReturnUri(env: Env, candidate: string | undefined): string {
   return value.toString();
 }
 
-function callbackUrl(env: Env, purpose: "identity" | "connector"): string {
-  return new URL(
-    purpose === "identity" ? "/auth/google/callback" : "/connections/google/callback",
-    env.PUBLIC_API_BASE_URL,
-  ).toString();
+/** The desktop identity callback on the API host. */
+function callbackUrl(env: Env, provider: LoginProvider): string {
+  return new URL(`/auth/${provider}/callback`, env.PUBLIC_API_BASE_URL).toString();
 }
 
 /**
- * The browser's Google identity callback. It is on the browser host, not the
- * API host, because only a response on that host can set its host-only cookie;
- * the browser Worker forwards it to `/browser/google/callback` here.
+ * The browser's identity callback. It is on the browser host, not the API
+ * host, because only a response on that host can set its host-only cookie;
+ * the browser Worker forwards it to `/browser/<provider>/callback` here.
  */
-function browserGoogleCallbackUrl(env: Env): string {
-  return new URL(`/regional/${env.AVALON_REGION}/browser/google/callback`, browserOrigin(env)).toString();
+function browserCallbackUrl(env: Env, provider: LoginProvider): string {
+  return new URL(`/regional/${env.AVALON_REGION}/browser/${provider}/callback`, browserOrigin(env)).toString();
 }
 
 interface GoogleCredentials {
   clientId: string;
   clientSecret: string;
 }
+
+type ProviderCredentials =
+  | { provider: "google"; credentials: GoogleCredentials }
+  | { provider: "apple"; credentials: AppleCredentials };
+
+/** What a callback carries beyond the code. Apple posts its `user` field on the first authorization only. */
+export interface IdentityCallbackExtras { appleUser?: string | undefined }
 
 export class AuthService {
   constructor(private readonly env: Env) {}
@@ -256,37 +271,53 @@ export class AuthService {
    * ticket to hand back: the callback sets the browser cookie itself. The
    * caller binds the returned state to the browser with a cookie of its own.
    */
-  async beginBrowserIdentity(input: { returnPath?: string | undefined; signupFlowId?: string | undefined }): Promise<{ url: string; state: string }> {
+  async beginBrowserIdentity(input: { returnPath?: string | undefined; signupFlowId?: string | undefined },
+    provider: LoginProvider): Promise<{ url: string; state: string }> {
     return this.startIdentity({
+      provider,
       signupFlowId: input.signupFlowId,
       purpose: "browser_identity",
       desktopAttemptId: null,
       desktopCodeChallenge: null,
       returnUri: browserReturnUrl(this.env, input.returnPath),
-      redirectUri: browserGoogleCallbackUrl(this.env),
+      redirectUri: browserCallbackUrl(this.env, provider),
     });
   }
 
-  async consumeBrowserIdentityCallback(code: string, state: string): Promise<{ session: Session; returnUrl: string }> {
-    const credentials = this.requireGoogleIdentity();
-    const row = await this.claimOAuthState(state, "browser_identity");
-    const identity = await this.verifySignupIdentity(row, credentials, code, browserGoogleCallbackUrl(this.env));
+  async consumeBrowserIdentityCallback(code: string, state: string, provider: LoginProvider,
+    extras: IdentityCallbackExtras = {}): Promise<{ session: Session; returnUrl: string }> {
+    const credentials = this.requireProvider(provider);
+    const row = await this.claimOAuthState(state, "browser_identity", provider);
+    const identity = await this.verifySignupIdentity(row, credentials, code, browserCallbackUrl(this.env, provider), extras);
     const session = await this.createSession(identity);
-    observeAuthenticationCompleted(this.env, { flowId: row.telemetry_flow_id, clientPlatform: 'browser' }, 'google', identity.user_id, identity.signup_created === true);
+    observeAuthenticationCompleted(this.env, { flowId: row.telemetry_flow_id, clientPlatform: 'browser' }, provider, identity.user_id, identity.signup_created === true);
     return { session, returnUrl: row.return_uri };
   }
 
-  async consumeBrowserIdentityDenial(state: string): Promise<string> {
-    this.requireGoogleIdentity();
-    const row = await this.claimOAuthState(state, "browser_identity");
-    observeSignup(this.env, { flowId: row.telemetry_flow_id, clientPlatform: 'browser' }, 'signup_failed', 'google', { result: 'denied' });
+  async consumeBrowserIdentityDenial(state: string, provider: LoginProvider): Promise<string> {
+    this.requireProvider(provider);
+    const row = await this.claimOAuthState(state, "browser_identity", provider);
+    observeSignup(this.env, { flowId: row.telemetry_flow_id, clientPlatform: 'browser' }, 'signup_failed', provider, { result: 'denied' });
     return row.return_uri;
   }
 
-  private requireGoogleIdentity(): GoogleCredentials {
+  /** Identity belongs to Global, and each provider must be configured there. */
+  private requireProvider(provider: LoginProvider): ProviderCredentials {
+    if (provider === "google") return { provider, credentials: this.requireGoogleIdentity() };
+    this.requireGlobalIdentity();
+    const credentials = appleCredentials(this.env);
+    if (!credentials) throw new ApiError(503, "apple_oauth_not_configured", "Apple authentication is not configured");
+    return { provider, credentials };
+  }
+
+  private requireGlobalIdentity(): void {
     if (this.env.AVALON_REGION !== "global") {
       throw new ApiError(409, "global_identity_required", "Sign in through the Avalon platform identity endpoint");
     }
+  }
+
+  private requireGoogleIdentity(): GoogleCredentials {
+    this.requireGlobalIdentity();
     // Checked on both halves of the flow. Without it an unconfigured
     // deployment sends `undefined` to Google and reports the provider's
     // rejection as a token-exchange failure.
@@ -299,11 +330,17 @@ export class AuthService {
   }
 
   /**
-   * Stores a single-use Google state and returns the authorization URL for it.
-   * `purpose` keeps desktop and browser rows apart: each callback claims only
-   * its own kind, so neither can consume the other's state.
+   * Stores a single-use OAuth state and returns the provider's authorization
+   * URL for it. `purpose` keeps desktop and browser rows apart, and `provider`
+   * keeps providers apart: each callback claims only its own kind, so none
+   * can consume another's state.
+   *
+   * The sealed secret is Google's PKCE verifier. Apple documents no PKCE, so
+   * for Apple it is the nonce's preimage: the authorization request carries
+   * its hash, and the callback requires the ID token to carry the same.
    */
   private async startIdentity(input: {
+    provider: LoginProvider;
     signupFlowId?: string | undefined;
     purpose: "identity" | "browser_identity";
     desktopAttemptId: string | null;
@@ -311,22 +348,23 @@ export class AuthService {
     returnUri: string;
     redirectUri: string;
   }): Promise<{ url: string; state: string }> {
-    const { clientId } = this.requireGoogleIdentity();
+    const configured = this.requireProvider(input.provider);
     const state = randomToken(32);
     const flowId = input.signupFlowId ?? newId();
-    const googleVerifier = randomToken(64);
+    const secret = randomToken(64);
     await this.env.DB.prepare(
       `INSERT INTO oauth_states
        (id, region, provider, purpose, code_verifier_encrypted, workspace_id,
         workspace_name, invitation_id, desktop_attempt_id, desktop_code_challenge,
         return_uri, expires_at, telemetry_flow_id)
-       VALUES (?, ?, 'google', ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
     )
       .bind(
         state,
         this.env.AVALON_REGION,
+        input.provider,
         input.purpose,
-        await sealString(googleVerifier, this.env.OAUTH_STATE_ENCRYPTION_KEY),
+        await sealString(secret, this.env.OAUTH_STATE_ENCRYPTION_KEY),
         input.desktopAttemptId,
         input.desktopCodeChallenge,
         input.returnUri,
@@ -334,31 +372,40 @@ export class AuthService {
         flowId,
       )
       .run();
-    observeSignup(this.env, { flowId, clientPlatform: input.purpose === 'browser_identity' ? 'browser' : 'desktop' }, 'signup_started', 'google');
+    observeSignup(this.env, { flowId, clientPlatform: input.purpose === 'browser_identity' ? 'browser' : 'desktop' }, 'signup_started', input.provider);
+    if (configured.provider === "apple") {
+      return { url: appleAuthorizeUrl({ clientId: configured.credentials.clientId, redirectUri: input.redirectUri, state, nonce: await sha256(secret) }), state };
+    }
     const authorize = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     authorize.search = new URLSearchParams({
-      client_id: clientId,
+      client_id: configured.credentials.clientId,
       redirect_uri: input.redirectUri,
       response_type: "code",
       scope: "openid email profile",
       state,
-      code_challenge: await sha256(googleVerifier),
+      code_challenge: await sha256(secret),
       code_challenge_method: "S256",
       prompt: "select_account",
     }).toString();
     return { url: authorize.toString(), state };
   }
 
-  private async verifySignupIdentity(row: OAuthStateRow, credentials: GoogleCredentials, code: string, redirectUri: string): Promise<IdentityRow> {
+  private async verifySignupIdentity(row: OAuthStateRow, configured: ProviderCredentials, code: string, redirectUri: string,
+    extras: IdentityCallbackExtras = {}): Promise<IdentityRow> {
     const flow: SignupFlow = { flowId: row.telemetry_flow_id, clientPlatform: row.purpose === 'browser_identity' ? 'browser' : 'desktop' };
-    observeSignup(this.env, flow, 'signup_verification_requested', 'google');
+    const provider = configured.provider;
+    observeSignup(this.env, flow, 'signup_verification_requested', provider);
     try {
-      const verifier = await openString(row.code_verifier_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY);
-      const identity = await this.exchangeGoogleIdentity(credentials, code, verifier, redirectUri, flow);
-      observeSignup(this.env, flow, 'signup_verification_completed', 'google', { userId: identity.user_id });
+      const secret = await openString(row.code_verifier_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY);
+      const verified = configured.provider === "apple"
+        ? await exchangeAppleIdentity({ credentials: configured.credentials, code, redirectUri,
+          expectedNonce: await sha256(secret), user: extras.appleUser })
+        : await this.exchangeGoogleIdentity(configured.credentials, code, secret, redirectUri);
+      const identity = await this.upsertIdentity(provider, verified, flow);
+      observeSignup(this.env, flow, 'signup_verification_completed', provider, { userId: identity.user_id });
       return identity;
     } catch (error) {
-      observeSignup(this.env, flow, 'signup_failed', 'google', { result: 'failed' });
+      observeSignup(this.env, flow, 'signup_failed', provider, { result: 'failed' });
       throw error;
     }
   }
@@ -368,8 +415,7 @@ export class AuthService {
     code: string,
     verifier: string,
     redirectUri: string,
-    signup?: SignupFlow,
-  ): Promise<IdentityRow> {
+  ): Promise<VerifiedLoginIdentity> {
     const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -407,12 +453,12 @@ export class AuthService {
     ) {
       throw new ApiError(401, "google_identity_invalid", "Google identity information is incomplete");
     }
-    return this.upsertIdentity({
+    return {
       subject: claims.sub,
       email: claims.email,
-      name: typeof claims.name === "string" ? claims.name : claims.email.split("@")[0] ?? "Avalon user",
+      name: typeof claims.name === "string" ? claims.name : claims.email.split("@")[0] ?? "Rally user",
       avatarUrl: typeof claims.picture === "string" ? claims.picture : null,
-    }, signup);
+    };
   }
 
   async beginIdentity(input: {
@@ -420,8 +466,10 @@ export class AuthService {
     desktopAttemptId: string;
     desktopCodeChallenge: string;
     signupFlowId?: string | undefined;
+    provider: LoginProvider;
   }): Promise<string> {
-    this.requireGoogleIdentity();
+    const provider = input.provider;
+    this.requireProvider(provider);
     if (!/^[A-Za-z0-9_-]{43}$/u.test(input.desktopAttemptId)) {
       throw new ApiError(422, "invalid_desktop_attempt", "The desktop authentication attempt is invalid");
     }
@@ -429,12 +477,13 @@ export class AuthService {
       throw new ApiError(422, "invalid_desktop_challenge", "The desktop authentication challenge is invalid");
     }
     const { url } = await this.startIdentity({
+      provider,
       signupFlowId: input.signupFlowId,
       purpose: "identity",
       desktopAttemptId: input.desktopAttemptId,
       desktopCodeChallenge: input.desktopCodeChallenge,
       returnUri: allowedReturnUri(this.env, input.returnUri),
-      redirectUri: callbackUrl(this.env, "identity"),
+      redirectUri: callbackUrl(this.env, provider),
     });
     return url;
   }
@@ -494,27 +543,28 @@ export class AuthService {
     return this.createSession(await this.loadIdentity(DEVELOPMENT_USER_ID, null));
   }
 
-  async consumeIdentityCallback(code: string, state: string): Promise<string> {
-    const credentials = this.requireGoogleIdentity();
-    const row = await this.claimOAuthState(state, "identity");
+  async consumeIdentityCallback(code: string, state: string, provider: LoginProvider,
+    extras: IdentityCallbackExtras = {}): Promise<string> {
+    const credentials = this.requireProvider(provider);
+    const row = await this.claimOAuthState(state, "identity", provider);
     if (!row.desktop_attempt_id || !row.desktop_code_challenge) {
       throw new ApiError(401, "invalid_desktop_binding", "The desktop authentication binding is missing");
     }
-    const identity = await this.verifySignupIdentity(row, credentials, code, callbackUrl(this.env, "identity"));
+    const identity = await this.verifySignupIdentity(row, credentials, code, callbackUrl(this.env, provider), extras);
     const ticket = randomToken(40);
     const ticketHash = await sha256(ticket);
     const at = nowIso();
     await this.env.DB.prepare(
       `INSERT INTO desktop_login_tickets
        (id, ticket_hash, user_id, workspace_id, region, desktop_attempt_id,
-        desktop_code_challenge, expires_at, created_at, telemetry_flow_id, signup_created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        desktop_code_challenge, expires_at, created_at, telemetry_flow_id, signup_created, login_provider)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         newId(),
         ticketHash,
         identity.user_id,
-        // Google identity always returns an unbound Global bootstrap ticket.
+        // Provider identity always returns an unbound Global bootstrap ticket.
         // Even an existing Global member must pass through cross-region
         // discovery so conflicting memberships cannot bypass the control plane.
         identityBootstrapWorkspaceId(),
@@ -525,6 +575,7 @@ export class AuthService {
         at,
         row.telemetry_flow_id,
         identity.signup_created ? 1 : 0,
+        provider,
       )
       .run();
     const target = new URL(row.return_uri);
@@ -534,12 +585,12 @@ export class AuthService {
     return target.toString();
   }
 
-  async consumeIdentityDenial(state: string): Promise<string> {
-    this.requireGoogleIdentity();
-    const row = await this.claimOAuthState(state, "identity");
+  async consumeIdentityDenial(state: string, provider: LoginProvider): Promise<string> {
+    this.requireProvider(provider);
+    const row = await this.claimOAuthState(state, "identity", provider);
     const target = new URL(row.return_uri);
-    observeSignup(this.env, { flowId: row.telemetry_flow_id, clientPlatform: 'desktop' }, 'signup_failed', 'google', { result: 'denied' });
-    target.searchParams.set("error", "google_oauth_denied");
+    observeSignup(this.env, { flowId: row.telemetry_flow_id, clientPlatform: 'desktop' }, 'signup_failed', provider, { result: 'denied' });
+    target.searchParams.set("error", `${provider}_oauth_denied`);
     target.searchParams.set("region", this.env.AVALON_REGION);
     if (row.desktop_attempt_id) target.searchParams.set("attempt", row.desktop_attempt_id);
     return target.toString();
@@ -560,14 +611,16 @@ export class AuthService {
       `UPDATE desktop_login_tickets SET consumed_at = ?
        WHERE ticket_hash = ? AND region = ? AND desktop_attempt_id = ?
          AND consumed_at IS NULL AND expires_at > ?
-       RETURNING user_id, workspace_id, desktop_code_challenge, telemetry_flow_id, signup_created`,
+       RETURNING user_id, workspace_id, desktop_code_challenge, telemetry_flow_id, signup_created, login_provider`,
     )
       .bind(nowIso(), hash, input.region, input.attemptId, nowIso())
-      .first<{ user_id: string; workspace_id: string | null; desktop_code_challenge: string | null; telemetry_flow_id: string | null; signup_created: number }>();
+      .first<{ user_id: string; workspace_id: string | null; desktop_code_challenge: string | null; telemetry_flow_id: string | null; signup_created: number; login_provider: string | null }>();
     if (!claimed) throw new ApiError(401, "invalid_login_ticket", "The login ticket is invalid, expired, or already used");
+    // A ticket written before migration 0133 has no provider; only Google wrote them.
+    const method: LoginProvider = claimed.login_provider === "apple" ? "apple" : "google";
     const proof = await sha256(input.codeVerifier);
     if (!claimed.desktop_code_challenge || !timingSafeEqualText(proof, claimed.desktop_code_challenge)) {
-      observeSignup(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, 'signup_failed', 'google', { result: 'failed', userId: claimed.user_id });
+      observeSignup(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, 'signup_failed', method, { result: 'failed', userId: claimed.user_id });
       // Matching ticket + attempt claims are intentionally burned on a wrong
       // verifier, mirroring RFC 7636 authorization-code redemption semantics.
       throw new ApiError(401, "invalid_login_ticket", "The login ticket is invalid, expired, or already used");
@@ -586,7 +639,7 @@ export class AuthService {
     }
     const identity = await this.loadIdentity(claimed.user_id, claimed.workspace_id);
     const session = await this.createSession(identity);
-    observeAuthenticationCompleted(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, 'google', claimed.user_id, claimed.signup_created === 1);
+    observeAuthenticationCompleted(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, method, claimed.user_id, claimed.signup_created === 1);
     return session;
   }
 
@@ -701,31 +754,28 @@ export class AuthService {
   }
 
   /**
-   * Claims a Google state once. Matching on `purpose` means a desktop state
-   * that reaches the browser callback, or the reverse, is refused without
-   * being consumed.
+   * Claims an identity state once. Matching on `purpose` and `provider` means
+   * a desktop state that reaches the browser callback, a Google state that
+   * reaches Apple's, or the reverse, is refused without being consumed.
    */
-  private async claimOAuthState(state: string, purpose: "identity" | "browser_identity"): Promise<OAuthStateRow> {
+  private async claimOAuthState(state: string, purpose: "identity" | "browser_identity", provider: LoginProvider): Promise<OAuthStateRow> {
     const row = await this.env.DB.prepare(
       `UPDATE oauth_states SET consumed_at = ?
-       WHERE id = ? AND provider = 'google' AND purpose = ? AND region = ?
+       WHERE id = ? AND provider = ? AND purpose = ? AND region = ?
          AND consumed_at IS NULL AND expires_at > ?
        RETURNING *`,
     )
-      .bind(nowIso(), state, purpose, this.env.AVALON_REGION, nowIso())
+      .bind(nowIso(), state, provider, purpose, this.env.AVALON_REGION, nowIso())
       .first<OAuthStateRow>();
     if (!row) throw new ApiError(401, "invalid_oauth_state", "The OAuth request is invalid or expired");
     return row;
   }
 
-  private async upsertIdentity(input: {
-    subject: string;
-    email: string;
-    name: string;
-    avatarUrl: string | null;
-  }, signup?: SignupFlow): Promise<IdentityRow> {
+  private async upsertIdentity(provider: LoginProvider, input: VerifiedLoginIdentity, signup?: SignupFlow): Promise<IdentityRow> {
     const at = nowIso();
-    const user = await persistVerifiedGoogleIdentity(this.env.DB, input, signup);
+    const user = provider === "google"
+      ? await persistVerifiedGoogleIdentity(this.env.DB, input, signup)
+      : await persistVerifiedProviderIdentity(this.env.DB, provider, input, signup);
     const platformLink = await this.env.DB.prepare(
       `UPDATE users SET platform_user_id = ?, updated_at = ?
        WHERE id = ? AND (platform_user_id IS NULL OR platform_user_id = ?)`,

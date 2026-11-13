@@ -178,6 +178,15 @@ it("refuses an identity Google has not verified",async () => {
   expect(db.prepare("SELECT COUNT(*) AS users FROM users WHERE email=?").get("unverified@example.test")).toEqual({ users:0 });
 });
 
+it("names an address another account holds rather than failing generically",async () => {
+  await googleIssuing({ sub:"google-subject-9",email:"held@example.test",email_verified:true });
+  db.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES ('holder','held@example.test','Holder','now','now')").run();
+  const { authorize,binding } = await start();
+  const callback = await browser(`google/callback?code=google-code&state=${authorize.searchParams.get("state")}`,{ cookie:binding });
+  expect(callback.headers.get("location")).toBe(`${origin}/#google_error=google_email_in_use`);
+  expect(sessionCookieSet(callback)).toBe(false);
+});
+
 it("lets two tabs sign in at once without one clobbering the other's binding",async () => {
   await googleIssuing({ sub:"google-subject-5",email:"tabs@example.test",email_verified:true });
   const first = await start("/app/first");
