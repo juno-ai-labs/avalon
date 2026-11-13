@@ -29,6 +29,7 @@ function providerSignInError(provider: SignInProvider, code: string): string {
   const name = providerName[provider];
   if (code === `${provider}_oauth_denied`) return `${name} sign-in was cancelled.`;
   if (code === `${provider}_state_mismatch` || code === "invalid_oauth_state") return `That ${name} sign-in expired. Try again.`;
+  if (code === `${provider}_email_in_use`) return `This ${name} account's email address is already used by another Rally account.`;
   return `${name} sign-in did not complete. Try again or use your email.`;
 }
 
