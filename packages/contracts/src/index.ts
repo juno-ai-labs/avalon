@@ -184,6 +184,10 @@ export const HarnessFailureCodeSchema = z.enum([
   // No endpoint for the model accepts an input the request carries (an image,
   // a file, audio), as OpenRouter's `failed_routing_step` names it.
   "model_input_unsupported",
+  // The provider does not know the model id Rally asked for: a configured or
+  // pinned model that was retired or mistyped. Rally's configuration, not the
+  // provider's health, and not Rally's code.
+  "model_not_found",
   "tool_surface_too_large",
   "ambiguous_external_write",
   // Every route candidate answered with a transport fault the provider owns —

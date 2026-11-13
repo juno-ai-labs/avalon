@@ -263,6 +263,8 @@ describe("boundary contracts", () => {
       // The model cannot read something the request carries; the remedy is
       // the attachment or the model, not a retry and not a support ticket.
       "model_input_unsupported",
+      // A model id the provider does not know; the remedy is another model.
+      "model_not_found",
       "tool_receipt_persistence_failed",
       "run_state_persistence_failed",
       // The two provider arms are separate on purpose: one says Avalon called
