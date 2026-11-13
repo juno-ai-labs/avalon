@@ -68,11 +68,11 @@ cleanly and is no longer the key. Those belong in `.env.local` directly.
 ```bash
 #!/bin/bash
 
-# The image ships pnpm 10.x while the repository pins 11.13.0 through
+# The image ships pnpm 10.x while the repository pins 11.13.1 through
 # `packageManager`. Without this, dependency resolution in an agent session
 # differs from the pnpm that gates the pull request in CI.
 sudo -E corepack enable
-corepack prepare pnpm@11.13.0 --activate
+corepack prepare pnpm@11.13.1 --activate
 
 # -E is required to pass proxy info to apt-get.
 sudo -E apt-get update
@@ -140,7 +140,7 @@ version are parity requirements; the rest tracks the lockfile.
 | | Production / CI | Sandbox |
 | --- | --- | --- |
 | Node.js | 22 (`engines`, `setup-node`) | 22.22.2 |
-| pnpm | 11.13.0 (`packageManager`, `pnpm/action-setup`) | 10.33.0 on the image, 11.13.0 after `corepack prepare` |
+| pnpm | 11.13.1 (`packageManager`, `pnpm/action-setup`) | 10.33.0 on the image, 11.13.1 after `corepack prepare` |
 | wrangler | from the lockfile (4.118.0) | same |
 | workerd | from the lockfile | same |
 | Electron | 43.2.0 | same, Linux x64 build instead of macOS |

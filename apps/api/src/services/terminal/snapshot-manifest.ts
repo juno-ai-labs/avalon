@@ -102,7 +102,7 @@ export function terminalManagedSnapshotBootstrapCommand(): string {
     // into a variable first mirrors the apt branch immediately above, and keeps
     // the whole block a no-op when the snapshot already ships both.
     "node_packages=''",
-    "if ! command -v pnpm >/dev/null 2>&1; then node_packages=\"$node_packages pnpm@11.13.0\"; installed_capabilities=\"$installed_capabilities,pnpm\"; fi",
+    "if ! command -v pnpm >/dev/null 2>&1; then node_packages=\"$node_packages pnpm@11.13.1\"; installed_capabilities=\"$installed_capabilities,pnpm\"; fi",
     "if ! command -v tsx >/dev/null 2>&1; then node_packages=\"$node_packages tsx@4.20.6\"; installed_capabilities=\"$installed_capabilities,tsx\"; fi",
     "if [ -n \"$node_packages\" ]; then npm install --global $node_packages >/dev/null; fi",
     // A directory, not an interpreter, is the idempotency check: a probe is
