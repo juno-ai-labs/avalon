@@ -28,13 +28,13 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 
 The app opens the browser host with `?mobile=1`. The browser keeps its cookie authentication and organization selection. A native host opens the system authentication browser through `expo-web-browser`: ASWebAuthenticationSession on iOS and a browser Custom Tab on Android. Apple, Google, email and password sign-in use the existing browser entry. The app then exchanges a PKCE-bound, single-use ticket inside its WebView to establish an independent HttpOnly cookie session. On a returning launch, the browser restores the last organization only when its saved user matches the authenticated user and that organization is still in the authorized directory. The account row in the sidebar opens the organization picker; explicit sign-out clears the preference. After sign-in, `shell.tsx` selects the mobile presentation of the canonical Canvas routes instead of the desktop shell. The session providers and API client remain shared.
 
-Home uses `#/canvases`; opening a canvas uses `#/canvases/:id`, just like desktop. The conversation sheet adds `?view=chat` to that same canvas URL; canonical `?artifact=` links select the named artifact, and `?turn=` links open chat. Creation is local form state on the dashboard, then navigates to the created canvas. There are no separate mobile dashboard, artifact, conversation, or creation paths.
+Home uses `#/canvases`; opening a canvas uses `#/canvases/:id`, just like desktop. The conversation sheet adds `?view=chat` to that same canvas URL; canonical `?artifact=` links select the named artifact, and validated `?turn=&sequence=` links reveal the named message through the embedded conversation’s explicit scroll request. Canonical path rewrites preserve the mobile and preview host parameters. Creation is local form state on the dashboard, then navigates to the created canvas. There are no separate mobile dashboard, artifact, conversation, or creation paths.
 
-The dashboard consumes the current socket-owned Canvas directory. Opening a Canvas reads `GET /canvases/:id` and its published artifacts, preferring a site, then the newest file. Multiple resources expose an artifact picker. An empty canvas routes to chat and stays there while the user writes; View canvas explicitly returns to the artifact. Fetch failures show recovery rather than being mistaken for an empty canvas.
+The dashboard consumes the current socket-owned Canvas directory. Opening a Canvas reads `GET /canvases/:id` and its published artifacts, preferring a site, then the newest file. Multiple resources expose an artifact picker. The matching Canvas row’s publication timestamp and the resource topic refresh detail reads in both artifact and chat views; shared resource-head state advances version-keyed metadata. Unrelated presence and pin updates do not refetch Canvas details. An empty canvas routes to chat and stays there while the user writes; View canvas explicitly returns to the artifact. Fetch failures show recovery rather than being mistaken for an empty canvas.
 
 The native sidebar has Tabs and Canvases sections. Edit exposes plus/minus controls and drag handles. The Canvas directory supplies each pin’s name, appearance, and `pinnedPosition`. Native tabs are icon-only. Their full canvas names remain available to VoiceOver/TalkBack and in the sidebar. Sidebar directory failures offer retry. Pin writes use the canonical Canvas pin APIs, with one write in flight and server acknowledgments driving the UI. Home is fixed. The first four pins appear beside Home; existing desktop pins beyond those remain in the sidebar and can be reordered into view. This is a presentation capacity, not a new backend limit.
 
-Visited artifact views stay mounted and attached to preserve local scroll and form state during tab changes. Inactive native views use zero opacity, disabled pointer events, and hidden accessibility descendants; `display: none` can detach WKWebView and replay its consumed access URL. The native containers disable view flattening so changing visibility or accessibility does not replace their children. Fragment navigation does not reset the shell, and full application-page loading retains artifact instances until the authenticated user or organization changes. File artifacts use the shared InspectorRail. Live sites use the existing `openArtifact` API to obtain an `openUrl` on their hosted artifact origin. That one-time URL establishes artifact access and redirects to the canonical hosted URL; loading the bare canonical URL would skip access for private sites. The browser preview frames the same hosted document directly. Native sites open in separate WebViews so their cookies are first-party on iOS, avoiding Safari's cross-site iframe restriction on interactive writes. Those views receive no native bridge. A native conversation sheet hosts the existing web transcript and composer. Native camera, photo-library, and microphone usage descriptions support its attachment and dictation controls; permission prompts occur when used. Creation uses the shared attachment lease and draft mechanisms. Creation first reserves the Canvas through `POST /canvases`, then sends its opening message and attachments through the existing HTTP conversation admission route. A create attempt retains its message receipt key, operation ID, and Canvas ID while the submitted content is unchanged, so either step can be retried safely. The form stays mounted through navigation while a request is pending; completion refreshes the directory without redirecting someone who already left the form. Changed content starts a new attempt.
+Visited artifact views stay mounted and attached to preserve local scroll and form state during tab changes. Inactive native views use zero opacity, disabled pointer events, and hidden accessibility descendants; `display: none` can detach WKWebView and replay its consumed access URL. The native containers disable view flattening so changing visibility or accessibility does not replace their children. Fragment navigation does not reset the shell, and full application-page loading retains artifact instances until the authenticated user or organization changes. File artifacts use the shared InspectorRail. Live sites use the existing `openArtifact` API to obtain an `openUrl` on their hosted artifact origin. Access queries belong to one mounted artifact/version instance and are discarded on unmount, so switching A → B → A obtains fresh access. That one-time URL establishes artifact access and redirects to the canonical hosted URL; loading the bare canonical URL would skip access for private sites. The browser preview frames the same hosted document directly. Native sites open in separate WebViews so their cookies are first-party on iOS, avoiding Safari's cross-site iframe restriction on interactive writes. Those views receive no native bridge. A native conversation sheet hosts the existing web transcript and composer. Native camera, photo-library, and microphone usage descriptions support its attachment and dictation controls; permission prompts occur when used. Creation uses the shared attachment lease and draft mechanisms. Creation first reserves the Canvas through `POST /canvases`, then sends its opening message and attachments through the existing HTTP conversation admission route. A create attempt retains its message receipt key, operation ID, and Canvas ID while the submitted content is unchanged, so either step can be retried safely. The form stays mounted through navigation while a request is pending; completion refreshes the directory without redirecting someone who already left the form. Edited retries keep the reserved Canvas ID and mint new message/operation receipts. The composer blocks submission while creation is pending and uses the same authorized member roster for mention confirmation and payload resolution.
 
 Navigation uses Callstack's maintained [`react-native-bottom-tabs`](https://oss.callstack.com/react-native-bottom-tabs/docs/guides/usage-with-react-navigation)
 and its React Navigation adapter. A shared native stack owns the header and
@@ -63,7 +63,8 @@ Removing native destinations exposed a blank selected page even with the
 upstream insertion fix. This stable structure avoids deleting native tab
 containers; it does not keep hidden WebViews or extra workspace sockets alive.
 The assignments reset when account or organization changes. Removing the active
-pin explicitly selects Home. Unpinning closes that tab, so its unsaved
+pin explicitly selects Home, including when an overflow pin immediately replaces
+its Android destination. Unpinning closes that tab, so its unsaved
 in-artifact state is not durable storage.
 
 The previous React Navigation experimental native-tab integration required an
@@ -102,7 +103,7 @@ host, path and attempt must match before native accepts the result. A
 `sign-in-complete` command delivers the proof only to the first-party application
 WebView, which posts `/browser/mobile/exchange`; its response sets the ordinary
 HttpOnly cookie and returns credential-free identity metadata. Artifact WebViews
-never receive this proof. The system browser's existing cookie is neither copied
+never receive this proof. The exchange joins the existing per-region Web Locks queue for cookie writers, so a late renewal cannot overwrite the new session. A transient session read failure offers retry without announcing sign-out or discarding native tabs. Sanitized response-schema errors retain rejected field names. The system browser's existing cookie is neither copied
 nor revoked when the app signs out.
 
 Deploy the API handoff routes and browser bundle together before distributing
@@ -246,9 +247,9 @@ The browser imports the framework-independent protocol from `apps/mobile/src/pro
 
 Network and HTTP failures show retry views. Pin failure messages stay in the sidebar; failed writes do not manufacture a successful local order. New pins beyond the four visible mobile slots ask the user to unpin another; existing overflow remains accessible. Directory search filters the socket’s Canvas list. A removed or inaccessible canvas reports its read failure.
 
-Renderer termination reloads the relevant WebView. An artifact retry requests a fresh access URL, rather than replaying an expired open ticket; an access failure removes the stale native surface and exposes web recovery. Sign-out and account/organization changes discard native artifact views; a full application-page reload can rebuild the tab directory. Foregrounding refreshes the directory and resource metadata. Unsaved in-artifact state survives tab switching, but a full page/app reload, closing that tab or process termination can discard it. Native navigation and Liquid Glass require device validation; a browser preview cannot validate WKWebView cookies, Android Back dispatch, keyboard resizing, native gestures, or system accessibility.
+Renderer termination reloads the relevant WebView. An artifact retry requests a fresh access URL, rather than replaying an expired open ticket; an access or active metadata failure removes the stale native surface and exposes web recovery. The native handler also recognizes a failed `/redeem` bootstrap. Returning from inline chat republishes the active artifact descriptor. Sign-out and account/organization changes discard native artifact views; a full application-page reload can rebuild the tab directory. Foregrounding refreshes the directory and resource metadata. Unsaved in-artifact state survives tab switching, but a full page/app reload, closing that tab or process termination can discard it. Native navigation and Liquid Glass require device validation; a browser preview cannot validate WKWebView cookies, Android Back dispatch, keyboard resizing, native gestures, or system accessibility.
 
-Sign-in uses the system browser and returns to `rally-mobile://auth/complete`. Cancelling leaves the app signed out, and retry creates a new attempt and verifier. External links open in the system browser. Push setup, offline canvas copies and app-store signing remain separate integration work.
+Sign-in uses the system browser and returns to `rally-mobile://auth/complete`. Cancelling leaves the app signed out, and retry creates a new attempt and verifier. External HTTP(S) links open in the system browser on both platforms; Android reports every navigation as `other`, so the handler uses the platform and destination origin instead of requiring iOS’s `click` signal. Push setup, offline canvas copies and app-store signing remain separate integration work.
 
 ## Testing
 
@@ -260,7 +261,7 @@ corepack pnpm --filter @rally/mobile exec expo install --check
 corepack pnpm --filter @rally/mobile build
 ```
 
-`apps/browser/test/mobile-session.test.ts` checks account-bound organization restoration and the stale-empty artifact race. `apps/desktop/src/renderer/lib/api.test.ts` checks that a retried opening message sends the caller’s original receipt key and attachments. The pure protocol tests execute command injection with adversarial IDs, validate the bridge and artifact origin boundaries, and exercise pin ordering. Expo export compiles iOS, Android, and web bundles; it does not install or launch native apps. Browser host tests still exercise the real Worker transport and CSP.
+`apps/browser/test/mobile-session.test.ts` checks account-bound organization restoration and the stale-empty artifact race. `apps/desktop/src/renderer/lib/api.test.ts` checks that a retried opening message sends the caller’s original receipt key and attachments. The pure protocol tests execute command injection with adversarial IDs, validate the bridge and artifact origin boundaries, and exercise pin ordering. Expo export compiles iOS, Android, and web bundles; it does not install or launch native apps. Browser host tests still exercise the real Worker transport and CSP. Renderer `browser-entry`, `browser-cookie-writers`, and `browser-collaboration` tests cover transient recovery, schema diagnostics, actual Web Locks ordering, hosted-site remounts, socket publication/head updates, metadata recovery, inline-chat return, mention confirmation, pending submission and edited creation retry.
 
 ### Native verification (2026-11-13)
 
@@ -295,6 +296,16 @@ icon-only Lucide tabs with canvas colors. This run includes the merged upstream
 insertion fix, stable native destinations, cached icon files and the documented
 predictive-Back opt-out. Both reorder directions were explicitly checked on
 Android; the iPhone run checked movement earlier.
+
+A targeted Pixel 7 review run additionally verified a same-window external
+article link opening Chrome and Back returning to the retained artifact, plus
+active-pin removal when an overflow pin immediately replaces its native slot.
+The production organization had four canvases: this run added a temporary
+fifth-pin bridge fixture and changed an existing article link's target only in
+the device's document. Those fixtures were removed; no published artifact was
+changed. System sign-in cancel/retry and sign-out also passed. A transient
+session-failure retry screen was separately inspected in Chromium, and the
+browser regression tests include eleven deliberate failing mutations.
 
 All paid sessions were stopped after testing. These checks cover the exercised
 flows, not every item in the broader manual acceptance list below.
@@ -364,3 +375,5 @@ pending release. File-based native icons and React Navigation's documented
 predictive-Back opt-out address failures found on device. iPhone, Duo and Android
 acceptance is recorded separately from bundle/type checks above. Store
 distribution and OTA updates remain unconfigured.
+
+Implemented in [#1589](https://github.com/juno-ai-labs/avalon/pull/1589).

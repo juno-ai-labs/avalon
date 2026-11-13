@@ -1,12 +1,14 @@
 import { ErrorNotice } from '@rally/ui/components/error-notice';
-import { canvasNeedsConversation, mobileStorage, rememberMobileWorkspace } from './mobile-session';
+import { canvasNeedsConversation, mobileStorage, mobileTurnTarget, rememberMobileWorkspace } from './mobile-session';
 import type { WorkstreamResource } from '../../desktop/src/renderer/lib/types';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, FileText, Plus, Search, Sparkles } from 'lucide-react';
-import { asWorkstreamId, type CanvasDetail } from '@rally/contracts';
+import { asWorkstreamId } from '@rally/contracts';
 import { MOBILE_COMMAND_EVENT, MobileCommandSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
+import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
+import { useWorkspaceMembers } from '../../desktop/src/renderer/lib/workspace-members';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
 import { LocalCacheScopeProvider } from '../../desktop/src/renderer/lib/local-cache-scope';
 import { localCacheScope } from '../../desktop/src/renderer/lib/local-cache';
@@ -148,11 +150,25 @@ function Dashboard({ rows, loading, failed, retry, hasMore, more, open, create }
   </div>;
 }
 
+/** Follow only this canvas's publication timestamp and the resource topic,
+ * not unrelated directory presence/pin changes. Both artifact and chat use it. */
+function useMobileCanvasDetail(id: string, active = true) {
+  const { api } = useAppSession();
+  const queryClient = useQueryClient();
+  const row = useCanvasList()?.find((canvas) => canvas.id === id);
+  const { topicWaterlines, sidebarConnect } = useWorkspaceSocket();
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) });
+  }, [id, queryClient, row?.updatedAt, row?.artifactKind, topicWaterlines.resources, sidebarConnect?.generation]);
+  return useQuery({ queryKey: canvasDetailQueryKey(id), queryFn: ({ signal }) => api!.getCanvas(id, signal), enabled: Boolean(api && active) });
+}
+
 function Canvas({ id, active, describe }: { id: string; active: boolean; describe: (id: string, descriptor: Descriptor) => void }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { api } = useAppSession();
-  const query = useQuery({ queryKey: canvasDetailQueryKey(id), queryFn: ({ signal }) => api!.getCanvas(id, signal), enabled: Boolean(api && active) });
+  const query = useMobileCanvasDetail(id, active);
+  const heads = useResourceHeads();
   const artifacts = query.data?.artifacts ?? [];
   // Once an empty canvas opens its chat, stay there until View canvas is tapped.
   useEffect(() => {
@@ -174,11 +190,16 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
   };
   const resource = artifacts.find((item) => item.resourceId === selected) ?? artifacts.find((item) => item.kind === 'site') ?? artifacts[0];
   useEffect(() => {
+    if (!active) return;
     if (query.isError) { describe(id, { title: 'Canvas', artifactId: null, artifactPicker: false, view: 'artifact' }); return; }
     if (!query.data) return;
     describe(id, { title: query.data.title, artifactId: resource?.resourceId ?? null, artifactPicker: artifacts.length > 1, view: resource ? 'artifact' : 'conversation' });
-  }, [describe, id, query.data, query.isError, resource, artifacts.length]);
-  const content = useQuery({ queryKey: ['mobile-resource', resource?.resourceId, resource?.version], queryFn: () => api!.getResource(resource!.resourceId), enabled: Boolean(api && resource && active) });
+  }, [active, describe, id, query.data, query.isError, resource, artifacts.length]);
+  const version = resource ? Math.max(resource.version, heads[resource.resourceId]?.version ?? 0) : undefined;
+  const content = useQuery({ queryKey: ['mobile-resource', resource?.resourceId, version], queryFn: () => api!.getResource(resource!.resourceId), enabled: Boolean(api && resource && active) });
+  useEffect(() => {
+    if (active && resource && content.isError) postMobileEvent({ type: 'artifact-unavailable', canvasId: id, resourceId: resource.resourceId });
+  }, [active, id, resource, content.isError]);
   const loadContent = useCallback((resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal), [api]);
   const loadOriginal = useCallback((resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal), [api]);
   if (query.isError) return <Recovery title="This canvas couldn’t load" retry={() => void query.refetch()} />;
@@ -187,7 +208,7 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
   return <>
     {artifacts.length > 1 && <label className="mobile-artifact-picker">Artifact <select aria-label="Choose artifact" value={resource.resourceId} onChange={(event) => selectArtifact(event.target.value)}>{artifacts.map((item) => <option key={item.resourceId} value={item.resourceId}>{item.title}</option>)}</select></label>}
     {content.isError ? <Recovery title="This artifact couldn’t load" retry={() => void content.refetch()} /> : !content.data ? <div className="mobile-empty" role="status">Opening artifact…</div> : resource.kind === 'site'
-      ? <HostedSite canvasId={id} resource={content.data} active={active} />
+      ? <HostedSite key={`${resource.resourceId}:${version}`} canvasId={id} resource={content.data} active={active} />
       : <InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} />}
   </>;
 }
@@ -195,7 +216,8 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
 function HostedSite({ canvasId, resource, active }: { canvasId: string; resource: WorkstreamResource; active: boolean }) {
   const { api } = useAppSession();
   const native = Boolean(Reflect.get(window, 'ReactNativeWebView'));
-  const access = useQuery({ queryKey: ['mobile-site-access', canvasId, resource.id, resource.currentVersion], queryFn: () => api!.openArtifact(resource.id), enabled: active && Boolean(api), staleTime: Infinity, refetchOnWindowFocus: false });
+  const instance = useId();
+  const access = useQuery({ queryKey: ['mobile-site-access', canvasId, resource.id, resource.currentVersion, instance], queryFn: () => api!.openArtifact(resource.id), enabled: active && Boolean(api), staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false });
   useEffect(() => {
     if (!native) return;
     if (active && access.isError) { postMobileEvent({ type: 'artifact-unavailable', canvasId, resourceId: resource.id }); return; }
@@ -209,18 +231,23 @@ function HostedSite({ canvasId, resource, active }: { canvasId: string; resource
 }
 
 function MobileConversation({ id, describe }: { id: string; describe: (id: string, descriptor: Descriptor) => void }) {
-  const { api } = useAppSession();
-  const detail = useQuery<CanvasDetail>({ queryKey: canvasDetailQueryKey(id), queryFn: ({ signal }) => api!.getCanvas(id, signal), enabled: Boolean(api) });
+  const detail = useMobileCanvasDetail(id);
+  const location = useLocation();
+  const scrollToTurn = useMemo(() => mobileTurnTarget(location.search), [location.search]);
   const resource = detail.data?.artifacts[0];
   useEffect(() => {
     if (detail.data) describe(id, { title: detail.data.title, view: 'conversation', artifactId: resource?.resourceId ?? null, artifactPicker: false });
   }, [describe, id, detail.data, resource]);
-  return <div className="mobile-conversation-stack">{resource && <button className="mobile-view-canvas" onClick={() => postMobileEvent({ type: 'open-canvas', id })}>View canvas <ArrowUpRight size={15} aria-hidden="true" /></button>}<ConversationSurface parentKind="canvas" parentId={id} substreamId="0" embedded /></div>;
+  return <div className="mobile-conversation-stack">{resource && <button className="mobile-view-canvas" onClick={() => postMobileEvent({ type: 'open-canvas', id })}>View canvas <ArrowUpRight size={15} aria-hidden="true" /></button>}<ConversationSurface parentKind="canvas" parentId={id} substreamId="0" embedded scrollToTurn={scrollToTurn} /></div>;
 }
 
 function CreateCanvas({ created }: { created: (id: string) => void }) {
   const { api, session } = useAppSession();
   const [sending, setSending] = useState(false);
+  const guest = session?.workspace?.accessClass === 'guest';
+  const roster = useWorkspaceMembers(api, { enabled: !guest });
+  const members = roster.data ?? [];
+  const participants = members.filter((member) => member.id === session?.user.id);
   const [failed, setFailed] = useState(false);
   const [preview, setPreview] = useState<AttachmentPreview | null>(null);
   const draftKey = `mobile-canvas:${session?.workspace?.id}:${session?.user.id}:new`;
@@ -230,8 +257,8 @@ function CreateCanvas({ created }: { created: (id: string) => void }) {
   return <div className="mobile-create"><Sparkles size={36} strokeWidth={1.2} /><h1>What would you<br />like to make?</h1><p>A plan, a tiny tool, a space for something you love. Start with an idea.</p>
     <div className="mobile-create-composer"><WorkstreamComposer
       placeholder="Describe what you’d like…" ariaLabel="Describe your canvas" submitLabel="Create canvas" draftKey={draftKey}
-      workstream={{ participants: [], scope: 'personal', harnessStatus: 'completed' }} members={[]}
-      fileInputRef={fileInput} sending={sending} uploading={attachments.uploading} attachments={attachments.attachments}
+      workstream={{ participants, scope: 'personal', harnessStatus: 'completed' }} members={members}
+      fileInputRef={fileInput} sending={sending} sendBlocked={sending || (!guest && !roster.data)} uploading={attachments.uploading} attachments={attachments.attachments}
       onAttach={attachments.addFiles} onOpenAttachment={setPreview} onRemoveAttachment={attachments.removeAttachment} onRetryAttachment={attachments.retryAttachment}
       error={failed ? 'Your canvas couldn’t be created. Your draft is safe; try again.' : attachments.error}
       onStop={async () => undefined}
@@ -243,11 +270,11 @@ function CreateCanvas({ created }: { created: (id: string) => void }) {
           lease = await attachments.leaseReady();
           const request = { openingMessage: text, mentions, participantIds, attachmentIds: lease.attachments.flatMap((item) => item.resource ? [item.resource.id] : []) };
           const signature = JSON.stringify(request);
-          if (attempt.current?.signature !== signature) attempt.current = { signature, operationId: uuidV7(), workstreamId: uuidV7(), clientMessageId: uuidV7() };
+          if (attempt.current?.signature !== signature) attempt.current = { signature, operationId: uuidV7(), workstreamId: attempt.current?.workstreamId ?? uuidV7(), clientMessageId: uuidV7() };
           const result = await api.createCanvas({ canvasId: asWorkstreamId(attempt.current.workstreamId) });
           await api.sendConversationMessage(result.canvasId, {
             text, clientMessageId: attempt.current.clientMessageId, attachmentIds: request.attachmentIds, confirmedParticipantUserIds: participantIds,
-            mentions: await api.messageMentionPayload(text, mentions),
+            mentions: await api.messageMentionPayload(text, mentions, members),
           }, attempt.current.operationId);
           attachments.commitLease(lease.leaseId);
           created(result.canvasId);

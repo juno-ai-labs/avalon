@@ -2,6 +2,8 @@ import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
 import { ConfiguredRegionSchema } from "@rally/contracts/regions";
 
+export class BrowserResponseError extends Error {}
+
 export class BrowserApiError extends Error {
   constructor(readonly status: number, message: string, readonly code?: string) { super(message); }
 }
@@ -13,7 +15,7 @@ export async function browserRequest<T>(region: string, path: string, schema: z.
   // Chrome serializes cookie writers across tabs. Keep this off all product
   // reads/mutations: an old renewal must finish before a newer login/logout.
   const send = () => request<T>(region, path, schema, body);
-  if (['/session/renew', '/email/redeem', '/password', '/logout'].includes(path) && navigator.locks) {
+  if (['/session/renew', '/email/redeem', '/password', '/logout', '/mobile/exchange'].includes(path) && navigator.locks) {
     return navigator.locks.request(`rally-browser-cookie:${region}`, send);
   }
   return send();
@@ -33,6 +35,6 @@ async function request<T>(region: string, path: string, schema: z.ZodType<T>, bo
     throw new BrowserApiError(response.status, error.success ? error.data.error.message : "Unable to continue. Please try again.", error.success ? error.data.error.code : undefined);
   }
   const parsed = schema.safeParse(value);
-  if (!parsed.success) throw new Error(`Rally returned an unexpected response (${describeZodIssues(parsed.error)}). Reload and try again.`);
+  if (!parsed.success) throw new BrowserResponseError(`Rally returned an unexpected response (${describeZodIssues(parsed.error)}). Reload and try again.`);
   return parsed.data;
 }

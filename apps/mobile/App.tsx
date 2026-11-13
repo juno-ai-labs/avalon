@@ -114,7 +114,11 @@ function CanvasTabs() {
 function AndroidCanvasRoute(props: NativeBottomTabScreenProps<ParamListBase>) {
   const canvasId = useContext(CanvasRoutesContext)[props.route.name];
   const focused = useIsFocused();
-  useEffect(() => { if (!canvasId && focused) props.navigation.navigate('Home'); }, [canvasId, focused, props.navigation]);
+  const previousCanvas = useRef(canvasId);
+  useEffect(() => {
+    if (focused && (!canvasId || previousCanvas.current !== canvasId)) props.navigation.navigate('Home');
+    previousCanvas.current = canvasId;
+  }, [canvasId, focused, props.navigation]);
   return canvasId ? <CanvasScreen key={canvasId} {...props} canvasId={canvasId} /> : null;
 }
 
