@@ -361,13 +361,13 @@ describe("where a Sidekick's run may publish", () => {
     expect(await waterlines()).toEqual(after);
   });
 
-  it("opens a Canvas a run makes to its creator and the Sidekick's audience, not the Organization's default", async () => {
+  it("opens a Canvas a run makes to the Organization's default, like one a person makes", async () => {
     await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "workspace" } });
     const runCanvas = asWorkstreamId(crypto.randomUUID());
     await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: runCanvas, title: "Digest", createdByUserId: CREATOR,
       authorityGeneration: 1, writer: { sidekickId: MADE_ELSEWHERE, runId: crypto.randomUUID() } });
     const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: runCanvas, actor: member(CREATOR) });
-    expect(detail.visibility).toBe("creator");
+    expect(detail.visibility).toBe("workspace");
   });
 
   it("includes the Canvas an earlier run of it made", async () => {
