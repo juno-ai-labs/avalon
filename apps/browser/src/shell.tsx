@@ -1,3 +1,5 @@
+import { MobileCanvasApp } from './mobile';
+import { isMobileHost } from './mobile-bridge';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
@@ -190,7 +192,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   }), [api, getAccountOnboarding, identityApi, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   return <AppSessionValueProvider value={value} connectorSetup={connectorSetup}>
     <FaviconApiProvider>
-      <AccountOnboardingGate><WorkspaceApp /></AccountOnboardingGate>
+      <AccountOnboardingGate>{isMobileHost() ? <MobileCanvasApp /> : <WorkspaceApp />}</AccountOnboardingGate>
     </FaviconApiProvider>
   </AppSessionValueProvider>;
 }

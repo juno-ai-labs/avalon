@@ -1,0 +1,104 @@
+diff --git a/android/src/main/java/com/rcttabview/RCTTabView.kt b/android/src/main/java/com/rcttabview/RCTTabView.kt
+index 66de5d2fca9c878e8d67d247eeca66f034aaf3f7..50a7d09538c47482ba56ced2a0b1b10fbfc24987 100644
+--- a/android/src/main/java/com/rcttabview/RCTTabView.kt
++++ b/android/src/main/java/com/rcttabview/RCTTabView.kt
+@@ -155,7 +155,10 @@ class ReactBottomNavigationView(context: Context) : LinearLayout(context) {
+ 
+   fun setSelectedItem(value: String) {
+     selectedItem = value
+-    setSelectedIndex(items.indexOfFirst { it.key == value })
++    val index = items.indexOfFirst { it.key == value }
++    if (index >= 0) {
++      setSelectedIndex(index)
++    }
+     // Per-tab active tint color depends on the selected item.
+     updateTintColors()
+   }
+@@ -170,13 +173,50 @@ class ReactBottomNavigationView(context: Context) : LinearLayout(context) {
+     container.addView(child, params)
+     layoutHolder.addView(container, index)
+ 
+-    val itemKey = items[index].key
+-    if (selectedItem == itemKey) {
++    val itemKey = items.getOrNull(index)?.key
++    if (itemKey != null && itemKey == selectedItem) {
+       setSelectedIndex(index)
+       refreshLayout()
+     }
+   }
+ 
++  fun getScreenAt(index: Int): View? {
++    return (layoutHolder.getChildAt(index) as? ViewGroup)?.getChildAt(0)
++  }
++
++  fun removeScreenAt(index: Int) {
++    layoutHolder.removeViewAt(index)
++    syncSelectedIndex()
++  }
++
++  fun removeScreen(view: View) {
++    val container = view.parent as? View ?: return
++    if (container.parent === layoutHolder) {
++      layoutHolder.removeView(container)
++      syncSelectedIndex()
++    }
++  }
++
++  private fun syncSelectedIndex() {
++    val index = items.indexOfFirst { it.key == selectedItem }
++    if (index < 0 || isSelectedIndex(index)) {
++      return
++    }
++    setSelectedIndex(index)
++  }
++
++  private fun isSelectedIndex(index: Int): Boolean {
++    if (bottomNavigation.selectedItemId != index) {
++      return false
++    }
++    layoutHolder.forEachIndexed { childIndex, view ->
++      if ((view.visibility == VISIBLE) != (childIndex == index)) {
++        return false
++      }
++    }
++    return true
++  }
++
+   private fun createContainer(): FrameLayout {
+     val container = FrameLayout(context).apply {
+       layoutParams = FrameLayout.LayoutParams(
+@@ -291,6 +331,7 @@ class ReactBottomNavigationView(context: Context) : LinearLayout(context) {
+         }
+       }
+     }
++    syncSelectedIndex()
+     // Update tint colors and text appearance after updating all items.
+     post {
+       updateTextAppearance()
+diff --git a/android/src/main/java/com/rcttabview/RCTTabViewManager.kt b/android/src/main/java/com/rcttabview/RCTTabViewManager.kt
+index 3d0c872bbfc0a6e8644661604eea3bef0b932508..d57e5ab8108aa375b82b872624d82d60ba2e5066 100644
+--- a/android/src/main/java/com/rcttabview/RCTTabViewManager.kt
++++ b/android/src/main/java/com/rcttabview/RCTTabViewManager.kt
+@@ -73,11 +73,11 @@ class RCTTabViewManager(context: ReactApplicationContext) :
+   }
+ 
+   override fun getChildAt(parent: ReactBottomNavigationView, index: Int): View? {
+-    return parent.layoutHolder.getChildAt(index)
++    return parent.getScreenAt(index)
+   }
+ 
+   override fun removeView(parent: ReactBottomNavigationView, view: View) {
+-    parent.layoutHolder.removeView(view)
++    parent.removeScreen(view)
+   }
+ 
+   override fun removeAllViews(parent: ReactBottomNavigationView) {
+@@ -85,7 +85,7 @@ class RCTTabViewManager(context: ReactApplicationContext) :
+   }
+ 
+   override fun removeViewAt(parent: ReactBottomNavigationView, index: Int) {
+-    parent.layoutHolder.removeViewAt(index)
++    parent.removeScreenAt(index)
+   }
+ 
+   override fun needsCustomLayoutForChildren(): Boolean {

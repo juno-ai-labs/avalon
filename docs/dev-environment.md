@@ -10,6 +10,11 @@ step in the same change rather than working around it.
 The container definition that this guide assumes is documented separately in
 [the sandbox environment](sandbox.md).
 
+For the Expo iOS/Android client, use this guide for the shared API/browser setup,
+then follow [mobile-canvas-client.md](mobile-canvas-client.md#running-locally).
+The Expo web preview is a development surface; a native bundle export is not a
+signed device build or deployment.
+
 ## Prerequisites
 
 - **Node.js 22 or newer**

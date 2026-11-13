@@ -9,6 +9,7 @@ vi.mock('./local-cache', () => ({ clearAllLocalCache: vi.fn().mockResolvedValue(
 import { uuidToBase58 } from '@rally/contracts/uuid-base58';
 import { BrowserEntry } from '../../../../browser/src/entry';
 import { clearAllLocalCache } from './local-cache';
+import { MOBILE_COMMAND_EVENT } from '../../../../mobile/src/protocol';
 
 const user = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'guest@example.test', name: 'Guest',
   avatarUrl: null, timezone: 'UTC', createdAt: '2026-09-17T00:00:00.000Z' };
@@ -16,6 +17,50 @@ const workspace = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Shared te
   region: 'global', accessClass: 'guest', role: null, timezone: 'UTC', createdAt: user.createdAt };
 
 afterEach(() => { vi.useRealTimers(); sessionStorage.clear(); history.replaceState(null, '', '/'); });
+
+it('retries a transient native session failure without announcing sign-out', async () => {
+  const events: Array<{ event: { type: string } }> = [];
+  vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'test-capability');
+  vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw)) });
+  let unavailable = true;
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    if (input.endsWith('/workspace/select')) return unavailable
+      ? Response.json({ error: { message: 'Unavailable' } }, { status: 503 })
+      : Response.json({ user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+    throw new Error(`Unexpected request: ${input}`);
+  }));
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1`);
+  const view = render(<BrowserEntry renderCollaboration={() => <div>Restored canvas</div>} />);
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
+    await screen.findByRole('button', { name: 'Try again' });
+    expect(events.some(({ event }) => event.type === 'signed-out')).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
+    unavailable = false;
+    fireEvent.online(window);
+    await screen.findByText('Restored canvas');
+    expect(events.some(({ event }) => event.type === 'signed-out')).toBe(false);
+  } finally { view.unmount(); }
+});
+
+it('names a rejected exchange response field without exposing its value', async () => {
+  vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'test-capability');
+  vi.stubGlobal('ReactNativeWebView', { postMessage: () => undefined });
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    if (input.endsWith('/mobile/exchange')) return Response.json({ user: { ...user, id: 'private-invalid-value' }, workspace: null, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+    return Response.json({ error: { message: 'Sign in' } }, { status: 401 });
+  }));
+  const view = render(<BrowserEntry />);
+  try {
+    await screen.findByRole('button', { name: 'Sign in' });
+    act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail: {
+      type: 'sign-in-complete', proof: { region: 'global', ticket: 'test-ticket-long-enough', attemptId: 'a'.repeat(43), codeVerifier: 'v'.repeat(43) },
+    } })));
+    expect(await screen.findByText(/unexpected response.*user.id/)).not.toHaveTextContent('private-invalid-value');
+  } finally { view.unmount(); }
+});
 
 // Renderer test: HTTP is the boundary; backend cookie/membership authority is
 // exercised by the API browser-session suites. The channel itself is real.
