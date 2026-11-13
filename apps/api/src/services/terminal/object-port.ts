@@ -13,6 +13,7 @@ import type { Env } from "../../env";
 import { localWorkstreamAuthority } from "../../runtime/local-authorities";
 import type { WorkstreamTerminalStorage } from "../../durable-objects/workstream-terminal-storage";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
+import { TerminalObjectPortError } from "./object-port-error";
 
 /**
  * Builds a port for one conversation's Terminal authority; injected so callers
@@ -36,26 +37,7 @@ export type TerminalOperationExecutor = (
   args: unknown[],
 ) => Promise<unknown>;
 
-/** A typed failure from the object-local Terminal authority with explicit retry safety. */
-export class TerminalObjectPortError extends Error {
-  readonly code: TerminalOperationFailure["code"];
-  readonly details: {
-    operation: TerminalOperation;
-    outcome: TerminalOperationFailure["outcome"];
-    retryable: TerminalOperationFailure["retryable"];
-  };
-
-  constructor(operation: TerminalOperation, failure: TerminalOperationFailure) {
-    super(failure.message);
-    this.name = "TerminalObjectPortError";
-    this.code = failure.code;
-    this.details = {
-      operation,
-      outcome: failure.outcome,
-      retryable: failure.retryable,
-    };
-  }
-}
+export { TerminalObjectPortError };
 
 /**
  * Bind a factory to an environment, optionally to in-isolate authority.

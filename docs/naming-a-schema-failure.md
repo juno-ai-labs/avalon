@@ -141,7 +141,7 @@ its own is a boundary that drifts.
 | `apps/ace/src/regional-api.ts`, `index.ts`, `private-access.ts` | a regional answer the contract refuses names the field in the message beside `regional_api_contract_mismatch`; the fallback handler logs `error_code`; a refused download grant says which field |
 | `apps/api/src/services/integrations.ts` | `dynamic_connector_tools_unavailable` carries `error_code` beside the class name, so a tool catalog that drifted out of `ToolDefinitionSchema` names its path on both the creator-catalog and initial-activation surfaces; `connector_plugin_reauthorization_failed` carries a schema rejection's paths as `code`, the way it already carried a connector's own |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
-| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback; a Workers runtime failure, which arrives as a sentence, is named behind the caller's code by matching the sentence or the runtime's `overloaded` flag (`parent_export_failed:durable_object_code_updated`), never by copying it; an `ObjectPortError` is named by the conversation object's refusal code (`workstream_runtime_authority_fenced`) when that code is a bare constant |
+| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback; a Workers runtime failure, which arrives as a sentence, is named behind the caller's code by matching the sentence or the runtime's `overloaded` flag (`parent_export_failed:durable_object_code_updated`), never by copying it; an `ObjectPortError` is named by the conversation object's refusal code (`workstream_runtime_authority_fenced`) when that code is a bare constant, and a `TerminalObjectPortError` by the Terminal authority's (`workstream_terminal_identity_mismatch`) |
 | `apps/api/src/middleware/errors.ts` | `request_failed` carries what `diagnosticErrorCode` admits of a plain `Error`'s message, as `error_code` and in the row's summary, where the row said `internal_error` and `Error` |
 | `apps/api/src/services/workspace-schedule-execution.ts` | the `schedule.failed`, `resource_watch.failed` and `workspace_schedule_target_failed` records name a stored row's rejection behind each record's own constant; the schedule and watch rows are the two whose targets parse a stored row |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | every RPC entry point, through `parseRpcInput`, labelled by method (`admit_external_event_invalid:…`) |
@@ -228,6 +228,31 @@ digits, underscores, up to 80 characters) to be named. The pattern is matched
 before the constraint sentences, so a trigger refusal never reads as another
 constraint. The guard is `test-workers/d1-trigger-abort-diagnostics.test.ts`,
 which raises both kinds on real D1.
+
+### 2026-11-12 — A Terminal authority's refusal is named by its code
+
+**What changed:** `diagnosticErrorCode` answers a `TerminalObjectPortError`
+with its declared `code`, as it does an `ObjectPortError`; the class moved to
+`services/terminal/object-port-error.ts` so the logger can read it without
+importing the port.
+
+**Why:** Callers of the Terminal RPC port and resident executor receive a typed
+refusal whose human-readable message cannot pass the diagnostic code filter.
+The helper discarded the declared reason even though it was available. An
+investigation of Terminal observation warnings exposed this gap, but the alarm
+uses local storage and does not receive this typed error; its cause remains
+unproven by this change.
+
+**Considered and rejected:** Subclassing `ObjectPortError`: four call sites
+branch on `instanceof ObjectPortError` and would start matching Terminal
+failures. Logging raw provider or SQLite messages from the alarm would widen
+logged data without establishing its cause.
+
+**Consequences:** The four Terminal codes are declared literals and still pass
+the bare-code filter. Provider messages and stacks are not newly logged, and
+callers retain the existing error class identity and import path.
+
+Shipped in #1568.
 
 ### 2026-10-19 — A conversation object's refusal is named by its code
 
