@@ -45,8 +45,8 @@ available to Rally users by virtue of product membership.
   `config/*-lakehouse.json` manifests.
 - `apps/engineering-mcp/src/observability.ts` is the Workers Observability
   client behind `query_worker_observability`.
-- `apps/engineering-mcp/src/audit-log.ts` writes the tool-call audit log to
-  R2; `src/server.ts` routes every tool registration through it.
+- `apps/engineering-mcp/src/audit-log.ts` sends the tool-call audit rows to
+  their Pipeline; `src/server.ts` routes every tool registration through it.
 - `apps/engineering-mcp/src/cloudflare-api.ts` reads both clients' Cloudflare
   response envelope and names a refusal by Cloudflare's own code.
 - `.github/workflows/deploy-api.yml` deploys this Worker only after both
@@ -153,40 +153,60 @@ stateful artifact runs. See [`reactive-web-artifacts.md`](reactive-web-artifacts
 
 ### Tool-call audit log
 
-Every `tools/call` that reaches a tool handler is recorded in the
-`rally-engineering-mcp-audit-log` R2 bucket (binding `ENGINEERING_AUDIT_LOG`).
+Every `tools/call` that reaches a tool handler is recorded as rows in the
+`avalon.engineering_mcp_audit` Iceberg table, sent through the
+`ENGINEERING_AUDIT_LAKEHOUSE` Pipeline binding and queryable with
+`query_data_lake` (`lakehouse: "engineering_mcp_audit"`). The table is a fourth
+Global lakehouse, declared like the others in
+`config/engineering-mcp-audit-lakehouse.json` and its stream schema, but its
+binding belongs to this Worker rather than the API Worker.
 `createEngineeringMcpServer` replaces `server.registerTool` before any tool is
 registered, so a tool added later is audited without opting in.
 
-Each event is its own JSON object, written once and never overwritten:
+Each event is one row:
 
-| `event` | Written | Carries |
+| `event` | Sent | Columns it fills |
 | --- | --- | --- |
-| `tool_call_started` | Before the handler runs, awaited | `callId`, `tool`, the validated `arguments` |
-| `tool_call_finished` | After the handler returns, in `waitUntil` | `callId`, `outcome` (`succeeded`, `failed`, `task_created`), `errorCode` when failed, `taskId` when a task was created, `durationMs` |
-| `task_finished` | When `EngineeringTaskDO` finishes or cancels a task | `taskId`, `outcome` (`succeeded`, `failed`, `cancelled`), `errorCode` when failed |
+| `tool_call_started` | Before the handler runs, awaited | `call_id`, `tool`, the validated `arguments` (JSON) |
+| `tool_call_finished` | After the handler returns, in `waitUntil` | `call_id`, `outcome` (`succeeded`, `failed`, `task_created`), `error_code` when failed, `task_id` when a task was created, `duration_ms` |
+| `task_finished` | When `EngineeringTaskDO` finishes or cancels a task | `task_id`, `outcome` (`succeeded`, `failed`, `cancelled`), `error_code` when failed |
 
-Every record also has `schema` (`rally.engineering-mcp.audit/v1`), `at`, the
-Access `actor` (subject, email, audience) and `workerVersion`. The key is
-`tool-calls/YYYY/MM/DD/<at>_<uuid>.json` in UTC, so a prefix listing returns
-one day in time order; pair a call's records by `callId`, and a deferred
-call's execution by `taskId`. `errorCode` is the same code
-`engineering_mcp_tool_failed` logs (`toolErrorCode`).
+Every row also has `schema_version`, `event_id`, `occurred_at`, the Access
+actor (`actor_subject`, `actor_email`, `actor_audience`) and `worker_version`.
+Pair a call's rows by `call_id`, and a deferred call's execution by `task_id`.
+`error_code` is the code `engineering_mcp_tool_failed` logs (`toolErrorCode`).
+Rows take about five minutes to become queryable, as in every lakehouse here.
+Pipeline delivery to the table is exactly-once, but a send the Worker retried
+would be a second row, so count distinct `event_id`.
 
-**A call whose started record cannot be written does not run.** The tool
-returns `engineering_audit_unavailable` and the Worker logs
-`engineering_mcp_audit_write_failed`. The finished and task records follow an
-effect that has already happened, so a failed write there is only logged.
+**A call whose started row the stream does not accept does not run.**
+`send()` resolves only once the stream confirms ingestion, and a stream is
+durable from then on, so a running tool always has a row on its way to the
+table. A refused send returns `engineering_audit_unavailable` (with the
+platform's code when it gave one); a Worker with no binding returns
+`engineering_audit_unconfigured`. Both log
+`engineering_mcp_audit_write_failed`. The finished and task rows follow an
+effect that has already happened, so a failed send there is only logged.
 
 Recorded: the arguments as the SDK validated them, which include SQL text and
 bindings, Basin queries and message bodies sent with `send_message`. Not
 recorded: results, and calls the SDK rejects before a handler runs (an unknown
 tool or arguments that fail the input schema), since those execute nothing.
 `tasks/get`, `tasks/update` and `tasks/cancel` are not tool calls; a
-cancellation appears as a `cancelled` `task_finished` record.
+cancellation appears as a `cancelled` `task_finished` row. Querying the audit
+table through `query_data_lake` is itself a recorded call.
 
-The bucket has no lifecycle rule, so records are kept until someone deletes
-them. Retention is the team's to set
+**Provisioning.** The manifest lands with the all-zero stream ID. Until
+`pnpm cloudflare:lakehouses:ensure` creates the stream, bucket, catalog, sink
+and pipeline and the reported stream ID is pinned in the manifest,
+`apps/engineering-mcp/scripts/deploy.mjs` deploys without the binding, warns,
+and every tool refuses as `engineering_audit_unconfigured`. The API Worker's
+`--materialize-bindings` step leaves this manifest out, since the binding is
+not the API Worker's. `BASIN_SQL_API_TOKEN` must also be widened to the new
+bucket before `query_data_lake` can read the table.
+
+The table has no retention or compaction policy of its own, so rows are kept
+until someone deletes them. Retention is the team's to set
 ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
 This log is separate from the content-free attempt and result rows that
 product writes keep in `AUDIT_DB` (see [Product creation](#product-creation)).
@@ -454,9 +474,9 @@ tools and Ace Service Binding are retired. See [`feature-flags.md`](feature-flag
 ### Lakehouses
 
 `query_data_lake` sends one statement to Cloudflare's Basin SQL HTTP API
-(formerly R2 SQL) for one of the three Global lakehouses: the
-[inference](inference-lakehouse.md), [analytics events](analytics-lakehouse.md)
-and [usage](usage-metering.md) tables. Their bucket, namespace and table names
+(formerly R2 SQL) for one of the four Global lakehouses: the
+[inference](inference-lakehouse.md), [analytics events](analytics-lakehouse.md),
+[usage](usage-metering.md) and [tool-call audit](#tool-call-audit-log) tables. Their bucket, namespace and table names
 come from `config/*-lakehouse.json`.
 
 Each bucket is its own catalog, so the tool takes the table and picks the
@@ -533,7 +553,7 @@ names the view only; filter values and the needle can quote product data.
 - The SQL text, bindings, returned rows, and error message never enter Worker
   logs. Audit events contain Access subject/email, tool name, target IDs, and a
   fixed outcome code only. SQL text and bindings, and every other argument, do
-  enter the R2 tool-call audit log; returned rows never do.
+  enter the tool-call audit table; returned rows never do.
 - No tool runs without a `tool_call_started` record in R2.
 - The private regional entrypoint has no HTTP route. Only a Worker with the
   named Service Binding can call it.
@@ -545,7 +565,7 @@ names the view only; filter values and the needle can quote product data.
   SQL tool for the length of the deployment window.
 
 - The lakehouse token reaches only Basin SQL, from inside this Worker. It never
-  crosses to a client, and its permissions are scoped to the three lakehouse
+  crosses to a client, and its permissions are scoped to the four lakehouse
   buckets, not the account.
 - The Workers Observability token is likewise used only from inside this Worker
   and holds only Workers Observability permission.
@@ -752,14 +772,15 @@ means message text ([`runbook.md`](runbook.md#log-shape)).
 Policy changes, identity-provider changes, and client approval belong in the
 Cloudflare Access application, not in application code.
 
-The tool-call audit bucket holds every argument an operator sent, so it holds
+The tool-call audit table holds every argument an operator sent, so it holds
 production SQL with its bindings and the text of messages sent as a user.
-Reading it needs account-level R2 access; no Rally Worker other than this one
-binds it, and this one only writes.
+Anyone with Access membership reads it through `query_data_lake`, as they can
+already read the production data those arguments name. This Worker only
+writes to it through its Pipeline binding.
 
 `BASIN_SQL_API_TOKEN` is a runtime credential, not
 the deployment token. Basin SQL requires R2 storage read/write on the buckets it
-reads, so create it as an R2 API token restricted to the three lakehouse
+reads, so create it as an R2 API token restricted to the four lakehouse
 buckets with Basin SQL Read, Basin Catalog Read, and R2 Storage Write. Never
 widen it to the account or reuse `CLOUDFLARE_API_TOKEN`.
 
@@ -794,8 +815,7 @@ production database write access. Verify the intended operator can authenticate
 and an unauthorized identity is refused before deploying.
 
 The deployment token needs Access application read/edit permissions as well as
-Worker deployment permissions, and R2 edit so the deploy can create the audit
-bucket when it is missing. The deploy script requires this app and a nonempty
+Worker deployment permissions. The deploy script requires this app and a nonempty
 policy list, preserves its session duration and identity providers, enables the
 hosted-client OAuth redirect configuration, and injects the app's audience into
 the Worker. It does not create an Access app or import another app's policy.
@@ -803,21 +823,30 @@ the Worker. It does not create an Access app or import another app's policy.
 
 ## Changelog
 
-### 2026-11-13 — Record every tool call in R2
+### 2026-11-13 — Record every tool call in a lakehouse
 
 Worker logs carried who ran which tool but, by design, never what it ran, and
 the `AUDIT_DB` rows cover only product writes and stay content-free. Nothing
 recorded the SQL an operator ran against production or the Basin query they
-ran over raw inference data. Each call now writes its validated arguments to an
-R2 object before it runs, and its outcome after.
+ran over raw inference data. Each call now sends its validated arguments as a
+row before it runs, and its outcome after.
+
+The rows go through a Pipeline into an Iceberg table rather than into plain R2
+objects, so the log answers questions ("every `run_d1_sql` by this operator
+last week") with one `query_data_lake` statement instead of a bucket listing.
+The first version of this change wrote one R2 object per event, which nothing
+could query. Workers Analytics Engine was rejected because it samples writes,
+and an audit log cannot drop rows. D1 was rejected because rows can be large
+(a statement or a message body) and keeping them out of `AUDIT_DB` keeps that
+database content-free.
 
 The hook wraps `server.registerTool` rather than the `tool` helper, because a
 task-creating call returns before `tool` runs and a future tool may not use the
-helper. The started write is awaited and fails the call closed, at the cost of
-one R2 write of latency per call; the finished write uses `waitUntil` so it
-adds none. R2 over D1: the records are append-only, unqueried by the product,
-and can be large (a SQL statement or message body), and keeping them out of
-`AUDIT_DB` keeps that database content-free. Retention is left open for the
+helper. The started send is awaited and fails the call closed, at the cost of
+one Pipeline ingest of latency per call; this holds because `send()` resolves
+only after the stream confirms ingestion. The finished send uses `waitUntil`
+so it adds none. The binding is the MCP Worker's own, so the API Worker's
+binding materializer leaves the manifest out. Retention is left open for the
 team to set.
 
 ### 2026-11-12 — Use the MCP SDK object-schema interface

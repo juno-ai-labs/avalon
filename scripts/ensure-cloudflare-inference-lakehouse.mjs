@@ -22,6 +22,7 @@ const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..
 const manifestPath = join(repositoryDirectory, 'config/inference-lakehouse.json');
 const analyticsManifestPath = join(repositoryDirectory, 'config/analytics-events-lakehouse.json');
 const usageManifestPath = join(repositoryDirectory, 'config/usage-lakehouse.json');
+const engineeringAuditManifestPath = join(repositoryDirectory, 'config/engineering-mcp-audit-lakehouse.json');
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 const SAFE_BUCKET = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
 const SAFE_PIPELINE_ENTITY = /^[a-z][a-z0-9_]{2,127}$/u;
@@ -167,10 +168,13 @@ function jurisdictionHeaders(region) {
 
 function assertManifest(manifest) {
   if (manifest.schemaVersion !== 5
-    || !['INFERENCE_LAKEHOUSE', 'ANALYTICS_LAKEHOUSE', 'USAGE_LAKEHOUSE'].includes(manifest.binding)) {
+    || !['INFERENCE_LAKEHOUSE', 'ANALYTICS_LAKEHOUSE', 'USAGE_LAKEHOUSE', 'ENGINEERING_AUDIT_LAKEHOUSE'].includes(manifest.binding)) {
     throw new Error('Unsupported lakehouse manifest version or binding');
   }
-  const label = { INFERENCE_LAKEHOUSE: 'Inference', ANALYTICS_LAKEHOUSE: 'Analytics events', USAGE_LAKEHOUSE: 'Usage' }[manifest.binding];
+  const label = {
+    INFERENCE_LAKEHOUSE: 'Inference', ANALYTICS_LAKEHOUSE: 'Analytics events', USAGE_LAKEHOUSE: 'Usage',
+    ENGINEERING_AUDIT_LAKEHOUSE: 'Engineering MCP audit',
+  }[manifest.binding];
   if (!['account', 'user'].includes(manifest.deploymentTokenOwner)) {
     throw new Error(`${label} lakehouse manifest must declare its deployment token owner`);
   }
@@ -279,6 +283,29 @@ export async function loadAnalyticsLakehouseManifest() {
     throw new Error('Analytics lakehouse stream schema must declare fields');
   }
   return { ...manifest, streamSchema };
+}
+
+export async function loadEngineeringAuditLakehouseManifest() {
+  const manifest = assertManifest(JSON.parse(await readFile(engineeringAuditManifestPath, 'utf8')));
+  const schemaPath = join(repositoryDirectory, manifest.streamSchema);
+  const streamSchema = JSON.parse(await readFile(schemaPath, 'utf8'));
+  if (!Array.isArray(streamSchema.fields) || streamSchema.fields.length === 0) {
+    throw new Error('Engineering MCP audit lakehouse stream schema must declare fields');
+  }
+  return { ...manifest, streamSchema };
+}
+
+/**
+ * The engineering MCP Worker's own Pipeline binding, which its deploy writes
+ * into its generated Wrangler config. Not one of the API Worker's lakehouses,
+ * so the regional materializer leaves it out. Null until reconciliation pins
+ * the stream: the MCP then deploys without it and refuses every tool call
+ * as `engineering_audit_unconfigured`.
+ */
+export async function engineeringAuditLakehouseBinding() {
+  const manifest = await loadEngineeringAuditLakehouseManifest();
+  const { streamId } = manifest.regions.global;
+  return streamId === UNPROVISIONED_STREAM_ID ? null : { binding: manifest.binding, stream: streamId };
 }
 
 async function ensureBucket(client, regionName, region, create, log) {
@@ -584,6 +611,7 @@ export async function ensureCloudflareLakehouses(options = {}) {
     loadInferenceLakehouseManifest(),
     loadAnalyticsLakehouseManifest(),
     loadUsageLakehouseManifest(),
+    loadEngineeringAuditLakehouseManifest(),
   ]);
   assertDistinctPinnedStreamIds(manifests);
   const provisioned = [];
