@@ -62,7 +62,7 @@ export function trustedArtifact(access: NativeArtifact, domain: string): boolean
 
 export const MobileEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
-  z.object({ type: z.literal('crash-permission'), scope: MobileCrashScopeSchema, enabled: z.boolean() }),
+  z.object({ type: z.literal('crash-permission'), requestId: z.string().uuid(), scope: MobileCrashScopeSchema, enabled: z.boolean() }),
   z.object({ type: z.literal('crash-uploaded'), scope: MobileCrashScopeSchema, uploadId: z.string().uuid(), ok: z.boolean() }),
   z.object({ type: z.literal('notification-opened'), url: HttpUrlSchema }),
   z.object({ type: z.literal('push-device-result'), requestId: z.string().uuid(), userId: z.string(), workspaceId: z.string(), ok: z.boolean(), enabled: z.boolean() }),
@@ -77,7 +77,7 @@ export type MobileEvent = z.infer<typeof MobileEventSchema>;
 
 export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('home') }),
-  z.object({ type: z.literal('crash-status') }),
+  z.object({ type: z.literal('crash-status'), requestId: z.string().uuid() }),
   z.object({ type: z.literal('crash-upload'), report: MobileCrashReportSchema }),
   z.object({ type: z.literal('push-device'), requestId: z.string().uuid(), userId: z.string(), workspaceId: z.string(), installationId: z.string().uuid(), registration: RegisterPushDeviceRequestSchema.nullable() }),
   z.object({ type: z.literal('open-notification'), url: HttpUrlSchema }),

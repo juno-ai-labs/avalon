@@ -23,6 +23,7 @@ concurrency:
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: mobile-production
     steps:
@@ -42,7 +43,7 @@ jobs:
       - run: pnpm --filter @rally/browser test
       - uses: expo/expo-github-action@v8
         with:
-          eas-version: latest
+          eas-version: 27.9.0
           token: ${{ secrets.EXPO_TOKEN }}
       - name: Build or update the production runtime
         working-directory: apps/mobile

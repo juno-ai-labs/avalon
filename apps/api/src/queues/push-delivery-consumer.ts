@@ -1,4 +1,3 @@
-import { sendFcm } from '../services/push/fcm-transport';
 import { notifyOps } from "../observability/ops-slack-notifier";
 import { asWorkspaceId, WorkspaceAttentionSchema } from "@rally/contracts";
 import { PushDeliveryMessageSchema, type PushDeliveryMessage } from "@rally/contracts/push-notifications";
@@ -16,14 +15,13 @@ import { pushEnabled } from "../services/push-delivery-service";
 import { livePushDevices } from "../services/push-device-service";
 import { sendApns, type ApnsOutcome } from "../services/push/apns-transport";
 import type { PushDevice } from "../services/push-device-service";
-import { renderPushPayload, renderWebPushPayload, renderFcmPayload, pushCollapseId, type PushPayloads } from "../services/push/push-payload";
+import { renderPushPayload, renderWebPushPayload, pushCollapseId, type PushPayloads } from "../services/push/push-payload";
 import { sendWebPush, WEB_PUSH_PAYLOAD_BYTES, type WebPushOutcome } from "../services/push/web-push-transport";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
 
 /** One send per device, to the transport the device registered with. */
 export type PushSend = (env: Env, device: PushDevice, payload: PushPayloads, collapseId: string) => Promise<ApnsOutcome | WebPushOutcome>;
 const sendByTransport: PushSend = async (env, device, payload, collapseId) => {
-  if (device.transport === "fcm" && payload.fcm) return sendFcm(env, device, payload.fcm, collapseId);
   if (device.transport === "apns") return sendApns(env, device, payload.apns, collapseId);
   if (device.transport === "webpush") return sendWebPush(env, device, payload.web, collapseId);
   return { outcome: "rejected", reason: "unknown_transport" };
@@ -106,7 +104,6 @@ async function sendPushNotice(env: Env, workspace: DurableObjectStub<WorkspaceDO
     : notice.kind === "artifact_updated" ? `artifacts:${notice.parentId}` : notice.intentId);
   const { title, body } = notice;
   const payload: PushPayloads = {
-    fcm: renderFcmPayload({ title, body, data }),
     apns: renderPushPayload({ title, body, threadKey: notice.parentId, badge: attention.readerAttentionCount, data }),
     web: renderWebPushPayload({ title, body, collapseId, data, badge: attention.readerAttentionCount, maxBytes: WEB_PUSH_PAYLOAD_BYTES }),
   };
@@ -128,8 +125,8 @@ async function sendPushNotice(env: Env, workspace: DurableObjectStub<WorkspaceDO
         db.prepare(`INSERT OR IGNORE INTO push_delivery_receipts VALUES (?, ?, ?, ?)`).bind(row.workspaceId, row.intentId, device.id, at),
         db.prepare(`UPDATE user_push_devices SET last_delivery_at = ?, last_failure_code = NULL WHERE id = ?`).bind(at, device.id),
       ]);
-    } else if (result.outcome === "bad_token" || (result.outcome === "unregistered" && (device.transport !== "apns"
-      // Web Push and FCM explicitly retire tokens; APNs dates its answer.
+    } else if (result.outcome === "bad_token" || (result.outcome === "unregistered" && (device.transport === "webpush"
+      // A browser subscription the push service has dropped never comes back; APNs dates its answer.
       || ("timestamp" in result && result.timestamp !== undefined && result.timestamp >= Date.parse(device.last_seen_at))))) {
       await db.prepare(`UPDATE user_push_devices SET disabled_at = ?, disabled_reason = ? WHERE id = ? AND token = ? AND last_seen_at = ?`)
         .bind(at, result.outcome, device.id, device.token, device.last_seen_at).run();
@@ -174,7 +171,7 @@ export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env
   }
   for (const [transport, reason] of faults) await notifyOps(env, {
     event: "push_provider_auth_failed",
-    summary: transport === "apns" ? "APNs provider authentication needs attention (the APNs key)." : transport === "fcm" ? "FCM provider authentication needs attention (the service account)." : "Web Push authentication needs attention (the VAPID key).",
+    summary: transport === "apns" ? "APNs provider authentication needs attention (the APNs key)." : "Web Push authentication needs attention (the VAPID key).",
     fields: { transport, reason },
   });
 }

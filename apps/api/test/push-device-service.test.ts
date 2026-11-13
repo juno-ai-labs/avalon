@@ -77,14 +77,24 @@ describe('push device registry', () => {
       expect.objectContaining({ token: '22'.repeat(32), apns_environment: 'production' }),
     ]);
   });
-});
 
- it('replaces a phone’s old session binding so signing out stops delivery after reinstallation', async () => {
+  it('replaces a phone’s old session binding so signing out stops delivery after reinstallation', async () => {
     const { db, env, auth } = fixture();
-    const input = { platform: 'android' as const, transport: 'fcm' as const, token: 'Same-DeviceToken', appVersion: '1' };
+    const input = { platform: 'ios' as const, transport: 'apns' as const, topic: 'ai.rallywith.mobile' as const, apnsEnvironment: 'production' as const, token: 'ab'.repeat(32), appVersion: '1' };
     await registerPushDevice(env, auth, 'phone', input);
     await registerPushDevice(env, { ...auth, sessionId: 'b' }, 'phone', input);
     expect(await livePushDevices(env, auth.userId)).toHaveLength(1);
     db.prepare(`UPDATE sessions SET revoked_at = '2026-01-02' WHERE id = 'b'`).run();
     expect(await livePushDevices(env, auth.userId)).toEqual([]);
   });
+
+  it.each(['macos', 'web'] as const)('keeps multiple %s browser-session bindings', async (platform) => {
+    const { db, env, auth, input } = fixture();
+    const registration = platform === 'macos' ? input : { platform: 'web' as const, transport: 'webpush' as const,
+      endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) }, appVersion: 'web' };
+    await registerPushDevice(env, auth, 'shared', registration);
+    await registerPushDevice(env, { ...auth, sessionId: 'b' }, 'shared', registration);
+    db.prepare("UPDATE sessions SET revoked_at = '2026-01-02' WHERE id = 'b'").run();
+    expect(await livePushDevices(env, auth.userId)).toHaveLength(1);
+  });
+});

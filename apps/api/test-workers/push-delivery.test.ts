@@ -297,22 +297,3 @@ it('pushes a Sidekick run that needs input or finished, linked to the Sidekick, 
   expect(await deliverPush(pushEnv(), message('run_finished:one:again'), send)).toBe(true);
   expect(send).not.toHaveBeenCalled();
 });
-
-it('queues Android-only installations, preserves token case, and disables an expired FCM token', async () => {
-  await env.DB.prepare('DELETE FROM user_push_devices').run();
-  await registerPushDevice(env, memberAuth, 'android', { platform: 'android', transport: 'fcm', token: 'MixedCase-FcmToken', appVersion: '0.1.0' });
-  const queue = vi.fn(async () => undefined);
-  const configured = { ...pushEnv(), APP_ENV: 'staging' as const, FCM_SERVICE_ACCOUNT_JSON: 'configured', WORKSPACE_DOS: createTestEnv({ WORKSPACE_DOS: { jurisdiction: () => env.WORKSPACE_DOS } }).WORKSPACE_DOS, PUSH_DELIVERY_QUEUE: createTestEnv({ PUSH_DELIVERY_QUEUE: { send: queue } }).PUSH_DELIVERY_QUEUE! };
-  expect(await enqueuePushDelivery(configured, message())).toBe(true);
-  expect(queue).toHaveBeenCalledOnce();
-  const send = vi.fn(async (_env: unknown, device: PushDevice, payload: PushPayloads): Promise<ApnsOutcome> => {
-    expect(device.token).toBe('MixedCase-FcmToken');
-    expect(JSON.parse(payload.fcm!.body!).rally.workspaceId).toBe(workspaceId);
-    return { outcome: 'unregistered', reason: 'fcm_unregistered' };
-  });
-  expect(await deliverPush(configured, message(), send)).toBe(true);
-  expect(send).toHaveBeenCalledOnce();
-  const row = await env.DB.prepare('SELECT disabled_reason FROM user_push_devices WHERE installation_id = ?').bind('android').first();
-  expect(row).toEqual({ disabled_reason: 'unregistered' });
-  expect(await enqueuePushDelivery(configured, message())).toBe(false);
-});

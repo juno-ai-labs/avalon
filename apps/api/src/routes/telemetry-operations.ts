@@ -77,11 +77,12 @@ telemetryOperatorRoutes.get(
       reason: c.req.valid('query').reason,
     }, getOperator(c));
     if (!object) throw new ApiError(404, 'crash_report_not_found', 'The crash report is unavailable');
+    const mobile = object.key.endsWith('.mobile.json');
     const headers = new Headers({
       'Cache-Control': 'no-store',
-      'Content-Type': 'application/octet-stream',
+      'Content-Type': mobile ? 'application/json' : 'application/octet-stream',
       'Content-Length': String(object.size),
-      'Content-Disposition': `attachment; filename="${c.req.valid('param').crashId}.dmp"`,
+      'Content-Disposition': `attachment; filename="${c.req.valid('param').crashId}.${mobile ? 'mobile.json' : 'dmp'}"`,
       ...(object.httpEtag ? { ETag: object.httpEtag } : {}),
     });
     return new Response(object.body, { headers });

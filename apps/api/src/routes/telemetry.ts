@@ -112,6 +112,7 @@ export async function parseCrashUpload(c: Context<HonoAppEnv>) {
 function crashApiError(error: unknown): never {
   if (error instanceof z.ZodError) throw error;
   const code = error instanceof Error ? error.message : "crash_upload_invalid";
+  if (code.startsWith("crash_dump_invalid:")) throw new ApiError(400, code, "The crash report is invalid");
   if (code === "crash_dump_too_large") throw new ApiError(413, code, "The crash report is too large");
   if (code === "crash_rate_limited") throw new ApiError(429, code, "Too many crash reports were uploaded");
   if (code === "crash_upload_conflict") throw new ApiError(409, code, "The crash upload ID was already used");
