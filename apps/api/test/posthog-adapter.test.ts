@@ -105,6 +105,16 @@ describe("PostHog adapter", () => {
     expect(captureException.mock.calls[0]?.[2]).not.toHaveProperty("$lib");
     expect(captureException.mock.calls[0]?.[2]).not.toHaveProperty("$lib_version");
     expect(flush).toHaveBeenCalledOnce();
+    captureException.mockClear();
+    await sendPostHogCrashBatch({
+      host: "https://us.i.posthog.com", projectToken: "phc_test_project_token",
+      rows: [{ ...crash, report: { mechanism: 'hermes', handled: true, threads: [] } }],
+      clientFactory: () => ({ captureException, flush }),
+    });
+    expect(captureException.mock.calls[0]?.[2]).toMatchObject({
+      $app_namespace: 'ai.rallywith.mobile', $device_type: 'Mobile', $os_name: 'iOS',
+      $exception_source: 'rally_mobile', $exception_level: 'error',
+    });
   });
 
   it.each([

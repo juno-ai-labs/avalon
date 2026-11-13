@@ -3,7 +3,7 @@ import { PUSH_BODY_PREVIEW_CHARACTERS, type PushNotificationData } from "@rally/
 // APNs regular alert payload ceiling, Apple Sending notification requests.
 export const APNS_PAYLOAD_BYTES = 4096;
 /** The rendered alert for each transport; a device is sent the one it registered for. */
-export interface PushPayloads { apns: string; web: string }
+export interface PushPayloads { apns: string; web: string; fcm?: Record<string, string> }
 export function renderPushPayload(input: {
   title: string; body: string; threadKey: string; data: PushNotificationData; badge: number;
 }): string {
@@ -57,4 +57,16 @@ export function renderWebPushPayload(input: {
   while (length > 0 && new TextEncoder().encode(encode(length)).byteLength > input.maxBytes) length--;
   while (titleLength > 0 && new TextEncoder().encode(encode(length)).byteLength > input.maxBytes) titleLength--;
   return encode(length);
+}
+
+/** Expo's direct-FCM data format. FCM limits the payload's keys and values to 4096 bytes. */
+export function renderFcmPayload(input: { title: string; body: string; data: PushNotificationData }): Record<string, string> {
+  const title = Array.from(input.title), body = Array.from(input.body);
+  let titleLength = title.length, bodyLength = Math.min(body.length, PUSH_BODY_PREVIEW_CHARACTERS);
+  const encode = () => ({ channelId: 'default', title: title.slice(0, titleLength).join('') + (titleLength < title.length ? '…' : ''),
+    message: body.slice(0, bodyLength).join('') + (bodyLength < body.length ? '…' : ''), body: JSON.stringify({ rally: input.data }), ...(input.data.badge === undefined ? {} : { badge: String(input.data.badge) }) });
+  const bytes = () => new TextEncoder().encode(JSON.stringify(encode())).byteLength;
+  while (bodyLength > 0 && bytes() > 4096) bodyLength--;
+  while (titleLength > 0 && bytes() > 4096) titleLength--;
+  return encode();
 }

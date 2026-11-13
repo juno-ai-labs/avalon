@@ -1,6 +1,6 @@
 .expo/
 dist/
-ios/
+/ios/
 android/
 .env.local
 
