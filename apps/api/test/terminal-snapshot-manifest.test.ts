@@ -76,7 +76,7 @@ describe("Terminal snapshot manifest", () => {
     expect(command).toContain("sudo -n install");
     expect(command).toContain("command -v sqlite3");
     expect(command).toContain("command -v gh");
-    expect(command).toContain("pnpm@11.13.0");
+    expect(command).toContain("pnpm@11.13.1");
     expect(command).toContain("tsx@4.20.6");
     expect(command).toContain("AVALON_BOOTSTRAP_INSTALLED=");
     expect(command).not.toContain("python3 -c");
@@ -102,7 +102,7 @@ describe("Terminal snapshot manifest", () => {
     const invocations = command.split("\n").filter((line) => line.includes("npm install --global"));
     expect(invocations).toHaveLength(1);
     expect(invocations[0]).toContain("$node_packages");
-    expect(command).toContain("node_packages=\"$node_packages pnpm@11.13.0\"");
+    expect(command).toContain("node_packages=\"$node_packages pnpm@11.13.1\"");
     expect(command).toContain("node_packages=\"$node_packages tsx@4.20.6\"");
     // The whole block stays a no-op on a snapshot that already ships both.
     expect(command).toContain("if [ -n \"$node_packages\" ]");
