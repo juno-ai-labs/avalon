@@ -19,7 +19,7 @@ and the map points at it rather than absorbing it.
 apps/
   desktop/                 Electron main, preload, React renderer, packaging
   browser/                 Cookie-authenticated web host and mobile Canvas presentation
-  mobile/                  Expo native canvas shell; store distribution not configured
+  mobile/                  Expo native canvas shell; one-channel OTA and iOS release workflow
   api/                     Hono Worker, routes, services, DOs, Workflows, Queue
 packages/
   ui/                      Shared collaboration components, display helpers, styles and appearance
@@ -104,12 +104,12 @@ docs/                      Product, architecture, security, setup, runbooks
    assertions before exposing production tools. Usage-plan changes and
    retirement call audited regional methods; fleet migrations use the CLI.
 
-5. **`apps/mobile`** is the Expo iOS/Android canvas consumer. A shared native
-   sidebar and tab bar surround WebViews from the browser host. Authentication,
+5. **`apps/mobile`** is the Expo iOS/Android canvas consumer. A shared sidebar and platform-native
+   navigation surround WebViews from the browser host. Authentication,
    chat, and artifact authorization remain with the existing services. The
    browser/native protocol is shared source; browser deployment watches it.
-   CI exports native bundles, but signed binaries, store submission, and OTA
-   updates are not configured. [`mobile-canvas-client.md`](mobile-canvas-client.md)
+   CI verifies native bundles. EAS uses one production OTA channel, fingerprint
+   compatibility and signed iOS builds; store submission is an explicit release step. [`mobile-canvas-client.md`](mobile-canvas-client.md)
    owns the implementation and release readiness.
 
 ### Request and event flow
@@ -689,7 +689,7 @@ survives; this table is the one list.
 | `meeting-notes.md` | The meeting recording and Notes cleanup | [Below](#meeting-notes) |
 | `demo-workspaces.md`, `demo-presenter-guide.md` | Presentation Organizations prepared from Ace | [Below](#demo-workspaces) |
 | `harness-production-qa-2026-08-22.md`, `terminal-production-qa-2026-08-21.md`, `durable-object-self-rpc-audit-2026-08-22.md`, `private-access-security-audit-2026-09-09.md` | Dated QA and audit passes | [Below](#dated-records) |
-| `ios-client.md` | The native iOS client, deleted with `apps/ios` | `platform: "ios"` push registration survives in the contracts with no sender ([`push-notifications.md`](push-notifications.md)) |
+| `ios-client.md` | The native iOS client, deleted with `apps/ios` | The Expo shell now uses the existing `platform: "ios"` APNs registry and sender ([`push-notifications.md`](push-notifications.md)) |
 | `listing-rules.md` | Who may be told a Space, Channel or Breakout exists | [`authorization.md`](authorization.md#retired-documents) |
 | `workstream-creation.md` | Starting a Thread from a Channel's composer | [`hosted-conversation-parents.md`](hosted-conversation-parents.md#retired-documents) |
 | `workstream-naming.md`, `workstream-descriptions.md` | The model passes that named and described a Thread | [`canvases.md`](canvases.md#retired-documents) |

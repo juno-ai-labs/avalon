@@ -1,3 +1,4 @@
+import { notificationPayload } from './notification-target';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
@@ -33,10 +34,10 @@ export function useNotifications(directory: MobileSnapshot | null, send: (comman
   const requestId = useRef<string | null>(null);
   const synchronize = useCallback(async (requestPermission = false, changedToken?: Notifications.DevicePushToken) => {
     const current = ++generation.current;
+    if (Platform.OS !== 'ios') { setPermission('unavailable'); setRegistration('unavailable'); return; }
     const owner = latest.current;
     if (!owner) { setRegistration('not registered'); return; }
     try {
-      if (Platform.OS === 'android') await Notifications.setNotificationChannelAsync('default', { name: 'Canvas activity', importance: Notifications.AndroidImportance.DEFAULT });
       const permissions = requestPermission ? await Notifications.requestPermissionsAsync() : await Notifications.getPermissionsAsync();
       if (current !== generation.current || latest.current?.userId !== owner.userId || latest.current.workspaceId !== owner.workspaceId) return;
       const permitted = allowed(permissions);
@@ -47,9 +48,7 @@ export function useNotifications(directory: MobileSnapshot | null, send: (comman
         const native = changedToken ?? await Notifications.getDevicePushTokenAsync();
         const token = String(native.data);
         const appVersion = Application.nativeApplicationVersion ?? 'unknown';
-        input = Platform.OS === 'ios'
-          ? { platform: 'ios', transport: 'apns', topic: APNS_TOPICS.ios, apnsEnvironment: 'production', token, appVersion }
-          : { platform: 'android', transport: 'fcm', token, appVersion };
+        input = { platform: 'ios', transport: 'apns', topic: APNS_TOPICS.ios, apnsEnvironment: 'production', token, appVersion };
       }
       if (current !== generation.current || latest.current?.userId !== owner.userId || latest.current.workspaceId !== owner.workspaceId) return;
       requestId.current = randomUUID();
@@ -68,7 +67,9 @@ export function useNotifications(directory: MobileSnapshot | null, send: (comman
   useEffect(() => {
     let active = true;
     const open = (response: Notifications.NotificationResponse) => {
-      if (response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER) onOpen(response.notification.request.content.data);
+      if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return;
+      const { trigger, content } = response.notification.request;
+      onOpen(notificationPayload(trigger, content.data));
     };
     const listener = Notifications.addNotificationResponseReceivedListener(open);
     void Notifications.getLastNotificationResponseAsync().then((response) => { if (active && response) open(response); }).catch(() => undefined);

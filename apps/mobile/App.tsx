@@ -1,4 +1,4 @@
-import { clearCrashContext, useCrashReporting } from './src/crashes';
+import { useCrashReporting } from './src/crashes';
 import { RecoveryBoundary } from './src/RecoveryBoundary';
 import { DiagnosticsScreen } from './src/DiagnosticsScreen';
 import { registerBackgroundSync } from './src/background';
@@ -9,7 +9,7 @@ import * as Notifications from 'expo-notifications';
 import { useNetworkState } from 'expo-network';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, AppState, Linking, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, type KeyboardEvent, type ImageSourcePropType } from 'react-native';
-import { NavigationContainer, createNavigationContainerRef, DefaultTheme, DarkTheme, useIsFocused, type ParamListBase } from '@react-navigation/native';
+import { NavigationContainer, StackActions, createNavigationContainerRef, DefaultTheme, DarkTheme, useIsFocused, type ParamListBase } from '@react-navigation/native';
 import { createNativeBottomTabNavigator, type NativeBottomTabScreenProps } from '@bottom-tabs/react-navigation';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useHeaderHeight } from '@react-navigation/elements';
@@ -79,21 +79,21 @@ function AppContent() {
   useEffect(() => { void registerBackgroundSync(); }, []);
   useEffect(() => {
     if (!pendingNotification || !directory || !rootNavigation.isReady()) return;
-    rootNavigation.navigate('Canvases', { screen: 'Home' });
+    rootNavigation.dispatch(StackActions.popTo('Canvases', { screen: 'Home' }));
     sendHome({ type: 'open-notification', url: pendingNotification });
-  }, [directory, pendingNotification, sendHome]);
+  }, [Boolean(directory), pendingNotification, sendHome]);
   const signingIn = useRef(false);
   const [authEpoch, setAuthEpoch] = useState(0);
   const signIn = useCallback(async (web: CanvasWebViewHandle | null) => {
     if (signingIn.current) return;
     signingIn.current = true;
-    clearCrashContext();
+    receiveCrashEvent({ type: 'signed-out' });
     try {
       const proof = await systemSignIn(APP_URL);
       if (proof) web?.send({ type: 'sign-in-complete', proof });
     } catch { Alert.alert('Sign-in couldn’t finish', 'Please try again.'); }
     finally { signingIn.current = false; setAuthEpoch((value) => value + 1); }
-  }, []);
+  }, [receiveCrashEvent]);
   const signOut = useCallback(() => {
     updateDirectory(null);
     controls.current.get('Home')?.reload();
@@ -233,10 +233,10 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
       web.current?.send(command);
       return;
     }
-    if (command.type === 'sign-out' || command.type === 'switch-workspace') clearCrashContext();
+    if (command.type === 'sign-out' || command.type === 'switch-workspace') receiveCrashEvent({ type: 'signed-out' });
     if (command.type === 'home' || command.type === 'create' || command.type === 'switch-workspace' || command.type === 'sign-out') tabs?.navigate('Home');
     controls.current.get('Home')?.send(command);
-  }, [controls, tabs, open]);
+  }, [controls, tabs, open, receiveCrashEvent]);
   const receive = useCallback((event: MobileEvent) => {
     if (event.type === 'notification-opened') { notificationOpened(event.url); return; }
     notifications.receive(event);
@@ -274,11 +274,12 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
   }, [focused, home, tabs, open, canvasId, signIn, signOut, updateDirectory, notifications.receive, notificationOpened, receiveCrashEvent]);
   useEffect(() => {
     const registry = controls.current;
-    if (web.current) registry.set(canvasId, web.current);
-    return () => { registry.delete(canvasId); };
+    const handle = web.current;
+    if (handle) registry.set(canvasId, handle);
+    return () => { if (registry.get(canvasId) === handle) registry.delete(canvasId); };
   }, [controls, canvasId]);
   useEffect(() => {
-    if (focused && ready) web.current?.send({ type: 'refresh' });
+    if (focused && ready && network.isConnected) web.current?.send({ type: 'refresh' });
     const listener = AppState.addEventListener('change', (state) => { if (state === 'active' && focused && ready) web.current?.send({ type: 'refresh' }); });
     return () => listener.remove();
   }, [focused, ready, network.isConnected]);

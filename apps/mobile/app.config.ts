@@ -30,7 +30,7 @@ const config: ExpoConfig = {
   // React Navigation requires opting out until its navigators support predictive Back.
   // https://reactnavigation.org/docs/getting-started/#opting-out-of-predictive-back-on-android
   android: { package: 'ai.rally.mobile',
-    ...(process.env.GOOGLE_SERVICES_JSON ? { googleServicesFile: process.env.GOOGLE_SERVICES_JSON } : {}), predictiveBackGestureEnabled: false, softwareKeyboardLayoutMode: 'resize', permissions: ['android.permission.CAMERA', 'android.permission.RECORD_AUDIO'] },
+    predictiveBackGestureEnabled: false, softwareKeyboardLayoutMode: 'resize', permissions: ['android.permission.CAMERA', 'android.permission.RECORD_AUDIO'] },
   web: { bundler: 'metro', name: 'Rally Mobile' },
 };
 export default config;

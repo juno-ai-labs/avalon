@@ -4,15 +4,15 @@ import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
 export interface PushDevice {
   id: string; token: string; topic: string; apns_environment: string; last_seen_at: string;
-  transport: "apns" | "webpush" | "fcm"; web_push_p256dh: string | null; web_push_auth: string | null;
+  transport: "apns" | "webpush"; web_push_p256dh: string | null; web_push_auth: string | null;
 }
 export async function registerPushDevice(env: Env, auth: AuthContext, installationId: string, input: RegisterPushDeviceRequest): Promise<void> {
   const db = workspaceRegionalDatabase(env);
   const now = new Date().toISOString();
-  // APNs hex is case-insensitive; FCM tokens and Web Push URLs are not.
-  const token = input.transport === "apns" ? input.token.toLowerCase() : input.transport === "fcm" ? input.token : input.endpoint;
+  // APNs hex is case-insensitive; Web Push URLs are not.
+  const token = input.transport === "apns" ? input.token.toLowerCase() : input.endpoint;
   const apnsEnvironment = input.transport === "apns" ? input.apnsEnvironment : "none";
-  const topic = input.transport === "apns" ? input.topic : input.transport === "fcm" ? "android" : "web";
+  const topic = input.transport === "apns" ? input.topic : "web";
   const keys = input.transport === "webpush" ? input.keys : null;
   await db.batch([
     db.prepare(`UPDATE user_push_devices SET disabled_at = ?, disabled_reason = 'token_reassigned'
@@ -30,7 +30,7 @@ export async function registerPushDevice(env: Env, auth: AuthContext, installati
         topic, apnsEnvironment, token, input.appVersion, now, keys?.p256dh ?? null, keys?.auth ?? null),
     // A phone has one browser session. Old bindings must not keep push live
     // after that session signs out (SecureStore can survive reinstallation).
-    ...(input.platform === "ios" || input.platform === "android" ? [
+    ...(input.platform === "ios" ? [
       db.prepare(`DELETE FROM user_push_device_sessions WHERE device_id IN
         (SELECT id FROM user_push_devices WHERE user_id = ? AND installation_id = ? AND transport = ?)`)
         .bind(auth.userId, installationId, input.transport),

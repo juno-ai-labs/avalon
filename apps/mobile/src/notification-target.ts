@@ -1,3 +1,4 @@
+import type { NotificationRequest } from 'expo-notifications';
 import { parseLinkTarget } from '@rally/contracts/links';
 import { PushNotificationDataSchema } from '@rally/contracts/push-notifications';
 
@@ -12,6 +13,10 @@ export function notificationTarget(data: unknown, appUrl: string): { url: string
   if (target.kind !== 'canvas') return { url: notice.url, external: true };
   const canonical = new URL(notice.url);
   const url = new URL(canonical.pathname + canonical.search, appUrl);
-  url.searchParams.set('mobile', '1');
   return { url: url.href, external: false };
+}
+
+/** Direct APNs userInfo is on Expo's push trigger; local notifications use data. */
+export function notificationPayload(trigger: NotificationRequest['trigger'], data: unknown): unknown {
+  return trigger && 'type' in trigger && trigger.type === 'push' && trigger.payload ? trigger.payload : data;
 }

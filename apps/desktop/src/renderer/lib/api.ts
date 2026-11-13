@@ -1128,12 +1128,12 @@ export class RallyApi {
     return this.request('/push-devices/web-push', { schema: WebPushConfigurationSchema, signal });
   }
 
-  async registerPushDevice(installationId: string, input: RegisterPushDeviceRequest): Promise<void> {
-    await this.requestVoid(`/push-devices/${encodeURIComponent(installationId)}`, { method: 'PUT', body: input });
+  async registerPushDevice(installationId: string, input: RegisterPushDeviceRequest, signal?: AbortSignal): Promise<void> {
+    await this.requestVoid(`/push-devices/${encodeURIComponent(installationId)}`, { method: 'PUT', body: input, signal });
   }
 
-  async deletePushDevice(installationId: string): Promise<void> {
-    await this.requestVoid(`/push-devices/${encodeURIComponent(installationId)}`, { method: 'DELETE' });
+  async deletePushDevice(installationId: string, signal?: AbortSignal): Promise<void> {
+    await this.requestVoid(`/push-devices/${encodeURIComponent(installationId)}`, { method: 'DELETE', signal });
   }
 
   async leaveWorkspace(workspaceId: string, expectedOutcome: WorkspaceDepartureOutcome): Promise<WorkspaceDeparture> {

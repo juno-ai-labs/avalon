@@ -12,6 +12,7 @@ jobs:
     params:
       platform: ios
       simulator: false
+      profile: production
       channel: production
       fingerprint_hash: ${{ needs.fingerprint.outputs.ios_fingerprint_hash }}
   build_ios:
