@@ -8,6 +8,7 @@ import { useTheme } from './theme';
 
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
 interface Props {
+  diagnostics?: () => void;
   visible: boolean;
   snapshot: MobileSnapshot;
   close: () => void;
@@ -62,7 +63,7 @@ function ReorderHandle({ id, title, ids, onReorder, onDrag }: { id: string; titl
 }
 
 const ROW_HEIGHT = 52;
-export function Sidebar({ visible, snapshot, close, send }: Props) {
+export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -123,6 +124,7 @@ export function Sidebar({ visible, snapshot, close, send }: Props) {
         <View style={[styles.footer, { borderTopColor: colors.line }]}>
           <View style={[styles.avatar, { backgroundColor: colors.tonal }]}><Text style={{ color: colors.text }}>{snapshot.userName.slice(0, 1).toUpperCase()}</Text></View>
           <Pressable accessibilityRole="button" accessibilityLabel="Switch organization" onPress={() => action({ type: 'switch-workspace' }, true)} style={{ flex: 1, minHeight: 48, justifyContent: 'center' }}><Text numberOfLines={1} style={{ color: colors.text, fontWeight: '600' }}>{snapshot.userName}</Text><Text numberOfLines={1} style={{ color: colors.muted, fontSize: 11, marginTop: 3 }}>{snapshot.workspaceName} · Switch</Text></Pressable>
+          {diagnostics && iconButton('settings-outline', 'Settings and diagnostics', () => { close(); diagnostics(); })}
           {iconButton('log-out-outline', 'Sign out', () => action({ type: 'sign-out' }, true))}
         </View>
       </View>

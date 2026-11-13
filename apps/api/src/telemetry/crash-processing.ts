@@ -1,5 +1,6 @@
 import type { Region } from "@rally/contracts/regions";
 import type { Env } from '../env';
+import { mobileCrashSummary } from './mobile-crash';
 import {
   durableObjectStubForRegionalSingleton,
 } from '../lib/durable-object-namespace';
@@ -64,6 +65,11 @@ export async function processPendingCrashReports(env: Env): Promise<CrashProcess
       const dump = await env.TELEMETRY_PAYLOADS.get(row.object_key);
       if (!dump) {
         await saveResult(env, row, 'malformed', { status: 'malformed', reason: 'dump_missing' });
+        summary.processed += 1;
+        continue;
+      }
+      if (row.object_key.endsWith('.mobile.json')) {
+        await saveResult(env, row, 'unsymbolicated', mobileCrashSummary(await dump.json()));
         summary.processed += 1;
         continue;
       }
@@ -160,7 +166,7 @@ interface NormalizedCrashReport {
   status: 'symbolicated' | 'unsymbolicated' | 'malformed';
   crash_type: string;
   mechanism: string;
-  handled: false;
+  handled: boolean;
   process_role: 'main' | 'renderer' | 'utility' | 'gpu' | 'unknown';
   threads: NormalizedCrashThread[];
   reason?: string;
@@ -214,7 +220,7 @@ function normalizeCrashReport(
     status: parserState,
     crash_type: crashType,
     mechanism,
-    handled: false,
+    handled: root?.['handled'] === true,
     process_role: processRole,
     threads,
     ...(reason ? { reason } : {}),

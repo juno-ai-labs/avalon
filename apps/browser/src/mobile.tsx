@@ -1,3 +1,4 @@
+import { parseLinkTarget } from '@rally/contracts/links';
 import { ErrorNotice } from '@rally/ui/components/error-notice';
 import { canvasNeedsConversation, mobileStorage, mobileTurnTarget, rememberMobileWorkspace } from './mobile-session';
 import type { WorkstreamResource } from '../../desktop/src/renderer/lib/types';
@@ -77,15 +78,70 @@ function MobileContent(): React.JSX.Element {
     setDescriptors((current) => JSON.stringify(current[id]) === JSON.stringify(descriptor) ? current : { ...current, [id]: descriptor });
   }, []);
   const open = useCallback((id: string, pinned = false) => { void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) }); void navigate(`${canvasRoute(id)}${pinned ? '?tab=1' : ''}`); }, [navigate, queryClient]);
+  const currentPushScope = useRef({ userId: session?.user.id, workspaceId: session?.workspace?.id });
+  currentPushScope.current = { userId: session?.user.id, workspaceId: session?.workspace?.id };
+  const pushWrite = useRef<Promise<void>>(Promise.resolve());
   const command = useRef<(command: MobileCommand) => void>(() => undefined);
   command.current = (message) => {
     switch (message.type) {
       case 'home': void navigate(CANVASES_ROUTE); break;
+      case 'crash-status': {
+        if (!api || !session?.workspace) break;
+        const scope = { userId: session.user.id, workspaceId: session.workspace.id, route: session.workspace.region };
+        void api.getProductAnalyticsPreference().then((preference) => {
+          if (currentPushScope.current.userId === scope.userId && currentPushScope.current.workspaceId === scope.workspaceId) {
+            postMobileEvent({ type: 'crash-permission', scope, enabled: preference.enabled });
+          }
+        }).catch(() => undefined);
+        break;
+      }
+      case 'crash-upload': {
+        const { report } = message;
+        if (!api || report.scope.userId !== session?.user.id || report.scope.workspaceId !== session.workspace?.id
+          || report.scope.route !== session.workspace.region || report.metadata.route !== report.scope.route
+          || report.metadata.format !== 'mobile-json' || report.deleteAfter <= Date.now()) break;
+        const registeredApi = api;
+        pushWrite.current = pushWrite.current.catch(() => undefined).then(async () => {
+          if (currentPushScope.current.userId !== report.scope.userId || currentPushScope.current.workspaceId !== report.scope.workspaceId) return;
+          try {
+            await registeredApi.uploadMobileCrash(report);
+            postMobileEvent({ type: 'crash-uploaded', scope: report.scope, uploadId: report.metadata.uploadId, ok: true });
+          } catch {
+            postMobileEvent({ type: 'crash-uploaded', scope: report.scope, uploadId: report.metadata.uploadId, ok: false });
+          }
+        });
+        break;
+      }
       case 'create': create(); break;
       case 'open': open(message.id, message.pinned); break;
       case 'load-more': break; // The current Canvas directory is pushed as one list.
       case 'refresh': socket.retry(); void queryClient.invalidateQueries({ queryKey: ['canvas'] }); break;
-      case 'sign-out': void signOut(); break;
+      case 'sign-out':
+        // Session revocation also disables every device bound only to that session.
+        void signOut(); break;
+      case 'push-device': {
+        if (!api || message.userId !== session?.user.id || message.workspaceId !== session.workspace?.id) break;
+        const registeredApi = api;
+        pushWrite.current = pushWrite.current.catch(() => undefined).then(async () => {
+          if (currentPushScope.current.userId !== message.userId || currentPushScope.current.workspaceId !== message.workspaceId) return;
+          try {
+            if (message.registration) await registeredApi.registerPushDevice(message.installationId, message.registration);
+            else await registeredApi.deletePushDevice(message.installationId);
+            postMobileEvent({ type: 'push-device-result', requestId: message.requestId, userId: message.userId, workspaceId: message.workspaceId, ok: true, enabled: Boolean(message.registration) });
+          } catch {
+            postMobileEvent({ type: 'push-device-result', requestId: message.requestId, userId: message.userId, workspaceId: message.workspaceId, ok: false, enabled: false });
+          }
+        });
+        break;
+      }
+      case 'open-notification': {
+        const target = parseLinkTarget(message.url, { webBaseUrl: window.location.origin });
+        if (target?.kind === 'canvas') {
+          postMobileEvent({ type: 'notification-opened', url: message.url });
+          window.location.assign(message.url);
+        }
+        break;
+      }
       case 'switch-workspace': locationAssignWorkspacePicker(); break;
       case 'reopen-artifact': void queryClient.invalidateQueries({ queryKey: ['mobile-site-access', message.canvasId, message.resourceId] }); break;
       case 'pin':

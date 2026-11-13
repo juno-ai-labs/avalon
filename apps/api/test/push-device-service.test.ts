@@ -78,3 +78,13 @@ describe('push device registry', () => {
     ]);
   });
 });
+
+ it('replaces a phone’s old session binding so signing out stops delivery after reinstallation', async () => {
+    const { db, env, auth } = fixture();
+    const input = { platform: 'android' as const, transport: 'fcm' as const, token: 'Same-DeviceToken', appVersion: '1' };
+    await registerPushDevice(env, auth, 'phone', input);
+    await registerPushDevice(env, { ...auth, sessionId: 'b' }, 'phone', input);
+    expect(await livePushDevices(env, auth.userId)).toHaveLength(1);
+    db.prepare(`UPDATE sessions SET revoked_at = '2026-01-02' WHERE id = 'b'`).run();
+    expect(await livePushDevices(env, auth.userId)).toEqual([]);
+  });

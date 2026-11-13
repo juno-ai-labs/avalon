@@ -440,6 +440,8 @@ export async function sendPostHogCrashBatch(input: {
   const client = (input.clientFactory ?? createExceptionClient)(input.projectToken, origin);
   try {
     for (const row of input.rows) {
+      const report = row.report && typeof row.report === 'object' ? row.report as Record<string, unknown> : {};
+      const mobile = report['mechanism'] === 'ios_plcrashreporter' || report['mechanism'] === 'hermes';
       client.captureException(nativeCrashError(row), row.analyticsSubjectId, {
         $geoip_disable: true,
         ...(row.workspaceAnalyticsId ? { $groups: { workspace: row.workspaceAnalyticsId } } : {}),
@@ -449,11 +451,12 @@ export async function sendPostHogCrashBatch(input: {
           platform: row.platform,
           deviceId: row.deviceId,
         }),
+        ...(mobile ? { $app_namespace: 'ai.rallywith.mobile', $device_type: 'Mobile', $os_name: 'iOS', $os: 'iOS' } : {}),
         $process_person_profile: row.processPersonProfile,
         $is_identified: row.processPersonProfile,
         $exception_fingerprint: row.fingerprint,
-        $exception_source: "rally_native",
-        $exception_level: "fatal",
+        $exception_source: mobile ? 'rally_mobile' : 'rally_native',
+        $exception_level: report['handled'] === true ? 'error' : 'fatal',
         category: "diagnostic",
         release: row.release,
         build_id: row.buildId,

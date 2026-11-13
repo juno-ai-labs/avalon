@@ -2,7 +2,7 @@
 
 Rally's telemetry subsystem accepts a closed set of semantic product signals,
 content-free reliability signals, sanitized JavaScript diagnostics, and native
-Electron crash reports. Rally owns collection, policy, routing, identity,
+Electron and iOS crash reports. Rally owns collection, policy, routing, identity,
 durability, and internal retention; PostHog is the Global destination, not an SDK
 embedded in the renderer or a source of product truth.
 
@@ -13,6 +13,8 @@ embedded in the renderer or a source of product truth.
 | `packages/contracts/src/telemetry.ts` | Closed event registry, envelope/batch schemas, breadcrumb and bootstrap contracts, size limits, and prohibited-field rules. |
 | `apps/desktop/src/main/telemetry-*.ts` | Route, random identity epochs, local event spool, typed reporter, breadcrumbs, launch markers, and preference-independent reliability collection. |
 | `apps/desktop/src/main/application-open-observer.ts` | Closed cold-start attribution and activation coalescing so explicit deep-link/menu sources outrank Electron's generic Dock/reopen callback. |
+| `packages/contracts/src/crash-reports.ts`, `apps/mobile/modules/rally-crash-reporter/`, `apps/mobile/src/crashes.ts` | Shared upload schema, local PLCrashReporter integration, consent-bound iOS spool and authenticated browser delivery. |
+| `apps/api/src/telemetry/mobile-crash.ts` | Closed/numeric mobile issue projection; raw crash text remains in regional R2. |
 | `apps/desktop/src/main/native-crash-*.ts` | Route-final Crashpad generations and the bounded, authenticated next-launch uploader. |
 | `apps/desktop/src/main/renderer-crash-recovery.ts`, `apps/desktop/src/main/renderer-window-availability.ts` | Native primary-window renderer-crash notice and application relaunch choice, plus the shared live-renderer filter for main-process broadcasts. |
 | `apps/desktop/src/main/main-process-network-recovery.ts` | Exact Electron URL-loader reset admission, original-origin reporting for every other rejection, and next-turn fatal scheduling that preserves sibling rejection delivery. |
@@ -584,6 +586,56 @@ closed.
 - **Telemetry failure never changes product behavior.** Reporters, middleware,
   processors, and operational callbacks fail independently of the action observed.
 
+### iOS crash reports
+
+The Expo client uses PLCrashReporter 1.12.0 (the latest published CocoaPods
+version when integrated) through a local Expo module and an AppDelegate
+subscriber. There is no Sentry project, external crash-upload URL, custom signal
+handler, or change to regional raw-data policy. Capture starts only after a
+verified Product analytics preference. A returning launch may resume an
+unexpired, previously approved context; upload waits for a fresh authenticated
+preference read. New sign-in, organization change and sign-out invalidate capture
+before the transition. A different account or region cannot adopt old reports.
+
+PLCrashReporter embeds the immutable context into its crash file. The next
+launch decodes it before starting the next handler, validates its original
+scope/deadline, and atomically spools the report. Opt-out clears the persisted
+context, pending reports and the handler's custom data; an already-running signal
+handler cannot be unregistered, so any later report without that context is
+purged on the next launch. Raw files are excluded from backups and protected
+until the device's first unlock. The desktop's existing limits apply: 14 days,
+20 reports, 100 MiB locally, 20 MiB per report, five reports per upload pass.
+Deadlines belong to the captured context and never move on retry or relaunch.
+
+The first-party Home WebView reads `GET /telemetry/preference` and sends the
+already-existing `POST /telemetry/crashes` multipart request using its HttpOnly
+session. The native process receives no session credential. Browser and native
+both fence the report to its original user, organization and region. A successful
+or suppressed server acknowledgement removes the matching local report;
+transient failure leaves it for a later foreground pass. The API rejects
+anonymous mobile reports, compares the captured owner with the authenticated
+user/workspace, and enforces the server preference again. The ownership check
+also rejects an upload that resumes after browser cookies change accounts. Existing
+regional R2/D1 acceptance, deduplication, rate limiting, 90-day retention,
+reason-coded operator access, opt-out purge and destination checks remain shared.
+No endpoint or socket was added.
+
+`format=mobile-json` distinguishes iOS reports from existing default minidumps.
+They use the existing Darwin/arm64 (or simulator x64) platform values, a native
+`ios-<build>` identity and the actual native launch ID. Raw Apple-formatted reports
+and Hermes stacks stay in regional R2. The external issue projection accepts
+only a closed signal, binary UUIDs/hex offsets, or Hermes numeric stack locations
+and an OTA update UUID. It never exports exception messages, filenames or URLs.
+React recovery-boundary reports are marked handled. Native and fatal Hermes
+reports are unhandled. The mobile client does not yet emit launch-denominator
+telemetry, so these reports do not establish a mobile crash-free-session rate.
+
+Mobile reports are explicitly **unsymbolicated**. The iOS EAS build retains
+private dSYM archives for manual investigation; automatic dSYM/Hermes source-map
+resolution is not part of the existing Electron minidump processor. Do not treat
+numeric fingerprints as source-level diagnosis. Android native crash capture is
+deferred with Android production setup.
+
 ## Boundary
 
 The subsystem owns telemetry contracts, collection, random analytics identities,
@@ -852,6 +904,19 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-11-13 — Keep iOS crash capture inside regional storage
+
+**What changed:** The shared crash endpoint accepts a typed mobile report format
+from a local Expo/PLCrashReporter collector. Consent and account/region context
+travel with the captured report; a closed numeric summary uses the existing
+issue-delivery path while raw text stays in regional R2.
+
+**Why:** Mobile needed crash evidence beyond local recovery codes, while direct
+Sentry ingestion would change Rally’s raw-data policy. Reusing minidump storage
+and retention with an explicit format avoids another endpoint and does not claim
+that the Electron symbolicator understands iOS. Preserve consent fencing,
+immutable deadlines and that distinction when adding mobile symbolication.
 
 ### 2026-11-11 — Save account analytics consent from the web app
 
