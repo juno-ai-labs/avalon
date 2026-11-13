@@ -28,6 +28,7 @@ import {
   writeSiteReleaseConfigAtomically,
 } from './site-release-config.mjs';
 import { createR2ReleaseLockClient, withR2ReleaseLock } from './release-r2-lock.mjs';
+import { R2_UPLOAD_MAX_ATTEMPTS, runWranglerWithTransientRetry } from './release-cloudflare.mjs';
 import {
   FASTER_RELEASE_MANIFEST,
   LEGACY_RELEASE_MANIFEST,
@@ -216,7 +217,14 @@ async function putR2Object(key, source, { contentType, cacheControl, disposition
     '--force',
   );
   if (disposition) args.push('--content-disposition', disposition);
-  const result = await runCapture('pnpm', args, wranglerEnvironment);
+  const result = await runWranglerWithTransientRetry({
+    attempt: () => runCapture('pnpm', args, wranglerEnvironment),
+    maxAttempts: R2_UPLOAD_MAX_ATTEMPTS,
+    sleep,
+    onRetry: ({ attempt, delay }) => {
+      console.warn(`Upload of r2://${bucket}/${key} hit a transient Cloudflare failure on attempt ${attempt}; retrying in ${delay} ms`);
+    },
+  });
   if (result.code !== 0) {
     throw new Error(`Could not upload r2://${bucket}/${key}\n${result.stdout}\n${result.stderr}`.trim());
   }
