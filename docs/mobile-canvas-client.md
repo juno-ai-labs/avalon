@@ -20,6 +20,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/notifications.ts`, `notification-target.ts` | Platform permission/token lifecycle and canonical notification routing. |
 | `apps/mobile/src/diagnostics.ts`, `DiagnosticsScreen.tsx`, `RecoveryBoundary.tsx` | Local content-free diagnostics, user-requested sharing and recovery. |
 | `apps/mobile/.eas/workflows/`, `.github/workflows/release-mobile.yml` | One-channel native-build/OTA releases and explicit store submission. |
+| `apps/mobile/store.config.json`, `apps/mobile/metadata/` | English store listing, TestFlight description, test instructions and review notes. Review credentials stay in App Store Connect. |
 | `apps/mobile/src/auth.ts`, `auth-callback.ts` | System authentication session and exact callback/attempt validation. |
 | `apps/browser/src/mobile-sign-in.tsx` | Existing browser login followed by the return-to-app handoff. |
 | `apps/mobile/src/protocol.ts` | Shared commands, validated snapshots, origin boundary, pin presentation capacity. |
@@ -160,8 +161,10 @@ There are two release surfaces:
   is a development client; `preview` is an installable internal release (IPA/APK),
   and `production` is a store build. Both release profiles use the **one
   `production` update channel** and production EAS environment. The project is
-  `@juno-ai-labs/rally-mobile`. Store records, submission credentials and physical
-  push delivery still require acceptance; a successful export proves none of them.
+  `@juno-ai-labs/rally-mobile`. EAS has the App Store signing profile and submission
+  API key for `ai.rallywith.mobile` on Apple team `7ZLT6A8W25`. The App Store Connect
+  app record, external TestFlight review and physical push delivery still require
+  acceptance; a successful export proves none of them.
 
 The physical iOS app uses `ai.rallywith.mobile`; Apple rejected the initial
 `ai.rally.mobile` development identifier for the Juno AI Labs team. The
@@ -195,9 +198,96 @@ on relevant main changes, then invokes `.eas/workflows/release.yml`. Expo's
 supported fingerprint/get-build jobs find a compatible non-simulator build from the
 `production` profile and channel for iOS: publish OTA when one exists, otherwise build the
 new production binary. Android automated releases and Firebase setup are deferred. Internal preview builds cannot satisfy the store-build lookup.
-Native builds do not automatically submit to stores. Use the explicit
-`.eas/workflows/submit.yml` with the verified build ID after configuring the
-Apple/Google store records and submission credentials.
+Native builds do not automatically submit to stores. The explicit
+`.eas/workflows/submit.yml` uses Expo's supported `testflight` job with a verified
+iOS store build ID and release-specific What to Test notes. It uploads the build,
+assigns it to the `Public Beta` external group and requests Beta App Review.
+This does not release the app on the App Store. Android submission is deferred.
+
+### Public TestFlight setup
+
+The initial App Store Connect app record must be created on Apple's website:
+iOS, bundle ID `ai.rallywith.mobile`, primary language English (US), SKU
+`rally-mobile-ios`. An account holder must accept any outstanding Apple agreements.
+Add the resulting numeric Apple ID to `submit.production.ios.ascAppId` in
+`apps/mobile/eas.json`; the bundle ID, Apple team ID and Expo project ID are not
+substitutes. EAS already holds a working submission API key and store signing
+credentials. Do not check a private key into the repository.
+
+In App Store Connect, complete TestFlight's beta description, feedback email,
+review contact and sign-in information. Provide a dedicated review account with
+sample canvases, rather than an employee's production administrator account.
+Create an internal tester group first, then the external group named exactly
+`Public Beta`. Enable that group's public link with Open to Anyone. A public link
+does not grant access to a Rally organization; testers still use normal Rally
+sign-in and onboarding.
+
+From `apps/mobile`, submit an already verified store build with the pinned CLI:
+
+```sh
+npx --yes eas-cli@27.9.0 workflow:run submit.yml \
+  --input build_id=<EAS_STORE_BUILD_ID> \
+  --input 'changelog=<What to Test for this build>' --non-interactive --wait
+```
+
+Use the build from the production release workflow, not an ad-hoc `preview` IPA
+or simulator archive. The workflow waits for processing and requests review;
+successful upload alone does not mean Apple approved external testing. Confirm
+approval and an available build in `Public Beta` before sharing its public link.
+Future compatible JavaScript changes still use the single `production` OTA
+channel. New native binaries use this same explicit TestFlight workflow.
+
+`store.config.json` holds the English App Store title, subtitle, description,
+category and verified public support/privacy links. Validate it with
+`eas metadata:lint`; `eas metadata:push` synchronizes the App Store listing after
+the app record exists. TestFlight's separate localized fields are in
+`metadata/testflight.en-US.json`; use the adjacent test instructions and review
+notes for the first beta. Keep review contact details and credentials in App
+Store Connect. Age ratings and privacy disclosures must reflect the actual
+service and cannot be inferred from a successful metadata lint.
+
+Capture screenshots from the current native app at Apple's accepted dimensions:
+1206 × 2622 for iPhone 17 and 2064 × 2752 for a 13-inch iPad Pro. Inspect the
+captures for loading states, private information and development overlays. Use
+real, suitable canvases and keep the image proportions intact. Apple currently
+pulls TestFlight invitation screenshots from the latest approved App Store
+version; preparing screenshots for a first beta does not make them appear on
+its public invitation before an App Store version has been approved.
+
+The selected English screenshots are in `apps/mobile/metadata/screenshots/en-US`:
+`iphone/01-grocery-list.png`, `ipad/01-newsletter-reader.png`, then
+`ipad/02-canvases.png`. Upload each device's files in that order to the App Store
+version's screenshot slots. These are native captures of production Juno Labs
+canvases, authorized for listing use, with no composited text or invented content.
+They are opaque RGB PNGs at the dimensions above; conversion removed the unused
+alpha channel without changing RGB pixels. Private authentication and diagnostic
+captures stay outside the repository.
+
+#### First store build verification — 2026-11-13
+
+[Production build 0.1.0 (6)](https://expo.dev/accounts/juno-ai-labs/projects/rally-mobile/builds/2d61a558-d6e1-4c78-ba17-5bfacea427c5)
+completed with SDK 58 and pnpm 11.13.1. The downloaded IPA has the expected bundle
+and team, App Store provisioning, production APNs entitlement, embedded JavaScript
+and production EAS Update configuration. Lint, typecheck, metadata lint and EAS
+workflow validation passed. Submission has not run: the App Store Connect app
+record, beta review contact and dedicated review login remain required.
+
+The matching release simulator build `8c4431f9-a599-4921-a8ff-66611b5cb677`
+passed production system sign-in, dashboard loading and hosted artifact viewing
+on iPhone 17 and iPad Pro 13-inch (M5), OS 26.5. Both paid sessions were stopped
+and the account's temporary screenshot pins removed. This was a screenshot smoke
+test, not the full acceptance suite or a new Duo transition test.
+
+Open findings before wider distribution: iPhone tab icons intermittently clipped
+or disappeared after switching tabs, including captures from two screenshot
+backends; the cause is unresolved. iPad icons rendered correctly, but its native
+tab buttons had no names in the automation accessibility tree. Verify VoiceOver
+and fix any missing spoken labels. The selected screenshots exclude visibly
+broken captures; their appearance does not establish that these issues are fixed.
+
+References: [Expo TestFlight jobs](https://docs.expo.dev/eas/workflows/pre-packaged-jobs/#testflight),
+[Apple app records](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app/)
+and [external testers/public links](https://developer.apple.com/help/app-store-connect/test-a-beta-version/invite-external-testers/).
 
 The GitHub `mobile-production` environment needs an `EXPO_TOKEN` secret. Set
 `EXPO_PUBLIC_RALLY_APP_URL=https://app.rallywith.ai` in the EAS production
@@ -468,6 +558,26 @@ generation, or native WebView behavior. Device acceptance remains necessary.
 Manual acceptance: sign in through the system browser with Apple, Google and email; cancel and retry sign-in; test an existing browser account and switching accounts; open Home; open an artifact and an empty canvas; create a canvas; edit through the conversation sheet; pin and unpin through sidebar Edit; drag to reorder; reload to check server persistence; check desktop overflow pins; disconnect and retry; sign out; test light/dark and Reduce Transparency. On devices, additionally verify artifact writes, keyboard behavior, Android Back, iOS sheet dismissal, VoiceOver/TalkBack reorder actions, and state retention across tab switching.
 
 ## Changelog
+
+### 2026-11-13 — Make external TestFlight distribution explicit
+
+**What changed:** The manual submission workflow uploads a selected iOS store
+build, adds it to Public Beta and requests Beta App Review with supplied test
+notes. EAS store signing and the existing Apple submission key are configured.
+Store copy and beta review instructions are versioned alongside the app. The
+build verification uses pnpm 11.13.1, supplied by #1594, because EAS rejects
+11.13.0's broken installer.
+
+**Why:** An installable ad-hoc IPA requires registered devices; public beta
+testers need Apple's external TestFlight distribution and review.
+
+**Considered and rejected:** Automatically distributing every main-branch native
+build would remove the existing explicit choice of which verified build testers
+receive. A second OTA channel would complicate the one-channel release model.
+
+**Consequences:** Keep store builds separate from preview/simulator artifacts,
+complete Apple's app record and review information before the first submission,
+and distinguish upload success from external beta approval.
 
 ### 2026-11-13 — Add one-channel releases and thin-client runtime recovery
 
