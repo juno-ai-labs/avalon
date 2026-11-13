@@ -1,4 +1,4 @@
-import { CanvasSharingDefaultsSchema, type CanvasSharingDefaultsUpdate } from "@rally/contracts/canvases";
+import type { CanvasSharingDefaultsUpdate } from "@rally/contracts/canvases";
 import { initializeOrganizationBilling } from "./billing-coordination";
 import { closeOrganizationBilling } from './billing-coordination';
 import { resolveModelSelectorVisibleForNewOrgs } from "./client-feature-flags";
@@ -454,18 +454,14 @@ export class WorkspaceService {
 
   /** The audiences a new Canvas starts with. Every member and guest reads them. */
   async getCanvasSharingDefaults() {
-    return CanvasSharingDefaultsSchema.parse(await (await this.workspaceObject()).canvasSharingDefaults({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-    }));
+    // Parsed by the object, and again by the route; not here.
+    return (await this.workspaceObject()).canvasSharingDefaults({ workspaceId: asWorkspaceId(this.auth.workspaceId) });
   }
 
   /** Only an administrator changes them, as with the Organization's other preferences. */
   async updateCanvasSharingDefaults(defaults: CanvasSharingDefaultsUpdate) {
     this.requireAdmin();
-    return CanvasSharingDefaultsSchema.parse(await (await this.workspaceObject()).saveCanvasSharingDefaults({
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      defaults,
-    }));
+    return (await this.workspaceObject()).saveCanvasSharingDefaults({ workspaceId: asWorkspaceId(this.auth.workspaceId), defaults });
   }
 
   async getMyPersonalSystemPrompt() {
