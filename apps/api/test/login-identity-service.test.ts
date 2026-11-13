@@ -135,14 +135,31 @@ describe("verified login identities", () => {
     expect(db.prepare("SELECT COUNT(*) AS identities FROM user_login_identities").get()).toEqual({ identities: 0 });
   });
 
-  it("keeps a returning Apple sign-in on its account when Apple reports another address", async () => {
+  it("follows a changed Apple address on an Apple-only account, so the old mailbox can no longer sign in", async () => {
     const db = database();
     const binding = sqliteD1(db);
-    const apple = { subject: "apple-subject", email: "relay@privaterelay.appleid.com", name: "Rally user", avatarUrl: null };
+    const apple = { subject: "apple-subject", email: "adam@example.com", name: "Adam", avatarUrl: null };
     const first = await persistVerifiedProviderIdentity(binding, "apple", apple);
     expect(first.created).toBe(true);
-    expect(await persistVerifiedProviderIdentity(binding, "apple", { ...apple, email: "moved@example.com" })).toEqual({ id: first.id, created: false });
-    expect(db.prepare("SELECT email FROM users").all()).toEqual([{ email: "relay@privaterelay.appleid.com" }]);
+    expect((await resolveVerifiedEmailIdentity(binding, "adam@example.com")).id).toBe(first.id);
+    expect(await persistVerifiedProviderIdentity(binding, "apple", { ...apple, email: "adam@email.com" })).toEqual({ id: first.id, created: false });
+    expect(db.prepare("SELECT email FROM users WHERE id = ?").get(first.id)).toEqual({ email: "adam@email.com" });
+    expect(db.prepare("SELECT email FROM user_verified_emails WHERE user_id = ?").all(first.id)).toEqual([{ email: "adam@email.com" }]);
+    // Whoever holds the old mailbox next gets an account of their own, by email or by Google.
+    expect((await resolveVerifiedEmailIdentity(binding, "adam@example.com")).id).not.toBe(first.id);
+    expect((await resolveVerifiedEmailIdentity(binding, "adam@email.com")).id).toBe(first.id);
+  });
+
+  it("refuses an Apple address change to an address another account holds, and changes nothing", async () => {
+    const db = database();
+    const binding = sqliteD1(db);
+    const apple = { subject: "apple-subject", email: "adam@example.com", name: "Adam", avatarUrl: null };
+    const adam = await persistVerifiedProviderIdentity(binding, "apple", apple);
+    const other = await resolveVerifiedEmailIdentity(binding, "adam@email.com");
+    await expect(persistVerifiedProviderIdentity(binding, "apple", { ...apple, email: "adam@email.com" }))
+      .rejects.toMatchObject({ code: "apple_email_in_use", status: 409 });
+    expect(db.prepare("SELECT id, email FROM users ORDER BY email").all())
+      .toEqual([{ id: other.id, email: "adam@email.com" }, { id: adam.id, email: "adam@example.com" }]);
   });
 
   it("upgrades populated identities with foreign keys on, preserving membership, sessions and routes", async () => {
