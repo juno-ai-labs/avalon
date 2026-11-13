@@ -90,8 +90,8 @@ export function stableCode(text: string): string {
  * on the provider Worker's side of the hop — the error's class, its HTTP status
  * and the provider's own machine-readable code, never its text — beside the
  * provider's sentence. That code rides behind the caller's, as a platform
- * failure does: `terminal_provider_observation_failed:DaytonaError:503`. Read
- * as a message, every Daytona failure reduced to the bare fallback.
+ * failure does:
+ * `terminal_provider_observation_failed:DaytonaServiceUnavailableError:503`.
  *
  * Nothing wider. A message is not trusted because it is code-shaped: the
  * tree throws `memory_table_value_type:${column.name}:string`, an R2 key

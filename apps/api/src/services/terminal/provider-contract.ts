@@ -1,3 +1,4 @@
+import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import type {
   TerminalProviderRequestMeasurement,
@@ -185,8 +186,10 @@ export class TerminalProviderError extends Error {
 
 /**
  * A provider failure as a code: the error's class, the HTTP status and the
- * provider's machine-readable code where it gave one. Never the message, which
- * is the provider's text and may carry identifiers.
+ * provider's machine-readable code where it gave one, and the name of a Workers
+ * runtime failure (`Error:network_connection_lost`) that `platformErrorCode`
+ * reads from its fixed sentence. Never the message, which is the provider's
+ * text and may carry identifiers.
  */
 export function terminalProviderErrorCode(error: unknown): string {
   if (error instanceof TerminalProviderError) return error.code;
@@ -195,6 +198,8 @@ export function terminalProviderErrorCode(error: unknown): string {
   const parts = [error.name];
   if (typeof value.statusCode === "number") parts.push(String(value.statusCode));
   if (typeof value.code === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(value.code)) parts.push(value.code);
+  const platform = platformErrorCode(error);
+  if (platform) parts.push(platform);
   return codeShaped(parts.join(":"));
 }
 
