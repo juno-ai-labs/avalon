@@ -109,6 +109,16 @@ export const OrganizationUsageSchema = z.object({
     billed: z.literal(false),
     billingEnabled: z.boolean().optional(),
   }),
+  /**
+   * New paid work is being refused: the week's allowance is spent and
+   * overages are off. Absent where billing is not configured.
+   */
+  allowanceExhausted: z.boolean().optional(),
+  /**
+   * Running out of the allowance would refuse new work: limits are enforced
+   * and overages are not admitted. Absent where billing is not configured.
+   */
+  stopsAtAllowance: z.boolean().optional(),
 });
 export type OrganizationUsage = z.infer<typeof OrganizationUsageSchema>;
 

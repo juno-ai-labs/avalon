@@ -26,6 +26,8 @@ are in
 | `packages/contracts/src/plans.ts` | The plan catalog and weekly allocation, shared by the product and public site; dependency-free so native Node site builds can consume it without loading the runtime schemas. |
 | `packages/contracts/src/usage.ts` | Re-exports the catalog and owns metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
 | `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only D1 ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`, `publishOrganizationUsage`, `pruneUsageEvents` and `USAGE_EVENTS_D1_RETENTION_DAYS`. |
+| `apps/api/src/services/usage-admission.ts` | `readUsageAllowance` (the admission decision) and `requireUsageAllowance` (the refusal). |
+| `apps/api/src/services/usage-allowance-notice.ts` | The once-a-week email to owners and administrators when work is refused. |
 | `apps/api/src/durable-objects/workspace-do.ts` (`publishUsage`) | Sends the meter after a plan change to every subscribed member socket as `workspace_usage` (`WorkspaceUsageEventSchema`), never a guest's, and drops a meter read before the last one sent. |
 | `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, applies the batch to D1, then sends it to the usage lakehouse, logs `usage_batch_applied`. `usageLakehouseRecord` shapes the R2 row. |
 | `apps/api/src/routes/workspace.ts` | `GET /workspace/usage`, for every member role, and `PUT /workspace/plan`, for administrators (`WorkspaceService.setPlan`). |
@@ -33,7 +35,7 @@ are in
 | `packages/db/usage-migrations/` | `usage_events`, `usage_rollups` and `usage_plan_changes`, in `USAGE_DB` (`avalon-<region>-usage`). Applied by `pnpm --filter @rally/api db:usage:migrate` (local, part of `db:migrate`) and `db:usage:migrate:remote` (deploy). |
 | `config/usage-lakehouse.json`, `config/usage-lakehouse-stream-schema.json` | The usage lakehouse: the `USAGE_LAKEHOUSE` Pipeline into the Iceberg table `avalon.usage_events` in R2, provisioned by `scripts/ensure-cloudflare-inference-lakehouse.mjs` like the other lakehouses. |
 | `apps/desktop/src/renderer/lib/organization-usage.ts` | The desktop's read: `useOrganizationUsage`, `useSetOrganizationPlan`, `applyPushedOrganizationUsage`, the `usage` local-cache slice, and the formatters. `lib/workspace-socket.tsx` applies the push, marks the meter stale on every subscribe answer, and relays both to the Settings window as `usage`. |
-| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Billing with its plan picker, and the account menu's meter (a full row right under Settings). |
+| `apps/desktop/src/renderer/components/organization-usage.tsx` | Settings → Organization → Billing with its plan picker, the account menu's meter (a full row right under Settings), and the rail's `UsageLimitRailWarning`. |
 | `packages/ui/src/components/primitives.tsx` (`Meter`) | The shared meter primitive and its `cmp.meter.*` tokens. |
 
 Each call site emits next to where its cost is already known; searching for
@@ -69,6 +71,15 @@ Cloudflare's 12-hour maximum), acknowledging only after the new delivery is
 accepted; lexical results remain available. These billing holds do not consume
 transport retries. OCR records the quota error and retries on the next explicit
 read instead of permanently caching it as a broken PDF.
+
+An agent run refused here ends as `usage_allowance_exhausted`
+(`requireRunUsageAllowance`). `readUsageAllowance` is the one copy of the rule:
+admission throws on it, and the usage read reports it as `allowanceExhausted`
+and `stopsAtAllowance` for the desktop's rail warning. Each refusal also defers
+a once-per-week email to owners and administrators, keyed
+`usage_allowance_exhausted/<org>/<week start>/<user>` in the shared email
+receipts; the week's first refusal also pushes the meter to open windows, and a
+billing change already does (`reconcileSubscription`).
 
 ### Sending
 
@@ -358,6 +369,27 @@ An uncertain write may have committed: inspect before retrying.
 
 
 ## Changelog
+
+### 2026-11-12 — An exhausted allowance is named, shown and emailed
+
+**What changed:** A refused agent run fails as `usage_allowance_exhausted` with
+a card that opens the Billing settings; the usage read reports the admission
+decision for a red (refused) or yellow (10% or less left) rail warning; owners
+and administrators get one email per allowance week.
+
+**Why:** The day admission shipped, an Organization over its allowance had every
+run fail as `run_state_persistence_failed`, because the check runs inside the
+harness's liveness port and the port wrapped it. Sidekick and background runs
+failed with nothing shown to anyone.
+
+**Considered and rejected:** Driving the rail from the meter: `billingEnabled`
+turns true only from the next billing period, so the warning would outlast the
+fix. A new "emailed this week" table: the email receipts' key already gives
+once-per-key.
+
+**What a future change has to respect:** Anything that warns about the
+allowance reads `readUsageAllowance`, never re-derives it. The email stays
+deferred: every hot path refuses through admission.
 
 ### 2026-11-12 — Payment-aware usage admission
 

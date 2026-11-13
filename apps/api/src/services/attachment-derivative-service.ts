@@ -388,7 +388,7 @@ export async function ocrPdfWithWorkersAi(
    * resource, or the connection a connector read the file through — and only
    * keeps the usage event id readable; the workspace is what is billed.
    */
-  metering: { env: Parameters<typeof emitInferenceUsage>[0] & Pick<Env, "DB" | "USAGE_DB" | "BILLING_CONFIG">; workspaceId: string; sourceId: string },
+  metering: { env: Env; workspaceId: string; sourceId: string },
 ): Promise<AttachmentOcrText> {
   if (signal.aborted) throw signal.reason;
   await requireUsageAllowance(metering.env, metering.workspaceId);

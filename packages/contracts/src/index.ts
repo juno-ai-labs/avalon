@@ -210,7 +210,10 @@ export const HarnessFailureCodeSchema = z.enum([
   // reporting `tool_receipt_persistence_failed` when nothing about the receipt
   // had failed. Same reasoning as the two provider arms above — the code exists
   // so the failure names the system that produced it.
-  "platform_limit_exceeded"
+  "platform_limit_exceeded",
+  // The weekly allowance is spent and overages are off. Not retryable: the
+  // remedy is an administrator's billing setting or the weekly reset.
+  "usage_allowance_exhausted",
 ]);
 export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
 

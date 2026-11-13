@@ -92,6 +92,7 @@ import {
   type HarnessPlugin,
   type HarnessSkill,
   HarnessToolEffectUnresolvedError,
+  HarnessLimitError,
   type HarnessToolContext,
   type HarnessToolResult,
   type HarnessToolReplayRefusal,
@@ -4097,7 +4098,7 @@ export async function runWorkstreamHarness(
       compaction: {
           contextWindowTokensByModel: await contextWindowPreparation.get(),
           prepare: async () => {
-            await requireUsageAllowance(env, input.workspaceId);
+            await requireRunUsageAllowance(env, input.workspaceId);
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
@@ -4244,7 +4245,7 @@ export async function runWorkstreamHarness(
           }
         },
         judge: async (state) => {
-          await requireUsageAllowance(env, input.workspaceId);
+          await requireRunUsageAllowance(env, input.workspaceId);
           const traceId = crypto.randomUUID();
           const decision = await judgeCompletionStop({
             apiKey: env.TYPESAFE_API_KEY, state, signal: harnessSignal,
@@ -4423,7 +4424,7 @@ export async function runWorkstreamHarness(
       // work is independently authorized by beforeToolCall above. Treating
       // archive as a renewal failure masks Bind's durable stop transition.
       if (stage === "before_model") {
-        await requireUsageAllowance(env, input.workspaceId);
+        await requireRunUsageAllowance(env, input.workspaceId);
         const authorityStartedAt = Date.now();
         await Promise.all([
           liveness.pulse(stage, true).then(() => {
@@ -4448,6 +4449,7 @@ export async function runWorkstreamHarness(
         await liveness.pulse(stage, stage === "after_tool");
       }
     },
+    describeFailureCause: describeHarnessFailureCause,
     findCompletedToolResult: (toolCallId, inputHash, policyIdentity) => findCompletedToolResult(toolCallId, inputHash, policyIdentity),
     resolveToolEffectIntentId: toolEffectIntents.resolve,
     onEvent: async (event: HarnessEvent) => {
@@ -9596,6 +9598,30 @@ export const __integrationTesting = {
 };
 
 /**
+ * The usage allowance, as a harness run's ports ask it: an exhausted allowance
+ * ends the run as the limit `usage_allowance_exhausted`, not as the port failing.
+ */
+export async function requireRunUsageAllowance(
+  env: Parameters<typeof requireUsageAllowance>[0],
+  workspaceId: string,
+): Promise<void> {
+  try {
+    await requireUsageAllowance(env, workspaceId);
+  } catch (error) {
+    if (!isUsageAllowanceExhausted(error)) throw error;
+    throw new HarnessLimitError("usage_allowance_exhausted", "The organization's included weekly usage is used up");
+  }
+}
+
+/**
+ * What a failed harness port threw, as a code a log may keep. A prose message
+ * collapses to the fallback: it may hold member content.
+ */
+export function describeHarnessFailureCause(cause: unknown): string {
+  return diagnosticErrorCode(cause, "unclassified_cause");
+}
+
+/**
  * What a harness run that did not complete leaves in the log. The member-safe
  * terminal result deliberately strips a failure's detail, so it is recorded
  * here or nowhere: a Bind run that fails before its first inference attempt
@@ -9607,7 +9633,7 @@ export const __integrationTesting = {
 export function logHarnessRunOutcome(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "harnessRunId" | "workspaceId" | "parentId">,
-  outcome: { status: string; failure?: { code?: string; kind?: string; message?: string } | null | undefined },
+  outcome: { status: string; failure?: { code?: string; kind?: string; message?: string; causeCode?: string } | null | undefined },
   stoppedByUser: boolean,
 ): void {
   if (outcome.status === "completed" || stoppedByUser) return;
@@ -9627,5 +9653,6 @@ export function logHarnessRunOutcome(
     failure_code: outcome.failure?.code ?? null,
     failure_kind: outcome.failure?.kind ?? null,
     failure_message: outcome.failure?.message?.slice(0, 500) ?? null,
+    failure_cause_code: outcome.failure?.causeCode ?? null,
   });
 }
