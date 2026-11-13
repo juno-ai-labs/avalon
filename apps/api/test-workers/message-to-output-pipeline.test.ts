@@ -4204,7 +4204,9 @@ describe("a member's message travels the whole pipeline", () => {
     try {
       await installScriptedProvider(stub, [[
         { choices: [{ delta: { content: "observable partial" }, finish_reason: null }] },
-        { error: { message: "provider stream broke" } },
+        // A provider outage, which would traverse to the fallback if nothing
+        // had streamed: only the visible partial closes the route.
+        { error: { code: "unavailable", message: "provider stream broke" } },
       ]], {
         // The fallback is deliberate: the oracle proves that participant-visible
         // output closes the entire route, rather than succeeding because there
@@ -4256,6 +4258,19 @@ describe("a member's message travels the whole pipeline", () => {
         .filter((request) => request.body.stream === true);
       expect(streamedRequests.map((request) => request.body.model))
         .toEqual([STREAM_FAILURE_PRIMARY_MODEL]);
+      // The ledger records the decision the executor made, not the matrix's
+      // unclamped "fallback".
+      const attempts = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ outcome: string; routing_decision_json: string }>(
+          `SELECT outcome, routing_decision_json FROM inference_attempts WHERE run_id = ?`,
+          opened.body.harnessRunId as string,
+        ).toArray());
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]!.outcome).toBe("failed");
+      expect(JSON.parse(attempts[0]!.routing_decision_json)).toMatchObject({
+        disposition: "failed",
+        producedOutput: true,
+      });
 
       const reloaded = await product(stub, { operation: "boot", auth: AUTH });
       expect(reloaded.status).toBe(200);
