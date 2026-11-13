@@ -718,8 +718,7 @@ export class WorkstreamTranscriptStorage {
       const provenanceKey = bindProvenanceKey(provenance);
       const replay = existingActivationInputs.get(activationInputId);
       if (replay) {
-        // The receipt already holds the admitted copy and the Bind head keeps
-        // it; a snapshot input's newer rendering is simply not appended.
+        // A snapshot input keeps its admitted copy; only provenance must match.
         if (replay.provenanceKey !== provenanceKey
           || (replay.messageJson !== messageJson && keepAdmittedOnReplay !== true)) {
           throw new Error("bind_activation_input_replay_mismatch");

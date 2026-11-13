@@ -162,9 +162,7 @@ also keep a Details action after acknowledgement. Explicit `occurrence` values
 are remembered by the window queue across source remounts, so reopening a
 surface does not replay an acknowledged event. Runs already failed when a
 conversation opens expose Run details; runs observed active, and a run the
-screen's own Retry started, open a notice when they fail. A Retry refused at its
-activation boundary settles in under a second, before any snapshot shows it
-running, so the id the `retry_harness` command returns counts as observed.
+screen's own Retry started, open a notice when they fail.
 
 `rally/no-inline-errors` rejects the retired `InlineError` primitive, DOM alerts,
 and error-message styling in shared UI and both client source trees. It does

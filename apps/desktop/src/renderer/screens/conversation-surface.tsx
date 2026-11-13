@@ -1998,10 +1998,7 @@ function ConversationSurfaceContent({
   const retry = useMutation({
     mutationFn: () => socketConnection.retryHarness(),
     onSuccess: async ({ harnessRunId }) => {
-      // A Retry this screen started is a new interruption even if it fails
-      // before any snapshot shows it running: one refused at its activation
-      // boundary settles in well under a second, and without this the failed
-      // Retry left the same Run details and Retry buttons with nothing said.
+      // A Retry this screen started counts as observed, even if no snapshot shows it running.
       observedActiveRun.current = harnessRunId;
       requestSocketSnapshot();
     },
