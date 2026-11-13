@@ -36,6 +36,21 @@ describe('Canvas sharing defaults', () => {
     expect(screen.getByRole('combobox', { name: 'Default Artifact Audience' })).toHaveTextContent('Anyone with a link');
   });
 
+  it('holds both choices while a save is answered, so a slow answer cannot land over a later choice', async () => {
+    const client = api({ editors: 'workspace', artifacts: 'public' });
+    let answer: (value: CanvasSharingDefaults) => void = () => undefined;
+    client.updateCanvasSharingDefaults.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    renderWithQueries(<CanvasSharingDefaultsSetting api={client} isAdmin workspaceId="workspace-acme" />);
+    const editors = screen.getByRole('combobox', { name: 'Default Editor Audience' });
+    await waitFor(() => expect(editors).toBeEnabled());
+    fireEvent.click(editors);
+    fireEvent.keyDown(screen.getByRole('option', { name: 'Creator' }), { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Default Artifact Audience' })).toBeDisabled());
+    answer({ editors: 'creator', artifacts: 'public' });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Default Artifact Audience' })).toBeEnabled());
+    expect(screen.getByRole('combobox', { name: 'Default Editor Audience' })).toHaveTextContent('Creator');
+  });
+
   it('shows a member the defaults without letting them change either', async () => {
     renderWithQueries(<CanvasSharingDefaultsSetting api={api({ editors: 'creator', artifacts: 'editors' })} isAdmin={false} workspaceId="workspace-acme" />);
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Default Artifact Audience' })).toHaveTextContent('Editors only'));

@@ -44,7 +44,9 @@ export function CanvasSharingDefaultsSetting({ api, workspaceId, isAdmin }: {
   const save = useMutation({
     mutationFn: (update: CanvasSharingDefaultsUpdate) => api!.updateCanvasSharingDefaults(update),
     // Show the choice at once; the answer is the stored record either way.
-    onMutate: (update) => {
+    // A read still in flight would land over it, so it is cancelled first.
+    onMutate: async (update) => {
+      await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<CanvasSharingDefaults>(key);
       queryClient.setQueryData<CanvasSharingDefaults>(key, { ...(previous ?? DEFAULT_CANVAS_SHARING_DEFAULTS), ...update });
       return { previous };
@@ -53,7 +55,9 @@ export function CanvasSharingDefaultsSetting({ api, workspaceId, isAdmin }: {
     onSuccess: (next) => queryClient.setQueryData(key, next),
   });
   const current = defaults.data ?? DEFAULT_CANVAS_SHARING_DEFAULTS;
-  const disabled = !isAdmin || !api || !defaults.data;
+  // One save at a time: each answers with the whole record, so a slower first
+  // answer could otherwise land over the second choice.
+  const disabled = !isAdmin || !api || !defaults.data || save.isPending;
   return <>
     <label className="settings-preference-row">
       <SettingCopy setting={settings.canvasEditorDefault} />
