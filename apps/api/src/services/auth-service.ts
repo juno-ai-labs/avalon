@@ -551,38 +551,37 @@ export class AuthService {
       throw new ApiError(401, "invalid_desktop_binding", "The desktop authentication binding is missing");
     }
     const identity = await this.verifySignupIdentity(row, credentials, code, callbackUrl(this.env, provider), extras);
+    const issued = await this.issueLoginTicket({
+      userId: identity.user_id, attemptId: row.desktop_attempt_id,
+      codeChallenge: row.desktop_code_challenge, audience: "desktop", provider,
+      telemetryFlowId: row.telemetry_flow_id, signupCreated: identity.signup_created === true,
+    });
+    const target = new URL(row.return_uri);
+    target.searchParams.set("ticket", issued.ticket);
+    target.searchParams.set("region", issued.region);
+    target.searchParams.set("attempt", issued.attemptId);
+    return target.toString();
+  }
+
+  /** Shared short-lived native handoff. Callers must authenticate the user first. */
+  async issueLoginTicket(input: {
+    userId: string; attemptId: string; codeChallenge: string; audience: "desktop" | "browser"; provider?: LoginProvider;
+    telemetryFlowId?: string | null; signupCreated?: boolean;
+  }): Promise<{ ticket: string; region: Region; attemptId: string }> {
     const ticket = randomToken(40);
-    const ticketHash = await sha256(ticket);
-    const at = nowIso();
-    await this.env.DB.prepare(
+    const inserted = await this.env.DB.prepare(
       `INSERT INTO desktop_login_tickets
        (id, ticket_hash, user_id, workspace_id, region, desktop_attempt_id,
-        desktop_code_challenge, expires_at, created_at, telemetry_flow_id, signup_created, login_provider)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-      .bind(
-        newId(),
-        ticketHash,
-        identity.user_id,
-        // Provider identity always returns an unbound Global bootstrap ticket.
-        // Even an existing Global member must pass through cross-region
-        // discovery so conflicting memberships cannot bypass the control plane.
-        identityBootstrapWorkspaceId(),
-        this.env.AVALON_REGION,
-        row.desktop_attempt_id,
-        row.desktop_code_challenge,
-        new Date(Date.now() + 2 * 60_000).toISOString(),
-        at,
-        row.telemetry_flow_id,
-        identity.signup_created ? 1 : 0,
-        provider,
-      )
-      .run();
-    const target = new URL(row.return_uri);
-    target.searchParams.set("ticket", ticket);
-    target.searchParams.set("region", this.env.AVALON_REGION);
-    target.searchParams.set("attempt", row.desktop_attempt_id);
-    return target.toString();
+        desktop_code_challenge, expires_at, created_at, telemetry_flow_id, signup_created, login_provider, redemption_audience)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(desktop_attempt_id) WHERE desktop_attempt_id IS NOT NULL DO NOTHING
+       RETURNING id`,
+    ).bind(newId(), await sha256(ticket), input.userId, identityBootstrapWorkspaceId(),
+      this.env.AVALON_REGION, input.attemptId, input.codeChallenge,
+      new Date(Date.now() + 2 * 60_000).toISOString(), nowIso(),
+      input.telemetryFlowId ?? null, input.signupCreated ? 1 : 0, input.provider ?? null, input.audience).first<{ id: string }>();
+    if (!inserted) throw new ApiError(409, "attempt_already_used", "Start a new sign-in attempt");
+    return { ticket, region: this.env.AVALON_REGION, attemptId: input.attemptId };
   }
 
   async consumeIdentityDenial(state: string, provider: LoginProvider): Promise<string> {
@@ -602,7 +601,7 @@ export class AuthService {
     attemptId: string;
     codeVerifier: string;
     timezone?: string | undefined;
-  }): Promise<Session> {
+  }, audience: "desktop" | "browser" = "desktop"): Promise<Session> {
     if (input.region !== this.env.AVALON_REGION) {
       throw new ApiError(409, "region_mismatch", "The login ticket belongs to another region");
     }
@@ -610,17 +609,20 @@ export class AuthService {
     const claimed = await this.env.DB.prepare(
       `UPDATE desktop_login_tickets SET consumed_at = ?
        WHERE ticket_hash = ? AND region = ? AND desktop_attempt_id = ?
-         AND consumed_at IS NULL AND expires_at > ?
-       RETURNING user_id, workspace_id, desktop_code_challenge, telemetry_flow_id, signup_created, login_provider`,
+         AND consumed_at IS NULL AND expires_at > ? AND redemption_audience = ?
+       RETURNING user_id, workspace_id, desktop_code_challenge, telemetry_flow_id, signup_created, login_provider, redemption_audience`,
     )
-      .bind(nowIso(), hash, input.region, input.attemptId, nowIso())
-      .first<{ user_id: string; workspace_id: string | null; desktop_code_challenge: string | null; telemetry_flow_id: string | null; signup_created: number; login_provider: string | null }>();
+      .bind(nowIso(), hash, input.region, input.attemptId, nowIso(), audience)
+      .first<{ user_id: string; workspace_id: string | null; desktop_code_challenge: string | null; telemetry_flow_id: string | null; signup_created: number; login_provider: string | null; redemption_audience: "desktop" | "browser" }>();
     if (!claimed) throw new ApiError(401, "invalid_login_ticket", "The login ticket is invalid, expired, or already used");
-    // A ticket written before migration 0133 has no provider; only Google wrote them.
-    const method: LoginProvider = claimed.login_provider === "apple" ? "apple" : "google";
+    // Legacy desktop tickets without a provider came from Google. Browser
+    // handoffs resume an existing sign-in and have no provider event to report.
+    const method: LoginProvider | null = claimed.redemption_audience === "desktop"
+      ? claimed.login_provider === "apple" ? "apple" : "google"
+      : null;
     const proof = await sha256(input.codeVerifier);
     if (!claimed.desktop_code_challenge || !timingSafeEqualText(proof, claimed.desktop_code_challenge)) {
-      observeSignup(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, 'signup_failed', method, { result: 'failed', userId: claimed.user_id });
+      if (method) observeSignup(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, 'signup_failed', method, { result: 'failed', userId: claimed.user_id });
       // Matching ticket + attempt claims are intentionally burned on a wrong
       // verifier, mirroring RFC 7636 authorization-code redemption semantics.
       throw new ApiError(401, "invalid_login_ticket", "The login ticket is invalid, expired, or already used");
@@ -639,7 +641,7 @@ export class AuthService {
     }
     const identity = await this.loadIdentity(claimed.user_id, claimed.workspace_id);
     const session = await this.createSession(identity);
-    observeAuthenticationCompleted(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, method, claimed.user_id, claimed.signup_created === 1);
+    if (method) observeAuthenticationCompleted(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, method, claimed.user_id, claimed.signup_created === 1);
     return session;
   }
 
