@@ -241,12 +241,12 @@ describe("a Sidekick a Canvas's Chat made", () => {
     expect(await lifecycle(MADE_HERE)).toBe("deleted");
   });
 
-  it("is not managed by a member whom only the Canvas's Organization-wide sharing admits", async () => {
+  it("is managed by every member an Organization-wide Canvas admits, as anyone with access to the Canvas", async () => {
     await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
       update: { visibility: "workspace", userIds: [PARTICIPANT, GUEST] } });
     const manages = (sidekickId: string, userId: string) => workspace().sidekickAllowsManager({
       workspaceId: WORKSPACE_ID, automationId: sidekickId, actor: { ...member(userId), participantOfOwningWorkstream: false } });
-    expect(await manages(MADE_HERE, OUTSIDER)).toBe(false);
+    expect(await manages(MADE_HERE, OUTSIDER)).toBe(true);
     expect(await manages(MADE_HERE, PARTICIPANT)).toBe(true);
   });
 
