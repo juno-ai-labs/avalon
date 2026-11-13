@@ -93,7 +93,7 @@ import { bareAddressAutolink, EMAIL_MENTION, EMAIL_MENTION_AT } from '@rally/con
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
-import { httpHostname, useHostFavicon } from '../lib/host-favicon';
+import { HostFaviconHold, httpHostname, useHostFavicon } from '../lib/host-favicon';
 import { isThinkingEvent, thoughtVerb } from '../lib/transcript';
 import type { ElicitationData, Message, MessageAttachment, MessageMention, WorkTotal } from '../lib/types';
 import { useTextClamped } from '../lib/use-text-clamped';
@@ -1514,9 +1514,15 @@ export function MarkdownBody({
   // see a [^1]: under ## Sources unless the definition rides along with the
   // fragment. Identity of `fragment` is preserved when nothing is missing, so
   // the parse that already owns the defs is unchanged.
+  // While streaming, the last line is still arriving: a definition there can
+  // name a prefix of its target (`[1]: https://www.alph`), and borrowing it
+  // would hand that prefix to links in settled fragments, outside the tail's
+  // `HostFaviconHold`. It rides along once its newline arrives.
   const definitionBlocks = useMemo(
-    () => (collapseParts ? markdownDefinitionBlocks(markdown) : EMPTY_DEFINITION_BLOCKS),
-    [collapseParts, markdown],
+    () => (collapseParts
+      ? markdownDefinitionBlocks(streaming ? markdown.slice(0, markdown.lastIndexOf('\n') + 1) : markdown)
+      : EMPTY_DEFINITION_BLOCKS),
+    [collapseParts, markdown, streaming],
   );
   const dropBorrowedFootnotes = useMemo<MarkdownComponents['section']>(() => (
     ({ children: sectionChildren, node, ...props }) => {
@@ -1590,8 +1596,11 @@ export function MarkdownBody({
               />
             );
           })}
-          {/* Only here is the source's last line still arriving. */}
-          {renderMarkdown(tail, extra, tailRemarkPlugins)}
+          {/* Only here is the source still arriving, so only here can a
+              link's hostname be a prefix of the one being typed. */}
+          <HostFaviconHold.Provider value={true}>
+            {renderMarkdown(tail, extra, tailRemarkPlugins)}
+          </HostFaviconHold.Provider>
         </>
       );
     };
@@ -1627,14 +1636,18 @@ export function MarkdownBody({
           return (
             <MarkdownCollapseSection
               heading={(
-                <SettledMarkdownSegment
-                  components={headingComponents}
-                  rehypePlugins={rehypePlugins}
-                  rehypeOptions={rehypeOptions}
-                  remarkPlugins={remarkPlugins}
-                  source={part.heading}
-                  urlTransform={urlTransform}
-                />
+                // A streaming section with no body yet is still typing its
+                // heading, which can hold a link to a part-typed host.
+                <HostFaviconHold.Provider value={streamThis && part.body.trim() === ''}>
+                  <SettledMarkdownSegment
+                    components={headingComponents}
+                    rehypePlugins={rehypePlugins}
+                    rehypeOptions={rehypeOptions}
+                    remarkPlugins={remarkPlugins}
+                    source={part.heading}
+                    urlTransform={urlTransform}
+                  />
+                </HostFaviconHold.Provider>
               )}
               id={part.id}
               key={part.id}
