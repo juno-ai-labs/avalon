@@ -65,6 +65,7 @@ import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { canvasTitleFromOpening } from "../services/canvas-naming";
 import { canvasRunningActivity, projectionIsRunning } from "./canvas-agent-activity";
+import { readCanvasSharingDefaults } from "./canvas-sharing-defaults";
 
 /** Who is asking: their id and, for a member, their Organization role; a guest has none. */
 export const CanvasActorSchema = z.strictObject({
@@ -471,7 +472,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    * Whether a Canvas is blank as this object sees it, and with `commit`, delete
    * its rows if so. The query below is the definition of blank; anything a
    * person can put into a Canvas must appear in it. Not blank is an answer,
-   * not a refusal. The Chat's own messages are not visible here (its
+   * not a refusal. An audience that names nobody (`creator`, `workspace`) is
+   * not use: a new Canvas may start with either, by the Organization's
+   * default. The Chat's own messages are not visible here (its
    * projection lags), so `CanvasService.discardIfBlank` asks the Chat between
    * the two calls.
    */
@@ -484,7 +487,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         return { discarded: false };
       }
       const blank = row.archived_at === null && row.title === UNTITLED_CANVAS && row.title_status === "settled"
-        && row.appearance_json === null && row.writer_sidekick_id === null && row.visibility === "creator"
+        && row.appearance_json === null && row.writer_sidekick_id === null && row.visibility !== "participants"
         && this.sql.exec<{ used: number }>(
           `SELECT EXISTS (SELECT 1 FROM sidekick_child_projections
                      WHERE sidekick_id = ?1 AND COALESCE(json_extract(effect_json, '$.latestAttentionOrdinal'), 0) > 0)
@@ -510,10 +513,12 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   }
 
   /**
-   * Bring a Canvas into existence with no artifacts, open to its creator
-   * alone; one a Sidekick run makes also admits whoever the Sidekick is
-   * shared with, read live from the Sidekick, so nothing is copied. A replay
-   * answers `created: false`.
+   * Bring a Canvas into existence with no artifacts. One a person makes opens
+   * to the Organization's default editor audience (`canvas-sharing-defaults.ts`),
+   * read in this transaction. One a Sidekick run makes opens to its creator
+   * alone and whoever the Sidekick is shared with, read live from the
+   * Sidekick, so nothing is copied and a personal Sidekick's output is not
+   * opened to the Organization. A replay answers `created: false`.
    */
   create(input: z.input<typeof CanvasCreateRequestSchema>): { created: boolean; canvasId: string } {
     const request = parseRpcInput(CanvasCreateRequestSchema, input, "canvas_create");
@@ -542,7 +547,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       }
       this.insertRow({
         workspaceId: request.workspaceId, title: request.title, createdByUserId: request.createdByUserId,
-        createdAt: now, updatedAt: now, writer: request.writer ?? null, visibility: "creator",
+        createdAt: now, updatedAt: now, writer: request.writer ?? null,
+        visibility: request.writer ? "creator" : readCanvasSharingDefaults(this.sql).editors,
         authorityGeneration: request.authorityGeneration, titleStatus: request.titleStatus ?? "settled",
       });
       // A run's Canvas is attached to its Sidekick as it is made: the

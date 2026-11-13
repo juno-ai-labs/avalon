@@ -455,3 +455,33 @@ export const CanvasPublishedArtifactSchema = z.strictObject({
   }).optional(),
 });
 export type CanvasPublishedArtifact = z.infer<typeof CanvasPublishedArtifactSchema>;
+
+/**
+ * The audiences a new Canvas starts with, one pair per Organization, set by
+ * its administrators under Organization preferences. Only the choices that
+ * name nobody: a default cannot list people.
+ *
+ * `editors` is what a Canvas a person makes opens to. `artifacts` is stored
+ * and shown but not yet applied: it is the audience Rally will suggest for a
+ * Canvas's artifacts. `docs/canvases.md#who-can-open-a-canvas`.
+ */
+export const CanvasDefaultEditorAudienceSchema = z.enum(["creator", "workspace"]);
+export type CanvasDefaultEditorAudience = z.infer<typeof CanvasDefaultEditorAudienceSchema>;
+export const CanvasDefaultArtifactAudienceSchema = z.enum(["editors", "workspace", "public"]);
+export type CanvasDefaultArtifactAudience = z.infer<typeof CanvasDefaultArtifactAudienceSchema>;
+
+export const CanvasSharingDefaultsSchema = z.object({
+  editors: CanvasDefaultEditorAudienceSchema,
+  artifacts: CanvasDefaultArtifactAudienceSchema,
+});
+export type CanvasSharingDefaults = z.infer<typeof CanvasSharingDefaultsSchema>;
+
+/** What an Organization that never chose reads. */
+export const DEFAULT_CANVAS_SHARING_DEFAULTS: CanvasSharingDefaults = { editors: "workspace", artifacts: "public" };
+
+/** A save: each field optional so one control saves its own. An empty save is refused. */
+export const CanvasSharingDefaultsUpdateSchema = CanvasSharingDefaultsSchema.partial()
+  .refine((value) => value.editors !== undefined || value.artifacts !== undefined, {
+    message: "A default to change is required.",
+  });
+export type CanvasSharingDefaultsUpdate = z.infer<typeof CanvasSharingDefaultsUpdateSchema>;
