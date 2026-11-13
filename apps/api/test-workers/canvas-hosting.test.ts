@@ -125,6 +125,34 @@ describe("who can open a Canvas", () => {
     expect(await opens(guest(OUTSIDER))).toBe(false);
   });
 
+  it("lists an untouched Organization-wide Canvas only to its creator, and to every member once it is titled", async () => {
+    const untitled = asWorkstreamId(crypto.randomUUID());
+    await workspace().canvasCreate({
+      workspaceId: WORKSPACE_ID, canvasId: untitled, title: "Untitled Canvas", createdByUserId: CREATOR, authorityGeneration: 1,
+    });
+    const listed = async (userId: string) => (await workspace().canvasListFor({ workspaceId: WORKSPACE_ID,
+      userId: asUserId(userId), accessClass: "member" })).map((row) => row.id);
+    expect(await listed(CREATOR)).toContain(untitled);
+    expect(await listed(MEMBER)).not.toContain(untitled);
+    // Still Organization-wide: a member with its link opens it.
+    expect(await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: untitled, actor: member(MEMBER) }))
+      .toMatchObject({ visibility: "workspace" });
+    await workspace().canvasUpdate({ workspaceId: WORKSPACE_ID, canvasId: untitled, actor: member(CREATOR), title: "Hiring plan" });
+    expect(await listed(MEMBER)).toContain(untitled);
+  });
+
+  it("discards a blank Canvas left at the default, and keeps one whose sharing somebody changed", async () => {
+    const untitled = asWorkstreamId(crypto.randomUUID());
+    await workspace().canvasCreate({
+      workspaceId: WORKSPACE_ID, canvasId: untitled, title: "Untitled Canvas", createdByUserId: CREATOR, authorityGeneration: 1,
+    });
+    const judge = () => workspace().canvasDiscardIfBlank({ workspaceId: WORKSPACE_ID, canvasId: untitled, actor: member(CREATOR), commit: false });
+    expect(await judge()).toEqual({ discarded: true });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: untitled, actor: member(CREATOR),
+      update: { visibility: "creator", userIds: [] } });
+    expect(await judge()).toEqual({ discarded: false });
+  });
+
   it("opens a new Canvas to its creator alone once the Organization chooses that default", async () => {
     expect(await workspace().canvasSharingDefaults({ workspaceId: WORKSPACE_ID }))
       .toEqual({ editors: "workspace", artifacts: "public" });
