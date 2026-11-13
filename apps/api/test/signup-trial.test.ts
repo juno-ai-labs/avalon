@@ -189,7 +189,7 @@ it('emails each owner and administrator once a week when the allowance runs out,
   expect(sent[0]!.text).toContain('turn on overage billing in Settings, Organization, Billing');
   // The desktop handoff and a browser link, since `/open` reaches only the desktop app.
   expect(sent[0]!.text).toContain('Open usage settings in the Rally app: https://rally.example.test/open#target=');
-  expect(sent[0]!.text).toContain('Open usage settings in your browser: https://app.example.test/#/settings?section=billing');
+  expect(sent[0]!.text).toContain(`Open usage settings in your browser: https://app.example.test/app/workspaces/global/${ORG}#/settings?section=billing`);
 });
 
 it('blocks a real provider entry point before opening a request after the allowance is exhausted', async () => {

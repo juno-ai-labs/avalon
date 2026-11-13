@@ -87,14 +87,15 @@ export function usageAllowanceEmail(
     "Until that changes, Rally will not answer in Chats, and Sidekicks and background agents stop when they next need a model.",
     `To keep working, turn on overage billing in Settings, Organization, Billing. Otherwise usage resumes when the allowance resets on ${resets}.`,
   ];
-  // `/open` hands off to the desktop app only. The browser app has no
-  // Organization-addressed Settings URL, so its link opens Settings in
-  // whichever Organization that browser last used; the text names the path.
+  // `/open` hands off to the desktop app only. The browser app's own
+  // Organization URL activates that Organization before its hash route runs,
+  // so an administrator of several lands in the right one.
+  const browserSettingsUrl = env.BROWSER_APP_ORIGIN
+    ? new URL(`/app/workspaces/${env.AVALON_REGION}/${input.workspaceId}#/settings?section=billing`, env.BROWSER_APP_ORIGIN).toString()
+    : null;
   const links = [
     { label: "Open usage settings in the Rally app", url: settingsUrl.toString() },
-    ...(env.BROWSER_APP_ORIGIN
-      ? [{ label: "Open usage settings in your browser", url: new URL("/#/settings?section=billing", env.BROWSER_APP_ORIGIN).toString() }]
-      : []),
+    ...(browserSettingsUrl ? [{ label: "Open usage settings in your browser", url: browserSettingsUrl }] : []),
   ];
   const text = [firstName ? `Hi ${firstName},` : "Hi,", "", ...paragraphs.flatMap((line) => [line, ""]),
     ...links.map((link) => `${link.label}: ${link.url}`)].join("\n");
