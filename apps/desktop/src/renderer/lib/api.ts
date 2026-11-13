@@ -1,3 +1,4 @@
+import { WorkstreamMessageAdmissionReceiptSchema, type CreateMessageRequestSchema, type WorkstreamMessageAdmissionReceipt } from '@rally/contracts';
 import type { ProductAnalyticsPreference } from '@rally/contracts/telemetry';
 import type { SignInProvider } from './sign-in-provider';
 import { ProductAnalyticsPreferenceClient } from '../../common/product-analytics-preference';
@@ -1283,6 +1284,13 @@ export class RallyApi {
   createCanvas(input: CreateCanvasRequest = {}): Promise<CreatedCanvas> {
     return this.request('/canvases', {
       method: 'POST', body: { ...input, canvasId: input.canvasId ?? uuidV7() }, schema: CreatedCanvasSchema,
+    });
+  }
+
+  /** Admit the opening message before the mobile client has a conversation socket. */
+  sendConversationMessage(parentId: string, input: z.input<typeof CreateMessageRequestSchema>, operationId: string): Promise<WorkstreamMessageAdmissionReceipt> {
+    return this.request(`/conversations/${encodeURIComponent(parentId)}/substreams/0/messages`, {
+      method: 'POST', body: input, headers: { [RALLY_HEADERS.OPERATION_ID]: operationId }, schema: WorkstreamMessageAdmissionReceiptSchema,
     });
   }
 

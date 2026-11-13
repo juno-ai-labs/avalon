@@ -1,9 +1,16 @@
 import { uuidToBase58 } from '@rally/contracts/uuid-base58';
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { BrowserEntry } from '../../../../browser/src/entry';
 import { cookieClientSession } from '../../../../browser/src/session';
 import BrowserShell from '../../../../browser/src/shell';
+import { MOBILE_COMMAND_EVENT } from '../../../../mobile/src/protocol';
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 const user={id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',email:'guest@example.test',name:'Guest',avatarUrl:null,timezone:'UTC',createdAt:'2026-09-17T00:00:00.000Z'};
 const workspace={id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',name:'Design team',slug:'design',region:'global' as const,accessClass:'guest' as const,role:null,timezone:'UTC',createdAt:'2026-09-17T00:00:00.000Z'};
@@ -31,7 +38,7 @@ class BrowserSocket extends EventTarget {
   close() { this.readyState = 3; this.dispatchEvent(Object.assign(new Event('close'), { code: 1000 })); }
 }
 
-let fetchHandler: (input: string) => Promise<Response>;
+let fetchHandler: (input: string, init?: RequestInit) => Promise<Response>;
 
 /** The conversation feed sockets, apart from the tab's one workspace socket. */
 const feedSockets = () => BrowserSocket.instances.filter((socket) => socket.url.includes('/socket/conversations/'));
@@ -43,12 +50,144 @@ beforeEach(() => {
   fetchHandler = async (input) => Response.json({ error: { message: `Unexpected request: ${input}` } }, { status: 404 });
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   vi.stubGlobal('WebSocket', BrowserSocket);
-  vi.stubGlobal('fetch', vi.fn((input: string) => fetchHandler(input)));
+  vi.stubGlobal('fetch', vi.fn((input: string, init?: RequestInit) => fetchHandler(input, init)));
 });
 
 afterEach(() => {
   history.replaceState(null, '', '/');
+  sessionStorage.clear();
   vi.unstubAllGlobals();
+});
+
+it('reopens mobile hosted sites with fresh access and follows live resource heads', async () => {
+  const siteA = '00000000-0000-7000-8000-0000000000a1';
+  const siteB = '00000000-0000-7000-8000-0000000000a2';
+  const versions = new Map([[siteA, 1], [siteB, 1]]);
+  const opens: string[] = [];
+  let detailReads = 0;
+  let published = false;
+  let failMetadata = false;
+  const artifact = (id: string) => ({ resourceId: id, title: id === siteA ? 'Site A' : 'Site B', kind: 'site', mimeType: 'text/html', version: versions.get(id), updatedAt: at });
+  const canvas = { id: parent, title: 'Mobile Canvas', createdByUserId: user.id, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false };
+  fetchHandler = async (input) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
+    if (path.endsWith(`/canvases/${parent}`)) { detailReads++; return Response.json({ ...canvas, artifacts: published ? [artifact(siteA), artifact(siteB)] : [] }); }
+    if (path.endsWith('/socket')) return Response.json({ url: `wss://api.rallywith.ai/socket/conversations/${parent}/0`, ticket: 'conversation-ticket' });
+    for (const id of [siteA, siteB]) {
+      if (path.endsWith(`/resources/${id}/artifact/open`)) {
+        opens.push(id);
+        return Response.json({ openUrl: `https://${id}.rallyusercontent.com/open#code-${opens.length}`, canonicalUrl: `https://${id}.rallyusercontent.com/`, artifactId: id, mode: 'static', stateful: false });
+      }
+      if (path.endsWith(`/resources/${id}`)) return failMetadata
+        ? Response.json({ error: { message: 'Metadata unavailable' } }, { status: 404 })
+        : Response.json({ id, slug: `site-${id}`, workspaceId: workspace.id, connectionId: null, resourceType: 'generated_site', provider: 'avalon_generated', providerResourceId: id,
+          title: artifact(id).title, mimeType: 'text/html', canonicalUrl: null, refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', lastHydratedAt: null,
+          createdAt: at, updatedAt: at, contentAvailable: true, sizeBytes: 42, currentVersion: versions.get(id) });
+    }
+    return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
+  };
+  const events: Array<{ event: { type: string; artifact?: { openUrl: string; version: number }; snapshot?: { view: string; artifactId: string | null } } }> = [];
+  vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'test-capability');
+  vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw)) });
+  history.replaceState(null, '', `/app/global/${uuidToBase58(workspace.id)}/cv/${uuidToBase58(parent)}?mobile=1`);
+  const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+  const access = () => events.filter(({ event }) => event.type === 'artifact').at(-1)?.event.artifact;
+  try {
+    await waitFor(() => expect(location.hash).toContain('view=chat'));
+    expect(screen.queryByRole('button', { name: 'View canvas' })).not.toBeInTheDocument();
+    await waitFor(() => expect(workspaceSockets()).toHaveLength(1));
+    const socket = workspaceSockets()[0]!;
+    act(() => socket.open());
+    published = true;
+    const row = { ...canvas, artifactKind: 'site', unread: false, presentUserIds: [], pinnedPosition: null, sharedWithMe: true };
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_canvas_list', occurredAt: at, waterline: 1, items: [row] }) })));
+    fireEvent.click(await screen.findByRole('button', { name: 'View canvas' }));
+    // The native host answers open-canvas by selecting this destination.
+    act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail: { type: 'open', id: parent, pinned: false } })));
+    await waitFor(() => expect(access()?.openUrl).toContain('code-1'));
+    expect(location.hash).toBe(`#/canvases/${parent}`);
+    expect(location.search).toBe('?mobile=1');
+    const picker = await screen.findByRole('combobox', { name: 'Choose artifact' });
+    fireEvent.change(picker, { target: { value: siteB } });
+    await waitFor(() => expect(access()?.openUrl).toContain('code-2'));
+    fireEvent.change(picker, { target: { value: siteA } });
+    await waitFor(() => expect(access()?.openUrl).toContain('code-3'));
+    expect(opens).toEqual([siteA, siteB, siteA]);
+    const head = (version: number) => ({ type: 'workspace_resource_versions', occurredAt: at, resources: [{ resourceId: siteA, version, title: 'Site A', mimeType: 'text/html', updatedAt: at, contentAvailable: true, sizeBytes: 42 }] });
+    versions.set(siteA, 2);
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(head(2)) })));
+    await waitFor(() => expect(access()?.version).toBe(2));
+    expect(opens).toEqual([siteA, siteB, siteA, siteA]);
+    // Presence/pin changes with the same publication timestamp do not refetch.
+    const reads = detailReads;
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_canvas_list', occurredAt: at, waterline: 2, items: [{ ...row, presentUserIds: [user.id], pinnedPosition: 0 }] }) })));
+    await act(async () => { await Promise.resolve(); });
+    expect(detailReads).toBe(reads);
+    act(() => { location.hash = `#/canvases/${parent}?view=chat`; window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    await waitFor(() => expect(events.filter(({ event }) => event.type === 'snapshot').at(-1)?.event.snapshot?.view).toBe('conversation'));
+    fireEvent.click(await screen.findByRole('button', { name: 'View canvas' }));
+    act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail: { type: 'open', id: parent, pinned: false } })));
+    await waitFor(() => expect(events.filter(({ event }) => event.type === 'snapshot').at(-1)?.event.snapshot).toMatchObject({ view: 'artifact', artifactId: siteA }));
+    failMetadata = true;
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(head(3)) })));
+    await waitFor(() => expect(events.some(({ event }) => event.type === 'artifact-unavailable')).toBe(true));
+    expect(await screen.findByText('This artifact couldn’t load')).toBeInTheDocument();
+  } finally { view.unmount(); }
+});
+
+it('keeps creation drafts during submission and reuses the canvas after an edited retry', async () => {
+  const memberWorkspace = { ...workspace, accessClass: 'member' as const, role: 'member' as const };
+  const maya = { ...user, id: '00000000-0000-7000-8000-0000000000a2', name: 'Maya Lin', email: 'maya@example.test' };
+  const createdIds: string[] = [];
+  const sent: Array<{ text: string; clientMessageId: string; confirmedParticipantUserIds: string[]; mentions: Array<{ userId: string }> }> = [];
+  const sends: Array<ReturnType<typeof deferred<Response>>> = [];
+  fetchHandler = async (input, init) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
+    if (path.endsWith('/workspace/members')) return Response.json({ items: [user, maya].map((person) => ({ user: person, role: 'member', status: 'active', joinedAt: at })) });
+    if (path.endsWith('/canvases') && init?.method === 'POST') {
+      const { canvasId } = JSON.parse(String(init.body));
+      createdIds.push(canvasId);
+      return Response.json({ canvasId, turnId: null });
+    }
+    if (path.endsWith('/messages')) {
+      sent.push(JSON.parse(String(init?.body)));
+      const pending = deferred<Response>();
+      sends.push(pending);
+      return pending.promise;
+    }
+    return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
+  };
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1#/canvases`);
+  const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace: memberWorkspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+  const refuse = () => Response.json({ error: { message: 'Try again later' } }, { status: 400 });
+  try {
+    act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail: { type: 'create' } })));
+    const input = await screen.findByRole('textbox', { name: 'Describe your canvas' });
+    fireEvent.change(input, { target: { value: 'Please ask @Maya Lin' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create canvas' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Create canvas' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add and mention' }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.confirmedParticipantUserIds).toEqual([maya.id]);
+    expect(sent[0]!.mentions.map((mention) => mention.userId)).toEqual([maya.id]);
+    fireEvent.change(input, { target: { value: 'A second thought' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(input).toHaveValue('A second thought');
+    expect(sent).toHaveLength(1);
+    await act(async () => sends[0]!.resolve(refuse()));
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
+    fireEvent.change(input, { target: { value: 'An edited retry' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Create canvas' }));
+    await waitFor(() => expect(sent).toHaveLength(2));
+    expect(createdIds).toHaveLength(2);
+    expect(createdIds[1]).toBe(createdIds[0]);
+    expect(sent[1]!.text).toBe('An edited retry');
+    expect(sent[1]!.clientMessageId).not.toBe(sent[0]!.clientMessageId);
+    await act(async () => sends[1]!.resolve(refuse()));
+  } finally { for (const send of sends) send.resolve(refuse()); view.unmount(); }
 });
 
 /**
