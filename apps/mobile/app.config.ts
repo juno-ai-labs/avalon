@@ -12,7 +12,7 @@ const config: ExpoConfig = {
   orientation: 'default',
   userInterfaceStyle: 'automatic',
   ios: {
-    supportsTablet: true, bundleIdentifier: 'ai.rally.mobile',
+    supportsTablet: true, bundleIdentifier: 'ai.rallywith.mobile',
     infoPlist: {
       NSCameraUsageDescription: 'Add a photo to your canvas conversation.',
       NSPhotoLibraryUsageDescription: 'Attach a photo to your canvas conversation.',
