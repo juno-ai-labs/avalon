@@ -295,6 +295,18 @@ unmounts. A missing or failed favicon changes nothing about the link. Glances
 remain inert text and synchronous still exports do not start asynchronous
 decoration.
 
+A streaming body's open tail asks for nothing: a link there can name a prefix
+of the host still being typed. `renderStreaming` wraps the tail in
+`HostFaviconHold`, which `useHostFavicon` reads as "no hostname", so a held link
+or marker draws its no-icon state until its block — the whole paragraph, list
+item or table — settles into a segment or the stream ends, both of which are
+fresh mounts that ask again.
+For the same reason a streaming body with heading collapse builds its borrowed
+definitions from complete lines only: a `[1]: https://www.alph` still arriving
+would otherwise ride along into earlier, settled sections, outside the hold. The
+heading of a streaming section with no body yet is held too, since it is the
+line still arriving.
+
 Markers are requesters in their own right, not free riders on the links: a
 lifted definition's link is never rendered, so before markers wore icons those
 hosts were fetched only when the body also linked them. The endpoint answers
@@ -1008,6 +1020,30 @@ for visible controls.
 refused, not merged, when someone else saved first; the Canvas detail is then
 refetched. A host that cannot open a browser or read a link should omit
 `artifact` rather than offer a dead button.
+
+### 2026-11-11 — A link still being typed asks for no favicon
+
+**What changed:** Links and footnote markers in a streaming body's open tail no
+longer request a favicon; `HostFaviconHold` turns the request off for that
+subtree, and the icon arrives when the block settles. Under heading collapse,
+the definitions lent to settled sections leave out the line still arriving. A
+streaming section's heading is held until its body starts.
+
+**Why:** Production logs on 2026-11-11 showed bursts of
+`favicon_unavailable:firecrawl_parse_200` and `firecrawl_http_400` 502s, logged
+at error, for hostnames such as `www.alph`, `www.alphamountain`, `www.idair` and
+`www.idaire` arriving tens of milliseconds apart: one reply's autolinks
+re-rendering at the paced reveal's rate, each prefix a separate request, each
+uncached miss a paid Firecrawl scrape for both the host and its registrable
+domain, and each confirmed miss a 30-day KV entry for a host that never existed.
+
+**Considered and rejected:** Holding only the link that touches the end of the
+tail. GFM excludes trailing punctuation from an autolink, so `www.alphamountain.`
+yields a link that ends before the source does, and the definitions appended to
+the tail move its end; the whole tail is the boundary the splitter already
+guarantees. Debouncing the request was rejected because it delays every settled
+link's icon as well and still fires for a pause mid-hostname. A server-side
+filter cannot tell a prefix from a real host.
 
 ### 2026-11-02 — Sidekick mention chips
 

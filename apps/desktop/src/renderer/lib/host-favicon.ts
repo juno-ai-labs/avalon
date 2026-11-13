@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { RallyApi } from './api';
 import { useFaviconApi } from './favicon-api';
 
@@ -24,6 +24,13 @@ export function httpHostname(href: string | undefined): string | null {
     return null;
   }
 }
+
+/**
+ * True inside a streaming body's open tail, whose links may name a part-typed
+ * host; `useHostFavicon` asks for nothing there, and the icon arrives when the
+ * block settles or the stream ends.
+ */
+export const HostFaviconHold = createContext(false);
 
 /** What a caller needs to draw a host's icon, and to stop drawing it. */
 export interface HostFavicon {
@@ -69,7 +76,8 @@ export interface HostFavicon {
  */
 export function useHostFavicon(href: string | undefined): HostFavicon {
   const api = useFaviconApi();
-  const hostname = httpHostname(href);
+  const held = useContext(HostFaviconHold);
+  const hostname = held ? null : httpHostname(href);
   const [resolved, setResolved] = useState<{ api: RallyApi; hostname: string; source: string } | null>(null);
   // Dropping the record is enough to stop drawing it: the effect does not
   // re-run while the target holds still, so nothing re-offers the same bytes.
