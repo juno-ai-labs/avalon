@@ -1487,7 +1487,12 @@ participants remain deferred product work.
   never the provider's. So is OpenRouter's 404 when its routing funnel names an
   input filter (`failed_routing_step` of `Filter by Image Support`, `File` or
   `Audio`): `model_input_unsupported`, kind `context`, because the model
-  cannot read an input the request carries. The invariant above is about *who owns* a failure; this
+  cannot read an input the request carries. And so is OpenRouter's 400 whose
+  `error.message` is exactly `<model id> is not a valid model ID`, once every
+  candidate including the fallback models refused: `model_not_found`, kind
+  `routing`, because a configured or pinned model no longer exists. It has no
+  machine code, so it is the one rejection read from prose, matched as the whole
+  parsed message and never as a substring of the body. The invariant above is about *who owns* a failure; this
   one is about *what it was*, and answering the first by discarding the second
   is how a run that crossed a known token limit reached a member as "Rally
   could not complete this run. Retrying is unlikely to help."
@@ -1895,20 +1900,24 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-11-13 — A replay keeps its admitted input, and an attempt records the clamp it got
+### 2026-11-13 — A replay keeps its admitted input, an attempt records the clamp it got, and an unknown model is named
 
 **What changed:** A replayed activation input keeps the copy first admitted
 whatever it renders now; a difference is logged as
 `activation_input_replay_drifted` instead of failing the run with
 `bind_activation_input_replay_mismatch`. A failed attempt now records the
 disposition after the `producedOutput` clamp, and whether output had streamed.
+A run whose every model id the provider rejects fails as `model_not_found`
+instead of `harness_execution_failed`.
 
 **Why:** Every Retry of a new Canvas's failed run failed with
 `bind_activation_input_replay_mismatch`: the context admitted with the title
 "Untitled Canvas" re-rendered as the generated title under the same ID. The
 same run's last attempt was logged and stored as `fallback` though the
 executor, having streamed text, ended the turn instead; that read as a broken
-fallback chain.
+fallback chain. A model id OpenRouter does not know reached a member as "Rally
+could not complete this run. Retrying is unlikely to help", though the 400
+named the model.
 
 **Considered and rejected:** Putting a Canvas revision in the context's
 `sourceRevision`, which admits a second context message on every replay after

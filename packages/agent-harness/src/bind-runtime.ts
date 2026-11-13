@@ -274,7 +274,7 @@ type RenderedSystemPrompt = {
 
 /** A limit that ends the run under its own code; `requiredPort` lets a host port's through unwrapped. */
 export class HarnessLimitError extends Error {
-  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open" | "platform_limit_exceeded" | "context_length_exceeded">, message: string) {
+  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open" | "platform_limit_exceeded" | "context_length_exceeded" | "model_not_found">, message: string) {
     super(message);
     this.name = "HarnessLimitError";
   }
@@ -2094,6 +2094,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     const contextLengthRejection = isProviderContextLengthRejection(error);
     // Same standing and position as the context-length arm.
     const inputUnsupported = !contextLengthRejection && isProviderInputUnsupportedRejection(error);
+    // Same standing again: reached only once every candidate, the fallback
+    // models included, refused, so no configured model existed.
+    const modelNotFound = !contextLengthRejection && !inputUnsupported && isProviderModelNotFoundRejection(error);
     const code = error instanceof HarnessLimitError
       ? error.code
       : error instanceof AmbiguousExternalWriteError
@@ -2106,7 +2109,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         ? "context_length_exceeded" as const
         : inputUnsupported
           ? "model_input_unsupported" as const
-          : "harness_execution_failed");
+          : modelNotFound
+            ? "model_not_found" as const
+            : "harness_execution_failed");
     const failure: HarnessFailure = {
       kind: error instanceof HarnessLimitError
         ? error.code === "context_limit_exceeded"
@@ -2122,7 +2127,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ? "deadline"
         : error instanceof ProviderUnavailableError
           ? "provider"
-        : error instanceof ProviderCircuitOpenError
+        : error instanceof ProviderCircuitOpenError || modelNotFound
           ? "routing"
         : contextLengthRejection || inputUnsupported
           ? "context"
@@ -3497,6 +3502,31 @@ function isProviderInputUnsupportedRejection(error: unknown): boolean {
   const step = (envelope as { error?: { metadata?: { failed_routing_step?: unknown } } })
     ?.error?.metadata?.failed_routing_step;
   return typeof step === "string" && /^Filter by (?:Image|File|Audio) Support$/u.test(step.trim());
+}
+
+/**
+ * Did OpenRouter refuse the request because it does not know the model id?
+ *
+ * OpenRouter answers a 400 whose only statement of the cause is its
+ * `error.message`, `"<model id> is not a valid model ID"`, with no machine
+ * code, so this is the one rejection read from prose. It reads the parsed
+ * `error.message` (never a substring of the whole body, which can echo the
+ * request) and matches the whole sentence, so a provider's other 400s keep the
+ * catch-all.
+ */
+function isProviderModelNotFoundRejection(error: unknown): boolean {
+  if (!(error instanceof OpenRouterError) || error.status !== 400) return false;
+  const detail = (error.details as { providerError?: OpenRouterProviderError } | undefined)
+    ?.providerError?.detail;
+  if (detail === undefined) return false;
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(detail);
+  } catch {
+    return false;
+  }
+  const message = (envelope as { error?: { message?: unknown } })?.error?.message;
+  return typeof message === "string" && /^\S+ is not a valid model ID$/u.test(message.trim());
 }
 
 function providerDeclaredTransportFailure(details: unknown): {
