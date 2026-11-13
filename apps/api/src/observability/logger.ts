@@ -1,5 +1,5 @@
 import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
-import { codeShaped, describeZodIssues, isDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { codeShaped, describeZodIssues, isCodeShaped, isDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import type { Context } from "hono";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -7,6 +7,7 @@ import type { Env } from "../env";
 import { asApiError } from "../lib/api-error";
 import { ObjectPortError } from "../runtime/object-port-error";
 import { TerminalObjectPortError } from "../services/terminal/object-port-error";
+import { TerminalProviderError } from "../services/terminal/provider-contract";
 
 const REDACTED = "[REDACTED]";
 const sensitiveKey = /token|secret|authorization|cookie|credential|code_verifier|prompt|email_?body|connector_?content|file_?content|model_?context/i;
@@ -85,6 +86,13 @@ export function stableCode(text: string): string {
  * kept when it has that same bare constant shape; read as a message, every
  * refusal reduced to the caller's fallback.
  *
+ * A `TerminalProviderError` carries the code `terminalProviderErrorCode` built
+ * on the provider Worker's side of the hop — the error's class, its HTTP status
+ * and the provider's own machine-readable code, never its text — beside the
+ * provider's sentence. That code rides behind the caller's, as a platform
+ * failure does: `terminal_provider_observation_failed:DaytonaError:503`. Read
+ * as a message, every Daytona failure reduced to the bare fallback.
+ *
  * Nothing wider. A message is not trusted because it is code-shaped: the
  * tree throws `memory_table_value_type:${column.name}:string`, an R2 key
  * after a colon, a target id, and `${component}_schema_hash_mismatch:${version}`,
@@ -98,6 +106,9 @@ export function diagnosticErrorCode(error: unknown, fallback: string): string {
   if (api) return api.diagnosticCode ?? api.code;
   if ((error instanceof ObjectPortError || error instanceof TerminalObjectPortError) && STABLE_CODE.test(error.code)) {
     return error.code;
+  }
+  if (error instanceof TerminalProviderError && isCodeShaped(error.code)) {
+    return codeShaped(`${fallback}:${error.code}`);
   }
   if (error instanceof z.ZodError) return codeShaped(`${fallback}:${describeZodIssues(error)}`);
   if (!(error instanceof Error)) return fallback;

@@ -141,7 +141,7 @@ its own is a boundary that drifts.
 | `apps/ace/src/regional-api.ts`, `index.ts`, `private-access.ts` | a regional answer the contract refuses names the field in the message beside `regional_api_contract_mismatch`; the fallback handler logs `error_code`; a refused download grant says which field |
 | `apps/api/src/services/integrations.ts` | `dynamic_connector_tools_unavailable` carries `error_code` beside the class name, so a tool catalog that drifted out of `ToolDefinitionSchema` names its path on both the creator-catalog and initial-activation surfaces; `connector_plugin_reauthorization_failed` carries a schema rejection's paths as `code`, the way it already carried a connector's own |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
-| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback; a Workers runtime failure, which arrives as a sentence, is named behind the caller's code by matching the sentence or the runtime's `overloaded` flag (`parent_export_failed:durable_object_code_updated`), never by copying it; an `ObjectPortError` is named by the conversation object's refusal code (`workstream_runtime_authority_fenced`) when that code is a bare constant, and a `TerminalObjectPortError` by the Terminal authority's (`workstream_terminal_identity_mismatch`) |
+| `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback; a Workers runtime failure, which arrives as a sentence, is named behind the caller's code by matching the sentence or the runtime's `overloaded` flag (`parent_export_failed:durable_object_code_updated`), never by copying it; an `ObjectPortError` is named by the conversation object's refusal code (`workstream_runtime_authority_fenced`) when that code is a bare constant, and a `TerminalObjectPortError` by the Terminal authority's (`workstream_terminal_identity_mismatch`); a `TerminalProviderError` is named behind the caller's code by the code `terminalProviderErrorCode` built across the hop (`terminal_provider_observation_failed:DaytonaError:503`), never by the provider's sentence |
 | `apps/api/src/middleware/errors.ts` | `request_failed` carries what `diagnosticErrorCode` admits of a plain `Error`'s message, as `error_code` and in the row's summary, where the row said `internal_error` and `Error` |
 | `apps/api/src/services/workspace-schedule-execution.ts` | the `schedule.failed`, `resource_watch.failed` and `workspace_schedule_target_failed` records name a stored row's rejection behind each record's own constant; the schedule and watch rows are the two whose targets parse a stored row |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | every RPC entry point, through `parseRpcInput`, labelled by method (`admit_external_event_invalid:…`) |
@@ -205,6 +205,34 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-11-13 — A Terminal provider failure is named by its code
+
+**What changed:** `diagnosticErrorCode` answers a `TerminalProviderError` with
+`<fallback>:<code>`, where the code is the one `terminalProviderErrorCode`
+built on the provider Worker's side of the RPC hop: the error's class, its
+HTTP status and the provider's machine-readable code. A code that is not
+code-shaped still reduces to the bare fallback.
+
+**Why:** Production logged about 350 `terminal_provider_observation_failed`
+warnings in a day, mostly in one burst, every one with the bare fallback as
+its code. The Terminal observation alarm's provider client rebuilds a
+failure as a `TerminalProviderError` whose message is Daytona's own sentence,
+so the helper read it as prose and dropped the code that sat beside it. The
+entry below this one closed a different gap for the same warning and left its
+cause unproven. This closes the one the alarm actually goes through.
+
+**Considered and rejected:** Calling `terminalProviderErrorCode` at the alarm's
+catch: it would name this one site and leave every other caller of the
+provider client to rediscover the gap. Admitting the code through
+`isDiagnosticCode`: that class admits only the `*_invalid:` shape `parseRpcInput`
+composes, and a provider code is `Class:status`. The code's provenance is its
+constructor, not a thrown message, so `isCodeShaped` is the right bound.
+
+**Consequences:** The code is the class, a number and a provider code that
+`terminalProviderErrorCode` validated against a fixed character class, so the
+logged values are bounded and carry no content. The provider's message is still
+never logged.
 
 ### 2026-11-12 — A D1 trigger's refusal is named by its reason
 
