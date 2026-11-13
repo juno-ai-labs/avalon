@@ -129,7 +129,11 @@ function objectApi({
             controller.error(new Error('terminated'));
             return;
           }
-          controller.enqueue(Buffer.from('provider error'));
+          controller.enqueue(Buffer.from(JSON.stringify({
+            success: false,
+            errors: [{ code: 10000, message: 'provider detail' }],
+          })));
+          controller.close();
         },
         cancel() {
           errorBodyCancelled = true;
@@ -305,17 +309,17 @@ test('rejects Cloudflare upload failures without exposing provider response bodi
     {
       name: 'HTTP failure',
       api: objectApi({ putStatus: 503, putSuccess: false, putErrors: [{ code: 10001, message: 'secret detail' }] }),
-      expected: /HTTP 503 \(success=false; error codes 10001\)/u,
+      expected: /HTTP 503 \(success=false; codes: 10001\)/u,
     },
     {
       name: 'protocol failure',
       api: objectApi({ putSuccess: false }),
-      expected: /HTTP 200 \(success=false\)/u,
+      expected: /HTTP 200 \(success=false; codes: none\)/u,
     },
     {
       name: 'invalid JSON',
       api: objectApi({ putInvalidJson: true }),
-      expected: /HTTP 200 \(invalid JSON response\)/u,
+      expected: /HTTP 200 \(invalid JSON response; codes: none\)/u,
     },
   ];
   for (const failure of cases) {
@@ -406,31 +410,71 @@ test('validates authoritative inventory responses without trusting cached object
     }
   });
 
-  for (const status of [403, 429]) {
-    await t.test(`non-transient inventory refusal is not retried: ${status}`, async () => {
-      const { root, desktopDirectory } = await fixture();
-      const api = objectApi({ inventoryStatus: status });
-      const sleeps = [];
-      try {
-        await assert.rejects(
-          publishTelemetryArtifacts({
-            desktopDirectory,
-            environment: runtimeEnvironment,
-            fetchImpl: api.fetchImpl,
-            runCommand: commandRunner().runCommand,
-            sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
-            temporaryRoot: root,
-          }),
-          new RegExp(`Could not verify .* HTTP ${status}`, 'u'),
-        );
-        assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 1);
-        assert.deepEqual(sleeps, []);
-        assert.equal(api.errorBodyCancelled, true);
-      } finally {
-        await rm(root, { recursive: true, force: true });
-      }
-    });
-  }
+  await t.test('persistent 403 is retried and names the provider codes', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({ inventoryStatus: 403 });
+    const sleeps = [];
+    try {
+      await assert.rejects(
+        publishTelemetryArtifacts({
+          desktopDirectory,
+          environment: runtimeEnvironment,
+          fetchImpl: api.fetchImpl,
+          runCommand: commandRunner().runCommand,
+          sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
+          temporaryRoot: root,
+        }),
+        (error) => /Could not verify .* HTTP 403; codes: 10000$/u.test(error.message)
+          && !error.message.includes('provider detail'),
+      );
+      assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 7);
+      assert.deepEqual(sleeps, [500, 1_000, 2_000, 4_000, 8_000, 16_000]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('transient 403 after a successful upload recovers on retry', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({ inventoryStatuses: [403] });
+    try {
+      await publishTelemetryArtifacts({
+        desktopDirectory,
+        environment: runtimeEnvironment,
+        fetchImpl: api.fetchImpl,
+        runCommand: commandRunner().runCommand,
+        sleepImpl: async () => {},
+        temporaryRoot: root,
+      });
+      assert.equal(api.objects.size, 5);
+      assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 6);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('rate-limited inventory read is not retried and names the provider codes', async () => {
+    const { root, desktopDirectory } = await fixture();
+    const api = objectApi({ inventoryStatus: 429 });
+    const sleeps = [];
+    try {
+      await assert.rejects(
+        publishTelemetryArtifacts({
+          desktopDirectory,
+          environment: runtimeEnvironment,
+          fetchImpl: api.fetchImpl,
+          runCommand: commandRunner().runCommand,
+          sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
+          temporaryRoot: root,
+        }),
+        /Could not verify .* HTTP 429; codes: 10000$/u,
+      );
+      assert.equal(api.calls.filter(({ method }) => method === 'GET').length, 1);
+      assert.deepEqual(sleeps, []);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   for (const cacheStatus of ['HIT', 'STALE', 'UPDATING', 'REVALIDATED', null]) {
     await t.test(`non-dynamic inventory response: ${cacheStatus ?? 'missing'}`, async () => {

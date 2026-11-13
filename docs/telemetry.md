@@ -863,6 +863,24 @@ control in the browser. A local browser switch would not change server consent.
 **Consequences:** Web saves require a successful server acknowledgement; desktop
 local-first disable, offline sync, and crash handling remain unchanged.
 
+### 2026-11-11 — Artifact inventory verification retries a 403 and names Cloudflare's error codes
+
+**What changed:** The post-upload inventory read retries HTTP 403 as well as
+5xx, on the same backoff. A final failure, on this read or on the PUT, names
+Cloudflare's numeric error codes through the shared `cloudflareErrorCodes`,
+never the provider's message.
+
+**Why:** Release v1.716.0 aborted when an inventory read returned 403 right
+after its PUT succeeded, and the error carried only the status. The entry below
+rejected retrying 403 for fear of a revoked token, but this read runs only
+after a PUT that succeeded with the same token, so a revoked token fails there
+first. A token that can write but cannot list still fails here, after roughly
+31 seconds.
+
+**Consequences:** The 403's error code was not recorded, so the retry is not
+narrowed to one. The logged codes are what a later change should narrow it by.
+429 is still refused on the first response.
+
 ### 2026-11-10 — Artifact inventory verification retries transient Cloudflare failures
 
 **What changed:** After each private artifact upload, the publisher's
