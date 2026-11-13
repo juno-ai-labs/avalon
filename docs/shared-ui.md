@@ -161,8 +161,10 @@ opened on demand; failure copy never returns inline. Full-screen recovery views
 also keep a Details action after acknowledgement. Explicit `occurrence` values
 are remembered by the window queue across source remounts, so reopening a
 surface does not replay an acknowledged event. Runs already failed when a
-conversation opens expose Run details; runs observed active open a notice when
-they fail.
+conversation opens expose Run details; runs observed active, and a run the
+screen's own Retry started, open a notice when they fail. A Retry refused at its
+activation boundary settles in under a second, before any snapshot shows it
+running, so the id the `retry_harness` command returns counts as observed.
 
 `rally/no-inline-errors` rejects the retired `InlineError` primitive, DOM alerts,
 and error-message styling in shared UI and both client source trees. It does
@@ -306,6 +308,22 @@ surfaces in Electron, and in Chrome for the browser host; no second component
 test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-11-13 — A failed Retry says it failed
+
+**What changed:** The id `retryHarness` answers with is recorded as a run the
+conversation saw, so its failure opens the Run failed notice.
+
+**Why:** A Retry that failed in 640ms was never seen running. The screen showed
+a new "Worked for 621ms" row and the same Run details and Retry buttons, and the
+person could not tell the Retry had failed.
+
+**Considered and rejected:** Opening a notice for any failed run first seen
+after the screen mounted, which also interrupts for a run that failed while the
+person was away and is still stored, not new.
+
+**What a future change has to respect:** Only a run this screen saw or started
+interrupts; a stored failure stays behind Run details.
 
 ### 2026-11-09 — Explain unavailable title-menu tiles through the shared menu item
 

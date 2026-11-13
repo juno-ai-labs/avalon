@@ -1077,6 +1077,18 @@ function modelDerivative(
   return { ...message, provenance };
 }
 
+/**
+ * Context messages rendered from state that moves while their identity does
+ * not: keyed on the message that woke the run, but carrying the Canvas's
+ * current title and artifacts. A new Canvas is titled after its first turn, so
+ * a Retry renders different text under the same id. The copy the run started
+ * with is the one it keeps (`HarnessActivationInput.keepAdmittedOnReplay`).
+ */
+const SNAPSHOT_ACTIVATION_SOURCE_KINDS: ReadonlySet<string> = new Set([
+  "canvas_context",
+  "sidekick_canvas_context",
+]);
+
 function workstreamActivationInput(message: ModelMessage): HarnessActivationInput {
   const provenance = message.provenance;
   if (message.role !== "user"
@@ -1094,6 +1106,7 @@ function workstreamActivationInput(message: ModelMessage): HarnessActivationInpu
       provenance.sourceId,
       provenance.sourceRevision,
     ])}`,
+    ...(SNAPSHOT_ACTIVATION_SOURCE_KINDS.has(provenance.sourceKind) ? { keepAdmittedOnReplay: true as const } : {}),
     message: {
       ...message,
       role: "user",
@@ -4368,6 +4381,7 @@ export async function runWorkstreamHarness(
           structuredOutputAttempt: attempt.cursor.structuredOutputAttempt,
           disposition: ledgerOutcome,
           success: attempt.success,
+          ...(attempt.producedOutput === undefined ? {} : { producedOutput: attempt.producedOutput }),
         },
         outcome: ledgerOutcome,
         ...(attempt.failureKind ? { failureClassification: attempt.failureKind } : {}),
