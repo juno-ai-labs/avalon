@@ -3722,20 +3722,20 @@ describe("connectors", () => {
 
   // Driven to the boundary: accepted at the advertised limit, refused one past it.
   it.each([
-    ["gmail.search", {}, ["gmail.read"], { messages: [] }],
+    ["gmail.search", 2_000, {}, ["gmail.read"], { messages: [] }],
     [
       "calendar.list_events",
+      2_000,
       { timeMin: "2026-08-12T00:00:00Z", timeMax: "2026-08-13T00:00:00Z" },
       ["calendar.read"],
       { items: [] },
     ],
-    ["drive.search", {}, ["drive.read"], { files: [] }],
-  ] as const)("advertises the query ceiling %s enforces", async (name, args, scopes, body) => {
+    ["drive.search", 1_000, {}, ["drive.read"], { files: [] }],
+  ] as const)("advertises the query ceiling %s enforces", async (name, maxLength, args, scopes, body) => {
     const declared = googleTools.find((tool) => tool.name === name)!;
-    const maxLength = (declared.inputSchema as {
+    expect((declared.inputSchema as {
       properties: Record<string, { maxLength?: number }>;
-    }).properties.query?.maxLength;
-    expect(maxLength, `${name} query.maxLength`).toBeGreaterThan(0);
+    }).properties.query?.maxLength, `${name} query.maxLength`).toBe(maxLength);
 
     const fetcher: typeof fetch = async () => googleJson(body);
     const context = {
@@ -3745,12 +3745,12 @@ describe("connectors", () => {
     };
     await expect(googleAdapter(fetcher).executeTool(
       name,
-      { ...args, query: "q".repeat(maxLength!) },
+      { ...args, query: "q".repeat(maxLength) },
       context,
     )).resolves.toBeDefined();
     await expect(googleAdapter(fetcher).executeTool(
       name,
-      { ...args, query: "q".repeat(maxLength! + 1) },
+      { ...args, query: "q".repeat(maxLength + 1) },
       context,
     )).rejects.toThrow(/query/u);
   });
