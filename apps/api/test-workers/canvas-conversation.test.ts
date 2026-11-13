@@ -213,6 +213,12 @@ beforeEach(async () => {
   startWaitBudget();
 });
 
+// These cases are about who may open a private Canvas, so the Organization
+// makes new Canvases private rather than taking the Organization-wide default.
+beforeEach(async () => {
+  await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } });
+});
+
 describe("a Canvas's Chat", () => {
   it("opens to its creator, a participant, a guest on its list and an administrator, and to nobody else", async () => {
     const { canvasId, created } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
