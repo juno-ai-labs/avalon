@@ -11,6 +11,7 @@ import {
 } from "../src/observability/logger";
 import { ApiError } from "../src/lib/api-error";
 import { ObjectPortError } from "../src/runtime/object-port-error";
+import { TerminalObjectPortError } from "../src/services/terminal/object-port";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 const env = createTestEnv({
@@ -54,6 +55,18 @@ describe("structured logging", () => {
       new ObjectPortError("page expired for customer@example.com", sentence),
       "thread_backfill_failed",
     )).toBe("thread_backfill_failed");
+  });
+
+  it("names a Terminal authority's refusal by its code, not the sentence written for members", () => {
+    expect(diagnosticErrorCode(
+      new TerminalObjectPortError("beginProviderObservation", {
+        code: "workstream_terminal_identity_mismatch",
+        message: "Rally's Terminal authority rejected an internal request because it was routed to the wrong work stream. Retrying the same operation will not repair the route.",
+        outcome: "rejected",
+        retryable: false,
+      }),
+      "terminal_provider_observation_failed",
+    )).toBe("workstream_terminal_identity_mismatch");
   });
 
   it("names a Workers runtime failure behind the caller's own code without copying its sentence", () => {
