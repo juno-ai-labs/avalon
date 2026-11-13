@@ -4245,7 +4245,7 @@ export async function runWorkstreamHarness(
           }
         },
         judge: async (state) => {
-          await requireUsageAllowance(env, input.workspaceId);
+          await requireRunUsageAllowance(env, input.workspaceId);
           const traceId = crypto.randomUUID();
           const decision = await judgeCompletionStop({
             apiKey: env.TYPESAFE_API_KEY, state, signal: harnessSignal,

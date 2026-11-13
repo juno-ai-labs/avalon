@@ -2591,6 +2591,19 @@ describe("agent harness", () => {
     ]));
   });
 
+  it("ends a run under the host's limit when the end-of-turn check refuses", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
+    }])) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      onTurnWouldEnd: () => {
+        throw new HarnessLimitError("usage_allowance_exhausted", "The organization's included weekly usage is used up");
+      },
+    })).resolves.toMatchObject({ status: "failed", failure: { code: "usage_allowance_exhausted", kind: "limit" } });
+  });
+
   it("honors a safe-boundary stop before a tool-less host nudge can continue", async () => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{ delta: { content: "Final" }, finish_reason: "stop" }],
