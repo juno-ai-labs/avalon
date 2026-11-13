@@ -6336,9 +6336,9 @@ async function loadHarnessTools(
     for (const version of versions) {
       const [toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash, preTextPaginationSurfaceHash] = await Promise.all([
         connectorToolSurfaceHash(pluginId, version),
-        connectorToolSurfaceHash(pluginId, priorPaginationTools(version)),
-        connectorToolSurfaceHash(pluginId, version, (name) => legacyConnectorCanonicalToolName("google", name) ?? name),
-        connectorToolSurfaceHash(pluginId, priorTextPaginationTools(version)),
+        connectorToolSurfaceHash(pluginId, priorPaginationTools(version).map(preQueryCeilingTool)),
+        connectorToolSurfaceHash(pluginId, version.map(preQueryCeilingTool), (name) => legacyConnectorCanonicalToolName("google", name) ?? name),
+        connectorToolSurfaceHash(pluginId, priorTextPaginationTools(version).map(preQueryCeilingTool)),
       ]);
       for (const target of targets) compatiblePluginSurfaces.set(target, [
         ...(compatiblePluginSurfaces.get(target) ?? []), { pluginId, toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash, preTextPaginationSurfaceHash },
@@ -6657,6 +6657,20 @@ function prePaginationTools(tools: readonly HarnessTool[]): HarnessTool[] {
   return tools.filter(({ definition }) => !(definition.capability === "calendar.read"
     && definition.name === "calendar.query_availability"))
     .map(prePaginationTool);
+}
+
+/** Google's search tools advertised no `query` ceiling when every historical
+ * surface below was recorded; only their parse held it. Removing it here keeps
+ * those receipts' hashes, while the current surface still fences on it.
+ */
+function preQueryCeilingTool(tool: HarnessTool): HarnessTool {
+  if (!["gmail.search", "calendar.list_events", "drive.search"].includes(tool.definition.name)) return tool;
+  const properties = z.record(z.string(), z.record(z.string(), z.unknown())).parse(tool.definition.inputSchema.properties);
+  if (!properties.query || !("maxLength" in properties.query)) return tool;
+  const query = { ...properties.query };
+  delete query.maxLength;
+  return { ...tool, definition: { ...tool.definition, inputSchema: { ...tool.definition.inputSchema,
+    properties: { ...properties, query } } } };
 }
 
 /** Historical schema prose is part of the surface digest, not just validation.

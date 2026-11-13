@@ -1651,6 +1651,32 @@ surface that tells somebody about connector activity reads
 
 ## Changelog
 
+### 2026-11-12 — A Google search tool tells the model its query ceiling
+
+**What changed:** `gmail.search` and `calendar.list_events` advertise
+`maxLength: 2000` on `query`, and `drive.search` advertises `1000`. These are
+the bounds the parse already enforced, now held in one constant per bound.
+
+**Why:** A model sent `gmail.search` a query of more than 2,000 characters.
+The schema it was shown had no ceiling, so the parse refused it for following
+that schema. This is the same split the `pageToken` entries below describe.
+
+**Consequences:** A hand-written `inputSchema` beside a separate Zod parse
+declares one contract twice. A new bound belongs in a constant both read. The
+split is known to remain elsewhere: the `fileId`, `documentId` and
+`spreadsheetId` parses cap at 500 with no advertised `maxLength`, and the
+`pageToken` schema and parse each hard-code their 2,000. These were left as
+they are because real IDs and cursors are well under those caps.
+
+The advertised ceiling is part of each tool's surface hash. `preQueryCeilingTool`
+in `integrations.ts` therefore removes it from every historical surface
+(pre-pagination, pre-text-pagination, legacy). Without that, Google receipts
+recorded under those surfaces would stop replaying, which the frozen fixtures
+in `connector-tool-selection.test.ts` catch. Receipts recorded under the
+surface just before this one are fenced, like any schema change.
+
+Shipped in #1586.
+
 ### 2026-11-10 — An adapter can read what one activity is about
 
 **What changed:** Adapters gain an optional `readActivityContent`, and Google

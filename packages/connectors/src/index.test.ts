@@ -3720,6 +3720,41 @@ describe("connectors", () => {
     )).rejects.toThrow(/pageToken/u);
   });
 
+  // Driven to the boundary: accepted at the advertised limit, refused one past it.
+  it.each([
+    ["gmail.search", 2_000, {}, ["gmail.read"], { messages: [] }],
+    [
+      "calendar.list_events",
+      2_000,
+      { timeMin: "2026-08-12T00:00:00Z", timeMax: "2026-08-13T00:00:00Z" },
+      ["calendar.read"],
+      { items: [] },
+    ],
+    ["drive.search", 1_000, {}, ["drive.read"], { files: [] }],
+  ] as const)("advertises the query ceiling %s enforces", async (name, maxLength, args, scopes, body) => {
+    const declared = googleTools.find((tool) => tool.name === name)!;
+    expect((declared.inputSchema as {
+      properties: Record<string, { maxLength?: number }>;
+    }).properties.query?.maxLength, `${name} query.maxLength`).toBe(maxLength);
+
+    const fetcher: typeof fetch = async () => googleJson(body);
+    const context = {
+      connection: googleConnection([...scopes]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: neverAborts(),
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      name,
+      { ...args, query: "q".repeat(maxLength) },
+      context,
+    )).resolves.toBeDefined();
+    await expect(googleAdapter(fetcher).executeTool(
+      name,
+      { ...args, query: "q".repeat(maxLength + 1) },
+      context,
+    )).rejects.toThrow(/query/u);
+  });
+
   // Every one of the four, because the parse that turns `null` into absence is
   // written out per tool rather than shared: covering `drive.search` alone
   // proves one copy of four.
