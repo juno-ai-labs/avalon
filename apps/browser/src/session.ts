@@ -56,14 +56,24 @@ function canvasHash(target: Extract<LinkTarget, { kind: "canvas" }>): string {
  * one of those, and the entry screen says what it named is gone.
  */
 export function shellLocation(pathname: string, hash: string, search = ""): string | null {
-  const target = canonicalTarget(pathname, search);
+  // Keep native/preview host selection outside the hash router's route query.
+  const incoming = new URLSearchParams(search);
+  const host = new URLSearchParams();
+  for (const key of ['mobile', 'mobilePreviewOrigin']) {
+    const value = incoming.get(key);
+    if (value !== null) host.set(key, value);
+  }
+  const hostSearch = host.size ? `?${host}` : '';
+  incoming.delete('mobile');
+  incoming.delete('mobilePreviewOrigin');
+  const target = canonicalTarget(pathname, incoming.size ? `?${incoming}` : '');
   if (target) {
-    const workspace = `/app/workspaces/${target.region}/${target.workspaceId}`;
+    const workspace = `/app/workspaces/${target.region}/${target.workspaceId}${hostSearch}`;
     if (target.kind === "sidekick") return `${workspace}#/sidekicks/${target.sidekickId}`;
     return `${workspace}${canvasHash(target)}`;
   }
   const workspace = /^\/app\/workspaces\/[^/]+\/[^/]+\/?$/u.test(pathname);
-  return workspace && !hash ? `${pathname.replace(/\/$/u, "")}#/` : null;
+  return workspace && !hash ? `${pathname.replace(/\/$/u, "")}${hostSearch}#/` : null;
 }
 
 /**

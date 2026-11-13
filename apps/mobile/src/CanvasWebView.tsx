@@ -1,7 +1,7 @@
 import { artifactInsetScript } from './layout';
 import { useTheme } from './theme';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Linking, StyleSheet, View, Text, Pressable, ActivityIndicator } from 'react-native';
+import { Linking, Platform, StyleSheet, View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { randomUUID } from 'expo-crypto';
 import { commandScript, isAppUrl, parseMobileEvent, type MobileCommand, type MobileEvent, type NativeArtifact } from './protocol';
@@ -91,7 +91,7 @@ export function ArtifactView({ access, background, topInset, onRetry }: { access
       contentInsetAdjustmentBehavior="never" automaticallyAdjustContentInsets={false}
       onLoadStart={() => { setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); setLoading(false); }}
       onError={() => { setFailed(true); setLoading(false); }}
-      onHttpError={(event) => { if (event.nativeEvent.statusCode >= 400 && [access.openUrl, access.canonicalUrl].includes(event.nativeEvent.url)) setFailed(true); }}
+      onHttpError={(event) => { if (event.nativeEvent.statusCode >= 400 && [access.openUrl, access.canonicalUrl, new URL('/redeem', access.canonicalUrl).href].includes(event.nativeEvent.url)) setFailed(true); }}
       onContentProcessDidTerminate={() => web.current?.reload()} onRenderProcessGone={() => web.current?.reload()}
       onOpenWindow={(event) => {
         try {
@@ -104,7 +104,7 @@ export function ArtifactView({ access, background, topInset, onRetry }: { access
         try {
           const url = new URL(request.url);
           if (url.origin === new URL(access.canonicalUrl).origin) return true;
-          if (request.navigationType === 'click' && ['https:', 'http:'].includes(url.protocol)) void Linking.openURL(url.href);
+          if ((request.navigationType === 'click' || Platform.OS === 'android') && ['https:', 'http:'].includes(url.protocol)) void Linking.openURL(url.href);
         } catch { /* Keep the artifact inside its own origin. */ }
         return false;
       }} />

@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEven
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema, IDENTITY_REGION } from "@rally/contracts/regions";
 import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
-import { browserRequest, BrowserApiError } from "./transport";
+import { browserRequest, BrowserApiError, BrowserResponseError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
 import { RETIRED_LINK_MESSAGE, isRetiredLinkPath, parseLinkPathTarget } from "@rally/contracts/links";
@@ -146,7 +146,8 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
   const [activity, setActivity] = useState<{ userId: string; counts: ReadonlyMap<string, number> } | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);
-  useEffect(() => { if (!checking && !session) postMobileEvent({ type: 'signed-out' }); }, [checking, session]);
+  const [sessionAbsent, setSessionAbsent] = useState(false);
+  useEffect(() => { if (!checking && !session && sessionAbsent) postMobileEvent({ type: 'signed-out' }); }, [checking, session, sessionAbsent]);
   const [error, setError] = useState<string | null>(null);
   // Kept apart from `error`, which the session read clears when it finds no session.
   const [providerNotice, setProviderNotice] = useState<string | null>(null);
@@ -254,6 +255,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
         if (!active || read !== sessionRead.current) return;
         sessionUser.current = current.user.id;
         rememberSignupFlow(null);
+        setSessionAbsent(false);
         setSession(current);
         setError(null);
         if (!opened) {
@@ -264,6 +266,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
         if (!active || read !== sessionRead.current) return;
         if (cause instanceof BrowserApiError && (cause.status === 401 || cause.status === 403)) {
           void clearAllDrafts(); sessionUser.current = null;
+          setSessionAbsent(true);
           setSession(null); setWorkspaceSession(null); setListed(null);
           setError(cause.status === 403 ? cause.message : null);
         } else setError("Unable to restore your session. Try again.");
@@ -369,7 +372,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
       setBusy(true); setError(null);
       void browserRequest(proof.region, '/mobile/exchange', BrowserSessionSchema, proof)
         .then((current) => adopt(current, proof.region))
-        .catch(() => setError('Sign-in couldn’t finish. Please try again.'))
+        .catch((cause: unknown) => setError(cause instanceof BrowserResponseError ? cause.message : 'Sign-in couldn’t finish. Please try again.'))
         .finally(() => { mobileExchangePending.current = false; setBusy(false); });
     };
     window.addEventListener(MOBILE_COMMAND_EVENT, receive);
@@ -398,6 +401,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
     }
     sessionUser.current = current.user.id;
     rememberSignupFlow(null);
+    setSessionAbsent(false);
     setSession(current);
     if (!destination) {
       const result = await browserRequest(sessionRegion, "/workspaces", BrowserWorkspacesSchema);
@@ -487,6 +491,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
       signupFlow.current = uuidV7();
       rememberSignupFlow(signupFlow.current);
       signupViewed.current = false;
+      setSessionAbsent(true);
       setSession(null); setListed(null); setCreating(false); setChallenge(null); setCode(""); issuance.current = null;
       sessionChannel.current?.postMessage("session-changed");
       if (unreached) setError("Signed out here, but a Rally deployment did not respond. Sign out again to finish.");
@@ -502,7 +507,13 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
   const revalidate = useCallback(() => refreshSession.current?.(false), []);
 
   if (!proof && session && renderAuthenticated) return renderAuthenticated(session, signOutStable);
-  if (!checking && !session && Reflect.get(window, 'ReactNativeWebView')) {
+  if (!checking && !session && !proof && Reflect.get(window, 'ReactNativeWebView') && !sessionAbsent) {
+    return <main className="onboarding-shell signin-shell entry"><section className="signin-card entry-card">
+      <RallyMark className="signin-mark" /><ErrorNotice>{error ?? 'Unable to restore your session. Try again.'}</ErrorNotice>
+      <Button onClick={() => { setChecking(true); setError(null); refreshSession.current?.(false); }}>Try again</Button>
+    </section></main>;
+  }
+  if (!checking && !session && sessionAbsent && Reflect.get(window, 'ReactNativeWebView')) {
     return <main className="onboarding-shell signin-shell entry"><section className="signin-card entry-card" aria-busy={busy}>
       <RallyMark className="signin-mark" /><h1>Welcome to Rally</h1><p>Your canvases, wherever you are.</p>
       <Button className="button-primary signin-button" disabled={busy} onClick={() => { setError(null); postMobileEvent({ type: 'sign-in' }); }}>{busy ? 'Signing in…' : 'Sign in'}</Button>

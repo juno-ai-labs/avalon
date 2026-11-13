@@ -216,7 +216,7 @@ export default function BrowserShell(props: {
   // once, before its router first reads the location.
   useState(() => {
     const next = shellLocation(location.pathname, location.hash, location.search);
-    if (next && !isMobileHost()) history.replaceState(history.state, '', next);
+    if (next) history.replaceState(history.state, '', next);
     // A tab opened as the former Sidekicks tab carries `?surface=sidekicks`,
     // which would mount the Sidekicks window and never let its close button
     // leave. Sidekicks is a route of this tab now (`window-surface.ts`).

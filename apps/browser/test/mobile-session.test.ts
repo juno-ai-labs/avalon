@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canvasNeedsConversation, forgetMobileWorkspace, rememberMobileWorkspace, restoreMobileWorkspace } from '../src/mobile-session';
+import { canvasNeedsConversation, forgetMobileWorkspace, mobileTurnTarget, rememberMobileWorkspace, restoreMobileWorkspace } from '../src/mobile-session';
 
 function storage() {
   const values = new Map<string, string>();
@@ -7,6 +7,14 @@ function storage() {
 }
 const first = { id: 'organization-a', region: 'global' };
 const second = { id: 'organization-b', region: 'global' };
+
+it('turns a validated message link into an embedded conversation scroll request', () => {
+  const turn = '00000000-0000-7000-8000-000000000001';
+  expect(mobileTurnTarget(`?turn=${turn}&sequence=12`)).toEqual({ turnId: turn, nonce: 12 });
+  for (const search of [`?turn=${turn}`, `?turn=${turn}&sequence=0`, `?turn=${turn}&sequence=1.5`, '?turn=invalid&sequence=12']) {
+    expect(mobileTurnTarget(search)).toBeNull();
+  }
+});
 
 describe('mobile organization preference', () => {
   it('restores only an organization still in this authenticated user’s directory', () => {
