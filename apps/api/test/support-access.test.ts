@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { SessionSchema } from "@rally/contracts";
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from "@rally/contracts/http-headers";
 import { createApp } from "../src/app";
+import { sha256 } from "../src/lib/crypto";
 import { AuthService } from "../src/services/auth-service";
 import { BrowserSessionService } from "../src/services/browser-session-service";
 import { revokeSupportSessions, SUPPORT_ORGANIZATION_ID } from "../src/services/support-access";
@@ -228,6 +229,30 @@ it("refuses to trade a support session for another credential or a device regist
   expect(devices.status).toBe(403);
   expect(db.prepare("SELECT COUNT(*) AS plain FROM sessions WHERE user_id = ? AND impersonator_user_id IS NULL").get(BOB))
     .toEqual({ plain: 0 });
+});
+
+it("hands mobile the signed-in identity while a support session is selected", async () => {
+  await grant();
+  const service = new BrowserSessionService(bindings());
+  const browser = await service.register(await new AuthService(bindings()).createIdentitySession(STAFF));
+  expect((await service.selectSupport(browser.credential, { workspaceId: CUSTOMER, userId: BOB })).user.id).toBe(BOB);
+  const codeVerifier = "v".repeat(43);
+  const issued = await createApp().request(`${apiOrigin}/browser/mobile/handoff`, {
+    method: "POST",
+    headers: { origin, "content-type": "application/json",
+      cookie: `__Host-rally-browser-global=${encodeURIComponent(browser.credential)}` },
+    body: JSON.stringify({ attemptId: "a".repeat(43), codeChallenge: await sha256(codeVerifier) }),
+  }, bindings());
+  expect(issued.status).toBe(200);
+  expect(db.prepare("SELECT user_id FROM desktop_login_tickets").get()).toEqual({ user_id: STAFF });
+  const exchanged = await createApp().request(`${apiOrigin}/browser/mobile/exchange`, {
+    method: "POST", headers: { origin, "content-type": "application/json" },
+    body: JSON.stringify({ ...await issued.json() as Record<string, unknown>, codeVerifier }),
+  }, bindings());
+  expect(exchanged.status).toBe(200);
+  const session = await exchanged.json();
+  expect(session).toMatchObject({ user: { id: STAFF }, workspace: null });
+  expect(session).not.toHaveProperty("impersonator");
 });
 
 it("stops a revoked support session at once and leaves an unannounced one to the expiry sweep", async () => {
