@@ -541,7 +541,7 @@ describe("organization setup intent", () => {
     const database = migratedSqliteDatabase();
     try {
       const env = environment(new StubDatabase(() => undefined), { DB: sqliteD1(database), LOG_LEVEL: 'error', APP_ENV: 'development' });
-      const authorize = await new AuthService(env).beginIdentity({
+      const authorize = await new AuthService(env).beginIdentity({ provider: "google",
         ...(returnUri ? { returnUri } : {}), desktopAttemptId: "a".repeat(43), desktopCodeChallenge: "c".repeat(43),
       });
       const google = new URL(authorize);

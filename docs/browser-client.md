@@ -1,6 +1,6 @@
 # Browser client
 
-The browser client provides email, Google and operator-provisioned password sign-in, then mounts the desktop
+The browser client provides email, Google, Apple and operator-provisioned password sign-in, then mounts the desktop
 shell for everyone: Organization members and guests shared into some of its
 conversations, as described in [The shell](#the-shell). A guest gets no setup or
 onboarding. Sign-in, which also claims anything shared with the person's
@@ -178,6 +178,14 @@ shows until the person starts an email sign-in. Four choices shape it:
 
 The redirect URI must be registered on Google's identity OAuth client; the
 [runbook](runbook.md#provider-configuration) lists it.
+
+### Apple sign-in
+
+**Continue with Apple** sits under Google's button at the same size and runs the
+same start, binding and callback, with `apple` in place of `google`. Apple
+returns with a cross-site POST, which changes the state cookie, the same-origin
+guard and the Worker's cookie forwarding; [apple-login.md](apple-login.md) owns
+those details.
 
 ### Development sign-in
 

@@ -4,7 +4,7 @@ import { UuidV7Schema } from '@rally/contracts/telemetry';
 import { observeSignup, observeSignupProgress } from '../telemetry/signup';
 import { requireIdentityAuth, getIdentityAuth, refuseSupportSession } from "../middleware/auth";
 import { startEmailLogin, redeemEmailLogin, deliverEmailLogin, EmailLoginStartSchema, EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { authBodyLimit } from "../middleware/auth-body-limit";
 import { zValidator } from "../middleware/validation";
 import {
@@ -24,7 +24,8 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { compatibleDesktopDeepLink, desktopHandoffUrl } from "../lib/desktop-handoff";
-import { AuthService, verifyAccessToken } from "../services/auth-service";
+import { AppleCallbackFormSchema } from "../services/apple-identity";
+import { AuthService, verifyAccessToken, type IdentityCallbackExtras, type LoginProvider } from "../services/auth-service";
 import { previewInvitation } from "../services/workspace-service";
 import { SupportAccessService } from "../services/support-access";
 
@@ -40,6 +41,9 @@ const callbackQuery = z.object({
   state: z.string().min(20),
   error: z.string().min(1).optional(),
 }).refine((value) => Boolean(value.code || value.error), { message: "Google returned neither a code nor an error" });
+/** The desktop holds Apple's callback to the same shape as Google's. */
+const appleCallbackForm = AppleCallbackFormSchema.extend({ state: z.string().min(20) })
+  .refine((value) => Boolean(value.code || value.error), { message: "Apple returned neither a code nor an error" });
 const logoutBody = z.object({ refreshToken: RefreshTokenSchema.optional() }).default({});
 const developmentSessionBody = z.object({ workspaceName: z.string().trim().min(2).max(120).optional() }).default({});
 
@@ -125,21 +129,30 @@ authRoutes.get("/invitations/preview", zValidator("query", invitationPreviewQuer
 });
 
 // Desktop uses POST so organization names and invitation tokens never enter
-// browser history. Only the opaque Google OAuth state is opened externally.
-authRoutes.post("/google/start", zValidator("json", startBody), async (c) => {
-  const body = c.req.valid("json");
-  const url = await new AuthService(c.env).beginIdentity({
-    ...(body.returnUri ? { returnUri: body.returnUri } : {}),
-    signupFlowId: body.signupFlowId,
-    desktopAttemptId: body.desktopAttemptId,
-    desktopCodeChallenge: body.desktopCodeChallenge,
+// browser history. Only the opaque provider OAuth state is opened externally.
+for (const provider of ["google", "apple"] as const satisfies readonly LoginProvider[]) {
+  authRoutes.post(`/${provider}/start`, zValidator("json", startBody), async (c) => {
+    const body = c.req.valid("json");
+    const url = await new AuthService(c.env).beginIdentity({
+      ...(body.returnUri ? { returnUri: body.returnUri } : {}),
+      signupFlowId: body.signupFlowId,
+      desktopAttemptId: body.desktopAttemptId,
+      desktopCodeChallenge: body.desktopCodeChallenge,
+      provider,
+    });
+    c.header("Cache-Control", "no-store");
+    return c.json(IdentityStartResponseSchema.parse({ url }));
   });
-  c.header("Cache-Control", "no-store");
-  return c.json(IdentityStartResponseSchema.parse({ url }));
-});
+}
 
-authRoutes.get("/google/callback", zValidator("query", callbackQuery), async (c) => {
-  const query = c.req.valid("query");
+/**
+ * Finishes a desktop sign-in on the API host and hands the deep link to the
+ * desktop handoff page. A provider callback that is a POST (Apple's) answers
+ * 303 so the browser follows with a GET; Google's GET keeps its 302.
+ */
+async function completeDesktopIdentity(c: Context<HonoAppEnv>, provider: LoginProvider,
+  callback: { code?: string | undefined; state: string; error?: string | undefined }, extras: IdentityCallbackExtras = {}) {
+  const status = c.req.method === "POST" ? 303 : 302;
   // Reached when no stored return URI can be consumed, so there is no caller
   // scheme to answer in — the scheme every live build registers is the one that
   // gets the error in front of somebody rather than dead-ending.
@@ -150,22 +163,29 @@ authRoutes.get("/google/callback", zValidator("query", callbackQuery), async (c)
     return target;
   };
   c.header("Cache-Control", "no-store");
-  if (query.error) {
+  if (callback.error) {
     try {
-      const denied = new URL(await new AuthService(c.env).consumeIdentityDenial(query.state));
-      return c.redirect(desktopHandoffUrl(c.env, denied), 302);
+      const denied = new URL(await new AuthService(c.env).consumeIdentityDenial(callback.state, provider));
+      return c.redirect(desktopHandoffUrl(c.env, denied), status);
     } catch (error) {
-      if (error instanceof ApiError) return c.redirect(desktopHandoffUrl(c.env, desktopTarget(error.code)), 302);
+      if (error instanceof ApiError) return c.redirect(desktopHandoffUrl(c.env, desktopTarget(error.code)), status);
       throw error;
     }
   }
   try {
-    const redirect = new URL(await new AuthService(c.env).consumeIdentityCallback(query.code!, query.state));
-    return c.redirect(desktopHandoffUrl(c.env, redirect), 302);
+    const redirect = new URL(await new AuthService(c.env).consumeIdentityCallback(callback.code!, callback.state, provider, extras));
+    return c.redirect(desktopHandoffUrl(c.env, redirect), status);
   } catch (error) {
-    if (error instanceof ApiError) return c.redirect(desktopHandoffUrl(c.env, desktopTarget(error.code)), 302);
+    if (error instanceof ApiError) return c.redirect(desktopHandoffUrl(c.env, desktopTarget(error.code)), status);
     throw error;
   }
+}
+
+authRoutes.get("/google/callback", zValidator("query", callbackQuery), (c) =>
+  completeDesktopIdentity(c, "google", c.req.valid("query")));
+authRoutes.post("/apple/callback", authBodyLimit, zValidator("form", appleCallbackForm), (c) => {
+  const form = c.req.valid("form");
+  return completeDesktopIdentity(c, "apple", form, { appleUser: form.user });
 });
 
 authRoutes.post("/desktop/exchange", zValidator("json", DesktopExchangeRequestSchema), async (c) => {

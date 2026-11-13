@@ -1,3 +1,4 @@
+import { appleCredentials } from "../services/apple-identity";
 import { isConfiguredRegion } from "@rally/contracts/regions";
 import { configuredRegions } from "@rally/contracts/regions";
 import { regionalBindings } from "../lib/regional-bindings";
@@ -162,6 +163,15 @@ healthRoutes.get("/", async (c) => {
     checks.googleLoginOAuth = { ok: false, message: "configured outside Global; remove it from this region" };
   } else {
     checks.googleLoginOAuth = { ok: true, message: "not required outside Global" };
+  }
+  // Reported, never required (`docs/apple-login.md#failure-modes-and-limits`).
+  const appleLoginConfigured = appleCredentials(c.env) !== null;
+  if (!isConfiguredRegion(c.env.AVALON_REGION) || c.env.AVALON_REGION === "global") {
+    checks.appleLoginOAuth = { ok: appleLoginConfigured, message: appleLoginConfigured ? "configured" : "not configured" };
+  } else if (appleLoginConfigured) {
+    checks.appleLoginOAuth = { ok: false, message: "configured outside Global; remove it from this region" };
+  } else {
+    checks.appleLoginOAuth = { ok: true, message: "not required outside Global" };
   }
   checks.googleConnectorOAuth = {
     ok: Boolean(c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID && c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET),

@@ -111,6 +111,8 @@ describe("suggestOrganizationName", () => {
   it("does not fetch for a personal mail provider or a reserved test domain", async () => {
     const fetcher = vi.fn<typeof fetch>();
     expect(await suggestOrganizationName(sqliteD1(db), "pat@gmail.com", fetcher)).toBeNull();
+    // Apple's Hide My Email relay: the domain is Apple's, never the person's organization.
+    expect(await suggestOrganizationName(sqliteD1(db), "x7k2qd9p@privaterelay.appleid.com", fetcher)).toBeNull();
     expect(await suggestOrganizationName(sqliteD1(db), "pat@acme.test", fetcher)).toBeNull();
     expect(await suggestOrganizationName(sqliteD1(db), "pat@example.com", fetcher)).toBeNull();
     expect(fetcher).not.toHaveBeenCalled();

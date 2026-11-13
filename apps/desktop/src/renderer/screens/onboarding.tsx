@@ -7,6 +7,7 @@ import { RallyMark, Button, ConnectorMark, ErrorNotice } from '../components/pri
 import { CreateOrganizationCard } from './create-organization';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
+import { rememberSignInProvider, type SignInProvider } from '../lib/sign-in-provider';
 import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
 import type { PendingWorkspaceInvitation } from '../lib/types';
 
@@ -46,7 +47,7 @@ export function SignInScreen(): React.JSX.Element {
     return signupFlow.current;
   };
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [starting, setStarting] = useState<SignInProvider | 'development' | null>(null);
   const [passwordChosen, setPasswordChosen] = useState(false);
 
   useEffect(() => {
@@ -60,9 +61,9 @@ export function SignInScreen(): React.JSX.Element {
     void ensureSignupFlow().then(flowId => api.observeSignupView(flowId)).catch(() => undefined);
   }, [api]);
 
-  const beginGoogleLogin = async (): Promise<void> => {
+  const beginProviderLogin = async (provider: SignInProvider): Promise<void> => {
     if (!api) return;
-    setStarting(true);
+    setStarting(provider);
     setError(null);
     clearDeepLinkError();
     let attemptId: string | null = null;
@@ -73,26 +74,28 @@ export function SignInScreen(): React.JSX.Element {
         region: 'global',
       });
       attemptId = authAttempt.attemptId;
-      const url = await api.beginGoogleLogin('global', 'rallywithai://auth/complete', { authAttempt, signupFlowId: await ensureSignupFlow() });
+      rememberSignInProvider(provider);
+      const url = await api.beginProviderLogin(provider, 'global', 'rallywithai://auth/complete',
+        { authAttempt, signupFlowId: await ensureSignupFlow() });
       await bridge.openExternal(url);
     } catch (caught) {
       if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);
       setError(caught instanceof Error ? caught.message : 'Rally could not open the sign-in page.');
     } finally {
-      setStarting(false);
+      setStarting(null);
     }
   };
 
   const useDevelopmentSession = async (): Promise<void> => {
     if (!api) return;
-    setStarting(true);
+    setStarting('development');
     setError(null);
     try {
       await createDevelopmentSession();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The local development session is unavailable.');
     } finally {
-      setStarting(false);
+      setStarting(null);
     }
   };
 
@@ -106,15 +109,19 @@ export function SignInScreen(): React.JSX.Element {
         {passwordChosen ? <PasswordSignInForm onSubmit={signInWithPassword} disabled={exchangingTicket}
           onBack={() => setPasswordChosen(false)} /> : <>
         <p className="signin-account-copy">Sign in or create your account.</p>
-        <Button className="button-primary signin-button" disabled={starting || exchangingTicket} onClick={beginGoogleLogin}>
-          {starting || exchangingTicket ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ConnectorMark mark="google" />}
+        <Button className="button-primary signin-button" disabled={Boolean(starting) || exchangingTicket} onClick={() => { void beginProviderLogin('google'); }}>
+          {starting === 'google' || exchangingTicket ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ConnectorMark mark="google" />}
           {exchangingTicket ? 'Completing sign in…' : 'Continue with Google'}
         </Button>
+        <Button className="button-secondary signin-button signin-button-provider" disabled={Boolean(starting) || exchangingTicket} onClick={() => { void beginProviderLogin('apple'); }}>
+          {starting === 'apple' ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ConnectorMark mark="apple" />}
+          Continue with Apple
+        </Button>
 
-        <button className="text-button onboarding-signout" type="button" disabled={starting || exchangingTicket}
+        <button className="text-button onboarding-signout" type="button" disabled={Boolean(starting) || exchangingTicket}
           onClick={() => { setPasswordChosen(true); setError(null); clearDeepLinkError(); }}>Sign in with password</button>
         {runtime?.devAuthEnabled && (
-          <Button className="button-secondary signin-button" disabled={starting} onClick={useDevelopmentSession}>
+          <Button className="button-secondary signin-button" disabled={Boolean(starting)} onClick={useDevelopmentSession}>
             Use local development account
           </Button>
         )}
