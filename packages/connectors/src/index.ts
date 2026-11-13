@@ -624,15 +624,9 @@ const GOOGLE_PAGE_TOKEN_SCHEMA = {
 const GOOGLE_PAGE_TOKEN_ARGUMENT = z.string().min(1).max(2_000).nullish()
   .transform((value) => value ?? undefined);
 
-/**
- * The longest free-text `query` each Google search tool accepts, read by both
- * its advertised `maxLength` and its executor's parse. Only the parse held the
- * number until a model sent `gmail.search` a query of more than 2,000
- * characters: it had been told there was no limit, and was then refused for
- * obeying the schema. The values are unchanged from what the parse already
- * enforced.
- */
+/** Longest free-text `query` for `gmail.search` and `calendar.list_events`; read by both its advertised `maxLength` and its parse. */
 const GOOGLE_TEXT_QUERY_MAX_LENGTH = 2_000;
+/** Longest `query` for `drive.search`; read by both its advertised `maxLength` and its parse. */
 const DRIVE_SEARCH_QUERY_MAX_LENGTH = 1_000;
 
 const emailContentFields = {
