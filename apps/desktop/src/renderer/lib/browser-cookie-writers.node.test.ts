@@ -1,4 +1,3 @@
-import { locks } from 'node:worker_threads';
 import { expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { browserRequest } from '../../../../browser/src/transport';
@@ -9,8 +8,17 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-it('serializes mobile exchange behind renewal using the actual Web Locks API', async () => {
-  // Node implements Web Locks; only the remote HTTP endpoint is substituted.
+it('serializes mobile exchange behind renewal through the browser cookie lock', async () => {
+  // CI's Node 22 has no Web Locks API. Substitute the browser capability at
+  // its boundary; exercise the real transport and observe HTTP dispatch order.
+  const queues = new Map<string, Promise<unknown>>();
+  const locks = {
+    request<T>(name: string, callback: () => Promise<T>): Promise<T> {
+      const result = (queues.get(name) ?? Promise.resolve()).then(callback);
+      queues.set(name, result.catch(() => undefined));
+      return result;
+    },
+  };
   vi.stubGlobal('navigator', { locks });
   const calls: string[] = [];
   const renewal = deferred<Response>();
@@ -23,8 +31,6 @@ it('serializes mobile exchange behind renewal using the actual Web Locks API', a
   const exchange = browserRequest('global', '/mobile/exchange', schema, {});
   try {
     await vi.waitFor(() => expect(calls).toContain('/regional/global/browser/session/renew'));
-    // Yield through the lock manager, so an unlocked exchange would have run.
-    await locks.query();
     expect(calls).toEqual(['/regional/global/browser/session/renew']);
   } finally { renewal.resolve(Response.json({ ok: true })); }
   await Promise.all([renewing, exchange]);
