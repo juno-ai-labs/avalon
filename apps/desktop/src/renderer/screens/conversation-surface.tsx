@@ -1357,6 +1357,7 @@ function ConversationSurfaceContent({
   // A stored failure is available through Run details. Only a run seen active
   // in this conversation is a new interruption, including across cache updates.
   const observedActiveRun = useRef<string | null>(null);
+  const [retriedRunId, setRetriedRunId] = useState<string | null>(null);
   useEffect(() => {
     if (routedDetail?.harnessStatus === 'running') {
       observedActiveRun.current = routedDetail.latestHarnessRunId ?? routedDetail.latestHarnessRun?.id ?? null;
@@ -1998,8 +1999,9 @@ function ConversationSurfaceContent({
   const retry = useMutation({
     mutationFn: () => socketConnection.retryHarness(),
     onSuccess: async ({ harnessRunId }) => {
-      // A Retry this screen started counts as observed, even if no snapshot shows it running.
-      observedActiveRun.current = harnessRunId;
+      // Counts as observed even if no snapshot shows it running. Kept apart
+      // from `observedActiveRun`, which a status frame resets to the old run.
+      setRetriedRunId(harnessRunId);
       requestSocketSnapshot();
     },
   });
@@ -2691,7 +2693,8 @@ function ConversationSurfaceContent({
               && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...activityRow.timing} />}</ActivityPresence>
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
-              automatic={observedActiveRun.current === detail.latestHarnessRun.id}
+              automatic={observedActiveRun.current === detail.latestHarnessRun.id
+                || retriedRunId === detail.latestHarnessRun.id}
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
               message={latestRunFailureMessage}
               onRetry={() => retry.mutate()}

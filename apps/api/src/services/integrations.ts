@@ -5230,9 +5230,9 @@ function principalSystemSectionFor(
  * derived user message, as a Sidekick run's activation context is, rather
  * than system prompt text: the system prompt prefix is byte-stable and
  * cached, and the artifact list changes with every publish. Keyed on the
- * message that woke the run, so a recovered execution renders the same
- * context, under its own source kind, so it never shares an identity with
- * the SLACK CONTEXT keyed on that same message. `docs/canvases.md#rally-in-a-canvas-chat`.
+ * message that woke the run, under its own source kind, so it never shares an
+ * identity with the SLACK CONTEXT keyed on that same message; a replay keeps
+ * the copy first admitted. `docs/canvases.md#rally-in-a-canvas-chat`.
  */
 async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput): Promise<ModelMessage | null> {
   const canvas = await (await hostedParentStub(env, input.workspaceId)).canvasContext({

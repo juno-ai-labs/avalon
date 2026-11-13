@@ -1608,6 +1608,11 @@ describe("canonical ordered work-stream transcript", () => {
     });
     expect(loop.loop()!.revision).toBe(revisionBeforeReplay);
     expect(sql.exec(`SELECT COUNT(*) AS count FROM transcript_facts`).one().count).toBe(factsBeforeSnapshotReplay);
+    // The run keeps the copy it was admitted with: the newer rendering is
+    // stored nowhere, so nothing can project it.
+    expect(sql.exec(
+      `SELECT COUNT(*) AS count FROM transcript_payloads WHERE payload_json LIKE '%Retitled replay payload%'`,
+    ).one().count).toBe(0);
     // It still may not change where the input came from.
     await expect(transcript.commitActivationInputs({
       loopId: "persistent-loop",

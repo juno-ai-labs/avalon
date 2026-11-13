@@ -1223,6 +1223,13 @@ and input audio admits only the `wav` and `mp3` formats the OpenRouter SDK
 contract supports. This keeps an SDK union or return-shape change visible to the
 compiler instead of letting it emerge later in a provider request.
 
+A failed attempt is recorded with the disposition the executor actually
+applied, from the same `attemptDisposition` in `@juno-ai/bind/routing`, and
+with whether output had streamed: `producedOutput` in the `inference_attempts`
+routing decision and the lakehouse row's `metadata`, `produced_output` on
+`agent_inference_attempt_failed`. An attempt that streamed before failing is
+never recorded as `retry` or `fallback`.
+
 ### Streaming stability
 
 SSE comments are ignored. Azure's Chat function-call fragments are combined by index, and OpenRouter's Responses argument deltas by output index, with the `done` event's arguments taken as final. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the AgentLoopDO event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
@@ -1677,8 +1684,6 @@ When every route candidate answers with a transport fault the provider owns — 
 
 Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the conversation host sets from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in `wrangler.global.jsonc`, the one regional config; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root conversation runs set no wall clock and are unaffected. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a conversation pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output or an external effect has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt appends to the owning execution object's `inference_attempts` ledger and emits its own lakehouse terminal record, so a retried turn is visible as more than one attempt sharing a `turn_id`.
 
-Neither the whole-plan retry nor provider and model traversal runs once a turn has streamed participant-visible text: the Chat cannot take that text back, so the executor clamps the failure to propagate-only (`propagateOnly`). The executor and the attempt record both take that decision from `attemptDisposition` in `@juno-ai/bind/routing`, and the record carries `producedOutput: true` (`produced_output` on `agent_inference_attempt_failed`, `producedOutput` in the `inference_attempts` routing decision), so such an attempt is never recorded as `retry` or `fallback`.
-
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
 
 When an executor throws a Zod error and its normalized arguments also fail the
@@ -1910,6 +1915,11 @@ fallback chain.
 **Considered and rejected:** Putting a Canvas revision in the context's
 `sourceRevision`, which admits a second context message on every replay after
 any publish or rename.
+
+**Trade-off accepted:** a retried run works from the title and artifact list
+it was first given. An artifact published between the failure and the Retry is
+missing from that list, so the run may publish a duplicate instead of a new
+version of it.
 
 **What a future change has to respect:** Mark only an input whose content is a
 snapshot of moving state. The executor and the attempt record share
