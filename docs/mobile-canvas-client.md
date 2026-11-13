@@ -20,6 +20,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/notifications.ts`, `notification-target.ts` | Platform permission/token lifecycle and canonical notification routing. |
 | `apps/mobile/src/diagnostics.ts`, `DiagnosticsScreen.tsx`, `RecoveryBoundary.tsx` | Local content-free diagnostics, user-requested sharing and recovery. |
 | `apps/mobile/.eas/workflows/`, `.github/workflows/release-mobile.yml` | One-channel native-build/OTA releases and explicit store submission. |
+| `apps/mobile/store.config.json`, `apps/mobile/metadata/` | English store listing, TestFlight description, test instructions and review notes. Review credentials stay in App Store Connect. |
 | `apps/mobile/src/auth.ts`, `auth-callback.ts` | System authentication session and exact callback/attempt validation. |
 | `apps/browser/src/mobile-sign-in.tsx` | Existing browser login followed by the return-to-app handoff. |
 | `apps/mobile/src/protocol.ts` | Shared commands, validated snapshots, origin boundary, pin presentation capacity. |
@@ -160,8 +161,10 @@ There are two release surfaces:
   is a development client; `preview` is an installable internal release (IPA/APK),
   and `production` is a store build. Both release profiles use the **one
   `production` update channel** and production EAS environment. The project is
-  `@juno-ai-labs/rally-mobile`. Store records, submission credentials and physical
-  push delivery still require acceptance; a successful export proves none of them.
+  `@juno-ai-labs/rally-mobile`. EAS has the App Store signing profile and submission
+  API key for `ai.rallywith.mobile` on Apple team `7ZLT6A8W25`. The App Store Connect
+  app record, external TestFlight review and physical push delivery still require
+  acceptance; a successful export proves none of them.
 
 The physical iOS app uses `ai.rallywith.mobile`; Apple rejected the initial
 `ai.rally.mobile` development identifier for the Juno AI Labs team. The
@@ -195,9 +198,45 @@ on relevant main changes, then invokes `.eas/workflows/release.yml`. Expo's
 supported fingerprint/get-build jobs find a compatible non-simulator build from the
 `production` profile and channel for iOS: publish OTA when one exists, otherwise build the
 new production binary. Android automated releases and Firebase setup are deferred. Internal preview builds cannot satisfy the store-build lookup.
-Native builds do not automatically submit to stores. Use the explicit
-`.eas/workflows/submit.yml` with the verified build ID after configuring the
-Apple/Google store records and submission credentials.
+Native builds do not automatically submit to stores. The explicit
+`.eas/workflows/submit.yml` uses Expo's supported `testflight` job with a verified
+iOS store build ID and release-specific What to Test notes. It uploads the build,
+assigns it to the `Public Beta` external group and requests Beta App Review.
+This does not release the app on the App Store. Android submission is deferred.
+
+### Public TestFlight setup
+
+Create the initial app record in [App Store Connect](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app/):
+iOS, `ai.rallywith.mobile`, English (US), SKU `rally-mobile-ios`. Accept any pending
+Apple agreements. Set `submit.production.ios.ascAppId` in `apps/mobile/eas.json`
+to the resulting **numeric Apple ID**. `submit.yml` cannot run until this is set;
+the bundle, team and Expo project IDs are not substitutes. EAS holds the signing
+credentials and submission API key; keep private keys out of the repository.
+
+Complete TestFlight's beta description, feedback email, review contact and a
+dedicated review login with sample canvases. Create an internal tester group,
+then the external group named exactly `Public Beta`, and enable its public link
+with Open to Anyone. Testers still need a Rally account and organization access.
+
+From `apps/mobile`, submit a verified production store build (not a preview IPA
+or simulator archive) using [Expo's TestFlight job](https://docs.expo.dev/eas/workflows/pre-packaged-jobs/#testflight):
+
+```sh
+npx --yes eas-cli@latest workflow:run submit.yml \
+  --input build_id=<EAS_STORE_BUILD_ID> \
+  --input 'changelog=<What to Test for this build>' --non-interactive --wait
+```
+
+The job waits for processing and requests Beta App Review. Confirm Apple's
+approval and an available build in `Public Beta` before sharing the public link;
+upload success alone is not approval. Keep using the single `production` OTA
+channel for compatible JavaScript updates.
+
+`store.config.json` is synchronized with `eas metadata:push` after the app record
+exists. Keep its `apple.version` aligned with app config for each release.
+[Release copy and screenshots](../apps/mobile/metadata/README.md) are manual paste
+and upload sources, not inputs to EAS Metadata. Complete Apple's age-rating and
+privacy questionnaires separately; metadata lint cannot validate those answers.
 
 The GitHub `mobile-production` environment needs an `EXPO_TOKEN` secret. Set
 `EXPO_PUBLIC_RALLY_APP_URL=https://app.rallywith.ai` in the EAS production
@@ -468,6 +507,27 @@ generation, or native WebView behavior. Device acceptance remains necessary.
 Manual acceptance: sign in through the system browser with Apple, Google and email; cancel and retry sign-in; test an existing browser account and switching accounts; open Home; open an artifact and an empty canvas; create a canvas; edit through the conversation sheet; pin and unpin through sidebar Edit; drag to reorder; reload to check server persistence; check desktop overflow pins; disconnect and retry; sign out; test light/dark and Reduce Transparency. On devices, additionally verify artifact writes, keyboard behavior, Android Back, iOS sheet dismissal, VoiceOver/TalkBack reorder actions, and state retention across tab switching.
 
 ## Changelog
+
+### 2026-11-13 — Make external TestFlight distribution explicit
+
+**What changed:** The manual submission workflow uploads a selected iOS store
+build, adds it to Public Beta and requests Beta App Review with supplied test
+notes. EAS store signing and the existing Apple submission key are configured.
+Store copy, screenshots and manual beta review instructions are versioned alongside
+the app.
+
+**Why:** An installable ad-hoc IPA requires registered devices; public beta
+testers need Apple's external TestFlight distribution and review.
+
+**Considered and rejected:** Automatically distributing every main-branch native
+build would remove the existing explicit choice of which verified build testers
+receive. A second OTA channel would complicate the one-channel release model.
+
+**Consequences:** Keep store builds separate from preview/simulator artifacts,
+complete Apple's app record and review information before the first submission,
+and distinguish upload success from external beta approval.
+
+Implemented in [#1596](https://github.com/juno-ai-labs/avalon/pull/1596).
 
 ### 2026-11-13 — Add one-channel releases and thin-client runtime recovery
 
