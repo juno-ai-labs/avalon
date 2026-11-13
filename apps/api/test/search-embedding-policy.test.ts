@@ -90,7 +90,7 @@ const ADDITIVITY_FIXTURES = [
 const mixedDocument = (length: number) => {
   let text = '';
   for (let index = 0; text.length < length; index += 1) {
-    text += ADDITIVITY_FIXTURES[(index * 7) % ADDITIVITY_FIXTURES.length]!;
+    text += ADDITIVITY_FIXTURES[index % ADDITIVITY_FIXTURES.length]!;
     text += index % 3 === 0 ? '\n\n' : index % 3 === 1 ? '\n' : ' ';
   }
   return text.slice(0, length);
