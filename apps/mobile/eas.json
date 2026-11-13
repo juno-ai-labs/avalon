@@ -14,7 +14,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "environment": "development",
-      "pnpm": "11.13.0",
+      "pnpm": "11.13.1",
       "ios": {
         "simulator": true,
         "image": "sdk-58"
@@ -30,7 +30,7 @@
       "environment": "production",
       "channel": "production",
       "autoIncrement": true,
-      "pnpm": "11.13.0",
+      "pnpm": "11.13.1",
       "ios": {
         "image": "sdk-58",
         "buildArtifactPaths": [

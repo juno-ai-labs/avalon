@@ -191,7 +191,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 11.13.0
+          version: 11.13.1
           run_install: false
 
       - name: Install Node.js
@@ -353,7 +353,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 11.13.0
+          version: 11.13.1
           run_install: false
 
       - name: Install Node.js
@@ -572,7 +572,7 @@ jobs:
           ref: ${{ needs.verify.outputs.release_commit }}
       - uses: pnpm/action-setup@v4
         with:
-          version: 11.13.0
+          version: 11.13.1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -619,7 +619,7 @@ jobs:
           ref: ${{ needs.verify.outputs.release_commit }}
       - uses: pnpm/action-setup@v4
         with:
-          version: 11.13.0
+          version: 11.13.1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
