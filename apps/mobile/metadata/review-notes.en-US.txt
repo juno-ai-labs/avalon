@@ -1,7 +1,0 @@
-Rally is a canvas app for shared lists, plans, documents, and small tools. Each canvas also has a conversation for requesting changes.
-
-Sign in with the dedicated review account supplied in App Store Connect. Sign-in opens the system authentication browser and returns to Rally when complete. The review account should contain sample canvases and have permission to create and edit them.
-
-From Home, open a populated canvas to view its content. Tap the conversation button to edit it. The sidebar lets you pin canvases, change their order, and switch organizations. A canvas without content opens its conversation.
-
-Notifications are optional and are enabled from Settings and diagnostics. Camera, photo, and microphone access is requested only when using the corresponding conversation feature. The app requires an internet connection.
