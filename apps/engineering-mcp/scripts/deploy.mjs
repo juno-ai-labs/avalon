@@ -3,6 +3,7 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { engineeringAuditLakehouseBinding } from "../../../scripts/ensure-cloudflare-inference-lakehouse.mjs";
 import { parseWranglerConfig } from "../../../scripts/wrangler-config.mjs";
 
 const appDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -137,27 +138,12 @@ async function ensureAccessApplication() {
   return result.aud;
 }
 
-// Wrangler refuses to deploy a binding to a bucket that does not exist. The
-// audit bucket is this Worker's alone, so its deploy creates it once.
-async function ensureAuditBucket(config) {
-  const bucket = config.r2_buckets?.find((entry) => entry.binding === "ENGINEERING_AUDIT_LOG")?.bucket_name;
-  if (!bucket) throw new Error("wrangler.jsonc must bind ENGINEERING_AUDIT_LOG");
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucket)}`,
-    { headers: { Authorization: `Bearer ${deploymentToken}`, Accept: "application/json" } },
-  );
-  if (response.ok) return;
-  if (response.status !== 404) {
-    throw new Error(`Cloudflare GET /r2/buckets/${bucket} failed (${response.status})`);
-  }
-  await cloudflare("/r2/buckets", { method: "POST", body: JSON.stringify({ name: bucket }) });
-  console.info(`${bucket}: created`);
-}
-
 const audience = await ensureAccessApplication();
 const source = await readFile(join(appDirectory, "wrangler.jsonc"), "utf8");
 const config = parseWranglerConfig(source);
-await ensureAuditBucket(config);
+const auditLakehouse = await engineeringAuditLakehouseBinding();
+if (auditLakehouse) config.pipelines = [auditLakehouse];
+else console.warn("ENGINEERING_AUDIT_LAKEHOUSE has no pinned stream; every tool call will refuse as engineering_audit_unconfigured until pnpm cloudflare:lakehouses:ensure pins it");
 config.vars.ACCESS_APPLICATION_AUD = audience;
 config.vars.CLOUDFLARE_ACCOUNT_ID = accountId;
 await writeFile(generatedConfig, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });

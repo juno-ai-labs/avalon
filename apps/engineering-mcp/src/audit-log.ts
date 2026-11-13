@@ -1,23 +1,28 @@
 /**
- * The engineering MCP's tool-call audit log: one immutable JSON object per
- * event in the `ENGINEERING_AUDIT_LOG` R2 bucket, never overwritten or read
- * back by this Worker. `docs/engineering-mcp.md#tool-call-audit-log` owns the
- * record shape, the key layout and the fail-closed rule.
+ * The engineering MCP's tool-call audit log: one row per event, sent through
+ * the `ENGINEERING_AUDIT_LAKEHOUSE` Pipeline into the
+ * `avalon.engineering_mcp_audit` Iceberg table, which `query_data_lake` reads.
+ * `docs/engineering-mcp.md#tool-call-audit-log` owns the row shape and the
+ * fail-closed rule; `config/engineering-mcp-audit-lakehouse-stream-schema.json`
+ * is the column contract the stream enforces.
  */
+import type { Pipeline } from "cloudflare:pipelines";
 import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 
 import type { AccessPrincipal } from "./access";
 
-export const AUDIT_RECORD_SCHEMA = "rally.engineering-mcp.audit/v1";
+/** Bump with the stream schema; a reader filters on it. */
+export const AUDIT_SCHEMA_VERSION = 1;
 
 export interface AuditLogEnvironment {
-  ENGINEERING_AUDIT_LOG: R2Bucket;
+  /** Absent until the stream is provisioned and pinned; every tool call then refuses. */
+  ENGINEERING_AUDIT_LAKEHOUSE?: Pipeline;
   CF_VERSION_METADATA?: WorkerVersionMetadata;
 }
 
 export type AuditOutcome = "succeeded" | "failed" | "task_created" | "cancelled";
 
-/** What happened. The actor, time and Worker version are added on write. */
+/** What happened. The actor, time and Worker version are added on send. */
 export type AuditEvent =
   | { event: "tool_call_started"; tool: string; callId: string; arguments: unknown }
   | {
@@ -26,36 +31,50 @@ export type AuditEvent =
   }
   | { event: "task_finished"; tool: string; taskId: string; outcome: AuditOutcome; errorCode?: string };
 
-/**
- * One object per event, under the UTC day it happened, named so a prefix
- * listing returns a day in time order. The random suffix keeps two events in
- * the same millisecond from sharing a key.
- */
-export function auditObjectKey(at: Date): string {
-  const iso = at.toISOString();
-  return `tool-calls/${iso.slice(0, 4)}/${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso}_${crypto.randomUUID()}.json`;
+/** The binding is missing, so nothing can be recorded. */
+export class AuditUnconfiguredError extends Error {
+  constructor() {
+    super("engineering_audit_unconfigured");
+    this.name = "AuditUnconfiguredError";
+  }
 }
 
-/** Writes an event; throws when R2 refuses, so the caller decides the policy. */
+export function auditRow(env: AuditLogEnvironment, principal: AccessPrincipal, event: AuditEvent): Record<string, unknown> {
+  return {
+    schema_version: AUDIT_SCHEMA_VERSION,
+    // Pipeline delivery to the table is exactly-once, but a retried send is a
+    // second row; readers deduplicate on this.
+    event_id: crypto.randomUUID(),
+    event: event.event,
+    occurred_at: new Date().toISOString(),
+    tool: event.tool,
+    actor_subject: principal.subject,
+    actor_email: principal.email,
+    actor_audience: principal.audience,
+    worker_version: env.CF_VERSION_METADATA?.id ?? null,
+    call_id: "callId" in event ? event.callId : null,
+    task_id: "taskId" in event ? event.taskId ?? null : null,
+    arguments: "arguments" in event ? event.arguments : null,
+    outcome: "outcome" in event ? event.outcome : null,
+    error_code: "errorCode" in event ? event.errorCode ?? null : null,
+    duration_ms: "durationMs" in event ? event.durationMs : null,
+  };
+}
+
+/**
+ * Sends an event and resolves once the stream confirms ingestion; throws when
+ * it does not, so the caller decides the policy.
+ */
 export async function writeAuditEvent(
   env: AuditLogEnvironment,
   principal: AccessPrincipal,
   event: AuditEvent,
 ): Promise<void> {
-  const at = new Date();
-  const record = {
-    schema: AUDIT_RECORD_SCHEMA,
-    at: at.toISOString(),
-    actor: { subject: principal.subject, email: principal.email, audience: principal.audience },
-    workerVersion: env.CF_VERSION_METADATA?.id ?? null,
-    ...event,
-  };
-  await env.ENGINEERING_AUDIT_LOG.put(auditObjectKey(at), JSON.stringify(record), {
-    httpMetadata: { contentType: "application/json" },
-  });
+  if (!env.ENGINEERING_AUDIT_LAKEHOUSE) throw new AuditUnconfiguredError();
+  await env.ENGINEERING_AUDIT_LAKEHOUSE.send([auditRow(env, principal, event)]);
 }
 
-/** For events after the effect: a failed write is logged, never surfaced. */
+/** For events after the effect: a failed send is logged, never surfaced. */
 export async function writeAuditEventOrLog(
   env: AuditLogEnvironment,
   principal: AccessPrincipal,
@@ -68,6 +87,12 @@ export async function writeAuditEventOrLog(
   }
 }
 
+export function auditFailureCode(error: unknown): string {
+  if (error instanceof AuditUnconfiguredError) return error.message;
+  const platform = platformErrorCode(error);
+  return platform ? `engineering_audit_unavailable:${platform}` : "engineering_audit_unavailable";
+}
+
 export function logAuditWriteFailure(principal: AccessPrincipal, event: AuditEvent, error: unknown) {
   console.error(JSON.stringify({
     event: "engineering_mcp_audit_write_failed",
@@ -76,6 +101,6 @@ export function logAuditWriteFailure(principal: AccessPrincipal, event: AuditEve
     actor_subject: principal.subject,
     ...("callId" in event ? { call_id: event.callId } : {}),
     ...("taskId" in event && event.taskId ? { task_id: event.taskId } : {}),
-    error_code: platformErrorCode(error) ?? (error instanceof Error ? error.name : "audit_write_failed"),
+    error_code: auditFailureCode(error),
   }));
 }

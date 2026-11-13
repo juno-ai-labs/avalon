@@ -1,5 +1,6 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
+import type { Pipeline } from "cloudflare:pipelines";
 import { env } from "cloudflare:workers";
 import { createExecutionContext, runDurableObjectAlarm } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,14 +8,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEngineeringMcpHandler } from "../../engineering-mcp/src/index";
 import { TASKS_EXTENSION, TaskSnapshotSchema } from "../../engineering-mcp/src/tasks";
 import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridge";
+import { recordedAuditRows, recordingAuditLakehouse } from "./helpers/recording-audit-lakehouse";
 
 const OPERATOR = { subject: "audit-engineer", email: "audit@example.com", audience: "engineering-mcp" };
 const query = { name: "query_data_lake", arguments: { lakehouse: "llm_inference", sql: "SELECT 42 AS answer FROM default.llm_inference" } };
 
-async function rpc(params: Record<string, unknown>, options: { tasks?: boolean; auditLog?: R2Bucket } = {}) {
+async function rpc(params: Record<string, unknown>, options: { tasks?: boolean; auditLakehouse?: Pipeline | null } = {}) {
+  const auditLakehouse = options.auditLakehouse === undefined ? recordingAuditLakehouse : options.auditLakehouse;
   const handler = createEngineeringMcpHandler({
     ENGINEERING_TASKS: env.ENGINEERING_TASKS!,
-    ENGINEERING_AUDIT_LOG: options.auditLog ?? env.ENGINEERING_AUDIT_LOG!,
+    ...(auditLakehouse ? { ENGINEERING_AUDIT_LAKEHOUSE: auditLakehouse } : {}),
     GLOBAL_INSPECTION: new EngineeringInspectionBridge(createExecutionContext(), env),
     CLOUDFLARE_ACCOUNT_ID: "audit-test-account", BASIN_SQL_API_TOKEN: "test-not-a-credential",
   }, OPERATOR);
@@ -35,21 +38,12 @@ async function rpc(params: Record<string, unknown>, options: { tasks?: boolean; 
   return (await response.json() as { result: Record<string, unknown> }).result;
 }
 
-/** Every record in the bucket, by event. The doubled clock gives them one timestamp. */
-async function auditRecords(): Promise<Map<string, Record<string, unknown>>> {
-  const listed = await env.ENGINEERING_AUDIT_LOG!.list({ prefix: "tool-calls/2050/01/01/" });
-  const records = await Promise.all(listed.objects.map(async ({ key }) =>
-    (await env.ENGINEERING_AUDIT_LOG!.get(key))!.json<Record<string, unknown>>()));
-  const byEvent = new Map(records.map((record) => [String(record.event), record]));
-  expect(byEvent.size, "one record per event").toBe(records.length);
-  return byEvent;
-}
-
 function basinResponse(value: unknown) {
   return Response.json({ success: true, errors: [], result: value });
 }
 
 beforeEach(() => {
+  recordedAuditRows.length = 0;
   // A task schedules its alarm at Date.now(). On the real clock it fires on its
   // own and races the test; a doubled future clock leaves delivery to the test,
   // as in engineering-mcp-tasks.test.ts.
@@ -57,9 +51,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2050-01-01T00:00:00.000Z"));
 });
 
-afterEach(async () => {
-  const listed = await env.ENGINEERING_AUDIT_LOG!.list();
-  if (listed.objects.length > 0) await env.ENGINEERING_AUDIT_LOG!.delete(listed.objects.map(({ key }) => key));
+afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -69,20 +61,24 @@ describe("engineering MCP tool-call audit log", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => basinResponse({ rows: [[42]] }));
     await rpc(query);
 
-    const records = await auditRecords();
-    expect([...records.keys()].sort()).toEqual(["tool_call_finished", "tool_call_started"]);
-    const started = records.get("tool_call_started");
-    const finished = records.get("tool_call_finished");
+    const [started, finished, ...rest] = recordedAuditRows;
+    expect(rest).toEqual([]);
     expect(started).toMatchObject({
-      schema: "rally.engineering-mcp.audit/v1",
+      schema_version: 1,
       event: "tool_call_started",
+      occurred_at: "2050-01-01T00:00:00.000Z",
       tool: "query_data_lake",
-      actor: { subject: "audit-engineer", email: "audit@example.com", audience: "engineering-mcp" },
+      actor_subject: "audit-engineer",
+      actor_email: "audit@example.com",
+      actor_audience: "engineering-mcp",
       arguments: { lakehouse: "llm_inference", sql: "SELECT 42 AS answer FROM default.llm_inference" },
+      outcome: null,
     });
-    expect(finished).toMatchObject({ event: "tool_call_finished", tool: "query_data_lake", outcome: "succeeded", callId: started!.callId });
-    expect(finished).not.toHaveProperty("arguments");
-    expect(finished).not.toHaveProperty("errorCode");
+    expect(finished).toMatchObject({
+      event: "tool_call_finished", tool: "query_data_lake", outcome: "succeeded",
+      call_id: started!.call_id, arguments: null, error_code: null,
+    });
+    expect(started!.event_id).not.toBe(finished!.event_id);
   });
 
   it("names the reason a tool call failed", async () => {
@@ -90,27 +86,26 @@ describe("engineering MCP tool-call audit log", () => {
       Response.json({ success: false, errors: [{ code: 40004, message: "Invalid query" }] }, { status: 400 }));
     await rpc(query);
 
-    const finished = (await auditRecords()).get("tool_call_finished");
-    expect(finished).toMatchObject({ event: "tool_call_finished", outcome: "failed", errorCode: "lakehouse_query_failed:40004" });
+    expect(recordedAuditRows[1]).toMatchObject({ event: "tool_call_finished", outcome: "failed", error_code: "lakehouse_query_failed:40004" });
   });
 
-  it("refuses to run a tool whose started record cannot be written", async () => {
+  it("refuses to run a tool whose started row the stream does not accept", async () => {
     const provider = vi.spyOn(globalThis, "fetch").mockImplementation(async () => basinResponse({ rows: [[42]] }));
-    // Real R2 cannot be made to refuse a write; this binding forwards every
-    // other call to it and fails the one the guard depends on.
-    const refusing = new Proxy(env.ENGINEERING_AUDIT_LOG!, {
-      get(target, property) {
-        if (property === "put") return async () => { throw new Error("R2 put failed (10001)"); };
-        const value = Reflect.get(target, property) as unknown;
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
+    const refusing: Pipeline = { send: async () => { throw new Error("Pipeline send failed"); } };
 
-    const result = await rpc(query, { auditLog: refusing });
+    const result = await rpc(query, { auditLakehouse: refusing });
 
-    expect(result).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringMatching(/^engineering_audit_unavailable:/) }] });
+    expect(result).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringMatching(/^engineering_audit_unavailable/) }] });
     expect(provider).not.toHaveBeenCalled();
-    expect((await auditRecords()).size).toBe(0);
+  });
+
+  it("refuses every tool while the audit stream is not provisioned", async () => {
+    const provider = vi.spyOn(globalThis, "fetch").mockImplementation(async () => basinResponse({ rows: [[42]] }));
+
+    const result = await rpc(query, { auditLakehouse: null });
+
+    expect(result).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringMatching(/^engineering_audit_unconfigured:/) }] });
+    expect(provider).not.toHaveBeenCalled();
   });
 
   it("links a deferred task's creation to how the task finished", async () => {
@@ -118,16 +113,13 @@ describe("engineering MCP tool-call audit log", () => {
     const task = TaskSnapshotSchema.parse(await rpc(query, { tasks: true }));
     expect(await runDurableObjectAlarm(env.ENGINEERING_TASKS!.get(env.ENGINEERING_TASKS!.idFromName(task.taskId)))).toBe(true);
 
-    const records = await auditRecords();
-    expect([...records.keys()].sort()).toEqual(["task_finished", "tool_call_finished", "tool_call_started"]);
-    const started = records.get("tool_call_started");
-    const created = records.get("tool_call_finished");
-    const finished = records.get("task_finished");
+    const [started, created, finished, ...rest] = recordedAuditRows;
+    expect(rest).toEqual([]);
     expect(started).toMatchObject({ event: "tool_call_started", tool: "query_data_lake" });
-    expect(created).toMatchObject({ event: "tool_call_finished", outcome: "task_created", taskId: task.taskId });
+    expect(created).toMatchObject({ event: "tool_call_finished", outcome: "task_created", task_id: task.taskId });
     expect(finished).toMatchObject({
-      event: "task_finished", tool: "query_data_lake", taskId: task.taskId, outcome: "succeeded",
-      actor: { subject: "audit-engineer" },
+      event: "task_finished", tool: "query_data_lake", task_id: task.taskId, outcome: "succeeded",
+      actor_subject: "audit-engineer", call_id: null,
     });
   });
 });

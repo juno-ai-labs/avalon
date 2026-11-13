@@ -22,6 +22,7 @@ export type ApiExportsPreserved = Pick<
 import { createExecutionContext } from "cloudflare:test";
 
 import { EngineeringTaskDO } from "../../../engineering-mcp/src/task-do";
+import { recordingAuditLakehouse } from "../helpers/recording-audit-lakehouse";
 import { EngineeringInspectionBridge } from "../../src/engineering-inspection-bridge";
 import type { Env } from "../../src/env";
 
@@ -41,12 +42,10 @@ export class EngineeringTaskTestDO extends EngineeringTaskDO {
     }
   }
 
-  constructor(ctx: DurableObjectState, env: Env & {
-    ENGINEERING_TASKS: DurableObjectNamespace<EngineeringTaskDO>; ENGINEERING_AUDIT_LOG: R2Bucket;
-  }) {
+  constructor(ctx: DurableObjectState, env: Env & { ENGINEERING_TASKS: DurableObjectNamespace<EngineeringTaskDO> }) {
     super(ctx, {
       ENGINEERING_TASKS: env.ENGINEERING_TASKS,
-      ENGINEERING_AUDIT_LOG: env.ENGINEERING_AUDIT_LOG,
+      ENGINEERING_AUDIT_LAKEHOUSE: recordingAuditLakehouse,
       GLOBAL_INSPECTION: new EngineeringInspectionBridge(createExecutionContext(), env),
       CLOUDFLARE_ACCOUNT_ID: "task-test-account",
       BASIN_SQL_API_TOKEN: "test-not-a-credential",

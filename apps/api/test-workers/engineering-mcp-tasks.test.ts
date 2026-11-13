@@ -11,6 +11,7 @@ import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridg
 import { workspaceDOName } from "../src/durable-objects/names";
 import { ensureBillingClosureSchema, seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
+import { recordingAuditLakehouse } from "./helpers/recording-audit-lakehouse";
 import type { EngineeringTaskTestDO } from "./fixtures/engineering-task-worker";
 
 const OPERATOR = { subject: "task-engineer", email: "engineer@example.com", audience: "engineering-mcp" };
@@ -23,7 +24,7 @@ async function rpc(method: string, params: Record<string, unknown> = {}, options
 } = {}) {
   const handler = createEngineeringMcpHandler({
     ENGINEERING_TASKS: env.ENGINEERING_TASKS!,
-    ENGINEERING_AUDIT_LOG: env.ENGINEERING_AUDIT_LOG!,
+    ENGINEERING_AUDIT_LAKEHOUSE: recordingAuditLakehouse,
     GLOBAL_INSPECTION: new EngineeringInspectionBridge(createExecutionContext(), env),
     CLOUDFLARE_ACCOUNT_ID: "task-test-account", BASIN_SQL_API_TOKEN: "test-not-a-credential",
   }, options.principal ?? OPERATOR);
