@@ -594,7 +594,8 @@ subscriber. There is no Sentry project, external crash-upload URL, custom signal
 handler, or change to regional raw-data policy. Capture starts only after a
 verified Product analytics preference. A returning launch may resume an
 unexpired, previously approved context; upload waits for a fresh authenticated
-preference read. New sign-in, organization change and sign-out invalidate capture
+preference read correlated to the latest verification request. Startup preserves
+the saved approval deadline while generating current-launch metadata. New sign-in, organization change and sign-out invalidate capture
 before the transition. A different account or region cannot adopt old reports.
 
 PLCrashReporter embeds the immutable context into its crash file. The next
@@ -612,7 +613,11 @@ already-existing `POST /telemetry/crashes` multipart request using its HttpOnly
 session. The native process receives no session credential. Browser and native
 both fence the report to its original user, organization and region. A successful
 or suppressed server acknowledgement removes the matching local report;
-transient failure leaves it for a later foreground pass. The API rejects
+transient failure leaves it for a later foreground pass. Expiry is checked again
+when a queued upload starts. Malformed, conflicting and oversized reports are
+discarded; authentication and rate-limit failures remain retryable. A malformed
+stored mobile report finishes processing as malformed rather than retrying for
+its retention window. Operator downloads preserve the mobile JSON content type. The API rejects
 anonymous mobile reports, compares the captured owner with the authenticated
 user/workspace, and enforces the server preference again. The ownership check
 also rejects an upload that resumes after browser cookies change accounts. Existing
@@ -912,11 +917,21 @@ from a local Expo/PLCrashReporter collector. Consent and account/region context
 travel with the captured report; a closed numeric summary uses the existing
 issue-delivery path while raw text stays in regional R2.
 
-**Why:** Mobile needed crash evidence beyond local recovery codes, while direct
-Sentry ingestion would change Rally’s raw-data policy. Reusing minidump storage
-and retention with an explicit format avoids another endpoint and does not claim
-that the Electron symbolicator understands iOS. Preserve consent fencing,
-immutable deadlines and that distinction when adding mobile symbolication.
+**Why:** Mobile needed crash evidence beyond local recovery codes while keeping
+raw exception text and stack data in the owning region.
+
+**Considered and rejected:** Direct Sentry ingestion would change Rally's raw-data
+policy. Treating iOS reports as minidumps would incorrectly claim the Electron
+symbolicator can process them. The existing regional endpoint accepts an explicit
+mobile format instead of adding another ingestion surface.
+
+**Consequences:** Preserve account/consent fencing and immutable deadlines. Only
+validated stack frames and closed numeric fields enter external summaries, with
+the existing 64-thread/256-frame projection bounds. Fresh authenticated consent
+may renew capture approval; retries and offline launches may not. Private dSYM
+and source-map symbolication remain separate work.
+
+Shipped in #1591.
 
 ### 2026-11-11 — Save account analytics consent from the web app
 

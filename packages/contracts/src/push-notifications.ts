@@ -56,13 +56,6 @@ export const RegisterPushDeviceRequestSchema = z.discriminatedUnion("platform", 
     appVersion,
   }),
   z.object({
-    platform: z.literal("android"),
-    transport: z.literal("fcm"),
-    token: z.string().min(1),
-    appVersion,
-  }),
-  // A browser's Web Push subscription, as `PushSubscription.toJSON()` gives it.
-  z.object({
     platform: z.literal("web"),
     transport: z.literal("webpush"),
     endpoint: HttpsUrlSchema.refine(isWebPushServiceUrl, "Expected a known Web Push service URL"),

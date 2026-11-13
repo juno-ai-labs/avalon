@@ -20,3 +20,26 @@ describe('mobile crash external projection', () => {
       frames: [{ imageUUID: 'private-image-name', offset: '1' }] }] })).toThrow();
   });
 });
+
+it('does not project numeric coordinates from exception messages or continuation text', () => {
+  expect(mobileCrashSummary({ kind: 'hermes', fatal: false, updateId: null,
+    report: 'Error: private record 12345:67890\nprivate continuation 987:654\n    at send (address at index.bundle:1:42)',
+  })).toMatchObject({ threads: [{ frames: [{ module: 'embedded', function: 'hermes_1_42' }] }] });
+});
+it('bounds mobile projections before constructing external summaries', () => {
+  const summary = mobileCrashSummary({ kind: 'hermes', fatal: true, updateId: null,
+    report: Array.from({ length: 1000 }, (_, i) => `    at send (address at index.bundle:1:${i})`).join('\n'),
+  });
+  expect(summary.threads[0]!.frames).toHaveLength(256);
+  expect(summary.threads[0]!.frames.at(-1)).toEqual({ module: 'embedded', function: 'hermes_1_255' });
+});
+it('bounds native projection arrays during schema parsing as well as normalization', () => {
+  const summary = mobileCrashSummary({ kind: 'ios-native', report: 'Raw private report', signal: 'SIGABRT',
+    threads: Array.from({ length: 100 }, () => ({ crashed: true,
+      frames: Array.from({ length: 300 }, () => ({ imageUUID: 'AAAA-BBBB', offset: '1A' })),
+    })),
+  });
+  expect(summary.threads).toHaveLength(64);
+  expect(summary.threads[0]!.frames).toHaveLength(256);
+  expect(summary.threads[0]!.frames[0]).toEqual({ module: 'aaaa-bbbb', function: 'offset_1a' });
+});

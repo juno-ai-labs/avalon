@@ -1,4 +1,5 @@
 import { CrashUploadMetadataSchema, MobileCrashPayloadSchema } from "@rally/contracts/crash-reports";
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { newId } from '@rally/db';
 import { TelemetryBreadcrumbSidecarSchema, type TelemetryBreadcrumbSidecar } from '@rally/contracts/telemetry';
 import type { z } from 'zod';
@@ -56,7 +57,8 @@ export class CrashIngestService {
       let raw: unknown;
       try { raw = JSON.parse(new TextDecoder().decode(input.dump)) as unknown; }
       catch { throw new Error('crash_dump_malformed'); }
-      MobileCrashPayloadSchema.parse(raw);
+      const parsed = MobileCrashPayloadSchema.safeParse(raw);
+      if (!parsed.success) throw new Error(zodDiagnosticCode(parsed.error, 'crash_dump')!);
     } else if (input.dump.byteLength < 4
       || input.dump[0] !== 0x4d || input.dump[1] !== 0x44
       || input.dump[2] !== 0x4d || input.dump[3] !== 0x50) {

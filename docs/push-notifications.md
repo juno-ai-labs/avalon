@@ -1,6 +1,6 @@
 # Push notifications
 
-Rally pushes to signed-in Macs and iPhones through APNs, Android through FCM, and signed-in browser tabs
+Rally pushes to signed-in Macs and iPhones through APNs, and signed-in browser tabs
 through Web Push, whatever lands on the workspace notification intent: a
 mention or an add, a Sidekick run that needs input or finished
 ([below](#a-sidekick-run-that-needs-input-or-finished)), and a person's reply
@@ -17,7 +17,7 @@ from one channel to another.
 ## Where the code lives
 
 - `apps/api/src/services/push-device-service.ts`: regional D1 device/session registry.
-- `apps/api/src/services/push/`: provider authentication and payload rendering; `apns-transport.ts` for Apple, `web-push-transport.ts` for browsers, and `fcm-transport.ts` for Android.
+- `apps/api/src/services/push/`: provider authentication and payload rendering; `apns-transport.ts` for Apple, `web-push-transport.ts` for browsers.
 - `apps/api/src/services/notification-notice.ts`: `renderNotice`, the one rendering of every kind into a channel-neutral `Notice`, with the access check.
 - `apps/api/src/queues/push-delivery-consumer.ts`: the queue consumer: render the notice, check the choice for its channel, hand it to the push sink (send by transport, receipt) or the email sink; a retired Activity row message is acknowledged.
 - `apps/api/src/services/notice-email.ts`: the email sink, one template for every kind, sent through `sendEmail`.
@@ -363,7 +363,7 @@ what it is about, the link still exists); nothing downstream knows kinds.
 
 A **sink** takes a notice and adds only its transport's form. There are two:
 
-- **Push** (`sendPushNotice`): the APNs, FCM and Web Push payloads, the badge, the
+- **Push** (`sendPushNotice`): the APNs and Web Push payloads, the badge, the
   collapse id, one send per live device with a receipt.
 - **Email** (`sendNoticeEmail`): one template for all kinds. Its subject is
   the notice's title, so each kind has its own subject line ("Avery mentioned
@@ -523,22 +523,10 @@ Push.
 The Expo shell uses direct `expo-notifications` device tokens, not Expo's push
 relay. iOS registers the actual bundle topic `ai.rallywith.mobile`, with a
 production push entitlement in its EAS release profile. Refresh Apple provisioning
-when enabling that entitlement. Android registers `transport: fcm`; tokens are
-case-sensitive and must not pass through APNs hex normalization. Existing device
-PUT/DELETE routes, session ownership, notification choices, access checks, queue
-receipts and retirement rules remain authoritative. There is no new mobile route,
-socket or database migration; the existing registry stores transport as text.
-
-Configure EAS production `GOOGLE_SERVICES_JSON` as the Firebase Android app's
-file for `ai.rally.mobile`. Set regional Worker secret `FCM_SERVICE_ACCOUNT_JSON`
-to that project's service-account JSON with permission to send FCM messages.
-Never put that private service account in the app. The transport signs Google's
-OAuth JWT, caches its access token until Google's expiry, and sends HTTP v1
-messages with Expo's documented Android data payload. Credential rotation changes
-the cache key. Explicit UNREGISTERED responses retire only that device; provider
-credential failures keep registrations and raise the existing operations fault.
-Without FCM credentials the FCM transport is unavailable and other transports
-continue. Provider authorization and a real device delivery still need testing.
+when enabling that entitlement. Existing device PUT/DELETE routes, session
+ownership, notification choices, access checks, queue receipts and retirement
+rules remain authoritative. There is no new mobile route, socket or database
+migration. Android push and Firebase provisioning are deferred.
 
 On mobile, the sidebar's settings screen requests permission; resume and token
 rotation reconcile registration. The trusted browser bridge keeps account/session
@@ -548,7 +536,7 @@ reinstallation from keeping notifications live after sign-out. Signing out
 invalidates the bound session regardless of in-flight optional push writes. Canvas notification taps use the canonical
 link and ordinary web authorization. Test foreground, background and terminated
 receipt/taps, denied/re-enabled permissions, token rotation and account switching
-on physical phones; an emulator or test double cannot establish APNs/FCM delivery.
+on physical phones; an emulator or test double cannot establish APNs delivery.
 
 
 An email sink without its Cloudflare `EMAIL` binding or sender answers
@@ -611,14 +599,6 @@ signed-Mac delivery.
 - A Sidekick run notice is recorded once per recipient and kind; a retried alarm entry re-enqueues, which the per-device receipts make harmless.
 
 ## Testing
-
-`test/fcm-transport.test.ts` verifies the signed service-account OAuth assertion,
-HTTP v1 payload, Unicode byte budget and provider error classifications.
-`test-workers/push-delivery.test.ts` covers an Android-only recipient through
-real workerd/D1, including token case and retirement. Removing FCM retirement
-makes that integration test fail with an active expired token; restoring it
-passes. Neither test establishes Firebase project credentials or phone delivery.
-
 
 `push-device-service.test.ts` uses real migrated SQLite. `push-payload.test.ts` and
 `apns-transport.test.ts` cover encoding/signing, Apple responses, and the
@@ -691,16 +671,24 @@ signed-Mac APNs/universal-link acceptance is claimed.
 
 ### 2026-11-13 — Register Expo phones through the existing delivery pipeline
 
-**What changed:** The Expo shell registers APNs and FCM tokens through existing
-session-bound device endpoints. Android adds a direct FCM HTTP v1 transport;
-iOS uses the shipped `ai.rallywith.mobile` topic. Notification taps retain canonical
-link validation and browser authorization.
+**What changed:** The Expo iOS shell registers direct APNs tokens through existing
+session-bound device endpoints, using the signed `ai.rallywith.mobile` topic.
+Phone registration replaces stale session bindings. Notification taps retain
+canonical validation, message/artifact targets and browser authorization.
 
 **Why:** Production phone notifications need token rotation, permission recovery
-and expired-device retirement. Reusing the registry and intent queue preserves
-access checks and per-person choices. A separate Expo push relay or mobile
-registration API would duplicate those boundaries. Provider credentials and signed
-physical-device acceptance remain separate from queue tests.
+and sign-out that stops delivery, including after reinstallation.
+
+**Considered and rejected:** A separate Expo push relay or mobile registration
+API would duplicate the existing registry, access checks and intent queue.
+Android/FCM delivery is deferred to keep this release focused on iOS.
+
+**Consequences:** Queued browser writes are cancelled when their account view
+unmounts; token, permission and session changes reconcile through the existing
+routes. Signed physical-device delivery still needs acceptance independent of
+queue tests. Direct APNs custom data is read from Expo's push trigger payload.
+
+Shipped in #1591.
 
 
 ### 2026-11-10 — A Sidekick source request and its answer are notices, and a notice can carry links that answer it

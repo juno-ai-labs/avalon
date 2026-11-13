@@ -22,6 +22,14 @@ export const CrashUploadMetadataSchema = z.strictObject({
 });
 export type CrashUploadMetadata = z.infer<typeof CrashUploadMetadataSchema>;
 
+// Existing external crash-summary bounds. Slice before Zod traverses/clones
+// arrays, so a bounded raw upload cannot expand into an unbounded projection.
+export const MAX_CRASH_THREADS = 64;
+export const MAX_CRASH_FRAMES = 256;
+function prefix(value: unknown, length: number): unknown {
+  return Array.isArray(value) ? value.slice(0, length) : value;
+}
+
 // Raw text stays in regional R2. Only these closed/numeric fields may become
 // an external issue summary; exception messages and filenames never do.
 export const MobileCrashPayloadSchema = z.discriminatedUnion('kind', [
@@ -29,13 +37,13 @@ export const MobileCrashPayloadSchema = z.discriminatedUnion('kind', [
     kind: z.literal('ios-native'),
     report: z.string(),
     signal: z.enum(['SIGABRT', 'SIGBUS', 'SIGFPE', 'SIGILL', 'SIGSEGV', 'SIGTRAP', 'SIGSYS', 'SIGPIPE', 'unknown']),
-    threads: z.array(z.strictObject({
+    threads: z.preprocess((value) => prefix(value, MAX_CRASH_THREADS), z.array(z.strictObject({
       crashed: z.boolean(),
-      frames: z.array(z.strictObject({
+      frames: z.preprocess((value) => prefix(value, MAX_CRASH_FRAMES), z.array(z.strictObject({
         imageUUID: z.string().regex(/^[a-fA-F0-9-]+$/u),
         offset: z.string().regex(/^[a-fA-F0-9]+$/u),
-      })),
-    })),
+      }))),
+    }))),
   }),
   z.strictObject({
     kind: z.literal('hermes'),

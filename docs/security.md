@@ -1382,6 +1382,22 @@ and fence delayed answers against the current native view; artifact scripts
 receive no application bridge. See
 [artifact annotations](artifact-annotations.md) for the protocol.
 
+## Mobile release trust
+
+The Expo native shell loads only the configured first-party browser origin into
+its application bridge; hosted artifacts have a separate WebView and origin.
+The bridge carries APNs device registrations and regional crash envelopes as
+well as navigation commands, so it is privileged. Application session cookies
+remain HttpOnly in the browser. Crash uploads preserve their captured account,
+organization and region, and cancellation ends queued work on account changes.
+
+EAS Update publishes executable JavaScript to the single production channel.
+The GitHub `mobile-production` environment's Expo credential therefore has code
+publication authority. Protect that environment and the Expo project as release
+infrastructure. Runtime fingerprints enforce native compatibility, not publisher
+identity. Update manifests currently rely on Expo's authenticated service and
+HTTPS; application-owned EAS Update code signing is not configured.
+
 ## Changelog
 
 ### 2026-11-11 — Separate artifact use from Canvas editing

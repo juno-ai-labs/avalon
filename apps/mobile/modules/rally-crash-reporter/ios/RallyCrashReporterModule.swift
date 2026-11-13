@@ -37,35 +37,38 @@ private final class CrashStore {
       try location.setResourceValues(values)
       context = defaults.dictionary(forKey: key)
       if reporter?.hasPendingCrashReport() == true {
-        defer { reporter?.purgePendingCrashReport() }
-        if let data = try reporter?.loadPendingCrashReportDataAndReturnError(), data.count <= maxBytes {
-          let report = try PLCrashReport(data: data)
-          if let custom = report.customData,
-             let captured = try JSONSerialization.jsonObject(with: custom) as? [String: Any],
-             valid(captured), sameScope(captured, context),
-             let text = PLCrashReportTextFormatter.stringValue(for: report, with: PLCrashReportTextFormatiOS) {
-            let signals = ["SIGABRT", "SIGBUS", "SIGFPE", "SIGILL", "SIGSEGV", "SIGTRAP", "SIGSYS", "SIGPIPE"]
-            let threads = (report.threads as? [PLCrashReportThreadInfo] ?? []).map { thread -> [String: Any] in
-              let frames = (thread.stackFrames as? [PLCrashReportStackFrameInfo] ?? []).compactMap { frame -> [String: String]? in
-                guard let image = report.image(forAddress: frame.instructionPointer), image.hasImageUUID,
-                  let uuid = image.imageUUID, frame.instructionPointer >= image.imageBaseAddress else { return nil }
-                return ["imageUUID": uuid, "offset": String(frame.instructionPointer - image.imageBaseAddress, radix: 16)]
+        let data = try? reporter?.loadPendingCrashReportDataAndReturnError()
+        reporter?.purgePendingCrashReport()
+        do {
+          if let data, data.count <= maxBytes {
+            let report = try PLCrashReport(data: data)
+            if let custom = report.customData,
+               let captured = try JSONSerialization.jsonObject(with: custom) as? [String: Any],
+               valid(captured), sameScope(captured, context),
+               let text = PLCrashReportTextFormatter.stringValue(for: report, with: PLCrashReportTextFormatiOS) {
+              let signals = ["SIGABRT", "SIGBUS", "SIGFPE", "SIGILL", "SIGSEGV", "SIGTRAP", "SIGSYS", "SIGPIPE"]
+              let threads = (report.threads as? [PLCrashReportThreadInfo] ?? []).map { thread -> [String: Any] in
+                let frames = (thread.stackFrames as? [PLCrashReportStackFrameInfo] ?? []).compactMap { frame -> [String: String]? in
+                  guard let image = report.image(forAddress: frame.instructionPointer), image.hasImageUUID,
+                    let uuid = image.imageUUID, frame.instructionPointer >= image.imageBaseAddress else { return nil }
+                  return ["imageUUID": uuid, "offset": String(frame.instructionPointer - image.imageBaseAddress, radix: 16)]
+                }
+                return ["crashed": thread.crashed, "frames": frames]
               }
-              return ["crashed": thread.crashed, "frames": frames]
+              try save(captured, payload: ["kind": "ios-native", "report": text,
+                "signal": signals.contains(report.signalInfo.name) ? report.signalInfo.name! : "unknown", "threads": threads])
             }
-            try save(captured, payload: ["kind": "ios-native", "report": text,
-              "signal": signals.contains(report.signalInfo.name) ? report.signalInfo.name! : "unknown", "threads": threads])
           }
-        }
+        } catch { /* A malformed previous crash must not disable the next capture. */ }
       }
       prune()
       if let old = context, valid(old), let scope = old["scope"] as? [String: String] {
-        configure(scope)
+        configure(scope, deleteAfter: old["deleteAfter"] as? Double)
       } else { configure(nil) }
     } catch { /* Capture must never prevent launch. */ }
   }
 
-  func configure(_ scope: [String: String]?) {
+  func configure(_ scope: [String: String]?, deleteAfter: Double? = nil) {
     lock.lock(); defer { lock.unlock() }
     guard let scope else {
       context = nil; defaults.removeObject(forKey: key); reporter?.customData = nil
@@ -88,7 +91,7 @@ private final class CrashStore {
       "platform": "darwin", "architecture": architecture, "processRole": "main", "launchId": launchId,
       "channel": "stable", "format": "mobile-json"]
     let next: [String: Any] = ["scope": scope, "metadata": metadata,
-      "deleteAfter": Date().addingTimeInterval(lifetime).timeIntervalSince1970 * 1000]
+      "deleteAfter": deleteAfter ?? Date().addingTimeInterval(lifetime).timeIntervalSince1970 * 1000]
     guard let data = try? JSONSerialization.data(withJSONObject: next) else { return }
     context = next; defaults.set(next, forKey: key); reporter?.customData = data
     if !enabled {

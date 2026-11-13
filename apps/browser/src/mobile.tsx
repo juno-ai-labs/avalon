@@ -1,3 +1,5 @@
+import { inPlaceHash } from './session';
+import { MobileWrites, uploadMobileReport } from './mobile-writes';
 import { parseLinkTarget } from '@rally/contracts/links';
 import { ErrorNotice } from '@rally/ui/components/error-notice';
 import { canvasNeedsConversation, mobileStorage, mobileTurnTarget, rememberMobileWorkspace } from './mobile-session';
@@ -80,7 +82,13 @@ function MobileContent(): React.JSX.Element {
   const open = useCallback((id: string, pinned = false) => { void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) }); void navigate(`${canvasRoute(id)}${pinned ? '?tab=1' : ''}`); }, [navigate, queryClient]);
   const currentPushScope = useRef({ userId: session?.user.id, workspaceId: session?.workspace?.id });
   currentPushScope.current = { userId: session?.user.id, workspaceId: session?.workspace?.id };
-  const pushWrite = useRef<Promise<void>>(Promise.resolve());
+  const pushWrite = useRef<MobileWrites | null>(null);
+  useEffect(() => {
+    currentPushScope.current = { userId: session?.user.id, workspaceId: session?.workspace?.id };
+    const writes = new MobileWrites();
+    pushWrite.current = writes;
+    return () => { writes.close(); pushWrite.current = null; currentPushScope.current = { userId: undefined, workspaceId: undefined }; };
+  }, [api, session?.user.id, session?.workspace?.id]);
   const command = useRef<(command: MobileCommand) => void>(() => undefined);
   command.current = (message) => {
     switch (message.type) {
@@ -90,7 +98,7 @@ function MobileContent(): React.JSX.Element {
         const scope = { userId: session.user.id, workspaceId: session.workspace.id, route: session.workspace.region };
         void api.getProductAnalyticsPreference().then((preference) => {
           if (currentPushScope.current.userId === scope.userId && currentPushScope.current.workspaceId === scope.workspaceId) {
-            postMobileEvent({ type: 'crash-permission', scope, enabled: preference.enabled });
+            postMobileEvent({ type: 'crash-permission', requestId: message.requestId, scope, enabled: preference.enabled });
           }
         }).catch(() => undefined);
         break;
@@ -99,16 +107,11 @@ function MobileContent(): React.JSX.Element {
         const { report } = message;
         if (!api || report.scope.userId !== session?.user.id || report.scope.workspaceId !== session.workspace?.id
           || report.scope.route !== session.workspace.region || report.metadata.route !== report.scope.route
-          || report.metadata.format !== 'mobile-json' || report.deleteAfter <= Date.now()) break;
+          || report.metadata.format !== 'mobile-json') break;
         const registeredApi = api;
-        pushWrite.current = pushWrite.current.catch(() => undefined).then(async () => {
+        void pushWrite.current?.enqueue(async (signal) => {
           if (currentPushScope.current.userId !== report.scope.userId || currentPushScope.current.workspaceId !== report.scope.workspaceId) return;
-          try {
-            await registeredApi.uploadMobileCrash(report);
-            postMobileEvent({ type: 'crash-uploaded', scope: report.scope, uploadId: report.metadata.uploadId, ok: true });
-          } catch {
-            postMobileEvent({ type: 'crash-uploaded', scope: report.scope, uploadId: report.metadata.uploadId, ok: false });
-          }
+          await uploadMobileReport(report, signal, (report, signal) => registeredApi.uploadMobileCrash(report, signal), postMobileEvent);
         });
         break;
       }
@@ -122,11 +125,11 @@ function MobileContent(): React.JSX.Element {
       case 'push-device': {
         if (!api || message.userId !== session?.user.id || message.workspaceId !== session.workspace?.id) break;
         const registeredApi = api;
-        pushWrite.current = pushWrite.current.catch(() => undefined).then(async () => {
+        void pushWrite.current?.enqueue(async (signal) => {
           if (currentPushScope.current.userId !== message.userId || currentPushScope.current.workspaceId !== message.workspaceId) return;
           try {
-            if (message.registration) await registeredApi.registerPushDevice(message.installationId, message.registration);
-            else await registeredApi.deletePushDevice(message.installationId);
+            if (message.registration) await registeredApi.registerPushDevice(message.installationId, message.registration, signal);
+            else await registeredApi.deletePushDevice(message.installationId, signal);
             postMobileEvent({ type: 'push-device-result', requestId: message.requestId, userId: message.userId, workspaceId: message.workspaceId, ok: true, enabled: Boolean(message.registration) });
           } catch {
             postMobileEvent({ type: 'push-device-result', requestId: message.requestId, userId: message.userId, workspaceId: message.workspaceId, ok: false, enabled: false });
@@ -136,9 +139,13 @@ function MobileContent(): React.JSX.Element {
       }
       case 'open-notification': {
         const target = parseLinkTarget(message.url, { webBaseUrl: window.location.origin });
+        postMobileEvent({ type: 'notification-opened', url: message.url });
         if (target?.kind === 'canvas') {
-          postMobileEvent({ type: 'notification-opened', url: message.url });
-          window.location.assign(message.url);
+          const hash = inPlaceHash(window.location.pathname, message.url);
+          if (hash) { window.location.hash = hash; break; }
+          const destination = new URL(message.url);
+          destination.searchParams.set('mobile', '1');
+          window.location.assign(destination.href);
         }
         break;
       }

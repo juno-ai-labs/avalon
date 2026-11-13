@@ -66,6 +66,9 @@ describe('regional native crash processing', () => {
       subjectWorkspaceId: '018f22f2-4c22-7abc-8def-0123456789a2',
       owner: { userId: '018f22f2-4c22-7abc-8def-0123456789a1', workspaceId: '018f22f2-4c22-7abc-8def-0123456789a2', route: 'global' as const },
       dump: new TextEncoder().encode(JSON.stringify(payload)) };
+    await expect(new CrashIngestService(env).accept({ ...input,
+      dump: new TextEncoder().encode(JSON.stringify({ ...payload, signal: 'Private secret' })),
+    })).rejects.toThrow('crash_dump_invalid:signal:invalid_value');
     await expect(new CrashIngestService(env).accept({ ...input, subjectUserId: '018f22f2-4c22-7abc-8def-0123456789a3' }))
       .rejects.toThrow('crash_route_forbidden');
     await expect(new CrashIngestService(env).accept({ ...input, subjectWorkspaceId: '018f22f2-4c22-7abc-8def-0123456789a3' }))
@@ -82,6 +85,11 @@ describe('regional native crash processing', () => {
     expect(row.destination_state).toBe('pending');
     expect(row.delete_at).toBe('2026-11-10T20:00:00.000Z');
     expect(new TextDecoder().decode(storage.objects.get(String(row.object_key)))).toContain('Private exception');
+    storage.objects.set(String(row.object_key), new TextEncoder().encode('{"kind":"hermes"}'));
+    database.prepare("UPDATE telemetry_crash_reports SET parser_state = 'pending'").run();
+    expect(await processPendingCrashReports(env)).toEqual({ selected: 1, processed: 1, failed: 0 });
+    expect(database.prepare('SELECT parser_state FROM telemetry_crash_reports').get()).toEqual({ parser_state: 'malformed' });
+    expect(await processPendingCrashReports(env)).toEqual({ selected: 0, processed: 0, failed: 0 });
     database.prepare('UPDATE users SET product_analytics_enabled = 0').run();
     await expect(new CrashIngestService(env).accept({ ...input, uploadId: '018f22f2-4c22-7abc-8def-0123456789ff' }))
       .resolves.toMatchObject({ result: 'suppressed' });
