@@ -17,6 +17,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { isEntryPoint } from '../../../scripts/entry-point.mjs';
+import { cloudflareErrorCodes } from './release-cloudflare.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
@@ -150,17 +151,14 @@ async function uploadAndVerify(
   });
   const putBody = await put.json().catch(() => null);
   if (!put.ok || putBody?.success !== true) {
-    const codes = Array.isArray(putBody?.errors)
-      ? putBody.errors.map((error) => error?.code).filter((code) => Number.isInteger(code)).slice(0, 5)
-      : [];
     const detail = putBody === null
       ? 'invalid JSON response'
       : putBody?.success === false
         ? 'success=false'
         : 'missing success=true';
-    const codeDetail = codes.length > 0 ? `; error codes ${codes.join(',')}` : '';
     throw new Error(
-      `Could not upload r2://${target}: Cloudflare returned HTTP ${put.status} (${detail}${codeDetail})`,
+      `Could not upload r2://${target}: Cloudflare returned HTTP ${put.status}`
+        + ` (${detail}; codes: ${cloudflareErrorCodes(putBody)})`,
     );
   }
   const uploaded = putBody.result;
@@ -191,14 +189,19 @@ async function uploadAndVerify(
         ...jurisdictionHeaders,
       },
     });
-    // Only 5xx: a 429 here is the account API rate limit, whose five-minute
-    // block this backoff cannot outlast.
-    if (inventory.status < 500) break;
+    // 5xx and 403: the PUT just above succeeded with this same token, so a
+    // 403 on the read that follows it cannot be a revoked token. Never 429:
+    // the account API rate limit blocks for five minutes, which this backoff
+    // cannot outlast.
+    if (inventory.status < 500 && inventory.status !== 403) break;
     if (attempt < INVENTORY_ATTEMPTS - 1) await discardBody(inventory);
   }
   if (!inventory.ok) {
-    await discardBody(inventory);
-    throw new Error(`Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`);
+    const failureBody = await inventory.json().catch(() => null);
+    throw new Error(
+      `Could not verify r2://${target}: Cloudflare returned HTTP ${inventory.status}`
+        + `; codes: ${cloudflareErrorCodes(failureBody)}`,
+    );
   }
   if (inventory.headers.get('cf-cache-status') !== 'DYNAMIC') {
     await inventory.body?.cancel();
