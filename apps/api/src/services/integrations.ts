@@ -1077,12 +1077,6 @@ function modelDerivative(
   return { ...message, provenance };
 }
 
-/** Rendered from moving state; a replay keeps the admitted copy (`keepAdmittedOnReplay`). */
-const SNAPSHOT_ACTIVATION_SOURCE_KINDS: ReadonlySet<string> = new Set([
-  "canvas_context",
-  "sidekick_canvas_context",
-]);
-
 function workstreamActivationInput(message: ModelMessage): HarnessActivationInput {
   const provenance = message.provenance;
   if (message.role !== "user"
@@ -1100,7 +1094,6 @@ function workstreamActivationInput(message: ModelMessage): HarnessActivationInpu
       provenance.sourceId,
       provenance.sourceRevision,
     ])}`,
-    ...(SNAPSHOT_ACTIVATION_SOURCE_KINDS.has(provenance.sourceKind) ? { keepAdmittedOnReplay: true as const } : {}),
     message: {
       ...message,
       role: "user",
