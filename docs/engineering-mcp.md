@@ -45,6 +45,8 @@ available to Rally users by virtue of product membership.
   `config/*-lakehouse.json` manifests.
 - `apps/engineering-mcp/src/observability.ts` is the Workers Observability
   client behind `query_worker_observability`.
+- `apps/engineering-mcp/src/audit-log.ts` writes the tool-call audit log to
+  R2; `src/server.ts` routes every tool registration through it.
 - `apps/engineering-mcp/src/cloudflare-api.ts` reads both clients' Cloudflare
   response envelope and names a refusal by Cloudflare's own code.
 - `.github/workflows/deploy-api.yml` deploys this Worker only after both
@@ -148,6 +150,46 @@ only through the product's own read-only admitted query path
 (`queryData`/`pageData`, behind work-stream authorization), and giving the
 console arbitrary SQL there would mean changing the facet host module every
 stateful artifact runs. See [`reactive-web-artifacts.md`](reactive-web-artifacts.md).
+
+### Tool-call audit log
+
+Every `tools/call` that reaches a tool handler is recorded in the
+`rally-engineering-mcp-audit-log` R2 bucket (binding `ENGINEERING_AUDIT_LOG`).
+`createEngineeringMcpServer` replaces `server.registerTool` before any tool is
+registered, so a tool added later is audited without opting in.
+
+Each event is its own JSON object, written once and never overwritten:
+
+| `event` | Written | Carries |
+| --- | --- | --- |
+| `tool_call_started` | Before the handler runs, awaited | `callId`, `tool`, the validated `arguments` |
+| `tool_call_finished` | After the handler returns, in `waitUntil` | `callId`, `outcome` (`succeeded`, `failed`, `task_created`), `errorCode` when failed, `taskId` when a task was created, `durationMs` |
+| `task_finished` | When `EngineeringTaskDO` finishes or cancels a task | `taskId`, `outcome` (`succeeded`, `failed`, `cancelled`), `errorCode` when failed |
+
+Every record also has `schema` (`rally.engineering-mcp.audit/v1`), `at`, the
+Access `actor` (subject, email, audience) and `workerVersion`. The key is
+`tool-calls/YYYY/MM/DD/<at>_<uuid>.json` in UTC, so a prefix listing returns
+one day in time order; pair a call's records by `callId`, and a deferred
+call's execution by `taskId`. `errorCode` is the same code
+`engineering_mcp_tool_failed` logs (`toolErrorCode`).
+
+**A call whose started record cannot be written does not run.** The tool
+returns `engineering_audit_unavailable` and the Worker logs
+`engineering_mcp_audit_write_failed`. The finished and task records follow an
+effect that has already happened, so a failed write there is only logged.
+
+Recorded: the arguments as the SDK validated them, which include SQL text and
+bindings, Basin queries and message bodies sent with `send_message`. Not
+recorded: results, and calls the SDK rejects before a handler runs (an unknown
+tool or arguments that fail the input schema), since those execute nothing.
+`tasks/get`, `tasks/update` and `tasks/cancel` are not tool calls; a
+cancellation appears as a `cancelled` `task_finished` record.
+
+The bucket has no lifecycle rule, so records are kept until someone deletes
+them. Retention is the team's to set
+([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
+This log is separate from the content-free attempt and result rows that
+product writes keep in `AUDIT_DB` (see [Product creation](#product-creation)).
 
 ### Deferred engineering tasks
 
@@ -490,7 +532,9 @@ names the view only; filter values and the needle can quote product data.
   list tools are read-only.
 - The SQL text, bindings, returned rows, and error message never enter Worker
   logs. Audit events contain Access subject/email, tool name, target IDs, and a
-  fixed outcome code only.
+  fixed outcome code only. SQL text and bindings, and every other argument, do
+  enter the R2 tool-call audit log; returned rows never do.
+- No tool runs without a `tool_call_started` record in R2.
 - The private regional entrypoint has no HTTP route. Only a Worker with the
   named Service Binding can call it.
 - **A per-object-kind id on the SQL result is optional and omitted, never a
@@ -708,6 +752,11 @@ means message text ([`runbook.md`](runbook.md#log-shape)).
 Policy changes, identity-provider changes, and client approval belong in the
 Cloudflare Access application, not in application code.
 
+The tool-call audit bucket holds every argument an operator sent, so it holds
+production SQL with its bindings and the text of messages sent as a user.
+Reading it needs account-level R2 access; no Rally Worker other than this one
+binds it, and this one only writes.
+
 `BASIN_SQL_API_TOKEN` is a runtime credential, not
 the deployment token. Basin SQL requires R2 storage read/write on the buckets it
 reads, so create it as an R2 API token restricted to the three lakehouse
@@ -745,13 +794,31 @@ production database write access. Verify the intended operator can authenticate
 and an unauthorized identity is refused before deploying.
 
 The deployment token needs Access application read/edit permissions as well as
-Worker deployment permissions. The deploy script requires this app and a nonempty
+Worker deployment permissions, and R2 edit so the deploy can create the audit
+bucket when it is missing. The deploy script requires this app and a nonempty
 policy list, preserves its session duration and identity providers, enables the
 hosted-client OAuth redirect configuration, and injects the app's audience into
 the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-13 — Record every tool call in R2
+
+Worker logs carried who ran which tool but, by design, never what it ran, and
+the `AUDIT_DB` rows cover only product writes and stay content-free. Nothing
+recorded the SQL an operator ran against production or the Basin query they
+ran over raw inference data. Each call now writes its validated arguments to an
+R2 object before it runs, and its outcome after.
+
+The hook wraps `server.registerTool` rather than the `tool` helper, because a
+task-creating call returns before `tool` runs and a future tool may not use the
+helper. The started write is awaited and fails the call closed, at the cost of
+one R2 write of latency per call; the finished write uses `waitUntil` so it
+adds none. R2 over D1: the records are append-only, unqueried by the product,
+and can be large (a SQL statement or message body), and keeping them out of
+`AUDIT_DB` keeps that database content-free. Retention is left open for the
+team to set.
 
 ### 2026-11-12 — Use the MCP SDK object-schema interface
 

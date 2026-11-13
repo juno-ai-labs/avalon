@@ -321,6 +321,7 @@ export default tseslint.config(
     ignores: [
       "apps/api/test/helpers/cloudflare-test.ts",
       "apps/release-retention/test/helpers/cloudflare-test.ts",
+      "apps/engineering-mcp/test/helpers/cloudflare-test.ts",
     ],
     rules: {
       "rally/no-application-contract-test-cast": "error",

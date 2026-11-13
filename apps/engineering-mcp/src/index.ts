@@ -37,11 +37,12 @@ function taskNameHeader(request: Request): string | undefined {
 export function createEngineeringMcpHandler(
   env: Env,
   principal: AccessPrincipal,
+  ctx?: Pick<ExecutionContext, "waitUntil">,
 ) {
   return {
     async fetch(request: Request) {
       let createdTask = false;
-      const handler = createMcpHandler(() => createEngineeringMcpServer(env, principal, () => { createdTask = true; }), {
+      const handler = createMcpHandler(() => createEngineeringMcpServer(env, principal, () => { createdTask = true; }, ctx && ((promise) => ctx.waitUntil(promise))), {
         allowedOriginHostnames: hostedClients.originHostnames,
       });
       const headerMethod = request.headers.get("Mcp-Method");
@@ -77,7 +78,7 @@ export function createEngineeringMcpHandler(
 }
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     if (new URL(request.url).pathname !== "/mcp") {
       return new Response("Not found", { status: 404 });
     }
@@ -88,6 +89,6 @@ export default {
         message: accessFailureMessage(access.reason),
       }, { status: 403 });
     }
-    return createEngineeringMcpHandler(env, access.principal).fetch(request);
+    return createEngineeringMcpHandler(env, access.principal, ctx).fetch(request);
   },
 } satisfies ExportedHandler<Env>;

@@ -8,6 +8,7 @@ import type { AccessPrincipal } from "../src/access";
 import type { Env } from "../src/env";
 import { createEngineeringMcpHandler } from "../src/index";
 import hostedClients from "../hosted-clients.json";
+import { createDiscardingAuditLog } from "./helpers/cloudflare-test";
 
 const principal: AccessPrincipal = {
   subject: "engineer-1",
@@ -87,6 +88,7 @@ function testEnv(bindings: Partial<Env> = {}): Env {
     ENGINEERING_TASKS: new Proxy({} as Env["ENGINEERING_TASKS"], {
       get() { throw new Error("Task execution must run in workerd"); },
     }),
+    ENGINEERING_AUDIT_LOG: createDiscardingAuditLog(),
     GLOBAL_INSPECTION: regionalBinding("global"),
     QUEUES_API_TOKEN: "queues-test-token",
     ENTERPRISE_INSPECTION: regionalBinding("enterprise"),
