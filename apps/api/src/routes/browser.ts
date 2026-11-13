@@ -18,7 +18,8 @@ import { browserOrigin } from "../lib/browser-origin";
 import { logEvent } from "../observability/logger";
 import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { zValidator } from "../middleware/validation";
-import { AuthService, issueAccessToken, verifyAccessToken } from "../services/auth-service";
+import { AppleCallbackFormSchema } from "../services/apple-identity";
+import { AuthService, issueAccessToken, verifyAccessToken, type IdentityCallbackExtras, type LoginProvider } from "../services/auth-service";
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import { deferOnboardingOutcome, onboardingFailureResult } from "./onboarding";
 import { PlatformOnboardingService } from "../services/platform-onboarding-service";
@@ -40,18 +41,27 @@ function cookieOptions(env: Env, region: Region = env.AVALON_REGION) {
 }
 
 /**
- * Binds a Google sign-in to the browser that started it. The OAuth state is
+ * Binds a provider sign-in to the browser that started it. The OAuth state is
  * also stored server-side; the callback requires this cookie to carry the same
  * value, so a link to someone else's callback cannot sign this browser in as
  * them. It is a session cookie: the stored state's own expiry bounds the
  * sign-in.
+ *
+ * Apple returns with a cross-site POST, which a `SameSite=Lax` cookie does not
+ * ride, so Apple's binding is `SameSite=None`. It still names one state and
+ * carries nothing but that state, so being sent cross-site gives it no power:
+ * the callback only compares it.
  */
-function googleStateCookie(env: Env, state: string) {
+function stateCookie(env: Env, provider: LoginProvider, state: string) {
   const cookie = cookieOptions(env);
+  const sameSite = provider === "apple" && cookie.attributes.secure ? "None" as const : cookie.attributes.sameSite;
   // One cookie per state, so two tabs signing in at once do not overwrite each
   // other. The state is base64url, which a cookie name may carry.
-  return { name:`${cookie.name}-google-${state}`,attributes:cookie.attributes };
+  return { name:`${cookie.name}-${provider}-${state}`,attributes:{ ...cookie.attributes,sameSite } };
 }
+
+/** The cross-site POST a provider returns with. The same-origin guard below lets only these through. */
+const PROVIDER_POST_CALLBACKS = new Set(["/apple/callback"]);
 
 function credential(c: Context<HonoAppEnv>): string {
   const value = getCookie(c,cookieOptions(c.env).name);
@@ -85,7 +95,7 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
   routes.use("*",async (c,next) => {
     const origin = browserOrigin(c.env).origin;
     c.header("Cache-Control","no-store");
-    if (!["GET","HEAD","OPTIONS"].includes(c.req.method) &&
+    if (!["GET","HEAD","OPTIONS"].includes(c.req.method) && !PROVIDER_POST_CALLBACKS.has(c.req.path.replace(/^\/browser/u,"")) &&
       (c.req.header("origin") !== origin || c.req.header("sec-fetch-site") === "cross-site")) {
       throw new ApiError(403,"browser_origin_required","Reload Rally before trying again");
     }
@@ -107,49 +117,65 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     await deliverEmailLogin(c.env,started.challengeId);
     return c.json(EmailLoginStartedSchema.parse(started),202);
   });
-  routes.post("/google/start",authBodyLimit,zValidator("json",BrowserGoogleStartSchema),async (c) => {
-    const { url,state } = await new AuthService(c.env).beginBrowserIdentity(c.req.valid("json"));
-    const binding = googleStateCookie(c.env,state);
-    setCookie(c,binding.name,state,binding.attributes);
-    return c.json(BrowserGoogleStartedSchema.parse({ url }));
-  });
-  routes.get("/google/callback",zValidator("query",z.object({ code:z.string().optional(),state:z.string().optional(),error:z.string().optional() })),async (c) => {
-    const query = c.req.valid("query");
+  for (const provider of ["google","apple"] as const satisfies readonly LoginProvider[]) {
+    routes.post(`/${provider}/start`,authBodyLimit,zValidator("json",BrowserGoogleStartSchema),async (c) => {
+      const { url,state } = await new AuthService(c.env).beginBrowserIdentity(c.req.valid("json"),provider);
+      const binding = stateCookie(c.env,provider,state);
+      setCookie(c,binding.name,state,binding.attributes);
+      return c.json(BrowserGoogleStartedSchema.parse({ url }));
+    });
+  }
+  /**
+   * Finishes a browser sign-in. Apple's callback is a POST and answers 303 so
+   * the browser follows with a GET; Google's GET keeps its 302. A failure
+   * returns with `#<provider>_error=<code>`.
+   */
+  async function completeBrowserIdentity(c: Context<HonoAppEnv>, provider: LoginProvider,
+    query: { code?: string | undefined; state?: string | undefined; error?: string | undefined }, extras: IdentityCallbackExtras = {}) {
+    const status = c.req.method === "POST" ? 303 : 302;
     const origin = browserOrigin(c.env).origin;
-    const failed = (code: string) => c.redirect(`${origin}/#google_error=${encodeURIComponent(code)}`,302);
+    const failed = (code: string) => c.redirect(`${origin}/#${provider}_error=${encodeURIComponent(code)}`,status);
     // A callback this browser cannot tie to a sign-in it started, including one
     // with no state at all, still lands on a page that says what happened.
-    if (!query.state || !/^[A-Za-z0-9_-]+$/u.test(query.state)) return failed("google_state_mismatch");
-    const binding = googleStateCookie(c.env,query.state);
+    if (!query.state || !/^[A-Za-z0-9_-]+$/u.test(query.state)) return failed(`${provider}_state_mismatch`);
+    const binding = stateCookie(c.env,provider,query.state);
     const bound = getCookie(c,binding.name);
-    if (!bound || bound !== query.state) return failed("google_state_mismatch");
+    if (!bound || bound !== query.state) return failed(`${provider}_state_mismatch`);
     deleteCookie(c,binding.name,binding.attributes);
     const service = new AuthService(c.env);
     try {
       if (query.error || !query.code) {
-        const returnUrl = await service.consumeBrowserIdentityDenial(query.state);
-        // Only a person declining is a denial; anything else Google reports is
-        // its own failure, named so the two read apart.
-        const code = query.error === "access_denied" ? "google_oauth_denied" : "google_oauth_failed";
-        if (code !== "google_oauth_denied") logEvent(c,"warn","browser_google_sign_in_failed",{ code,providerError:codeShaped(query.error ?? "missing_code") });
-        return c.redirect(`${returnUrl}#google_error=${code}`,302);
+        const returnUrl = await service.consumeBrowserIdentityDenial(query.state,provider);
+        // Only a person declining is a denial; anything else the provider
+        // reports is its own failure, named so the two read apart. Google and
+        // Apple each have their own word for declining.
+        const declined = query.error === "access_denied" || query.error === "user_cancelled_authorize";
+        const code = declined ? `${provider}_oauth_denied` : `${provider}_oauth_failed`;
+        if (!declined) logEvent(c,"warn",`browser_${provider}_sign_in_failed`,{ code,providerError:codeShaped(query.error ?? "missing_code") });
+        return c.redirect(`${returnUrl}#${provider}_error=${code}`,status);
       }
-      const { session,returnUrl } = await service.consumeBrowserIdentityCallback(query.code,query.state);
+      const { session,returnUrl } = await service.consumeBrowserIdentityCallback(query.code,query.state,provider,extras);
       const cookie = await new BrowserSessionService(c.env).register(session);
       writeCookie(c,cookie.credential,cookie.expiresAt);
-      return c.redirect(returnUrl,302);
+      return c.redirect(returnUrl,status);
     } catch (error) {
       if (error instanceof ApiError) {
-        logEvent(c,"warn","browser_google_sign_in_failed",{ code:error.code,...(error.diagnosticCode ? { cause:error.diagnosticCode } : {}) });
+        logEvent(c,"warn",`browser_${provider}_sign_in_failed`,{ code:error.code,...(error.diagnosticCode ? { cause:error.diagnosticCode } : {}) });
         return failed(error.code);
       }
       // Anything else that threw, such as a fetch or D1 failure: name it in the
       // log and send the person back to a page that says sign-in failed.
       const code: unknown = error instanceof Error && "code" in error ? error.code : undefined;
       const cause = typeof code === "string" ? code : error instanceof Error ? error.name : "unknown";
-      logEvent(c,"error","browser_google_sign_in_failed",{ code:"google_sign_in_failed",cause:codeShaped(cause) });
-      return failed("google_sign_in_failed");
+      logEvent(c,"error",`browser_${provider}_sign_in_failed`,{ code:`${provider}_sign_in_failed`,cause:codeShaped(cause) });
+      return failed(`${provider}_sign_in_failed`);
     }
+  }
+  routes.get("/google/callback",zValidator("query",z.object({ code:z.string().optional(),state:z.string().optional(),error:z.string().optional() })),
+    (c) => completeBrowserIdentity(c,"google",c.req.valid("query")));
+  routes.post("/apple/callback",authBodyLimit,zValidator("form",AppleCallbackFormSchema),(c) => {
+    const form = c.req.valid("form");
+    return completeBrowserIdentity(c,"apple",form,{ appleUser:form.user });
   });
   // The desktop's "Use local development account", as this browser's cookie
   // session: development with RALLY_DEV_AUTH only, which the GET answers so

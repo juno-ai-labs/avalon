@@ -307,7 +307,12 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   [multiple workspaces](multiple-workspaces.md#authority-and-data-flow).
 
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable
-  sessions, PKCE, and single-use Electron deep-link completion. A session that
+  sessions, PKCE, and single-use Electron deep-link completion. `oauth_states.provider`
+  is the sign-in provider (`google` or `apple`) and its callback claims only its
+  own; for Apple, `code_verifier_encrypted` holds the nonce's preimage rather than a
+  PKCE verifier. `desktop_login_tickets.login_provider` (migration 0133) names the
+  provider for signup telemetry, and a null one is Google's
+  ([apple-login.md](apple-login.md)). A session that
   simply expires is also marked `revoked_at` by the five-minute reaper, which is
   what makes announcing the expiry exactly-once; see
   [`access-revocation.md`](access-revocation.md). `oauth_states`
@@ -1106,6 +1111,32 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-11-13 — A Google address another account holds is refused by name
+
+**What changed:** `persistVerifiedGoogleIdentity` answers 409
+`google_email_in_use` when Google reports an address another Rally account
+already holds, and writes nothing. Apple's equivalent is `apple_email_in_use`.
+The desktop and the browser both say so in words.
+
+**Why:** Renaming a Google account to an address an older Rally account used,
+or a first Google sign-in with an address an account held unverified, failed on
+`users.email`'s unique constraint. The raw D1 error became a generic failure in
+the browser and an unhandled 500 at the desktop callback, so the person was
+locked out with no reason given.
+
+**Considered and rejected:** Checking for a holder before every write. It costs
+a query on every Google sign-in to name a rare case; the check now runs only
+after the write has failed. Because the failed batch rolled back, the account
+its first statement would have linked reads as a holder too; the check excludes
+it (with `IS`, since an unverified address has no owner), or a transient D1
+error on a person's first Google sign-in would be reported as a collision with
+their own account. Merging the two accounts is a product decision and is not
+attempted.
+
+**Consequences:** The person still cannot sign in with Google until the other
+account gives up the address. A Google rename is still recorded only at the
+next Google sign-in, so the old address keeps email sign-in until then.
 
 ### 2026-11-12 — Retain Organization billing and financial delivery receipts
 

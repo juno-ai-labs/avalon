@@ -204,6 +204,11 @@ export interface Env extends FeatureFlagEnvironment {
   /** Global only. `productionOnlySecrets` enforces them there; regional never carries them. */
   GOOGLE_OAUTH_CLIENT_ID?: string;
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
+  /** Global only, and optional: Sign in with Apple's web client (`docs/apple-login.md`). */
+  APPLE_OAUTH_CLIENT_ID?: string;
+  APPLE_OAUTH_TEAM_ID?: string;
+  APPLE_OAUTH_KEY_ID?: string;
+  APPLE_OAUTH_PRIVATE_KEY?: string;
   GOOGLE_CONNECTOR_OAUTH_CLIENT_ID?: string;
   GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET?: string;
   GITHUB_APP_ID?: string;

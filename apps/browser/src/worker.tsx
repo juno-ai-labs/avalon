@@ -15,7 +15,8 @@ function deploymentCookies(header: string | null, region: string): string | null
   if (!header) return null;
   const kept = header.split(";").map((part) => part.trim()).filter((part) => {
     const name = part.split("=", 1)[0]!.replace(/^__Host-/u, "");
-    return name === `rally-browser-${region}` || name.startsWith(`rally-browser-${region}-google-`);
+    return name === `rally-browser-${region}` || name.startsWith(`rally-browser-${region}-google-`)
+      || name.startsWith(`rally-browser-${region}-apple-`);
   });
   return kept.length > 0 ? kept.join("; ") : null;
 }

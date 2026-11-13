@@ -938,6 +938,13 @@ The **Rally Google Connectors** client owns the Gmail, Calendar, Drive, Docs, an
 
 `https://rallywith.ai/auth/desktop/` is Rally's browser handoff for login and connector outcomes, and `rallywithai://auth/complete` is the allowlisted desktop return URI. Provider codes always terminate at a regional API callback first; neither handoff URI belongs in Google's authorized redirect URI list. Identity login requests only `openid`, `email`, and `profile`.
 
+Sign in with Apple uses one **Services ID** with Sign in with Apple enabled, its primary App ID, and one Sign in with Apple **key**. Register `api.rallywith.ai` and `app.rallywith.ai` as its domains and these Return URLs:
+
+- Global identity: `https://api.rallywith.ai/auth/apple/callback`
+- Global browser identity: `https://app.rallywith.ai/regional/global/browser/apple/callback`
+
+Store `APPLE_OAUTH_CLIENT_ID` (the Services ID), `APPLE_OAUTH_TEAM_ID`, `APPLE_OAUTH_KEY_ID` and `APPLE_OAUTH_PRIVATE_KEY` (the `.p8` file's PEM) on the Global Worker only. Until all four are set, Apple sign-in answers `apple_oauth_not_configured` and `/health` reports `appleLoginOAuth: not configured`; nothing else is affected. Under **Sign in with Apple for Email Communication**, register `rallywith.ai` and the `invites@` and `notifications@` senders, or mail to a person who hid their address bounces at Apple's relay, sign-in codes included. See [apple-login.md](apple-login.md).
+
 Store the Login client as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` on the Global Worker. Store the connector client as `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID` / `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET` on configured regional Workers. The connector runtime deliberately has no fallback to the login credentials.
 
 Settings exposes two authorization presets over one `google` connector family:
