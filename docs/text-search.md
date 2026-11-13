@@ -237,12 +237,9 @@ matching `encode` without allocating token-ID and attention-mask arrays. This
 lifecycle depends on the locked library implementation and must be rechecked
 when upgrading it; differential tests compare against an unmodified tokenizer.
 
-Planning measures hundreds of overlapping spans of the same text per window,
-and re-tokenizing each one cost about 26 times the document's length. The policy
-therefore also offers `spanCounter`: `qwenAdditiveCuts` in `search-embedding.ts`
-lists the positions where the pinned pipeline is provably additive (a single
-space with visible ASCII on both sides, and a line feed before visible ASCII,
-kept at least 16 characters apart), and `additiveSpanCounter` answers a span from
+The policy offers `spanCounter`: `qwenAdditiveCuts` in `search-embedding.ts`
+defines and justifies the pinned tokenizer's additive cut positions.
+`additiveSpanCounter` answers a span from
 segment counts taken once per text plus its two edges. The counts are exactly
 `countTokens` of the slice, so chunk plans, chunk ids and
 `SEARCH_CHUNK_ALGORITHM` do not change; `search-embedding-policy.test.ts`
