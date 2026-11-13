@@ -303,10 +303,11 @@ async function seedCanvas(env: Env, workspaceId: string, canvas: z.infer<typeof 
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)));
   const creator = { userId: asUserId(canvas.createdByUserId), actorRole: "owner" as const };
-  if (canvas.visibility !== "creator") {
-    await workspace.canvasSetAudience({ workspaceId, canvasId: canvas.id, actor: creator,
-      update: { visibility: canvas.visibility, userIds: canvas.participantUserIds.map(asUserId) } });
-  }
+  // Set every time, `creator` included: a new Canvas starts with the
+  // Organization's default, which the fixture must not depend on.
+  await workspace.canvasSetAudience({ workspaceId, canvasId: canvas.id, actor: creator,
+    update: { visibility: canvas.visibility,
+      userIds: canvas.visibility === "creator" ? [] : canvas.participantUserIds.map(asUserId) } });
   copied.participants = canvas.participantUserIds.length;
   // Idempotent: the Canvas's runtime environment is already routed, and this
   // answers with it.
