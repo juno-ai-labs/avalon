@@ -206,17 +206,19 @@ This does not release the app on the App Store. Android submission is deferred.
 
 ### Public TestFlight setup
 
-Create the initial app record in [App Store Connect](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app/):
-iOS, `ai.rallywith.mobile`, English (US), SKU `rally-mobile-ios`. Accept any pending
-Apple agreements. Set `submit.production.ios.ascAppId` in `apps/mobile/eas.json`
-to the resulting **numeric Apple ID**. `submit.yml` cannot run until this is set;
-the bundle, team and Expo project IDs are not substitutes. EAS holds the signing
-credentials and submission API key; keep private keys out of the repository.
+The [App Store Connect record](https://appstoreconnect.apple.com/apps/6834593399/testflight/ios)
+is **Rally AI - Live Artifacts**, Apple ID `6834593399`, bundle
+`ai.rallywith.mobile`, English (US), SKU `rally-mobile-ios`.
+`submit.production.ios.ascAppId` in `apps/mobile/eas.json` links EAS to that
+record; the bundle, team and Expo project IDs are not substitutes. EAS holds the
+signing credentials and submission API key. Accept any pending Apple agreements
+and keep private keys out of the repository.
 
 Complete TestFlight's beta description, feedback email, review contact and a
-dedicated review login with sample canvases. Create an internal tester group,
-then the external group named exactly `Public Beta`, and enable its public link
-with Open to Anyone. Testers still need a Rally account and organization access.
+dedicated review login with sample canvases. The `Internal` and external
+`Public Beta` groups are configured. Enable the public link with Open to Anyone
+once a build is approved for external testing. Testers still need a Rally account
+and organization access.
 
 From `apps/mobile`, submit a verified production store build (not a preview IPA
 or simulator archive) using [Expo's TestFlight job](https://docs.expo.dev/eas/workflows/pre-packaged-jobs/#testflight):
@@ -232,8 +234,11 @@ approval and an available build in `Public Beta` before sharing the public link;
 upload success alone is not approval. Keep using the single `production` OTA
 channel for compatible JavaScript updates.
 
-`store.config.json` is synchronized with `eas metadata:push` after the app record
-exists. Keep its `apple.version` aligned with app config for each release.
+`store.config.json` is synchronized from `apps/mobile` with
+`EXPO_APPLE_TEAM_ID=7ZLT6A8W25 npx --yes eas-cli@latest metadata:push --profile production --non-interactive`.
+The explicit team environment variable also handles stored API keys whose EAS
+record lacks a team association. Keep `apple.version` in the store config aligned
+with app config for each release.
 [Release copy and screenshots](../apps/mobile/metadata/README.md) are manual paste
 and upload sources, not inputs to EAS Metadata. Complete Apple's age-rating and
 privacy questionnaires separately; metadata lint cannot validate those answers.
