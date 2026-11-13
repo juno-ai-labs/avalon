@@ -17,7 +17,7 @@ describe("RegisterPushDeviceRequestSchema", () => {
     expect(RegisterPushDeviceRequestSchema.parse({
       platform: "ios",
       transport: "apns",
-      topic: APNS_TOPICS.ios,
+      topic: "ai.rallywith.mobile",
       apnsEnvironment: "sandbox",
       token,
       appVersion: "1.0.0",
@@ -25,11 +25,11 @@ describe("RegisterPushDeviceRequestSchema", () => {
     expect(RegisterPushDeviceRequestSchema.parse({
       platform: "ios",
       transport: "apns",
-      topic: APNS_TOPICS.ios,
+      topic: "ai.rallywith.mobile",
       apnsEnvironment: "production",
       token,
       appVersion: "1.0.0",
-    })).toMatchObject({ topic: "ai.rallywith.ios" });
+    })).toMatchObject({ topic: "ai.rallywith.mobile" });
   });
 
   it("rejects a Mac sandbox token and a mismatched iOS topic", () => {
@@ -45,6 +45,14 @@ describe("RegisterPushDeviceRequestSchema", () => {
       platform: "ios",
       transport: "apns",
       topic: APNS_TOPICS.macos,
+      apnsEnvironment: "production",
+      token,
+      appVersion: "1",
+    }).success).toBe(false);
+    expect(RegisterPushDeviceRequestSchema.safeParse({
+      platform: "ios",
+      transport: "apns",
+      topic: "ai.rallywith.ios",
       apnsEnvironment: "production",
       token,
       appVersion: "1",
