@@ -1,0 +1,21 @@
+{
+  "cli": {
+    "appVersionSource": "local"
+  },
+  "build": {
+    "simulator": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "environment": "development",
+      "pnpm": "11.13.0",
+      "ios": {
+        "simulator": true,
+        "image": "sdk-58"
+      },
+      "android": {
+        "buildType": "apk",
+        "image": "sdk-58"
+      }
+    }
+  }
+}

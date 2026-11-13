@@ -1,0 +1,133 @@
+import { MobileAuthExchangeSchema } from '@rally/contracts';
+import { z } from 'zod';
+
+// Presentation capacity, from the approved Home + four tabs design. This is not
+// a server pin limit: pins made on desktop remain in the sidebar in full.
+export const VISIBLE_PIN_COUNT = 4;
+export const MOBILE_CHANNEL = 'rally.mobile.v1';
+export const MOBILE_COMMAND_EVENT = 'rally:mobile-command';
+
+export const CanvasSummarySchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  icon: z.string().nullable().optional(),
+  color: z.string().nullable().optional(),
+  updatedAt: z.string(),
+});
+export type CanvasSummary = z.infer<typeof CanvasSummarySchema>;
+
+export const MobileSnapshotSchema = z.object({
+  userId: z.string(),
+  userName: z.string(),
+  workspaceId: z.string(),
+  workspaceName: z.string(),
+  workspacePath: z.string().regex(/^\/app\/workspaces\/[^/?#]+\/[^/?#]+$/u),
+  canvases: z.array(CanvasSummarySchema),
+  pins: z.array(z.string()),
+  hasMore: z.boolean(),
+  loading: z.boolean(),
+  pinBusy: z.boolean(),
+  pinError: z.string().nullable(),
+  directoryError: z.boolean().default(false),
+  canvasId: z.string().nullable(),
+  tabId: z.string().nullable(),
+  view: z.enum(['home', 'artifact', 'conversation', 'create']),
+  title: z.string(),
+  artifactId: z.string().nullable(),
+  artifactPicker: z.boolean(),
+});
+export type MobileSnapshot = z.infer<typeof MobileSnapshotSchema>;
+
+export const NativeArtifactSchema = z.object({
+  canvasId: z.string(), resourceId: z.string(), version: z.number().int().positive(),
+  openUrl: z.string(), canonicalUrl: z.string(),
+});
+export type NativeArtifact = z.infer<typeof NativeArtifactSchema>;
+
+/** Artifact code gets its own origin and no application bridge. */
+export function trustedArtifact(access: NativeArtifact, domain: string): boolean {
+  try {
+    const opened = new URL(access.openUrl), canonical = new URL(access.canonicalUrl);
+    const suffix = `.${domain}`;
+    return opened.origin === canonical.origin && opened.hostname.endsWith(suffix)
+      && !opened.hostname.slice(0, -suffix.length).includes('.')
+      && opened.hostname.length > suffix.length && !opened.username && !opened.password
+      && !canonical.username && !canonical.password
+      && (opened.protocol === 'https:' || (opened.protocol === 'http:' && domain.endsWith('.localhost')));
+  } catch { return false; }
+}
+
+export const MobileEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('ready') }),
+  z.object({ type: z.literal('sign-in') }),
+  z.object({ type: z.literal('artifact'), artifact: NativeArtifactSchema }),
+  z.object({ type: z.literal('artifact-unavailable'), canvasId: z.string(), resourceId: z.string() }),
+  z.object({ type: z.literal('open-canvas'), id: z.string().min(1) }),
+  z.object({ type: z.literal('signed-out') }),
+  z.object({ type: z.literal('snapshot'), snapshot: MobileSnapshotSchema }),
+]);
+export type MobileEvent = z.infer<typeof MobileEventSchema>;
+
+export const MobileCommandSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('home') }),
+  z.object({ type: z.literal('sign-in-complete'), proof: MobileAuthExchangeSchema }),
+  z.object({ type: z.literal('create') }),
+  z.object({ type: z.literal('open'), id: z.string().min(1), pinned: z.boolean() }),
+  z.object({ type: z.literal('pin'), id: z.string().min(1), pinned: z.boolean() }),
+  z.object({ type: z.literal('reorder'), ids: z.array(z.string().min(1)) }),
+  z.object({ type: z.literal('load-more') }),
+  z.object({ type: z.literal('refresh') }),
+  z.object({ type: z.literal('sign-out') }),
+  z.object({ type: z.literal('switch-workspace') }),
+  z.object({ type: z.literal('reopen-artifact'), canvasId: z.string(), resourceId: z.string() }),
+]);
+export type MobileCommand = z.infer<typeof MobileCommandSchema>;
+
+export const MobileEnvelopeSchema = z.object({
+  channel: z.literal(MOBILE_CHANNEL),
+  token: z.string().min(1),
+  event: MobileEventSchema,
+});
+
+/** Only the configured application origin can supply shell state. */
+export function isAppUrl(candidate: string, appUrl: string): boolean {
+  try {
+    const target = new URL(candidate);
+    const app = new URL(appUrl);
+    return target.origin === app.origin && !target.username && !target.password
+      && (target.pathname === '/' || target.pathname.startsWith('/app/'));
+  } catch { return false; }
+}
+
+export function parseMobileEvent(data: string, url: string, appUrl: string, token: string): MobileEvent | null {
+  if (!isAppUrl(url, appUrl)) return null;
+  try {
+    const parsed = MobileEnvelopeSchema.safeParse(JSON.parse(data));
+    return parsed.success && parsed.data.token === token ? parsed.data.event : null;
+  } catch { return null; }
+}
+
+export function mobileUrl(base: string, workspacePath?: string, conversationId?: string): string {
+  const url = new URL(workspacePath ?? '/', base);
+  url.searchParams.set('mobile', '1');
+  url.hash = conversationId ? `/canvases/${encodeURIComponent(conversationId)}?view=chat` : '/canvases';
+  return url.href;
+}
+
+/** Used by native injection and the browser preview. Payloads remain data. */
+export function commandScript(command: MobileCommand, appUrl?: string): string {
+  const dispatch = `window.dispatchEvent(new CustomEvent(${JSON.stringify(MOBILE_COMMAND_EVENT)}, {detail: ${JSON.stringify(command)}}));`;
+  // Re-check at execution, since navigation can race an authentication sheet.
+  // In particular, a same-origin resource document must never receive proof.
+  return appUrl
+    ? `if (location.origin === ${JSON.stringify(new URL(appUrl).origin)} && (location.pathname === "/" || location.pathname.startsWith("/app/"))) { ${dispatch} } true;`
+    : `${dispatch} true;`;
+}
+
+export function movePin(ids: readonly string[], from: number, to: number): string[] {
+  const result = [...ids];
+  if (from < 0 || to < 0 || from >= ids.length || to >= ids.length) return result;
+  const [id] = result.splice(from, 1);
+  if (id !== undefined) result.splice(to, 0, id);
+  return result;
+}
