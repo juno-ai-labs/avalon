@@ -262,7 +262,7 @@ pnpm --filter @rally/api exec -- wrangler dev --local \
   --enable-containers=false
 ```
 
-The `--` matters: without it pnpm 11.13.1 takes `--env-file` as its own option,
+The `--` matters: without it pnpm 11 takes `--env-file` as its own option,
 swallows the path, and fails before Wrangler sees it.
 
 That single-config session serves `GET /health` and little else a client needs:
