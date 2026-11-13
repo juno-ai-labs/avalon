@@ -1,0 +1,11 @@
+Try the canvases you use every day:
+
+- Sign in and open a canvas. Its finished work should open first; an empty canvas opens the conversation.
+- Pin a few canvases, switch between them, then reorder or remove pins in the sidebar.
+- Open a conversation, write a message, and attach a photo or file. Check that the keyboard leaves the input visible.
+- Start a new canvas and return to it later.
+- Leave the app and come back. Check that your canvases refresh and your selected tab stays in place.
+- Enable notifications in Settings and diagnostics, then open a canvas from a notification.
+- On iPhone Duo, open and close the phone while viewing a canvas or writing a message. Your place and draft should stay intact.
+
+Please report blank screens, sign-in problems, covered controls, or lost drafts through TestFlight feedback. Include the steps that led to the problem. These are live canvases, so use one you are comfortable editing.
