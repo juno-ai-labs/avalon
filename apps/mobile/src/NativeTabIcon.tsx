@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Platform, View, type ImageSourcePropType } from 'react-native';
 import { File, Paths } from 'expo-file-system';
 import { CryptoDigestAlgorithm, digestStringAsync } from 'expo-crypto';
-import Svg, { Rect } from 'react-native-svg';
+import Svg, { G, Rect } from 'react-native-svg';
 import { House, PanelsTopLeft, type LucideIcon } from 'lucide-react-native';
 import { APPEARANCE_ICON_COMPONENTS } from './appearance-icons';
 import type { CanvasSummary } from './protocol';
@@ -40,7 +40,10 @@ export function NativeTabIcon({ canvas, onImage }: { canvas?: CanvasSummary; onI
   return <View collapsable={false} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', opacity: 0, width: 28, height: 28 }}>
     <Svg onLayout={() => setLaidOut(true)} ref={svg} width={28} height={28} viewBox="0 0 28 28">
       <Rect width={28} height={28} rx={8} fill={tint} />
-      <Icon x={3} y={3} width={22} height={22} color={ink} strokeWidth={1.9} />
+      {/* Lucide forwards SVG props to its shapes; position the whole glyph instead. */}
+      <G transform="translate(3 3)">
+        <Icon size={22} color={ink} strokeWidth={1.9} />
+      </G>
     </Svg>
   </View>;
 }
