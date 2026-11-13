@@ -1,0 +1,8 @@
+.expo/
+dist/
+ios/
+android/
+.env.local
+
+# Expo Simulators controller credentials (managed by EAS CLI).
+.env.eas-simulator

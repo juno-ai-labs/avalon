@@ -21,6 +21,8 @@
     "src/connection-complete.tsx",
     "src/entry.tsx",
     "src/mcp-consent.tsx",
+    "src/mobile.tsx",
+    "src/mobile-sign-in.tsx",
     "src/shell.tsx",
     "src/site-open.tsx",
     "src/source-decision.tsx"

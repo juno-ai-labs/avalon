@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "apps/browser/**"
+      # The browser host imports these framework-independent mobile contracts.
+      - "apps/mobile/src/protocol.ts"
+      - "apps/mobile/src/auth-contract.ts"
       # The browser imports the desktop collaboration surface and its theme.
       - "apps/desktop/**"
       - "packages/**"

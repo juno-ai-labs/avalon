@@ -211,6 +211,24 @@ it('maps additive invocation metadata without widening legacy wire trigger kinds
 });
 
 describe('Rally API wire adapter', () => {
+  it('retries a mobile opening message with the same receipt and attachments', async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('Connection lost')).mockResolvedValueOnce(json({
+      turn: { turnId: messageId, clientMessageId: 'mobile-opening-receipt', createdAt: timestamp }, deliveryState: 'canonical',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    const input = { text: 'Make a checklist', clientMessageId: 'mobile-opening-receipt', attachmentIds: [resourceId] };
+    await expect(api.sendConversationMessage(workstreamId, input, runId)).rejects.toThrow();
+    await expect(api.sendConversationMessage(workstreamId, input, runId)).resolves.toMatchObject({
+      turn: { turnId: messageId, clientMessageId: 'mobile-opening-receipt' }, deliveryState: 'canonical',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(String(call[0])).toBe(`https://api.rally.test/conversations/${workstreamId}/substreams/0/messages`);
+      expect(JSON.parse(String(call[1].body))).toEqual({ text: 'Make a checklist', clientMessageId: 'mobile-opening-receipt', attachmentIds: [resourceId] });
+    }
+  });
+
   it('keeps overlapping detached-window refreshes on their observed resource revisions', async () => {
     vi.stubGlobal('Blob', (await new Response('').blob()).constructor);
     await clearAllLocalCache();

@@ -231,21 +231,21 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("provision_user_password", {
     description: "Provision or rotate a password for an existing Global identity user (resolve with search_users). Returns a generated password ONCE; deliver it only to the intended recipient through an appropriate private channel, never put it in logs or routine status updates. Each call replaces the previous password; if the response is lost, call again and use the latest result. Sign-in requires an independently verified primary email. Does not create an account, verify an email, grant Organization access, or end existing sessions.",
-    inputSchema: EngineeringPasswordUserInputSchema.unwrap().shape,
+    inputSchema: z.object(EngineeringPasswordUserInputSchema.unwrap().shape),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, (request) => tool(principal, "provision_user_password", { user_id: request.userId }, async () =>
     EngineeringProvisionPasswordResultSchema.parse(await env.GLOBAL_INSPECTION.provisionUserPassword(request, principal))));
 
   server.registerTool("revoke_user_password", {
     description: "Disable password sign-in for an existing Global identity user. Repeating is safe. Prevents new password sign-ins; existing sessions and other sign-in methods remain valid.",
-    inputSchema: EngineeringPasswordUserInputSchema.unwrap().shape,
+    inputSchema: z.object(EngineeringPasswordUserInputSchema.unwrap().shape),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "revoke_user_password", { user_id: request.userId }, async () =>
     EngineeringRevokePasswordResultSchema.parse(await env.GLOBAL_INSPECTION.revokeUserPassword(request, principal))));
 
   server.registerTool("create_org", {
     description: "Create a Rally Organization in the specified region, owned by creatorUserId, and directly add userIds as members. All users must already exist in that region (use search_users). No invitations or login credentials are created. Reuse operationId and the same arguments to resume an uncertain result; orgId is operationId.",
-    inputSchema: CreateEngineeringOrgInputSchema.unwrap().shape,
+    inputSchema: z.object(CreateEngineeringOrgInputSchema.unwrap().shape),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "create_org", {
     region: request.region, workspace_id: request.operationId, creator_user_id: request.creatorUserId,
@@ -257,7 +257,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("send_message", {
     description: "Send a message as userId to a Canvas's Chat or a Sidekick's shared conversation (conversationId is the Canvas or Sidekick ID), through the same composer admission as the app. The message is attributed to userId, as though that user sent it. Enforces that user's access, uses normal addressing, queue/steer behavior, notifications and agent execution; recordOnly posts it for readers without starting a run. Reuse operationId and the same arguments to retry an uncertain send.",
-    inputSchema: SendEngineeringMessageInputSchema.unwrap().shape,
+    inputSchema: z.object(SendEngineeringMessageInputSchema.unwrap().shape),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "send_message", {
     workspace_id: request.orgId, workstream_id: request.conversationId,
@@ -270,7 +270,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
       description: paused
         ? "Pause an active Sidekick as userId, exactly as the app's Pause button does: open runs stop, scheduled and pending runs are cancelled, and its activity triggers are cleared. userId must be allowed to manage the Sidekick in the app; its author always is. Pausing a paused Sidekick changes nothing; a draft or deleted one is refused. Returns the resulting lifecycle."
         : "Resume a paused Sidekick as userId, exactly as the app's Resume button does: schedules restart from now without firing what was missed, and its activity triggers are restored. userId must be allowed to manage the Sidekick in the app; its author always is. Resuming an active Sidekick changes nothing. Returns the resulting lifecycle.",
-      inputSchema: sidekickPauseSchema.shape,
+      inputSchema: z.object(sidekickPauseSchema.shape),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, (request) => tool(principal, name, {
       workspace_id: request.orgId, sidekick_id: request.sidekickId, user_id: request.userId,
@@ -280,7 +280,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("archive_sidekick", {
     description: "Archive a Sidekick as userId, exactly as the app's Archive action does: open runs stop, scheduled and pending runs are cancelled, its activity triggers are cleared, and it leaves everyone's Sidekick list. There is no undo. userId must be allowed to manage the Sidekick in the app; its author always is. Works in any lifecycle; archiving an archived Sidekick changes nothing. Also works in an abandoned or retired Organization, as a user who is still an active member of it. Returns the resulting lifecycle.",
-    inputSchema: sidekickPauseSchema.shape,
+    inputSchema: z.object(sidekickPauseSchema.shape),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "archive_sidekick", {
     workspace_id: request.orgId, sidekick_id: request.sidekickId, user_id: request.userId,
@@ -289,7 +289,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("retire_org", {
     description: "Retire an Organization permanently through the regional retirement service: nobody can sign in to it, every Canvas, Sidekick and socket in it stops, and nothing reopens. There is no undo. Task-capable clients receive a durable handle to poll while failed passes are retried. Synchronous results report complete: false while parts are still open; call again with the same orgId to resume the walk.",
-    inputSchema: RetireEngineeringOrgInputSchema.unwrap().shape,
+    inputSchema: z.object(RetireEngineeringOrgInputSchema.unwrap().shape),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, async (request, ctx) => {
     const input = { name: "retire_org" as const, arguments: request };
@@ -303,7 +303,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
       description: kind === "canvas"
         ? "Read a Canvas's Chat as userId through ordinary conversation authorization: the participant-visible message text, omitting tools, thinking and internal agent messages. Returns 20 committed turns by default, or the requested limit; follow the returned sequence fence to continue a page."
         : "Read a Sidekick's shared conversation as userId through ordinary conversation authorization, with the same text and paging as read_canvas_chat.",
-      inputSchema: { ...conversationReadSchema.shape, [idKey]: IdSchema.describe(`The ${label} ID.`) },
+      inputSchema: z.object({ ...conversationReadSchema.shape, [idKey]: IdSchema.describe(`The ${label} ID.`) }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     }, (request) => {
       const rest: Record<string, unknown> = { ...request };
@@ -318,7 +318,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("list_workspaces", {
     description: "List Rally workspaces from configured regional identity stores.",
-    inputSchema: {},
+    inputSchema: z.object({}),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, () => tool(principal, "list_workspaces", {}, async () => {
     const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listWorkspaces({})));
@@ -328,35 +328,35 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("list_orgs", {
     description: "List every Rally Organization (stored as a workspace) across configured regions, abandoned ones included, newest first unless ordered otherwise, with plan, creation time, active member count, and when a member was last seen. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
-    inputSchema: organizationPageInputSchema,
+    inputSchema: z.object(organizationPageInputSchema),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (request) => tool(principal, "list_orgs", {}, () =>
     organizationPage(inspectionBindings(env), { abandoned: "include" }, request)));
 
   server.registerTool("search_orgs", {
     description: "Search Rally Organizations (stored as workspaces) across configured regions, newest first unless ordered otherwise. Every filter narrows the result; abandoned Organizations are excluded unless asked for. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
-    inputSchema: { ...SearchEngineeringOrganizationsInputSchema.unwrap().shape, ...organizationPageInputSchema },
+    inputSchema: z.object({ ...SearchEngineeringOrganizationsInputSchema.unwrap().shape, ...organizationPageInputSchema }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ orderBy, direction, limit, page, ...filter }) => tool(principal, "search_orgs", {}, () =>
     organizationPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
 
   server.registerTool("list_users", {
     description: "List every Rally user across configured regions, newest first unless ordered otherwise, each with every Organization they belong to (role, guest or member, status, last seen). A person with accounts in two regions appears once per region. Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
-    inputSchema: userPageInputSchema,
+    inputSchema: z.object(userPageInputSchema),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (request) => tool(principal, "list_users", {}, () =>
     userPage(inspectionBindings(env), {}, request)));
 
   server.registerTool("search_users", {
     description: "Search Rally users across configured regions by name, email or ID, or by creation time, newest first unless ordered otherwise. Each result carries every Organization the user belongs to (role, guest or member, status, last seen). Returns { items, page, pageCount, total, nextPage }; while nextPage is not null, call again with the same arguments and page set to nextPage.",
-    inputSchema: { ...SearchEngineeringUsersInputSchema.unwrap().shape, ...userPageInputSchema },
+    inputSchema: z.object({ ...SearchEngineeringUsersInputSchema.unwrap().shape, ...userPageInputSchema }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ orderBy, direction, limit, page, ...filter }) => tool(principal, "search_users", {}, () =>
     userPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
 
   server.registerTool("list_canvases", {
     description: "List every Canvas in the authoritative WorkspaceDO for an Organization's workspace ID, most recently updated first. A Canvas ID also names its Chat's conversation object (read_canvas_chat, run_canvas_sql).",
-    inputSchema: { workspaceId: WorkspaceIdSchema },
+    inputSchema: z.object({ workspaceId: WorkspaceIdSchema }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workspaceId }) => tool(principal, "list_canvases", { workspace_id: workspaceId }, async () => {
     const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listCanvases({ workspaceId })));
@@ -369,7 +369,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("list_sidekicks", {
     description: "List every Sidekick in the authoritative WorkspaceDO for a workspace ID, in every lifecycle including deleted.",
-    inputSchema: { workspaceId: WorkspaceIdSchema },
+    inputSchema: z.object({ workspaceId: WorkspaceIdSchema }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workspaceId }) => tool(principal, "list_sidekicks", { workspace_id: workspaceId }, async () => {
     const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listSidekicks({ workspaceId })));
@@ -382,7 +382,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("list_artifacts", {
     description: "List every live web artifact in the authoritative WorkspaceDO registry for a workspace ID.",
-    inputSchema: { workspaceId: WorkspaceIdSchema },
+    inputSchema: z.object({ workspaceId: WorkspaceIdSchema }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workspaceId }) => tool(principal, "list_artifacts", { workspace_id: workspaceId }, async () => {
     const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listArtifacts({ workspaceId })));
@@ -395,7 +395,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("run_workspace_sql", {
     description: "Run arbitrary SQLite against a WorkspaceDO. Statements may mutate production state.",
-    inputSchema: { workspaceId: WorkspaceIdSchema, ...sqlInputSchema },
+    inputSchema: z.object({ workspaceId: WorkspaceIdSchema, ...sqlInputSchema }),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, ({ workspaceId, sql, bindings = [] }) => tool(
     principal,
@@ -418,12 +418,12 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("run_canvas_sql", {
     description: "Run arbitrary SQLite against the conversation object (AgentLoopDO) of a Canvas's Chat or a Sidekick's shared conversation, named by the Canvas or Sidekick ID: its transcript, runs, tool calls and outbox. substreamId reaches a registered child instead: a Sidekick run's or a background agent's conversation. Statements may mutate production state.",
-    inputSchema: {
+    inputSchema: z.object({
       workspaceId: WorkspaceIdSchema,
       conversationId: IdSchema.describe("A Canvas ID or a Sidekick ID."),
       substreamId: SubstreamIdSchema.optional().describe("A registered child conversation under it; omit for the main conversation."),
       ...sqlInputSchema,
-    },
+    }),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, ({ workspaceId, conversationId, substreamId, sql, bindings = [] }) => tool(
     principal,
@@ -447,11 +447,11 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("run_artifact_sql", {
     description: "Run arbitrary SQLite against an ArtifactHostDO — the artifact's supervisor, holding its current version, viewer sessions and error log. A stateful artifact's own tables live in a separate facet database this tool does not reach. The workspace ID is required: the Durable Object name carries none. Statements may mutate production state.",
-    inputSchema: {
+    inputSchema: z.object({
       workspaceId: WorkspaceIdSchema,
       artifactId: ArtifactIdSchema,
       ...sqlInputSchema,
-    },
+    }),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, ({ workspaceId, artifactId, sql, bindings = [] }) => tool(
     principal,
@@ -475,11 +475,11 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("run_d1_sql", {
     description: "Run arbitrary SQLite against one of a region's D1 databases: DB (the regional product database: users, workspaces, memberships, authority routes), TELEMETRY_DB, USAGE_DB (the usage ledger), PLATFORM_DB (routing shared by every region), or MESSAGE_ISSUES_DB (Oopsie message issue reports). Semicolon-separated statements all run when only the last has ? parameters; the result is the last statement's rows and counters, so rowsWritten counts only its writes. D1 refuses BEGIN and SAVEPOINT. A result with no rows lists no columns, since D1 names columns only through its rows, and a later column overwrites an earlier one of the same name, so alias duplicate names in a JOIN. Statements may mutate production state.",
-    inputSchema: {
+    inputSchema: z.object({
       region: z.enum(configuredRegions as [string, ...string[]]).describe("The deployment whose D1 database to query."),
       database: EngineeringD1DatabaseSchema.describe("The regional API Worker's D1 binding."),
       ...sqlInputSchema,
-    },
+    }),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, ({ region, database, sql, bindings = [] }) => tool(
     principal,
@@ -495,10 +495,10 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
   server.registerTool("query_data_lake", {
     title: "Query Data Lake",
     description: `Run a read-only Basin SQL (formerly R2 SQL) query against one Global analytical lakehouse. Each lakehouse is a separate catalog, so a query reaches only its own table: ${Object.values(LAKEHOUSES).map(({ table }) => table).join(", ")}. Run DESCRIBE <table> for its columns. Billing is by bytes scanned, so filter on the table's timestamp column and add a LIMIT. Pipeline rolls files every 300 seconds, so a row can take about five minutes to appear, and delivery is at-least-once: rows sharing event_id are one event. llm_inference holds raw prompts and model output; select its request, response and error columns only for a specific inference_request_id.`,
-    inputSchema: {
+    inputSchema: z.object({
       lakehouse: z.enum(LAKEHOUSE_TABLES).describe("The table to query; it selects the catalog."),
       sql: z.string().min(1).describe("Basin SQL SELECT statement naming the table as <namespace>.<table>."),
-    },
+    }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async (request, ctx) => {
     const input = { name: "query_data_lake" as const, arguments: request };
@@ -508,33 +508,33 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
   server.registerTool("query_worker_observability", {
     title: "Query Worker Logs and Traces",
     description: "Query Cloudflare Workers Observability: the structured logs, invocation logs and trace spans of every Worker on the account, as the dashboard's Query Builder shows them. Narrow to one Worker with a filter on $metadata.service (avalon-api-global is the Global API). Rally logs one JSON object per line, so filter on its fields (event, level, code, request_id, workspace_id) rather than with needle. To read one trace's spans and logs, query the events view filtered on $metadata.traceId. Retention is seven days. Invocation logs and spans carry full request URLs and SQL bindings, which can hold one-time OAuth codes, socket tickets and message text.",
-    inputSchema: observabilityQueryInputSchema,
+    inputSchema: z.object(observabilityQueryInputSchema),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (query) => tool(principal, "query_worker_observability", { view: query.view }, () =>
     queryObservability({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.WORKERS_OBSERVABILITY_API_TOKEN }, query)));
 
   server.registerTool("inspect_queues", {
     description: "Inspect Cloudflare queue backlog metrics and active dead-letter relationships. Does not consume or acknowledge messages. Metrics describe a point in time, not successful delivery.",
-    inputSchema: { deadLettersOnly: z.boolean().default(false) },
+    inputSchema: z.object({ deadLettersOnly: z.boolean().default(false) }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ deadLettersOnly }) => tool(principal, "inspect_queues", { dead_letters_only: deadLettersOnly }, () => inspectQueues(env, deadLettersOnly)));
 
   server.registerTool("inspect_dead_letters", {
     description: "Peek messages in an active dead-letter queue returned by inspect_queues. Returns the provider's sample without consuming, leasing, replaying or acknowledging messages. Message bodies may contain customer data; inspect only for the requested investigation.",
-    inputSchema: { queueId: z.string().min(1) },
+    inputSchema: z.object({ queueId: z.string().min(1) }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ queueId }) => tool(principal, "inspect_dead_letters", { queue_id: queueId }, () => peekDeadLetters(env, queueId)));
 
   server.registerTool("inspect_org_settings", {
     description: "Read an Organization's stored presentation settings, including whether its model selector is visible. These values are independent of defaults for new Organizations.",
-    inputSchema: InspectEngineeringOrgSettingsInputSchema.shape,
+    inputSchema: z.object(InspectEngineeringOrgSettingsInputSchema.shape),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (request) => tool(principal, "inspect_org_settings", { workspace_id: request.orgId }, async () =>
     EngineeringOrgSettingsResultSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOrganizationSettings(request))));
 
   server.registerTool("update_org_settings", {
     description: "Set whether the model selector is visible for everyone in an Organization on macOS and web, independent of Debug mode. Persists the setting and refreshes connected clients. Does not change model routing or pins. Safe to repeat after an uncertain result; inspect_org_settings reads the saved value.",
-    inputSchema: UpdateEngineeringOrgSettingsInputSchema.shape,
+    inputSchema: z.object(UpdateEngineeringOrgSettingsInputSchema.shape),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "update_org_settings", { workspace_id: request.orgId, model_selector_visible: request.modelSelectorVisible }, async () =>
     EngineeringOrgSettingsResultSchema.parse(await (await organizationBinding(env, request.orgId)).updateOrganizationSettings(request, principal))));
@@ -581,7 +581,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("inspect_overage_credits", {
     description: "Read an Organization's overage-only USD credit grants and available balances from Stripe. Includes grants made directly in Stripe with the dedicated overage price scope; does not include general invoice credits. Supply operationId to recover the result of a previously accepted grant after an uncertain response, including legacy non-expiring grants. This only looks up the existing Stripe grant: it never issues credit or changes its terms. An unknown operation is rejected; an empty grants list means no matching Stripe receipt was found, not permission to reissue under a new ID.",
-    inputSchema: InspectEngineeringCreditsInputSchema.shape,
+    inputSchema: z.object(InspectEngineeringCreditsInputSchema.shape),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "inspect_overage_credits", { workspace_id: request.orgId }, async () =>
     BillingCreditsSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOverageCredits(request))));
@@ -602,26 +602,26 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
 
   server.registerTool("inspect_usage_plan", {
     description: "Read an Organization's current plan, weekly quota remaining and reset, and current-period overage from its owning region's authoritative usage ledger.",
-    inputSchema: InspectEngineeringUsageInputSchema.shape,
+    inputSchema: z.object(InspectEngineeringUsageInputSchema.shape),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (request) => tool(principal, "inspect_usage_plan", { workspace_id: request.orgId }, async () =>
     EngineeringUsageResultSchema.parse(await (await organizationBinding(env, request.orgId)).inspectOrganizationUsage(request))));
 
   server.registerTool("change_usage_plan", {
     description: "Set a persistent operator override of an Organization's usage plan. Stripe subscription changes preserve this override; this tool does not change the Stripe subscription or its price. Applies its new quota to the current week, records the plan change, and notifies connected members. Past weekly quotas remain unchanged. Resolve an uncertain outcome with inspect_usage_plan before retrying.",
-    inputSchema: ChangeEngineeringPlanInputSchema.shape,
+    inputSchema: z.object(ChangeEngineeringPlanInputSchema.shape),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, (request) => tool(principal, "change_usage_plan", { workspace_id: request.orgId, plan: request.plan }, async () =>
     EngineeringUsageResultSchema.parse(await (await organizationBinding(env, request.orgId)).changeOrganizationPlan(request, principal))));
 
   server.registerTool("inspect_migration_progress", {
     description: "Inspect forced-migration outcomes, failures, invalid or misrouted commands and schema version shortfalls in a region's Worker logs. Filters by run or object when supplied. Seven-day log retention applies; missing logs do not prove a fleet or object is current. Use inspect_queues for command backlog and dead letters. Ordinary constructor migrations are not a fleet registry.",
-    inputSchema: {
+    inputSchema: z.object({
       region: z.enum(configuredRegions as [string, ...string[]]),
       from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }).optional(),
       runId: z.uuid().optional(), objectId: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
       limit: z.number().int().positive().optional(), offset: z.string().optional(),
-    },
+    }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ region, from, to, runId, objectId, limit, offset }) => tool(principal, "inspect_migration_progress", { region, run_id: runId, object_id: objectId }, () =>
     queryObservability({ accountId: env.CLOUDFLARE_ACCOUNT_ID, token: env.WORKERS_OBSERVABILITY_API_TOKEN }, {
