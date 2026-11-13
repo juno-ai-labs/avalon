@@ -13,7 +13,8 @@ and uses the existing ticketed conversation sockets.
 | `apps/api/src/services/browser-session-service.ts` | Registration (which claims shares waiting for the user's verified addresses), explicit workspace selection, renewal, metadata and logout. |
 | `apps/api/src/services/session-authentication.ts` | Shared ordinary-session, membership-incarnation and region checks. |
 | `apps/api/src/routes/browser.ts` | HttpOnly cookies, Origin checks and the cookie-to-API adapter. |
-| `packages/contracts/src/mobile-auth.ts` | Native handoff request, ticket and PKCE exchange contracts. |
+| `packages/contracts/src/index.ts` | Shared desktop and mobile PKCE request contracts. |
+| `packages/db/migrations/0134_login_ticket_audience.sql` | Server-controlled ticket redemption audience; existing tickets default to desktop. |
 | `apps/api/test/browser-sessions.test.ts`, `mobile-auth.test.ts`, `support-access.test.ts` | Real migrated SQLite and HTTP protocol cases, including the native handoff and support-session boundary. |
 
 ## How it works
@@ -92,15 +93,16 @@ requires the ticket, matching attempt, region and verifier, consumes the existin
 `desktop_login_tickets` row and registers an independent browser session. The
 WebView receives its cookie through Set-Cookie; JSON contains metadata only.
 These routes reuse the desktop ticket's two-minute expiry and burn-on-invalid-
-verifier semantics, with no migration or separate session store. Mobile handoff
-redemption does not report a second Google signup completion.
+verifier semantics, with no separate session store. Migration 0134 adds a
+`redemption_audience`: mobile handoffs are `browser`, and existing and newly
+issued desktop OAuth tickets are `desktop`. Each route requires its own audience
+in the atomic claim; a wrong-audience request cannot consume the ticket or issue
+credentials. The persisted audience also determines whether desktop signup
+telemetry is emitted. A repeated attempt ID returns `409 attempt_already_used`
+without replacing its ticket, even after consumption or expiry.
 
 The original system-browser session remains independent: signing out in the
-WebView revokes its own session and children. A cancelled or lost handoff starts
-again from the app, with a fresh verifier; tickets are not renewable or reusable.
-The native client must validate its callback and retain the verifier until
-redemption. The browser sign-in UI and native client ship separately from these
-backend routes.
+WebView revokes its own session and children. Tickets are not renewable or reusable.
 
 ## Invariants
 
@@ -152,6 +154,10 @@ adapter, promotion, rejoin fencing, renewal ceilings and whole-browser logout.
 It is backend protocol evidence, not proof of browser rendering or end-to-end
 collaboration.
 
+`pnpm --filter @rally/api exec vitest run test/mobile-auth.test.ts test/support-access.test.ts`
+covers the handoff, cross-audience rejection in both directions, repeated attempts,
+and the root identity guarantee with a support workspace selected.
+
 `pnpm --filter @rally/api test:workers test-workers/browser-sessions.test.ts`
 additionally proves concurrent activation and cross-tab incarnation isolation
 against real D1 in workerd. Its minimal schema declares the runtime dependencies;
@@ -161,11 +167,18 @@ the Node suite separately applies the checked-in migrations.
 
 ### 2026-11-12 — Hand system-browser sign-in back to the mobile WebView
 
-System authentication browsers cannot share their cookie jar with WKWebView or
-Android WebView. Reusing the existing PKCE login-ticket ledger gives the app its
-own ordinary cookie session without exposing durable credentials. Both handoff
-routes retain the browser Origin gate; the browser frontend and API must ship
-before the new native flow is usable in production.
+**What changed:** System-browser sign-in can establish a separate WebView cookie
+session through the existing PKCE login-ticket ledger.
+
+**Why:** System authentication browsers and WebViews have separate cookie jars.
+A stored redemption audience prevents mobile handoffs from becoming desktop
+bearer credentials; provider metadata is not an authorization boundary.
+
+**Consequences:** Both handoff routes retain the browser Origin gate. Apply
+migration 0134 before deploying the API. Existing tickets retain desktop behavior;
+each exchange atomically accepts only its own audience.
+
+**Related:** [PR #1588](https://github.com/juno-ai-labs/avalon/pull/1588).
 
 ### 2026-10-07 — Create an organization over the cookie
 

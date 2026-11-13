@@ -1740,6 +1740,13 @@ export const DesktopExchangeRequestSchema = z.object({
    */
   timezone: IanaTimezoneSchema.optional()
 });
+export const MobileAuthStartSchema = z.strictObject({
+  attemptId: DesktopExchangeRequestSchema.shape.attemptId,
+  codeChallenge: DesktopExchangeRequestSchema.shape.attemptId,
+});
+export const MobileAuthExchangeSchema = DesktopExchangeRequestSchema.omit({ timezone: true }).strict();
+export const MobileAuthTicketSchema = MobileAuthExchangeSchema.omit({ codeVerifier: true });
+
 export const ConnectorOAuthProviderSchema = z.enum(ConnectorOAuthProviders);
 export const ConnectorOAuthAttemptStatusSchema = z.enum(["pending", "succeeded", "denied", "failed"]);
 export const ConnectorOAuthStartSchema = z.object({
