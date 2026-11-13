@@ -198,6 +198,7 @@ export function createAgentInferenceLogger(
           latency_ms: attempt.latencyMs,
           fallback_attempt: attempt.cursor.stageIndex,
           attempt: attempt.cursor.endpointAttempt,
+          produced_output: attempt.producedOutput,
           provider_error_code: attempt.providerError?.code,
           provider_error_provider: attempt.providerError?.providerName,
           // `detail`, not `message`: the logger reserves `message` for the row

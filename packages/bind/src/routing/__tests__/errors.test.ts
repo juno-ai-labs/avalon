@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  attemptDisposition,
   categorizeHttpStatus,
   failureDisposition,
   isRetriableAttemptError,
@@ -165,6 +166,24 @@ describe("isRetriableAttemptError", () => {
       expect(failureDisposition(error).nextProvider).toBe(true);
       expect(isRetriableAttemptError(error)).toBe(false);
     }
+  });
+});
+
+describe("attemptDisposition", () => {
+  it("traverses a transport failure that streamed nothing", () => {
+    expect(attemptDisposition(err("network"), false)).toMatchObject({
+      nextProvider: true, fallbackModel: true, propagate: false,
+    });
+  });
+
+  it("propagates the same failure once output has streamed", () => {
+    expect(attemptDisposition(err("network"), true)).toEqual({
+      sameEndpointRetry: false,
+      nextProvider: false,
+      fallbackModel: false,
+      breaker: "record_failure",
+      propagate: true,
+    });
   });
 });
 

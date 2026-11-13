@@ -326,6 +326,7 @@ describe("agent inference logging", () => {
       latencyMs: 340,
       disposition: "fallback",
       failureKind: "api",
+      producedOutput: false,
       providerError: {
         code: 400,
         providerName: "xAI",
@@ -342,6 +343,7 @@ describe("agent inference logging", () => {
       model: "x-ai/grok-4.3",
       disposition: "fallback",
       failure_kind: "api",
+      produced_output: false,
       provider_error_code: 400,
       provider_error_provider: "xAI",
       provider_error_detail: '{"error":{"code":400,"message":"tool parameter root must be an object type"}}',

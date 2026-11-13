@@ -1186,6 +1186,7 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Invalid model output | `event = request_failed` and `code = model_output_invalid` |
 | Degraded connector workflows | `event = connector_poll_timeout` or `event = connector_poll_failed` |
 | Rejected model calls | `event = agent_inference_attempt_failed` or `event = structured_inference`, and `provider_error_code` exists |
+| A Retry or recovery that re-rendered a context input differently (it kept the admitted copy) | `event = activation_input_replay_drifted`, grouped by `source_kind` and `differs` |
 | Broken response contracts | `event = request_failed` and `error_name = ZodError` |
 | Harness run outcomes | `event = harness_run_finished` |
 | Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |
@@ -1574,6 +1575,12 @@ choose the `inference_request_id` for the next query.
 request did not ask OpenRouter for usage accounting, and is absent on every
 structured row; Azure rows were always priced correctly. Read an older row's
 spend from `input_tokens`/`output_tokens` and the model, not from this column.
+
+A failed `attempt` row's `disposition` is the routing decision actually made
+only from 2026-11-13. Before that, an attempt that had already streamed text
+reads `fallback` though the turn ended there. From that date the row carries
+`metadata.producedOutput`, and such an attempt reads `failed` (or `cancelled`
+or `defect`), never `retry` or `fallback`.
 
 Use `substream_id` to isolate the product conversation and `request_id` to
 isolate one API/harness run. `"0"` is the current main substream. An inline
@@ -1976,7 +1983,7 @@ children, and the final meeting-notes pass all read it**, worth doing when a pro
 because each re-execution charges another failure to the per-workspace circuit
 breaker whose threshold is 3.
 
-Four failure codes an operator will see, all distinct from
+Five failure codes an operator will see, all distinct from
 `harness_execution_failed`, which means Rally's own defect:
 
 | Code | Meaning | Triage |
@@ -1985,6 +1992,7 @@ Four failure codes an operator will see, all distinct from
 | `provider_circuit_open` | Rally did not call: the breaker had already opened, so the run was refused before a request went out. | Read the *earlier* failures that opened it. The breaker also opens on 401/402/403, which are Rally's credential or credit, so this code does not by itself accuse the provider. |
 | `context_length_exceeded` | Rally called and the endpoint refused the prompt as longer than it accepts, declaring `context_length_exceeded` in its 400 — after every other candidate for the model refused it too. | Rally's sizing, not the provider's health. Compare the deployment's own input limit against the `context_length` the catalog reports for that model: a deployment that accepts less is a window compaction is sizing against wrongly, and every long run on that model will reach it. Not to be read as `context_limit_exceeded`, which is Rally declining to send a run it could not make fit and says nothing about a deployment. |
 | `model_input_unsupported` | Rally called and OpenRouter found no endpoint for the model that accepts something the request carries: its 404 names an input step in `error.metadata.failed_routing_step` (`Filter by Image Support`, `File` or `Audio`). | The model, not the provider's health: that model cannot read that input on any endpoint. The member's remedy is the attachment or a different model; an operator's is the model a flag or override routes that work to. The attempt's `provider_error_detail` names the step. |
+| `model_not_found` | Rally called and OpenRouter answered 400 `<model id> is not a valid model ID` for every candidate, the fallback models included. | Rally's model configuration: an environment override, a conversation pin or a catalog entry names a model OpenRouter retired or never had. The member's remedy is another model; the operator's is the configuration. |
 
 A run failing with either *provider* code while the provider is healthy points
 at credentials or at the breaker's cooldown (60–120 seconds), not at a model

@@ -312,7 +312,13 @@ missing inputs under the exact active-execution and Bind-head fence, then return
 the committed transitions for Bind to apply plus the stable IDs durably
 acknowledged without another append. Every requested ID must be
 acknowledged exactly once by one of those two paths; an empty or partial host
-answer fails closed instead of silently dropping activation context. The
+answer fails closed instead of silently dropping activation context. A replay
+under an existing ID always keeps the copy first admitted, which the Bind head
+already holds, so a Retry can always proceed. Its new rendering may differ: the
+Canvas context is keyed on the message that woke the run, but a new Canvas is
+titled after its first turn, and a deploy can change a prompt template between a
+failure and its Retry. A difference in content or provenance is logged as
+`activation_input_replay_drifted` (`source_kind`, `differs`), never refused. The
 boundary runs even when the activation has no model-only input, and it resolves before assistant reservation
 or provider I/O; persistence or fence failure therefore stops inference. A
 resumed loop never replaces its durable history from a freshly assembled
@@ -1215,6 +1221,13 @@ and input audio admits only the `wav` and `mp3` formats the OpenRouter SDK
 contract supports. This keeps an SDK union or return-shape change visible to the
 compiler instead of letting it emerge later in a provider request.
 
+A failed attempt is recorded with the disposition the executor actually
+applied, from the same `attemptDisposition` in `@juno-ai/bind/routing`, and
+with whether output had streamed: `producedOutput` in the `inference_attempts`
+routing decision and the lakehouse row's `metadata`, `produced_output` on
+`agent_inference_attempt_failed`. An attempt that streamed before failing is
+never recorded as `retry` or `fallback`.
+
 ### Streaming stability
 
 SSE comments are ignored. Azure's Chat function-call fragments are combined by index, and OpenRouter's Responses argument deltas by output index, with the `done` event's arguments taken as final. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the AgentLoopDO event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
@@ -1474,7 +1487,12 @@ participants remain deferred product work.
   never the provider's. So is OpenRouter's 404 when its routing funnel names an
   input filter (`failed_routing_step` of `Filter by Image Support`, `File` or
   `Audio`): `model_input_unsupported`, kind `context`, because the model
-  cannot read an input the request carries. The invariant above is about *who owns* a failure; this
+  cannot read an input the request carries. And so is OpenRouter's 400 whose
+  `error.message` is exactly `<model id> is not a valid model ID`, once every
+  candidate including the fallback models refused: `model_not_found`, kind
+  `routing`, because a configured or pinned model no longer exists. It has no
+  machine code, so it is the one rejection read from prose, matched as the whole
+  parsed message and never as a substring of the body. The invariant above is about *who owns* a failure; this
   one is about *what it was*, and answering the first by discarding the second
   is how a run that crossed a known token limit reached a member as "Rally
   could not complete this run. Retrying is unlikely to help."
@@ -1881,6 +1899,42 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-13 — A replay keeps its admitted input, an attempt records the clamp it got, and an unknown model is named
+
+**What changed:** A replayed activation input keeps the copy first admitted
+whatever it renders now; a difference is logged as
+`activation_input_replay_drifted` instead of failing the run with
+`bind_activation_input_replay_mismatch`. A failed attempt now records the
+disposition after the `producedOutput` clamp, and whether output had streamed.
+A run whose every model id the provider rejects fails as `model_not_found`
+instead of `harness_execution_failed`.
+
+**Why:** Every Retry of a new Canvas's failed run failed with
+`bind_activation_input_replay_mismatch`: the context admitted with the title
+"Untitled Canvas" re-rendered as the generated title under the same ID. The
+same run's last attempt was logged and stored as `fallback` though the
+executor, having streamed text, ended the turn instead; that read as a broken
+fallback chain. A model id OpenRouter does not know reached a member as "Rally
+could not complete this run. Retrying is unlikely to help", though the 400
+named the model.
+
+**Considered and rejected:** Putting a Canvas revision in the context's
+`sourceRevision`, which admits a second context message on every replay after
+any publish or rename. Exempting only the two Canvas context kinds, which left
+every other kind one prompt-template deploy away from the same dead end: the
+check could only ever fail a run that keeping the admitted copy would finish.
+
+**Trade-off accepted:** a retried run works from the title and artifact list
+it was first given. An artifact published between the failure and the Retry is
+missing from that list, so the run may publish a duplicate instead of a new
+version of it.
+
+**What a future change has to respect:** Replay must not fail a run; report
+drift instead. A rise in `activation_input_replay_drifted` for a kind that
+should be stable points at an id collision upstream. The executor and the
+attempt record share `attemptDisposition`; neither may compute the disposition
+on its own.
 
 ### 2026-11-12 — A failed port is logged with what it threw
 

@@ -304,7 +304,10 @@ export function captureStreamingInferenceAttempt(
     ...(attempt.responseBytes !== undefined ? { response_bytes: attempt.responseBytes } : {}),
     ...(attempt.response ? { response: { ...attempt.response } } : {}),
     ...(attempt.providerError ? { error: { providerError: attempt.providerError } } : {}),
-    metadata: { cursor: attempt.cursor },
+    metadata: {
+      cursor: attempt.cursor,
+      ...(attempt.producedOutput === undefined ? {} : { producedOutput: attempt.producedOutput }),
+    },
   });
 }
 
