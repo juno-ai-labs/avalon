@@ -91,3 +91,14 @@ it("opens a push link at the message it names, in a new tab and in place", () =>
   expect(shellLocation(path, "", "?utm_source=mail")).toBe(`/app/workspaces/global/${workspaceId}#/canvases/${canvasId}`);
   expect(shellLocation(path, "", `?turn=${turnId}&sequence=0`)).toBe(`/app/workspaces/global/${workspaceId}#/canvases/${canvasId}`);
 });
+
+it('keeps mobile host parameters while rewriting canonical artifact and message links', () => {
+  const canvas = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const artifact = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const path = `/app/global/${uuidToBase58(metadata.workspace!.id)}/cv/${uuidToBase58(canvas)}`;
+  const host = '?mobile=1&mobilePreviewOrigin=https%3A%2F%2Fpreview.example.test';
+  const root = `/app/workspaces/global/${metadata.workspace!.id}${host}`;
+  expect(shellLocation(`${path}/a/${uuidToBase58(artifact)}`, '', host)).toBe(`${root}#/canvases/${canvas}?artifact=${artifact}`);
+  expect(shellLocation(path, '', `${host}&turn=${artifact}&sequence=12`)).toBe(`${root}#/canvases/${canvas}?turn=${artifact}&sequence=12`);
+  expect(shellLocation(`/app/workspaces/global/${metadata.workspace!.id}`, '', host)).toBe(`${root}#/`);
+});

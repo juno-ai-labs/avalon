@@ -144,7 +144,7 @@ The initial card offers **Sign in with password**, using the same form as the
 Mac app. Email and password go to Global's `/browser/password`; the ordinary
 cookie session is adopted through the same return-destination and Organization
 picker flow as email redemption. Password writes share the browser cookie lock
-with renewal and logout. Operators provision credentials through engineering MCP;
+with renewal, mobile exchange and logout. Operators provision credentials through engineering MCP;
 there is no public signup or reset form. [Password sign-in](password-login.md)
 owns the credential lifecycle.
 
@@ -474,7 +474,7 @@ authority for that one decision
 
 ### Browser host lifecycle and content boundaries
 
-Chrome cookie-changing requests (renewal, email redemption and logout) use one
+Chrome cookie-changing requests (renewal, email redemption, password sign-in, mobile exchange and logout) use one
 regional Web Lock across same-origin tabs. This orders actual `Set-Cookie`
 responses; React generation checks alone cannot order browser cookie writes.
 Ordinary product requests and sockets never enter that lock. A renewal requested

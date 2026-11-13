@@ -1,3 +1,5 @@
+import { IdSchema } from '@rally/contracts';
+
 const LAST_WORKSPACE = 'rally-mobile:last-workspace';
 type StoragePort = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export function mobileStorage(): StoragePort | null {
@@ -23,4 +25,12 @@ export function restoreMobileWorkspace(storage: StoragePort | null, userId: stri
 /** A stale empty result must not send View canvas straight back into chat. */
 export function canvasNeedsConversation(state: { active: boolean; loaded: boolean; fetching: boolean; failed: boolean; artifactCount: number }): boolean {
   return state.active && state.loaded && !state.fetching && !state.failed && state.artifactCount === 0;
+}
+
+/** Embedded conversations receive explicit turn requests instead of reading the host route. */
+export function mobileTurnTarget(search: string): { turnId: string; nonce: number } | null {
+  const params = new URLSearchParams(search);
+  const turn = IdSchema.safeParse(params.get('turn'));
+  const sequence = Number(params.get('sequence'));
+  return turn.success && Number.isSafeInteger(sequence) && sequence > 0 ? { turnId: turn.data, nonce: sequence } : null;
 }
