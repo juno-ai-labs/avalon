@@ -352,6 +352,22 @@ describe('telemetry HTTP bounds', () => {
       AVALON_REGION: 'global', APP_ENV: 'development', RALLY_DEV_AUTH: 'true',
       LOG_LEVEL: 'error', DB: sqliteD1(database),
     });
+    const invalidCrash = new FormData();
+    invalidCrash.set('metadata', JSON.stringify({
+      uploadId: '018f22f2-4c22-7abc-8def-0123456789b1', installationId: '018f22f2-4c22-7abc-8def-0123456789b2',
+      launchId: '018f22f2-4c22-7abc-8def-0123456789b3', route: 'global', release: '1', buildId: 'ios-1',
+      platform: 'darwin', architecture: 'arm64', processRole: 'renderer', channel: 'stable', format: 'mobile-json',
+      owner: { userId: '00000000-0000-7000-8000-0000000000d1', workspaceId: '00000000-0000-7000-8000-0000000000d2', route: 'global' },
+    }));
+    invalidCrash.set('dump', new Blob([JSON.stringify({ kind: 'hermes', report: 'Private', updateId: null, fatal: 'private-value' })]), 'crash.json');
+    const invalidCrashResponse = await authenticatedApp().request('/telemetry/crashes', {
+      method: 'POST', body: invalidCrash, headers: {
+        'x-rally-dev-user-id': '00000000-0000-7000-8000-0000000000d1',
+        'x-rally-dev-workspace-id': '00000000-0000-7000-8000-0000000000d2',
+      },
+    }, environment);
+    expect(invalidCrashResponse.status).toBe(400);
+    await expect(invalidCrashResponse.json()).resolves.toMatchObject({ error: { code: 'crash_dump_invalid:fatal:invalid_type' } });
     const body = JSON.stringify({ events: [{
       schema: 'ai.rallywith.telemetry.event', schemaVersion: 1,
       eventId: '018f22f2-4c22-7abc-8def-0123456789af',

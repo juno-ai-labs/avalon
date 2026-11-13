@@ -1,3 +1,6 @@
+import { notificationTarget } from '../../mobile/src/notification-target';
+import { canvasCanonicalUrl, parseLinkTarget } from '@rally/contracts/links';
+import { inPlaceHash, shellLocation } from '../src/session';
 import { describe, expect, it } from 'vitest';
 import { canvasNeedsConversation, forgetMobileWorkspace, mobileTurnTarget, rememberMobileWorkspace, restoreMobileWorkspace } from '../src/mobile-session';
 
@@ -52,4 +55,20 @@ describe('artifact-first navigation', () => {
     expect(canvasNeedsConversation({ ...empty, fetching: true })).toBe(false);
     expect(canvasNeedsConversation({ ...empty, active: false })).toBe(false);
   });
+});
+
+it.each(['canvas', 'message', 'artifact'])('carries a native %s notification through browser validation and routing', (kind) => {
+  const workspaceId = '00000000-0000-4000-8000-000000000001';
+  const canvasId = '00000000-0000-4000-8000-000000000002';
+  const detailId = '00000000-0000-4000-8000-000000000003';
+  const url = canvasCanonicalUrl('https://rallywith.ai', { region: 'global', workspaceId, canvasId,
+    ...(kind === 'message' ? { turnId: detailId, sequence: 7 } : kind === 'artifact' ? { artifactId: detailId } : {}),
+  });
+  const app = 'https://app.rallywith.ai';
+  const target = notificationTarget({ rally: { v: 1, kind: 'mention', region: 'global', workspaceId, url } }, app);
+  expect(parseLinkTarget(target!.url, { webBaseUrl: app })).toMatchObject({ kind: 'canvas', canvasId });
+  const expectedHash = `#/canvases/${canvasId}${kind === 'message' ? `?turn=${detailId}&sequence=7` : kind === 'artifact' ? `?artifact=${detailId}` : ''}`;
+  expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, target!.url)).toBe(expectedHash);
+  const opened = new URL(target!.url); opened.searchParams.set('mobile', '1');
+  expect(shellLocation(opened.pathname, '', opened.search)).toBe(`/app/workspaces/global/${workspaceId}?mobile=1${expectedHash}`);
 });

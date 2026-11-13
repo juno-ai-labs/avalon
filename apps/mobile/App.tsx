@@ -1,13 +1,23 @@
+import { useCrashReporting } from './src/crashes';
+import { RecoveryBoundary } from './src/RecoveryBoundary';
+import { DiagnosticsScreen } from './src/DiagnosticsScreen';
+import { registerBackgroundSync } from './src/background';
+import { useNotifications } from './src/notifications';
+import { notificationTarget } from './src/notification-target';
+import { shareDiagnostics } from './src/diagnostics';
+import * as Notifications from 'expo-notifications';
+import { useNetworkState } from 'expo-network';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, type KeyboardEvent, type ImageSourcePropType } from 'react-native';
-import { NavigationContainer, DefaultTheme, DarkTheme, useIsFocused, type ParamListBase } from '@react-navigation/native';
+import { ActivityIndicator, Alert, AppState, Linking, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, type KeyboardEvent, type ImageSourcePropType } from 'react-native';
+import { NavigationContainer, StackActions, createNavigationContainerRef, DefaultTheme, DarkTheme, useIsFocused, type ParamListBase } from '@react-navigation/native';
 import { createNativeBottomTabNavigator, type NativeBottomTabScreenProps } from '@bottom-tabs/react-navigation';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SafeAreaView } from 'react-native-screens/experimental';
 import { Menu, MessageCircle, X } from 'lucide-react-native';
-import { StatusBar } from 'expo-status-bar';
+import { StatusBar, useVerticalBarEdgeIOS } from 'expo-status-bar';
+import { useBottomTabBarHeight } from 'react-native-bottom-tabs';
 import { systemSignIn } from './src/auth';
 import { CanvasWebView, ArtifactView, type CanvasWebViewHandle } from './src/CanvasWebView';
 import { NativeTabIcon } from './src/NativeTabIcon';
@@ -20,8 +30,9 @@ const APP_URL = process.env.EXPO_PUBLIC_RALLY_APP_URL || 'https://app.rallywith.
 const ARTIFACT_DOMAIN = process.env.EXPO_PUBLIC_RALLY_ARTIFACT_DOMAIN || 'rallyusercontent.com';
 const START_URL = mobileUrl(APP_URL);
 const Tabs = createNativeBottomTabNavigator();
-type RootRoutes = { Canvases: undefined; Conversation: { id: string; workspacePath: string; title: string } };
+type RootRoutes = { Canvases: { screen: 'Home' } | undefined; Diagnostics: undefined; Conversation: { id: string; workspacePath: string; title: string } };
 const Stack = createNativeStackNavigator<RootRoutes>();
+const rootNavigation = createNavigationContainerRef<RootRoutes>();
 
 type Session = {
   directory: MobileSnapshot | null;
@@ -30,6 +41,9 @@ type Session = {
   signIn: (web: CanvasWebViewHandle | null) => Promise<void>;
   signOut: () => void;
   authEpoch: number;
+  notifications: ReturnType<typeof useNotifications>;
+  receiveCrashEvent: (event: MobileEvent) => void;
+  notificationOpened: (url: string) => void;
 };
 const SessionContext = createContext<Session | null>(null);
 const CanvasRoutesContext = createContext<Record<string, string | null>>({});
@@ -39,21 +53,47 @@ function useSession() {
   return session;
 }
 
-export default function App() {
+export default function App() { return <RecoveryBoundary><AppContent /></RecoveryBoundary>; }
+
+function AppContent() {
   const { colors, isDark } = useTheme();
   const [directory, updateDirectory] = useState<MobileSnapshot | null>(null);
   const controls = useRef(new Map<string, CanvasWebViewHandle>());
+  const [pendingNotification, setPendingNotification] = useState<string | null>(null);
+  const pendingNotificationRef = useRef(pendingNotification);
+  pendingNotificationRef.current = pendingNotification;
+  const sendHome = useCallback((command: MobileCommand) => controls.current.get('Home')?.send(command), []);
+  const openNotification = useCallback((data: unknown) => {
+    const target = notificationTarget(data, APP_URL);
+    if (!target) { void Notifications.clearLastNotificationResponseAsync().catch(() => undefined); return; }
+    if (target.external) { void Linking.openURL(target.url).catch(() => Alert.alert('Unable to open notification', 'Try opening Rally in your browser.')); void Notifications.clearLastNotificationResponseAsync().catch(() => undefined); }
+    else setPendingNotification(target.url);
+  }, []);
+  const notificationOpened = useCallback((url: string) => {
+    if (pendingNotificationRef.current !== url) return;
+    setPendingNotification(null);
+    void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+  }, []);
+  const notifications = useNotifications(directory, sendHome, openNotification);
+  const receiveCrashEvent = useCrashReporting(directory, sendHome);
+  useEffect(() => { void registerBackgroundSync(); }, []);
+  useEffect(() => {
+    if (!pendingNotification || !directory || !rootNavigation.isReady()) return;
+    rootNavigation.dispatch(StackActions.popTo('Canvases', { screen: 'Home' }));
+    sendHome({ type: 'open-notification', url: pendingNotification });
+  }, [Boolean(directory), pendingNotification, sendHome]);
   const signingIn = useRef(false);
   const [authEpoch, setAuthEpoch] = useState(0);
   const signIn = useCallback(async (web: CanvasWebViewHandle | null) => {
     if (signingIn.current) return;
     signingIn.current = true;
+    receiveCrashEvent({ type: 'signed-out' });
     try {
       const proof = await systemSignIn(APP_URL);
       if (proof) web?.send({ type: 'sign-in-complete', proof });
     } catch { Alert.alert('Sign-in couldn’t finish', 'Please try again.'); }
     finally { signingIn.current = false; setAuthEpoch((value) => value + 1); }
-  }, []);
+  }, [receiveCrashEvent]);
   const signOut = useCallback(() => {
     updateDirectory(null);
     controls.current.get('Home')?.reload();
@@ -61,9 +101,10 @@ export default function App() {
   const theme = isDark ? DarkTheme : DefaultTheme;
   return <SafeAreaProvider>
     <StatusBar style={isDark ? 'light' : 'dark'} />
-    <SessionContext value={{ directory, updateDirectory, controls, signIn, signOut, authEpoch }}>
-      <NavigationContainer theme={{ ...theme, colors: { ...theme.colors, background: colors.background, card: colors.surface, text: colors.text, primary: colors.accent, border: colors.line } }}>
-        <Stack.Navigator>
+    <SessionContext value={{ directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent }}>
+      <NavigationContainer ref={rootNavigation} theme={{ ...theme, colors: { ...theme.colors, background: colors.background, card: colors.surface, text: colors.text, primary: colors.accent, border: colors.line } }}>
+        <Stack.Navigator initialRouteName="Canvases">
+          <Stack.Screen name="Diagnostics" options={{ title: 'Settings and diagnostics' }}>{() => <DiagnosticsScreen notifications={notifications} signedIn={Boolean(directory)} />}</Stack.Screen>
           <Stack.Screen name="Canvases" component={CanvasTabs} options={{ headerTitle: '', headerTransparent: true, headerShadowVisible: false, headerTintColor: colors.text }} />
           <Stack.Screen name="Conversation" component={Conversation} options={{ presentation: Platform.OS === 'ios' ? 'formSheet' : 'card', title: 'Conversation', sheetGrabberVisible: true }} />
         </Stack.Navigator>
@@ -145,14 +186,21 @@ function HeaderButton({ kind, label, onPress }: { kind: 'menu' | 'chat' | 'close
 }
 
 function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string }) {
-  const { directory, updateDirectory, controls, signIn, signOut } = useSession();
+  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent } = useSession();
   const { colors } = useTheme();
   const canvasId = assignedCanvasId ?? route.name;
   const routeCanvases = useContext(CanvasRoutesContext);
   const tabs = navigation;
   const home = canvasId === 'Home';
   const focused = useIsFocused();
+  const network = useNetworkState();
   const headerHeight = useHeaderHeight();
+  const tabBarHeight = useBottomTabBarHeight();
+  const verticalBarEdge = useVerticalBarEdgeIOS();
+  // Callstack tab scenes extend behind the iPhone bar. Reserve its measured
+  // height, including the home indicator, once. Duo rails use native side insets.
+  const bottomTabInset = Platform.OS === 'ios' && !Platform.isPad && !Platform.isTV
+    && verticalBarEdge === null && directory ? tabBarHeight : 0;
   const web = useRef<CanvasWebViewHandle>(null);
   const [url] = useState(() => {
     if (home || !directory) return START_URL;
@@ -185,10 +233,14 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
       web.current?.send(command);
       return;
     }
+    if (command.type === 'sign-out' || command.type === 'switch-workspace') receiveCrashEvent({ type: 'signed-out' });
     if (command.type === 'home' || command.type === 'create' || command.type === 'switch-workspace' || command.type === 'sign-out') tabs?.navigate('Home');
     controls.current.get('Home')?.send(command);
-  }, [controls, tabs, open]);
+  }, [controls, tabs, open, receiveCrashEvent]);
   const receive = useCallback((event: MobileEvent) => {
+    if (event.type === 'notification-opened') { notificationOpened(event.url); return; }
+    notifications.receive(event);
+    if (home) receiveCrashEvent(event);
     if (event.type === 'sign-in') {
       if (home) void signIn(web.current);
       else { tabs?.navigate('Home'); signOut(); }
@@ -219,17 +271,18 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
       setArtifacts({}); setSnapshot(null); setSidebar(false);
       if (home) updateDirectory(null); else signOut();
     }
-  }, [focused, home, tabs, open, canvasId, signIn, signOut, updateDirectory]);
+  }, [focused, home, tabs, open, canvasId, signIn, signOut, updateDirectory, notifications.receive, notificationOpened, receiveCrashEvent]);
   useEffect(() => {
     const registry = controls.current;
-    if (web.current) registry.set(canvasId, web.current);
-    return () => { registry.delete(canvasId); };
+    const handle = web.current;
+    if (handle) registry.set(canvasId, handle);
+    return () => { if (registry.get(canvasId) === handle) registry.delete(canvasId); };
   }, [controls, canvasId]);
   useEffect(() => {
-    if (focused && ready) web.current?.send({ type: 'refresh' });
+    if (focused && ready && network.isConnected) web.current?.send({ type: 'refresh' });
     const listener = AppState.addEventListener('change', (state) => { if (state === 'active' && focused && ready) web.current?.send({ type: 'refresh' }); });
     return () => listener.remove();
-  }, [focused, ready]);
+  }, [focused, ready, network.isConnected]);
   useEffect(() => {
     if (!focused) return;
     const chat = snapshot?.view === 'artifact' && snapshot.canvasId ? () => tabs.getParent()?.navigate('Conversation', { id: snapshot.canvasId, workspacePath: snapshot.workspacePath, title: snapshot.title }) : undefined;
@@ -244,8 +297,8 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
   const hosted = snapshot?.view === 'artifact' && artifacts[snapshot.canvasId ?? '']?.resourceId === snapshot.artifactId;
   // Native safe areas follow the system rail (including its side in Split View).
   // Content extends behind the transparent header; the initial inset scrolls away.
-  return <SafeAreaView edges={{ left: true, right: true, bottom: true }} style={{ backgroundColor: colors.background }}>
-    <KeyboardAvoidingView enabled={keyboardVisible} style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+  return <SafeAreaView edges={{ left: true, right: true, bottom: bottomTabInset === 0 }} style={{ backgroundColor: colors.background }}>
+    <KeyboardAvoidingView enabled={keyboardVisible} style={[styles.fill, { marginBottom: bottomTabInset }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View collapsable={false} style={styles.fill} accessibilityElementsHidden={hosted || !focused} importantForAccessibility={hosted || !focused ? 'no-hide-descendants' : 'auto'}>
         <CanvasWebView ref={web} url={url} appUrl={APP_URL} background={colors.background} topInset={headerHeight + 12} onEvent={receive}
           onLoading={() => {
@@ -262,7 +315,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
       })}
       {(!ready || failed) && <Loading failed={failed} retry={() => { setFailed(false); web.current?.reload(); }} />}
     </KeyboardAvoidingView>
-    {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, ...snapshot, ...{ canvases: directory.canvases, pins: directory.pins, pinBusy: directory.pinBusy, pinError: directory.pinError }, tabId: home ? null : canvasId }} close={() => setSidebar(false)} send={send} />}
+    {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, ...snapshot, ...{ canvases: directory.canvases, pins: directory.pins, pinBusy: directory.pinBusy, pinError: directory.pinError }, tabId: home ? null : canvasId }} close={() => setSidebar(false)} send={send} diagnostics={() => rootNavigation.navigate('Diagnostics')} />}
   </SafeAreaView>;
 }
 
@@ -295,7 +348,7 @@ function Conversation({ route, navigation }: NativeStackScreenProps<RootRoutes, 
 function Loading({ failed, retry }: { failed: boolean; retry: () => void }) {
   const { colors } = useTheme();
   return <View style={[StyleSheet.absoluteFill, styles.loading, { backgroundColor: colors.background }]}>
-    {failed ? <><Text style={{ color: colors.text }}>Rally couldn’t load. Check your connection.</Text><Pressable accessibilityRole="button" onPress={retry} style={{ padding: 20 }}><Text style={{ color: colors.text }}>Try again</Text></Pressable></> : <ActivityIndicator accessibilityLabel="Opening Rally" color={colors.accent} />}
+    {failed ? <><Text style={{ color: colors.text }}>Rally couldn’t load. Check your connection.</Text><Pressable accessibilityRole="button" onPress={retry} style={{ padding: 20 }}><Text style={{ color: colors.text }}>Try again</Text></Pressable><Pressable accessibilityRole="button" onPress={() => { void shareDiagnostics().catch(() => undefined); }} style={{ padding: 16 }}><Text style={{ color: colors.text }}>Share diagnostics</Text></Pressable></> : <ActivityIndicator accessibilityLabel="Opening Rally" color={colors.accent} />}
   </View>;
 }
 const styles = StyleSheet.create({ fill: { flex: 1 }, loading: { alignItems: 'center', justifyContent: 'center', padding: 24 } });

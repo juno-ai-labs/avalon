@@ -9,7 +9,7 @@ export interface PushDevice {
 export async function registerPushDevice(env: Env, auth: AuthContext, installationId: string, input: RegisterPushDeviceRequest): Promise<void> {
   const db = workspaceRegionalDatabase(env);
   const now = new Date().toISOString();
-  // An APNs token is hex, compared case-insensitively; a Web Push endpoint is a URL.
+  // APNs hex is case-insensitive; Web Push URLs are not.
   const token = input.transport === "apns" ? input.token.toLowerCase() : input.endpoint;
   const apnsEnvironment = input.transport === "apns" ? input.apnsEnvironment : "none";
   const topic = input.transport === "apns" ? input.topic : "web";
@@ -28,6 +28,13 @@ export async function registerPushDevice(env: Env, auth: AuthContext, installati
       disabled_at = NULL, disabled_reason = NULL`)
       .bind(crypto.randomUUID(), auth.userId, installationId, input.platform, input.transport,
         topic, apnsEnvironment, token, input.appVersion, now, keys?.p256dh ?? null, keys?.auth ?? null),
+    // A phone has one browser session. Old bindings must not keep push live
+    // after that session signs out (SecureStore can survive reinstallation).
+    ...(input.platform === "ios" ? [
+      db.prepare(`DELETE FROM user_push_device_sessions WHERE device_id IN
+        (SELECT id FROM user_push_devices WHERE user_id = ? AND installation_id = ? AND transport = ?)`)
+        .bind(auth.userId, installationId, input.transport),
+    ] : []),
     db.prepare(`INSERT OR IGNORE INTO user_push_device_sessions (device_id, session_id)
       SELECT id, ? FROM user_push_devices WHERE user_id = ? AND installation_id = ? AND transport = ?`)
       .bind(auth.sessionId, auth.userId, installationId, input.transport),

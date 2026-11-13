@@ -1,5 +1,8 @@
+import { z } from 'zod';
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import type { Region } from "@rally/contracts/regions";
 import type { Env } from '../env';
+import { mobileCrashSummary } from './mobile-crash';
 import {
   durableObjectStubForRegionalSingleton,
 } from '../lib/durable-object-namespace';
@@ -28,6 +31,8 @@ export interface CrashProcessingSummary {
   processed: number;
   failed: number;
 }
+
+import { MAX_CRASH_THREADS, MAX_CRASH_FRAMES } from '@rally/contracts/crash-reports';
 
 const MAX_SYMBOL_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_SYMBOLICATION_RPC_BYTES = 84 * 1024 * 1024;
@@ -64,6 +69,20 @@ export async function processPendingCrashReports(env: Env): Promise<CrashProcess
       const dump = await env.TELEMETRY_PAYLOADS.get(row.object_key);
       if (!dump) {
         await saveResult(env, row, 'malformed', { status: 'malformed', reason: 'dump_missing' });
+        summary.processed += 1;
+        continue;
+      }
+      if (row.object_key.endsWith('.mobile.json')) {
+        let report: unknown;
+        let malformed: string | null = null;
+        try { report = mobileCrashSummary(await dump.json()); }
+        catch (error) {
+          if (error instanceof z.ZodError) malformed = zodDiagnosticCode(error, 'crash_dump');
+          else if (error instanceof SyntaxError) malformed = 'crash_dump_malformed';
+          else throw error;
+        }
+        await saveResult(env, row, malformed ? 'malformed' : 'unsymbolicated',
+          malformed ? { status: 'malformed', reason: malformed } : report);
         summary.processed += 1;
         continue;
       }
@@ -160,7 +179,7 @@ interface NormalizedCrashReport {
   status: 'symbolicated' | 'unsymbolicated' | 'malformed';
   crash_type: string;
   mechanism: string;
-  handled: false;
+  handled: boolean;
   process_role: 'main' | 'renderer' | 'utility' | 'gpu' | 'unknown';
   threads: NormalizedCrashThread[];
   reason?: string;
@@ -183,11 +202,11 @@ function normalizeCrashReport(
   const processRole = PROCESS_ROLES.has(processRoleCandidate)
     ? processRoleCandidate as NormalizedCrashReport['process_role']
     : fallbackProcessRole;
-  const rawThreads = Array.isArray(root?.['threads']) ? root['threads'].slice(0, 64) : [];
+  const rawThreads = Array.isArray(root?.['threads']) ? root['threads'].slice(0, MAX_CRASH_THREADS) : [];
   const threads = rawThreads.flatMap((thread, threadIndex): NormalizedCrashThread[] => {
     const source = record(thread);
     if (!source) return [];
-    const rawFrames = Array.isArray(source['frames']) ? source['frames'].slice(0, 256) : [];
+    const rawFrames = Array.isArray(source['frames']) ? source['frames'].slice(0, MAX_CRASH_FRAMES) : [];
     const frames = rawFrames.flatMap((frame): NormalizedCrashFrame[] => {
       const candidate = record(frame);
       if (!candidate) return [];
@@ -214,7 +233,7 @@ function normalizeCrashReport(
     status: parserState,
     crash_type: crashType,
     mechanism,
-    handled: false,
+    handled: root?.['handled'] === true,
     process_role: processRole,
     threads,
     ...(reason ? { reason } : {}),
@@ -234,7 +253,7 @@ function safeBasename(value: unknown, fallback: string): string {
 
 function safeToken(value: unknown, fallback: string): string {
   if (typeof value !== 'string' || value.length === 0) return fallback;
-  const bounded = value.slice(0, 256).replace(/[^a-zA-Z0-9_.$+<>@ -]/gu, '_').trim();
+  const bounded = value.slice(0, MAX_CRASH_FRAMES).replace(/[^a-zA-Z0-9_.$+<>@ -]/gu, '_').trim();
   return bounded || fallback;
 }
 

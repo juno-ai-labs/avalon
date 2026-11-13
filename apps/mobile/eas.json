@@ -1,18 +1,13 @@
 {
   "cli": {
-    "appVersionSource": "local"
+    "appVersionSource": "remote"
   },
   "build": {
     "preview": {
-      "developmentClient": false,
+      "extends": "production",
       "distribution": "internal",
-      "environment": "preview",
-      "pnpm": "11.13.0",
-      "env": {
-        "EXPO_PUBLIC_RALLY_APP_URL": "https://app.rallywith.ai"
-      },
-      "ios": {
-        "image": "sdk-58"
+      "android": {
+        "buildType": "apk"
       }
     },
     "simulator": {
@@ -28,6 +23,34 @@
         "buildType": "apk",
         "image": "sdk-58"
       }
+    },
+    "production": {
+      "developmentClient": false,
+      "distribution": "store",
+      "environment": "production",
+      "channel": "production",
+      "autoIncrement": true,
+      "pnpm": "11.13.0",
+      "ios": {
+        "image": "sdk-58",
+        "buildArtifactPaths": [
+          "ios/build/*.dSYM.zip"
+        ]
+      },
+      "android": {
+        "image": "sdk-58"
+      }
+    },
+    "simulator-release": {
+      "extends": "production",
+      "distribution": "internal",
+      "autoIncrement": false,
+      "ios": {
+        "simulator": true
+      }
     }
+  },
+  "submit": {
+    "production": {}
   }
 }

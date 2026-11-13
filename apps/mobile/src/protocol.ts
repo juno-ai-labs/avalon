@@ -1,5 +1,8 @@
+import { RegisterPushDeviceRequestSchema } from '@rally/contracts/push-notifications';
 import { MobileAuthExchangeSchema } from '@rally/contracts';
+import { MobileCrashReportSchema, MobileCrashScopeSchema } from '@rally/contracts/crash-reports';
 import { z } from 'zod';
+import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 
 // Presentation capacity, from the approved Home + four tabs design. This is not
 // a server pin limit: pins made on desktop remain in the sidebar in full.
@@ -59,6 +62,10 @@ export function trustedArtifact(access: NativeArtifact, domain: string): boolean
 
 export const MobileEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
+  z.object({ type: z.literal('crash-permission'), requestId: z.string().uuid(), scope: MobileCrashScopeSchema, enabled: z.boolean() }),
+  z.object({ type: z.literal('crash-uploaded'), scope: MobileCrashScopeSchema, uploadId: z.string().uuid(), ok: z.boolean() }),
+  z.object({ type: z.literal('notification-opened'), url: HttpUrlSchema }),
+  z.object({ type: z.literal('push-device-result'), requestId: z.string().uuid(), userId: z.string(), workspaceId: z.string(), ok: z.boolean(), enabled: z.boolean() }),
   z.object({ type: z.literal('sign-in') }),
   z.object({ type: z.literal('artifact'), artifact: NativeArtifactSchema }),
   z.object({ type: z.literal('artifact-unavailable'), canvasId: z.string(), resourceId: z.string() }),
@@ -70,6 +77,10 @@ export type MobileEvent = z.infer<typeof MobileEventSchema>;
 
 export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('home') }),
+  z.object({ type: z.literal('crash-status'), requestId: z.string().uuid() }),
+  z.object({ type: z.literal('crash-upload'), report: MobileCrashReportSchema }),
+  z.object({ type: z.literal('push-device'), requestId: z.string().uuid(), userId: z.string(), workspaceId: z.string(), installationId: z.string().uuid(), registration: RegisterPushDeviceRequestSchema.nullable() }),
+  z.object({ type: z.literal('open-notification'), url: HttpUrlSchema }),
   z.object({ type: z.literal('sign-in-complete'), proof: MobileAuthExchangeSchema }),
   z.object({ type: z.literal('create') }),
   z.object({ type: z.literal('open'), id: z.string().min(1), pinned: z.boolean() }),

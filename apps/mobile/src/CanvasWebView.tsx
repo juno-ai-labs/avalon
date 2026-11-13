@@ -1,3 +1,4 @@
+import { recordFailure } from './diagnostics';
 import { artifactInsetScript } from './layout';
 import { useTheme } from './theme';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
@@ -38,6 +39,7 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
     allowsInlineMediaPlayback
     contentInsetAdjustmentBehavior="never"
     automaticallyAdjustContentInsets={false}
+    removeIosKeyboardObserver
     injectedJavaScriptBeforeContentLoaded={`window.__RALLY_MOBILE_BRIDGE_TOKEN__=${JSON.stringify(token.current)}; true;`}
     injectedJavaScriptBeforeContentLoadedForMainFrameOnly
     onLoadStart={(event) => {
@@ -48,10 +50,10 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
       if (!sameDocument) props.onLoading();
     }}
     onLoadEnd={() => web.current?.injectJavaScript(`window.__RALLY_MOBILE_BRIDGE_TOKEN__=${JSON.stringify(token.current)}; document.documentElement.style.setProperty("--mobile-top-inset", "${props.topInset ?? 0}px"); window.dispatchEvent(new Event("rally:mobile-ready")); true;`)}
-    onError={props.onError}
-    onHttpError={(event) => { if (event.nativeEvent.statusCode >= 400 && isAppUrl(event.nativeEvent.url, props.appUrl)) props.onError(); }}
-    onContentProcessDidTerminate={() => web.current?.reload()}
-    onRenderProcessGone={() => web.current?.reload()}
+    onError={() => { recordFailure('webview_load_failed'); props.onError(); }}
+    onHttpError={(event) => { if (event.nativeEvent.statusCode >= 400 && isAppUrl(event.nativeEvent.url, props.appUrl)) { recordFailure('webview_load_failed'); props.onError(); } }}
+    onContentProcessDidTerminate={() => { recordFailure('webview_process_terminated'); web.current?.reload(); }}
+    onRenderProcessGone={() => { recordFailure('webview_process_terminated'); web.current?.reload(); }}
     onMessage={(event) => {
       const message = parseMobileEvent(event.nativeEvent.data, event.nativeEvent.url, props.appUrl, token.current);
       if (message) props.onEvent(message);
@@ -89,10 +91,11 @@ export function ArtifactView({ access, background, topInset, onRetry }: { access
     <WebView<unknown> ref={web} source={{ uri: access.openUrl }} style={styles.web}
       sharedCookiesEnabled thirdPartyCookiesEnabled={false} javaScriptCanOpenWindowsAutomatically={false} setSupportMultipleWindows
       contentInsetAdjustmentBehavior="never" automaticallyAdjustContentInsets={false}
+      removeIosKeyboardObserver
       onLoadStart={() => { setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); setLoading(false); }}
-      onError={() => { setFailed(true); setLoading(false); }}
-      onHttpError={(event) => { if (event.nativeEvent.statusCode >= 400 && [access.openUrl, access.canonicalUrl, new URL('/redeem', access.canonicalUrl).href].includes(event.nativeEvent.url)) setFailed(true); }}
-      onContentProcessDidTerminate={() => web.current?.reload()} onRenderProcessGone={() => web.current?.reload()}
+      onError={() => { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }}
+      onHttpError={(event) => { if (event.nativeEvent.statusCode >= 400 && [access.openUrl, access.canonicalUrl, new URL('/redeem', access.canonicalUrl).href].includes(event.nativeEvent.url)) { recordFailure('artifact_load_failed'); setFailed(true); } }}
+      onContentProcessDidTerminate={() => { recordFailure('artifact_process_terminated'); setFailed(true); setLoading(false); onRetry(); }} onRenderProcessGone={() => { recordFailure('artifact_process_terminated'); setFailed(true); setLoading(false); onRetry(); }}
       onOpenWindow={(event) => {
         try {
           const url = new URL(event.nativeEvent.targetUrl);

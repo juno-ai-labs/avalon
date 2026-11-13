@@ -7,7 +7,7 @@ import { HttpsUrlSchema } from "./url-schemas";
 export { PUSH_BODY_PREVIEW_CHARACTERS } from "./notification-text";
 export const APNS_TOPICS = {
   macos: "ai.rallywith.desktop",
-  ios: "ai.rallywith.ios",
+  ios: "ai.rallywith.mobile",
 } as const;
 const token = z.string().regex(/^[0-9a-f]+$/i);
 
@@ -55,7 +55,6 @@ export const RegisterPushDeviceRequestSchema = z.discriminatedUnion("platform", 
     token,
     appVersion,
   }),
-  // A browser's Web Push subscription, as `PushSubscription.toJSON()` gives it.
   z.object({
     platform: z.literal("web"),
     transport: z.literal("webpush"),
