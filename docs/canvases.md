@@ -939,7 +939,10 @@ retain their publication policy; authenticated sessions are withdrawn.
 ### Discarding a blank Canvas
 
 Leaving a blank Canvas deletes it, so pressing New Canvas and going elsewhere
-does not leave an **Untitled Canvas** behind. What blank means is the query in
+does not leave an **Untitled Canvas** behind. Sharing still at the
+Organization's default does not make a Canvas used; sharing somebody changed
+does. Until a Canvas holds something, Organization-wide sharing does not list
+it for anyone but its creator (`canvasSidebarRows`). What blank means is the query in
 `HostedCanvas.discardIfBlank`; the client (`screens/canvas.tsx`, from
 `ConversationSurface`'s `onBlankChange`) only skips the request for a Canvas it
 knows is in use, and reports blank only once the history, the saved draft and
@@ -1017,9 +1020,11 @@ why the refresh lease shares the owning object's transaction.
 everyone in the Organization. Administrators choose the default under Organization preferences
 (**Default Editor Audience**: Creator or Everyone in the Organization), stored
 in WorkspaceDO migration 149's `canvas_sharing_defaults`. A second setting,
-**Default Artifact Audience**, is stored and shown but not applied yet. A blank
-Canvas whose audience names nobody (`creator` or `workspace`) is still
-discarded when its creator leaves it.
+**Default Artifact Audience**, is stored and shown but not applied yet. An
+untouched Canvas (its default title, no Chat message, no artifact) lists only
+for its creator until it holds something, though a member with its link can
+open it. A blank Canvas whose audience is still the default is discarded when
+its creator leaves it; one whose sharing somebody changed is kept.
 
 **Why:** Product decided a Canvas is shared work by default. The default sits in
 the Organization's object rather than the D1 `workspaces` row beside the
@@ -1029,7 +1034,14 @@ default; keeping them `creator` was considered and rejected by product, so an
 Organization that wants a personal Sidekick's output private chooses `creator`.
 The blank check had required `creator`; left alone, every new Canvas would
 have counted as used and pressing New Canvas would have left an Untitled
-Canvas behind again. A future change that applies the artifact default must
+Canvas behind again. Without the list rule, every press would have pushed an
+Untitled Canvas into every member's sidebar, left there for good if its
+creator quit before the discard ran, and a teammate who opened it from the
+list could have had it deleted under them. Creating as `creator` and applying
+the default on first use was rejected: it needs a second "chosen" flag for the
+editor audience to tell a person's `creator` from the pending default.
+Sharing an empty Canvas exactly as the default already does is
+indistinguishable from not sharing it, so that Canvas is discarded too. A future change that applies the artifact default must
 respect `artifact_visibility_chosen` the way `set_artifact_audience` does.
 
 ### 2026-11-12 — Delete a Canvas left blank

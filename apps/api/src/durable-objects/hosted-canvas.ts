@@ -472,9 +472,10 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    * Whether a Canvas is blank as this object sees it, and with `commit`, delete
    * its rows if so. The query below is the definition of blank; anything a
    * person can put into a Canvas must appear in it. Not blank is an answer,
-   * not a refusal. An audience that names nobody (`creator`, `workspace`) is
-   * not use: a new Canvas may start with either, by the Organization's
-   * default. The Chat's own messages are not visible here (its
+   * not a refusal. An audience still at the Organization's default is not
+   * use; one somebody changed away from it is. Sharing an empty Canvas as the
+   * default already does is indistinguishable from not sharing it, so such a
+   * Canvas is discarded too. The Chat's own messages are not visible here (its
    * projection lags), so `CanvasService.discardIfBlank` asks the Chat between
    * the two calls.
    */
@@ -487,7 +488,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         return { discarded: false };
       }
       const blank = row.archived_at === null && row.title === UNTITLED_CANVAS && row.title_status === "settled"
-        && row.appearance_json === null && row.writer_sidekick_id === null && row.visibility !== "participants"
+        && row.appearance_json === null && row.writer_sidekick_id === null
+        && row.visibility === readCanvasSharingDefaults(this.sql).editors
         && this.sql.exec<{ used: number }>(
           `SELECT EXISTS (SELECT 1 FROM sidekick_child_projections
                      WHERE sidekick_id = ?1 AND COALESCE(json_extract(effect_json, '$.latestAttentionOrdinal'), 0) > 0)
@@ -1067,10 +1069,17 @@ export function canvasSidebarRows(
        LEFT JOIN automation_directory written_by ON written_by.automation_id = written.sidekick_id
              AND written_by.lifecycle <> 'deleted'
       WHERE canvas.archived_at IS NULL AND (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
-         OR (?2 = 1 AND canvas.visibility = 'workspace') OR canvas.writer_sidekick_id IS NOT NULL)
+         -- Organization reach lists a Canvas once it holds something: an
+         -- untouched one (its default title, no Chat message, no artifact)
+         -- stays on its creator's list, so pressing New Canvas does not put
+         -- an Untitled Canvas in every member's sidebar.
+         OR (?2 = 1 AND canvas.visibility = 'workspace'
+           AND NOT (canvas.title = ?4 AND canvas.title_status = 'settled' AND newest.id IS NULL
+             AND COALESCE(json_extract(chat.effect_json, '$.latestAttentionOrdinal'), 0) = 0))
+         OR canvas.writer_sidekick_id IS NOT NULL)
         AND (?3 IS NULL OR instr(lower(canvas.title), lower(?3)) > 0)
       ORDER BY canvas.updated_at DESC, canvas.canvas_id`,
-    viewer.userId, viewer.member ? 1 : 0, titleQuery,
+    viewer.userId, viewer.member ? 1 : 0, titleQuery, UNTITLED_CANVAS,
   ).toArray();
   // A writer Sidekick's audience is the one rule not expressed above; the
   // row is admitted by the whole rule, without the administrator's reach.
