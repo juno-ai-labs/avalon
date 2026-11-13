@@ -1724,7 +1724,7 @@ started is told all of them; the wizard, a run a person asked for, and a loop
 whose run id has no run row, only those their person may open. A Sidekick attached to none is sent nothing. It is a derived
 user message for the reason `CANVAS CONTEXT` is one: the system prompt prefix
 is byte-stable and the list moves with every publish. A replay keeps the copy
-first admitted (`keepAdmittedOnReplay`, [`agent-harness.md`](agent-harness.md)).
+first admitted ([`agent-harness.md`](agent-harness.md)).
 
 Runs are not coalesced: each occurrence starts one, and they overlap. So a run
 that fires per event writes rows, which are atomic, and republishes only to

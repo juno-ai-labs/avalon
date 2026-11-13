@@ -313,14 +313,12 @@ the committed transitions for Bind to apply plus the stable IDs durably
 acknowledged without another append. Every requested ID must be
 acknowledged exactly once by one of those two paths; an empty or partial host
 answer fails closed instead of silently dropping activation context. A replay
-under an existing ID must render the same bytes, or the boundary refuses it as
-`bind_activation_input_replay_mismatch`. The exception is an input marked
-`keepAdmittedOnReplay`, which renders state that moves under a fixed identity:
-the Canvas context is keyed on the message that woke the run, but a new Canvas
-is titled after its first turn and a publish changes its artifact list. Such a
-replay keeps the copy first admitted, and only its provenance must still match.
-Mark only such snapshots; any other input that renders differently on replay is
-a defect the check exists to catch. The
+under an existing ID always keeps the copy first admitted, which the Bind head
+already holds, so a Retry can always proceed. Its new rendering may differ: the
+Canvas context is keyed on the message that woke the run, but a new Canvas is
+titled after its first turn, and a deploy can change a prompt template between a
+failure and its Retry. A difference in content or provenance is logged as
+`activation_input_replay_drifted` (`source_kind`, `differs`), never refused. The
 boundary runs even when the activation has no model-only input, and it resolves before assistant reservation
 or provider I/O; persistence or fence failure therefore stops inference. A
 resumed loop never replaces its durable history from a freshly assembled
@@ -1897,13 +1895,13 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-11-13 — A Canvas context replays, and an attempt records the clamp it got
+### 2026-11-13 — A replay keeps its admitted input, and an attempt records the clamp it got
 
-**What changed:** An activation input may be marked `keepAdmittedOnReplay`; the
-Canvas and Sidekick-attached-Canvas context messages are, and a replay of one
-keeps the admitted copy instead of being refused. A failed attempt now records
-the disposition after the `producedOutput` clamp, and whether output had
-streamed.
+**What changed:** A replayed activation input keeps the copy first admitted
+whatever it renders now; a difference is logged as
+`activation_input_replay_drifted` instead of failing the run with
+`bind_activation_input_replay_mismatch`. A failed attempt now records the
+disposition after the `producedOutput` clamp, and whether output had streamed.
 
 **Why:** Every Retry of a new Canvas's failed run failed with
 `bind_activation_input_replay_mismatch`: the context admitted with the title
@@ -1914,16 +1912,20 @@ fallback chain.
 
 **Considered and rejected:** Putting a Canvas revision in the context's
 `sourceRevision`, which admits a second context message on every replay after
-any publish or rename.
+any publish or rename. Exempting only the two Canvas context kinds, which left
+every other kind one prompt-template deploy away from the same dead end: the
+check could only ever fail a run that keeping the admitted copy would finish.
 
 **Trade-off accepted:** a retried run works from the title and artifact list
 it was first given. An artifact published between the failure and the Retry is
 missing from that list, so the run may publish a duplicate instead of a new
 version of it.
 
-**What a future change has to respect:** Mark only an input whose content is a
-snapshot of moving state. The executor and the attempt record share
-`attemptDisposition`; neither may compute the disposition on its own.
+**What a future change has to respect:** Replay must not fail a run; report
+drift instead. A rise in `activation_input_replay_drifted` for a kind that
+should be stable points at an id collision upstream. The executor and the
+attempt record share `attemptDisposition`; neither may compute the disposition
+on its own.
 
 ### 2026-11-12 — A failed port is logged with what it threw
 

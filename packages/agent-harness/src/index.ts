@@ -377,8 +377,6 @@ export interface ModelMessageProvenance {
  */
 export interface HarnessActivationInput {
   activationInputId: string;
-  /** Rendered from moving state; a replay keeps the admitted copy. See `agent-harness.md`. */
-  keepAdmittedOnReplay?: true;
   message: ModelMessage & {
     role: "user";
     provenance: ModelMessageProvenance & {

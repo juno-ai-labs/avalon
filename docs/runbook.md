@@ -1155,6 +1155,7 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Invalid model output | `event = request_failed` and `code = model_output_invalid` |
 | Degraded connector workflows | `event = connector_poll_timeout` or `event = connector_poll_failed` |
 | Rejected model calls | `event = agent_inference_attempt_failed` or `event = structured_inference`, and `provider_error_code` exists |
+| A Retry or recovery that re-rendered a context input differently (it kept the admitted copy) | `event = activation_input_replay_drifted`, grouped by `source_kind` and `differs` |
 | Broken response contracts | `event = request_failed` and `error_name = ZodError` |
 | Harness run outcomes | `event = harness_run_finished` |
 | Slow root runs | `event = harness_run_finished` and `duration_ms > 60000` |

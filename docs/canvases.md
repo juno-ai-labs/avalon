@@ -486,8 +486,8 @@ prompt text, because the system prompt prefix is byte-stable and cached and
 the artifact list changes with every publish; it is keyed on the message that
 woke the run, under its own source kind (`canvas_context`), so it never shares
 an identity with another derived message keyed on that same message. A replay
-keeps the context the run started with (`keepAdmittedOnReplay`,
-[`agent-harness.md`](agent-harness.md)).
+keeps the context the run started with
+([`agent-harness.md`](agent-harness.md)).
 
 A Chat can open with Rally's own message: a seeded Canvas's does. A provider
 conversation must begin with a user turn, and Gemini, the fallback model,
