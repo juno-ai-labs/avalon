@@ -272,7 +272,8 @@ type RenderedSystemPrompt = {
   content: string;
 };
 
-class HarnessLimitError extends Error {
+/** A limit that ends the run under its own code; `requiredPort` lets a host port's through unwrapped. */
+export class HarnessLimitError extends Error {
   constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "tool_receipt_persistence_failed" | "run_state_persistence_failed" | "ambiguous_external_write" | "tool_surface_too_large" | "provider_unavailable" | "provider_circuit_open" | "platform_limit_exceeded" | "context_length_exceeded">, message: string) {
     super(message);
     this.name = "HarnessLimitError";
@@ -2128,6 +2129,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           : "execution",
       code,
       message: error instanceof Error ? error.message : "Harness execution failed",
+      // Only a port failure: its code names the port, and only the cause says why.
+      ...(input.describeFailureCause && error instanceof FatalHarnessPortError
+        ? { causeCode: input.describeFailureCause(error.causeValue) }
+        : {}),
     };
     return {
       ...outcome("failed", streamedContent || content, model, state, routedAttempts),
@@ -4054,7 +4059,7 @@ async function requiredPort<T>(
   try {
     return await operation();
   } catch (error) {
-    if (error instanceof FatalHarnessPortError) throw error;
+    if (error instanceof FatalHarnessPortError || error instanceof HarnessLimitError) throw error;
     throw new FatalHarnessPortError(code, label, error);
   }
 }
