@@ -84,7 +84,11 @@ whether it works, or on whether the next person can follow it.
 ## Platform
 
 We have a macOS and Linux Electron app and a browser SPA.
-Linux support and its native-feature limits are described in `docs/linux-desktop.md`. When designing
+Linux support and its native-feature limits are described in `docs/linux-desktop.md`.
+`apps/mobile` is the Expo iOS/Android canvas client under development. Read
+[`docs/mobile-canvas-client.md`](docs/mobile-canvas-client.md) before changing its
+native shell, browser bridge, or release setup. It shares browser authentication
+and conversation UI; native store distribution is not yet configured. When designing
 or implementing a feature, first consider which platform or platforms it should support.
 Some features are native macOS only, and others are shared across all supported platforms. When in doubt ask
 the (human) user before implementing the feature; if there is no answer, assume macOS and web.

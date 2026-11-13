@@ -1,3 +1,6 @@
+import { MOBILE_COMMAND_EVENT, MobileCommandSchema } from '../../mobile/src/protocol';
+import { forgetMobileWorkspace, mobileStorage, restoreMobileWorkspace } from './mobile-session';
+import { isMobileHost, postMobileEvent } from './mobile-bridge';
 import { PasswordSignInForm } from '../../desktop/src/renderer/components/password-sign-in-form';
 import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
 import { providerSignInError, type SignInProvider } from '../../desktop/src/renderer/lib/sign-in-provider';
@@ -11,7 +14,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEven
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema, IDENTITY_REGION } from "@rally/contracts/regions";
 import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
-import { browserRequest, BrowserApiError } from "./transport";
+import { browserRequest, BrowserApiError, BrowserResponseError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
 import { RETIRED_LINK_MESSAGE, isRetiredLinkPath, parseLinkPathTarget } from "@rally/contracts/links";
@@ -88,7 +91,7 @@ function rememberSignupFlow(flowId: string | null): void {
 }
 
 /** This entry has no account setup step. Collaboration mounts after authentication. */
-export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void, onRevalidate: () => void) => ReactNode } = {}) {
+export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { renderAuthenticated?: (session: BrowserSession, onSignOut: () => void) => ReactNode; renderCollaboration?: (region: string, session: BrowserSession, onSignOut: () => void, onRevalidate: () => void) => ReactNode } = {}) {
   const signupFlow = useRef<string | null>(null);
   const signupViewed = useRef(false);
   if (signupFlow.current === null) {
@@ -122,7 +125,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [code, setCode] = useState("");
   const [challenge, setChallenge] = useState<{ id: string; redemptionId: string } | null>(null);
   // The signed-out screen leads with Google and opens the email form on request.
-  const [emailChosen, setEmailChosen] = useState(false);
+  const [emailChosen, setEmailChosen] = useState(isMobileHost);
   const [passwordChosen, setPasswordChosen] = useState(false);
   // Whether this API offers the development account (`GET /dev/session`
   // answers 204 only in development with RALLY_DEV_AUTH): asked once, the
@@ -143,6 +146,8 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [activity, setActivity] = useState<{ userId: string; counts: ReadonlyMap<string, number> } | null>(null);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [sessionAbsent, setSessionAbsent] = useState(false);
+  useEffect(() => { if (!checking && !session && sessionAbsent) postMobileEvent({ type: 'signed-out' }); }, [checking, session, sessionAbsent]);
   const [error, setError] = useState<string | null>(null);
   // Kept apart from `error`, which the session read clears when it finds no session.
   const [providerNotice, setProviderNotice] = useState<string | null>(null);
@@ -166,13 +171,18 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   const [createPending, setCreatePending] = useState(false);
   const createOperation = useRef<CreateOrganizationOperation>(null);
   const issuance = useRef<{ email: string; id: string; redemptionId: string } | null>(null);
+  useEffect(() => {
+    if (!isMobileHost() || !session || !listed || destination || new URLSearchParams(location.search).has('chooseWorkspace') || location.pathname !== '/') return;
+    const remembered = restoreMobileWorkspace(mobileStorage(), session.user.id, listed.workspaces);
+    if (remembered) location.replace(`/app/workspaces/${encodeURIComponent(remembered.region)}/${encodeURIComponent(remembered.id)}?mobile=1`);
+  }, [session, listed, destination]);
   const sessionRead = useRef(0);
   const sessionUser = useRef<string | null>(null);
   const renewalAt = useRef(Number.POSITIVE_INFINITY);
   const sessionChannel = useRef<BroadcastChannel | null>(null);
   const refreshSession = useRef<((renew: boolean) => void) | null>(null);
   // A later signed-out screen starts from the Google-first choice again.
-  useEffect(() => { if (session) { setEmailChosen(false); setPasswordChosen(false); } }, [session]);
+  useEffect(() => { if (session) { setEmailChosen(isMobileHost()); setPasswordChosen(false); } }, [session]);
   useEffect(() => {
     const userId = session?.user.id;
     if (!userId || !listed?.workspaces.length) return;
@@ -245,6 +255,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         if (!active || read !== sessionRead.current) return;
         sessionUser.current = current.user.id;
         rememberSignupFlow(null);
+        setSessionAbsent(false);
         setSession(current);
         setError(null);
         if (!opened) {
@@ -255,6 +266,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         if (!active || read !== sessionRead.current) return;
         if (cause instanceof BrowserApiError && (cause.status === 401 || cause.status === 403)) {
           void clearAllDrafts(); sessionUser.current = null;
+          setSessionAbsent(true);
           setSession(null); setWorkspaceSession(null); setListed(null);
           setError(cause.status === 403 ? cause.message : null);
         } else setError("Unable to restore your session. Try again.");
@@ -349,6 +361,24 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       .then(() => setDevelopmentAccount(true), () => undefined);
   }, [checking, session]);
 
+  const mobileExchangePending = useRef(false);
+  useEffect(() => {
+    if (!Reflect.get(window, 'ReactNativeWebView')) return;
+    const receive = (event: Event) => {
+      const command = MobileCommandSchema.safeParse((event as CustomEvent<unknown>).detail);
+      if (!command.success || command.data.type !== 'sign-in-complete' || mobileExchangePending.current) return;
+      const proof = command.data.proof;
+      mobileExchangePending.current = true;
+      setBusy(true); setError(null);
+      void browserRequest(proof.region, '/mobile/exchange', BrowserSessionSchema, proof)
+        .then((current) => adopt(current, proof.region))
+        .catch((cause: unknown) => setError(cause instanceof BrowserResponseError ? cause.message : 'Sign-in couldn’t finish. Please try again.'))
+        .finally(() => { mobileExchangePending.current = false; setBusy(false); });
+    };
+    window.addEventListener(MOBILE_COMMAND_EVENT, receive);
+    return () => window.removeEventListener(MOBILE_COMMAND_EVENT, receive);
+  });
+
   async function redeem(input: { challengeId: string; redemptionId: string; method: "otp" | "magic"; credential: string }) {
     const sessionRegion = proof?.region ?? IDENTITY_REGION;
     await adopt(await browserRequest(sessionRegion, "/email/redeem", BrowserSessionSchema, input), sessionRegion);
@@ -371,6 +401,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     }
     sessionUser.current = current.user.id;
     rememberSignupFlow(null);
+    setSessionAbsent(false);
     setSession(current);
     if (!destination) {
       const result = await browserRequest(sessionRegion, "/workspaces", BrowserWorkspacesSchema);
@@ -453,12 +484,14 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       const unreached = results.some((result) => result.status === "rejected"
         && !(result.reason instanceof BrowserApiError && result.reason.status === 404));
       const read = ++sessionRead.current;
+      if (isMobileHost()) forgetMobileWorkspace(mobileStorage());
       await clearAllDrafts();
       if (read !== sessionRead.current) return;
       sessionUser.current = null;
       signupFlow.current = uuidV7();
       rememberSignupFlow(signupFlow.current);
       signupViewed.current = false;
+      setSessionAbsent(true);
       setSession(null); setListed(null); setCreating(false); setChallenge(null); setCode(""); issuance.current = null;
       sessionChannel.current?.postMessage("session-changed");
       if (unreached) setError("Signed out here, but a Rally deployment did not respond. Sign out again to finish.");
@@ -472,6 +505,21 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   useEffect(() => { latestSignOut.current = signOut; });
   const signOutStable = useCallback(() => { void latestSignOut.current(); }, []);
   const revalidate = useCallback(() => refreshSession.current?.(false), []);
+
+  if (!proof && session && renderAuthenticated) return renderAuthenticated(session, signOutStable);
+  if (!checking && !session && !proof && Reflect.get(window, 'ReactNativeWebView') && !sessionAbsent) {
+    return <main className="onboarding-shell signin-shell entry"><section className="signin-card entry-card">
+      <RallyMark className="signin-mark" /><ErrorNotice>{error ?? 'Unable to restore your session. Try again.'}</ErrorNotice>
+      <Button onClick={() => { setChecking(true); setError(null); refreshSession.current?.(false); }}>Try again</Button>
+    </section></main>;
+  }
+  if (!checking && !session && sessionAbsent && Reflect.get(window, 'ReactNativeWebView')) {
+    return <main className="onboarding-shell signin-shell entry"><section className="signin-card entry-card" aria-busy={busy}>
+      <RallyMark className="signin-mark" /><h1>Welcome to Rally</h1><p>Your canvases, wherever you are.</p>
+      <Button className="button-primary signin-button" disabled={busy} onClick={() => { setError(null); postMobileEvent({ type: 'sign-in' }); }}>{busy ? 'Signing in…' : 'Sign in'}</Button>
+      {error && <ErrorNotice>{error}</ErrorNotice>}
+    </section></main>;
+  }
 
   if (!proof && destination && workspaceSession && session && workspaceSession.user.id === session.user.id && renderCollaboration) {
     return <div className="browser-shell">

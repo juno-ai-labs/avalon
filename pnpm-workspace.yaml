@@ -29,6 +29,9 @@ minimumReleaseAgeExclude:
   - '@posthog/core@1.47.1'
   - '@posthog/types@1.403.0'
   - posthog-node@5.48.2
+  - expo@58.0.25
+  - expo-dev-client@58.0.20
+  - expo-dev-launcher@58.0.20
 
 auditConfig:
   ignoreGhsas:
@@ -36,3 +39,4 @@ auditConfig:
 
 patchedDependencies:
   electron-updater@6.8.9: patches/electron-updater@6.8.9.patch
+  react-native-bottom-tabs@1.5.0: patches/react-native-bottom-tabs@1.5.0.patch

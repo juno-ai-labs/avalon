@@ -10,6 +10,11 @@ export default defineConfig({
   // The opaque HTML-file frame loads Rally's annotation script from this
   // origin, as it does on the desktop; the plugin is shared like the theme.
   plugins: [react(), artifactPickerPlugin(), canvasTemplatePlugin()],
+  // Optional direct local API forwarding for the Expo web preview.
+  server: { proxy: process.env.RALLY_BROWSER_DEV_API ? {
+    '/regional/global': { target: process.env.RALLY_BROWSER_DEV_API, ws: true, changeOrigin: true,
+      rewrite: (path: string) => path.replace(/^\/regional\/global/u, '') },
+  } : {} },
   // Copied Channel links are minted against the public site, as on the desktop.
   define: { "import.meta.env.VITE_PUBLIC_WEB_BASE_URL": JSON.stringify(process.env.VITE_PUBLIC_WEB_BASE_URL ?? "https://rallywith.ai") },
   resolve: { dedupe: ["react", "react-dom"] },

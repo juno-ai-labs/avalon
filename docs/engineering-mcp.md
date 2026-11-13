@@ -52,6 +52,11 @@ available to Rally users by virtue of product membership.
 
 ## How it works
 
+Tool registration passes complete Zod object schemas to the MCP SDK's Standard
+Schema interface. Raw shape records belong inside `z.object(...)`; they are a
+deprecated SDK compatibility path and can disagree with the application's Zod
+types. This preserves the declared fields and parsing behavior without casts.
+
 The initialization response advertises the server's purpose through
 `serverInfo.description` and includes usage instructions for resolving product
 and storage names, selecting exact users and conversations, paging participant
@@ -747,6 +752,14 @@ the Worker. It does not create an Access app or import another app's policy.
 
 
 ## Changelog
+
+### 2026-11-12 — Use the MCP SDK object-schema interface
+
+Legacy raw-shape registrations failed type checking against the installed MCP
+SDK, blocking repository release checks. Wrapping those shapes in Zod objects
+uses the supported Standard Schema overload and preserves field validation;
+loosening types or skipping the release gate would hide the incompatibility.
+
 
 ### 2026-11-12 — Administer billing in Stripe
 
