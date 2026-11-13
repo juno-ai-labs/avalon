@@ -486,6 +486,13 @@ export interface TranscriptCompactionCheckpointRow {
  * tables are projections containing only stable references and ordering data.
  * Every multi-row state transition is one object-local SQLite transaction.
  */
+/** An activation input replayed under its admitted id with a different rendering. */
+export interface ActivationReplayDrift {
+  activationInputId: string;
+  sourceKind: string;
+  differs: "content" | "provenance";
+}
+
 export class WorkstreamTranscriptStorage {
   private readonly bindProjectionCache = new Map<string, BindLoopProjectionState>();
 
@@ -651,6 +658,8 @@ export class WorkstreamTranscriptStorage {
   }): Promise<{
     transitions: ProtocolUserTransition[];
     replayedActivationInputIds: string[];
+    /** Replays whose new rendering differed from the admitted copy, which they kept. */
+    driftedReplays: ActivationReplayDrift[];
   }> {
     const now = input.now ?? Date.now();
     const previous = this.readBindProjection(input.loopId);
@@ -688,6 +697,7 @@ export class WorkstreamTranscriptStorage {
     ));
     const requestedActivationInputIds = new Set<string>();
     const replayedActivationInputIds = new Set<string>();
+    const driftedReplays: ActivationReplayDrift[] = [];
     const receiptAliases: Array<{
       activationInputId: string;
       fact: PreparedTranscriptFact;
@@ -718,8 +728,15 @@ export class WorkstreamTranscriptStorage {
       const provenanceKey = bindProvenanceKey(provenance);
       const replay = existingActivationInputs.get(activationInputId);
       if (replay) {
-        if (replay.messageJson !== messageJson || replay.provenanceKey !== provenanceKey) {
-          throw new Error("bind_activation_input_replay_mismatch");
+        // A replay always keeps the copy first admitted, which the Bind head
+        // already holds, so a Retry can always proceed. A different rendering
+        // is reported, never refused.
+        if (replay.provenanceKey !== provenanceKey || replay.messageJson !== messageJson) {
+          driftedReplays.push({
+            activationInputId,
+            sourceKind: provenance.sourceKind,
+            differs: replay.provenanceKey !== provenanceKey ? "provenance" : "content",
+          });
         }
         replayedActivationInputIds.add(activationInputId);
         continue;
@@ -816,6 +833,7 @@ export class WorkstreamTranscriptStorage {
       return {
         transitions: prepared.map((append) => append.transition),
         replayedActivationInputIds: [...replayedActivationInputIds],
+        driftedReplays,
       };
     });
     if (prepared.length > 0) this.bindProjectionCache.set(input.loopId, projection);

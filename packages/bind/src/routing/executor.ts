@@ -1,7 +1,6 @@
 import type { RouteCandidate, RoutePlan } from "./plan";
 import {
-  failureDisposition,
-  propagateOnly,
+  attemptDisposition,
   isRetriableAttemptError,
   type InferenceAttemptError,
   type RouteAttemptCursor,
@@ -159,9 +158,7 @@ export async function executeRoutePlan<T>(
         // The clamp is applied to the taxonomy's answer rather than folded into
         // it, so `failureDisposition` stays total over the error kinds and this
         // stays one testable step. See `propagateOnly`.
-        const disposition = outcome.producedOutput === true
-          ? propagateOnly(failureDisposition(outcome.error))
-          : failureDisposition(outcome.error);
+        const disposition = attemptDisposition(outcome.error, outcome.producedOutput === true);
 
         switch (disposition.breaker) {
           case "none":

@@ -3316,6 +3316,7 @@ describe("agent harness", () => {
       provider: "azure",
       success: false,
       disposition: "fallback",
+      producedOutput: false,
       providerError: { code: "unavailable" },
     });
   });
@@ -3323,6 +3324,7 @@ describe("agent harness", () => {
   it("does not traverse a recognized streamed outage after observable output", async () => {
     const urls: string[] = [];
     const events: HarnessEvent[] = [];
+    const attempts: InferenceAttemptEvent[] = [];
     const fetcher = vi.fn(async (request: RequestInfo | URL) => {
       const url = String(request);
       urls.push(url);
@@ -3344,6 +3346,7 @@ describe("agent harness", () => {
         workspaceId: "workspace-stream-unavailable-after-output",
       }),
       onEvent: (event) => { events.push(event); },
+      onInferenceAttempt: (event) => { attempts.push(event); },
     });
 
     expect(urls).toEqual([
@@ -3357,6 +3360,14 @@ describe("agent harness", () => {
     expect(events.filter((event) => event.type === "stream_delta")).toEqual([
       expect.objectContaining({ delta: "partial", reset: false }),
     ]);
+    // The attempt that ended the turn is recorded as such, not as "fallback".
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      provider: "azure",
+      success: false,
+      disposition: "failed",
+      producedOutput: true,
+    });
   });
 
   it("reports exhausted streamed-service-unavailable routes as a provider failure", async () => {
@@ -3918,6 +3929,32 @@ describe("agent harness", () => {
 
     expect(memberSafeHarnessFailureMessage("model_input_unsupported"))
       .toBe("The selected model cannot read part of this message, such as an attached image or file. Remove it or use a different model, and copy the request ID for support");
+  });
+
+  it("names a model the provider does not know rather than blaming Rally", async () => {
+    // The body OpenRouter returned on 2026-11-13 for a model id it does not
+    // know. Before this arm the run failed `harness_execution_failed`.
+    const refusal = (message: string) => vi.fn(async () => Response.json({
+      error: { message, code: 400 },
+    }, { status: 400 })) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
+
+    await expect(runHarness(runInput(refusal("retired-vendor/old-model is not a valid model ID"), {
+      workspaceId: "workspace-openrouter-model-not-found",
+    }))).resolves.toMatchObject({
+      status: "failed",
+      failure: { kind: "routing", code: "model_not_found" },
+    });
+
+    // Another 400 that merely mentions the phrase keeps the catch-all.
+    await expect(runHarness(runInput(refusal("Request echoed: \"x is not a valid model ID\" in a tool argument"), {
+      workspaceId: "workspace-openrouter-other-400",
+    }))).resolves.toMatchObject({
+      status: "failed",
+      failure: { kind: "execution", code: "harness_execution_failed" },
+    });
+
+    expect(memberSafeHarnessFailureMessage("model_not_found"))
+      .toBe("The selected model is not available. Choose a different model, or copy the request ID for support");
   });
 
   it("does not read a context-length refusal out of a provider's prose", async () => {

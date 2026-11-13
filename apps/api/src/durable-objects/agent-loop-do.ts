@@ -5199,7 +5199,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           throw new Error("substream_loop_activation_boundary_mismatch");
         }
         fence();
-        return this.transcript.commitActivationInputs({
+        const { driftedReplays, ...committed } = await this.transcript.commitActivationInputs({
           loopId: boundary.loopId,
           executionId: execution.runId,
           executionEpoch: execution.executionEpoch,
@@ -5208,6 +5208,16 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           expectedBindStateRevision: boundary.stateRevision,
           inputs: boundary.inputs,
         });
+        for (const drift of driftedReplays) {
+          logWarn(this.env, "activation_input_replay_drifted", {
+            loop_id: boundary.loopId,
+            harness_run_id: execution.runId,
+            activation_input_id: drift.activationInputId,
+            source_kind: drift.sourceKind,
+            differs: drift.differs,
+          });
+        }
+        return committed;
       },
       commitBindTransition: async (transition) => {
         const current = fence();

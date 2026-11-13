@@ -46,6 +46,7 @@ export {
 } from "./billing-basis";
 export { fallbackKindOfCursor } from "./executor";
 export {
+  attemptDisposition,
   failureDisposition,
   propagateOnly,
   categorizeHttpStatus,

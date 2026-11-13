@@ -128,6 +128,7 @@ describe("inference lakehouse", () => {
       cursor: { structuredOutputAttempt: 0, stageIndex: 1, candidateIndex: 0, endpointAttempt: 2 },
       success: true,
       disposition: "success",
+      producedOutput: false,
       latencyMs: 123,
       ttftMs: 17,
       inputTokens: 10,
@@ -210,6 +211,7 @@ describe("inference lakehouse", () => {
       expect.objectContaining({
         event_id: "stream-request-1:attempt",
         success: true,
+        metadata: expect.objectContaining({ producedOutput: false }),
         substream_id: "substream-7",
         ttft_ms: 17,
         cost_microusd: 123,
