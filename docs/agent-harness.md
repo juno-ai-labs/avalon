@@ -312,7 +312,14 @@ missing inputs under the exact active-execution and Bind-head fence, then return
 the committed transitions for Bind to apply plus the stable IDs durably
 acknowledged without another append. Every requested ID must be
 acknowledged exactly once by one of those two paths; an empty or partial host
-answer fails closed instead of silently dropping activation context. The
+answer fails closed instead of silently dropping activation context. A replay
+under an existing ID must render the same bytes, or the boundary refuses it as
+`bind_activation_input_replay_mismatch`, except for an input marked
+`keepAdmittedOnReplay`: a rendering of state that moves under a fixed identity
+(the Canvas context, keyed on the message that woke the run, carries the
+Canvas's current title and artifacts). Such a replay keeps the copy first
+admitted, and only its provenance must still match. The
+
 boundary runs even when the activation has no model-only input, and it resolves before assistant reservation
 or provider I/O; persistence or fence failure therefore stops inference. A
 resumed loop never replaces its durable history from a freshly assembled
@@ -1669,6 +1676,8 @@ When every route candidate answers with a transport fault the provider owns — 
 
 Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the conversation host sets from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in `wrangler.global.jsonc`, the one regional config; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root conversation runs set no wall clock and are unaffected. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a conversation pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output or an external effect has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt appends to the owning execution object's `inference_attempts` ledger and emits its own lakehouse terminal record, so a retried turn is visible as more than one attempt sharing a `turn_id`.
 
+Neither the whole-plan retry nor provider and model traversal runs once a turn has streamed participant-visible text: the Chat cannot take that text back, so the executor clamps the failure to propagate-only (`propagateOnly`). The attempt is recorded with that clamped decision, `disposition: "failed"` and `producedOutput: true` (`produced_output` on `agent_inference_attempt_failed`, `producedOutput` in the `inference_attempts` routing decision), so a run that ended on a streamed outage does not read as one that fell back.
+
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
 
 When an executor throws a Zod error and its normalized arguments also fail the
@@ -1881,6 +1890,30 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-13 — A Canvas context replays, and an attempt records the clamp it got
+
+**What changed:** An activation input may be marked `keepAdmittedOnReplay`; the
+Canvas and Sidekick-attached-Canvas context messages are, and a replay of one
+keeps the admitted copy instead of being refused. A failed attempt now records
+the disposition after the `producedOutput` clamp, and whether output had
+streamed.
+
+**Why:** Every Retry of a new Canvas's failed run failed with
+`bind_activation_input_replay_mismatch`: the context admitted with the title
+"Untitled Canvas" re-rendered as the generated title under the same ID. The
+same run's last attempt was logged and stored as `fallback` though the
+executor, having streamed text, ended the turn instead; that read as a broken
+fallback chain.
+
+**Considered and rejected:** Putting a Canvas revision in the context's
+`sourceRevision`, which admits a second context message on every replay after
+any publish or rename.
+
+**What a future change has to respect:** Mark only an input whose content is a
+snapshot of moving state; any other input that renders differently on replay is
+a defect the mismatch check exists to catch. The recorded disposition is the
+executor's, so it must apply the same clamp the executor does.
 
 ### 2026-11-12 — A failed port is logged with what it threw
 

@@ -377,6 +377,14 @@ export interface ModelMessageProvenance {
  */
 export interface HarnessActivationInput {
   activationInputId: string;
+  /**
+   * The message renders state that moves under a fixed identity (a Canvas's
+   * title and artifacts, keyed on the message that woke the run). A replay
+   * keeps the copy first admitted under this id instead of requiring the new
+   * rendering to match it byte for byte; provenance must still match. Absent,
+   * a replay that renders differently is refused as a defect.
+   */
+  keepAdmittedOnReplay?: true;
   message: ModelMessage & {
     role: "user";
     provenance: ModelMessageProvenance & {
@@ -484,6 +492,12 @@ export interface InferenceAttemptEvent {
     openRouterMetadata?: Record<string, unknown>;
   };
   failureKind?: string;
+  /**
+   * A failed attempt only: whether participant-visible output had already
+   * streamed when it failed. When true the turn could not retry or fall back,
+   * whatever the failure kind, and `disposition` is `failed`.
+   */
+  producedOutput?: boolean;
   /** The provider's own classification of a rejected request, when it gave one. */
   providerError?: OpenRouterProviderError;
 }

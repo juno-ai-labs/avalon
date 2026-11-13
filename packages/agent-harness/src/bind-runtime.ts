@@ -38,6 +38,7 @@ import {
   failureDisposition,
   isRetriableAttemptError,
   parseModelRouteRegistry,
+  propagateOnly,
   providerIdSchema,
   retryAfterMsFromHeaders,
   resolveProviderPolicy,
@@ -2434,7 +2435,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             isAbort: (value) => args.signal.aborted || (value instanceof Error && value.name === "AbortError"),
             asTransportFailure: classifyProviderFailure,
           });
-          const disposition = failureDisposition(classified);
+          // The executor clamps a failure that already streamed output to
+          // propagate-only; record that decision, not the unclamped matrix, or
+          // the ledger says "fallback" for the attempt that ended the turn.
+          const producedOutput = textStream.producedOutput;
+          const disposition = producedOutput
+            ? propagateOnly(failureDisposition(classified))
+            : failureDisposition(classified);
           await requiredPort("run_state_persistence_failed", "Inference attempt ledger persistence failed", () => args.input.onInferenceAttempt?.({
             inferenceRequestId,
             success: false,
@@ -2457,6 +2464,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             cursor,
             latencyMs: target.durationMs,
             failureKind: classified.kind,
+            producedOutput,
             ...(error instanceof OpenRouterError || error instanceof AzureOpenAIError
               ? (() => {
                 const providerError = (error.details as { providerError?: OpenRouterProviderError } | undefined)
@@ -2468,7 +2476,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           return {
             kind: "failure",
             error: classified,
-            producedOutput: textStream.producedOutput,
+            producedOutput,
           };
         }
       },
