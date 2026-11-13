@@ -3720,10 +3720,7 @@ describe("connectors", () => {
     )).rejects.toThrow(/pageToken/u);
   });
 
-  // A model told nothing about a query's length sent `gmail.search` more than
-  // 2,000 characters and was refused by the parse. Each tool's advertised
-  // ceiling must be the one its executor enforces, so each is driven to the
-  // boundary: accepted at the limit, refused one past it.
+  // Driven to the boundary: accepted at the advertised limit, refused one past it.
   it.each([
     ["gmail.search", {}, ["gmail.read"], { messages: [] }],
     [
