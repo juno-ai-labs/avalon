@@ -41,9 +41,12 @@ export class EngineeringTaskTestDO extends EngineeringTaskDO {
     }
   }
 
-  constructor(ctx: DurableObjectState, env: Env & { ENGINEERING_TASKS: DurableObjectNamespace<EngineeringTaskDO> }) {
+  constructor(ctx: DurableObjectState, env: Env & {
+    ENGINEERING_TASKS: DurableObjectNamespace<EngineeringTaskDO>; ENGINEERING_AUDIT_LOG: R2Bucket;
+  }) {
     super(ctx, {
       ENGINEERING_TASKS: env.ENGINEERING_TASKS,
+      ENGINEERING_AUDIT_LOG: env.ENGINEERING_AUDIT_LOG,
       GLOBAL_INSPECTION: new EngineeringInspectionBridge(createExecutionContext(), env),
       CLOUDFLARE_ACCOUNT_ID: "task-test-account",
       BASIN_SQL_API_TOKEN: "test-not-a-credential",

@@ -3,7 +3,8 @@ import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
 import type { AccessPrincipal } from "./access";
 import type { Env } from "./env";
-import { executeEngineeringTask, toolErrorCode } from "./server";
+import { writeAuditEventOrLog } from "./audit-log";
+import { executeEngineeringTask, toolErrorCode, toolResultFailureCode } from "./server";
 import { initializeTaskSchema } from "./task-schema";
 import { EngineeringTaskInputSchema, TaskResultSchema, TASK_RETENTION_MS, type EngineeringTaskInput, type TaskResult, type TaskSnapshot } from "./tasks";
 
@@ -133,14 +134,17 @@ export class EngineeringTaskDO extends DurableObject<Env> {
     // Retirement is irreversible. Cancellation acknowledges intent but never
     // abandons a half-retired Organization; the extension permits this.
     if (task.snapshot.status !== "working" || task.name === "retire_org") return true;
-    await this.finish("cancelled");
+    await this.finish("cancelled", undefined, undefined);
     return true;
   }
 
-  private async finish(status: "completed" | "cancelled", result?: TaskResult) {
+  /** `errorCode` names a failed result, as `tool` logged it, for the audit record. */
+  private async finish(status: "completed" | "cancelled", result: TaskResult | undefined, errorCode: string | undefined) {
+    let finished: StoredTask | undefined;
     const expiresAt = this.ctx.storage.transactionSync(() => {
       const current = this.loadTask();
       if (!current || current.snapshot.status !== "working") return;
+      finished = current;
       const now = Date.now();
       const expiresAt = now + TASK_RETENTION_MS;
       const snapshot: TaskSnapshot = {
@@ -154,6 +158,13 @@ export class EngineeringTaskDO extends DurableObject<Env> {
       return expiresAt;
     });
     if (expiresAt !== undefined) await this.ctx.storage.setAlarm(expiresAt);
+    if (finished) {
+      await writeAuditEventOrLog(this.env, finished.principal, {
+        event: "task_finished", tool: finished.name, taskId: finished.snapshot.taskId,
+        outcome: status === "cancelled" ? "cancelled" : result?.isError ? "failed" : "succeeded",
+        ...(result?.isError ? { errorCode: errorCode ?? "tool_failed" } : {}),
+      });
+    }
   }
 
   override async alarm(info?: AlarmInvocationInfo) {
@@ -182,7 +193,11 @@ export class EngineeringTaskDO extends DurableObject<Env> {
         // work, not a page of normal progress; native failure backoff applies.
         throw new Error("engineering_retirement_incomplete");
       }
-      await this.finish("completed", incomplete ? { ...result, isError: true } : result);
+      await this.finish(
+        "completed",
+        incomplete ? { ...result, isError: true } : result,
+        incomplete ? "engineering_retirement_incomplete" : toolResultFailureCode(result),
+      );
     } catch (error) {
       // Already-terminal tasks must retry a failed cleanup, not complete again.
       if (task?.expiresAt !== undefined) throw error;
@@ -192,9 +207,8 @@ export class EngineeringTaskDO extends DurableObject<Env> {
       // Stored-input failures cannot recover by retrying unchanged data.
       // Other catchable failures get the platform's retry budget first.
       if (!dataCode && (info?.retryCount ?? 0) < ALARM_RETRIES) throw error;
-      await this.finish("completed", { isError: true, content: [{
-        type: "text", text: dataCode ?? toolErrorCode(error, "engineering_task_alarm"),
-      }] });
+      const code = dataCode ?? toolErrorCode(error, "engineering_task_alarm");
+      await this.finish("completed", { isError: true, content: [{ type: "text", text: code }] }, code);
     }
   }
 }

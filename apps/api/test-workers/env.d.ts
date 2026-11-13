@@ -48,6 +48,7 @@ declare global {
     // The Workers test pool discovers bindings only through this ambient name.
     interface Env extends AvalonEnv {
       ENGINEERING_TASKS?: DurableObjectNamespace<EngineeringTaskDO>;
+      ENGINEERING_AUDIT_LOG?: R2Bucket;
       MIGRATION_PROBE_DO?: DurableObjectNamespace<MigrationProbeDO>;
       TELEMETRY_RPC_TEST?: TelemetryDeliveryRpcBinding;
       TERMINAL_RPC_TEST?: TerminalRpcTestBinding;

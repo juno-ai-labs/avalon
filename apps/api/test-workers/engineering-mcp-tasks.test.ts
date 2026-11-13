@@ -23,6 +23,7 @@ async function rpc(method: string, params: Record<string, unknown> = {}, options
 } = {}) {
   const handler = createEngineeringMcpHandler({
     ENGINEERING_TASKS: env.ENGINEERING_TASKS!,
+    ENGINEERING_AUDIT_LOG: env.ENGINEERING_AUDIT_LOG!,
     GLOBAL_INSPECTION: new EngineeringInspectionBridge(createExecutionContext(), env),
     CLOUDFLARE_ACCOUNT_ID: "task-test-account", BASIN_SQL_API_TOKEN: "test-not-a-credential",
   }, options.principal ?? OPERATOR);
