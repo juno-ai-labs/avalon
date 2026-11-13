@@ -88,7 +88,7 @@ Linux support and its native-feature limits are described in `docs/linux-desktop
 `apps/mobile` is the Expo iOS/Android canvas client under development. Read
 [`docs/mobile-canvas-client.md`](docs/mobile-canvas-client.md) before changing its
 native shell, browser bridge, or release setup. It shares browser authentication
-and conversation UI; native store distribution is not yet configured. When designing
+and conversation UI; EAS production builds and OTA releases are configured; store submission is explicit. When designing
 or implementing a feature, first consider which platform or platforms it should support.
 Some features are native macOS only, and others are shared across all supported platforms. When in doubt ask
 the (human) user before implementing the feature; if there is no answer, assume macOS and web.

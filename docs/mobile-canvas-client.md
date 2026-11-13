@@ -16,6 +16,10 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/App.web.tsx`, `src/PreviewTabBar.tsx`, `src/Glass.tsx` | Development-only browser preview; its custom controls do not model native geometry. |
 | `apps/mobile/src/CanvasWebView.tsx` | Application WebView and isolated first-party live artifact WebViews. |
 | `apps/mobile/src/CanvasWebView.web.tsx` | Development-only iframe preview of the native shell. |
+| `apps/mobile/src/background.ts`, `runtime.ts` | Top-level background update task and registration; downloads never interrupt an open canvas. |
+| `apps/mobile/src/notifications.ts`, `notification-target.ts` | Platform permission/token lifecycle and canonical notification routing. |
+| `apps/mobile/src/diagnostics.ts`, `DiagnosticsScreen.tsx`, `RecoveryBoundary.tsx` | Local content-free diagnostics, user-requested sharing and recovery. |
+| `apps/mobile/.eas/workflows/`, `.github/workflows/release-mobile.yml` | One-channel native-build/OTA releases and explicit store submission. |
 | `apps/mobile/src/auth.ts`, `auth-callback.ts` | System authentication session and exact callback/attempt validation. |
 | `apps/browser/src/mobile-sign-in.tsx` | Existing browser login followed by the return-to-app handoff. |
 | `apps/mobile/src/protocol.ts` | Shared commands, validated snapshots, origin boundary, pin presentation capacity. |
@@ -76,6 +80,15 @@ pin changes. Native acceptance must cover insert, remove and reordering the
 selected pin in both directions; a successful tab tap alone does not prove it.
 
 Each tab lazily mounts a browser WebView on its first visit and retains it through tab switching. These pages reuse the existing browser session, Canvas REST APIs and workspace socket protocol. This means one existing workspace connection per visited browser page, rather than a new native data client or socket protocol. The focused page supplies directory snapshots and handles pin writes, so Android does not wait for an inactive WebView to resume rendering. Background snapshots cannot overwrite the visible page’s acknowledged state, and an initial loading snapshot cannot clear existing tabs before its first directory sync. Canvas screens receive their own artifact descriptors and keep their authorized hosted WebViews in stable native containers. Dashboard links and the pin manager select an existing native tab when possible. Unpinned canvases open within Home. The system conversation sheet uses the canonical chat URL and existing web composer.
+
+iPhone scenes extend behind the native bottom tab bar. The supported
+`useBottomTabBarHeight()` measurement supplies bottom margin on the keyboard
+container; its margin includes the home indicator, so the outer bottom safe area
+is disabled in that case. `useVerticalBarEdgeIOS()` removes that margin when Duo
+uses a vertical rail. WKWebView's documented `removeIosKeyboardObserver` option
+lets the surrounding KeyboardAvoidingView own keyboard avoidance, preventing a
+second keyboard inset from lifting the composer into the transcript. The same
+WebView behavior applies to conversation sheets and hosted artifacts.
 
 The OS places the native tab bar and rail, including Duo’s outer screen, inner orientation changes and either side of Split View. No hinge angle or fixed width threshold chooses native navigation. Native safe-area handling reserves the system rail/bar; content extends behind the transparent header with a measured initial inset that scrolls away. The inset updates when geometry changes without accumulating padding. Header actions are native bar items on iOS, so the system can relocate or overflow them. Android uses its native navigation header with accessible actions. Main screens have sidebar/chat actions and no title or extra Home action. The Muse-inspired sidebar remains shared and custom, including pin/unpin, drag ordering and accessibility move actions. Its drag handle owns the gesture and disables parent scrolling during the drag.
 
@@ -143,15 +156,12 @@ There are two release surfaces:
   ships the mobile dashboard and shared conversation code at `app.rallywith.ai`.
   The workflow must pass its existing repository-wide checks first; a local
   build or a branch change does not deploy it.
-- **Native shell:** CI runs Expo export for iOS, Android, and web. This verifies
-  JavaScript/assets only. `apps/mobile/eas.json` defines a `simulator` development
-  profile (iOS Simulator and Android APK), with `expo-dev-client` for live
-  reload. The `preview` profile produces a standalone internal-distribution iPhone
-  IPA against `https://app.rallywith.ai`, without requiring Metro. The project is linked as `@juno-ai-labs/rally-mobile`, and EAS has produced
-  both iOS Simulator and Android development builds. Store signing, a native release
-  workflow, TestFlight/Play distribution, and EAS Update remain unconfigured. The
-  iOS identifier is registered with Apple and EAS holds its distribution certificate
-  and ad hoc provisioning profile. This does not create an App Store listing.
+- **Native shell:** CI exports iOS, Android and web bundles. The `simulator` profile
+  is a development client; `preview` is an installable internal release (IPA/APK),
+  and `production` is a store build. Both release profiles use the **one
+  `production` update channel** and production EAS environment. The project is
+  `@juno-ai-labs/rally-mobile`. Store records, submission credentials and physical
+  push delivery still require acceptance; a successful export proves none of them.
 
 The physical iOS app uses `ai.rallywith.mobile`; Apple rejected the initial
 `ai.rally.mobile` development identifier for the Juno AI Labs team. The
@@ -162,20 +172,96 @@ team with `eas device:create`, then configure iOS signing through `eas credentia
 for the `preview` profile. Run `eas build --platform ios --profile preview` after
 the compatible browser deployment succeeds. Ad hoc provisioning includes only
 registered devices present when the profile was generated. For automated refresh,
-current EAS CLI supports `--non-interactive --refresh-ad-hoc-provisioning-profile`
+first run `eas credentials:configure-build --platform ios --profile preview` when
+entitlements change; it synchronizes Apple capabilities. Merely refreshing the
+old profile does not enable Push Notifications. Current EAS CLI supports
+`--non-interactive --refresh-ad-hoc-provisioning-profile`
 with an App Store Connect API key in Expo or the documented `EXPO_ASC_*` secret
 environment variables. A new device can require a refreshed profile and re-sign;
 a simulator archive cannot be installed on a phone. Store distribution remains
 separate from this internal build profile.
 
-To enable store distribution, choose the owning Expo/Apple/Google accounts,
-confirm the bundle identifiers, link the EAS project, configure development,
-preview and production build profiles, provide signing/store credentials through
-secret storage, and add the chosen submission workflow. Use production browser
-and artifact origins in release builds. Deploy compatible browser routes before
-installing the native build; devices may retain an older bridge protocol after a
-web deployment, so evolve that contract compatibly. OTA updates additionally need
-an explicit runtime-version and channel policy; none is enabled today.
+### One production channel
+
+`expo-updates` checks on launch without blocking startup. Expo's fingerprint
+runtime policy isolates updates by native compatibility. JavaScript and asset
+changes can use OTA; native dependencies, entitlements and plugins require a new
+binary. A previously installed binary without `expo-updates` needs one replacement
+build before it can receive updates. The runtime policy, channel and update URL
+are in app config and `eas.json`; do not add preview or staging update channels.
+
+`.github/workflows/release-mobile.yml` runs lint, types and mobile/browser tests
+on relevant main changes, then invokes `.eas/workflows/release.yml`. Expo's
+supported fingerprint/get-build jobs find a compatible non-simulator build from the
+`production` profile and channel for iOS: publish OTA when one exists, otherwise build the
+new production binary. Android automated releases and Firebase setup are deferred. Internal preview builds cannot satisfy the store-build lookup.
+Native builds do not automatically submit to stores. Use the explicit
+`.eas/workflows/submit.yml` with the verified build ID after configuring the
+Apple/Google store records and submission credentials.
+
+The GitHub `mobile-production` environment needs an `EXPO_TOKEN` secret. Set
+`EXPO_PUBLIC_RALLY_APP_URL=https://app.rallywith.ai` in the EAS production
+**environment**, so fingerprint, build and update jobs resolve the same config.
+The pnpm package extension supplies `@expo/config-plugins` to
+`react-native-bottom-tabs@1.5.0`: its published Expo plugin imports the package
+without declaring it, which otherwise fails under EAS's direct config loading.
+Remove this extension when upstream declares the dependency.
+
+Deploy compatible API/browser changes before distributing a dependent native
+build. The optional push commands remain compatible with older shells, but an
+older browser cannot acknowledge new native registration. Existing installed
+clients must keep working across browser deployments. The release integration adds no API
+routes or socket protocols. Push registration reuses
+`PUT /push-devices/:installationId` and `DELETE /push-devices/:installationId`;
+crash reporting reuses `GET /telemetry/preference` and `POST /telemetry/crashes`.
+
+For an urgent JavaScript regression, use EAS Update's republish or rollback to
+embedded on `production`, targeting the affected runtime. Keep Expo's built-in
+error recovery enabled. A runtime change needs another native build; publishing
+an update cannot repair missing native modules. Never reload automatically while
+a user is writing: the app downloads updates and applies them on a subsequent
+cold launch, or after the user chooses Restart in diagnostics.
+
+### Background work, notifications and recovery
+
+`expo-background-task` registers one top-level TaskManager task to download
+compatible updates. WorkManager/BGTaskScheduler choose execution using their
+default cadence; delivery is opportunistic, and iOS Simulator cannot run this
+task. Resume and reconnection refresh the existing browser/socket data. There is
+no offline canvas cache, queued editing system, or background content polling.
+
+Settings and diagnostics is available from the sidebar's settings button.
+Notification permission is requested only through Enable notifications. The
+native installation ID is in SecureStore; APNs device tokens pass through the
+trusted browser bridge to the existing authenticated registry. Registration is
+serialized and cancelled with the current account/organization view, including network-recovery retries. Token rotation,
+permission changes and resume reconcile it. Sign-out revokes the bound session;
+optional notification work never delays sign-out. Notification payloads must
+match their canonical link's organization/region. Canvas taps wait for sign-in
+and browser acknowledgement before clearing the response. Canonical URLs cross the bridge; the browser adds host parameters only after validation. Same-organization links route in place; Sidekick links open
+in the system browser. See [push-notifications.md](push-notifications.md) for
+provider credentials and deployment requirements.
+
+The React recovery boundary offers reopen and share-diagnostics actions.
+WebView failures retain explicit retry; artifact process termination requests a
+fresh access URL. Diagnostics store fixed failure codes and timestamps locally,
+plus report native version/build, runtime/update ID, channel, emergency-launch
+state and connection/background availability. Sharing is an explicit system
+share-sheet action. It includes no conversation, title, URL, cookie or push token.
+Remote iOS crash reporting is separate from that share sheet. A local Expo
+module wraps PLCrashReporter, capturing fatal native crashes without a provider
+SDK or an external ingestion URL. Hermes fatal errors and React boundary errors
+use the same regional spool. The existing Product analytics preference gates
+capture and delivery; account/organization changes invalidate the old context.
+`GET /telemetry/preference` and `POST /telemetry/crashes` are reused through the
+authenticated browser. See [telemetry.md](telemetry.md#ios-crash-reports) for the
+immutable route, consent, retention, raw-data and symbolication boundaries.
+
+The iOS release profile retains Fastlane's `ios/build/*.dSYM.zip` as private EAS
+build artifacts. Native stacks currently retain binary UUIDs and offsets; Hermes
+stacks retain numeric locations and update IDs. They are explicitly marked
+unsymbolicated. Automatic mobile symbolication is not implemented; the existing
+Electron minidump symbolicator cannot interpret iOS reports.
 
 Run the device acceptance checks below before distributing a build. The browser
 preview cannot prove native cookie behavior, keyboard handling, or Liquid Glass.
@@ -208,6 +294,12 @@ Build the current native development client with the checked-in profile:
 npx --yes eas-cli@latest build --platform ios --profile simulator --non-interactive
 npx --yes eas-cli@latest build --platform android --profile simulator --non-interactive
 ```
+
+For OTA acceptance, `simulator-release` extends the production profile with an
+iOS Simulator target and no version increment. It uses the same one production
+channel and fingerprint policy, without a development client. Build it with
+`eas build --platform ios --profile simulator-release`; development clients do
+not prove automatic launch-update behavior.
 
 Both build platforms pin the `sdk-58` image; iOS uses Xcode 27.1 for Duo support. The iOS profile targets the simulator, not a signed physical-device app. Android
 produces an installable APK. EAS may manage development Android signing; this is
@@ -250,7 +342,7 @@ platform's bundle first to catch resolution errors before device testing.
 - Live artifact open and canonical URLs share one origin under the configured artifact domain. The validator's tests reject nested, deceptive, credential-bearing, and cross-origin URLs. Artifact WebViews have no injected bridge; breaking that separation exposes shell actions to generated code.
 - Home cannot be removed or reordered. Pin ordering preserves every server pin, including desktop overflow; `movePin` tests cover preservation and invalid moves. The fixed Home control is verified visually, with no automated guard.
 - A failed resource request cannot imply no artifact. Error recovery precedes fallback routing; `mobile-session.test.ts` checks the routing decision, and browser acceptance exercises the stale-cache and recovery paths.
-- Credentials remain in browser cookies. The bridge transmits display metadata, commands, short-lived artifact open URLs and the single-use sign-in redemption proof, never a password, access/refresh token or session cookie. Runtime schemas define this boundary.
+- Credentials remain in browser cookies. The bridge transmits display metadata, commands, short-lived artifact open URLs, APNs registration tokens, account-bound regional crash envelopes and the single-use sign-in redemption proof, never a password, access/refresh token or session cookie. Runtime schemas define this boundary.
 
 ## Boundary
 
@@ -266,9 +358,18 @@ Network and HTTP failures show retry views. Pin failure messages stay in the sid
 
 Renderer termination reloads the relevant WebView. An artifact retry requests a fresh access URL, rather than replaying an expired open ticket; an access or active metadata failure removes the stale native surface and exposes web recovery. The native handler also recognizes a failed `/redeem` bootstrap. Returning from inline chat republishes the active artifact descriptor. Sign-out and account/organization changes discard native artifact views; a full application-page reload can rebuild the tab directory. Foregrounding refreshes the directory and resource metadata. Unsaved in-artifact state survives tab switching, but a full page/app reload, closing that tab or process termination can discard it. Native navigation and Liquid Glass require device validation; a browser preview cannot validate WKWebView cookies, Android Back dispatch, keyboard resizing, native gestures, or system accessibility.
 
-Sign-in uses the system browser and returns to `rally-mobile://auth/complete`. Cancelling leaves the app signed out, and retry creates a new attempt and verifier. External HTTP(S) links open in the system browser on both platforms; Android reports every navigation as `other`, so the handler uses the platform and destination origin instead of requiring iOS’s `click` signal. Push setup, offline canvas copies and app-store signing remain separate integration work.
+Sign-in uses the system browser and returns to `rally-mobile://auth/complete`. Cancelling leaves the app signed out, and retry creates a new attempt and verifier. External HTTP(S) links open in the system browser on both platforms; Android reports every navigation as `other`, so the handler uses the platform and destination origin instead of requiring iOS’s `click` signal. Offline canvas copies are intentionally out of scope. Provider credentials and app-store signing remain release setup.
 
 ## Testing
+
+`background.test.ts` exercises download deduplication, rollback directives,
+retryable task failure, platform availability and the absence of automatic
+reload. Its doubles stand in for the OS/Expo native APIs. `notification-target.test.ts`
+checks canonical routing and organization/region mismatches. These are not
+physical background scheduling, OTA receipt or notification delivery acceptance.
+The APNs provider and real queue/registry tests are owned by
+[push-notifications.md](push-notifications.md#testing).
+
 
 ```sh
 corepack pnpm --filter @rally/mobile test
@@ -283,9 +384,9 @@ corepack pnpm --filter @rally/mobile build
 ### Native verification (2026-11-13)
 
 SDK 58 development builds were exercised against the production Juno Labs
-organization through a temporary branch browser host. The reviewed backend
-handoff is deployed; the mobile browser presentation remains part of this
-unmerged change. Production pins were restored after each device run, and
+organization through a temporary branch browser host. Those earlier navigation
+checks used the deployed backend handoff and the then-unmerged mobile browser
+presentation. Production pins were restored after each device run, and
 artifact/conversation drafts were not submitted.
 
 The final shared-stack implementation passed iPhone 17 (iOS 26.5) system sign-in,
@@ -367,6 +468,30 @@ generation, or native WebView behavior. Device acceptance remains necessary.
 Manual acceptance: sign in through the system browser with Apple, Google and email; cancel and retry sign-in; test an existing browser account and switching accounts; open Home; open an artifact and an empty canvas; create a canvas; edit through the conversation sheet; pin and unpin through sidebar Edit; drag to reorder; reload to check server persistence; check desktop overflow pins; disconnect and retry; sign out; test light/dark and Reduce Transparency. On devices, additionally verify artifact writes, keyboard behavior, Android Back, iOS sheet dismissal, VoiceOver/TalkBack reorder actions, and state retention across tab switching.
 
 ## Changelog
+
+### 2026-11-13 — Add one-channel releases and thin-client runtime recovery
+
+**What changed:** Fingerprint-compatible EAS Update releases, platform background
+update downloads, native notification registration, account-fenced browser writes,
+regional iOS crash capture, measured composer insets,
+and local recovery/diagnostics now share the existing client and push services.
+
+**Why:** Installed builds needed JavaScript fixes without reinstallation and an
+explicit recovery path when the native shell or WebView fails.
+
+**Considered and rejected:** Separate update channels, an offline canvas database
+and a second mobile API would create state and release branches this consumer
+does not need. Direct Sentry ingestion would change the regional storage policy.
+
+**Consequences:** Keep one production channel, fingerprint-compatible binaries,
+user-controlled restarts, and native SDK recovery enabled. Native changes still
+need replacement builds. Store submission, OTA receipt, background scheduling
+and real push delivery require separate acceptance; bundle export proves none
+of them. Crash approval replies must match the latest verification, and stored
+approval deadlines cannot renew during an offline launch.
+
+Shipped in #1591.
+
 
 ### 2026-11-13 — Add the Expo canvas consumer
 

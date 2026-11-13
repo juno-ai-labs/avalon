@@ -1,6 +1,6 @@
 # Push notifications
 
-Rally pushes to signed-in Macs through APNs, and to signed-in browser tabs
+Rally pushes to signed-in Macs and iPhones through APNs, and signed-in browser tabs
 through Web Push, whatever lands on the workspace notification intent: a
 mention or an add, a Sidekick run that needs input or finished
 ([below](#a-sidekick-run-that-needs-input-or-finished)), and a person's reply
@@ -518,6 +518,27 @@ Push.
 
 ## Operations and release
 
+### Expo mobile delivery
+
+The Expo shell uses direct `expo-notifications` device tokens, not Expo's push
+relay. iOS registers the actual bundle topic `ai.rallywith.mobile`, with a
+production push entitlement in its EAS release profile. Refresh Apple provisioning
+when enabling that entitlement. Existing device PUT/DELETE routes, session
+ownership, notification choices, access checks, queue receipts and retirement
+rules remain authoritative. There is no new mobile route, socket or database
+migration. Android push and Firebase provisioning are deferred.
+
+On mobile, the sidebar's settings screen requests permission; resume and token
+rotation reconcile registration. The trusted browser bridge keeps account/session
+credentials in the browser. Phone registration replaces that installation’s previous session binding; unlike
+the Mac it has one browser session. This prevents an older session surviving
+reinstallation from keeping notifications live after sign-out. Signing out
+invalidates the bound session regardless of in-flight optional push writes. Canvas notification taps use the canonical
+link and ordinary web authorization. Test foreground, background and terminated
+receipt/taps, denied/re-enabled permissions, token rotation and account switching
+on physical phones; an emulator or test double cannot establish APNs delivery.
+
+
 An email sink without its Cloudflare `EMAIL` binding or sender answers
 `notification_email_unavailable` (retryable), so its queue messages retry
 until the dead-letter queue takes them: a non-empty dead-letter queue is the
@@ -647,6 +668,28 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-13 — Register Expo phones through the existing delivery pipeline
+
+**What changed:** The Expo iOS shell registers direct APNs tokens through existing
+session-bound device endpoints, using the signed `ai.rallywith.mobile` topic.
+Phone registration replaces stale session bindings. Notification taps retain
+canonical validation, message/artifact targets and browser authorization.
+
+**Why:** Production phone notifications need token rotation, permission recovery
+and sign-out that stops delivery, including after reinstallation.
+
+**Considered and rejected:** A separate Expo push relay or mobile registration
+API would duplicate the existing registry, access checks and intent queue.
+Android/FCM delivery is deferred to keep this release focused on iOS.
+
+**Consequences:** Queued browser writes are cancelled when their account view
+unmounts; token, permission and session changes reconcile through the existing
+routes. Signed physical-device delivery still needs acceptance independent of
+queue tests. Direct APNs custom data is read from Expo's push trigger payload.
+
+Shipped in #1591.
+
 
 ### 2026-11-10 — A Sidekick source request and its answer are notices, and a notice can carry links that answer it
 

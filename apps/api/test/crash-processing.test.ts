@@ -34,7 +34,7 @@ function bucket() {
       put: vi.fn(async (key: string, value: Uint8Array) => { objects.set(key, value); }),
       get: vi.fn(async (key: string) => {
         const value = objects.get(key);
-        return value ? { arrayBuffer: async () => value.buffer.slice(0) } : null;
+        return value ? { arrayBuffer: async () => value.buffer.slice(0), json: async () => JSON.parse(new TextDecoder().decode(value)) as unknown } : null;
       }),
       delete: vi.fn(async (key: string) => { objects.delete(key); }),
     }),
@@ -47,6 +47,55 @@ describe('regional native crash processing', () => {
     vi.setSystemTime(new Date('2026-08-12T20:00:00.000Z'));
   });
   afterEach(() => vi.useRealTimers());
+
+  it('ingests iOS reports regionally and projects only numeric frames before delivery', async () => {
+    const database = migratedSqliteDatabase();
+    database.prepare(`INSERT INTO users
+      (id, google_subject, email, name, created_at, updated_at, product_analytics_enabled)
+      VALUES ('018f22f2-4c22-7abc-8def-0123456789a1', 'google-1', 'user@example.com', 'User', ?, ?, 1)`)
+      .run('2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z');
+    database.prepare(`INSERT INTO workspaces
+      (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('018f22f2-4c22-7abc-8def-0123456789a2', 'Workspace', 'workspace', 'global',
+        '018f22f2-4c22-7abc-8def-0123456789a1', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')`).run();
+    const storage = bucket();
+    const env = createTestEnv({ DB: sqliteD1(database), AVALON_REGION: 'global', TELEMETRY_PAYLOADS: storage.binding });
+    const payload = { kind: 'ios-native', report: 'Private exception text and paths', signal: 'SIGABRT',
+      threads: [{ crashed: true, frames: [{ imageUUID: 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE', offset: '1A2B' }] }] };
+    const input = { ...metadata, format: 'mobile-json' as const, subjectUserId: '018f22f2-4c22-7abc-8def-0123456789a1',
+      subjectWorkspaceId: '018f22f2-4c22-7abc-8def-0123456789a2',
+      owner: { userId: '018f22f2-4c22-7abc-8def-0123456789a1', workspaceId: '018f22f2-4c22-7abc-8def-0123456789a2', route: 'global' as const },
+      dump: new TextEncoder().encode(JSON.stringify(payload)) };
+    await expect(new CrashIngestService(env).accept({ ...input,
+      dump: new TextEncoder().encode(JSON.stringify({ ...payload, signal: 'Private secret' })),
+    })).rejects.toThrow('crash_dump_invalid:signal:invalid_value');
+    await expect(new CrashIngestService(env).accept({ ...input, subjectUserId: '018f22f2-4c22-7abc-8def-0123456789a3' }))
+      .rejects.toThrow('crash_route_forbidden');
+    await expect(new CrashIngestService(env).accept({ ...input, subjectWorkspaceId: '018f22f2-4c22-7abc-8def-0123456789a3' }))
+      .rejects.toThrow('crash_route_forbidden');
+    await expect(new CrashIngestService(env).accept(input)).resolves.toMatchObject({ result: 'accepted' });
+    await expect(new CrashIngestService(env).accept(input)).resolves.toMatchObject({ result: 'duplicate' });
+    await expect(processPendingCrashReports(env)).resolves.toEqual({ selected: 1, processed: 1, failed: 0 });
+    const row = database.prepare(`SELECT structured_report_json, object_key, destination_state, delete_at FROM telemetry_crash_reports`).get() as Record<string, unknown>;
+    expect(JSON.parse(String(row.structured_report_json))).toMatchObject({
+      status: 'unsymbolicated', mechanism: 'ios_plcrashreporter', crash_type: 'SIGABRT',
+      threads: [{ crashed: true, frames: [{ module: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', function: 'offset_1a2b' }] }],
+    });
+    expect(row.structured_report_json).not.toContain('Private');
+    expect(row.destination_state).toBe('pending');
+    expect(row.delete_at).toBe('2026-11-10T20:00:00.000Z');
+    expect(new TextDecoder().decode(storage.objects.get(String(row.object_key)))).toContain('Private exception');
+    storage.objects.set(String(row.object_key), new TextEncoder().encode('{"kind":"hermes"}'));
+    database.prepare("UPDATE telemetry_crash_reports SET parser_state = 'pending'").run();
+    expect(await processPendingCrashReports(env)).toEqual({ selected: 1, processed: 1, failed: 0 });
+    expect(database.prepare('SELECT parser_state FROM telemetry_crash_reports').get()).toEqual({ parser_state: 'malformed' });
+    expect(await processPendingCrashReports(env)).toEqual({ selected: 0, processed: 0, failed: 0 });
+    database.prepare('UPDATE users SET product_analytics_enabled = 0').run();
+    await expect(new CrashIngestService(env).accept({ ...input, uploadId: '018f22f2-4c22-7abc-8def-0123456789ff' }))
+      .resolves.toMatchObject({ result: 'suppressed' });
+    expect(database.prepare('SELECT COUNT(*) AS count FROM telemetry_crash_reports').get()).toEqual({ count: 1 });
+    database.close();
+  });
 
   it('symbolicates with private regional artifacts and stores one bounded full structured report', async () => {
     const database = migratedSqliteDatabase();

@@ -1,0 +1,32 @@
+name: Release Rally Mobile
+
+# GitHub's release workflow runs the repository gates before invoking this workflow.
+# Use Expo's fingerprint/get-build jobs to decide between a native build and OTA.
+jobs:
+  fingerprint:
+    type: fingerprint
+    environment: production
+  get_ios_build:
+    needs: [fingerprint]
+    type: get-build
+    params:
+      platform: ios
+      simulator: false
+      profile: production
+      channel: production
+      fingerprint_hash: ${{ needs.fingerprint.outputs.ios_fingerprint_hash }}
+  build_ios:
+    needs: [get_ios_build]
+    if: ${{ !needs.get_ios_build.outputs.build_id }}
+    type: build
+    params:
+      platform: ios
+      profile: production
+  update_ios:
+    needs: [get_ios_build]
+    if: ${{ needs.get_ios_build.outputs.build_id }}
+    type: update
+    environment: production
+    params:
+      platform: ios
+      channel: production
