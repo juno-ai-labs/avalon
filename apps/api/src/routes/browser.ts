@@ -9,7 +9,7 @@ import { authBodyLimit } from "../middleware/auth-body-limit";
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
-import { StartSupportSessionRequestSchema, SupportPeopleSchema, SupportWorkspacesSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { MobileAuthStartSchema, MobileAuthExchangeSchema, MobileAuthTicketSchema, StartSupportSessionRequestSchema, SupportPeopleSchema, SupportWorkspacesSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { SupportAccessService } from "../services/support-access";
 import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import type { Env, HonoAppEnv } from "../env";
@@ -101,6 +101,19 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     }
     await next();
     c.header("Cache-Control","no-store");
+  });
+  // The system browser and native WebView have separate cookie stores. Only
+  // a single-use, PKCE-bound ticket crosses that boundary; never the cookie.
+  routes.post('/mobile/handoff', authBodyLimit, zValidator('json', MobileAuthStartSchema), async (c) => {
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    const ticket = await new AuthService(c.env).issueLoginTicket({ userId: auth.userId, audience: 'browser', ...c.req.valid('json') });
+    return c.json(MobileAuthTicketSchema.parse(ticket));
+  });
+  routes.post('/mobile/exchange', authBodyLimit, zValidator('json', MobileAuthExchangeSchema), async (c) => {
+    const session = await new AuthService(c.env).exchangeDesktopTicket(c.req.valid('json'), 'browser');
+    const cookie = await new BrowserSessionService(c.env).register(session);
+    writeCookie(c, cookie.credential, cookie.expiresAt);
+    return c.json(BrowserSessionSchema.parse(cookie.session));
   });
   routes.post('/password', authBodyLimit, zValidator('json', PasswordLoginRequestSchema), async (c) => {
     const session = await passwordLogin(c.env, c.req.valid('json'));
