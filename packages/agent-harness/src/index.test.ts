@@ -3316,6 +3316,7 @@ describe("agent harness", () => {
       provider: "azure",
       success: false,
       disposition: "fallback",
+      producedOutput: false,
       providerError: { code: "unavailable" },
     });
   });
@@ -3323,6 +3324,7 @@ describe("agent harness", () => {
   it("does not traverse a recognized streamed outage after observable output", async () => {
     const urls: string[] = [];
     const events: HarnessEvent[] = [];
+    const attempts: InferenceAttemptEvent[] = [];
     const fetcher = vi.fn(async (request: RequestInfo | URL) => {
       const url = String(request);
       urls.push(url);
@@ -3344,6 +3346,7 @@ describe("agent harness", () => {
         workspaceId: "workspace-stream-unavailable-after-output",
       }),
       onEvent: (event) => { events.push(event); },
+      onInferenceAttempt: (event) => { attempts.push(event); },
     });
 
     expect(urls).toEqual([
@@ -3357,6 +3360,14 @@ describe("agent harness", () => {
     expect(events.filter((event) => event.type === "stream_delta")).toEqual([
       expect.objectContaining({ delta: "partial", reset: false }),
     ]);
+    // The attempt that ended the turn is recorded as such, not as "fallback".
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      provider: "azure",
+      success: false,
+      disposition: "failed",
+      producedOutput: true,
+    });
   });
 
   it("reports exhausted streamed-service-unavailable routes as a provider failure", async () => {

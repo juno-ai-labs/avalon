@@ -1584,6 +1584,48 @@ describe("canonical ordered work-stream transcript", () => {
       }],
       now: NOW + 4,
     })).rejects.toThrow("bind_activation_input_replay_mismatch");
+
+    // A snapshot input (a Canvas context retitled after the first turn) keeps
+    // the copy it was admitted with: the newer rendering is acknowledged as a
+    // replay and appends nothing.
+    const factsBeforeSnapshotReplay = sql.exec(`SELECT COUNT(*) AS count FROM transcript_facts`).one().count;
+    await expect(transcript.commitActivationInputs({
+      loopId: "persistent-loop",
+      executionId: runId,
+      executionEpoch: 1,
+      leaseOwner: "activation-owner",
+      expectedBindGeneration: 2,
+      expectedBindStateRevision: 4,
+      inputs: [{
+        ...inputs[0]!,
+        keepAdmittedOnReplay: true,
+        message: { ...inputs[0]!.message, content: "Retitled replay payload" },
+      }],
+      now: NOW + 5,
+    })).resolves.toEqual({
+      transitions: [],
+      replayedActivationInputIds: [inputs[0]!.activationInputId],
+    });
+    expect(loop.loop()!.revision).toBe(revisionBeforeReplay);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM transcript_facts`).one().count).toBe(factsBeforeSnapshotReplay);
+    // It still may not change where the input came from.
+    await expect(transcript.commitActivationInputs({
+      loopId: "persistent-loop",
+      executionId: runId,
+      executionEpoch: 1,
+      leaseOwner: "activation-owner",
+      expectedBindGeneration: 2,
+      expectedBindStateRevision: 4,
+      inputs: [{
+        ...inputs[0]!,
+        keepAdmittedOnReplay: true,
+        message: {
+          ...inputs[0]!.message,
+          provenance: { ...inputs[0]!.message.provenance, sourceId: "another-source" },
+        },
+      }],
+      now: NOW + 6,
+    })).rejects.toThrow("bind_activation_input_replay_mismatch");
   });
 
   it("revalidates a cached Bind projection across storage instances and never caches a rolled-back head", async () => {

@@ -484,9 +484,12 @@ is a new version attributed to Rally while a new path adds an artifact. It is a
 derived user message, as a Sidekick run's activation context is, not system
 prompt text, because the system prompt prefix is byte-stable and cached and
 the artifact list changes with every publish; it is keyed on the message that
-woke the run, so a recovered execution renders the same context, under its own
-source kind (`canvas_context`), so it never shares an identity with another
-derived message keyed on that same message.
+woke the run, under its own source kind (`canvas_context`), so it never shares
+an identity with another derived message keyed on that same message. That key
+does not fix its content: a new Canvas is titled after its first turn, and a
+publish changes the artifact list, so a Retry renders different text under the
+same identity. The input is marked `keepAdmittedOnReplay`, and a replay keeps
+the context the run started with ([`agent-harness.md`](agent-harness.md)).
 
 A Chat can open with Rally's own message: a seeded Canvas's does. A provider
 conversation must begin with a user turn, and Gemini, the fallback model,

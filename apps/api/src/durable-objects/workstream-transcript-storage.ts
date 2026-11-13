@@ -697,7 +697,7 @@ export class WorkstreamTranscriptStorage {
       message: BindLoopMessage;
       provenance: BindLoopMessageOrigin;
     }> = [];
-    for (const { activationInputId, message } of input.inputs) {
+    for (const { activationInputId, message, keepAdmittedOnReplay } of input.inputs) {
       if (requestedActivationInputIds.has(activationInputId)) {
         throw new Error("bind_activation_input_duplicate");
       }
@@ -718,7 +718,10 @@ export class WorkstreamTranscriptStorage {
       const provenanceKey = bindProvenanceKey(provenance);
       const replay = existingActivationInputs.get(activationInputId);
       if (replay) {
-        if (replay.messageJson !== messageJson || replay.provenanceKey !== provenanceKey) {
+        // The receipt already holds the admitted copy and the Bind head keeps
+        // it; a snapshot input's newer rendering is simply not appended.
+        if (replay.provenanceKey !== provenanceKey
+          || (replay.messageJson !== messageJson && keepAdmittedOnReplay !== true)) {
           throw new Error("bind_activation_input_replay_mismatch");
         }
         replayedActivationInputIds.add(activationInputId);
