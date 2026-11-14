@@ -326,14 +326,37 @@ reads.
 - **Canonical id** `rally:notifications`, model id `rally_notifications`,
   wire prefix `notifications_`. The prefix stays because the local names are
   bare verbs ([`agent-tools.md`](../../agent-tools.md#the-shape-of-a-tool)).
-- **Preloaded** for every loop that has a Canvas: a Canvas's Chat and its
-  background agents, a Sidekick's wizard, and a Sidekick's runs. Loading reads
+- **Preloaded** for the loops the table below offers a tool to. Loading reads
   nothing and authorizes nothing; each call resolves the Canvas.
-- **Which Canvas** is always the host's: the loop's own Canvas for a Chat or
-  its background agent, the Sidekick's Canvas for a wizard or a run.
+- **Which Canvas** is always the host's: the loop's own Canvas for a Canvas's
+  Chat, the Sidekick's attached Canvas for a Sidekick's loops
+  ([A Sidekick's Canvas](#a-sidekicks-canvas)).
 - **Tool order:** `notifications_register`, `notifications_send`.
-  `notifications_register` is offered to a Chat, a background agent and a
-  wizard; never to a run.
+- **Who is offered what.** Every loop kind in
+  [`agent-loop-types.md`](../../agent-loop-types.md) has a row:
+
+  | Loop | `notifications_register` | `notifications_send` |
+  | --- | --- | --- |
+  | A Canvas's Chat, a person's turn | Yes | Yes |
+  | A Sidekick's wizard, a person's turn | Yes | Yes |
+  | A Sidekick's self-review (`reason` `sidekick_review`) | No | No |
+  | A Sidekick run, however it started or was continued | No | Yes |
+  | A run's delegation worker (`automationDelegation`) | No | Yes |
+  | A turn another agent's message started (`agentExchange`) | As the conversation it runs in | As the conversation it runs in |
+  | A background agent (`backgroundAgent`) | As its root conversation | As its root conversation |
+  | An MCP client | No | No |
+
+  A background agent takes the row of the conversation that started it,
+  which it already records as its root: rooted in a Canvas's Chat or a
+  person's wizard turn it gets both tools, rooted in a run only send, rooted
+  in a self-review neither. Its reach is held to the person its loop acts as,
+  as for every background agent today.
+
+  The self-review gets neither. Rally's own notice starts it, so nobody asked
+  for notices, and what it produces is about the Sidekick's procedure, which
+  its managers read in the Sidekick's conversation. The Canvas's people may
+  not be able to open the Sidekick at all. A run that publishes is what is
+  news to them.
 - **System-prompt guidance:**
 
   > Notices reach everyone in this Canvas on their phone, computer or email.
@@ -458,3 +481,10 @@ The migrations add two tables and widen two CHECKs; none rewrites rows.
    Canvas would cover a "your daily report is ready" Sidekick, but that
    Canvas was never registered, so it would need registering on its first
    publish.
+2. **Should a background agent of a run that acts as the Sidekick itself be
+   able to send?** A run with no delegate acts as nobody, and a background
+   agent is held to the person its loop acts as, so that agent's send always
+   fails with `canvas_access_denied`. The run itself can still send. Giving
+   the agent its root run's reach, as Terminal does for the sandbox, would fix
+   it, but widens what every background agent reaches, not only notices.
+   Until decided, the agent cannot send.
