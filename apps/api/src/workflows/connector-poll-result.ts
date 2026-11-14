@@ -72,10 +72,11 @@ export function terminalPollFailure(error: unknown): { code: string; message: st
 }
 
 /**
- * A code saying the provider refused the connection's grant (`unauthorized…`).
- * By the time an attempt fails with it, the poll has already tried to rotate
- * the refused credential and the provider has refused that too, so nothing a
- * retry seconds later can change it: only the member reconnecting does.
+ * An authorization failure (`unauthorized…`): a revoked grant, or a refusal of
+ * Rally's own configuration such as GitHub's `invalid_client`. Neither changes
+ * within a step's retry window, so the poll does not retry it. This is retry
+ * policy only; whether the connection needs reconnecting is decided by the
+ * credential layer, not by this code.
  */
 export function isRefusedGrantCode(code: string): boolean {
   return code === "unauthorized" || code.startsWith("unauthorized:");

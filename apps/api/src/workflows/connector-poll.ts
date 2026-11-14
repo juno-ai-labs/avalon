@@ -106,11 +106,11 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
               error_code: errorCode,
             });
             const failure = pollAttemptFailure(error, errorCode);
-            // A refused grant is not retried: the attempt already tried to
-            // rotate the credential and was refused again, so three more
-            // attempts only spent three more refresh calls against the
-            // provider on every poll of every disconnected account. The
-            // message, and so the code, survives the step boundary.
+            // An authorization failure is not retried: it does not change
+            // within the retry window, so three more attempts only spent three
+            // more token-endpoint calls on every poll of every disconnected
+            // account. The message, and so the code, survives the step
+            // boundary.
             if (isRefusedGrantCode(errorCode) && failure instanceof Error) {
               throw new NonRetryableError(failure.message);
             }

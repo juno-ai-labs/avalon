@@ -1464,12 +1464,16 @@ now guards it.
   raise that for policy and configuration failures that never reached the provider,
   and spending a single-use refresh token on one buys a retry that fails
   identically.
-- **A poll attempt refused on its grant is not retried.** `poll-and-persist-provider-page`
-  throws an `unauthorized…` failure as a `NonRetryableError`: the attempt has
-  already tried to rotate the refused credential and been refused again, so its
-  step retries could only spend more refresh calls. The connection is marked
-  `needs_reconnect` and the next scheduled poll tries once more. Every other
-  failure keeps the step's bounded retries.
+- **A poll attempt that fails `unauthorized` is not retried.** `poll-and-persist-provider-page`
+  throws an `unauthorized…` failure as a `NonRetryableError`, because an
+  authorization answer does not change seconds later and the step retries
+  could only spend more token-endpoint calls; the next scheduled poll tries
+  once more. That is a retry policy, not a diagnosis: whether the connection is
+  marked `needs_reconnect` is decided separately, by the adapter's
+  `reconnectRequired` or `isRevokedGrantError` (above). A refusal of Rally's
+  own configuration, such as GitHub's `invalid_client`, is `unauthorized` too
+  and leaves the status alone. Every other failure keeps the step's bounded
+  retries.
 - **A token-endpoint failure has three answers, not two.** A code naming a dead
   grant marks; a code naming Rally's own fault does not, whatever the status; an
   unfamiliar code or none at all defers to the status. An unfamiliar word is not
@@ -1666,9 +1670,10 @@ surface that tells somebody about connector activity reads
 
 **Why:** A scheduled log review on 2026-11-14 found six Google connections with
 revoked grants failing `credentials_refresh` 4,370 times in fifteen hours, four
-times on each of 1,090 polls. Each attempt had already rotated and been refused,
-so the retries were three wasted token-endpoint calls per poll per disconnected
-account, and three times the log volume.
+times on each of 1,090 polls. An authorization refusal does not change within
+the step's 14-second retry window, so the retries were three wasted
+token-endpoint calls per poll per disconnected account, and three times the log
+volume.
 
 **Rejected:** Skipping the poll of a `needs_reconnect` connection would end the
 calls entirely, but that status also covers diagnoses such as missing scopes
