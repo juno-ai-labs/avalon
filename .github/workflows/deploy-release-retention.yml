@@ -1,0 +1,79 @@
+name: Deploy release retention
+
+# The private `avalon-release-retention` Worker archives desktop releases older
+# than the newest five. It used to be deployed only by hand, and a merged fix
+# was never run: the live version dated from 2026-08-07, did not recognize the
+# `faster-mac.yml` channel manifest added on 2026-09-15, and threw
+# `Unexpected active R2 key` on every nightly run from then on, so the public
+# release bucket stopped draining. Deploying on merge makes a merged retention
+# change a live one.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/release-retention/**"
+      # The Worker's tsconfig extends the root config, and the workspace and
+      # lockfile decide what is installed and built.
+      - "tsconfig.base.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/deploy-release-retention.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-release-retention
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The environment that already holds the Worker deployment token.
+    environment: api-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Check out the revision being deployed
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Require Cloudflare deployment credentials
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ci.yml runs on the same push but cannot gate this workflow, so the
+      # deployment verifies the Worker itself rather than racing it.
+      - name: Typecheck the retention Worker
+        run: pnpm --filter @rally/release-retention typecheck
+
+      - name: Test the retention Worker
+        run: pnpm --filter @rally/release-retention test
+
+      - name: Deploy the retention Worker
+        run: pnpm --filter @rally/release-retention run deploy
