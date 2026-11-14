@@ -6,7 +6,7 @@ import { ConnectorError } from "@rally/connectors";
 
 import {
   failedPollAttemptCode,
-  isRefusedGrantCode,
+  isReconnectRequiredFailure,
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
@@ -103,21 +103,26 @@ describe("terminalPollFailureLevel", () => {
   });
 });
 
-describe("isRefusedGrantCode", () => {
-  it("names a provider's refusal of the grant, which a retry cannot change", () => {
-    // The code a revoked Google grant produces: a step that retried it spent
-    // four refresh calls on every poll of a disconnected account.
-    const revoked = new ConnectorError("unauthorized", "revoked", { status: 400 });
-    expect(pollAttemptErrorCode(revoked)).toBe("unauthorized:http_400");
-    expect(isRefusedGrantCode(pollAttemptErrorCode(revoked))).toBe(true);
-    expect(isRefusedGrantCode("unauthorized")).toBe(true);
+describe("isReconnectRequiredFailure", () => {
+  it("stops retrying a grant the adapter declared dead", () => {
+    // The failure Google's refresh raises for `invalid_grant`: a step that
+    // retried it spent four refresh calls on every poll of a disconnected account.
+    const revoked = new ConnectorError("unauthorized", "revoked", {
+      reconnectRequired: true, reason: "invalid_grant", status: 400,
+    });
+    expect(isReconnectRequiredFailure(revoked)).toBe(true);
   });
 
-  it("leaves provider faults, timeouts and platform failures retryable", () => {
-    const fault = new ConnectorError("provider_error", "down", { status: 503 });
-    expect(isRefusedGrantCode(pollAttemptErrorCode(fault))).toBe(false);
-    expect(isRefusedGrantCode("connector_poll_failed:d1_overloaded")).toBe(false);
-    expect(isRefusedGrantCode("connector_poll_timeout")).toBe(false);
-    expect(isRefusedGrantCode("unauthorized_scope")).toBe(false);
+  it("keeps retrying a 403 that may be a rate limit, and every other failure", () => {
+    const rateLimited = new ConnectorError("unauthorized", "Rate Limit Exceeded", {
+      status: 403, providerError: "rateLimitExceeded",
+    });
+    expect(isReconnectRequiredFailure(rateLimited)).toBe(false);
+    const misconfigured = new ConnectorError("unauthorized", "GitHub OAuth failed", {
+      providerError: "invalid_client", reconnectRequired: false,
+    });
+    expect(isReconnectRequiredFailure(misconfigured)).toBe(false);
+    expect(isReconnectRequiredFailure(new ConnectorError("provider_error", "down", { status: 503 }))).toBe(false);
+    expect(isReconnectRequiredFailure(new Error("unauthorized"))).toBe(false);
   });
 });

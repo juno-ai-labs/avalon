@@ -19,7 +19,7 @@ import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service"
 
 import {
   failedPollAttemptCode,
-  isRefusedGrantCode,
+  isReconnectRequiredFailure,
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
@@ -106,12 +106,12 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
               error_code: errorCode,
             });
             const failure = pollAttemptFailure(error, errorCode);
-            // An authorization failure is not retried: it does not change
-            // within the retry window, so three more attempts only spent three
-            // more token-endpoint calls on every poll of every disconnected
-            // account. The message, and so the code, survives the step
-            // boundary.
-            if (isRefusedGrantCode(errorCode) && failure instanceof Error) {
+            // A grant the adapter declared dead is not retried: three more
+            // attempts only spent three more token-endpoint calls on every
+            // poll of every disconnected account. Any other `unauthorized`,
+            // such as a rate-limit 403, keeps its retries. The message, and
+            // so the code, survives the step boundary.
+            if (isReconnectRequiredFailure(error) && failure instanceof Error) {
               throw new NonRetryableError(failure.message);
             }
             throw failure;
