@@ -1,3 +1,4 @@
+import { AppErrorBoundary } from '@rally/ui/components/app-error-boundary';
 import { inPlaceHash } from './session';
 import { PinPlacementError, writeMobilePins } from './mobile-pins';
 import { MobileWrites, uploadMobileReport } from './mobile-writes';
@@ -16,7 +17,7 @@ import { localCacheScope } from '../../desktop/src/renderer/lib/local-cache';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from '../../desktop/src/renderer/lib/workspace-socket';
 import { CANVASES_ROUTE, canvasRoute, openCanvasId, useCanvasList } from '../../desktop/src/renderer/lib/canvases';
 import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/speech-playback';
-import { postMobileEvent } from './mobile-bridge';
+import { mobileScreenReady, postMobileEvent } from './mobile-bridge';
 import './mobile.css';
 import { useMobileCanvasDetail, useMobileCanvasUpdates } from './mobile-canvas-detail';
 // Chat/composition and file previews are paid for only when those screens open.
@@ -223,8 +224,8 @@ function MobileContent(): React.JSX.Element {
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
     <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={create} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
-    {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><Suspense fallback={opening}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Suspense></section>}
-    {creationSession && <section hidden={!creating} className="mobile-page"><Suspense fallback={opening}><CreateCanvas created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></section>}
+    {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Suspense></AppErrorBoundary></section>}
+    {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
   </main>;
 }
 
@@ -257,7 +258,7 @@ function PrepareCanvas({ id }: { id: string }) {
   useEffect(() => {
     if (!session?.workspace || (!query.data && !query.isError)) return;
     postMobileEvent({ type: 'prepared-canvas', userId: session.user.id, workspaceId: session.workspace.id, canvasId: id,
-      canvas: resource && !query.isError ? { canvasId: id, resourceId: resource.resourceId, version, title: query.data!.title } : null });
+      canvas: resource ? { canvasId: id, resourceId: resource.resourceId, version, title: query.data!.title } : null });
   }, [session, id, resource, version, query.data, query.isError]);
   return null;
 }
@@ -309,7 +310,7 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
     {resource.kind === 'site'
       ? <HostedSite key={`${resource.resourceId}:${version}`} canvasId={id} resourceId={resource.resourceId} version={version ?? resource.version} title={resource.title} active={active} />
       : content.isError ? <Recovery title="This artifact couldn’t load" retry={() => void content.refetch()} /> : !content.data ? <div className="mobile-empty" role="status">Opening artifact…</div>
-      : <Suspense fallback={opening}><InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} /></Suspense>}
+      : <AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} /></Suspense></AppErrorBoundary>}
   </>;
 }
 

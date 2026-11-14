@@ -64,3 +64,6 @@ export function installMobileBridge(): void {
   });
   ready();
 }
+
+/** Actionable browser recovery must be visible above the native loading gate. */
+export function mobileScreenReady(): void { postMobileEvent({ type: 'screen-ready' }); }

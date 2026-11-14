@@ -268,12 +268,14 @@ it('prepares hosted pins through Home and opens fresh access without another bro
     lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false };
   let opens = 0;
   let fail = false;
+  let failDetail = false;
+  let detailReads = 0;
   const events: Array<{ event: { type: string; canvas?: unknown; requestId?: string; artifact?: unknown } }> = [];
   fetchHandler = async (input) => {
     const path = new URL(String(input), 'http://localhost').pathname;
     if (path.endsWith('/workspace/socket')) return workspaceTicket();
     if (path.endsWith('/socket')) return Response.json({ url: `wss://api.rallywith.ai/socket/conversations/${parent}/0`, ticket: 'conversation-ticket' });
-    if (path.endsWith(`/canvases/${parent}`)) return Response.json({ ...canvas, artifacts: [{ resourceId: site, title: 'Groceries', kind: 'site', mimeType: 'text/html', version: 1, updatedAt: at }] });
+    if (path.endsWith(`/canvases/${parent}`)) { detailReads++; return failDetail ? Response.json({ error: { message: 'Temporarily busy' } }, { status: 429 }) : Response.json({ ...canvas, artifacts: [{ resourceId: site, title: 'Groceries', kind: 'site', mimeType: 'text/html', version: 1, updatedAt: at }] }); }
     if (path.endsWith(`/resources/${site}/artifact/open`)) {
       opens++;
       if (fail) return Response.json({ error: { message: 'Access unavailable' } }, { status: 403 });
@@ -293,6 +295,12 @@ it('prepares hosted pins through Home and opens fresh access without another bro
     const row = { ...canvas, artifactKind: 'site', unread: false, presentUserIds: [], pinnedPosition: 0, sharedWithMe: true };
     act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_canvas_list', occurredAt: at, waterline: 1, items: [row] }) })));
     await waitFor(() => expect(events.find(({ event }) => event.type === 'prepared-canvas')?.event.canvas).toEqual({ canvasId: parent, resourceId: site, version: 1, title: 'Shopping' }));
+    failDetail = true;
+    act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail: { type: 'refresh' } })));
+    await waitFor(() => expect(detailReads).toBe(2));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(events.filter(({ event }) => event.type === 'prepared-canvas').at(-1)?.event.canvas).toEqual({ canvasId: parent, resourceId: site, version: 1, title: 'Shopping' });
+    failDetail = false;
     expect(opens).toBe(0); // Do not cache an expiring single-use access URL.
     command('wrong-account', child);
     command('first');
@@ -384,5 +392,32 @@ it('refreshes only the published mobile canvas and ignores unrelated resource to
     // Reconnect still reconciles detail that might have changed while offline.
     push({ type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000124', occurredAt: at, waterline: 4, topics: [], reason: 'resume', sidebar: { automations: { waterline: 4, items: [] }, canvases: { waterline: 4, items: [{ ...rows[0], updatedAt: '2026-11-14T00:00:00.000Z' }, rows[1]] } } });
     await waitFor(() => expect(reads).toEqual([parent, child, parent, parent, child]));
+  } finally { view.unmount(); }
+});
+
+
+it('recovers a failed deep-link detail when access adds the canvas to the directory', async () => {
+  const canvas = { id: parent, title: 'Newly shared', createdByUserId: user.id, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false };
+  let granted = false;
+  fetchHandler = async (input) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
+    if (path.endsWith('/socket')) return Response.json({ url: `wss://api.rallywith.ai/socket/conversations/${parent}/0`, ticket: 'conversation-ticket' });
+    if (path.endsWith(`/canvases/${parent}`)) { return granted ? Response.json({ ...canvas, artifacts: [] }) : Response.json({ error: { message: 'Not shared yet' } }, { status: 403 }); }
+    return Response.json({ error: { message: 'Not in fixture' } }, { status: 404 });
+  };
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1#/canvases/${parent}`);
+  const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+  try {
+    await waitFor(() => expect(workspaceSockets()).toHaveLength(1));
+    const socket = workspaceSockets()[0]!;
+    act(() => socket.open());
+    const push = (event: unknown) => act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) })));
+    push({ type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000122', occurredAt: at, waterline: 1, topics: [], reason: 'initial', sidebar: { automations: { waterline: 1, items: [] }, canvases: { waterline: 1, items: [] } } });
+    await screen.findByText('This canvas couldn’t load');
+    granted = true;
+    push({ type: 'workspace_canvas_list', occurredAt: at, waterline: 2, items: [{ ...canvas, artifactKind: null, unread: false, presentUserIds: [], pinnedPosition: null, sharedWithMe: true }] });
+    await waitFor(() => expect(location.hash).toContain('view=chat'));
   } finally { view.unmount(); }
 });

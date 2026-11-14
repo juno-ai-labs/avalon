@@ -1051,3 +1051,31 @@ it('keeps an explicitly requested mobile organization picker usable and selects 
     expect(location.search).toBe('?mobile=1');
   } finally { view.unmount(); localStorage.clear(); }
 });
+
+
+it.each([false, true])('adopts the regional identity when opening an organization in place (remembered=%s)', async (remembered) => {
+  const enterprise = { ...workspace, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Enterprise team', region: 'enterprise', accessClass: 'member', role: 'member' };
+  const regionalUser = { ...user, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' };
+  let activated = false;
+  vi.stubGlobal('ReactNativeWebView', { postMessage: () => undefined });
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
+    if (input.endsWith('/workspaces')) return Response.json({ workspaces: [enterprise] });
+    if (input.endsWith('/workspaces/attention')) return Response.json({ attention: [] });
+    if (input === '/regional/enterprise/browser/workspace/select') return activated
+      ? Response.json({ user: regionalUser, workspace: enterprise, expiresAt })
+      : Response.json({ error: { message: 'Sign in' } }, { status: 401 });
+    if (input === '/regional/global/browser/workspace/activate') { activated = true; return new Response(null, { status: 204 }); }
+    throw new Error(`Unexpected request: ${input}`);
+  }));
+  history.replaceState(null, '', '/?mobile=1');
+  if (remembered) rememberMobileWorkspace(localStorage, user.id, enterprise);
+  const view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.user.id}`}</output>} />);
+  try {
+    if (!remembered) fireEvent.click(await screen.findByRole('link', { name: /Enterprise team/ }));
+    await screen.findByText('enterprise:dddddddd-dddd-4ddd-8ddd-dddddddddddd');
+    expect(location.pathname).toBe(`/app/workspaces/enterprise/${enterprise.id}`);
+    expect(screen.queryByText('The organization session changed. Reload this page.')).not.toBeInTheDocument();
+  } finally { view.unmount(); }
+});

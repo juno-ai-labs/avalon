@@ -6,7 +6,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import { Linking, Platform, StyleSheet, View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { randomUUID } from 'expo-crypto';
-import { artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, parseMobileEvent, type MobileCommand, type MobileEvent, type NativeArtifact } from './protocol';
+import { artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, parseMobileEvent, type MobileCommand, type MobileEvent, type NativeArtifact } from './protocol';
 
 export interface CanvasWebViewHandle { send: (command: MobileCommand) => void; reload: () => void }
 export interface CanvasWebViewProps {
@@ -102,11 +102,13 @@ export function ArtifactSessionPreparation({ access, onReady }: { access: Native
 
 /** A first-party artifact WebView avoids Safari's cross-site cookie restriction.
  * Only a presentation inset is injected; generated code has no native capability. */
-export function ArtifactView({ access, background, topInset, onRetry }: { access: NativeArtifact; background: string; topInset: number; onRetry: () => void }) {
+export function ArtifactView({ access, appUrl, background, topInset, onRetry }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; onRetry: () => void }) {
   const { colors } = useTheme();
   const web = useRef<WebView<unknown>>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const renewing = useRef(false);
+  const renew = () => { if (!renewing.current) { renewing.current = true; onRetry(); } };
   useEffect(() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); }, [topInset]);
   return <View style={{ flex: 1, backgroundColor: background }}>
     <WebView<unknown> ref={web} source={{ uri: access.openUrl }} style={styles.web}
@@ -115,15 +117,13 @@ export function ArtifactView({ access, background, topInset, onRetry }: { access
       removeIosKeyboardObserver
       injectedJavaScriptBeforeContentLoaded={artifactPresentationScript(topInset)}
       injectedJavaScriptBeforeContentLoadedForMainFrameOnly
-      injectedJavaScript={artifactPresentationScript(topInset)}
-      injectedJavaScriptForMainFrameOnly
       onMessage={(event) => { if (artifactPresented(event.nativeEvent.data, event.nativeEvent.url, access.canonicalUrl)) setLoading(false); }}
       onLoadStart={() => { setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); setLoading(false); }}
       onError={() => { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }}
       onHttpError={(event) => {
         const action = artifactLoadFailure(access, event.nativeEvent.url, event.nativeEvent.statusCode);
         if (action === 'ignore') return;
-        if (action === 'renew') { onRetry(); return; }
+        if (action === 'renew') { renew(); return; }
         recordFailure('artifact_load_failed'); setFailed(true);
       }}
       onContentProcessDidTerminate={() => { recordFailure('artifact_process_terminated'); setFailed(true); setLoading(false); onRetry(); }} onRenderProcessGone={() => { recordFailure('artifact_process_terminated'); setFailed(true); setLoading(false); onRetry(); }}
@@ -135,6 +135,11 @@ export function ArtifactView({ access, background, topInset, onRetry }: { access
       }}
       onShouldStartLoadWithRequest={(request) => {
         if (request.url === 'about:blank' || request.isTopFrame === false) return true;
+        if (artifactAuthHandoff(access.canonicalUrl, request.url, appUrl)) {
+          if (access.openUrl === access.canonicalUrl) renew();
+          else { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }
+          return false;
+        }
         try {
           const url = new URL(request.url);
           if (url.origin === new URL(access.canonicalUrl).origin) return true;

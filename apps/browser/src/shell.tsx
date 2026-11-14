@@ -1,5 +1,5 @@
 import { MobileCanvasApp } from './mobile';
-import { isMobileHost } from './mobile-bridge';
+import { mobileScreenReady, isMobileHost } from './mobile-bridge';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
@@ -195,13 +195,13 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   }), [api, getAccountOnboarding, identityApi, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   return <AppSessionValueProvider value={value} connectorSetup={connectorSetup}>
     <FaviconApiProvider>
-      <AccountOnboardingGate>{isMobileHost() ? <MobileCanvasApp /> : <Suspense fallback={<BrowserBoot />}><WorkspaceApp /></Suspense>}</AccountOnboardingGate>
+      <AccountOnboardingGate onRecoveryReady={mobileScreenReady}>{isMobileHost() ? <MobileCanvasApp /> : <Suspense fallback={<BrowserBoot />}><WorkspaceApp /></Suspense>}</AccountOnboardingGate>
     </FaviconApiProvider>
   </AppSessionValueProvider>;
 }
 
 /**
- * The signed-in application, and the browser's one lazy boundary: sign-in
+ * The signed-in application, and the browser's authenticated loading boundary: sign-in
  * never downloads the renderer.
  */
 export default function BrowserShell(props: {

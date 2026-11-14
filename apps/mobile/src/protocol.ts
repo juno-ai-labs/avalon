@@ -2,6 +2,7 @@ import { RegisterPushDeviceRequestSchema } from '@rally/contracts/push-notificat
 import { MobileAuthExchangeSchema } from '@rally/contracts';
 import { MobileCrashReportSchema, MobileCrashScopeSchema } from '@rally/contracts/crash-reports';
 import { z } from 'zod';
+import { parseArtifactHost, parseArtifactSiteOpenPath } from '@rally/contracts';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 
 // Presentation capacity, from the approved Home + four tabs design. This is not
@@ -24,6 +25,17 @@ export function artifactLoadFailure(access: { openUrl: string; canonicalUrl: str
   const mainDocument = [new URL(access.openUrl).href, new URL(access.canonicalUrl).href, new URL('/__rally/redeem', access.canonicalUrl).href].includes(target);
   if (!mainDocument || status < 400) return 'ignore';
   return access.openUrl === access.canonicalUrl && [401, 403].includes(status) ? 'renew' : 'fail';
+}
+
+/** Only the serving Worker's handoff for this site can renew a lost cookie. */
+export function artifactAuthHandoff(canonicalUrl: string, target: string, appUrl: string): boolean {
+  try {
+    const url = new URL(target);
+    const host = parseArtifactHost(new URL(canonicalUrl).host);
+    const handoff = parseArtifactSiteOpenPath(url.pathname);
+    return url.origin === new URL(appUrl).origin && !url.username && !url.password
+      && Boolean(host?.hostnameStub && handoff && host.hostnameStub === handoff.hostnameStub && host.region === handoff.region);
+  } catch { return false; }
 }
 
 export const CanvasSummarySchema = z.object({

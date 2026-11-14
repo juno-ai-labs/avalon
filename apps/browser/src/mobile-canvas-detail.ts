@@ -23,13 +23,13 @@ export function useMobileCanvasUpdates() {
       // A deep link can read its detail before the first directory arrives.
       for (const row of rows) {
         const detail = queryClient.getQueryData<CanvasDetail>(canvasDetailQueryKey(row.id));
-        if (detail && (detail.updatedAt !== row.updatedAt || Boolean(detail.artifacts.length) !== Boolean(row.artifactKind))) {
+        if (queryClient.getQueryState(canvasDetailQueryKey(row.id))?.status === 'error' || (detail && (detail.updatedAt !== row.updatedAt || Boolean(detail.artifacts.length) !== Boolean(row.artifactKind)))) {
           void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(row.id) });
         }
       }
-    } else if (before) {
-      for (const [id, revision] of before.rows) {
-        if (next.get(id) !== revision) void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) });
+    } else {
+      for (const id of new Set([...before.rows.keys(), ...next.keys()])) {
+        if (next.get(id) !== before.rows.get(id)) void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) });
       }
     }
   }, [queryClient, rows, sidebarConnect?.generation]);
