@@ -28,7 +28,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Same install/check/deploy scope and budget as deploy-site.yml.
+    timeout-minutes: 20
     # The environment that already holds the Worker deployment token.
     environment: api-production
     env:
