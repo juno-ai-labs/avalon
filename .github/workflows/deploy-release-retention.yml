@@ -1,12 +1,7 @@
 name: Deploy release retention
 
-# The private `avalon-release-retention` Worker archives desktop releases older
-# than the newest five. It used to be deployed only by hand, and a merged fix
-# was never run: the live version dated from 2026-08-07, did not recognize the
-# `faster-mac.yml` channel manifest added on 2026-09-15, and threw
-# `Unexpected active R2 key` on every nightly run from then on, so the public
-# release bucket stopped draining. Deploying on merge makes a merged retention
-# change a live one.
+# Deploys the private `avalon-release-retention` Worker on merge, so a merged
+# retention change is a live one rather than waiting on a manual deploy.
 
 on:
   push:

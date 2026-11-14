@@ -542,12 +542,8 @@ Production retention is automated by the private `avalon-release-retention`
 Worker in `apps/release-retention`. It has no route, `workers.dev` URL, preview
 URL, or application secret. Its only capabilities are bindings to the active and
 archive release buckets. `.github/workflows/deploy-release-retention.yml`
-deploys it on a merge to `main` that touches `apps/release-retention`, the root
-TypeScript config, the workspace file or the lockfile, and on manual dispatch.
-It used to be deployed only by hand, and a merged change was never run: the
-version live until 2026-11 dated from 2026-08-07, did not recognize the
-`faster-mac.yml` channel manifest, and failed every nightly run with
-`Unexpected active R2 key` from 2026-09-15 on. A local deploy remains available
+deploys it on a merge to `main` matching that workflow's `paths:` filter, and on
+manual dispatch. A local deploy remains available
 from the repository root:
 
 ```text
@@ -928,7 +924,7 @@ Check in this order, because the two causes look different.
 To ship a desktop build for a change outside the path set, dispatch the workflow against the tag you want, or land any change inside the set — the watermark means that release carries everything unreleased, not just the change that triggered it.
 
 - `.github/workflows/deploy-site.yml` is the sole landing-site publisher. It deploys on a merge to `main` matching its `paths:` filter — `apps/site`, the shared packages, the lockfile, the root TypeScript config and workspace file, and the workflow itself — and on manual dispatch.
-- `.github/workflows/deploy-release-retention.yml` is the sole publisher of the `avalon-release-retention` Worker. It deploys on a merge to `main` matching its `paths:` filter — `apps/release-retention`, the root TypeScript config, the workspace file, the lockfile, and the workflow itself — and on manual dispatch.
+- `.github/workflows/deploy-release-retention.yml` deploys the retention Worker; see [Desktop release retention](#desktop-release-retention).
 
 #### How the desktop release is recorded
 
