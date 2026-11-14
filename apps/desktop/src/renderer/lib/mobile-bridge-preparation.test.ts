@@ -9,16 +9,17 @@ it('replays prepared pins after bridge attachment and drops them on organization
   vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw).event) });
   try {
     installMobileBridge();
+    postMobileEvent({ type: 'screen-ready' });
     postMobileEvent({ type: 'snapshot', snapshot });
     postMobileEvent({ type: 'prepared-canvas', userId: 'alice', workspaceId: 'work', canvasId: 'shopping', canvas: { canvasId: 'shopping', resourceId: 'site', version: 1, title: 'Shopping' } });
     expect(events).toEqual([]);
     vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'capability');
     window.dispatchEvent(new Event('rally:mobile-ready'));
-    expect(events.map((event) => event.type)).toEqual(['ready', 'snapshot', 'prepared-canvas']);
+    expect(events.map((event) => event.type)).toEqual(['ready', 'screen-ready', 'snapshot', 'prepared-canvas']);
     postMobileEvent({ type: 'snapshot', snapshot: { ...snapshot, workspaceId: 'other', pins: [] } });
     events.length = 0;
     window.dispatchEvent(new Event('rally:mobile-ready'));
-    expect(events.map((event) => event.type)).toEqual(['ready', 'snapshot']);
+    expect(events.map((event) => event.type)).toEqual(['ready', 'screen-ready', 'snapshot']);
   } finally {
     postMobileEvent({ type: 'signed-out' });
     vi.unstubAllGlobals();

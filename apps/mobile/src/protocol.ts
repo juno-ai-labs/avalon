@@ -80,7 +80,8 @@ export const PreparedCanvasSchema = z.object({ canvasId: z.string(), resourceId:
 export type PreparedCanvas = z.infer<typeof PreparedCanvasSchema>;
 
 export const MobileEventSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('ready') }),
+  z.object({ type: z.literal('ready'), waitForContent: z.boolean().optional() }),
+  z.object({ type: z.literal('screen-ready') }),
   z.object({ type: z.literal('crash-permission'), requestId: z.string().uuid(), scope: MobileCrashScopeSchema, enabled: z.boolean() }),
   z.object({ type: z.literal('crash-uploaded'), scope: MobileCrashScopeSchema, uploadId: z.string().uuid(), ok: z.boolean() }),
   z.object({ type: z.literal('notification-opened'), url: HttpUrlSchema }),
@@ -163,4 +164,11 @@ export function movePin(ids: readonly string[], from: number, to: number): strin
   const [id] = result.splice(from, 1);
   if (id !== undefined) result.splice(to, 0, id);
   return result;
+}
+
+/** New hosts wait for usable content; older deployed hosts keep their handshake. */
+export function mobileContentReady(event: MobileEvent): boolean {
+  return (event.type === 'ready' && !event.waitForContent)
+    || event.type === 'screen-ready' || event.type === 'signed-out'
+    || (event.type === 'snapshot' && (!event.snapshot.loading || event.snapshot.directoryError));
 }

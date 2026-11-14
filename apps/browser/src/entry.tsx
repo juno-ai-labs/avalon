@@ -10,7 +10,7 @@ import { iosStandalone } from '../../desktop/src/renderer/lib/home-screen';
 import { CreateOrganizationCard, type CreateOrganizationOperation } from '../../desktop/src/renderer/screens/create-organization';
 import { Building2, ChevronRight, KeyRound, LoaderCircle, Mail } from "lucide-react";
 import { ActivityCountBadge, Button, ConnectorMark, ErrorNotice, RallyMark, activityCountLabel } from "@rally/ui/components/primitives";
-import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema, IDENTITY_REGION } from "@rally/contracts/regions";
 import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
@@ -69,6 +69,11 @@ type Proof = { region: string; challengeId: string; credential: string; redempti
  */
 
 /** What the entry screen says for a link to something deleted with Channels and Threads. */
+
+function EntryReady() {
+  useEffect(() => { postMobileEvent({ type: 'screen-ready' }); }, []);
+  return null;
+}
 
 export function BrowserBoot(): React.JSX.Element {
   return <main className="onboarding-shell entry"><div className="boot-mark" role="status" aria-label="Opening Rally"><RallyMark /></div></main>;
@@ -171,11 +176,22 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
   const [createPending, setCreatePending] = useState(false);
   const createOperation = useRef<CreateOrganizationOperation>(null);
   const issuance = useRef<{ email: string; id: string; redemptionId: string } | null>(null);
-  useEffect(() => {
-    if (!isMobileHost() || !session || !listed || destination || new URLSearchParams(location.search).has('chooseWorkspace') || location.pathname !== '/') return;
-    const remembered = restoreMobileWorkspace(mobileStorage(), session.user.id, listed.workspaces);
-    if (remembered) location.replace(`/app/workspaces/${encodeURIComponent(remembered.region)}/${encodeURIComponent(remembered.id)}?mobile=1`);
-  }, [session, listed, destination]);
+  const rememberedWorkspace = isMobileHost() && session && listed && !destination
+    && !new URLSearchParams(location.search).has('chooseWorkspace') && location.pathname === '/'
+    ? restoreMobileWorkspace(mobileStorage(), session.user.id, listed.workspaces) : null;
+  useLayoutEffect(() => {
+    if (rememberedWorkspace) enterWorkspace(rememberedWorkspace.region, rememberedWorkspace.id);
+  }, [rememberedWorkspace?.region, rememberedWorkspace?.id]);
+  function enterWorkspace(region: string, workspaceId: string) {
+    const opened = { region, workspaceId };
+    const url = new URL(location.href);
+    url.pathname = `/app/workspaces/${encodeURIComponent(region)}/${encodeURIComponent(workspaceId)}`;
+    url.searchParams.delete('chooseWorkspace');
+    history.replaceState(history.state, '', url.href);
+    destinationRef.current = opened;
+    setError(null);
+    setDestination(opened);
+  }
   const sessionRead = useRef(0);
   const sessionUser = useRef<string | null>(null);
   const renewalAt = useRef(Number.POSITIVE_INFINITY);
@@ -508,13 +524,13 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
 
   if (!proof && session && renderAuthenticated) return renderAuthenticated(session, signOutStable);
   if (!checking && !session && !proof && Reflect.get(window, 'ReactNativeWebView') && !sessionAbsent) {
-    return <main className="onboarding-shell signin-shell entry"><section className="signin-card entry-card">
+    return <main className="onboarding-shell signin-shell entry"><EntryReady /><section className="signin-card entry-card">
       <RallyMark className="signin-mark" /><ErrorNotice>{error ?? 'Unable to restore your session. Try again.'}</ErrorNotice>
       <Button onClick={() => { setChecking(true); setError(null); refreshSession.current?.(false); }}>Try again</Button>
     </section></main>;
   }
   if (!checking && !session && sessionAbsent && Reflect.get(window, 'ReactNativeWebView')) {
-    return <main className="onboarding-shell signin-shell entry"><section className="signin-card entry-card" aria-busy={busy}>
+    return <main className="onboarding-shell signin-shell entry"><EntryReady /><section className="signin-card entry-card" aria-busy={busy}>
       <RallyMark className="signin-mark" /><h1>Welcome to Rally</h1><p>Your canvases, wherever you are.</p>
       <Button className="button-primary signin-button" disabled={busy} onClick={() => { setError(null); postMobileEvent({ type: 'sign-in' }); }}>{busy ? 'Signing in…' : 'Sign in'}</Button>
       {error && <ErrorNotice>{error}</ErrorNotice>}
@@ -528,7 +544,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
     </div>;
   }
 
-  if (checking && !session && !proof) return <BrowserBoot />;
+  if ((checking && !session && !proof) || rememberedWorkspace) return <BrowserBoot />;
   if (!proof && siteTarget && session) {
     return <SiteOpening key={session.user.id} region={siteTarget.region} hostnameStub={siteTarget.hostnameStub} returnPath={siteTarget.returnPath}
       openWorkspace={openWorkspace} onSignOut={signOutStable} />;
@@ -539,8 +555,12 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
   // workspace session for another user is the old account's, still pending.
   if (!proof && destination && session && workspaceSession?.user.id !== session.user.id && !error && !busy && renderCollaboration) return <BrowserBoot />;
 
+  // A returning mobile launch restores the saved organization before revealing
+  // an actionable screen. The explicit picker remains available from the sidebar.
+  if (isMobileHost() && session && !destination && workspaces === null && !error && !proof) return <BrowserBoot />;
+
   if (creating && session && !proof) {
-    return <main className="onboarding-shell workspace-setup-shell entry">
+    return <main className="onboarding-shell workspace-setup-shell entry"><EntryReady />
       <CreateOrganizationCard onCreate={createOrganization} operation={createOperation} suggestedName={suggestedName}>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
         <button className="text-button onboarding-signout" type="button" disabled={createPending} onClick={() => setCreating(false)}>Back</button>
@@ -549,7 +569,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
   }
 
   const failure = error ?? (!session && !proof && !challenge ? providerNotice : null);
-  return <main className="onboarding-shell signin-shell entry">
+  return <main className="onboarding-shell signin-shell entry"><EntryReady />
     <section className="signin-card entry-card" aria-busy={busy || checking}>
       <a className="entry-mark" href="/" aria-label="Rally"><RallyMark className="signin-mark" /></a>
       {session && !proof ? <>
@@ -559,7 +579,11 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
         {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the link…" : "Loading your organizations…"}</p>
           : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) => {
             const count = activity?.userId === session.user.id ? activity.counts.get(`${workspace.region}:${workspace.id}`) ?? 0 : 0;
-            return <a aria-label={count > 0 ? `${workspace.name}, ${activityCountLabel(count)}` : undefined} className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ActivityCountBadge count={count} /><ChevronRight aria-hidden="true" size={16} /></a>;
+            return <a aria-label={count > 0 ? `${workspace.name}, ${activityCountLabel(count)}` : undefined} className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`} onClick={(event) => {
+              if (isMobileHost() && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+                event.preventDefault(); enterWorkspace(workspace.region, workspace.id);
+              }
+            }}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ActivityCountBadge count={count} /><ChevronRight aria-hidden="true" size={16} /></a>;
           })}</nav>
           : <>
             <p className="entry-lead">{session.user.email} is not part of an organization, and nothing has been shared with it yet.</p>

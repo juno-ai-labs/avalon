@@ -1,3 +1,4 @@
+import { useAppResume } from './src/use-app-resume';
 import { usePreparedCanvases } from './src/prepared-canvases';
 import { useCrashReporting } from './src/crashes';
 import { RecoveryBoundary } from './src/RecoveryBoundary';
@@ -9,7 +10,7 @@ import { shareDiagnostics } from './src/diagnostics';
 import * as Notifications from 'expo-notifications';
 import { useNetworkState } from 'expo-network';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, Linking, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, type KeyboardEvent, type ImageSourcePropType } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, type KeyboardEvent, type ImageSourcePropType } from 'react-native';
 import { NavigationContainer, StackActions, createNavigationContainerRef, DefaultTheme, DarkTheme, useIsFocused, type ParamListBase } from '@react-navigation/native';
 import { createNativeBottomTabNavigator, type NativeBottomTabScreenProps } from '@bottom-tabs/react-navigation';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -24,7 +25,7 @@ import { CanvasWebView, ArtifactView, ArtifactSessionPreparation, type CanvasWeb
 import { NativeTabIcon } from './src/NativeTabIcon';
 import { allocatePinSlots } from './src/pin-routes';
 import { Sidebar } from './src/Sidebar';
-import { mobileUrl, trustedArtifact, VISIBLE_PIN_COUNT, type CanvasSummary, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot, type PreparedCanvas } from './src/protocol';
+import { mobileContentReady, mobileUrl, trustedArtifact, VISIBLE_PIN_COUNT, type CanvasSummary, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot, type PreparedCanvas } from './src/protocol';
 import { useTheme } from './src/theme';
 
 const APP_URL = process.env.EXPO_PUBLIC_RALLY_APP_URL || 'https://app.rallywith.ai';
@@ -228,6 +229,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
   const [snapshot, setSnapshot] = useState<MobileSnapshot | null>(null);
   const [artifacts, setArtifacts] = useState<Record<string, NativeArtifact>>({});
   const [ready, setReady] = useState(false);
+  const [contentReady, setContentReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [sidebar, setSidebar] = useState(false);
   const keyboardVisible = useKeyboardVisible();
@@ -265,6 +267,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
       return;
     }
     setReady(true); setFailed(false);
+    if (mobileContentReady(event)) setContentReady(true);
     if (event.type === 'open-canvas') {
       if (event.id === canvasId) web.current?.send({ type: 'open', id: event.id, pinned: true });
       else open(event.id);
@@ -304,9 +307,8 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
     // when the bridge announces readiness; subsequent focus/reconnect refreshes stay background work.
     if (initialized.current && focused && network.isConnected) web.current?.send({ type: 'refresh' });
     initialized.current = true;
-    const listener = AppState.addEventListener('change', (state) => { if (state === 'active' && focused && ready) web.current?.send({ type: 'refresh' }); });
-    return () => listener.remove();
   }, [focused, ready, network.isConnected]);
+  useAppResume(() => { if (focused && ready) web.current?.send({ type: 'refresh' }); });
   useEffect(() => {
     if (!focused) return;
     const chat = snapshot?.view === 'artifact' && snapshot.canvasId ? () => tabs.getParent()?.navigate('Conversation', { id: snapshot.canvasId, workspacePath: snapshot.workspacePath, title: snapshot.title }) : undefined;
@@ -329,7 +331,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
           onLoading={() => {
             // Loading Home must not close other tabs and discard their drafts.
             // Authentication snapshots and signed-out events own the directory.
-            if (home) prepared.reset(); initialized.current = false; setReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
+            if (home) prepared.reset(); initialized.current = false; setReady(false); setContentReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
           }} onError={() => { if (home) prepared.reset(); setFailed(true); }} />
       </View>
       {Object.values(artifacts).map((access) => {
@@ -338,7 +340,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
           <ArtifactView topInset={snapshot?.artifactPicker ? 0 : headerHeight + 12} access={access} background={colors.background} onRetry={() => web.current?.send({ type: 'reopen-artifact', canvasId: access.canvasId, resourceId: access.resourceId })} />
         </View>;
       })}
-      {(!ready || failed) && <Loading failed={failed} retry={() => { setFailed(false); web.current?.reload(); }} />}
+      {(!contentReady || failed) && <Loading failed={failed} retry={() => { setFailed(false); web.current?.reload(); }} />}
     </KeyboardAvoidingView>
     {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, ...snapshot, ...{ canvases: directory.canvases, pins: directory.pins, pinBusy: directory.pinBusy, pinError: directory.pinError }, tabId: home ? null : canvasId }} close={() => setSidebar(false)} send={send} diagnostics={() => rootNavigation.navigate('Diagnostics')} />}
   </SafeAreaView>;
@@ -397,16 +399,13 @@ function PreparedSiteScreen({ canvas, navigation }: NativeBottomTabScreenProps<P
   };
   const previousConnection = useRef(network.isConnected);
   useEffect(() => {
-    // The shared Home socket is already live. A tab tap must not restart it
-    // and invalidate every prepared Canvas alongside the access request.
+    // Home already keeps its socket live. A tab tap must not invalidate every
+    // prepared Canvas alongside the access request.
     const reconnected = previousConnection.current === false && network.isConnected;
     previousConnection.current = network.isConnected;
     if (focused && reconnected) controls.current.get('Home')?.send({ type: 'refresh' });
-    const listener = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && focused) controls.current.get('Home')?.send({ type: 'refresh' });
-    });
-    return () => listener.remove();
   }, [focused, network.isConnected, controls]);
+  useAppResume(() => { if (focused) controls.current.get('Home')?.send({ type: 'refresh' }); });
   useEffect(() => {
     if (!focused || !directory) return;
     const chat = () => navigation.getParent()?.navigate('Conversation', { id: canvas.canvasId, workspacePath: directory.workspacePath, title: canvas.title });
@@ -447,7 +446,7 @@ function Conversation({ route, navigation }: NativeStackScreenProps<RootRoutes, 
       <View collapsable={false} style={styles.fill}>
         <CanvasWebView ref={web} url={mobileUrl(APP_URL, route.params.workspacePath, route.params.id)} appUrl={APP_URL} background={colors.background}
           onLoading={() => { setLoading(true); setFailed(false); }} onError={() => { setLoading(false); setFailed(true); }}
-          onEvent={(event) => { setLoading(false); if (event.type === 'signed-out') { navigation.goBack(); signOut(); } if (event.type === 'open-canvas') { navigation.goBack(); (controls.current.get(event.id) ?? controls.current.get('Home'))?.send({ type: 'open', id: event.id, pinned: controls.current.has(event.id) }); } }} />
+          onEvent={(event) => { if (mobileContentReady(event)) setLoading(false); if (event.type === 'signed-out') { navigation.goBack(); signOut(); } if (event.type === 'open-canvas') { navigation.goBack(); (controls.current.get(event.id) ?? controls.current.get('Home'))?.send({ type: 'open', id: event.id, pinned: controls.current.has(event.id) }); } }} />
       </View>
       {(loading || failed) && <Loading failed={failed} retry={() => web.current?.reload()} />}
     </KeyboardAvoidingView>

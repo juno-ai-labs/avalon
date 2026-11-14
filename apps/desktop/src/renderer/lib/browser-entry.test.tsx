@@ -9,6 +9,7 @@ vi.mock('./local-cache', () => ({ clearAllLocalCache: vi.fn().mockResolvedValue(
 import { uuidToBase58 } from '@rally/contracts/uuid-base58';
 import { BrowserEntry } from '../../../../browser/src/entry';
 import { clearAllLocalCache } from './local-cache';
+import { rememberMobileWorkspace } from '../../../../browser/src/mobile-session';
 import { MOBILE_COMMAND_EVENT } from '../../../../mobile/src/protocol';
 
 const user = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'guest@example.test', name: 'Guest',
@@ -986,4 +987,67 @@ it('shows organization discovery failure after password login unmounts the form'
   expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
   await act(async () => { finishDiscovery(Response.json({ error: { message: 'Organization discovery unavailable' } }, { status: 503 })); });
   expect(await screen.findByText('Organization discovery unavailable')).toBeVisible();
+});
+
+
+it('restores the remembered mobile organization in place and preserves the screen during resume', async () => {
+  const events: string[] = [];
+  const calls: string[] = [];
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+  let finishSelect!: () => void;
+  const selecting = new Promise<void>(resolve => { finishSelect = resolve; });
+  vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'capability');
+  vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw).event.type) });
+  rememberMobileWorkspace(localStorage, user.id, workspace);
+  history.replaceState(null, '', '/?mobile=1');
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1]!; calls.push(path);
+    if (path === '/session') return Response.json({ user, workspace: null, expiresAt });
+    if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
+    if (path === '/workspaces/attention') return Response.json({ attention: [] });
+    if (path === '/workspace/select') { await selecting; return Response.json({ user, workspace, expiresAt }); }
+    throw new Error(`Unexpected request: ${input}`);
+  }));
+  const view = render(<BrowserEntry renderCollaboration={() => <textarea aria-label="Current canvas" />} />);
+  try {
+    await waitFor(() => expect(calls).toContain('/workspace/select'));
+    expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}`);
+    expect(screen.getByRole('status', { name: 'Opening Rally' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Your organizations' })).not.toBeInTheDocument();
+    expect(events).not.toContain('screen-ready');
+    await act(async () => finishSelect());
+    const content = await screen.findByRole('textbox', { name: 'Current canvas' });
+    fireEvent.change(content, { target: { value: 'Keep this draft' } });
+    fireEvent.focus(window);
+    await waitFor(() => expect(calls.filter(path => path === '/workspace/select')).toHaveLength(2));
+    expect(screen.getByRole('textbox', { name: 'Current canvas' })).toBe(content);
+    expect(content).toHaveValue('Keep this draft');
+    expect(calls.filter(path => path === '/session')).toHaveLength(1);
+    expect(calls.filter(path => path === '/workspaces')).toHaveLength(1);
+  } finally { view.unmount(); localStorage.clear(); }
+});
+
+it('keeps an explicitly requested mobile organization picker usable and selects without a page reload', async () => {
+  const events: string[] = [];
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+  vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'capability');
+  vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw).event.type) });
+  rememberMobileWorkspace(localStorage, user.id, workspace);
+  history.replaceState(null, '', '/?mobile=1&chooseWorkspace=1');
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    if (input.endsWith('/session')) return Response.json({ user, workspace: null, expiresAt });
+    if (input.endsWith('/workspaces')) return Response.json({ workspaces: [workspace] });
+    if (input.endsWith('/workspaces/attention')) return Response.json({ attention: [] });
+    if (input.endsWith('/workspace/select')) return Response.json({ user, workspace, expiresAt });
+    throw new Error(`Unexpected request: ${input}`);
+  }));
+  const view = render(<BrowserEntry renderCollaboration={() => <p>Canvas dashboard</p>} />);
+  try {
+    const organization = await screen.findByRole('link', { name: 'Shared team' });
+    expect(events).toContain('screen-ready');
+    fireEvent.click(organization);
+    await screen.findByText('Canvas dashboard');
+    expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}`);
+    expect(location.search).toBe('?mobile=1');
+  } finally { view.unmount(); localStorage.clear(); }
 });
