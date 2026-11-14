@@ -1,5 +1,5 @@
 import { inPlaceHash } from './session';
-import { writeMobilePins } from './mobile-pins';
+import { PinPlacementError, writeMobilePins } from './mobile-pins';
 import { MobileWrites, uploadMobileReport } from './mobile-writes';
 import { parseLinkTarget } from '@rally/contracts/links';
 import { ErrorNotice } from '@rally/ui/components/error-notice';
@@ -160,7 +160,7 @@ function MobileContent(): React.JSX.Element {
         }
         pinInFlight.current = true; setPinBusy(true); setPinNotice(null);
         const write = writeMobilePins(api, pinnedIds, message);
-        void write.then(() => { pinInFlight.current = false; setPinBusy(false); }, () => { pinInFlight.current = false; setPinBusy(false); setPinNotice('Your tabs couldn’t be saved. Try again.'); });
+        void write.then(() => { pinInFlight.current = false; setPinBusy(false); }, (error: unknown) => { pinInFlight.current = false; setPinBusy(false); setPinNotice(error instanceof PinPlacementError ? 'Pinned, but couldn’t move it there. Try moving it again.' : 'Your tabs couldn’t be saved. Try again.'); });
         break;
       }
     }
