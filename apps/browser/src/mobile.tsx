@@ -1,3 +1,5 @@
+import type { CanvasSummary } from '@rally/contracts';
+import { canvasMark } from '../../desktop/src/renderer/components/canvas-mark';
 import { AppErrorBoundary } from '@rally/ui/components/app-error-boundary';
 import { inPlaceHash } from './session';
 import { PinPlacementError, writeMobilePins } from './mobile-pins';
@@ -8,7 +10,7 @@ import { canvasNeedsConversation, mobileStorage, rememberMobileWorkspace } from 
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowUpRight, FileText, Plus, Search, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Plus, Search, Sparkles } from 'lucide-react';
 import { MOBILE_COMMAND_EVENT, MobileCommandSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
@@ -230,7 +232,7 @@ function MobileContent(): React.JSX.Element {
 }
 
 function Dashboard({ rows, loading, failed, retry, hasMore, more, open, create }: {
-  rows: Array<{ id: string; title: string; updatedAt: string }>;
+  rows: Array<Pick<CanvasSummary, 'id' | 'title' | 'appearance'>>;
   loading: boolean; failed: boolean; retry: () => void; hasMore: boolean; more: () => void;
   open: (id: string) => void; create: () => void;
 }) {
@@ -240,7 +242,13 @@ function Dashboard({ rows, loading, failed, retry, hasMore, more, open, create }
     <label className="mobile-search"><Search size={19} /><input aria-label="Find a canvas" placeholder="Find a canvas" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
     {failed ? <Recovery title="Your canvases couldn’t load" retry={retry} /> : loading ? <div role="status" className="mobile-skeleton">Loading your canvases…</div> : <>
       <div className="mobile-section-heading"><h2>{query ? 'Search results' : 'Pick up where you left off'}</h2><span>{filtered.length} canvases</span></div>
-      <div className="mobile-grid">{filtered.map((row, index) => <button className={`mobile-card mobile-card-${index % 4}`} key={row.id} onClick={() => open(row.id)}><div className="mobile-card-art" aria-hidden="true"><FileText size={index === 0 ? 50 : 32} strokeWidth={1} /></div><h3>{row.title || 'Untitled canvas'}</h3><p>Open canvas <ArrowUpRight size={14} aria-hidden="true" /></p></button>)}</div>
+      <div className="mobile-grid">{filtered.map((row, index) => {
+        const { icon: Icon, tint, ink } = canvasMark(row.id, row.appearance);
+        return <button className="mobile-card" style={{ background: tint, color: ink }} key={row.id} onClick={() => open(row.id)}>
+          <div className="mobile-card-art" aria-hidden="true"><Icon size={index === 0 ? 50 : 32} strokeWidth={1.9} /></div>
+          <h3>{row.title || 'Untitled canvas'}</h3><p>Open canvas <ArrowUpRight size={14} aria-hidden="true" /></p>
+        </button>;
+      })}</div>
       {!filtered.length && <div className="mobile-empty"><Sparkles size={32} /><h2>{query ? 'No canvases found' : 'Make room for an idea.'}</h2><p>{query ? 'Try another name, or load more canvases.' : 'Create a plan, a little tool, or something just for you.'}</p>{!query && <button className="mobile-primary" onClick={create}><Plus size={18} /> Create a canvas</button>}</div>}
       {hasMore && <button className="mobile-load" onClick={more}>Load more canvases</button>}
     </>}
