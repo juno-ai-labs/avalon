@@ -32,9 +32,8 @@ jobs:
     timeout-minutes: 20
     # The environment that already holds the Worker deployment token.
     environment: api-production
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    # The token is scoped to the two steps that need it, never to dependency
+    # install or tests, as in deploy-browser.yml.
 
     steps:
       - name: Check out the revision being deployed
@@ -43,6 +42,9 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Require Cloudflare deployment credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
@@ -72,4 +74,7 @@ jobs:
         run: pnpm --filter @rally/release-retention test
 
       - name: Deploy the retention Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm --filter @rally/release-retention run deploy
