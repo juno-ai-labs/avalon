@@ -716,8 +716,7 @@ Mobile entry now selects a remembered or explicitly chosen organization in the
 current document, preserving the restored session and validated organization
 list. The picker stays unmounted during automatic restoration; native hosts
 receive a usable-screen signal for sign-in, selection, and recovery. Desktop
-navigation loads through a separate lazy boundary so the mobile shell does not
-fetch it. A full navigation repeated browser startup and briefly showed the
+navigation, mobile Chat/composition, and file previews load through separate lazy boundaries so the mobile dashboard does not fetch them. Mobile Chat reuses the existing session and socket, retaining the most recent editor while hidden; scoped publication updates replace broad detail invalidation. A full navigation repeated browser startup and briefly showed the
 picker before returning users reached their canvases. Account/directory checks,
 explicit picker requests, cookie revalidation, and cross-region selection remain
 authoritative. See [Mobile canvas client](mobile-canvas-client.md) for the native
