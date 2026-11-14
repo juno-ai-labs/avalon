@@ -488,3 +488,9 @@ The migrations add two tables and widen two CHECKs; none rewrites rows.
    the agent its root run's reach, as Terminal does for the sandbox, would fix
    it, but widens what every background agent reaches, not only notices.
    Until decided, the agent cannot send.
+3. **How does the host know a background agent's root was a self-review?**
+   The matrix gives a self-review's background agents neither tool, but the
+   input marks them only as wizard-rooted, the same as a person's wizard
+   turn's ([`agent-loop-types.md`](../../agent-loop-types.md#open-questions)).
+   Recording the root turn's `reason` beside `root_substream_id` would let the
+   gate tell them apart. Without it, those agents get both tools.
