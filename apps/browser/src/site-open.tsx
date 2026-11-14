@@ -1,3 +1,4 @@
+import { mobileScreenReady } from './mobile-bridge';
 import { ErrorNotice, RallyMark } from "@rally/ui/components/primitives";
 import { BrowserSiteResolutionSchema, type BrowserSession } from "@rally/contracts/browser-session";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
@@ -32,6 +33,7 @@ export function SiteOpening({ region, hostnameStub, returnPath, openWorkspace, o
 }) {
   const [failure, setFailure] = useState<SiteOpenFailure | null>(null);
   const [attempt, setAttempt] = useState(0);
+  useEffect(() => { if (failure) mobileScreenReady(); }, [failure]);
   useEffect(() => {
     let active = true;
     (async () => {

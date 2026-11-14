@@ -20,7 +20,7 @@ artifact serving remain release checks.
 | `apps/browser/src/site-open.tsx` | The site-opening page a protected site sends a signed-out visitor to: finds the site's organization, opens it, opens the site and returns to the visitor's path. |
 | `apps/browser/src/source-decision.tsx`, `source-decision-words.ts` | The page an emailed Approve or Decline for a Sidekick source request opens: it posts the signed decision as it loads and says how the request stands. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
-| `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
+| `apps/browser/src/shell.tsx` | The signed-in application's loading boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
 | `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications, sets the installed app's icon badge, and opens their links on this origin. |
 | `apps/desktop/artifact-picker-plugin.ts` | Emits `/annotation-frame.js`, the annotation script an HTML file's opaque preview frame loads from this origin, into the browser build as well as the desktop's. |
 | `apps/browser/public/manifest.webmanifest`, `icon-*.png`, `apple-touch-icon.png` | The install manifest and icons that let the host be added to an iOS Home Screen or installed as an app window. |
@@ -715,11 +715,11 @@ workspace, role or access-class changes replace the client and re-admit it.
 Mobile entry now selects a remembered or explicitly chosen organization in the
 current document, preserving the restored session and validated organization
 list. The picker stays unmounted during automatic restoration; native hosts
-receive a usable-screen signal for sign-in, selection, and recovery. Desktop
-navigation, mobile Chat/composition, and file previews load through separate lazy boundaries so the mobile dashboard does not fetch them. Mobile Chat reuses the existing session and socket, retaining the most recent editor while hidden; scoped publication updates replace broad detail invalidation. A full navigation repeated browser startup and briefly showed the
+receive a usable-screen signal for sign-in, selection, and recovery. Desktop navigation loads separately from mobile presentation. A full navigation repeated browser startup and briefly showed the
 picker before returning users reached their canvases. Account/directory checks,
 explicit picker requests, cookie revalidation, and cross-region selection remain
-authoritative. See [Mobile canvas client](mobile-canvas-client.md) for the native
+authoritative. In-place cross-region choices use regional session restoration
+because the same person can have a different regional user ID. See [Mobile canvas client](mobile-canvas-client.md) for the native
 readiness and background-resume behavior.
 
 ### 2026-11-12 — Serve the Expo canvas client

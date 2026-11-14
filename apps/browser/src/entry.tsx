@@ -191,6 +191,12 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
     destinationRef.current = opened;
     setError(null);
     setDestination(opened);
+    if (region !== (session?.workspace?.region ?? listed?.region ?? IDENTITY_REGION)) {
+      // Regional user IDs are not Global IDs. The existing restore path adopts
+      // the destination's authoritative session and fences in-flight reads.
+      setSession(null); setWorkspaceSession(null); setChecking(true);
+      refreshSession.current?.(false);
+    }
   }
   const sessionRead = useRef(0);
   const sessionUser = useRef<string | null>(null);
@@ -249,7 +255,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
     let invalidated = false;
     let pendingRenewal = false;
     const restore = (renew = false) => {
-      if (restoring) { pendingRenewal ||= renew; return; }
+      if (restoring) { invalidated = true; pendingRenewal ||= renew; return; }
       const read = ++sessionRead.current;
       const opened = destinationRef.current;
       const openedRegion = opened?.region ?? selected;
@@ -466,16 +472,13 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
     // page again only to read back the session this one already holds. The
     // address is replaced rather than pushed because nothing here answers
     // Back, and the shell reads the organization's address before its router.
-    const opened = { region: created.region, workspaceId: created.workspaceId };
-    history.replaceState(null, "", `/app/workspaces/${opened.region}/${opened.workspaceId}`);
-    destinationRef.current = opened;
+    enterWorkspace(created.region, created.workspaceId);
     // The list read before the creation said "none". Left in place, a select
     // that then fails would offer Create again and make a second organization.
     setListed(null);
     createOperation.current = null;
     setCreatePending(false);
     setCreating(false);
-    setDestination(opened);
   }
 
   async function continueWithProvider(provider: SignInProvider) {

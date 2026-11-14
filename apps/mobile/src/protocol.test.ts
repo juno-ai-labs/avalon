@@ -1,6 +1,6 @@
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { mobileContentReady, type MobileSnapshot, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact } from './protocol';
+import { mobileContentReady, type MobileSnapshot, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact } from './protocol';
 
 const app = 'https://app.rallywith.ai';
 const token = 'main-frame-capability';
@@ -113,4 +113,15 @@ it('reveals usable content rather than bridge bootstrap, including legacy hosts 
   expect(mobileContentReady({ type: 'snapshot', snapshot })).toBe(false);
   expect(mobileContentReady({ type: 'snapshot', snapshot: { ...snapshot, loading: false } })).toBe(true);
   expect(mobileContentReady({ type: 'snapshot', snapshot: { ...snapshot, directoryError: true } })).toBe(true);
+});
+
+
+it('recognizes only the trusted authentication handoff for the current artifact', () => {
+  const canonical = 'https://level-luminous-sequential-schrodinger-g.rallyusercontent.com/';
+  const app = 'https://app.rallywith.ai';
+  const path = '/app/sites/global/level-luminous-sequential-schrodinger/%2F';
+  expect(artifactAuthHandoff(canonical, app + path, app)).toBe(true);
+  for (const target of ['https://evil.example' + path, app + '/app/sites/global/level-luminous-sequential-curie/%2F', app + '/', 'https://attacker@app.rallywith.ai' + path, 'not a url']) {
+    expect(artifactAuthHandoff(canonical, target, app)).toBe(false);
+  }
 });
