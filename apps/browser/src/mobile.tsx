@@ -1,4 +1,5 @@
 import { inPlaceHash } from './session';
+import { writeMobilePins } from './mobile-pins';
 import { MobileWrites, uploadMobileReport } from './mobile-writes';
 import { parseLinkTarget } from '@rally/contracts/links';
 import { ErrorNotice } from '@rally/ui/components/error-notice';
@@ -158,7 +159,7 @@ function MobileContent(): React.JSX.Element {
           setPinNotice('Unpin a canvas to make room for another tab.'); return;
         }
         pinInFlight.current = true; setPinBusy(true); setPinNotice(null);
-        const write = message.type === 'pin' ? api.setCanvasPinned(message.id, message.pinned) : api.reorderCanvasPins(message.ids);
+        const write = writeMobilePins(api, pinnedIds, message);
         void write.then(() => { pinInFlight.current = false; setPinBusy(false); }, () => { pinInFlight.current = false; setPinBusy(false); setPinNotice('Your tabs couldn’t be saved. Try again.'); });
         break;
       }

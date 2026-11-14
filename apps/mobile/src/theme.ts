@@ -20,6 +20,8 @@ function nativeColors(appearance: typeof lightTheme | typeof darkTheme) {
     return {
       tint: value(pastel ? `sys.color.project-tint.${key}` : `sys.color.project.${key}`),
       ink: value(pastel ? `sys.color.project-ink.${key}` : `sys.color.palette-ink.${PALETTE_INK[key] === 'white' ? 'light' : 'dark'}`),
+      // Match packages/ui's markColors: tile ink can vanish on a bare surface.
+      bare: value(pastel ? `sys.color.project-ink.${key}` : `sys.color.project.${key}`),
     };
   }
   return {

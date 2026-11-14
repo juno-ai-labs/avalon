@@ -51,6 +51,9 @@ Notifications are optional and are enabled from Settings and diagnostics. Camera
 
 ## Screenshots
 
+Follow [App Store screenshots](../../../docs/app-store-screenshots.md) for capture
+commands, iPhone/iPad/Duo sizes, image checks, and upload instructions.
+
 Upload the images under `screenshots/en-US` manually to the matching App Store
 version's iPhone and iPad slots. These are real native captures of the shared
 grocery canvas, with no private conversation or third-party editorial content.

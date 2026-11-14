@@ -12,7 +12,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/NativeTabIcon.tsx` | Rasterizes saved Lucide glyphs after native layout; Android uses content-addressed PNG files in Expo FileSystem’s cache. |
 | `apps/mobile/src/pin-routes.ts` | Assigns Android’s four native pin destinations while preserving each canvas’s identity across reordering. |
 | `apps/mobile/src/theme.ts` | Native adapter over the same source color tokens as Electron. |
-| `apps/mobile/src/Sidebar.tsx` | Pin, unpin, drag ordering, accessible move actions, complete canvas directory. |
+| `apps/mobile/src/Sidebar.tsx`, `SidebarDragRow.tsx`, `sidebar-drop.ts` | Long-press pin/unpin/reorder with edge scrolling, Edit controls and accessible move actions. |
 | `apps/mobile/App.web.tsx`, `src/PreviewTabBar.tsx`, `src/Glass.tsx` | Development-only browser preview; its custom controls do not model native geometry. |
 | `apps/mobile/src/CanvasWebView.tsx` | Application WebView and isolated first-party live artifact WebViews. |
 | `apps/mobile/src/CanvasWebView.web.tsx` | Development-only iframe preview of the native shell. |
@@ -37,7 +37,7 @@ Home uses `#/canvases`; opening a canvas uses `#/canvases/:id`, just like deskto
 
 The dashboard consumes the current socket-owned Canvas directory. Opening a Canvas reads `GET /canvases/:id` and its published artifacts, preferring a site, then the newest file. Multiple resources expose an artifact picker. The matching Canvas row’s publication timestamp and the resource topic refresh detail reads in both artifact and chat views; shared resource-head state advances version-keyed metadata. Unrelated presence and pin updates do not refetch Canvas details. An empty canvas routes to chat and stays there while the user writes; View canvas explicitly returns to the artifact. Fetch failures show recovery rather than being mistaken for an empty canvas.
 
-The native sidebar has Tabs and Canvases sections. Edit exposes plus/minus controls and drag handles. The Canvas directory supplies each pin’s name, appearance, and `pinnedPosition`. Native tabs are icon-only. Their full canvas names remain available to VoiceOver/TalkBack and in the sidebar. Sidebar directory failures offer retry. Pin writes use the canonical Canvas pin APIs, with one write in flight and server acknowledgments driving the UI. Home is fixed. The first four pins appear beside Home; existing desktop pins beyond those remain in the sidebar and can be reordered into view. This is a presentation capacity, not a new backend limit.
+The native sidebar keeps Home fixed above Pinned and the remaining Canvases. Hold a canvas row and drag it into Pinned, between pins, or back into Canvases to pin, reorder, or unpin. A floating row and insertion marker show the destination; edge scrolling reaches off-screen rows. Dropping outside either section cancels. Edit still exposes plus/minus controls and drag handles, including accessible move actions. The Canvas directory supplies each pin’s name, appearance, and `pinnedPosition`. Native tabs are icon-only. Their full canvas names remain available to VoiceOver/TalkBack and in the sidebar. Sidebar directory failures offer retry. Pin writes use the canonical Canvas pin APIs, with one write in flight and server acknowledgments driving the UI. A new pin can carry an optional `beforeId` in the existing bridge command: the browser saves membership, then its position with the existing reorder endpoint. If positioning fails, the pin remains appended and the failure is shown; there is no optimistic pin store or new endpoint. Home is fixed. The first four pins appear beside Home; existing desktop pins beyond those remain in the sidebar and can be reordered into view. This is a presentation capacity, not a new backend limit.
 
 Visited artifact views stay mounted and attached to preserve local scroll and form state during tab changes. Inactive native views use zero opacity, disabled pointer events, and hidden accessibility descendants; `display: none` can detach WKWebView and replay its consumed access URL. The native containers disable view flattening so changing visibility or accessibility does not replace their children. Fragment navigation does not reset the shell, and full application-page loading retains artifact instances until the authenticated user or organization changes. File artifacts use the shared InspectorRail. Live sites use the existing `openArtifact` API to obtain an `openUrl` on their hosted artifact origin. Access queries belong to one mounted artifact/version instance and are discarded on unmount, so switching A → B → A obtains fresh access. That one-time URL establishes artifact access and redirects to the canonical hosted URL; loading the bare canonical URL would skip access for private sites. The browser preview frames the same hosted document directly. Native sites open in separate WebViews so their cookies are first-party on iOS, avoiding Safari's cross-site iframe restriction on interactive writes. Those views receive no native bridge. A native conversation sheet hosts the existing web transcript and composer. Native camera, photo-library, and microphone usage descriptions support its attachment and dictation controls; permission prompts occur when used. Creation uses the shared attachment lease and draft mechanisms. Creation first reserves the Canvas through `POST /canvases`, then sends its opening message and attachments through the existing HTTP conversation admission route. A create attempt retains its message receipt key, operation ID, and Canvas ID while the submitted content is unchanged, so either step can be retried safely. The form stays mounted through navigation while a request is pending; completion refreshes the directory without redirecting someone who already left the form. Edited retries keep the reserved Canvas ID and mint new message/operation receipts. The composer blocks submission while creation is pending and uses the same authorized member roster for mention confirmation and payload resolution.
 
@@ -91,9 +91,9 @@ lets the surrounding KeyboardAvoidingView own keyboard avoidance, preventing a
 second keyboard inset from lifting the composer into the transcript. The same
 WebView behavior applies to conversation sheets and hosted artifacts.
 
-The OS places the native tab bar and rail, including Duo’s outer screen, inner orientation changes and either side of Split View. No hinge angle or fixed width threshold chooses native navigation. Native safe-area handling reserves the system rail/bar; content extends behind the transparent header with a measured initial inset that scrolls away. The inset updates when geometry changes without accumulating padding. Header actions are native bar items on iOS, so the system can relocate or overflow them. Android uses its native navigation header with accessible actions. Main screens have sidebar/chat actions and no title or extra Home action. The Muse-inspired sidebar remains shared and custom, including pin/unpin, drag ordering and accessibility move actions. Its drag handle owns the gesture and disables parent scrolling during the drag.
+The OS places the native tab bar and rail, including Duo’s outer screen, inner orientation changes and either side of Split View. No hinge angle or fixed width threshold chooses native navigation. Native safe-area handling reserves the system rail/bar; content extends behind the transparent header with a measured initial inset that scrolls away. The inset updates when geometry changes without accumulating padding. Header actions are native bar items on iOS, so the system can relocate or overflow them. Android uses its native navigation header with accessible actions. Home has sidebar and create-canvas (+) actions; artifact screens have sidebar/chat actions. Headers have no title or extra Home action. The Muse-inspired sidebar remains shared and custom, including pin/unpin, drag ordering and accessibility move actions. Pressable detects a long hold before PanResponder takes over the drag; ordinary swipes keep scrolling. Edit handles can start dragging immediately. Manual scrolling pauses while edge scrolling moves the list; closing the drawer or a changed account, organization or pin list cancels the drag.
 
-Android native tab images use cached PNG file URLs because its native image loader does not render PNG data URIs. Native tab images use the same Lucide catalog and Electron ink/tint pairs as the sidebar, rasterized from SVG for platform tab items with original-color rendering. The SVG wrapper positions each complete glyph; Lucide receives `size` rather than `x`/`y` or explicit dimensions, which it would also forward to its child shapes and distort their geometry. Missing icons use PanelsTopLeft. The native theme reads Electron’s base and appearance tokens. iOS supplies Liquid Glass and its accessibility fallbacks; Android supplies native tab behavior and system Back. Predictive Back is disabled through Expo's
+Android native tab images use cached PNG file URLs because its native image loader does not render PNG data URIs. Native tab images use the same Lucide catalog and Electron bare-mark colors (themed ink for pastel colors, the hue itself for legacy colors), rasterized from SVG for platform tab items with original-color rendering. Tab glyphs retain transparent SVG bounds for native layout and rasterization, matching Home; canvas tint tiles remain in the sidebar. Selection uses the platform indicator, and the browser preview follows the same bare-icon treatment. The SVG wrapper positions each complete glyph; Lucide receives `size` rather than `x`/`y` or explicit dimensions, which it would also forward to its child shapes and distort their geometry. Missing icons use PanelsTopLeft. The native theme reads Electron’s base and appearance tokens. iOS supplies Liquid Glass and its accessibility fallbacks; Android supplies native tab behavior and system Back. Predictive Back is disabled through Expo's
 `android.predictiveBackGestureEnabled` setting, following [React Navigation's
 Android setup](https://reactnavigation.org/docs/getting-started/#opting-out-of-predictive-back-on-android).
 Enabling it on the tested Android emulator bypassed navigation and exited the
@@ -425,6 +425,21 @@ corepack pnpm --filter @rally/mobile build
 
 `apps/browser/test/mobile-session.test.ts` checks account-bound organization restoration and the stale-empty artifact race. `apps/desktop/src/renderer/lib/api.test.ts` checks that a retried opening message sends the caller’s original receipt key and attachments. The pure protocol tests execute command injection with adversarial IDs, validate the bridge and artifact origin boundaries, and exercise pin ordering. Expo export compiles iOS, Android, and web bundles; it does not install or launch native apps. Browser host tests still exercise the real Worker transport and CSP. Renderer `browser-entry`, `browser-cookie-writers`, and `browser-collaboration` tests cover transient recovery, schema diagnostics, cookie-writer ordering through a browser capability double, hosted-site remounts, socket publication/head updates, metadata recovery, inline-chat return, mention confirmation, pending submission and edited creation retry.
 
+### Targeted native verification (2026-11-14)
+
+An iPhone 17 with the SDK 58 development client and current Metro source passed
+long-hold pinning, pin reordering in both directions, dragging out to unpin,
+Edit plus/minus buttons, immediate handle dragging, ordinary row taps,
+edge auto-scroll from a long list, and cancellation outside the drop sections.
+These gesture checks used the real sidebar with an in-memory directory fixture;
+unit tests cover the browser's ordered pin/reorder writes and failure propagation.
+The gesture recording and screenshots were inspected. Bare tab icons were also
+checked in native tabs in light and dark appearances.
+
+The full app then signed into production Juno Labs and the native Home plus
+button opened the existing creation screen. No canvas was submitted and no
+production pin was changed. This round did not repeat Android or Duo acceptance.
+
 ### Native verification (2026-11-13)
 
 SDK 58 development builds were exercised against the production Juno Labs
@@ -512,6 +527,19 @@ generation, or native WebView behavior. Device acceptance remains necessary.
 Manual acceptance: sign in through the system browser with Apple, Google and email; cancel and retry sign-in; test an existing browser account and switching accounts; open Home; open an artifact and an empty canvas; create a canvas; edit through the conversation sheet; pin and unpin through sidebar Edit; drag to reorder; reload to check server persistence; check desktop overflow pins; disconnect and retry; sign out; test light/dark and Reduce Transparency. On devices, additionally verify artifact writes, keyboard behavior, Android Back, iOS sheet dismissal, VoiceOver/TalkBack reorder actions, and state retention across tab switching.
 
 ## Changelog
+
+### 2026-11-14 — Direct sidebar pinning and a Home create action
+
+Holding and dragging a canvas now changes its pin membership or position across
+Pinned and Canvases. Edit remains the discoverable, accessible alternative.
+The native Home header adds a plus action for the existing creation flow, and
+tab icons use canvas-colored outlines without tint tiles.
+
+This removes the need to enter Edit for every pin change. The gesture uses
+React Native's existing responder APIs and the existing pin/reorder endpoints;
+it introduces no native dependency, socket or separate pin store. The server
+still owns membership and order, Home stays fixed, and pin capacity is unchanged.
+
 
 ### 2026-11-13 — Make external TestFlight distribution explicit
 
