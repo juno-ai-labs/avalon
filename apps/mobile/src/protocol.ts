@@ -54,6 +54,7 @@ export const MobileSnapshotSchema = z.object({
   title: z.string(),
   artifactId: z.string().nullable(),
   artifactPicker: z.boolean(),
+  inlineChat: z.boolean().optional(),
 });
 export type MobileSnapshot = z.infer<typeof MobileSnapshotSchema>;
 
@@ -105,6 +106,8 @@ export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('open-notification'), url: HttpUrlSchema }),
   z.object({ type: z.literal('sign-in-complete'), proof: MobileAuthExchangeSchema }),
   z.object({ type: z.literal('create') }),
+  z.object({ type: z.literal('open-chat'), id: z.string().min(1) }),
+  z.object({ type: z.literal('close-chat') }),
   z.object({ type: z.literal('open'), id: z.string().min(1), pinned: z.boolean() }),
   z.object({ type: z.literal('pin'), id: z.string().min(1), pinned: z.boolean(), beforeId: z.string().min(1).optional() }),
   z.object({ type: z.literal('reorder'), ids: z.array(z.string().min(1)) }),

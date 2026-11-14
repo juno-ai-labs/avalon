@@ -8,7 +8,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/mobile/App.tsx` | Native tab navigator and headers, retained per-tab browser content, system conversation sheet, session scope and foreground refresh. |
+| `apps/mobile/App.tsx` | Native tab navigator and headers, retained per-tab browser content, shared full-screen conversation navigation, session scope and foreground refresh. |
 | `apps/mobile/src/NativeTabIcon.tsx` | Rasterizes saved Lucide glyphs after native layout; Android uses content-addressed PNG files in Expo FileSystem’s cache. |
 | `apps/mobile/src/prepared-canvases.ts` | Keeps account-scoped pin descriptors and prepared session URLs; matches fresh access replies from Home. |
 | `apps/mobile/src/pin-routes.ts` | Assigns Android’s four native pin destinations while preserving each canvas’s identity across reordering. |
@@ -17,6 +17,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/Sidebar.tsx`, `SidebarDragRow.tsx`, `sidebar-drop.ts` | Long-press pin/unpin/reorder with edge scrolling, Edit controls and accessible move actions. |
 | `apps/mobile/App.web.tsx`, `src/PreviewTabBar.tsx`, `src/Glass.tsx` | Development-only browser preview; its custom controls do not model native geometry. |
 | `apps/mobile/src/CanvasWebView.tsx` | Application WebView and isolated first-party live artifact WebViews. |
+| `apps/mobile/src/artifact-presentation.ts` | Applies the artifact inset at document readiness and signals presentation without waiting for images. |
 | `apps/mobile/src/CanvasWebView.web.tsx` | Development-only iframe preview of the native shell. |
 | `apps/mobile/src/background.ts`, `runtime.ts` | Top-level background update task and registration; downloads never interrupt an open canvas. |
 | `apps/mobile/src/notifications.ts`, `notification-target.ts` | Platform permission/token lifecycle and canonical notification routing. |
@@ -29,15 +30,17 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/CanvasIcon.tsx` | Saved Lucide glyphs and themed canvas shading, with a sheet fallback. |
 | `apps/browser/src/mobile-session.ts` | Account-bound organization preference and artifact routing decisions. |
 | `apps/browser/src/mobile-bridge.ts` | Native handshake and explicit browser-preview handshake. |
-| `apps/browser/src/mobile.tsx`, `mobile.css` | Mobile dashboard, artifact selection, shared chat and creation form. |
+| `apps/browser/src/mobile.tsx`, `mobile.css` | Mobile dashboard, artifact selection and retained chat navigation. |
+| `apps/browser/src/mobile-conversation.tsx` | Deferred shared transcript, composer and creation form. |
+| `apps/browser/src/mobile-canvas-detail.ts` | One owner for publication/reconnect invalidation and shared event-driven detail queries. |
 
 ## How it works
 
 The app opens the browser host with `?mobile=1`. The browser keeps its cookie authentication and organization selection. A native host opens the system authentication browser through `expo-web-browser`: ASWebAuthenticationSession on iOS and a browser Custom Tab on Android. Apple, Google, email and password sign-in use the existing browser entry. The app then exchanges a PKCE-bound, single-use ticket inside its WebView to establish an independent HttpOnly cookie session. On a returning launch, the browser restores the last organization only when its saved user matches the authenticated user and that organization is still in the authorized directory. It replaces the history URL and selects the organization inside the current document, retaining the restored session instead of downloading and booting the page again. An explicit organization choice uses the same in-place path; `chooseWorkspace` still forces the picker. The account row in the sidebar opens the organization picker; explicit sign-out clears the preference. After sign-in, `shell.tsx` selects the mobile presentation of the canonical Canvas routes instead of the desktop shell. The session providers and API client remain shared.
 
-Home uses `#/canvases`; opening a canvas uses `#/canvases/:id`, just like desktop. The conversation sheet adds `?view=chat` to that same canvas URL; canonical `?artifact=` links select the named artifact, and validated `?turn=&sequence=` links reveal the named message through the embedded conversation’s explicit scroll request. Canonical path rewrites preserve the mobile and preview host parameters. Creation is local form state on the dashboard, then navigates to the created canvas. There are no separate mobile dashboard, artifact, conversation, or creation paths.
+Home uses `#/canvases`; opening a canvas uses `#/canvases/:id`, just like desktop. The conversation view adds `?view=chat` to that same canvas URL; canonical `?artifact=` links select the named artifact, and validated `?turn=&sequence=` links reveal the named message through the embedded conversation’s explicit scroll request. Canonical path rewrites preserve the mobile and preview host parameters. Creation is local form state on the dashboard, then navigates to the created canvas. There are no separate mobile dashboard, artifact, conversation, or creation paths.
 
-The dashboard consumes the current socket-owned Canvas directory. Opening a Canvas reads `GET /canvases/:id` and its published artifacts, preferring a site, then the newest file. Multiple resources expose an artifact picker. The matching Canvas row’s publication timestamp and the resource topic refresh detail reads in both artifact and chat views; shared resource-head state advances version-keyed metadata. Unrelated presence and pin updates do not refetch Canvas details. An empty canvas routes to chat and stays there while the user writes; View canvas explicitly returns to the artifact. Fetch failures show recovery rather than being mistaken for an empty canvas.
+The dashboard consumes the current socket-owned Canvas directory. Opening a Canvas reads `GET /canvases/:id` and its published artifacts, preferring a site, then the newest file. Multiple resources expose an artifact picker. One mobile owner refreshes details when the matching directory row changes publication timestamp, artifact kind, title or visibility, or disappears. The first directory reconciles a detail read before it arrived; reconnects reconcile missed updates. Shared resource-head state advances existing artifact versions directly. Detail queries remain fresh between those events, and mounting a second observer does not repeat the read. Unrelated resource-topic, presence and pin updates do not refetch Canvas details. An empty canvas routes to chat and stays there while the user writes; View canvas explicitly returns to the artifact. Fetch failures show recovery rather than being mistaken for an empty canvas.
 
 During startup, the browser bridge announces `ready` with `waitForContent: true`.
 The native shell keeps its existing loading surface until a non-loading directory
@@ -47,7 +50,7 @@ Entry readiness is replayed if the native bridge attaches late. Older browser
 hosts without the flag retain their existing reveal behavior. This change adds
 no splash-screen dependency or artificial delay; Expo's native splash keeps its
 normal lifecycle. The desktop navigation/settings renderer has its own lazy
-boundary and is not fetched by the mobile shell.
+boundary and is not fetched by the mobile shell. Chat/composition and InspectorRail are separate deferred imports: the dashboard downloads neither. Opening the first chat pays for its UI chunk; subsequent visits reuse it.
 
 A warm return keeps the current native and browser views mounted. Native resume
 refreshes require an observed `background` followed by `active`; an iOS sheet,
@@ -59,13 +62,15 @@ The native sidebar keeps Home fixed above Pinned and the remaining Canvases. Hol
 
 Home prepares descriptors for the first four pinned canvases through its existing authenticated API and workspace socket. A pin with one hosted site opens that site's actual URL in a native WebView, without starting another browser shell. The shell prepares each visible hosted pin's session through Home's bridge and an attached, invisible native WebView. It loads only Rally's authentication bootstrap and cancels the redirect before the generated document, so no artifact code runs in the background. The platform stores the HttpOnly cookie; only the canonical URL is reused when opening a tab. A tab then loads that URL with shared cookies. If preparation is unavailable, opening requests fresh access; an expired or revoked cookie gets one fresh-access attempt before showing recovery. No single-use URL is saved for later replay. Native request IDs match replies, organization/account scope fences descriptors and pending requests, and reloading Home fails pending opens so they can be retried. Resource-head and Canvas publication changes update descriptors. Removing a pin drops its prepared descriptor and unmounts any in-flight preparation. A resource version change reloads the visible hosted document, while tab switching preserves an already loaded view.
 
-Files, multi-artifact canvases, and pins opened before their descriptor is ready use the browser renderer. A prepared descriptor arriving during bootstrap can replace the spinner with the direct hosted path. Once the browser has shown an artifact or conversation, the route keeps that renderer when a new artifact publishes, preserving in-progress work. This also keeps older browser deployments compatible with the new native client. Native tabs retain their existing lazy behavior: eager React mounting alone does not create an iOS WKWebView before SwiftUI attaches its tab to a window. Initial bridge readiness no longer sends a redundant refresh over bootstrap reads; browser-renderer focus, reconnect, and foreground refreshes remain. Direct hosted tabs keep Home’s live socket and avoid invalidating every prepared Canvas on each tab tap; reconnect and foregrounding refresh the shared host. Hosted sites use the Canvas descriptor and resource-head version directly, avoiding an extra resource-metadata request; file artifacts still need that metadata for InspectorRail.
+Files, multi-artifact canvases, and pins opened before their descriptor is ready use the browser renderer. A prepared descriptor arriving during bootstrap can replace the spinner with the direct hosted path. Once the browser has shown an artifact or conversation, the route keeps that renderer when a new artifact publishes, preserving in-progress work. This also keeps older browser deployments compatible with the new native client. Native tabs retain their existing lazy behavior: eager React mounting alone does not create an iOS WKWebView before SwiftUI attaches its tab to a window. Initial bridge readiness no longer sends a redundant refresh over bootstrap reads; reconnect and foreground refreshes remain. Focusing a retained browser tab does not itself invalidate Canvas queries. Direct hosted tabs keep Home’s live socket and avoid invalidating every prepared Canvas on each tab tap; reconnect and foregrounding refresh the shared host. Hosted sites use the Canvas descriptor and resource-head version directly, avoiding an extra resource-metadata request; file artifacts still need that metadata for InspectorRail.
 
-Already loaded artifact views stay mounted and attached to preserve local scroll and form state during tab changes. Inactive native views use zero opacity, disabled pointer events, and hidden accessibility descendants; `display: none` can detach WKWebView and replay its consumed access URL. The native containers disable view flattening so changing visibility or accessibility does not replace their children. Fragment navigation does not reset the shell, and full application-page loading retains artifact instances until the authenticated user or organization changes. File artifacts use the shared InspectorRail. Live sites use the existing `openArtifact` API to obtain an `openUrl` on their hosted artifact origin. Access queries belong to one mounted artifact/version instance and are discarded on unmount, so switching A → B → A obtains fresh access. That one-time URL establishes artifact access and redirects to the canonical hosted URL; the canonical URL alone requires an existing artifact cookie, which the native pin preparation establishes ahead of a tap. The browser preview frames the same hosted document directly. Native sites open in separate WebViews so their cookies are first-party on iOS, avoiding Safari's cross-site iframe restriction on interactive writes. Those views receive no native bridge. A native conversation sheet hosts the existing web transcript and composer. Native camera, photo-library, and microphone usage descriptions support its attachment and dictation controls; permission prompts occur when used. Creation uses the shared attachment lease and draft mechanisms. Creation first reserves the Canvas through `POST /canvases`, then sends its opening message and attachments through the existing HTTP conversation admission route. A create attempt retains its message receipt key, operation ID, and Canvas ID while the submitted content is unchanged, so either step can be retried safely. The form stays mounted through navigation while a request is pending; completion refreshes the directory without redirecting someone who already left the form. Edited retries keep the reserved Canvas ID and mint new message/operation receipts. The composer blocks submission while creation is pending and uses the same authorized member roster for mention confirmation and payload resolution.
+Already loaded artifact views stay mounted and attached to preserve local scroll and form state during tab changes. Inactive native views use zero opacity, disabled pointer events, and hidden accessibility descendants; `display: none` can detach WKWebView and replay its consumed access URL. The native containers disable view flattening so changing visibility or accessibility does not replace their children. Fragment navigation does not reset the shell, and full application-page loading retains artifact instances until the authenticated user or organization changes. File artifacts use the shared InspectorRail. Live sites use the existing `openArtifact` API to obtain an `openUrl` on their hosted artifact origin. Access queries belong to one mounted artifact/version instance and are discarded on unmount, so switching A → B → A obtains fresh access. That one-time URL establishes artifact access and redirects to the canonical hosted URL; the canonical URL alone requires an existing artifact cookie, which the native pin preparation establishes ahead of a tap. The browser preview frames the same hosted document directly. Native sites open in separate WebViews so their cookies are first-party on iOS, avoiding Safari's cross-site iframe restriction on interactive writes. Those views receive no application commands or authentication bridge. A presentation-only `onMessage` handler accepts only the artifact-ready marker from the artifact origin, outside authentication bootstrap paths. The document-ready script applies the inset and signals after two animation frames, without waiting for images; `onLoadEnd` remains the fallback on engines that miss early injection. HTTP/network/process failures retain their existing recovery. This signal describes document presentation, not completion of a generated app’s own data fetches.
+
+On hosts advertising `inlineChat`, the Chat button selects the existing Home browser and sends `open-chat`. The browser saves its prior route and displays the shared transcript/composer in place. Native tabs hide during this full-screen editor; Close and Android Back restore the previous tab and Home route through `close-chat`. The most recent chat stays mounted when hidden, so its draft, scroll and conversation socket survive reopening. Opening another chat replaces that retained editor, and account/organization changes destroy the scoped browser tree. Hidden chat uses the shared visibility context so it does not acknowledge unseen messages. Closing Chat sends no refresh fan-out; publication pushes keep artifacts current. Older hosts keep the native sheet fallback. This avoids reparenting WKWebView between native screens or retaining popped native-stack routes, neither of which is a supported reuse mechanism. Native camera, photo-library, and microphone usage descriptions support its attachment and dictation controls; permission prompts occur when used. Creation uses the shared attachment lease and draft mechanisms. Creation first reserves the Canvas through `POST /canvases`, then sends its opening message and attachments through the existing HTTP conversation admission route. A create attempt retains its message receipt key, operation ID, and Canvas ID while the submitted content is unchanged, so either step can be retried safely. The form stays mounted through navigation while a request is pending; completion refreshes the directory without redirecting someone who already left the form. Edited retries keep the reserved Canvas ID and mint new message/operation receipts. The composer blocks submission while creation is pending and uses the same authorized member roster for mention confirmation and payload resolution.
 
 Navigation uses Callstack's maintained [`react-native-bottom-tabs`](https://oss.callstack.com/react-native-bottom-tabs/docs/guides/usage-with-react-navigation)
 and its React Navigation adapter. A shared native stack owns the header and
-presents the conversation. The documented
+presents diagnostics and the older-host conversation fallback. The documented
 `labeled={false}` and `tabBarIconRenderingMode="original"` options provide
 icon-only tabs with full accessibility names and canvas colors. The Expo config
 plugin owns Android's Material theme. The Android package carries an unchanged backport of merged
@@ -102,7 +107,7 @@ trigger hiding resets navigator state, so its native tabs are not used for live
 pin changes. Native acceptance must cover insert, remove and reordering the
 selected pin in both directions; a successful tab tap alone does not prove it.
 
-Each tab lazily mounts a browser WebView on its first visit and retains it through tab switching. These pages reuse the existing browser session, Canvas REST APIs and workspace socket protocol. This means one existing workspace connection per visited browser page, rather than a new native data client or socket protocol. The focused page supplies directory snapshots and handles pin writes, so Android does not wait for an inactive WebView to resume rendering. Background snapshots cannot overwrite the visible page’s acknowledged state, and an initial loading snapshot cannot clear existing tabs before its first directory sync. Canvas screens receive their own artifact descriptors and keep their authorized hosted WebViews in stable native containers. Dashboard links and the pin manager select an existing native tab when possible. Unpinned canvases open within Home. The system conversation sheet uses the canonical chat URL and existing web composer.
+Each tab lazily mounts a browser WebView on its first visit and retains it through tab switching. These pages reuse the existing browser session, Canvas REST APIs and workspace socket protocol. This means one existing workspace connection per visited browser page, rather than a new native data client or socket protocol. The focused page supplies directory snapshots and handles pin writes, so Android does not wait for an inactive WebView to resume rendering. Background snapshots cannot overwrite the visible page’s acknowledged state, and an initial loading snapshot cannot clear existing tabs before its first directory sync. Canvas screens receive their own artifact descriptors and keep their authorized hosted WebViews in stable native containers. Dashboard links and the pin manager select an existing native tab when possible. Unpinned canvases open within Home. Chat reuses Home’s browser document and existing web composer; older hosts fall back to a system sheet at the canonical chat URL.
 
 iPhone scenes extend behind the native bottom tab bar. The supported
 `useBottomTabBarHeight()` measurement supplies bottom margin on the keyboard
@@ -111,7 +116,7 @@ is disabled in that case. `useVerticalBarEdgeIOS()` removes that margin when Duo
 uses a vertical rail. WKWebView's documented `removeIosKeyboardObserver` option
 lets the surrounding KeyboardAvoidingView own keyboard avoidance, preventing a
 second keyboard inset from lifting the composer into the transcript. The same
-WebView behavior applies to conversation sheets and hosted artifacts.
+WebView behavior applies to the shared conversation view, legacy conversation sheets and hosted artifacts.
 
 The OS places the native tab bar and rail, including Duo’s outer screen, inner orientation changes and either side of Split View. No hinge angle or fixed width threshold chooses native navigation. Native safe-area handling reserves the system rail/bar; content extends behind the transparent header with a measured initial inset that scrolls away. The inset updates when geometry changes without accumulating padding. Header actions are native bar items on iOS, so the system can relocate or overflow them. Android uses its native navigation header with accessible actions. Home has sidebar and create-canvas (+) actions; artifact screens have sidebar/chat actions. Headers have no title or extra Home action. The Muse-inspired sidebar remains shared and custom, including pin/unpin, drag ordering and accessibility move actions. Ordinary swipes scroll; closing the drawer or a changed account, organization or pin list cancels a drag.
 
@@ -404,8 +409,8 @@ platform's bundle first to catch resolution errors before device testing.
 
 ## Invariants
 
-- Only the configured application origin and a per-WebView capability can update native navigation. `protocol.test.ts` exercises origin, document-path, nonce, and malformed-message rejection. Accepting generated artifact messages would give generated code account-level navigation capabilities.
-- Live artifact open and canonical URLs share one origin under the configured artifact domain. The validator's tests reject nested, deceptive, credential-bearing, and cross-origin URLs. Artifact WebViews have no injected bridge; breaking that separation exposes shell actions to generated code.
+- Only the configured application origin and a per-WebView capability can update native navigation. `protocol.test.ts` exercises origin, document-path, nonce, and malformed-message rejection. Routing generated artifact messages through that application handler would give generated code account-level navigation capabilities.
+- Live artifact open and canonical URLs share one origin under the configured artifact domain. The validator's tests reject nested, deceptive, credential-bearing, and cross-origin URLs. Artifact WebViews accept only their presentation-ready marker, which can dismiss a loading cover and has no shell actions, account metadata or credentials. Never route it through the application bridge.
 - Home cannot be removed or reordered. Pin ordering preserves every server pin, including desktop overflow; `movePin` tests cover preservation and invalid moves. The fixed Home control is verified visually, with no automated guard.
 - A failed resource request cannot imply no artifact. Error recovery precedes fallback routing; `mobile-session.test.ts` checks the routing decision, and browser acceptance exercises the stale-cache and recovery paths.
 - Credentials remain in browser cookies. The bridge transmits display metadata, commands, short-lived artifact open URLs, APNs registration tokens, account-bound regional crash envelopes and the single-use sign-in redemption proof, never a password, access/refresh token or session cookie. Runtime schemas define this boundary.
@@ -535,7 +540,7 @@ persistence/order, dimensions, artifact interaction and tab state retention,
 but not production artifact authorization, backend item persistence, model
 generation, or native WebView behavior. Device acceptance remains necessary.
 
-Manual acceptance: sign in through the system browser with Apple, Google and email; cancel and retry sign-in; test an existing browser account and switching accounts; open Home; open an artifact and an empty canvas; create a canvas; edit through the conversation sheet; pin and unpin through sidebar Edit; drag to reorder; reload to check server persistence; check desktop overflow pins; disconnect and retry; sign out; test light/dark and Reduce Transparency. On devices, additionally verify artifact writes, keyboard behavior, Android Back, iOS sheet dismissal, VoiceOver/TalkBack reorder actions, and state retention across tab switching.
+Manual acceptance: sign in through the system browser with Apple, Google and email; cancel and retry sign-in; test an existing browser account and switching accounts; open Home; open an artifact and an empty canvas; create a canvas; edit through the full-screen conversation view; pin and unpin through sidebar Edit; drag to reorder; reload to check server persistence; check desktop overflow pins; disconnect and retry; sign out; test light/dark and Reduce Transparency. On devices, additionally verify artifact writes, keyboard behavior, Android Back, Close and legacy iOS sheet dismissal, VoiceOver/TalkBack reorder actions, and state retention across tab switching.
 
 ### Hosted pin latency check (2026-11-14)
 
@@ -581,6 +586,48 @@ simulator was stopped. These checks exercise the real native shell and built
 browser bundle, but do not measure production authentication or release-build
 startup time. Android and Duo startup were not checked in this round.
 
+### Navigation and deferred loading comparison (2026-11-14)
+
+Compared commit `ce0dcb126` with the additional navigation changes on the same
+SDK 58 iPhone 17 development binary. Both native runs used the same built-browser
+fixture: two pinned sites, an empty Chat, 100 ms delays on existing REST routes,
+and a site image delayed by 1,200 ms. The fixture supplies session and socket
+responses; it is not a production-backend benchmark. Temporary timing hooks were
+removed after the runs, and all simulator sessions were stopped.
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| First native Chat open | 2,814 ms | 830 ms |
+| Next two native Chat opens | 1,824 / 1,688 ms | 82 / 82 ms |
+| Canvas-detail reads per Chat close (two pins, three closes) | 2 each | 0 each |
+| Detail reads per unrelated resource-topic update (two pins, five runs) | 2 each | 0 each |
+| Dashboard JavaScript fetched, uncompressed | 2,641,565 bytes | 1,261,622 bytes |
+| Same JavaScript, summed gzip size | 771,494 bytes | 380,605 bytes |
+| Dashboard ready, headful Chrome median of five | 1,127 ms | 1,039 ms |
+| Artifact reveal gate, headful Chrome median of five | 1,220 ms | 39 ms |
+
+Chat timing runs from the native button callback to the visible composer and
+loaded empty transcript, followed by two browser animation frames. The retained
+editor uses the same document and conversation connection on return. Native
+screenshots and recordings confirmed full-screen Chat, the uncovered composer,
+and return to the existing artifact. The browser integration check also retained
+typed draft text and dashboard search across Chat open/close.
+
+Artifact gate timing compares the previous document-load completion gate with
+the actual new document-ready/inset script; the delayed image was still pending
+when the new signal fired. This is a controlled demonstration of avoiding a
+subresource wait, not a claim that every hosted app opens in 39 ms. Generated
+apps can still fetch their own data afterward. The native script retains load
+completion as a fallback and leaves failure recovery intact.
+
+Dashboard measurements used fresh browser contexts on the same machine; the
+52% JavaScript reduction is deterministic for these builds, while the small
+startup-time difference is sensitive to scheduling and network variation. The
+first Chat now downloads its deferred UI; later opens reuse it. Production
+latency distributions, release-binary timings, Android timing and Duo timing
+remain unmeasured for this change. Android bundle export is a build check, not a
+substitute for those device measurements.
+
 ## Changelog
 
 ### 2026-11-14 — Reduce mobile launch and pinned-canvas startup work
@@ -592,8 +639,7 @@ the generated document; failed preparation and expired cookies use fresh access.
 resource-metadata read, and initial bridge readiness no longer restarts bootstrap
 reads. Returning launches restore the remembered organization in place, native
 loading waits for usable browser content, and real background resumes refresh
-without treating every iOS interruption as another launch. The desktop renderer
-is loaded only for desktop browser routes.
+without treating every iOS interruption as another launch. Desktop navigation, Chat/composition and file preview renderers have separate loading boundaries. Chat reuses Home’s session and keeps the current editor mounted; closing it no longer refreshes every browser tab. Canvas detail invalidation has one owner and follows publication rows rather than unrelated resource topics. Artifacts reveal after document readiness and inset application, with load completion as fallback.
 
 **Why:** First taps were paying for another browser shell, session, socket, Canvas
 discovery, access, and artifact load. The goal is 500 ms tap-to-visible with a
@@ -601,7 +647,7 @@ discovery, access, and artifact load. The goal is 500 ms tap-to-visible with a
 but first opens remain dependent on hosted page/network performance. Cold access and the browser-renderer fallback remain
 network work, not an offline cache. Launch also reloaded the entire browser after
 restoring the organization list, exposing multiple intermediate screens. Removing
-that navigation preserves authentication work and one continuous loading state.
+that navigation preserves authentication work and one continuous loading state. Reopening Chat was repeating that session bootstrap in a new WebView; mounting, closing and broad resource events also refetched already-current Canvas details. Waiting for all artifact images unnecessarily covered usable content.
 
 **Considered and rejected:** The navigator's supported eager mounting option was
 tested on iPhone and did not preload WKWebView: iOS creates it only after the tab
@@ -609,14 +655,14 @@ attaches to a window. Caching access URLs would leave expired or consumed ticket
 redeems immediately and lets the platform retain the ordinary HttpOnly cookie.
 A separate REST client, socket, or native content database would duplicate the
 browser session. The existing Home session can provide the descriptors and fresh
-access instead.
+access instead. Retaining the full-screen editor in Home uses supported browser routing and native tab visibility. Moving a WKWebView between a sheet and its old parent risks replacing it; keeping a popped stack screen alive requires unsupported navigation behavior.
 
 **Consequences:** Descriptor preparation is limited to the existing four visible
 pins. A mounted browser conversation must not be replaced when an artifact
 publishes. Files and multiple artifacts keep the browser renderer, while native
 sites retain state between tab switches. There are no new backend endpoints or
 sockets. The bridge adds prepared-descriptor and request/reply messages with
-account/organization fencing; artifact code still receives no bridge.
+account/organization fencing. `open-chat`/`close-chat` use the existing authenticated bridge; artifact code receives only a presentation signal handler, with no application capability. First Chat/file opens still download their deferred UI. The native and browser changes must both ship for in-place Chat; older hosts retain the sheet.
 
 ### 2026-11-14 — Direct sidebar pinning and a Home create action
 
