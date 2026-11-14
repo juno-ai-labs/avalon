@@ -25,7 +25,7 @@ export function NativeTabIcon({ canvas, onImage }: { canvas?: CanvasSummary; onI
   const { colors } = useTheme();
   const svg = useRef<Svg>(null);
   const [laidOut, setLaidOut] = useState(false);
-  const { ink, tint } = canvas ? colors.canvasColors(canvas.id, canvas.color) : { ink: colors.text, tint: 'transparent' };
+  const ink = canvas ? colors.canvasColors(canvas.id, canvas.color).bare : colors.text;
   const Icon = canvas ? icons[canvas.icon ?? ''] ?? PanelsTopLeft : House;
   useEffect(() => {
     if (!laidOut) return;
@@ -36,10 +36,11 @@ export function NativeTabIcon({ canvas, onImage }: { canvas?: CanvasSummary; onI
       }).catch((error: unknown) => console.warn('Native tab icon could not be cached', error));
     }));
     return () => { active = false; cancelAnimationFrame(frame); };
-  }, [Icon, ink, tint, onImage, laidOut]);
+  }, [Icon, ink, onImage, laidOut]);
   return <View collapsable={false} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', opacity: 0, width: 28, height: 28 }}>
     <Svg onLayout={() => setLaidOut(true)} ref={svg} width={28} height={28} viewBox="0 0 28 28">
-      <Rect width={28} height={28} rx={8} fill={tint} />
+      {/* Keep native SVG layout bounds for rasterization without painting a tile. */}
+      <Rect width={28} height={28} fill="transparent" />
       {/* Lucide forwards SVG props to its shapes; position the whole glyph instead. */}
       <G transform="translate(3 3)">
         <Icon size={22} color={ink} strokeWidth={1.9} />

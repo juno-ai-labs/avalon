@@ -40,13 +40,12 @@ export function TabBar({ snapshot, bottomInset, send }: {
       {tabs.map((tab) => {
         const selected = snapshot.tabId === tab.id;
         const canvas = snapshot.canvases.find((item) => item.id === tab.id);
-        const mark = tab.id ? colors.canvasColors(canvas?.id, canvas?.color) : null;
         return <Pressable key={tab.id ?? 'home'} accessibilityRole="tab" accessibilityLabel={tab.title}
           accessibilityState={{ selected }} aria-selected={selected}
           onLongPress={() => setLabel(tab.title)} onPressOut={() => setLabel(null)}
           onPress={() => send(tab.id ? { type: 'open', id: tab.id, pinned: true } : { type: 'home' })}
-          style={({ pressed }) => [styles.tab, { borderColor: selected ? colors.line : 'transparent', backgroundColor: selected ? mark?.tint ?? colors.selected : pressed ? colors.tonal : 'transparent' }]}>
-          {tab.id ? <CanvasIcon canvas={canvas} size={24} shaded={!selected} /> : <House size={24} strokeWidth={1.9} color={selected ? colors.text : colors.muted} />}
+          style={({ pressed }) => [styles.tab, { borderColor: selected ? colors.line : 'transparent', backgroundColor: selected ? colors.selected : pressed ? colors.tonal : 'transparent' }]}>
+          {tab.id ? <CanvasIcon canvas={canvas} size={24} shaded={false} /> : <House size={24} strokeWidth={1.9} color={selected ? colors.text : colors.muted} />}
         </Pressable>;
       })}
     </Glass>
