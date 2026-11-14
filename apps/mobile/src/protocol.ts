@@ -84,7 +84,7 @@ export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('sign-in-complete'), proof: MobileAuthExchangeSchema }),
   z.object({ type: z.literal('create') }),
   z.object({ type: z.literal('open'), id: z.string().min(1), pinned: z.boolean() }),
-  z.object({ type: z.literal('pin'), id: z.string().min(1), pinned: z.boolean() }),
+  z.object({ type: z.literal('pin'), id: z.string().min(1), pinned: z.boolean(), beforeId: z.string().min(1).optional() }),
   z.object({ type: z.literal('reorder'), ids: z.array(z.string().min(1)) }),
   z.object({ type: z.literal('load-more') }),
   z.object({ type: z.literal('refresh') }),

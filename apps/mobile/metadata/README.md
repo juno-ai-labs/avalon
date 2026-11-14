@@ -51,14 +51,5 @@ Notifications are optional and are enabled from Settings and diagnostics. Camera
 
 ## Screenshots
 
-Upload the images under `screenshots/en-US` manually to the matching App Store
-version's iPhone and iPad slots. These are real native captures of the shared
-grocery canvas, with no private conversation or third-party editorial content.
-Apple's [current screenshot specification](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/)
-requires a medium Dynamic Island iPhone image (1206 × 2622 is accepted) and a
-13-inch iPad image (2064 × 2752 is accepted). Recheck the specification when
-recapturing; do not upscale images from a smaller device to fill another slot.
-
-TestFlight itself does not require screenshots. Its public invitation uses images
-from the latest approved App Store version, so preparing these assets does not
-make them appear on a first-beta invitation.
+Follow [App Store screenshots](../../../docs/app-store-screenshots.md) for capture
+commands, iPhone/iPad/Duo sizes, image checks, and upload instructions.
