@@ -1,6 +1,6 @@
 import { CanvasIcon } from './CanvasIcon';
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
-import { AccessibilityInfo, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { AccessibilityInfo, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { movePin, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from './protocol';
@@ -21,6 +21,7 @@ interface DragState { id: string; x: number; y: number; target: SidebarDrop | nu
 interface Bounds { x: number; y: number; width: number; height: number }
 
 const ROW_HEIGHT = 52;
+const AUTO_SCROLL_ROWS_PER_SECOND = 8;
 export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -36,11 +37,27 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
   const scrollY = useRef(0);
   const contentHeight = useRef(0);
   const dragRef = useRef<DragState | null>(null);
-  const updateDrag = (value: DragState | null) => { dragRef.current = value; setDrag(value); };
+  const dragY = useRef(new Animated.Value(0)).current;
+  const updateDrag = (value: DragState | null) => {
+    const previous = dragRef.current;
+    dragRef.current = value;
+    if (value) dragY.setValue(value.y - ROW_HEIGHT / 2);
+    // Pointer motion moves only the ghost; rerender rows when the destination changes.
+    if (previous?.id !== value?.id || previous?.target?.section !== value?.target?.section
+      || (previous?.target?.section === 'pins' ? previous.target.index : null) !== (value?.target?.section === 'pins' ? value.target.index : null)) setDrag(value);
+  };
   const dragging = drag !== null;
   const pinKey = JSON.stringify(snapshot.pins);
   useEffect(() => { dragRef.current = null; setDrag(null); }, [visible, snapshot.userId, snapshot.workspaceId, pinKey]);
-  useEffect(() => { if (!visible) { setEditing(false); setNotice(null); } }, [visible]);
+  const resetScroll = () => {
+    scrollY.current = 0;
+    scroll.current?.scrollTo({ y: 0, animated: false });
+  };
+  const measureViewport = (after?: () => void) => viewport.current?.measure((_x, _y, width, height, x, y) => {
+    viewportBounds.current = { x, y, width, height };
+    after?.();
+  });
+  useEffect(() => { if (!visible) { resetScroll(); setEditing(false); setNotice(null); } }, [visible]);
   const move = (x: number, y: number) => {
     const current = dragRef.current;
     if (!current) return;
@@ -72,7 +89,7 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
       const direction = localY < edge ? -Math.min(1, (edge - localY) / edge) : localY > bounds.height - edge ? Math.min(1, (localY - bounds.height + edge) / edge) : 0;
       const elapsed = previous ? (now - previous) / 1000 : 0;
       previous = now;
-      const next = Math.max(0, Math.min(Math.max(0, contentHeight.current - bounds.height), scrollY.current + direction * ROW_HEIGHT * 8 * elapsed));
+      const next = Math.max(0, Math.min(Math.max(0, contentHeight.current - bounds.height), scrollY.current + direction * ROW_HEIGHT * AUTO_SCROLL_ROWS_PER_SECOND * elapsed));
       if (next !== scrollY.current) {
         scrollY.current = next;
         scroll.current?.scrollTo({ y: next, animated: false });
@@ -88,6 +105,10 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
     setNotice(null);
     updateDrag({ id, x, y, target: null });
     move(x, y);
+    measureViewport(() => {
+      const current = dragRef.current;
+      if (current?.id === id) moveRef.current(current.x, current.y);
+    });
   }
   function finishDrag() {
     const current = dragRef.current;
@@ -116,12 +137,12 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
     style={({ pressed }) => [styles.control, { opacity: disabled ? 0.35 : pressed ? 0.6 : 1 }]}>
     <Ionicons name={name} size={20} color={colors.muted} />
   </Pressable>;
-  return <Modal transparent visible={visible} animationType="fade" onRequestClose={close}>
+  return <Modal transparent visible={visible} animationType="fade" onRequestClose={close} onShow={() => { resetScroll(); measureViewport(); }}>
     <View style={[styles.overlay, { backgroundColor: colors.scrim }]}>
       <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close sidebar" accessibilityRole="button" onPress={close} />
       <View accessibilityViewIsModal style={[styles.drawer, { width: Math.min(width - insets.right - 44, 336 + insets.left), paddingLeft: 14 + insets.left, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12, backgroundColor: colors.sidebar }]}>
         <View style={styles.heading}><Text style={[styles.brand, { color: colors.text }]}>Rally</Text>{iconButton('menu-outline', 'Close sidebar', close)}</View>
-        <View ref={viewport} style={{ flex: 1 }} onLayout={() => viewport.current?.measureInWindow((x, y, width, height) => { viewportBounds.current = { x, y, width, height }; })}>
+        <View ref={viewport} style={{ flex: 1 }} onLayout={() => measureViewport()}>
         <ScrollView ref={scroll} scrollEnabled={!dragging} onScroll={({ nativeEvent }) => { scrollY.current = nativeEvent.contentOffset.y; }} scrollEventThrottle={16}
           onContentSizeChange={(_, height) => { contentHeight.current = height; }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ flex: 1 }}>
           <View style={[styles.row, { backgroundColor: snapshot.view === 'home' ? colors.selected : 'transparent' }]}>
@@ -133,7 +154,7 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
             <View onLayout={({ nativeEvent: { layout } }) => { pinBounds.current.rowsY = layout.y; }} style={{ minHeight: ROW_HEIGHT }}>
               {snapshot.pins.map((id, index) => <SidebarDragRow key={id} title={titleFor(id)} disabled={snapshot.pinBusy} handle={editing && !snapshot.pinBusy}
                 order={{ index, count: snapshot.pins.length }}
-                style={[styles.row, { opacity: drag?.id === id ? 0.35 : 1, backgroundColor: snapshot.tabId === id ? colors.selected : 'transparent' }]}
+                style={[styles.row, { opacity: drag?.id === id ? 0.35 : 1, backgroundColor: (snapshot.tabId === id || snapshot.canvasId === id) ? colors.selected : 'transparent' }]}
                 destinationStyle={styles.destination} onOpen={() => action({ type: 'open', id, pinned: true }, true)}
                 onStart={(x, y) => startDrag(id, x, y)} onMove={move} onEnd={finishDrag} onCancel={() => updateDrag(null)}
                 onEarlier={index > 0 ? () => { action({ type: 'reorder', ids: movePin(snapshot.pins, index, index - 1) }); AccessibilityInfo.announceForAccessibility(`Moved to tab ${index + 1}`); } : undefined}
@@ -149,7 +170,7 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
           {snapshot.pins.length > VISIBLE_PIN_COUNT && <Text style={[styles.hint, { color: colors.muted }]}>Your first four pins appear in the bottom bar. All pins remain here.</Text>}
           {(notice || snapshot.pinError) && <Text accessibilityRole="alert" style={[styles.hint, { color: colors.error }]}>{notice ?? snapshot.pinError}</Text>}
           <View style={[styles.divider, { backgroundColor: colors.line }]} />
-          <View onLayout={({ nativeEvent: { layout } }) => { canvasBounds.current = { y: layout.y, height: layout.height }; }} style={{ backgroundColor: drag?.target?.section === 'canvases' ? colors.selected : 'transparent', borderRadius: 13, minHeight: ROW_HEIGHT * 2 }}>
+          <View onLayout={({ nativeEvent: { layout } }) => { canvasBounds.current = { y: layout.y, height: layout.height }; }} style={{ backgroundColor: drag?.target?.section === 'canvases' && snapshot.pins.includes(drag.id) ? colors.selected : 'transparent', borderRadius: 13, minHeight: ROW_HEIGHT * 2 }}>
             <View style={styles.section}><Text style={[styles.label, { color: colors.muted }]}>CANVASES</Text>{editing && <Text style={[styles.count, { color: colors.muted }]}>{snapshot.pins.length} pinned</Text>}</View>
             {unpinned.map((canvas) => <SidebarDragRow key={canvas.id} title={canvas.title} disabled={snapshot.pinBusy} handle={false}
               style={[styles.row, { opacity: drag?.id === canvas.id ? 0.35 : 1 }, snapshot.canvasId === canvas.id && { backgroundColor: colors.selected }]}
@@ -174,9 +195,9 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
           {iconButton('log-out-outline', 'Sign out', () => action({ type: 'sign-out' }, true))}
         </View>
       </View>
-      {drag && <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.row, { position: 'absolute', left: viewportBounds.current.x, top: drag.y - ROW_HEIGHT / 2, width: viewportBounds.current.width, paddingHorizontal: 12, gap: 12, backgroundColor: colors.surface, boxShadow: '0 5px 18px rgba(0, 0, 0, 0.18)' }]}>
+      {drag && <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.row, { position: 'absolute', left: viewportBounds.current.x, top: 0, transform: [{ translateY: dragY }], width: viewportBounds.current.width, paddingHorizontal: 12, gap: 12, backgroundColor: colors.surface, boxShadow: '0 5px 18px rgba(0, 0, 0, 0.18)' }]}>
         <CanvasIcon canvas={snapshot.canvases.find((canvas) => canvas.id === drag.id)} size={21} /><Text numberOfLines={1} style={[styles.title, { color: colors.text }]}>{titleFor(drag.id)}</Text>
-      </View>}
+      </Animated.View>}
     </View>
   </Modal>;
 }

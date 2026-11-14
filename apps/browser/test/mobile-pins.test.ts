@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { writeMobilePins } from '../src/mobile-pins';
+import { PinPlacementError, writeMobilePins } from '../src/mobile-pins';
 
 describe('mobile pin placement', () => {
   it('waits for membership before ordering a newly pinned canvas', async () => {
@@ -22,7 +22,7 @@ describe('mobile pin placement', () => {
   });
   it('propagates placement failure so the UI reports the partial write', async () => {
     const api = { setCanvasPinned: vi.fn(async () => {}), reorderCanvasPins: vi.fn(async () => { throw Error('order refused'); }) };
-    await expect(writeMobilePins(api, ['a'], { type: 'pin', id: 'new', pinned: true, beforeId: 'a' })).rejects.toThrow('order refused');
+    await expect(writeMobilePins(api, ['a'], { type: 'pin', id: 'new', pinned: true, beforeId: 'a' })).rejects.toBeInstanceOf(PinPlacementError);
   });
   it('uses only membership for unpin and append, and only order for reordering', async () => {
     const api = { setCanvasPinned: vi.fn(async () => {}), reorderCanvasPins: vi.fn(async () => {}) };

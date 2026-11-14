@@ -92,11 +92,17 @@ npx --yes eas-cli@latest simulator:start \
 Record the returned session ID privately. Wait for the session to be ready, then
 use the controller through `simulator:exec`. It reads the local ignored
 `.env.eas-simulator` connection file; keep the commands in the same app directory.
+Attach to the running app before taking a snapshot. After signing in and preparing
+the view as described below, capture the image:
 
 ```sh
+npx --yes eas-cli@latest simulator:exec npx agent-device@latest open ai.rallywith.mobile --foreground --platform ios
 npx --yes eas-cli@latest simulator:exec npx agent-device@latest snapshot --json
-npx --yes eas-cli@latest simulator:exec npx agent-device@latest screenshot /tmp/rally-iphone-grocery.png --json
+npx --yes eas-cli@latest simulator:exec npx agent-device@latest screenshot /tmp/rally-iphone-grocery.png --pixel-density 3 --scale 1 --json
 ```
+
+The iPhone and Duo commands explicitly request 3× native pixels and disable
+downscaling. For iPad, use its native density (2×), then check output dimensions.
 
 Sign in through Rally's normal system sign-in sheet. Select the intended
 organization, open the canvas, dismiss the keyboard, and wait for fonts, images,
@@ -117,10 +123,10 @@ and a compatible SDK 58 build. Keep Rally running between poses:
 
 ```sh
 npx --yes eas-cli@latest simulator:exec npx agent-device@latest fold closed --json
-npx --yes eas-cli@latest simulator:exec npx agent-device@latest screenshot /tmp/rally-duo-outer-grocery.png --json
+npx --yes eas-cli@latest simulator:exec npx agent-device@latest screenshot /tmp/rally-duo-outer-grocery.png --pixel-density 3 --scale 1 --json
 npx --yes eas-cli@latest simulator:exec npx agent-device@latest fold open --json
 npx --yes eas-cli@latest simulator:exec npx agent-device@latest snapshot --json
-npx --yes eas-cli@latest simulator:exec npx agent-device@latest screenshot /tmp/rally-duo-inner-grocery.png --json
+npx --yes eas-cli@latest simulator:exec npx agent-device@latest screenshot /tmp/rally-duo-inner-grocery.png --pixel-density 3 --scale 1 --json
 ```
 
 Wait for each layout to settle before its screenshot. Element references and
