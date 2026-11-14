@@ -1,6 +1,6 @@
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact } from './protocol';
+import { mobileContentReady, type MobileSnapshot, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact } from './protocol';
 
 const app = 'https://app.rallywith.ai';
 const token = 'main-frame-capability';
@@ -78,4 +78,50 @@ describe('native artifact isolation', () => {
     expect(trustedArtifact(local, 'rallyusercontent.localhost')).toBe(true);
     expect(trustedArtifact(local, 'rallyusercontent.com')).toBe(false);
   });
+});
+
+
+describe('artifact cookie preparation', () => {
+  const canonicalUrl = 'https://site.rallyusercontent.com';
+  it('allows only the bootstrap and redemption, stopping before artifact code or other origins', () => {
+    expect(artifactPreparationNavigation(canonicalUrl, 'https://site.rallyusercontent.com/__rally/open#one')).toBe('allow');
+    expect(artifactPreparationNavigation(canonicalUrl, 'https://site.rallyusercontent.com/__rally/redeem')).toBe('allow');
+    expect(artifactPreparationNavigation(canonicalUrl, 'https://site.rallyusercontent.com/')).toBe('ready');
+    expect(artifactPreparationNavigation(canonicalUrl, 'https://site.rallyusercontent.com/app.js')).toBe('block');
+    expect(artifactPreparationNavigation(canonicalUrl, 'https://other.rallyusercontent.com/__rally/open')).toBe('block');
+    expect(artifactPreparationNavigation(canonicalUrl, 'not a URL')).toBe('block');
+  });
+  it('renews rejected cookies once, without retrying access failures or subresource errors', () => {
+    const access = { canonicalUrl, openUrl: canonicalUrl };
+    expect(artifactLoadFailure(access, canonicalUrl + '/', 403)).toBe('renew');
+    expect(artifactLoadFailure(access, canonicalUrl + '/', 401)).toBe('renew');
+    expect(artifactLoadFailure(access, canonicalUrl + '/', 503)).toBe('fail');
+    expect(artifactLoadFailure(access, canonicalUrl + '/image.png', 403)).toBe('ignore');
+    expect(artifactLoadFailure(access, canonicalUrl + '/', 200)).toBe('ignore');
+    expect(artifactLoadFailure({ ...access, openUrl: canonicalUrl + '/__rally/open#fresh' }, canonicalUrl + '/__rally/redeem', 403)).toBe('fail');
+    expect(artifactLoadFailure({ ...access, openUrl: canonicalUrl + '/__rally/open#fresh' }, canonicalUrl + '/', 403)).toBe('fail');
+  });
+});
+
+
+it('reveals usable content rather than bridge bootstrap, including legacy hosts and failure screens', () => {
+  expect(mobileContentReady({ type: 'ready', waitForContent: true })).toBe(false);
+  expect(mobileContentReady({ type: 'ready' })).toBe(true);
+  expect(mobileContentReady({ type: 'screen-ready' })).toBe(true);
+  expect(mobileContentReady({ type: 'signed-out' })).toBe(true);
+  const snapshot = { loading: true, directoryError: false } as MobileSnapshot;
+  expect(mobileContentReady({ type: 'snapshot', snapshot })).toBe(false);
+  expect(mobileContentReady({ type: 'snapshot', snapshot: { ...snapshot, loading: false } })).toBe(true);
+  expect(mobileContentReady({ type: 'snapshot', snapshot: { ...snapshot, directoryError: true } })).toBe(true);
+});
+
+
+it('recognizes only the trusted authentication handoff for the current artifact', () => {
+  const canonical = 'https://level-luminous-sequential-schrodinger-g.rallyusercontent.com/';
+  const app = 'https://app.rallywith.ai';
+  const path = '/app/sites/global/level-luminous-sequential-schrodinger/%2F';
+  expect(artifactAuthHandoff(canonical, app + path, app)).toBe(true);
+  for (const target of ['https://evil.example' + path, app + '/app/sites/global/level-luminous-sequential-curie/%2F', app + '/', 'https://attacker@app.rallywith.ai' + path, 'not a url']) {
+    expect(artifactAuthHandoff(canonical, target, app)).toBe(false);
+  }
 });

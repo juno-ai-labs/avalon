@@ -22,7 +22,7 @@ const ProfileEditorContext = createContext<AccountProfileEditor | null>(null);
 const AccountContext = createContext<AccountOnboarding | null>(null);
 export function useOnboardingAccount(): AccountOnboarding | null { return useContext(AccountContext); }
 
-export function AccountOnboardingGate({ children }: { children: ReactNode }): React.JSX.Element {
+export function AccountOnboardingGate({ children, onRecoveryReady }: { children: ReactNode; onRecoveryReady?: () => void }): React.JSX.Element {
   const { api, session, signOut, updateCurrentUserName, getAccountOnboarding, updateAccountOnboarding } = useAppSession();
   const { guest } = useShellCapabilities();
   // Account onboarding and the profile it carries belong to the signed-in
@@ -61,6 +61,7 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
     if (profileState.profile.displayName?.trim()) updateCurrentUserName?.(profileState.profile.displayName.trim());
     return () => { delete root.dataset['personalColor']; };
   }, [account.data?.presentation, profileState, session, updateCurrentUserName]);
+  useEffect(() => { if (!session?.workspace && !account.data && account.error) onRecoveryReady?.(); }, [session?.workspace, account.data, account.error, onRecoveryReady]);
   if (!session) return <>{children}</>;
   // A restored workspace can open while identity-owned details load. Keep the
   // providers in place so a background result does not remount its socket/feed.
@@ -69,7 +70,7 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
     if (account.error) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><ErrorNotice occurrence={account.error}>{account.error.message}</ErrorNotice></OnboardingPage>;
     return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
   }
-  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={!supportSession && (account.isPending || account.isFetching)}><ConversationAdmissionProvider allowed={guest || supportSession || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <RecordIntroduction /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
+  return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={!supportSession && (account.isPending || account.isFetching)}><ConversationAdmissionProvider allowed={guest || supportSession || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <RecordIntroduction onRecoveryReady={onRecoveryReady} /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
 }
 
 export function OnboardingPage({ title, subtitle, children, footer }: { title: string; subtitle?: string | readonly string[]; children: ReactNode; footer?: ReactNode }): React.JSX.Element {
@@ -84,7 +85,7 @@ export function OnboardingPage({ title, subtitle, children, footer }: { title: s
 
 // Rally no longer shows introduction screens, but signup completion still
 // waits on `introduced`, so a new account records it on arrival.
-function RecordIntroduction(): React.JSX.Element {
+function RecordIntroduction({ onRecoveryReady }: { onRecoveryReady?: (() => void) | undefined }): React.JSX.Element {
   const account = useOnboardingAccount()!;
   const { updateAccountOnboarding } = useAppSession();
   const queryClient = useQueryClient();
@@ -103,6 +104,7 @@ function RecordIntroduction(): React.JSX.Element {
       await queryClient.invalidateQueries({ queryKey: ['account-onboarding'] });
     } finally { setBusy(false); }
   }, [account.revision, busy, queryClient, updateAccountOnboarding]);
+  useEffect(() => { if (error) onRecoveryReady?.(); }, [error, onRecoveryReady]);
   const recorded = useRef(false);
   useEffect(() => {
     if (!recorded.current) { recorded.current = true; void complete(); }

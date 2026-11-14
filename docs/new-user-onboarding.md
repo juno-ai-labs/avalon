@@ -31,7 +31,9 @@ ships directly for newly created accounts, with no feature flag.
 There are no introduction screens: a signed-out person goes straight to
 sign-in. The account still carries an `introduced` flag, because signup
 completion waits on it, so an eligible account that has not recorded it shows
-"Opening Rally" while the app saves it, with a retry if the save fails.
+"Opening Rally" while the app saves it, with a retry if the save fails. The
+account gate optionally notifies its host when account-read or introduction-save
+recovery is actionable, so a native loading cover cannot hide Retry.
 Existing [workspace discovery and invitation acceptance](multiple-workspaces.md)
 choose the regional workspace. Everyone starts at personal setup. Connecting
 tools is not a journey step; it lives in Settings → Connections. The invitation

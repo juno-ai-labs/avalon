@@ -42,11 +42,11 @@ function WorkspaceView(): React.JSX.Element {
   const allowed = useConversationAdmission();
   return <><div>Ordinary organization</div><output data-testid="admission">{allowed ? 'allowed' : 'blocked'}</output></>;
 }
-function show() {
+function show(onRecoveryReady?: () => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   // The journey renders inside the app's HashRouter and leaves through it, so
   // the harness gives it a router and reports where it went.
-  render(<ErrorNoticeProvider><MemoryRouter initialEntries={['/onboarding']}><QueryClientProvider client={client}><AccountOnboardingGate><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter></ErrorNoticeProvider>);
+  render(<ErrorNoticeProvider><MemoryRouter initialEntries={['/onboarding']}><QueryClientProvider client={client}><AccountOnboardingGate {...(onRecoveryReady ? { onRecoveryReady } : {})}><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter></ErrorNoticeProvider>);
   return client;
 }
 beforeEach(() => {
@@ -394,4 +394,28 @@ describe('Account profile settings', () => {
     expect(state.saveAccount.mock.lastCall?.[0]).toMatchObject({ expectedRevision: 1, presentation: { displayName: 'New Name', initials: 'NN', color: 'violet' } });
     expect(client.getQueryData(['account-onboarding', 'person@example.com'])).toMatchObject({ revision: 2, presentation: { displayName: 'New Name', initials: 'NN', color: 'violet' } });
   });
+});
+
+
+it('reveals failed introduction recovery without revealing the automatic save', async () => {
+  state.getAccount.mockResolvedValue({ ...state.account, introduced: false });
+  let rejectSave!: (reason: Error) => void;
+  state.saveAccount.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSave = reject; }));
+  const ready = vi.fn();
+  show(ready);
+  await waitFor(() => expect(state.saveAccount).toHaveBeenCalled());
+  expect(ready).not.toHaveBeenCalled();
+  await act(async () => rejectSave(new Error('Save unavailable')));
+  fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
+  await screen.findByRole('button', { name: 'Retry' });
+  expect(ready).toHaveBeenCalledTimes(1);
+});
+
+it('reveals account-read recovery when there is no workspace', async () => {
+  state.hasWorkspace = false;
+  state.getAccount.mockRejectedValue(new Error('Account unavailable'));
+  const ready = vi.fn();
+  show(ready);
+  await screen.findByRole('button', { name: 'Retry' });
+  expect(ready).toHaveBeenCalledTimes(1);
 });
