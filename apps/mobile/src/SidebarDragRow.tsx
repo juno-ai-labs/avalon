@@ -71,7 +71,7 @@ export function SidebarDragRow(props: Props) {
     onTouchEnd={() => { if (!panning.current) responders.finish(); }}
     onTouchCancel={() => responders.finish(true)}>
     <Pressable style={props.destinationStyle} accessibilityRole="button" accessibilityLabel={props.title}
-      accessibilityHint="Hold and drag to pin, unpin, or reorder"
+      accessibilityHint="Use Edit in Pinned to pin, unpin, or reorder"
       onPressIn={() => { suppressOpen.current = false; }} onLongPress={start}
       onPress={() => { if (!suppressOpen.current) props.onOpen(); }}>
       {props.children}
