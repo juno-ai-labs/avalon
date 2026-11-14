@@ -2,6 +2,7 @@ import { MOBILE_SIGN_IN_PATH } from '../../mobile/src/auth-contract';
 import { MOBILE_CHANNEL, MOBILE_COMMAND_EVENT, VISIBLE_PIN_COUNT, MobileCommandSchema, type MobileEvent } from '../../mobile/src/protocol';
 
 let latest: MobileEvent | null = null;
+let screenReady = false;
 let latestArtifact: MobileEvent | null = null;
 const preparedCanvases = new Map<string, Extract<MobileEvent, { type: 'prepared-canvas' }>>();
 let preview: { token: string; origin: string } | null = null;
@@ -17,6 +18,7 @@ export function isMobileHost(): boolean {
 
 export function postMobileEvent(event: MobileEvent): void {
   if (!isMobileHost()) return;
+  if (event.type === 'screen-ready') screenReady = true;
   if (event.type === 'snapshot' && latest?.type === 'snapshot' && (event.snapshot.userId !== latest.snapshot.userId || event.snapshot.workspaceId !== latest.snapshot.workspaceId)) latestArtifact = null;
   if (event.type === 'snapshot') {
     for (const [id, prepared] of preparedCanvases) {
@@ -41,7 +43,7 @@ export function postMobileEvent(event: MobileEvent): void {
 export function installMobileBridge(): void {
   if (!isMobileHost()) return;
   document.documentElement.dataset.mobileHost = 'true';
-  const ready = () => { postMobileEvent({ type: 'ready' }); if (latest) postMobileEvent(latest); if (latestArtifact) postMobileEvent(latestArtifact); for (const prepared of preparedCanvases.values()) postMobileEvent(prepared); };
+  const ready = () => { postMobileEvent({ type: 'ready', waitForContent: true }); if (screenReady) postMobileEvent({ type: 'screen-ready' }); if (latest) postMobileEvent(latest); if (latestArtifact) postMobileEvent(latestArtifact); for (const prepared of preparedCanvases.values()) postMobileEvent(prepared); };
   window.addEventListener('rally:mobile-ready', ready);
   window.addEventListener('message', (event: MessageEvent) => {
     // Only the preview's direct parent may attach. Native uses a token injected
