@@ -10,6 +10,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | --- | --- |
 | `apps/mobile/App.tsx` | Native tab navigator and headers, retained per-tab browser content, system conversation sheet, session scope and foreground refresh. |
 | `apps/mobile/src/NativeTabIcon.tsx` | Rasterizes saved Lucide glyphs after native layout; Android uses content-addressed PNG files in Expo FileSystem’s cache. |
+| `apps/mobile/src/prepared-canvases.ts` | Keeps account-scoped pin descriptors and prepared session URLs; matches fresh access replies from Home. |
 | `apps/mobile/src/pin-routes.ts` | Assigns Android’s four native pin destinations while preserving each canvas’s identity across reordering. |
 | `apps/mobile/src/theme.ts` | Native adapter over the same source color tokens as Electron. |
 | `apps/mobile/src/Sidebar.tsx`, `SidebarDragRow.tsx`, `sidebar-drop.ts` | Long-press pin/unpin/reorder with edge scrolling, Edit controls and accessible move actions. |
@@ -39,7 +40,11 @@ The dashboard consumes the current socket-owned Canvas directory. Opening a Canv
 
 The native sidebar keeps Home fixed above Pinned and the remaining Canvases. Hold a canvas row and drag it into Pinned, between pins, or back into Canvases to pin, reorder, or unpin. A floating row and insertion marker show the destination; edge scrolling reaches off-screen rows. Dropping outside either section cancels. Edit still exposes plus/minus controls and drag handles, including accessible move actions. The Canvas directory supplies each pin’s name, appearance, and `pinnedPosition`. Native tabs are icon-only. Their full canvas names remain available to VoiceOver/TalkBack and in the sidebar. Sidebar directory failures offer retry. Pin writes use the canonical Canvas pin APIs, with one pin command in flight and server acknowledgments driving the UI. A new pin can carry an optional `beforeId` in the existing bridge command: the browser saves membership, then its position with the existing reorder endpoint. If positioning fails, the pin remains appended and the notice distinguishes a saved pin from its failed placement. Home is fixed. The first four pins appear beside Home; existing desktop pins beyond those remain in the sidebar and can be reordered into view. This is a presentation capacity, not a new backend limit.
 
-Visited artifact views stay mounted and attached to preserve local scroll and form state during tab changes. Inactive native views use zero opacity, disabled pointer events, and hidden accessibility descendants; `display: none` can detach WKWebView and replay its consumed access URL. The native containers disable view flattening so changing visibility or accessibility does not replace their children. Fragment navigation does not reset the shell, and full application-page loading retains artifact instances until the authenticated user or organization changes. File artifacts use the shared InspectorRail. Live sites use the existing `openArtifact` API to obtain an `openUrl` on their hosted artifact origin. Access queries belong to one mounted artifact/version instance and are discarded on unmount, so switching A → B → A obtains fresh access. That one-time URL establishes artifact access and redirects to the canonical hosted URL; loading the bare canonical URL would skip access for private sites. The browser preview frames the same hosted document directly. Native sites open in separate WebViews so their cookies are first-party on iOS, avoiding Safari's cross-site iframe restriction on interactive writes. Those views receive no native bridge. A native conversation sheet hosts the existing web transcript and composer. Native camera, photo-library, and microphone usage descriptions support its attachment and dictation controls; permission prompts occur when used. Creation uses the shared attachment lease and draft mechanisms. Creation first reserves the Canvas through `POST /canvases`, then sends its opening message and attachments through the existing HTTP conversation admission route. A create attempt retains its message receipt key, operation ID, and Canvas ID while the submitted content is unchanged, so either step can be retried safely. The form stays mounted through navigation while a request is pending; completion refreshes the directory without redirecting someone who already left the form. Edited retries keep the reserved Canvas ID and mint new message/operation receipts. The composer blocks submission while creation is pending and uses the same authorized member roster for mention confirmation and payload resolution.
+Home prepares descriptors for the first four pinned canvases through its existing authenticated API and workspace socket. A pin with one hosted site opens that site's actual URL in a native WebView, without starting another browser shell. The shell prepares each visible hosted pin's session through Home's bridge and an attached, invisible native WebView. It loads only Rally's authentication bootstrap and cancels the redirect before the generated document, so no artifact code runs in the background. The platform stores the HttpOnly cookie; only the canonical URL is reused when opening a tab. A tab then loads that URL with shared cookies. If preparation is unavailable, opening requests fresh access; an expired or revoked cookie gets one fresh-access attempt before showing recovery. No single-use URL is saved for later replay. Native request IDs match replies, organization/account scope fences descriptors and pending requests, and reloading Home fails pending opens so they can be retried. Resource-head and Canvas publication changes update descriptors. Removing a pin drops its prepared descriptor and unmounts any in-flight preparation. A resource version change reloads the visible hosted document, while tab switching preserves an already loaded view.
+
+Files, multi-artifact canvases, and pins opened before their descriptor is ready use the browser renderer. A prepared descriptor arriving during bootstrap can replace the spinner with the direct hosted path. Once the browser has shown an artifact or conversation, the route keeps that renderer when a new artifact publishes, preserving in-progress work. This also keeps older browser deployments compatible with the new native client. Native tabs retain their existing lazy behavior: eager React mounting alone does not create an iOS WKWebView before SwiftUI attaches its tab to a window. Initial bridge readiness no longer sends a redundant refresh over bootstrap reads; browser-renderer focus, reconnect, and foreground refreshes remain. Direct hosted tabs keep Home’s live socket rather than restarting it on each tab tap; reconnect and foregrounding refresh the shared host. Hosted sites use the Canvas descriptor and resource-head version directly, avoiding an extra resource-metadata request; file artifacts still need that metadata for InspectorRail.
+
+Already loaded artifact views stay mounted and attached to preserve local scroll and form state during tab changes. Inactive native views use zero opacity, disabled pointer events, and hidden accessibility descendants; `display: none` can detach WKWebView and replay its consumed access URL. The native containers disable view flattening so changing visibility or accessibility does not replace their children. Fragment navigation does not reset the shell, and full application-page loading retains artifact instances until the authenticated user or organization changes. File artifacts use the shared InspectorRail. Live sites use the existing `openArtifact` API to obtain an `openUrl` on their hosted artifact origin. Access queries belong to one mounted artifact/version instance and are discarded on unmount, so switching A → B → A obtains fresh access. That one-time URL establishes artifact access and redirects to the canonical hosted URL; the canonical URL alone requires an existing artifact cookie, which the native pin preparation establishes ahead of a tap. The browser preview frames the same hosted document directly. Native sites open in separate WebViews so their cookies are first-party on iOS, avoiding Safari's cross-site iframe restriction on interactive writes. Those views receive no native bridge. A native conversation sheet hosts the existing web transcript and composer. Native camera, photo-library, and microphone usage descriptions support its attachment and dictation controls; permission prompts occur when used. Creation uses the shared attachment lease and draft mechanisms. Creation first reserves the Canvas through `POST /canvases`, then sends its opening message and attachments through the existing HTTP conversation admission route. A create attempt retains its message receipt key, operation ID, and Canvas ID while the submitted content is unchanged, so either step can be retried safely. The form stays mounted through navigation while a request is pending; completion refreshes the directory without redirecting someone who already left the form. Edited retries keep the reserved Canvas ID and mint new message/operation receipts. The composer blocks submission while creation is pending and uses the same authorized member roster for mention confirmation and payload resolution.
 
 Navigation uses Callstack's maintained [`react-native-bottom-tabs`](https://oss.callstack.com/react-native-bottom-tabs/docs/guides/usage-with-react-navigation)
 and its React Navigation adapter. A shared native stack owns the header and
@@ -515,7 +520,66 @@ generation, or native WebView behavior. Device acceptance remains necessary.
 
 Manual acceptance: sign in through the system browser with Apple, Google and email; cancel and retry sign-in; test an existing browser account and switching accounts; open Home; open an artifact and an empty canvas; create a canvas; edit through the conversation sheet; pin and unpin through sidebar Edit; drag to reorder; reload to check server persistence; check desktop overflow pins; disconnect and retry; sign out; test light/dark and Reduce Transparency. On devices, additionally verify artifact writes, keyboard behavior, Android Back, iOS sheet dismissal, VoiceOver/TalkBack reorder actions, and state retention across tab switching.
 
+### Hosted pin latency check (2026-11-14)
+
+On an EAS iPhone 17 simulator with the SDK 58 development build, the Juno Labs
+canvases measured:
+
+| Path | Grocery list | Newsletter |
+| --- | --- | --- |
+| Existing browser-per-tab first open | 5.72 s | 4.37 s |
+| Direct native view, fresh access on tap | 3.68 s | 1.72 s |
+| Direct native view, cookie prepared before tap | 1.91 s | 1.02 s |
+
+The prepared path met the 2-second ceiling in these individual samples, but
+**first opens did not meet the 500 ms target**. Returning to already loaded
+canvases took under 50 ms. Preparation was confirmed complete before the first
+taps. Immediate taps before preparation finishes, recovery, and browser-renderer
+fallbacks still pay for authentication or bootstrap and can exceed 2 seconds.
+These are not percentile guarantees or release-build benchmarks. Timings run
+from tab press to canonical-document load plus two animation frames; generated
+pages may continue fetching their own data afterward.
+
+Native runs used production APIs and hosted pages, with a temporary adapter for
+the new bridge messages in the production Home document. The branch's browser
+implementation was tested separately: the temporary preview host did not forward
+session cookies, blocking a full native run against that host. No adapter or
+instrumentation ships. Screenshots confirmed the grocery and newsletter pages
+and native controls rendered correctly. Android/Duo performance and preservation
+of an unsent form value were not verified in this run. All simulator sessions
+were stopped afterward.
+
 ## Changelog
+
+### 2026-11-14 — Remove browser startup from hosted pin opening
+
+**What changed:** Home prepares visible pin descriptors using its existing
+session. Single-site pins prepare their cookie through that bridge and a native bootstrap
+WebView, then open the canonical hosted URL directly. The bootstrap stops before
+the generated document; failed preparation and expired cookies use fresh access. Hosted-site rendering also skips a redundant
+resource-metadata read, and initial bridge readiness no longer restarts bootstrap
+reads.
+
+**Why:** First taps were paying for another browser shell, session, socket, Canvas
+discovery, access, and artifact load. The goal is 500 ms tap-to-visible with a
+2-second ceiling; measurements above meet the ceiling after cookie preparation,
+but first opens remain dependent on hosted page/network performance. Cold access and the browser-renderer fallback remain
+network work, not an offline cache.
+
+**Considered and rejected:** The navigator's supported eager mounting option was
+tested on iPhone and did not preload WKWebView: iOS creates it only after the tab
+attaches to a window. Caching access URLs would leave expired or consumed tickets. Instead, preparation
+redeems immediately and lets the platform retain the ordinary HttpOnly cookie.
+A separate REST client, socket, or native content database would duplicate the
+browser session. The existing Home session can provide the descriptors and fresh
+access instead.
+
+**Consequences:** Descriptor preparation is limited to the existing four visible
+pins. A mounted browser conversation must not be replaced when an artifact
+publishes. Files and multiple artifacts keep the browser renderer, while native
+sites retain state between tab switches. There are no new backend endpoints or
+sockets. The bridge adds prepared-descriptor and request/reply messages with
+account/organization fencing; artifact code still receives no bridge.
 
 ### 2026-11-14 — Direct sidebar pinning and a Home create action
 

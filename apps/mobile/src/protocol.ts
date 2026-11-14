@@ -10,6 +10,22 @@ export const VISIBLE_PIN_COUNT = 4;
 export const MOBILE_CHANNEL = 'rally.mobile.v1';
 export const MOBILE_COMMAND_EVENT = 'rally:mobile-command';
 
+/** The bootstrap may redeem, but must stop before generated code loads. */
+export function artifactPreparationNavigation(canonicalUrl: string, target: string): 'allow' | 'ready' | 'block' {
+  try {
+    const canonical = new URL(canonicalUrl);
+    const url = new URL(target);
+    if (url.href === canonical.href) return 'ready';
+    return url.origin === canonical.origin && ['/__rally/open', '/__rally/redeem'].includes(url.pathname) ? 'allow' : 'block';
+  } catch { return 'block'; }
+}
+
+export function artifactLoadFailure(access: { openUrl: string; canonicalUrl: string }, target: string, status: number): 'ignore' | 'renew' | 'fail' {
+  const mainDocument = [new URL(access.openUrl).href, new URL(access.canonicalUrl).href, new URL('/__rally/redeem', access.canonicalUrl).href].includes(target);
+  if (!mainDocument || status < 400) return 'ignore';
+  return access.openUrl === access.canonicalUrl && [401, 403].includes(status) ? 'renew' : 'fail';
+}
+
 export const CanvasSummarySchema = z.object({
   id: z.string().min(1),
   title: z.string(),
@@ -60,6 +76,9 @@ export function trustedArtifact(access: NativeArtifact, domain: string): boolean
   } catch { return false; }
 }
 
+export const PreparedCanvasSchema = z.object({ canvasId: z.string(), resourceId: z.string(), version: z.number().int().positive(), title: z.string() });
+export type PreparedCanvas = z.infer<typeof PreparedCanvasSchema>;
+
 export const MobileEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
   z.object({ type: z.literal('crash-permission'), requestId: z.string().uuid(), scope: MobileCrashScopeSchema, enabled: z.boolean() }),
@@ -67,6 +86,8 @@ export const MobileEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('notification-opened'), url: HttpUrlSchema }),
   z.object({ type: z.literal('push-device-result'), requestId: z.string().uuid(), userId: z.string(), workspaceId: z.string(), ok: z.boolean(), enabled: z.boolean() }),
   z.object({ type: z.literal('sign-in') }),
+  z.object({ type: z.literal('prepared-canvas'), userId: z.string(), workspaceId: z.string(), canvasId: z.string(), canvas: PreparedCanvasSchema.nullable() }),
+  z.object({ type: z.literal('prepared-artifact'), requestId: z.string(), artifact: NativeArtifactSchema.nullable() }),
   z.object({ type: z.literal('artifact'), artifact: NativeArtifactSchema }),
   z.object({ type: z.literal('artifact-unavailable'), canvasId: z.string(), resourceId: z.string() }),
   z.object({ type: z.literal('open-canvas'), id: z.string().min(1) }),
@@ -90,6 +111,7 @@ export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('refresh') }),
   z.object({ type: z.literal('sign-out') }),
   z.object({ type: z.literal('switch-workspace') }),
+  z.object({ type: z.literal('open-prepared-artifact'), requestId: z.string(), userId: z.string(), workspaceId: z.string(), canvas: PreparedCanvasSchema }),
   z.object({ type: z.literal('reopen-artifact'), canvasId: z.string(), resourceId: z.string() }),
 ]);
 export type MobileCommand = z.infer<typeof MobileCommandSchema>;

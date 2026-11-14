@@ -1,3 +1,4 @@
+import { usePreparedCanvases } from './src/prepared-canvases';
 import { useCrashReporting } from './src/crashes';
 import { RecoveryBoundary } from './src/RecoveryBoundary';
 import { DiagnosticsScreen } from './src/DiagnosticsScreen';
@@ -19,11 +20,11 @@ import { Menu, MessageCircle, Plus, X } from 'lucide-react-native';
 import { StatusBar, useVerticalBarEdgeIOS } from 'expo-status-bar';
 import { useBottomTabBarHeight } from 'react-native-bottom-tabs';
 import { systemSignIn } from './src/auth';
-import { CanvasWebView, ArtifactView, type CanvasWebViewHandle } from './src/CanvasWebView';
+import { CanvasWebView, ArtifactView, ArtifactSessionPreparation, type CanvasWebViewHandle } from './src/CanvasWebView';
 import { NativeTabIcon } from './src/NativeTabIcon';
 import { allocatePinSlots } from './src/pin-routes';
 import { Sidebar } from './src/Sidebar';
-import { mobileUrl, trustedArtifact, VISIBLE_PIN_COUNT, type CanvasSummary, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot } from './src/protocol';
+import { mobileUrl, trustedArtifact, VISIBLE_PIN_COUNT, type CanvasSummary, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot, type PreparedCanvas } from './src/protocol';
 import { useTheme } from './src/theme';
 
 const APP_URL = process.env.EXPO_PUBLIC_RALLY_APP_URL || 'https://app.rallywith.ai';
@@ -35,6 +36,7 @@ const Stack = createNativeStackNavigator<RootRoutes>();
 const rootNavigation = createNavigationContainerRef<RootRoutes>();
 
 type Session = {
+  prepared: ReturnType<typeof usePreparedCanvases>;
   directory: MobileSnapshot | null;
   updateDirectory: (snapshot: MobileSnapshot | null) => void;
   controls: React.RefObject<Map<string, CanvasWebViewHandle>>;
@@ -63,6 +65,7 @@ function AppContent() {
   const pendingNotificationRef = useRef(pendingNotification);
   pendingNotificationRef.current = pendingNotification;
   const sendHome = useCallback((command: MobileCommand) => controls.current.get('Home')?.send(command), []);
+  const prepared = usePreparedCanvases(directory, sendHome);
   const openNotification = useCallback((data: unknown) => {
     const target = notificationTarget(data, APP_URL);
     if (!target) { void Notifications.clearLastNotificationResponseAsync().catch(() => undefined); return; }
@@ -101,7 +104,7 @@ function AppContent() {
   const theme = isDark ? DarkTheme : DefaultTheme;
   return <SafeAreaProvider>
     <StatusBar style={isDark ? 'light' : 'dark'} />
-    <SessionContext value={{ directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent }}>
+    <SessionContext value={{ prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent }}>
       <NavigationContainer ref={rootNavigation} theme={{ ...theme, colors: { ...theme.colors, background: colors.background, card: colors.surface, text: colors.text, primary: colors.accent, border: colors.line } }}>
         <Stack.Navigator initialRouteName="Canvases">
           <Stack.Screen name="Diagnostics" options={{ title: 'Settings and diagnostics' }}>{() => <DiagnosticsScreen notifications={notifications} signedIn={Boolean(directory)} />}</Stack.Screen>
@@ -114,7 +117,7 @@ function AppContent() {
 }
 
 function CanvasTabs() {
-  const { directory, controls } = useSession();
+  const { directory, controls, prepared } = useSession();
   const [images, setImages] = useState<Record<string, ImageSourcePropType>>({});
   const saveImage = useCallback((id: string, image: ImageSourcePropType) => setImages((current) => ({ ...current, [id]: image })), []);
   const { colors } = useTheme();
@@ -133,6 +136,7 @@ function CanvasTabs() {
   const routeCanvases = Object.fromEntries([['Home', 'Home'], ...routes.map(({ name, id }) => [name, id])]);
   const tabs = ['Home', ...pins];
   return <View style={styles.fill}>
+    {Object.values(prepared.canvases).map((canvas) => <PrepareArtifactSession key={`${scope}:${canvas.canvasId}:${canvas.resourceId}`} canvas={canvas} scope={scope} />)}
     {tabs.map((id) => <TabIconAsset key={id} id={id} canvas={directory?.canvases.find((canvas) => canvas.id === id)} save={saveImage} />)}
     <CanvasRoutesContext value={routeCanvases}><Tabs.Navigator backBehavior="firstRoute" labeled={false} tabBarHidden={!directory}
       activeIndicatorColor={colors.selected}
@@ -146,10 +150,23 @@ function CanvasTabs() {
     {routes.map(({ name, id }) => <Tabs.Screen
       key={Platform.OS === 'android' ? name : `${scope}:${id}`} name={name}
       navigationKey={Platform.OS === 'android' ? undefined : scope}
-      component={Platform.OS === 'android' ? AndroidCanvasRoute : CanvasScreen}
+      component={Platform.OS === 'android' ? AndroidCanvasRoute : PinnedCanvasRoute}
       options={{ title: id ? directory?.canvases.find((canvas) => canvas.id === id)?.title || 'Canvas' : '', tabBarItemHidden: !id }}
     />)}
   </Tabs.Navigator></CanvasRoutesContext></View>;
+}
+
+function PrepareArtifactSession({ canvas, scope }: { canvas: PreparedCanvas; scope: string }) {
+  const { prepared } = useSession();
+  const [access, setAccess] = useState<NativeArtifact | null>(null);
+  useEffect(() => {
+    let active = true;
+    void prepared.open(canvas).then((artifact) => {
+      if (active && artifact && trustedArtifact(artifact, ARTIFACT_DOMAIN)) setAccess(artifact);
+    });
+    return () => { active = false; };
+  }, [canvas.canvasId, canvas.resourceId, prepared.open]);
+  return access ? <ArtifactSessionPreparation access={access} onReady={() => prepared.rememberSession(scope, access)} /> : null;
 }
 
 function AndroidCanvasRoute(props: NativeBottomTabScreenProps<ParamListBase>) {
@@ -160,7 +177,7 @@ function AndroidCanvasRoute(props: NativeBottomTabScreenProps<ParamListBase>) {
     if (focused && (!canvasId || previousCanvas.current !== canvasId)) props.navigation.navigate('Home');
     previousCanvas.current = canvasId;
   }, [canvasId, focused, props.navigation]);
-  return canvasId ? <CanvasScreen key={canvasId} {...props} canvasId={canvasId} /> : null;
+  return canvasId ? <PinnedCanvasRoute key={canvasId} {...props} canvasId={canvasId} /> : null;
 }
 
 function TabIconAsset({ id, canvas, save }: { id: string; canvas?: CanvasSummary; save: (id: string, image: ImageSourcePropType) => void }) {
@@ -185,8 +202,8 @@ function HeaderButton({ kind, label, onPress }: { kind: 'menu' | 'chat' | 'creat
   return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}><Icon size={24} color={colors.text} /></Pressable>;
 }
 
-function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string }) {
-  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent } = useSession();
+function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContentReady }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string; onContentReady?: () => void }) {
+  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared } = useSession();
   const { colors } = useTheme();
   const canvasId = assignedCanvasId ?? route.name;
   const routeCanvases = useContext(CanvasRoutesContext);
@@ -238,6 +255,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
     controls.current.get('Home')?.send(command);
   }, [controls, tabs, open, receiveCrashEvent]);
   const receive = useCallback((event: MobileEvent) => {
+    if (home && prepared.receive(event)) return;
     if (event.type === 'notification-opened') { notificationOpened(event.url); return; }
     notifications.receive(event);
     if (home) receiveCrashEvent(event);
@@ -263,23 +281,29 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
       const nextScope = `${event.snapshot.userId}:${event.snapshot.workspaceId}`;
       if (scope.current !== nextScope) { scope.current = nextScope; setArtifacts({}); }
       setSnapshot(event.snapshot);
+      if (!event.snapshot.loading && (event.snapshot.view === 'conversation' || event.snapshot.artifactId)) onContentReady?.();
       // A newly visited tab has no directory until its socket's first sync.
       // That loading snapshot must not remove the existing native routes.
-      if (focused && !event.snapshot.loading) updateDirectory(event.snapshot);
+      if ((home || focused) && !event.snapshot.loading) updateDirectory(event.snapshot);
     }
     if (event.type === 'signed-out') {
       setArtifacts({}); setSnapshot(null); setSidebar(false);
       if (home) updateDirectory(null); else signOut();
     }
-  }, [focused, home, tabs, open, canvasId, signIn, signOut, updateDirectory, notifications.receive, notificationOpened, receiveCrashEvent]);
+  }, [focused, home, tabs, open, canvasId, signIn, signOut, updateDirectory, notifications.receive, notificationOpened, receiveCrashEvent, prepared.receive, onContentReady]);
   useEffect(() => {
     const registry = controls.current;
     const handle = web.current;
     if (handle) registry.set(canvasId, handle);
     return () => { if (registry.get(canvasId) === handle) registry.delete(canvasId); };
   }, [controls, canvasId]);
+  const initialized = useRef(false);
   useEffect(() => {
-    if (focused && ready && network.isConnected) web.current?.send({ type: 'refresh' });
+    if (!ready) return;
+    // Initial page bootstrap already reads the canvas. Do not cancel/restart it
+    // when the bridge announces readiness; subsequent focus/reconnect refreshes stay background work.
+    if (initialized.current && focused && network.isConnected) web.current?.send({ type: 'refresh' });
+    initialized.current = true;
     const listener = AppState.addEventListener('change', (state) => { if (state === 'active' && focused && ready) web.current?.send({ type: 'refresh' }); });
     return () => listener.remove();
   }, [focused, ready, network.isConnected]);
@@ -305,8 +329,8 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
           onLoading={() => {
             // Loading Home must not close other tabs and discard their drafts.
             // Authentication snapshots and signed-out events own the directory.
-            setReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
-          }} onError={() => setFailed(true)} />
+            if (home) prepared.reset(); initialized.current = false; setReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
+          }} onError={() => { if (home) prepared.reset(); setFailed(true); }} />
       </View>
       {Object.values(artifacts).map((access) => {
         const visible = snapshot?.view === 'artifact' && snapshot.canvasId === access.canvasId && snapshot.artifactId === access.resourceId;
@@ -317,6 +341,89 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
       {(!ready || failed) && <Loading failed={failed} retry={() => { setFailed(false); web.current?.reload(); }} />}
     </KeyboardAvoidingView>
     {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, ...snapshot, ...{ canvases: directory.canvases, pins: directory.pins, pinBusy: directory.pinBusy, pinError: directory.pinError }, tabId: home ? null : canvasId }} close={() => setSidebar(false)} send={send} diagnostics={() => rootNavigation.navigate('Diagnostics')} />}
+  </SafeAreaView>;
+}
+
+function PinnedCanvasRoute(props: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string }) {
+  const { prepared } = useSession();
+  const canvas = prepared.canvases[props.canvasId ?? props.route.name];
+  // Late descriptors may replace the bootstrap spinner, but never a browser
+  // artifact or conversation the person has already started using.
+  const [browserShown, setBrowserShown] = useState(false);
+  const keepBrowser = useCallback(() => setBrowserShown(true), []);
+  return !browserShown && canvas ? <PreparedSiteScreen {...props} canvas={canvas} /> : <CanvasScreen {...props} onContentReady={keepBrowser} />;
+}
+
+/** A hosted pin uses Home's existing API/socket session and opens its actual URL.
+ * Other artifact types retain the shared browser renderer. */
+function PreparedSiteScreen({ canvas, navigation }: NativeBottomTabScreenProps<ParamListBase> & { canvas: PreparedCanvas }) {
+  const { directory, controls, prepared, receiveCrashEvent } = useSession();
+  const { colors } = useTheme();
+  const focused = useIsFocused();
+  const routeCanvases = useContext(CanvasRoutesContext);
+  const network = useNetworkState();
+  const keyboardVisible = useKeyboardVisible();
+  const headerHeight = useHeaderHeight();
+  const tabBarHeight = useBottomTabBarHeight();
+  const verticalBarEdge = useVerticalBarEdgeIOS();
+  const bottomTabInset = Platform.OS === 'ios' && !Platform.isPad && !Platform.isTV && verticalBarEdge === null ? tabBarHeight : 0;
+  const [sidebar, setSidebar] = useState(false);
+  const [access, setAccess] = useState<NativeArtifact | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const retry = () => setAttempt((value) => value + 1);
+  useEffect(() => {
+    let active = true;
+    setFailed(false);
+    const session = attempt === 0 ? prepared.sessions[canvas.canvasId] : null;
+    void (session ? Promise.resolve({ ...session, version: canvas.version }) : prepared.open(canvas)).then((artifact) => {
+      if (!active) return;
+      if (artifact && trustedArtifact(artifact, ARTIFACT_DOMAIN)) setAccess(artifact);
+      else { setAccess(null); setFailed(true); }
+    });
+    return () => { active = false; };
+  }, [canvas.canvasId, canvas.resourceId, canvas.version, prepared.open, attempt]);
+  const send = (command: MobileCommand) => {
+    if (command.type === 'open') {
+      if (directory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(command.id)) {
+        const route = Object.keys(routeCanvases).find((name) => routeCanvases[name] === command.id);
+        if (route) { navigation.navigate(route); return; }
+      }
+      navigation.navigate('Home');
+    }
+    if (command.type === 'sign-out' || command.type === 'switch-workspace') receiveCrashEvent({ type: 'signed-out' });
+    if (['home', 'create', 'sign-out', 'switch-workspace'].includes(command.type)) navigation.navigate('Home');
+    controls.current.get('Home')?.send(command);
+  };
+  const previousConnection = useRef(network.isConnected);
+  useEffect(() => {
+    // The shared Home socket is already live. A tab tap must not restart it
+    // and invalidate every prepared Canvas alongside the access request.
+    const reconnected = previousConnection.current === false && network.isConnected;
+    previousConnection.current = network.isConnected;
+    if (focused && reconnected) controls.current.get('Home')?.send({ type: 'refresh' });
+    const listener = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && focused) controls.current.get('Home')?.send({ type: 'refresh' });
+    });
+    return () => listener.remove();
+  }, [focused, network.isConnected, controls]);
+  useEffect(() => {
+    if (!focused || !directory) return;
+    const chat = () => navigation.getParent()?.navigate('Conversation', { id: canvas.canvasId, workspacePath: directory.workspacePath, title: canvas.title });
+    const menu = () => setSidebar(true);
+    navigation.getParent()?.setOptions({
+      headerLeft: () => <HeaderButton kind="menu" label="Open sidebar" onPress={menu} />,
+      headerRight: () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} />,
+      unstable_headerLeftItems: () => [{ type: 'button', label: 'Open sidebar', icon: { type: 'sfSymbol', name: 'sidebar.left' }, onPress: menu }],
+      unstable_headerRightItems: () => [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }],
+    });
+  }, [focused, directory, canvas.canvasId, canvas.title, navigation]);
+  return <SafeAreaView edges={{ left: true, right: true, bottom: bottomTabInset === 0 }} style={{ backgroundColor: colors.background }}>
+    <KeyboardAvoidingView enabled={keyboardVisible} style={[styles.fill, { marginBottom: bottomTabInset }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {access && <ArtifactView key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={headerHeight + 12} onRetry={retry} />}
+      {(!access || failed) && <Loading failed={failed} retry={retry} />}
+    </KeyboardAvoidingView>
+    {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, canvasId: canvas.canvasId, tabId: canvas.canvasId, view: 'artifact', artifactId: canvas.resourceId, title: canvas.title, artifactPicker: false }} close={() => setSidebar(false)} send={send} diagnostics={() => rootNavigation.navigate('Diagnostics')} />}
   </SafeAreaView>;
 }
 
