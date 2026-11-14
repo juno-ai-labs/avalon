@@ -710,6 +710,19 @@ workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
 
+### 2026-11-14 — Restore mobile organizations without reloading the page
+
+Mobile entry now selects a remembered or explicitly chosen organization in the
+current document, preserving the restored session and validated organization
+list. The picker stays unmounted during automatic restoration; native hosts
+receive a usable-screen signal for sign-in, selection, and recovery. Desktop
+navigation loads through a separate lazy boundary so the mobile shell does not
+fetch it. A full navigation repeated browser startup and briefly showed the
+picker before returning users reached their canvases. Account/directory checks,
+explicit picker requests, cookie revalidation, and cross-region selection remain
+authoritative. See [Mobile canvas client](mobile-canvas-client.md) for the native
+readiness and background-resume behavior.
+
 ### 2026-11-12 — Serve the Expo canvas client
 
 The native mobile shell consumes a dedicated mobile route surface using the existing cookie session, Canvas API, composer, and artifact rendering. The browser keeps ownership of authentication and chat so mobile stays a thin consumer. Production framing policy remains unchanged; an optional Vite proxy supports the desktop preview.

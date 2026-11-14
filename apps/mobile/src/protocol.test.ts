@@ -1,6 +1,6 @@
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact } from './protocol';
+import { mobileContentReady, type MobileSnapshot, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact } from './protocol';
 
 const app = 'https://app.rallywith.ai';
 const token = 'main-frame-capability';
@@ -101,4 +101,16 @@ describe('artifact cookie preparation', () => {
     expect(artifactLoadFailure({ ...access, openUrl: canonicalUrl + '/__rally/open#fresh' }, canonicalUrl + '/__rally/redeem', 403)).toBe('fail');
     expect(artifactLoadFailure({ ...access, openUrl: canonicalUrl + '/__rally/open#fresh' }, canonicalUrl + '/', 403)).toBe('fail');
   });
+});
+
+
+it('reveals usable content rather than bridge bootstrap, including legacy hosts and failure screens', () => {
+  expect(mobileContentReady({ type: 'ready', waitForContent: true })).toBe(false);
+  expect(mobileContentReady({ type: 'ready' })).toBe(true);
+  expect(mobileContentReady({ type: 'screen-ready' })).toBe(true);
+  expect(mobileContentReady({ type: 'signed-out' })).toBe(true);
+  const snapshot = { loading: true, directoryError: false } as MobileSnapshot;
+  expect(mobileContentReady({ type: 'snapshot', snapshot })).toBe(false);
+  expect(mobileContentReady({ type: 'snapshot', snapshot: { ...snapshot, loading: false } })).toBe(true);
+  expect(mobileContentReady({ type: 'snapshot', snapshot: { ...snapshot, directoryError: true } })).toBe(true);
 });
