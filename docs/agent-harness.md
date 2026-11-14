@@ -823,11 +823,10 @@ It is written to give the model latitude: it states what one event carries,
 how a filter is judged and that the person reads and approves the same text,
 gives a way to try a draft on real events, and leaves the wording to the
 model. It names its owner plugin's three source tools, as an owned skill may.
-Those tools are offered only to a turn a person is driving
-(`asksForSources` in `apps/api/src/services/integrations.ts`). A Sidekick
-run, a background agent, a run's delegation worker, and a wizard or Chat turn
-that another agent's message (`agentExchange`) or Rally's review notice
-(`reason === "sidekick_review"`) started never see them. The skill tells the
+Those tools are offered to every loop except a Sidekick run and its
+delegation workers (`asksForSources` in
+`apps/api/src/services/integrations.ts`): a run carries the content of the
+event that started it, and that content may not ask in anyone's name. The skill tells the
 model to call `sidekick_request_source`, so the host lists it only where a
 plugin in scope holds that tool (`builtInSkillsFor`): owning the plugin is
 not enough, because a run carries the Sidekicks plugin without the source

@@ -5263,17 +5263,15 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  */
 /**
  * Whether a loop may ask people for a source (`sidekick_request_source` and
- * its two companions): only a turn a person is driving, in a conversation
- * they are talking in. A Sidekick run is handed the content of the event that
- * started it, a stranger's email among it, and asking in its delegate's name
- * is not something what it read may bring about. A background agent works from content the same
- * way, and so does a turn another agent's message or Rally's own review
- * notice started, the wizard's included: nobody typed it.
+ * its two companions): every loop but a Sidekick run and the delegation
+ * workers rooted in one. A run is handed the content of the event that
+ * started it, a stranger's email among it, and its workers read the same;
+ * asking in its delegate's name is not something what it read may bring
+ * about. Every other loop may ask, whoever or whatever started its turn,
+ * because an ask approves nobody: each person asked still presses Approve.
  */
-function asksForSources(input: Pick<WorkstreamWorkflowInput,
-  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "reason">): boolean {
-  return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true
-    && !input.agentExchange && input.reason !== "sidekick_review";
+function asksForSources(input: Pick<WorkstreamWorkflowInput, "automationRun" | "automationDelegation">): boolean {
+  return !input.automationRun && !input.automationDelegation;
 }
 
 /**
