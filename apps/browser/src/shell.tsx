@@ -1,15 +1,18 @@
 import { MobileCanvasApp } from './mobile';
-import { isMobileHost } from './mobile-bridge';
+import { mobileScreenReady, isMobileHost } from './mobile-bridge';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspacesSchema, type BrowserWorkspaceAttention } from '@rally/contracts/browser-session';
 import { SupportPeopleSchema, SupportWorkspacesSchema } from '@rally/contracts';
 import { z } from 'zod';
 import { IDENTITY_REGION, type Region } from '@rally/contracts/regions';
-import { WorkspaceApp } from '../../desktop/src/renderer/App';
+import { BrowserBoot } from './entry';
+// The native consumer does not need the desktop navigation and settings bundle.
+// eslint-disable-next-line rally/no-dynamic-import
+const WorkspaceApp = lazy(() => import('../../desktop/src/renderer/App').then((module) => ({ default: module.WorkspaceApp })));
 import { AccountOnboardingGate } from '../../desktop/src/renderer/screens/guided-onboarding';
 import { RallyApi } from '../../desktop/src/renderer/lib/api';
 import { AppSessionValueProvider, type AppSessionValue } from '../../desktop/src/renderer/lib/app-session';
@@ -192,13 +195,13 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   }), [api, getAccountOnboarding, identityApi, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   return <AppSessionValueProvider value={value} connectorSetup={connectorSetup}>
     <FaviconApiProvider>
-      <AccountOnboardingGate>{isMobileHost() ? <MobileCanvasApp /> : <WorkspaceApp />}</AccountOnboardingGate>
+      <AccountOnboardingGate onRecoveryReady={mobileScreenReady}>{isMobileHost() ? <MobileCanvasApp /> : <Suspense fallback={<BrowserBoot />}><WorkspaceApp /></Suspense>}</AccountOnboardingGate>
     </FaviconApiProvider>
   </AppSessionValueProvider>;
 }
 
 /**
- * The signed-in application, and the browser's one lazy boundary: sign-in
+ * The signed-in application, and the browser's authenticated loading boundary: sign-in
  * never downloads the renderer.
  */
 export default function BrowserShell(props: {

@@ -1,35 +1,35 @@
+import { AppErrorBoundary } from '@rally/ui/components/app-error-boundary';
 import { inPlaceHash } from './session';
 import { PinPlacementError, writeMobilePins } from './mobile-pins';
 import { MobileWrites, uploadMobileReport } from './mobile-writes';
 import { parseLinkTarget } from '@rally/contracts/links';
 import { ErrorNotice } from '@rally/ui/components/error-notice';
-import { canvasNeedsConversation, mobileStorage, mobileTurnTarget, rememberMobileWorkspace } from './mobile-session';
-import type { WorkstreamResource } from '../../desktop/src/renderer/lib/types';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { canvasNeedsConversation, mobileStorage, rememberMobileWorkspace } from './mobile-session';
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, FileText, Plus, Search, Sparkles } from 'lucide-react';
-import { asWorkstreamId } from '@rally/contracts';
 import { MOBILE_COMMAND_EVENT, MobileCommandSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
-import { useWorkspaceMembers } from '../../desktop/src/renderer/lib/workspace-members';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
 import { LocalCacheScopeProvider } from '../../desktop/src/renderer/lib/local-cache-scope';
 import { localCacheScope } from '../../desktop/src/renderer/lib/local-cache';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from '../../desktop/src/renderer/lib/workspace-socket';
-import { CANVASES_ROUTE, canvasRoute, openCanvasId, canvasDetailQueryKey, useCanvasList } from '../../desktop/src/renderer/lib/canvases';
+import { CANVASES_ROUTE, canvasRoute, openCanvasId, useCanvasList } from '../../desktop/src/renderer/lib/canvases';
 import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/speech-playback';
-import { InspectorRail } from '../../desktop/src/renderer/components/inspector-rail';
-import { ConversationSurface } from '../../desktop/src/renderer/screens/conversation-surface';
-import { WorkstreamComposer } from '../../desktop/src/renderer/components/workstream-composer';
-import { useFileAttachments } from '../../desktop/src/renderer/lib/use-file-attachments';
-import { AttachmentLightbox } from '../../desktop/src/renderer/components/attachment-lightbox';
-import type { AttachmentPreview } from '../../desktop/src/renderer/components/attachments';
-import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
-import { postMobileEvent } from './mobile-bridge';
+import { mobileScreenReady, postMobileEvent } from './mobile-bridge';
 import './mobile.css';
+import { useMobileCanvasDetail, useMobileCanvasUpdates } from './mobile-canvas-detail';
+// Chat/composition and file previews are paid for only when those screens open.
+// eslint-disable-next-line rally/no-dynamic-import
+const MobileConversation = lazy(() => import('./mobile-conversation').then(module => ({ default: module.MobileConversation })));
+// eslint-disable-next-line rally/no-dynamic-import
+const CreateCanvas = lazy(() => import('./mobile-conversation').then(module => ({ default: module.CreateCanvas })));
+// eslint-disable-next-line rally/no-dynamic-import
+const InspectorRail = lazy(() => import('../../desktop/src/renderer/components/inspector-rail').then(module => ({ default: module.InspectorRail })));
+const opening = <div className="mobile-empty" role="status">Opening…</div>;
 
-type Descriptor = Pick<MobileSnapshot, 'view' | 'title' | 'artifactId' | 'artifactPicker'>;
+export type Descriptor = Pick<MobileSnapshot, 'view' | 'title' | 'artifactId' | 'artifactPicker'>;
 
 /** Cookie-authenticated web content. The native shell never receives tokens. */
 export function MobileCanvasApp(): React.JSX.Element | null {
@@ -49,6 +49,7 @@ function MobileContent(): React.JSX.Element {
   const location = useLocation();
   const queryClient = useQueryClient();
   const directory = useCanvasList();
+  useMobileCanvasUpdates();
   const socket = useWorkspaceSocket();
   const [pinBusy, setPinBusy] = useState(false);
   const pinInFlight = useRef(false);
@@ -63,12 +64,20 @@ function MobileContent(): React.JSX.Element {
   }, [session?.user.id, session?.workspace]);
   const canvasId = openCanvasId(location.pathname);
   const params = new URLSearchParams(location.search);
+  const returnLocation = useRef<{ pathname: string; search: string; state: unknown } | null>(null);
   const conversation = Boolean(canvasId && (params.get('view') === 'chat' || params.has('turn')));
+  // Home keeps preparing pins while its inline conversation is open. Dedicated
+  // conversation sheets and pinned browser renderers never become this owner.
+  const canPreparePins = !params.has('tab') && !conversation;
+  const [preparePins, setPreparePins] = useState(canPreparePins);
+  useEffect(() => { if (canPreparePins) setPreparePins(true); }, [canPreparePins]);
+  const [lastConversation, setLastConversation] = useState<string | null>(conversation ? canvasId : null);
+  useEffect(() => { if (conversation && canvasId) setLastConversation(canvasId); }, [conversation, canvasId]);
   const [creationSession, setCreationSession] = useState(false);
   const creating = location.pathname === CANVASES_ROUTE && location.state?.createCanvas === true;
   const currentCreating = useRef(creating);
   currentCreating.current = creating;
-  const create = () => { void navigate(CANVASES_ROUTE, { state: { createCanvas: true } }); };
+  const create = () => { returnLocation.current = null; void navigate(CANVASES_ROUTE, { state: { createCanvas: true } }); };
   useEffect(() => { if (location.pathname === '/') void navigate(CANVASES_ROUTE, { replace: true }); }, [location.pathname, navigate]);
   useEffect(() => { if (creating) setCreationSession(true); }, [creating]);
   const tabId = canvasId && new URLSearchParams(location.search).get('tab') === '1' && pinnedIds.includes(canvasId) ? canvasId : null;
@@ -80,7 +89,7 @@ function MobileContent(): React.JSX.Element {
   const describe = useCallback((id: string, descriptor: Descriptor) => {
     setDescriptors((current) => JSON.stringify(current[id]) === JSON.stringify(descriptor) ? current : { ...current, [id]: descriptor });
   }, []);
-  const open = useCallback((id: string, pinned = false) => { void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) }); void navigate(`${canvasRoute(id)}${pinned ? '?tab=1' : ''}`); }, [navigate, queryClient]);
+  const open = useCallback((id: string, pinned = false) => { returnLocation.current = null; void navigate(`${canvasRoute(id)}${pinned ? '?tab=1' : ''}`); }, [navigate]);
   const currentPushScope = useRef({ userId: session?.user.id, workspaceId: session?.workspace?.id });
   currentPushScope.current = { userId: session?.user.id, workspaceId: session?.workspace?.id };
   const pushWrite = useRef<MobileWrites | null>(null);
@@ -93,7 +102,7 @@ function MobileContent(): React.JSX.Element {
   const command = useRef<(command: MobileCommand) => void>(() => undefined);
   command.current = (message) => {
     switch (message.type) {
-      case 'home': void navigate(CANVASES_ROUTE); break;
+      case 'home': returnLocation.current = null; void navigate(CANVASES_ROUTE); break;
       case 'crash-status': {
         if (!api || !session?.workspace) break;
         const scope = { userId: session.user.id, workspaceId: session.workspace.id, route: session.workspace.region };
@@ -114,6 +123,16 @@ function MobileContent(): React.JSX.Element {
           if (currentPushScope.current.userId !== report.scope.userId || currentPushScope.current.workspaceId !== report.scope.workspaceId) return;
           await uploadMobileReport(report, signal, (report, signal) => registeredApi.uploadMobileCrash(report, signal), postMobileEvent);
         });
+        break;
+      }
+      case 'open-chat':
+        if (!returnLocation.current) returnLocation.current = { pathname: location.pathname, search: location.search, state: location.state };
+        void navigate(`${canvasRoute(message.id)}?view=chat`);
+        break;
+      case 'close-chat': {
+        const previous = returnLocation.current;
+        returnLocation.current = null;
+        void navigate(previous ? previous.pathname + previous.search : CANVASES_ROUTE, { replace: true, state: previous?.state });
         break;
       }
       case 'create': create(); break;
@@ -139,6 +158,7 @@ function MobileContent(): React.JSX.Element {
         break;
       }
       case 'open-notification': {
+        returnLocation.current = null;
         const target = parseLinkTarget(message.url, { webBaseUrl: window.location.origin });
         postMobileEvent({ type: 'notification-opened', url: message.url });
         if (target?.kind === 'canvas') {
@@ -151,6 +171,18 @@ function MobileContent(): React.JSX.Element {
         break;
       }
       case 'switch-workspace': locationAssignWorkspacePicker(); break;
+      case 'open-prepared-artifact': {
+        if (!api || message.userId !== session?.user.id || message.workspaceId !== session.workspace?.id) break;
+        const { canvas, requestId, userId, workspaceId } = message;
+        void api.openArtifact(canvas.resourceId).then((access) => {
+          if (currentPushScope.current.userId === userId && currentPushScope.current.workspaceId === workspaceId) {
+            postMobileEvent({ type: 'prepared-artifact', requestId, artifact: { ...canvas, openUrl: access.openUrl, canonicalUrl: access.canonicalUrl } });
+          }
+        }, () => {
+          if (currentPushScope.current.userId === userId && currentPushScope.current.workspaceId === workspaceId) postMobileEvent({ type: 'prepared-artifact', requestId, artifact: null });
+        });
+        break;
+      }
       case 'reopen-artifact': void queryClient.invalidateQueries({ queryKey: ['mobile-site-access', message.canvasId, message.resourceId] }); break;
       case 'pin':
       case 'reorder': {
@@ -182,17 +214,18 @@ function MobileContent(): React.JSX.Element {
       workspacePath: `/app/workspaces/${session.workspace.region}/${session.workspace.id}`,
       canvases: summaries,
       pins: pinnedIds, hasMore: false, loading: directory === undefined,
-      pinBusy, pinError: pinNotice, directoryError, canvasId, tabId,
+      pinBusy, pinError: pinNotice, directoryError, canvasId, tabId, inlineChat: true,
       view: creating ? 'create' : conversation ? 'conversation' : canvasId ? descriptor?.view ?? 'artifact' : 'home',
       title: creating ? 'New canvas' : canvasId ? descriptor?.title ?? rows.find((row) => row.id === canvasId)?.title ?? 'Canvas' : 'Your canvases',
       artifactId: descriptor?.artifactId ?? null, artifactPicker: descriptor?.artifactPicker ?? false,
     } });
   }, [session, rows, summaries, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, conversation, descriptors]);
   return <main className="mobile-canvas-app">
+    {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
     <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={create} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
-    {conversation && canvasId && <section className="mobile-page mobile-conversation"><MobileConversation key={canvasId} id={canvasId} describe={describe} /></section>}
-    {creationSession && <section hidden={!creating} className="mobile-page"><CreateCanvas created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></section>}
+    {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Suspense></AppErrorBoundary></section>}
+    {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
   </main>;
 }
 
@@ -214,17 +247,20 @@ function Dashboard({ rows, loading, failed, retry, hasMore, more, open, create }
   </div>;
 }
 
-/** Follow only this canvas's publication timestamp and the resource topic,
- * not unrelated directory presence/pin changes. Both artifact and chat use it. */
-function useMobileCanvasDetail(id: string, active = true) {
-  const { api } = useAppSession();
-  const queryClient = useQueryClient();
-  const row = useCanvasList()?.find((canvas) => canvas.id === id);
-  const { topicWaterlines, sidebarConnect } = useWorkspaceSocket();
+/** The existing Home session discovers pins before native tabs open.
+ * The native shell redeems access immediately; no single-use URL is cached. */
+function PrepareCanvas({ id }: { id: string }) {
+  const { session } = useAppSession();
+  const query = useMobileCanvasDetail(id);
+  const heads = useResourceHeads();
+  const resource = query.data?.artifacts.length === 1 && query.data.artifacts[0]?.kind === 'site' ? query.data.artifacts[0] : null;
+  const version = resource ? Math.max(resource.version, heads[resource.resourceId]?.version ?? 0) : 0;
   useEffect(() => {
-    void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) });
-  }, [id, queryClient, row?.updatedAt, row?.artifactKind, topicWaterlines.resources, sidebarConnect?.generation]);
-  return useQuery({ queryKey: canvasDetailQueryKey(id), queryFn: ({ signal }) => api!.getCanvas(id, signal), enabled: Boolean(api && active) });
+    if (!session?.workspace || (!query.data && !query.isError)) return;
+    postMobileEvent({ type: 'prepared-canvas', userId: session.user.id, workspaceId: session.workspace.id, canvasId: id,
+      canvas: resource ? { canvasId: id, resourceId: resource.resourceId, version, title: query.data!.title } : null });
+  }, [session, id, resource, version, query.data, query.isError]);
+  return null;
 }
 
 function Canvas({ id, active, describe }: { id: string; active: boolean; describe: (id: string, descriptor: Descriptor) => void }) {
@@ -260,9 +296,9 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
     describe(id, { title: query.data.title, artifactId: resource?.resourceId ?? null, artifactPicker: artifacts.length > 1, view: resource ? 'artifact' : 'conversation' });
   }, [active, describe, id, query.data, query.isError, resource, artifacts.length]);
   const version = resource ? Math.max(resource.version, heads[resource.resourceId]?.version ?? 0) : undefined;
-  const content = useQuery({ queryKey: ['mobile-resource', resource?.resourceId, version], queryFn: () => api!.getResource(resource!.resourceId), enabled: Boolean(api && resource && active) });
+  const content = useQuery({ queryKey: ['mobile-resource', resource?.resourceId, version], queryFn: () => api!.getResource(resource!.resourceId), enabled: Boolean(api && resource && resource.kind !== 'site' && active) });
   useEffect(() => {
-    if (active && resource && content.isError) postMobileEvent({ type: 'artifact-unavailable', canvasId: id, resourceId: resource.resourceId });
+    if (active && resource && resource.kind !== 'site' && content.isError) postMobileEvent({ type: 'artifact-unavailable', canvasId: id, resourceId: resource.resourceId });
   }, [active, id, resource, content.isError]);
   const loadContent = useCallback((resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal), [api]);
   const loadOriginal = useCallback((resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal), [api]);
@@ -271,83 +307,30 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
   if (!resource) return null;
   return <>
     {artifacts.length > 1 && <label className="mobile-artifact-picker">Artifact <select aria-label="Choose artifact" value={resource.resourceId} onChange={(event) => selectArtifact(event.target.value)}>{artifacts.map((item) => <option key={item.resourceId} value={item.resourceId}>{item.title}</option>)}</select></label>}
-    {content.isError ? <Recovery title="This artifact couldn’t load" retry={() => void content.refetch()} /> : !content.data ? <div className="mobile-empty" role="status">Opening artifact…</div> : resource.kind === 'site'
-      ? <HostedSite key={`${resource.resourceId}:${version}`} canvasId={id} resource={content.data} active={active} />
-      : <InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} />}
+    {resource.kind === 'site'
+      ? <HostedSite key={`${resource.resourceId}:${version}`} canvasId={id} resourceId={resource.resourceId} version={version ?? resource.version} title={resource.title} active={active} />
+      : content.isError ? <Recovery title="This artifact couldn’t load" retry={() => void content.refetch()} /> : !content.data ? <div className="mobile-empty" role="status">Opening artifact…</div>
+      : <AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} /></Suspense></AppErrorBoundary>}
   </>;
 }
 
-function HostedSite({ canvasId, resource, active }: { canvasId: string; resource: WorkstreamResource; active: boolean }) {
+function HostedSite({ canvasId, resourceId, version, title, active }: { canvasId: string; resourceId: string; version: number; title: string; active: boolean }) {
   const { api } = useAppSession();
   const native = Boolean(Reflect.get(window, 'ReactNativeWebView'));
   const instance = useId();
-  const access = useQuery({ queryKey: ['mobile-site-access', canvasId, resource.id, resource.currentVersion, instance], queryFn: () => api!.openArtifact(resource.id), enabled: active && Boolean(api), staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false });
+  const access = useQuery({ queryKey: ['mobile-site-access', canvasId, resourceId, version, instance], queryFn: () => api!.openArtifact(resourceId), enabled: active && Boolean(api), staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false });
   useEffect(() => {
     if (!native) return;
-    if (active && access.isError) { postMobileEvent({ type: 'artifact-unavailable', canvasId, resourceId: resource.id }); return; }
-    if (active && access.data) postMobileEvent({ type: 'artifact', artifact: { canvasId, resourceId: resource.id, version: resource.currentVersion, openUrl: access.data.openUrl, canonicalUrl: access.data.canonicalUrl } });
-  }, [native, active, access.data, access.isError, canvasId, resource.id, resource.currentVersion]);
+    if (active && access.isError) { postMobileEvent({ type: 'artifact-unavailable', canvasId, resourceId }); return; }
+    if (active && access.data) postMobileEvent({ type: 'artifact', artifact: { canvasId, resourceId, version, openUrl: access.data.openUrl, canonicalUrl: access.data.canonicalUrl } });
+  }, [native, active, access.data, access.isError, canvasId, resourceId, version]);
   if (access.isError) return <Recovery title="This canvas couldn’t open" retry={() => void access.refetch()} />;
   // Native uses a first-party WebView; the browser preview frames that same
   // hosted document. Neither surface receives the application's bridge.
-  if (!native && access.data) return <iframe className="mobile-hosted-artifact" title={resource.title || 'Canvas artifact'} src={access.data.openUrl} sandbox="allow-scripts allow-same-origin allow-forms" referrerPolicy="no-referrer" />;
+  if (!native && access.data) return <iframe className="mobile-hosted-artifact" title={title || 'Canvas artifact'} src={access.data.openUrl} sandbox="allow-scripts allow-same-origin allow-forms" referrerPolicy="no-referrer" />;
   return <div className="mobile-empty" role="status">Opening canvas…</div>;
 }
 
-function MobileConversation({ id, describe }: { id: string; describe: (id: string, descriptor: Descriptor) => void }) {
-  const detail = useMobileCanvasDetail(id);
-  const location = useLocation();
-  const scrollToTurn = useMemo(() => mobileTurnTarget(location.search), [location.search]);
-  const resource = detail.data?.artifacts[0];
-  useEffect(() => {
-    if (detail.data) describe(id, { title: detail.data.title, view: 'conversation', artifactId: resource?.resourceId ?? null, artifactPicker: false });
-  }, [describe, id, detail.data, resource]);
-  return <div className="mobile-conversation-stack">{resource && <button className="mobile-view-canvas" onClick={() => postMobileEvent({ type: 'open-canvas', id })}>View canvas <ArrowUpRight size={15} aria-hidden="true" /></button>}<ConversationSurface parentKind="canvas" parentId={id} substreamId="0" embedded scrollToTurn={scrollToTurn} /></div>;
-}
-
-function CreateCanvas({ created }: { created: (id: string) => void }) {
-  const { api, session } = useAppSession();
-  const [sending, setSending] = useState(false);
-  const guest = session?.workspace?.accessClass === 'guest';
-  const roster = useWorkspaceMembers(api, { enabled: !guest });
-  const members = roster.data ?? [];
-  const participants = members.filter((member) => member.id === session?.user.id);
-  const [failed, setFailed] = useState(false);
-  const [preview, setPreview] = useState<AttachmentPreview | null>(null);
-  const draftKey = `mobile-canvas:${session?.workspace?.id}:${session?.user.id}:new`;
-  const attachments = useFileAttachments(api, draftKey);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const attempt = useRef<{ signature: string; operationId: string; workstreamId: string; clientMessageId: string } | null>(null);
-  return <div className="mobile-create"><Sparkles size={36} strokeWidth={1.2} /><h1>What would you<br />like to make?</h1><p>A plan, a tiny tool, a space for something you love. Start with an idea.</p>
-    <div className="mobile-create-composer"><WorkstreamComposer
-      placeholder="Describe what you’d like…" ariaLabel="Describe your canvas" submitLabel="Create canvas" draftKey={draftKey}
-      workstream={{ participants, scope: 'personal', harnessStatus: 'completed' }} members={members}
-      fileInputRef={fileInput} sending={sending} sendBlocked={sending || (!guest && !roster.data)} uploading={attachments.uploading} attachments={attachments.attachments}
-      onAttach={attachments.addFiles} onOpenAttachment={setPreview} onRemoveAttachment={attachments.removeAttachment} onRetryAttachment={attachments.retryAttachment}
-      error={failed ? 'Your canvas couldn’t be created. Your draft is safe; try again.' : attachments.error}
-      onStop={async () => undefined}
-      onSend={async (text, mentions, participantIds = []) => {
-        if (!api || sending) return;
-        setSending(true); setFailed(false);
-        let lease: Awaited<ReturnType<typeof attachments.leaseReady>> | undefined;
-        try {
-          lease = await attachments.leaseReady();
-          const request = { openingMessage: text, mentions, participantIds, attachmentIds: lease.attachments.flatMap((item) => item.resource ? [item.resource.id] : []) };
-          const signature = JSON.stringify(request);
-          if (attempt.current?.signature !== signature) attempt.current = { signature, operationId: uuidV7(), workstreamId: attempt.current?.workstreamId ?? uuidV7(), clientMessageId: uuidV7() };
-          const result = await api.createCanvas({ canvasId: asWorkstreamId(attempt.current.workstreamId) });
-          await api.sendConversationMessage(result.canvasId, {
-            text, clientMessageId: attempt.current.clientMessageId, attachmentIds: request.attachmentIds, confirmedParticipantUserIds: participantIds,
-            mentions: await api.messageMentionPayload(text, mentions, members),
-          }, attempt.current.operationId);
-          attachments.commitLease(lease.leaseId);
-          created(result.canvasId);
-        } catch (error) { if (lease) await attachments.restoreLease(lease.leaseId); setFailed(true); throw error; }
-        finally { setSending(false); }
-      }} />
-    </div><AttachmentLightbox preview={preview} onClose={() => setPreview(null)} />
-  </div>;
-}
 function Recovery({ title, retry }: { title: string; retry: () => void }) {
   return <div className="mobile-empty"><ErrorNotice title={title}>Check your connection and try again.</ErrorNotice><button className="mobile-primary" onClick={retry}>Try again</button></div>;
 }

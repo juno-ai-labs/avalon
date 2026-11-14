@@ -31,3 +31,4 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
 });
 
 export function ArtifactView() { return null; }
+export function ArtifactSessionPreparation() { return null; }

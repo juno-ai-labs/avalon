@@ -1,6 +1,6 @@
 import { MOBILE_SIGN_IN_PATH } from '../../mobile/src/auth-contract';
 import { MobileSignIn } from './mobile-sign-in';
-import { installMobileBridge } from './mobile-bridge';
+import { installMobileBridge, postMobileEvent } from './mobile-bridge';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { AppErrorBoundary } from "@rally/ui/components/app-error-boundary";
 import { reportJavascriptError } from "../../desktop/src/renderer/lib/telemetry";
@@ -36,7 +36,7 @@ watchSystemAppearance();
 // remounts the shell: its caches hold what the old relationship could read.
 const root = document.getElementById("root");
 if (!root) throw new Error("Browser root is missing");
-createRoot(root).render(<ErrorNoticeProvider><AppErrorBoundary onError={(error) => reportJavascriptError(error, "react_boundary")}>
+createRoot(root).render(<ErrorNoticeProvider><AppErrorBoundary onError={(error) => { reportJavascriptError(error, "react_boundary"); postMobileEvent({ type: 'screen-ready' }); }}>
   {location.pathname.startsWith(`${MOBILE_SIGN_IN_PATH}/`)
     ? <MobileSignIn />
     : location.pathname === "/connections/complete"
