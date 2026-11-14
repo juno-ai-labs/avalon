@@ -27,6 +27,7 @@
     "src/site-open.tsx",
     "src/source-decision.tsx",
     "src/mobile-canvas-detail.ts",
-    "src/mobile-conversation.tsx"
+    "src/mobile-conversation.tsx",
+    "src/mobile-canvas-icon.tsx"
   ]
 }

@@ -14,16 +14,15 @@ html[data-mobile-host],html[data-mobile-host] body,html[data-mobile-host] #root 
 .mobile-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}
 .mobile-card{display:flex;flex-direction:column;border:0;border-radius:20px;padding:18px;text-align:left;overflow:hidden;min-height:176px}
 .mobile-card:first-child{grid-column:1/-1;min-height:220px}
-.mobile-card-art{flex:none;width:100%;height:76px;display:flex;align-items:center;justify-content:center}
+.mobile-card-art{flex:none;height:76px;display:flex;align-items:center;justify-content:center}
 .mobile-card:first-child .mobile-card-art{height:107px}
 .mobile-card h3{font-size:16px;font-weight:550;line-height:1.35;overflow-wrap:anywhere;margin:12px 0 8px}
 .mobile-card:first-child h3{font:29px/1.15 Georgia,serif;letter-spacing:-.7px}
-.mobile-card p{width:100%;font-size:11px;opacity:.75;display:flex;justify-content:space-between;margin: auto 0 0}
+.mobile-card p{font-size:11px;display:flex;justify-content:space-between;margin:auto 0 0}
 .mobile-primary{display:inline-flex;align-items:center;justify-content:center;gap:9px;background:var(--av-sys-color-text-default);color:var(--av-sys-color-text-on-inverse);border:0;border-radius:24px;min-height:48px;padding:12px 23px;font-size:14px}
 .mobile-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60%;text-align:center;padding:35px;gap:14px}
 .mobile-empty h2{font-size:22px;line-height:1.3}
 .mobile-empty p{color:var(--mobile-muted);font-size:14px;line-height:1.6}
-.mobile-load{display:block;background:var(--mobile-surface);border:0;border-radius:15px;padding:15px 24px;margin:24px auto;color:var(--mobile-ink)}
 .mobile-skeleton{background:var(--mobile-surface);padding:60px 25px;border-radius:20px;color:var(--mobile-muted)}
 .mobile-artifact{display:flex;flex-direction:column;overflow:hidden}
 .mobile-artifact>.artifact-window-panel{width:100%;min-width:0;flex:1;min-height:0}

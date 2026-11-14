@@ -321,6 +321,38 @@ it('prepares hosted pins through Home and opens fresh access without another bro
   } finally { view.unmount(); }
 });
 
+it('keeps saved mobile card colors when filtering and follows appearance updates', async () => {
+  fetchHandler = async () => workspaceTicket();
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1#/canvases`);
+  const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+  const row = { id: child, title: 'Shopping', createdByUserId: user.id, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false,
+    artifactKind: null, unread: false, presentUserIds: [], pinnedPosition: null, sharedWithMe: true };
+  try {
+    await waitFor(() => expect(workspaceSockets()).toHaveLength(1));
+    const socket = workspaceSockets()[0]!;
+    act(() => socket.open());
+    const push = (waterline: number, color: string) => {
+      const items = [{ ...row, id: parent, title: 'Trips', appearance: { color: 'blue', icon: null } }, { ...row, appearance: { color, icon: null } }];
+      // A subscribe snapshot replaces any cached directory from an earlier session.
+      const event = waterline === 1
+        ? { type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000125', occurredAt: at, waterline, topics: [], reason: 'initial', sidebar: { automations: { waterline, items: [] }, canvases: { waterline, items } } }
+        : { type: 'workspace_canvas_list', occurredAt: at, waterline, items };
+      act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) })));
+    };
+    push(1, 'rose');
+    const card = await screen.findByRole('button', { name: 'Shopping Open canvas' });
+    await waitFor(() => expect(card.style.background).toBe('var(--av-sys-color-project-tint-rose)'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Find a canvas' }), { target: { value: 'Shopping' } });
+    expect(screen.queryByRole('button', { name: 'Trips Open canvas' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Shopping Open canvas' }).style.background).toBe('var(--av-sys-color-project-tint-rose)');
+    push(2, 'emerald');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Shopping Open canvas' }).style.background).toBe('var(--av-sys-color-project-tint-emerald)'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Find a canvas' }), { target: { value: 'nothing matches' } });
+    expect(screen.getByText('Try another name.')).toBeVisible();
+  } finally { view.unmount(); }
+});
+
 it('keeps the current mobile chat, draft, and connections when closing and reopening it', async () => {
   const canvas = { id: parent, title: 'Shopping', createdByUserId: user.id, createdAt: at, updatedAt: at,
     lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false };

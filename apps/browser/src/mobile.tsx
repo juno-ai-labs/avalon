@@ -1,5 +1,5 @@
 import type { CanvasSummary } from '@rally/contracts';
-import { canvasMark } from '../../desktop/src/renderer/components/canvas-mark';
+import { canvasColors } from '../../desktop/src/renderer/lib/canvas-colors';
 import { AppErrorBoundary } from '@rally/ui/components/app-error-boundary';
 import { inPlaceHash } from './session';
 import { PinPlacementError, writeMobilePins } from './mobile-pins';
@@ -10,7 +10,7 @@ import { canvasNeedsConversation, mobileStorage, rememberMobileWorkspace } from 
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowUpRight, Plus, Search, Sparkles } from 'lucide-react';
+import { ArrowUpRight, PanelsTopLeft, Plus, Search, Sparkles } from 'lucide-react';
 import { MOBILE_COMMAND_EVENT, MobileCommandSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
@@ -29,6 +29,12 @@ const MobileConversation = lazy(() => import('./mobile-conversation').then(modul
 const CreateCanvas = lazy(() => import('./mobile-conversation').then(module => ({ default: module.CreateCanvas })));
 // eslint-disable-next-line rally/no-dynamic-import
 const InspectorRail = lazy(() => import('../../desktop/src/renderer/components/inspector-rail').then(module => ({ default: module.InspectorRail })));
+function UnchosenCanvasIcon({ size }: { size: number }) {
+  return <PanelsTopLeft size={size} strokeWidth={1.9} />;
+}
+// A missing decorative chunk must not take down the dashboard or its navigation.
+// eslint-disable-next-line rally/no-dynamic-import
+const MobileCanvasIcon = lazy(() => import('./mobile-canvas-icon').catch(() => ({ default: UnchosenCanvasIcon })));
 const opening = <div className="mobile-empty" role="status">Opening…</div>;
 
 export type Descriptor = Pick<MobileSnapshot, 'view' | 'title' | 'artifactId' | 'artifactPicker'>;
@@ -224,16 +230,16 @@ function MobileContent(): React.JSX.Element {
   }, [session, rows, summaries, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, conversation, descriptors]);
   return <main className="mobile-canvas-app">
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
-    <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={create} /></section>
+    <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} loading={directory === undefined} failed={directoryError} retry={socket.retry} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={create} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
     {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Suspense></AppErrorBoundary></section>}
     {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
   </main>;
 }
 
-function Dashboard({ rows, loading, failed, retry, hasMore, more, open, create }: {
+function Dashboard({ rows, loading, failed, retry, open, create }: {
   rows: Array<Pick<CanvasSummary, 'id' | 'title' | 'appearance'>>;
-  loading: boolean; failed: boolean; retry: () => void; hasMore: boolean; more: () => void;
+  loading: boolean; failed: boolean; retry: () => void;
   open: (id: string) => void; create: () => void;
 }) {
   const [query, setQuery] = useState('');
@@ -243,14 +249,14 @@ function Dashboard({ rows, loading, failed, retry, hasMore, more, open, create }
     {failed ? <Recovery title="Your canvases couldn’t load" retry={retry} /> : loading ? <div role="status" className="mobile-skeleton">Loading your canvases…</div> : <>
       <div className="mobile-section-heading"><h2>{query ? 'Search results' : 'Pick up where you left off'}</h2><span>{filtered.length} canvases</span></div>
       <div className="mobile-grid">{filtered.map((row, index) => {
-        const { icon: Icon, tint, ink } = canvasMark(row.id, row.appearance);
+        const { tint, ink } = canvasColors(row.id, row.appearance);
+        const fallback = <UnchosenCanvasIcon size={index === 0 ? 50 : 32} />;
         return <button className="mobile-card" style={{ background: tint, color: ink }} key={row.id} onClick={() => open(row.id)}>
-          <div className="mobile-card-art" aria-hidden="true"><Icon size={index === 0 ? 50 : 32} strokeWidth={1.9} /></div>
+          <div className="mobile-card-art" aria-hidden="true">{row.appearance?.icon ? <Suspense fallback={fallback}><MobileCanvasIcon id={row.id} appearance={row.appearance} size={index === 0 ? 50 : 32} /></Suspense> : fallback}</div>
           <h3>{row.title || 'Untitled canvas'}</h3><p>Open canvas <ArrowUpRight size={14} aria-hidden="true" /></p>
         </button>;
       })}</div>
-      {!filtered.length && <div className="mobile-empty"><Sparkles size={32} /><h2>{query ? 'No canvases found' : 'Make room for an idea.'}</h2><p>{query ? 'Try another name, or load more canvases.' : 'Create a plan, a little tool, or something just for you.'}</p>{!query && <button className="mobile-primary" onClick={create}><Plus size={18} /> Create a canvas</button>}</div>}
-      {hasMore && <button className="mobile-load" onClick={more}>Load more canvases</button>}
+      {!filtered.length && <div className="mobile-empty"><Sparkles size={32} /><h2>{query ? 'No canvases found' : 'Make room for an idea.'}</h2><p>{query ? 'Try another name.' : 'Create a plan, a little tool, or something just for you.'}</p>{!query && <button className="mobile-primary" onClick={create}><Plus size={18} /> Create a canvas</button>}</div>}
     </>}
   </div>;
 }
