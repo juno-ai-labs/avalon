@@ -15,7 +15,7 @@ import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-
 import { useHeaderHeight } from '@react-navigation/elements';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SafeAreaView } from 'react-native-screens/experimental';
-import { Menu, MessageCircle, X } from 'lucide-react-native';
+import { Menu, MessageCircle, Plus, X } from 'lucide-react-native';
 import { StatusBar, useVerticalBarEdgeIOS } from 'expo-status-bar';
 import { useBottomTabBarHeight } from 'react-native-bottom-tabs';
 import { systemSignIn } from './src/auth';
@@ -179,9 +179,9 @@ function useKeyboardVisible() {
   return visible;
 }
 
-function HeaderButton({ kind, label, onPress }: { kind: 'menu' | 'chat' | 'close'; label: string; onPress: () => void }) {
+function HeaderButton({ kind, label, onPress }: { kind: 'menu' | 'chat' | 'create' | 'close'; label: string; onPress: () => void }) {
   const { colors } = useTheme();
-  const Icon = kind === 'menu' ? Menu : kind === 'chat' ? MessageCircle : X;
+  const Icon = kind === 'menu' ? Menu : kind === 'chat' ? MessageCircle : kind === 'create' ? Plus : X;
   return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}><Icon size={24} color={colors.text} /></Pressable>;
 }
 
@@ -287,11 +287,12 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId }: NativeB
     if (!focused) return;
     const chat = snapshot?.view === 'artifact' && snapshot.canvasId ? () => tabs.getParent()?.navigate('Conversation', { id: snapshot.canvasId, workspacePath: snapshot.workspacePath, title: snapshot.title }) : undefined;
     const menu = () => setSidebar(true);
+    const create = snapshot?.view === 'home' ? () => web.current?.send({ type: 'create' }) : undefined;
     navigation.getParent()?.setOptions({
       headerLeft: directory ? () => <HeaderButton kind="menu" label="Open sidebar" onPress={menu} /> : undefined,
-      headerRight: chat ? () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} /> : undefined,
+      headerRight: create ? () => <HeaderButton kind="create" label="Create a canvas" onPress={create} /> : chat ? () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} /> : undefined,
       unstable_headerLeftItems: () => directory ? [{ type: 'button', label: 'Open sidebar', icon: { type: 'sfSymbol', name: 'sidebar.left' }, onPress: menu }] : [],
-      unstable_headerRightItems: () => chat ? [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }] : [],
+      unstable_headerRightItems: () => create ? [{ type: 'button', label: 'Create a canvas', icon: { type: 'sfSymbol', name: 'plus' }, onPress: create }] : chat ? [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }] : [],
     });
   }, [directory, focused, navigation, snapshot, tabs]);
   const hosted = snapshot?.view === 'artifact' && artifacts[snapshot.canvasId ?? '']?.resourceId === snapshot.artifactId;
