@@ -1,11 +1,12 @@
 import { recordFailure } from './diagnostics';
 import { artifactInsetScript } from './layout';
+import { artifactPresented, artifactPresentationScript } from './artifact-presentation';
 import { useTheme } from './theme';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Linking, Platform, StyleSheet, View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { randomUUID } from 'expo-crypto';
-import { commandScript, isAppUrl, parseMobileEvent, type MobileCommand, type MobileEvent, type NativeArtifact } from './protocol';
+import { artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, parseMobileEvent, type MobileCommand, type MobileEvent, type NativeArtifact } from './protocol';
 
 export interface CanvasWebViewHandle { send: (command: MobileCommand) => void; reload: () => void }
 export interface CanvasWebViewProps {
@@ -79,22 +80,52 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
 });
 const styles = StyleSheet.create({ web: { flex: 1 } });
 
+/** Redeem in a real, attached WebView so the platform stores the HttpOnly cookie.
+ * Stop at the redirect: generated artifact code never runs in the background. */
+export function ArtifactSessionPreparation({ access, onReady }: { access: NativeArtifact; onReady: () => void }) {
+  const [finished, setFinished] = useState(false);
+  const complete = useRef(false);
+  const stop = () => { complete.current = true; setFinished(true); };
+  if (finished) return null;
+  return <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', width: 1, height: 1, opacity: 0 }}>
+    <WebView source={{ uri: access.openUrl }} sharedCookiesEnabled thirdPartyCookiesEnabled={false}
+      javaScriptCanOpenWindowsAutomatically={false} setSupportMultipleWindows
+      onError={stop} onHttpError={stop} onContentProcessDidTerminate={stop} onRenderProcessGone={stop}
+      onShouldStartLoadWithRequest={(request) => {
+        if (complete.current) return false;
+        const action = artifactPreparationNavigation(access.canonicalUrl, request.url);
+        if (action === 'ready') { stop(); onReady(); }
+        return action === 'allow';
+      }} />
+  </View>;
+}
+
 /** A first-party artifact WebView avoids Safari's cross-site cookie restriction.
  * Only a presentation inset is injected; generated code has no native capability. */
-export function ArtifactView({ access, background, topInset, onRetry }: { access: NativeArtifact; background: string; topInset: number; onRetry: () => void }) {
+export function ArtifactView({ access, appUrl, background, topInset, onRetry }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; onRetry: () => void }) {
   const { colors } = useTheme();
   const web = useRef<WebView<unknown>>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const renewing = useRef(false);
+  const renew = () => { if (!renewing.current) { renewing.current = true; onRetry(); } };
   useEffect(() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); }, [topInset]);
   return <View style={{ flex: 1, backgroundColor: background }}>
     <WebView<unknown> ref={web} source={{ uri: access.openUrl }} style={styles.web}
       sharedCookiesEnabled thirdPartyCookiesEnabled={false} javaScriptCanOpenWindowsAutomatically={false} setSupportMultipleWindows
       contentInsetAdjustmentBehavior="never" automaticallyAdjustContentInsets={false}
       removeIosKeyboardObserver
+      injectedJavaScriptBeforeContentLoaded={artifactPresentationScript(topInset)}
+      injectedJavaScriptBeforeContentLoadedForMainFrameOnly
+      onMessage={(event) => { if (artifactPresented(event.nativeEvent.data, event.nativeEvent.url, access.canonicalUrl)) setLoading(false); }}
       onLoadStart={() => { setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); setLoading(false); }}
       onError={() => { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }}
-      onHttpError={(event) => { if (event.nativeEvent.statusCode >= 400 && [access.openUrl, access.canonicalUrl, new URL('/redeem', access.canonicalUrl).href].includes(event.nativeEvent.url)) { recordFailure('artifact_load_failed'); setFailed(true); } }}
+      onHttpError={(event) => {
+        const action = artifactLoadFailure(access, event.nativeEvent.url, event.nativeEvent.statusCode);
+        if (action === 'ignore') return;
+        if (action === 'renew') { renew(); return; }
+        recordFailure('artifact_load_failed'); setFailed(true);
+      }}
       onContentProcessDidTerminate={() => { recordFailure('artifact_process_terminated'); setFailed(true); setLoading(false); onRetry(); }} onRenderProcessGone={() => { recordFailure('artifact_process_terminated'); setFailed(true); setLoading(false); onRetry(); }}
       onOpenWindow={(event) => {
         try {
@@ -104,6 +135,11 @@ export function ArtifactView({ access, background, topInset, onRetry }: { access
       }}
       onShouldStartLoadWithRequest={(request) => {
         if (request.url === 'about:blank' || request.isTopFrame === false) return true;
+        if (artifactAuthHandoff(access.canonicalUrl, request.url, appUrl)) {
+          if (access.openUrl === access.canonicalUrl) renew();
+          else { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }
+          return false;
+        }
         try {
           const url = new URL(request.url);
           if (url.origin === new URL(access.canonicalUrl).origin) return true;

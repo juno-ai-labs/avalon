@@ -1,3 +1,5 @@
+// Compile the deferred UI before DOM waits; built-browser checks measure its loading.
+import '../../../../browser/src/mobile-conversation';
 import { uuidToBase58 } from '@rally/contracts/uuid-base58';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -66,7 +68,8 @@ it('reopens mobile hosted sites with fresh access and follows live resource head
   const opens: string[] = [];
   let detailReads = 0;
   let published = false;
-  let failMetadata = false;
+  let failAccess = false;
+  const metadataReads: string[] = [];
   const artifact = (id: string) => ({ resourceId: id, title: id === siteA ? 'Site A' : 'Site B', kind: 'site', mimeType: 'text/html', version: versions.get(id), updatedAt: at });
   const canvas = { id: parent, title: 'Mobile Canvas', createdByUserId: user.id, createdAt: at, updatedAt: at,
     lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false };
@@ -78,13 +81,13 @@ it('reopens mobile hosted sites with fresh access and follows live resource head
     for (const id of [siteA, siteB]) {
       if (path.endsWith(`/resources/${id}/artifact/open`)) {
         opens.push(id);
+        if (failAccess) return Response.json({ error: { message: 'Artifact unavailable' } }, { status: 404 });
         return Response.json({ openUrl: `https://${id}.rallyusercontent.com/open#code-${opens.length}`, canonicalUrl: `https://${id}.rallyusercontent.com/`, artifactId: id, mode: 'static', stateful: false });
       }
-      if (path.endsWith(`/resources/${id}`)) return failMetadata
-        ? Response.json({ error: { message: 'Metadata unavailable' } }, { status: 404 })
-        : Response.json({ id, slug: `site-${id}`, workspaceId: workspace.id, connectionId: null, resourceType: 'generated_site', provider: 'avalon_generated', providerResourceId: id,
-          title: artifact(id).title, mimeType: 'text/html', canonicalUrl: null, refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', lastHydratedAt: null,
-          createdAt: at, updatedAt: at, contentAvailable: true, sizeBytes: 42, currentVersion: versions.get(id) });
+      if (path.endsWith(`/resources/${id}`)) {
+        metadataReads.push(id);
+        return Response.json({ error: { message: 'Hosted sites must open from the canvas descriptor' } }, { status: 404 });
+      }
     }
     return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
   };
@@ -120,9 +123,9 @@ it('reopens mobile hosted sites with fresh access and follows live resource head
     act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(head(2)) })));
     await waitFor(() => expect(access()?.version).toBe(2));
     expect(opens).toEqual([siteA, siteB, siteA, siteA]);
-    // Presence/pin changes with the same publication timestamp do not refetch.
+    // Presence changes with the same publication timestamp do not refetch.
     const reads = detailReads;
-    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_canvas_list', occurredAt: at, waterline: 2, items: [{ ...row, presentUserIds: [user.id], pinnedPosition: 0 }] }) })));
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_canvas_list', occurredAt: at, waterline: 2, items: [{ ...row, presentUserIds: [user.id], pinnedPosition: null }] }) })));
     await act(async () => { await Promise.resolve(); });
     expect(detailReads).toBe(reads);
     act(() => { location.hash = `#/canvases/${parent}?view=chat`; window.dispatchEvent(new HashChangeEvent('hashchange')); });
@@ -130,10 +133,11 @@ it('reopens mobile hosted sites with fresh access and follows live resource head
     fireEvent.click(await screen.findByRole('button', { name: 'View canvas' }));
     act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail: { type: 'open', id: parent, pinned: false } })));
     await waitFor(() => expect(events.filter(({ event }) => event.type === 'snapshot').at(-1)?.event.snapshot).toMatchObject({ view: 'artifact', artifactId: siteA }));
-    failMetadata = true;
+    expect(metadataReads).toEqual([]);
+    failAccess = true;
     act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(head(3)) })));
     await waitFor(() => expect(events.some(({ event }) => event.type === 'artifact-unavailable')).toBe(true));
-    expect(await screen.findByText('This artifact couldn’t load')).toBeInTheDocument();
+    expect(await screen.findByText('This canvas couldn’t open')).toBeInTheDocument();
   } finally { view.unmount(); }
 });
 
@@ -255,5 +259,165 @@ it('opens a guest in the shared shell without asking for anything a guest is ref
     // The Organization's setup does not stand in front of a guest, and
     // nothing they are refused was asked for.
     expect(requested.filter((path) => MEMBER_ONLY.test(path))).toEqual([]);
+  } finally { view.unmount(); }
+});
+
+it('prepares hosted pins through Home and opens fresh access without another browser session', async () => {
+  const site = '00000000-0000-7000-8000-0000000000a1';
+  const canvas = { id: parent, title: 'Shopping', createdByUserId: user.id, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false };
+  let opens = 0;
+  let fail = false;
+  let failDetail = false;
+  let detailReads = 0;
+  const events: Array<{ event: { type: string; canvas?: unknown; requestId?: string; artifact?: unknown } }> = [];
+  fetchHandler = async (input) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
+    if (path.endsWith('/socket')) return Response.json({ url: `wss://api.rallywith.ai/socket/conversations/${parent}/0`, ticket: 'conversation-ticket' });
+    if (path.endsWith(`/canvases/${parent}`)) { detailReads++; return failDetail ? Response.json({ error: { message: 'Temporarily busy' } }, { status: 429 }) : Response.json({ ...canvas, artifacts: [{ resourceId: site, title: 'Groceries', kind: 'site', mimeType: 'text/html', version: 1, updatedAt: at }] }); }
+    if (path.endsWith(`/resources/${site}/artifact/open`)) {
+      opens++;
+      if (fail) return Response.json({ error: { message: 'Access unavailable' } }, { status: 403 });
+      return Response.json({ openUrl: `https://${site}.rallyusercontent.com/open#code-${opens}`, canonicalUrl: `https://${site}.rallyusercontent.com/`, artifactId: site, mode: 'static', stateful: false });
+    }
+    return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
+  };
+  vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'test-capability');
+  vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw)) });
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1#/canvases`);
+  const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+  const command = (requestId: string, userId = user.id) => act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail: { type: 'open-prepared-artifact', requestId, userId, workspaceId: workspace.id, canvas: { canvasId: parent, resourceId: site, version: 1, title: 'Shopping' } } })));
+  try {
+    await waitFor(() => expect(workspaceSockets()).toHaveLength(1));
+    const socket = workspaceSockets()[0]!;
+    act(() => socket.open());
+    const row = { ...canvas, artifactKind: 'site', unread: false, presentUserIds: [], pinnedPosition: 0, sharedWithMe: true };
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_canvas_list', occurredAt: at, waterline: 1, items: [row] }) })));
+    await waitFor(() => expect(events.find(({ event }) => event.type === 'prepared-canvas')?.event.canvas).toEqual({ canvasId: parent, resourceId: site, version: 1, title: 'Shopping' }));
+    failDetail = true;
+    act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail: { type: 'refresh' } })));
+    await waitFor(() => expect(detailReads).toBe(2));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(events.filter(({ event }) => event.type === 'prepared-canvas').at(-1)?.event.canvas).toEqual({ canvasId: parent, resourceId: site, version: 1, title: 'Shopping' });
+    failDetail = false;
+    expect(opens).toBe(0); // Do not cache an expiring single-use access URL.
+    command('wrong-account', child);
+    command('first');
+    await waitFor(() => expect(events.find(({ event }) => event.requestId === 'first')?.event.artifact).toMatchObject({ openUrl: `https://${site}.rallyusercontent.com/open#code-1` }));
+    command('retry');
+    await waitFor(() => expect(events.find(({ event }) => event.requestId === 'retry')?.event.artifact).toMatchObject({ openUrl: `https://${site}.rallyusercontent.com/open#code-2` }));
+    expect(events.some(({ event }) => event.requestId === 'wrong-account')).toBe(false);
+    expect(workspaceSockets()).toHaveLength(1);
+    expect(feedSockets()).toHaveLength(0);
+    expect(location.hash).toBe('#/canvases');
+    fail = true;
+    command('denied');
+    await waitFor(() => expect(events.find(({ event }) => event.requestId === 'denied')?.event.artifact).toBeNull());
+    act(() => { location.hash = `#/canvases/${parent}?view=chat`; window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    await screen.findByRole('button', { name: 'View canvas' });
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_resource_versions', occurredAt: at, resources: [{ resourceId: site, version: 2, title: 'Groceries', mimeType: 'text/html', updatedAt: at, contentAvailable: true, sizeBytes: 42 }] }) })));
+    await waitFor(() => expect(events.filter(({ event }) => event.type === 'prepared-canvas').at(-1)?.event.canvas).toMatchObject({ version: 2 }));
+  } finally { view.unmount(); }
+});
+
+it('keeps the current mobile chat, draft, and connections when closing and reopening it', async () => {
+  const canvas = { id: parent, title: 'Shopping', createdByUserId: user.id, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false };
+  let reads = 0;
+  fetchHandler = async (input) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
+    if (path.endsWith('/socket')) return Response.json({ url: `wss://api.rallywith.ai/socket/conversations/${parent}/0`, ticket: 'conversation-ticket' });
+    if (path.endsWith(`/canvases/${parent}`)) { reads++; return Response.json({ ...canvas, artifacts: [] }); }
+    return Response.json({ error: { message: 'Not in fixture' } }, { status: 404 });
+  };
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1#/canvases`);
+  const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+  const command = (detail: unknown) => act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail })));
+  try {
+    await waitFor(() => expect(workspaceSockets()).toHaveLength(1));
+    act(() => workspaceSockets()[0]!.open());
+    act(() => workspaceSockets()[0]!.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_canvas_list', occurredAt: at, waterline: 1, items: [{ ...canvas, artifactKind: null, unread: false, presentUserIds: [], pinnedPosition: null, sharedWithMe: true }] }) })));
+    const search = await screen.findByRole('textbox', { name: 'Find a canvas' });
+    fireEvent.change(search, { target: { value: 'Shopping' } });
+    command({ type: 'open-chat', id: parent });
+    await waitFor(() => expect(feedSockets()).toHaveLength(1));
+    act(() => feedSockets()[0]!.open());
+    const input = await screen.findByPlaceholderText('Ask Rally or the people here…');
+    fireEvent.change(input, { target: { value: 'Keep my grocery draft' } });
+    command({ type: 'close-chat' });
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Find a canvas' })).toHaveValue('Shopping'));
+    expect(input).not.toBeVisible();
+    command({ type: 'open-chat', id: parent });
+    await waitFor(() => expect(input).toBeVisible());
+    expect(screen.getByPlaceholderText('Ask Rally or the people here…')).toBe(input);
+    expect(input).toHaveValue('Keep my grocery draft');
+    expect(reads).toBe(1);
+    expect(workspaceSockets()).toHaveLength(1);
+    expect(feedSockets()).toHaveLength(1);
+    expect(feedSockets()[0]!.readyState).toBe(BrowserSocket.OPEN);
+  } finally { view.unmount(); }
+});
+
+it('refreshes only the published mobile canvas and ignores unrelated resource topics', async () => {
+  const site = '00000000-0000-7000-8000-0000000000a1';
+  const reads: string[] = [];
+  const canvas = (id: string) => ({ id, title: id === parent ? 'Shopping' : 'Trips', createdByUserId: user.id, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false });
+  const rows = [parent, child].map((id, index) => ({ ...canvas(id), artifactKind: 'site', unread: false, presentUserIds: [], pinnedPosition: index, sharedWithMe: true }));
+  fetchHandler = async (input) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
+    const id = [parent, child].find(id => path.endsWith(`/canvases/${id}`));
+    if (id) { reads.push(id); return Response.json({ ...canvas(id), artifacts: [{ resourceId: site, title: 'Site', kind: 'site', mimeType: 'text/html', version: 1, updatedAt: at }] }); }
+    return Response.json({ error: { message: 'Not in fixture' } }, { status: 404 });
+  };
+  vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'test-capability');
+  vi.stubGlobal('ReactNativeWebView', { postMessage: () => undefined });
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1#/canvases`);
+  const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+  try {
+    await waitFor(() => expect(workspaceSockets()).toHaveLength(1));
+    const socket = workspaceSockets()[0]!;
+    act(() => socket.open());
+    const push = (event: unknown) => act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) })));
+    push({ type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000122', occurredAt: at, waterline: 1, topics: [], reason: 'initial', sidebar: { automations: { waterline: 1, items: [] }, canvases: { waterline: 1, items: rows } } });
+    await waitFor(() => expect(reads).toHaveLength(2));
+    push({ type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000123', occurredAt: at, waterline: 2, topics: ['resources'], reason: 'change' });
+    await act(async () => { await Promise.resolve(); });
+    expect(reads).toHaveLength(2);
+    push({ type: 'workspace_canvas_list', occurredAt: at, waterline: 3, items: [{ ...rows[0], updatedAt: '2026-11-14T00:00:00.000Z' }, rows[1]] });
+    await waitFor(() => expect(reads).toEqual([parent, child, parent]));
+    // Reconnect still reconciles detail that might have changed while offline.
+    push({ type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000124', occurredAt: at, waterline: 4, topics: [], reason: 'resume', sidebar: { automations: { waterline: 4, items: [] }, canvases: { waterline: 4, items: [{ ...rows[0], updatedAt: '2026-11-14T00:00:00.000Z' }, rows[1]] } } });
+    await waitFor(() => expect(reads).toEqual([parent, child, parent, parent, child]));
+  } finally { view.unmount(); }
+});
+
+
+it('recovers a failed deep-link detail when access adds the canvas to the directory', async () => {
+  const canvas = { id: parent, title: 'Newly shared', createdByUserId: user.id, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false };
+  let granted = false;
+  fetchHandler = async (input) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
+    if (path.endsWith('/socket')) return Response.json({ url: `wss://api.rallywith.ai/socket/conversations/${parent}/0`, ticket: 'conversation-ticket' });
+    if (path.endsWith(`/canvases/${parent}`)) { return granted ? Response.json({ ...canvas, artifacts: [] }) : Response.json({ error: { message: 'Not shared yet' } }, { status: 403 }); }
+    return Response.json({ error: { message: 'Not in fixture' } }, { status: 404 });
+  };
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1#/canvases/${parent}`);
+  const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+  try {
+    await waitFor(() => expect(workspaceSockets()).toHaveLength(1));
+    const socket = workspaceSockets()[0]!;
+    act(() => socket.open());
+    const push = (event: unknown) => act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) })));
+    push({ type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000122', occurredAt: at, waterline: 1, topics: [], reason: 'initial', sidebar: { automations: { waterline: 1, items: [] }, canvases: { waterline: 1, items: [] } } });
+    await screen.findByText('This canvas couldn’t load');
+    granted = true;
+    push({ type: 'workspace_canvas_list', occurredAt: at, waterline: 2, items: [{ ...canvas, artifactKind: null, unread: false, presentUserIds: [], pinnedPosition: null, sharedWithMe: true }] });
+    await waitFor(() => expect(location.hash).toContain('view=chat'));
   } finally { view.unmount(); }
 });
