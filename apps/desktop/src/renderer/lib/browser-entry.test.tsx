@@ -1077,5 +1077,5 @@ it.each([false, true])('adopts the regional identity when opening an organizatio
     await screen.findByText('enterprise:dddddddd-dddd-4ddd-8ddd-dddddddddddd');
     expect(location.pathname).toBe(`/app/workspaces/enterprise/${enterprise.id}`);
     expect(screen.queryByText('The organization session changed. Reload this page.')).not.toBeInTheDocument();
-  } finally { view.unmount(); }
+  } finally { view.unmount(); localStorage.clear(); }
 });
