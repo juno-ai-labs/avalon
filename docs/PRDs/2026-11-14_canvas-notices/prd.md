@@ -5,11 +5,11 @@
 > Any agent working on a Canvas can tell the Canvas's participants that
 > something happened, by push or email as each person chose. A Canvas turns
 > notices on once, and the record of that in its Chat lets people join, mute,
-> or grant their device permission. Each Sidekick with triggers works on one
-> Canvas; an instruction-only Sidekick can be attached to many.
-> Delivery is [`push-notifications.md`](../../push-notifications.md)'s, and
-> this changes the attachment rule of
-> [Sidekicks attached to Canvases](../2026-11-10_sidekicks-attached-to-canvases/prd.md).
+> or grant their device permission. A Sidekick sends from the one Canvas it
+> is attached to. Delivery is
+> [`push-notifications.md`](../../push-notifications.md)'s; attachments are
+> [Sidekicks attached to Canvases](../2026-11-10_sidekicks-attached-to-canvases/prd.md)'s,
+> unchanged.
 > Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
@@ -27,10 +27,8 @@ unless they mute it. Anyone else who can open the Canvas can join from the
 record. When the device someone is reading on cannot show notifications, the
 record says so and offers the fix.
 
-To make "the Canvas" unambiguous, a Sidekick with triggers works on at most
-one Canvas. An instruction-only Sidekick, which never runs, can still be
-attached to any number of Canvases. A Canvas still has any number of
-Sidekicks.
+A Sidekick sends from the Canvas it is attached to. One attached to several
+Canvases, or to none, is told it cannot send and why.
 
 ## Motivation
 
@@ -48,13 +46,10 @@ record in the Chat, send from the Canvas to all participants, and no
 recipients or artifact in the send. No support thread or usage number is
 recorded.
 
-A Sidekick today can be attached to several Canvases, and each run that
-publishes without naming one makes a Canvas of its own. "Send from the
-Canvas" has no single answer for such a Sidekick. The owner chose to fix the
-model: one Canvas per Sidekick, many Sidekicks per Canvas, as part of this
-work. The rule is for Sidekicks that run. An instruction-only Sidekick is
-loaded as a Skill into other conversations, makes no runs and publishes
-nothing, so the owner kept it attachable to many Canvases.
+A Sidekick can be attached to several Canvases, so "send from the Canvas"
+has no single answer for every Sidekick. The owner chose not to change how
+Sidekicks attach: a Sidekick attached to several Canvases gets an error when
+it sends.
 
 ## Goals
 
@@ -71,9 +66,8 @@ nothing, so the owner kept it attachable to many Canvases.
    person whose device cannot show notifications can fix that.
 5. A person who never chose channels for Canvas notices gets push when they
    have a device that can receive it, and email when they do not.
-6. Every Sidekick with triggers works on at most one Canvas, and its runs
-   publish into that Canvas. An instruction-only Sidekick can be attached to
-   any number of Canvases.
+6. A Sidekick attached to exactly one Canvas sends from it. One attached to
+   several, or to none, gets an error that says so, and nothing is sent.
 
 ## Non-goals
 
@@ -88,8 +82,10 @@ nothing, so the owner kept it attachable to many Canvases.
    ([`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md)).
 4. **Leaving a Canvas's participant list from the record.** Rejected, the
    owner's call: muting is enough.
-5. **Moving a Sidekick to another Canvas.** Deferred. A Sidekick's Canvas is
-   set once. Archive and remake the Sidekick to change it.
+5. **Changing how Sidekicks attach to Canvases.** Rejected, the owner's
+   call. A Sidekick can still be attached to any number of Canvases, and an
+   instruction-only one is still offered to every Canvas whose people can
+   read it. Choosing one Canvas among several is not part of the send.
 6. **Android push and Linux desktop push.** Deferred, as today. Those people
    get email by default (goal 5).
 7. **Turning notices off for a Canvas as a whole.** Deferred. Registering
@@ -173,22 +169,16 @@ default as "Push when a device is set up, otherwise email". A Canvas's own
 channel choice, from the record or the menu, overrides the row for that
 Canvas.
 
-### A Sidekick's one Canvas
+### A Sidekick's Canvas
 
-- A Sidekick made in a Canvas's Chat, or through `POST /canvases/:id/sidekicks`,
-  works on that Canvas, as today.
-- A Sidekick made anywhere else has no Canvas until it needs one: its first
-  run that publishes makes it, or its wizard turning notices on makes it.
-  Every later run publishes into the same Canvas.
-- A Sidekick's wizard can attach a Canvas only while the Sidekick has none.
-- The Sidekick's card shows at most one Canvas pill.
-- **Instruction-only Sidekicks are exempt.** One with no triggers can be
-  attached to any number of Canvases, by its wizard or as it is made in a
-  Canvas, and its card shows a pill for each, as today. It has no Canvas to
-  send notices from, so its wizard cannot turn notices on.
-- **Adding a trigger to an instruction-only Sidekick attached to several
-  Canvases is refused** until it is attached to one. The wizard is told which
-  Canvases it is attached to and that a Sidekick that runs works on one.
+A Sidekick's wizard and runs register and send from the Canvas the Sidekick
+is attached to. Which Canvases count is the set `ATTACHED CANVASES` already
+lists (`sidekickCanvasContext`): the one it was made in and any its wizard
+attached, never the Canvas a run made as its output.
+
+- **One:** the wizard registers it and runs send from it.
+- **Several:** both tools refuse and name the Canvases. Nothing is sent.
+- **None:** both tools refuse and say the Sidekick is attached to no Canvas.
 
 ### States
 
@@ -204,16 +194,9 @@ Platforms: macOS, web, and the iPhone app, which shares the conversation UI.
 
 ## Impact on the product contract
 
-Two clauses of the Canvases and Sidekicks contract move.
+One clause moves.
 
-1. **"A Sidekick's output is a Canvas" narrows to "a Sidekick's output is its
-   Canvas"** for Sidekicks with triggers. Instruction-only Sidekicks produce
-   no output and keep their many attachments. [Sidekicks attached to Canvases](../2026-11-10_sidekicks-attached-to-canvases/prd.md)
-   widened a Sidekick's output from the Canvas each run makes to any Canvas it
-   is attached to. This change makes it one. A Sidekick whose runs each made a
-   daily Canvas now writes each day's output into one Canvas, as new artifacts
-   or new versions.
-2. **The agent may notify people.** Until now only system events notified
+1. **The agent may notify people.** Until now only system events notified
    anyone. An agent's notice goes only to people the Canvas already lists, by
    channels they control, so no one is reached who had not already joined the
    Canvas or been added to it.
@@ -271,30 +254,23 @@ None yet.
    `useDevicePushReadiness()`, returning the state and the action to offer, so
    Settings and the record cannot disagree. The iPhone app reaches its native
    check through the browser bridge.
-8. **A Sidekick has at most one Canvas, made on first need.** Rejected:
-   exactly one, made with the Sidekick, which would give every instruction-only
-   Sidekick an empty Canvas in the sidebar. A Sidekick with no Canvas gets one
-   when a run first publishes or its wizard turns notices on, with the
-   Sidekick's name as its title and its audience as today's run Canvases have.
-9. **A run publishes into its Sidekick's Canvas, with no `canvas` argument.**
-   With one Canvas there is nothing to name. `publish_resource` drops the
-   argument for runs, and `canvas_not_attached_to_sidekick` goes with it.
-   Overlapping runs that republish one artifact can lose an update, as they can
-   today on an attached Canvas; `ATTACHED CANVASES` already tells a run to
-   write rows or rebuild from sources.
+8. **A Sidekick with several Canvases gets an error, not a choice.** The
+   owner's call. Rejected first: one Canvas per Sidekick, enforced by a
+   migration and new attach rules, which changed how every Sidekick publishes
+   to make one tool unambiguous. Rejected also: a `canvas` argument on the
+   send, which the owner ruled out. The error costs nothing to reverse if a
+   choice is wanted later.
+9. **A run's output Canvas does not count as its Sidekick's Canvas.** Each
+   run that publishes without naming a Canvas makes one and attaches it, so
+   counting those would give any such Sidekick several Canvases after its
+   second run. The count uses the attachments a person or a wizard made, the
+   set `ATTACHED CANVASES` and the Sidekick's card already show.
 10. **Registration is open to loops content can start.** A Sidekick source
     request is offered only to turns a person drives, because it asks in a
     delegate's name. Registration asks nothing of anyone and reaches only
     people the Canvas already lists, who can mute it, so the owner allowed
     background agents too. Runs still cannot register: a run is handed an
     event's content, and turning notices on changes the Canvas for everyone.
-11. **The one-Canvas rule follows triggers, not the Sidekick.** The owner's
-    call: an instruction-only Sidekick is a Skill several Canvases may want,
-    and it has no runs to publish or send from, so one Canvas would buy
-    nothing. The rule is checked where it can break: attaching a Canvas, and
-    applying a definition that adds a trigger, each in one `WorkspaceDO`
-    transaction that reads the Sidekick's triggers and attachments. Rejected:
-    a unique index on `automation_id`, which cannot tell the two kinds apart.
 
 ## Data model
 
@@ -314,12 +290,6 @@ All in the Organization's `WorkspaceDO`. Implementers and reviewers read
 - **`member_preferences`**: `NotificationKindSchema` and
   `OFFERED_NOTIFICATION_KINDS` gain `canvasNotices`, whose absence means the
   send-time default.
-- **`sidekick_conversation_attachments`** has no new index (decision 11).
-  For each Sidekick with triggers, the migration keeps one row, in this order:
-  the `made_here` row; else the newest row a wizard attached; else the newest
-  Canvas a run made. It deletes the rest. An instruction-only Sidekick keeps
-  every row. A detached Canvas stays a Canvas
-  with its audience (`writer_sidekick_id` is untouched); runs stop writing it.
 
 ## Regional impact
 
@@ -437,13 +407,12 @@ later a run calls `notifications_send` after `publish_resource` succeeds.
 | `canvas_archived` | both | "This Canvas is archived, so it cannot send notices. Continue without sending a notice." | Stop |
 | `canvas_access_denied` | both | "The person this run acts for can no longer open this Canvas, so no notice was sent." | Stop |
 | `canvas_notices_empty_field` | both | "`<field>` is empty. Write it and call again." | Correct and retry |
+| `notifications_sidekick_has_several_canvases` | both | "This Sidekick is attached to several Canvases (`<titles>`), so it has no one Canvas to send notices from. No notice was sent." | Stop |
+| `notifications_sidekick_has_no_canvas` | both | "This Sidekick is not attached to a Canvas, so it has nowhere to send notices from. No notice was sent." | Stop |
 
-| `notifications_sidekick_has_several_canvases` | both | "This Sidekick is attached to several Canvases, so it has no one Canvas to send notices from. Only a Sidekick with triggers sends notices, from its one Canvas." | Stop |
-
-A wizard whose Sidekick has no Canvas does not fail: registering makes it
-(decision 8). Only an instruction-only Sidekick can have several Canvases, so
-only its wizard can meet `notifications_sidekick_has_several_canvases`. A send that finds no recipients after mutes succeeds with
-`recipients: 0`.
+The two Sidekick refusals carry the attached Canvases' ids and titles in
+`data.details.canvases`. A send that finds no recipients after mutes succeeds
+with `recipients: 0`.
 
 ### Model-usability acceptance
 
@@ -457,14 +426,10 @@ publish, not sending progress notices, and a run stopping on
 
 Ships to everyone on merge, with no flag. Order:
 
-1. One Canvas per Sidekick: the attachment migration, the `publish_resource`
-   change, the wizard's attach rule, the card's single pill.
-2. `canvasJoin`, the change-based audience save, and `useDevicePushReadiness()`.
-3. The plugin, the record, the menu item, the Settings row and delivery.
+1. `canvasJoin`, the change-based audience save, and `useDevicePushReadiness()`.
+2. The plugin, the record, the menu item, the Settings row and delivery.
 
-The attachment migration deletes rows, so step 1 is reversible only by
-restoring from a Durable Object point-in-time recovery; it moves no artifacts
-and archives no Canvas.
+The migrations add two tables and widen two CHECKs; none rewrites rows.
 
 ## Acceptance
 
@@ -480,19 +445,16 @@ and archives no Canvas.
 5. A muted participant gets nothing; turning the Canvas back on restores it.
 6. A manager opens the sharing modal, someone joins, the manager saves, and
    the person who joined is still listed.
-7. A Sidekick made from the Sidekicks section publishes twice in two runs, and
-   both land in one Canvas.
-8. An instruction-only Sidekick is attached to three Canvases and loads as a
-   Skill in each. Adding a trigger to it is refused, naming the three.
+7. A Sidekick attached to two Canvases sends; it gets
+   `notifications_sidekick_has_several_canvases` naming both, and nobody is
+   notified. A Sidekick attached to none gets
+   `notifications_sidekick_has_no_canvas`.
 
 ## Open questions
 
-1. **Is the migration's pick order right** for Sidekicks with several
-   Canvases today (`made_here`, then the newest wizard attachment, then the
-   newest run Canvas)? A different order changes which Canvas each existing
-   Sidekick keeps writing.
-2. **How does an instruction-only Sidekick on several Canvases get a
-   trigger?** Nothing detaches a Canvas (non-goal 5), so today the refusal
-   leaves remaking it as the only path. Letting the wizard keep one Canvas and
-   detach the rest when it adds a trigger would remove that dead end, at the
-   cost of the first detach in the product.
+1. **Should a run with no attached Canvas send from the Canvas it made?** A
+   Sidekick made from the Sidekicks section has no attached Canvas, so its
+   runs cannot send at all (decision 9). Sending from the run's own output
+   Canvas would cover a "your daily report is ready" Sidekick, but that
+   Canvas was never registered, so it would need registering on its first
+   publish.
