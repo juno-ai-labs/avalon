@@ -1464,6 +1464,12 @@ now guards it.
   raise that for policy and configuration failures that never reached the provider,
   and spending a single-use refresh token on one buys a retry that fails
   identically.
+- **A poll attempt refused on its grant is not retried.** `poll-and-persist-provider-page`
+  throws an `unauthorized…` failure as a `NonRetryableError`: the attempt has
+  already tried to rotate the refused credential and been refused again, so its
+  step retries could only spend more refresh calls. The connection is marked
+  `needs_reconnect` and the next scheduled poll tries once more. Every other
+  failure keeps the step's bounded retries.
 - **A token-endpoint failure has three answers, not two.** A code naming a dead
   grant marks; a code naming Rally's own fault does not, whatever the status; an
   unfamiliar code or none at all defers to the status. An unfamiliar word is not
@@ -1650,6 +1656,30 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-14 — A poll refused on its grant fails once, not four times
+
+**What changed:** The connector poll Workflow throws a refused grant
+(`unauthorized`, `unauthorized:http_400`, …) from its poll step as a
+`NonRetryableError`, so the step's three retries are skipped. The predicate,
+`isRefusedGrantCode`, is the one the terminal log already used to choose `warn`.
+
+**Why:** A scheduled log review on 2026-11-14 found six Google connections with
+revoked grants failing `credentials_refresh` 4,370 times in fifteen hours, four
+times on each of 1,090 polls. Each attempt had already rotated and been refused,
+so the retries were three wasted token-endpoint calls per poll per disconnected
+account, and three times the log volume.
+
+**Rejected:** Skipping the poll of a `needs_reconnect` connection would end the
+calls entirely, but that status also covers diagnoses such as missing scopes
+under which the poll still works, and a reconnected account would then wait
+for something else to resume its polling.
+
+**Consequences:** A disconnected account costs one refresh call per scheduled
+poll. A failure that is transient but reported as `unauthorized` is no longer
+retried within the poll and waits for the next one. The code survives the step
+boundary because the Worker's compatibility date is after
+`workflows_preserve_non_retryable_error_message` became the default.
 
 ### 2026-11-12 — A Google search tool tells the model its query ceiling
 

@@ -3,6 +3,7 @@ import {
   type ConnectorPollWorkflowInput
 } from "@rally/contracts";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 
 import type { Env } from "../env";
 import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
@@ -18,6 +19,7 @@ import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service"
 
 import {
   failedPollAttemptCode,
+  isRefusedGrantCode,
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
@@ -103,7 +105,16 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
               error_name: error instanceof Error ? error.name : typeof error,
               error_code: errorCode,
             });
-            throw pollAttemptFailure(error, errorCode);
+            const failure = pollAttemptFailure(error, errorCode);
+            // A refused grant is not retried: the attempt already tried to
+            // rotate the credential and was refused again, so three more
+            // attempts only spent three more refresh calls against the
+            // provider on every poll of every disconnected account. The
+            // message, and so the code, survives the step boundary.
+            if (isRefusedGrantCode(errorCode) && failure instanceof Error) {
+              throw new NonRetryableError(failure.message);
+            }
+            throw failure;
           }
           logStructuredEvent(this.env, "info", "connector_poll_attempt_completed", {
             workspace_id: input.workspaceId,

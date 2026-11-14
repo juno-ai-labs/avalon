@@ -72,13 +72,21 @@ export function terminalPollFailure(error: unknown): { code: string; message: st
 }
 
 /**
- * `warn` for a grant the provider refused (`unauthorized…`): that is the
- * member's account state, already recorded as `needs_reconnect`, and the poll
- * fires again on schedule. Logged as `error` it repeated every poll interval
- * per connection and buried real platform faults. Every other failure stays
- * `error`.
+ * A code saying the provider refused the connection's grant (`unauthorized…`).
+ * By the time an attempt fails with it, the poll has already tried to rotate
+ * the refused credential and the provider has refused that too, so nothing a
+ * retry seconds later can change it: only the member reconnecting does.
+ */
+export function isRefusedGrantCode(code: string): boolean {
+  return code === "unauthorized" || code.startsWith("unauthorized:");
+}
+
+/**
+ * `warn` for a grant the provider refused: that is the member's account state,
+ * already recorded as `needs_reconnect`, and the poll fires again on schedule.
+ * Logged as `error` it repeated every poll interval per connection and buried
+ * real platform faults. Every other failure stays `error`.
  */
 export function terminalPollFailureLevel(error: unknown): "warn" | "error" {
-  const code = failedPollAttemptCode(error) ?? pollAttemptErrorCode(error);
-  return code === "unauthorized" || code.startsWith("unauthorized:") ? "warn" : "error";
+  return isRefusedGrantCode(failedPollAttemptCode(error) ?? pollAttemptErrorCode(error)) ? "warn" : "error";
 }

@@ -6,6 +6,7 @@ import { ConnectorError } from "@rally/connectors";
 
 import {
   failedPollAttemptCode,
+  isRefusedGrantCode,
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
@@ -99,5 +100,24 @@ describe("terminalPollFailureLevel", () => {
     const fault = new ConnectorError("provider_error", "down", { status: 500 });
     expect(terminalPollFailureLevel(pollAttemptFailure(fault, pollAttemptErrorCode(fault)))).toBe("error");
     expect(terminalPollFailureLevel(new Error("boom"))).toBe("error");
+  });
+});
+
+describe("isRefusedGrantCode", () => {
+  it("names a provider's refusal of the grant, which a retry cannot change", () => {
+    // The code a revoked Google grant produces: a step that retried it spent
+    // four refresh calls on every poll of a disconnected account.
+    const revoked = new ConnectorError("unauthorized", "revoked", { status: 400 });
+    expect(pollAttemptErrorCode(revoked)).toBe("unauthorized:http_400");
+    expect(isRefusedGrantCode(pollAttemptErrorCode(revoked))).toBe(true);
+    expect(isRefusedGrantCode("unauthorized")).toBe(true);
+  });
+
+  it("leaves provider faults, timeouts and platform failures retryable", () => {
+    const fault = new ConnectorError("provider_error", "down", { status: 503 });
+    expect(isRefusedGrantCode(pollAttemptErrorCode(fault))).toBe(false);
+    expect(isRefusedGrantCode("connector_poll_failed:d1_overloaded")).toBe(false);
+    expect(isRefusedGrantCode("connector_poll_timeout")).toBe(false);
+    expect(isRefusedGrantCode("unauthorized_scope")).toBe(false);
   });
 });
