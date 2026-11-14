@@ -110,6 +110,7 @@ function CanvasApp() {
     </View>
     {showChrome && <View pointerEvents="box-none" style={[styles.toolbar, { left: insets.left + 24, right: insets.right + 24, top: insets.top + 8 }]}>
       <Glass style={styles.toolbarButton}>{action('menu-outline', 'Open sidebar', () => setSidebar(true))}</Glass>
+      {snapshot.view === 'home' && <Glass style={styles.toolbarButton}>{action('add', 'Create a canvas', () => send({ type: 'create' }))}</Glass>}
       {snapshot.view === 'artifact' && snapshot.canvasId && <Glass style={styles.toolbarButton}>{action('chatbubble-outline', 'Open conversation', () => setConversation(snapshot.canvasId))}</Glass>}
     </View>}
     {showChrome && !keyboardVisible && <TabBar snapshot={snapshot} bottomInset={insets.bottom} send={send} />}
