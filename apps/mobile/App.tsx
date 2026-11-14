@@ -10,7 +10,7 @@ import { shareDiagnostics } from './src/diagnostics';
 import * as Notifications from 'expo-notifications';
 import { useNetworkState } from 'expo-network';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, type KeyboardEvent, type ImageSourcePropType } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Linking, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, type KeyboardEvent, type ImageSourcePropType } from 'react-native';
 import { NavigationContainer, StackActions, createNavigationContainerRef, DefaultTheme, DarkTheme, useIsFocused, type ParamListBase } from '@react-navigation/native';
 import { createNativeBottomTabNavigator, type NativeBottomTabScreenProps } from '@bottom-tabs/react-navigation';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -36,7 +36,10 @@ type RootRoutes = { Canvases: { screen: 'Home' } | undefined; Diagnostics: undef
 const Stack = createNativeStackNavigator<RootRoutes>();
 const rootNavigation = createNavigationContainerRef<RootRoutes>();
 
+type ChatReturn = { scope: string; tab: string };
 type Session = {
+  chatReturn: ChatReturn | null;
+  setChatReturn: (value: ChatReturn | null) => void;
   prepared: ReturnType<typeof usePreparedCanvases>;
   directory: MobileSnapshot | null;
   updateDirectory: (snapshot: MobileSnapshot | null) => void;
@@ -62,6 +65,9 @@ function AppContent() {
   const { colors, isDark } = useTheme();
   const [directory, updateDirectory] = useState<MobileSnapshot | null>(null);
   const controls = useRef(new Map<string, CanvasWebViewHandle>());
+  const [chatReturn, setChatReturn] = useState<ChatReturn | null>(null);
+  const accountScope = directory ? `${directory.userId}:${directory.workspaceId}` : '';
+  useEffect(() => { if (chatReturn && chatReturn.scope !== accountScope) setChatReturn(null); }, [accountScope, chatReturn]);
   const [pendingNotification, setPendingNotification] = useState<string | null>(null);
   const pendingNotificationRef = useRef(pendingNotification);
   pendingNotificationRef.current = pendingNotification;
@@ -83,6 +89,7 @@ function AppContent() {
   useEffect(() => { void registerBackgroundSync(); }, []);
   useEffect(() => {
     if (!pendingNotification || !directory || !rootNavigation.isReady()) return;
+    setChatReturn(null);
     rootNavigation.dispatch(StackActions.popTo('Canvases', { screen: 'Home' }));
     sendHome({ type: 'open-notification', url: pendingNotification });
   }, [Boolean(directory), pendingNotification, sendHome]);
@@ -99,13 +106,13 @@ function AppContent() {
     finally { signingIn.current = false; setAuthEpoch((value) => value + 1); }
   }, [receiveCrashEvent]);
   const signOut = useCallback(() => {
-    updateDirectory(null);
+    setChatReturn(null); updateDirectory(null);
     controls.current.get('Home')?.reload();
   }, []);
   const theme = isDark ? DarkTheme : DefaultTheme;
   return <SafeAreaProvider>
     <StatusBar style={isDark ? 'light' : 'dark'} />
-    <SessionContext value={{ prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent }}>
+    <SessionContext value={{ chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent }}>
       <NavigationContainer ref={rootNavigation} theme={{ ...theme, colors: { ...theme.colors, background: colors.background, card: colors.surface, text: colors.text, primary: colors.accent, border: colors.line } }}>
         <Stack.Navigator initialRouteName="Canvases">
           <Stack.Screen name="Diagnostics" options={{ title: 'Settings and diagnostics' }}>{() => <DiagnosticsScreen notifications={notifications} signedIn={Boolean(directory)} />}</Stack.Screen>
@@ -118,7 +125,7 @@ function AppContent() {
 }
 
 function CanvasTabs() {
-  const { directory, controls, prepared } = useSession();
+  const { directory, controls, prepared, chatReturn } = useSession();
   const [images, setImages] = useState<Record<string, ImageSourcePropType>>({});
   const saveImage = useCallback((id: string, image: ImageSourcePropType) => setImages((current) => ({ ...current, [id]: image })), []);
   const { colors } = useTheme();
@@ -139,7 +146,7 @@ function CanvasTabs() {
   return <View style={styles.fill}>
     {Object.values(prepared.canvases).map((canvas) => <PrepareArtifactSession key={`${scope}:${canvas.canvasId}:${canvas.resourceId}`} canvas={canvas} scope={scope} />)}
     {tabs.map((id) => <TabIconAsset key={id} id={id} canvas={directory?.canvases.find((canvas) => canvas.id === id)} save={saveImage} />)}
-    <CanvasRoutesContext value={routeCanvases}><Tabs.Navigator backBehavior="firstRoute" labeled={false} tabBarHidden={!directory}
+    <CanvasRoutesContext value={routeCanvases}><Tabs.Navigator backBehavior="firstRoute" labeled={false} tabBarHidden={!directory || Boolean(chatReturn)}
       activeIndicatorColor={colors.selected}
       tabBarStyle={Platform.OS === 'android' ? { backgroundColor: colors.surface } : undefined}
       screenOptions={({ route }) => {
@@ -203,12 +210,35 @@ function HeaderButton({ kind, label, onPress }: { kind: 'menu' | 'chat' | 'creat
   return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}><Icon size={24} color={colors.text} /></Pressable>;
 }
 
+function useChatNavigation(navigation: NativeBottomTabScreenProps<ParamListBase>['navigation'], returnTab: string) {
+  const { controls, directory, chatReturn, setChatReturn } = useSession();
+  const openChat = useCallback((id: string, title: string) => {
+    if (!directory) return;
+    if (!directory.inlineChat) {
+      navigation.getParent()?.navigate('Conversation', { id, title, workspacePath: directory.workspacePath });
+      return;
+    }
+    setChatReturn({ scope: `${directory.userId}:${directory.workspaceId}`, tab: returnTab });
+    controls.current.get('Home')?.send({ type: 'open-chat', id });
+    navigation.navigate('Home');
+  }, [controls, directory, navigation, returnTab, setChatReturn]);
+  const closeChat = useCallback(() => {
+    Keyboard.dismiss();
+    controls.current.get('Home')?.send({ type: 'close-chat' });
+    const destination = chatReturn?.tab;
+    setChatReturn(null);
+    navigation.navigate(destination && navigation.getState().routeNames.includes(destination) ? destination : 'Home');
+  }, [chatReturn, controls, navigation, setChatReturn]);
+  return { openChat, closeChat, chatReturn };
+}
+
 function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContentReady }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string; onContentReady?: () => void }) {
-  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared } = useSession();
+  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn } = useSession();
   const { colors } = useTheme();
   const canvasId = assignedCanvasId ?? route.name;
   const routeCanvases = useContext(CanvasRoutesContext);
   const tabs = navigation;
+  const { openChat, closeChat, chatReturn } = useChatNavigation(navigation, route.name);
   const home = canvasId === 'Home';
   const focused = useIsFocused();
   const network = useNetworkState();
@@ -218,7 +248,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
   // Callstack tab scenes extend behind the iPhone bar. Reserve its measured
   // height, including the home indicator, once. Duo rails use native side insets.
   const bottomTabInset = Platform.OS === 'ios' && !Platform.isPad && !Platform.isTV
-    && verticalBarEdge === null && directory ? tabBarHeight : 0;
+    && verticalBarEdge === null && directory && !chatReturn ? tabBarHeight : 0;
   const web = useRef<CanvasWebViewHandle>(null);
   const [url] = useState(() => {
     if (home || !directory) return START_URL;
@@ -235,6 +265,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
   const keyboardVisible = useKeyboardVisible();
   const scope = useRef<string | null>(null);
   const open = useCallback((id: string) => {
+    if (chatReturn) closeChat();
     if (directory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(id)) {
       const destination = Object.keys(routeCanvases).find((name) => routeCanvases[name] === id);
       if (destination) tabs.navigate(destination);
@@ -243,7 +274,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
       tabs?.navigate('Home');
       controls.current.get('Home')?.send({ type: 'open', id, pinned: false });
     }
-  }, [controls, directory?.pins, routeCanvases, tabs]);
+  }, [controls, directory?.pins, routeCanvases, tabs, chatReturn, closeChat]);
   const send = useCallback((command: MobileCommand) => {
     if (command.type === 'open') { open(command.id); return; }
     if (command.type === 'pin' || command.type === 'reorder' || command.type === 'refresh' || command.type === 'load-more') {
@@ -253,9 +284,9 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
       return;
     }
     if (command.type === 'sign-out' || command.type === 'switch-workspace') receiveCrashEvent({ type: 'signed-out' });
-    if (command.type === 'home' || command.type === 'create' || command.type === 'switch-workspace' || command.type === 'sign-out') tabs?.navigate('Home');
+    if (command.type === 'home' || command.type === 'create' || command.type === 'switch-workspace' || command.type === 'sign-out') { if (chatReturn) closeChat(); tabs?.navigate('Home'); }
     controls.current.get('Home')?.send(command);
-  }, [controls, tabs, open, receiveCrashEvent]);
+  }, [controls, tabs, open, receiveCrashEvent, chatReturn, closeChat]);
   const receive = useCallback((event: MobileEvent) => {
     if (home && prepared.receive(event)) return;
     if (event.type === 'notification-opened') { notificationOpened(event.url); return; }
@@ -300,27 +331,31 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
     if (handle) registry.set(canvasId, handle);
     return () => { if (registry.get(canvasId) === handle) registry.delete(canvasId); };
   }, [controls, canvasId]);
-  const initialized = useRef(false);
+  const previousConnection = useRef(network.isConnected);
   useEffect(() => {
-    if (!ready) return;
-    // Initial page bootstrap already reads the canvas. Do not cancel/restart it
-    // when the bridge announces readiness; subsequent focus/reconnect refreshes stay background work.
-    if (initialized.current && focused && network.isConnected) web.current?.send({ type: 'refresh' });
-    initialized.current = true;
+    const reconnected = previousConnection.current === false && network.isConnected;
+    previousConnection.current = network.isConnected;
+    if (focused && ready && reconnected) web.current?.send({ type: 'refresh' });
   }, [focused, ready, network.isConnected]);
+  useEffect(() => {
+    if (!home || !focused || !chatReturn) return;
+    const back = BackHandler.addEventListener('hardwareBackPress', () => { closeChat(); return true; });
+    return () => back.remove();
+  }, [home, focused, chatReturn, closeChat]);
   useAppResume(() => { if (focused && ready) web.current?.send({ type: 'refresh' }); });
   useEffect(() => {
     if (!focused) return;
-    const chat = snapshot?.view === 'artifact' && snapshot.canvasId ? () => tabs.getParent()?.navigate('Conversation', { id: snapshot.canvasId, workspacePath: snapshot.workspacePath, title: snapshot.title }) : undefined;
+    const chat = snapshot?.view === 'artifact' && snapshot.canvasId ? () => openChat(snapshot.canvasId!, snapshot.title) : undefined;
+    const close = home && chatReturn ? closeChat : undefined;
     const menu = () => setSidebar(true);
     const create = snapshot?.view === 'home' ? () => web.current?.send({ type: 'create' }) : undefined;
     navigation.getParent()?.setOptions({
       headerLeft: directory ? () => <HeaderButton kind="menu" label="Open sidebar" onPress={menu} /> : undefined,
-      headerRight: create ? () => <HeaderButton kind="create" label="Create a canvas" onPress={create} /> : chat ? () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} /> : undefined,
+      headerRight: close ? () => <HeaderButton kind="close" label="Close conversation" onPress={close} /> : create ? () => <HeaderButton kind="create" label="Create a canvas" onPress={create} /> : chat ? () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} /> : undefined,
       unstable_headerLeftItems: () => directory ? [{ type: 'button', label: 'Open sidebar', icon: { type: 'sfSymbol', name: 'sidebar.left' }, onPress: menu }] : [],
-      unstable_headerRightItems: () => create ? [{ type: 'button', label: 'Create a canvas', icon: { type: 'sfSymbol', name: 'plus' }, onPress: create }] : chat ? [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }] : [],
+      unstable_headerRightItems: () => close ? [{ type: 'button', label: 'Close conversation', icon: { type: 'sfSymbol', name: 'xmark' }, onPress: close }] : create ? [{ type: 'button', label: 'Create a canvas', icon: { type: 'sfSymbol', name: 'plus' }, onPress: create }] : chat ? [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }] : [],
     });
-  }, [directory, focused, navigation, snapshot, tabs]);
+  }, [directory, focused, navigation, snapshot, home, chatReturn, closeChat, openChat]);
   const hosted = snapshot?.view === 'artifact' && artifacts[snapshot.canvasId ?? '']?.resourceId === snapshot.artifactId;
   // Native safe areas follow the system rail (including its side in Split View).
   // Content extends behind the transparent header; the initial inset scrolls away.
@@ -331,7 +366,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
           onLoading={() => {
             // Loading Home must not close other tabs and discard their drafts.
             // Authentication snapshots and signed-out events own the directory.
-            if (home) prepared.reset(); initialized.current = false; setReady(false); setContentReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
+            if (home) { prepared.reset(); setChatReturn(null); } setReady(false); setContentReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
           }} onError={() => { if (home) prepared.reset(); setFailed(true); }} />
       </View>
       {Object.values(artifacts).map((access) => {
@@ -358,9 +393,10 @@ function PinnedCanvasRoute(props: NativeBottomTabScreenProps<ParamListBase> & { 
 
 /** A hosted pin uses Home's existing API/socket session and opens its actual URL.
  * Other artifact types retain the shared browser renderer. */
-function PreparedSiteScreen({ canvas, navigation }: NativeBottomTabScreenProps<ParamListBase> & { canvas: PreparedCanvas }) {
+function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreenProps<ParamListBase> & { canvas: PreparedCanvas }) {
   const { directory, controls, prepared, receiveCrashEvent } = useSession();
   const { colors } = useTheme();
+  const { openChat } = useChatNavigation(navigation, route.name);
   const focused = useIsFocused();
   const routeCanvases = useContext(CanvasRoutesContext);
   const network = useNetworkState();
@@ -408,7 +444,7 @@ function PreparedSiteScreen({ canvas, navigation }: NativeBottomTabScreenProps<P
   useAppResume(() => { if (focused) controls.current.get('Home')?.send({ type: 'refresh' }); });
   useEffect(() => {
     if (!focused || !directory) return;
-    const chat = () => navigation.getParent()?.navigate('Conversation', { id: canvas.canvasId, workspacePath: directory.workspacePath, title: canvas.title });
+    const chat = () => openChat(canvas.canvasId, canvas.title);
     const menu = () => setSidebar(true);
     navigation.getParent()?.setOptions({
       headerLeft: () => <HeaderButton kind="menu" label="Open sidebar" onPress={menu} />,
@@ -416,7 +452,7 @@ function PreparedSiteScreen({ canvas, navigation }: NativeBottomTabScreenProps<P
       unstable_headerLeftItems: () => [{ type: 'button', label: 'Open sidebar', icon: { type: 'sfSymbol', name: 'sidebar.left' }, onPress: menu }],
       unstable_headerRightItems: () => [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }],
     });
-  }, [focused, directory, canvas.canvasId, canvas.title, navigation]);
+  }, [focused, directory, canvas.canvasId, canvas.title, navigation, openChat]);
   return <SafeAreaView edges={{ left: true, right: true, bottom: bottomTabInset === 0 }} style={{ backgroundColor: colors.background }}>
     <KeyboardAvoidingView enabled={keyboardVisible} style={[styles.fill, { marginBottom: bottomTabInset }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {access && <ArtifactView key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={headerHeight + 12} onRetry={retry} />}
@@ -439,7 +475,6 @@ function Conversation({ route, navigation }: NativeStackScreenProps<RootRoutes, 
       headerRight: Platform.OS === 'ios' ? () => <HeaderButton kind="close" label="Close conversation" onPress={close} /> : undefined,
       unstable_headerRightItems: () => [{ type: 'button', label: 'Close conversation', icon: { type: 'sfSymbol', name: 'xmark' }, onPress: close }],
     });
-    return () => { for (const control of controls.current.values()) control.send({ type: 'refresh' }); };
   }, [controls, navigation]);
   return <SafeAreaView edges={{ left: true, right: true, bottom: true }} style={{ backgroundColor: colors.background }}>
     <KeyboardAvoidingView enabled={keyboardVisible} style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>

@@ -1,5 +1,6 @@
 import { recordFailure } from './diagnostics';
 import { artifactInsetScript } from './layout';
+import { artifactPresented, artifactPresentationScript } from './artifact-presentation';
 import { useTheme } from './theme';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Linking, Platform, StyleSheet, View, Text, Pressable, ActivityIndicator } from 'react-native';
@@ -112,6 +113,11 @@ export function ArtifactView({ access, background, topInset, onRetry }: { access
       sharedCookiesEnabled thirdPartyCookiesEnabled={false} javaScriptCanOpenWindowsAutomatically={false} setSupportMultipleWindows
       contentInsetAdjustmentBehavior="never" automaticallyAdjustContentInsets={false}
       removeIosKeyboardObserver
+      injectedJavaScriptBeforeContentLoaded={artifactPresentationScript(topInset)}
+      injectedJavaScriptBeforeContentLoadedForMainFrameOnly
+      injectedJavaScript={artifactPresentationScript(topInset)}
+      injectedJavaScriptForMainFrameOnly
+      onMessage={(event) => { if (artifactPresented(event.nativeEvent.data, event.nativeEvent.url, access.canonicalUrl)) setLoading(false); }}
       onLoadStart={() => { setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); setLoading(false); }}
       onError={() => { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }}
       onHttpError={(event) => {

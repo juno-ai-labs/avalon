@@ -1,3 +1,5 @@
+// Compile the deferred UI before DOM waits; built-browser checks measure its loading.
+import '../../../../browser/src/mobile-conversation';
 import { uuidToBase58 } from '@rally/contracts/uuid-base58';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -308,5 +310,79 @@ it('prepares hosted pins through Home and opens fresh access without another bro
     await screen.findByRole('button', { name: 'View canvas' });
     act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_resource_versions', occurredAt: at, resources: [{ resourceId: site, version: 2, title: 'Groceries', mimeType: 'text/html', updatedAt: at, contentAvailable: true, sizeBytes: 42 }] }) })));
     await waitFor(() => expect(events.filter(({ event }) => event.type === 'prepared-canvas').at(-1)?.event.canvas).toMatchObject({ version: 2 }));
+  } finally { view.unmount(); }
+});
+
+it('keeps the current mobile chat, draft, and connections when closing and reopening it', async () => {
+  const canvas = { id: parent, title: 'Shopping', createdByUserId: user.id, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false };
+  let reads = 0;
+  fetchHandler = async (input) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
+    if (path.endsWith('/socket')) return Response.json({ url: `wss://api.rallywith.ai/socket/conversations/${parent}/0`, ticket: 'conversation-ticket' });
+    if (path.endsWith(`/canvases/${parent}`)) { reads++; return Response.json({ ...canvas, artifacts: [] }); }
+    return Response.json({ error: { message: 'Not in fixture' } }, { status: 404 });
+  };
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1#/canvases`);
+  const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+  const command = (detail: unknown) => act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail })));
+  try {
+    await waitFor(() => expect(workspaceSockets()).toHaveLength(1));
+    act(() => workspaceSockets()[0]!.open());
+    act(() => workspaceSockets()[0]!.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_canvas_list', occurredAt: at, waterline: 1, items: [{ ...canvas, artifactKind: null, unread: false, presentUserIds: [], pinnedPosition: null, sharedWithMe: true }] }) })));
+    const search = await screen.findByRole('textbox', { name: 'Find a canvas' });
+    fireEvent.change(search, { target: { value: 'Shopping' } });
+    command({ type: 'open-chat', id: parent });
+    await waitFor(() => expect(feedSockets()).toHaveLength(1));
+    act(() => feedSockets()[0]!.open());
+    const input = await screen.findByPlaceholderText('Ask Rally or the people here…');
+    fireEvent.change(input, { target: { value: 'Keep my grocery draft' } });
+    command({ type: 'close-chat' });
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Find a canvas' })).toHaveValue('Shopping'));
+    expect(input).not.toBeVisible();
+    command({ type: 'open-chat', id: parent });
+    await waitFor(() => expect(input).toBeVisible());
+    expect(screen.getByPlaceholderText('Ask Rally or the people here…')).toBe(input);
+    expect(input).toHaveValue('Keep my grocery draft');
+    expect(reads).toBe(1);
+    expect(workspaceSockets()).toHaveLength(1);
+    expect(feedSockets()).toHaveLength(1);
+    expect(feedSockets()[0]!.readyState).toBe(BrowserSocket.OPEN);
+  } finally { view.unmount(); }
+});
+
+it('refreshes only the published mobile canvas and ignores unrelated resource topics', async () => {
+  const site = '00000000-0000-7000-8000-0000000000a1';
+  const reads: string[] = [];
+  const canvas = (id: string) => ({ id, title: id === parent ? 'Shopping' : 'Trips', createdByUserId: user.id, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false });
+  const rows = [parent, child].map((id, index) => ({ ...canvas(id), artifactKind: 'site', unread: false, presentUserIds: [], pinnedPosition: index, sharedWithMe: true }));
+  fetchHandler = async (input) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
+    const id = [parent, child].find(id => path.endsWith(`/canvases/${id}`));
+    if (id) { reads.push(id); return Response.json({ ...canvas(id), artifacts: [{ resourceId: site, title: 'Site', kind: 'site', mimeType: 'text/html', version: 1, updatedAt: at }] }); }
+    return Response.json({ error: { message: 'Not in fixture' } }, { status: 404 });
+  };
+  vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'test-capability');
+  vi.stubGlobal('ReactNativeWebView', { postMessage: () => undefined });
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1#/canvases`);
+  const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+  try {
+    await waitFor(() => expect(workspaceSockets()).toHaveLength(1));
+    const socket = workspaceSockets()[0]!;
+    act(() => socket.open());
+    const push = (event: unknown) => act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) })));
+    push({ type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000122', occurredAt: at, waterline: 1, topics: [], reason: 'initial', sidebar: { automations: { waterline: 1, items: [] }, canvases: { waterline: 1, items: rows } } });
+    await waitFor(() => expect(reads).toHaveLength(2));
+    push({ type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000123', occurredAt: at, waterline: 2, topics: ['resources'], reason: 'change' });
+    await act(async () => { await Promise.resolve(); });
+    expect(reads).toHaveLength(2);
+    push({ type: 'workspace_canvas_list', occurredAt: at, waterline: 3, items: [{ ...rows[0], updatedAt: '2026-11-14T00:00:00.000Z' }, rows[1]] });
+    await waitFor(() => expect(reads).toEqual([parent, child, parent]));
+    // Reconnect still reconciles detail that might have changed while offline.
+    push({ type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000124', occurredAt: at, waterline: 4, topics: [], reason: 'resume', sidebar: { automations: { waterline: 4, items: [] }, canvases: { waterline: 4, items: [{ ...rows[0], updatedAt: '2026-11-14T00:00:00.000Z' }, rows[1]] } } });
+    await waitFor(() => expect(reads).toEqual([parent, child, parent, parent, child]));
   } finally { view.unmount(); }
 });

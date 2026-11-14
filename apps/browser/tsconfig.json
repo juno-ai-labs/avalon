@@ -25,6 +25,8 @@
     "src/mobile-sign-in.tsx",
     "src/shell.tsx",
     "src/site-open.tsx",
-    "src/source-decision.tsx"
+    "src/source-decision.tsx",
+    "src/mobile-canvas-detail.ts",
+    "src/mobile-conversation.tsx"
   ]
 }
