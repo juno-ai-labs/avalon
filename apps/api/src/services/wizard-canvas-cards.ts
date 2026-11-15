@@ -37,9 +37,10 @@ export function wizardTurnCanvasId(input: Pick<WorkstreamWorkflowInput, "sidekic
  * so a failed post is logged by name and never fails the tool that made it.
  */
 export async function postWizardCard(env: Env, input: WorkstreamWorkflowInput, canvasId: string, clientMessageId: string,
-  post: { text: string; card: Pick<AutomationActivationV1, "sourceRequests" | "question"> }): Promise<void> {
+  post: { text: string; card: Pick<AutomationActivationV1, "sourceRequests" | "question">; sidekickId?: string }): Promise<void> {
   const workspaceId = asWorkspaceId(input.workspaceId);
-  const sidekickId = input.parentId;
+  // The Sidekick the card is about: the wizard's own, unless it asked for another's sources.
+  const sidekickId = post.sidekickId ?? input.parentId;
   const failed = (code: string) => logWarn(env, "wizard_card_post_failed", { workspace_id: workspaceId, automation_id: sidekickId,
     workstream_id: canvasId, client_message_id: clientMessageId, code });
   try {
