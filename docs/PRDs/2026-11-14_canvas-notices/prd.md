@@ -266,6 +266,39 @@ has a device that can receive it.
 **Changes:** Supersedes decision 4's send-time resolution and its `default`
 queue marker. A person who wants both push and email for every notice gets
 the device-dependent one instead; nobody has asked for that.
+### 2026-11-15 — "No" in the plugin table means offered and refusing
+
+**Decided:** Every loop is offered both tools. Where the table says No, the
+tool is a refusing copy (`refusingTool`) with a named code and a route:
+`notifications_register_from_run` for a run and its delegation worker,
+`notifications_not_for_self_review` for the self-review, a wizard turn it
+claims, and its background agents.
+
+**Why:** Rule 14 of [`agent-tools.md`](../../agent-tools.md) merged while
+this was built: a tool is never withheld for who started a turn, so the
+model can tell "not mine to do" from "does not exist" and hand the work on.
+
+**Changes:** The Plugin contract's "Preloaded for the loops the table below
+offers a tool to" is every loop, and Acceptance 8 reads "refuses" for
+"is offered neither".
+
+### 2026-11-15 — The record is a host-written system message
+
+**Decided:** `register` lands the record through a new
+`AgentLoopDO.appendHostRecord`: a system message in the Chat whose
+structured content is `canvas_notices_record`, keyed on the tool call's
+receipt, and which does not wake the agent. Only the record matching the
+current sentence draws controls. Its device line is hidden where push cannot
+work at all (`unavailable`, `unconfigured`): there is nothing to fix there.
+
+**Why:** A conversation post is a Sidekick's, and a Canvas's Chat registering
+for itself has no Sidekick to post as. A host record also needs no model
+turn to land.
+
+**Changes:** Plan step 6's "conversation post" is this record. A local
+`POST /dev/canvas-notices` (development only) registers and sends without a
+model, to drive the screens.
+
 ### 2026-11-15 — Only Organization visibility admits a join
 
 **Decided:** `canvasJoin` lists only a member an Organization-wide Canvas
@@ -482,8 +515,9 @@ reads.
 - **Canonical id** `rally:notifications`, model id `rally_notifications`,
   wire prefix `notifications_`. The prefix stays because the local names are
   bare verbs ([`agent-tools.md`](../../agent-tools.md#the-shape-of-a-tool)).
-- **Preloaded** for the loops the table below offers a tool to. Loading reads
-  nothing and authorizes nothing; each call resolves the Canvas.
+- **Preloaded** for every loop; a No below is a tool that refuses by name
+  (decision log, 2026-11-15). Loading reads nothing and authorizes nothing;
+  each call resolves the Canvas.
 - **Which Canvas** is always the host's: the loop's own Canvas for a Canvas's
   Chat, the Sidekick's attached Canvas for a Sidekick's loops
   ([A Sidekick's Canvas](#a-sidekicks-canvas)).
@@ -633,5 +667,5 @@ rewrites rows.
    `notifications_sidekick_has_several_canvases` naming both, and nobody is
    notified. A Sidekick attached to none gets
    `notifications_sidekick_has_no_canvas`.
-8. A self-review starts a background agent. That agent is offered neither
-   notice tool; an agent a manager's wizard turn started is offered both.
+8. A self-review starts a background agent. Both notice tools refuse it
+   (`notifications_not_for_self_review`); an agent a manager's wizard turn started is offered both.
