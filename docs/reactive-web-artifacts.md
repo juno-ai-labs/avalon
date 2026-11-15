@@ -460,8 +460,11 @@ not offered the tool:
    person who can open the site's Canvas now. It is there to check a row write
    it saves before the first real run makes one; its guide says to use a row it
    can tell is a test and delete it after.
-4. **Nobody else**: not a background agent, a Chat under Organization
-   authority, or any other parent kind.
+4. **A background agent** writes as its root does: a Chat's agent under rule
+   1, a wizard's under rule 3, and a run's worker under rule 2 with its run's
+   id ([`agent-loop-types.md`](agent-loop-types.md#a-background-agent-acts-with-its-roots-authority)).
+5. **Nobody else**: not a Chat under Organization authority, or any other
+   parent kind.
 
 The read resolution runs first, then one WorkspaceDO call,
 `artifactDataWriteFacts`, in place of the read path's registry lookup. A site

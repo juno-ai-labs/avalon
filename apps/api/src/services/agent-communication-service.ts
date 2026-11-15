@@ -19,7 +19,7 @@ import { createAutomation } from "./automation-service";
 import { sidekickChangeRequestText } from "@rally/prompts/api/sidekick-change-request";
 import { renderAgentFailureNotice, renderAgentSilentCompletionNotice } from "@rally/prompts/api/agent-owner-notice";
 import { personManagesSidekick } from "./sidekick-run-continuation";
-import { isCanvasChat } from "../lib/canvas-chat";
+import { canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
 
 // The wire names this service asks about — a message, and the delegation that
 // also counts as handing work on — are in `@rally/contracts` beside the schemas
@@ -190,9 +190,10 @@ export class AgentCommunicationService {
    * found the agentId; this names the path so a run uses it.
    */
   async requestSidekickChange(changes: string, context: HarnessToolContext): Promise<AgentMessageResult> {
-    const run = this.input.automationRun;
-    if (!run) throw new AgentCommunicationError("sidekick_change_outside_run");
-    const wizard = agentIdForAddress({ parentKind: "automation", parentId: run.automationId, substreamId: asSubstreamId("0") });
+    // A run's worker asks for its run, which is whose change it is.
+    const run = loopAuthority(this.input);
+    if (run?.kind !== "sidekick_run") throw new AgentCommunicationError("sidekick_change_outside_run");
+    const wizard = agentIdForAddress({ parentKind: "automation", parentId: run.sidekickId, substreamId: asSubstreamId("0") });
     const sent = await this.send({ agentId: wizard, attachmentIds: [],
       message: sidekickChangeRequestText(run.runId, this.input.automationContinuation, changes) }, context);
     return { ...sent, next: `Sent to this Sidekick's wizard. Its reply will arrive here as a message, ${REPLY_ARRIVES}. The change is not saved until the wizard confirms the revision was accepted.` };
@@ -408,11 +409,12 @@ export class AgentCommunicationService {
   }
 
   /**
-   * The Canvas this loop is the Chat of, or null for any other loop: a
-   * background agent works for a conversation and is not its Chat.
+   * The Canvas this loop acts for as its Chat, or null: the Chat itself and
+   * any agent it started (`loopAuthority`), so a Sidekick that agent creates is
+   * the Canvas's, as it would be had the Chat created it.
    */
   private canvasChatId(): string | null {
-    return isCanvasChat(this.input) ? this.input.parentId : null;
+    return canvasChatAuthority(this.input);
   }
 
   /**
