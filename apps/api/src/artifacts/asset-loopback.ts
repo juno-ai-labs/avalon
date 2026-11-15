@@ -26,6 +26,7 @@ import { artifactAssetKey } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { resolveAssetPath } from "./serving-policy";
+import { storedObjectResponse } from "./stored-object-response";
 
 export interface ArtifactAssetLoopbackProps {
   artifactId: string;
@@ -42,11 +43,10 @@ export class ArtifactAssetLoopback extends WorkerEntrypoint<Env, ArtifactAssetLo
     if (!resolved) return new Response("Not found", { status: 404 });
     const asset = assets.find((entry) => entry.path === resolved);
     if (!asset) return new Response("Not found", { status: 404 });
-    const object = await this.env.PAYLOADS.get(artifactAssetKey(artifactId, version, resolved));
-    if (!object) return new Response("Temporarily unavailable", { status: 503 });
-    return new Response(object.body, {
-      status: 200,
-      headers: { "content-type": asset.contentType },
-    });
+    // The site's code passes its visitor's request on, so a player's range
+    // reaches the stored file through it as it does through a static site.
+    const served = await storedObjectResponse(this.env.PAYLOADS, artifactAssetKey(artifactId, version, resolved), request,
+      { "content-type": asset.contentType });
+    return served.found ? served.response : new Response("Temporarily unavailable", { status: 503 });
   }
 }

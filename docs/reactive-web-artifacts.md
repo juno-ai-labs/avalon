@@ -37,6 +37,7 @@ exists.
 | `apps/api/src/services/artifact-site-resolution.ts` | The hostname-to-organization lookup behind `/browser/sites/resolve`, for signing in from a site's link. |
 | `apps/api/src/artifacts/facet-host.ts` | The Rally-authored module source loaded into a stateful artifact's facet beside the model's own. |
 | `apps/api/src/artifacts/asset-loopback.ts` | `ArtifactAssetLoopback`: the `ASSETS` binding, as an exported entrypoint. The file-reading capability that crosses into an artifact's isolate. |
+| `apps/api/src/artifacts/stored-object-response.ts` | `storedObjectResponse`: every stored byte Rally serves (a published file, a static asset, an `ASSETS` read), with one byte range honoured. |
 | `apps/api/src/artifacts/sidekick-dispatch.ts`, `sidekick-forwarder.ts`, `sidekick-input.ts` | App-scoped Sidekick invocation: the facet loopback, the serving Worker's narrow API service bridge, and the common input parser. |
 | `apps/api/src/durable-objects/artifact-sidekick-bindings.ts` | Resolving accepted named bindings and checking the attached, open Canvas. |
 | `apps/api/src/artifacts/asset-shim.ts` | The two module sources that run inside the isolate: the wrapper that makes `fetch(string)` true, and the entry Rally puts in front of a stateless active site's own module. |
@@ -289,6 +290,16 @@ Then `/__rally/*` paths are Rally's own (the access bootstrap, the redeem
 endpoint, prior-version mounts) and everything else is artifact content: assets
 resolved against the manifest for a static site, the loader for a stateless
 active one, or the facet for a stateful one.
+
+Stored bytes (a published file, a static asset, and an asset a site's code
+reads through `env.ASSETS`) are served by `storedObjectResponse`, after
+admission. Each response carries `Accept-Ranges: bytes`, its `Content-Length`
+and the object's `ETag`. A `GET` with one range (`bytes=a-b`, `bytes=a-`,
+`bytes=-n`) gets `206` with `Content-Range`; a range past the end gets `416`;
+a request for several ranges, or an `If-Range` naming another version, gets
+the whole object with `200`. A `HEAD` reads only the object's metadata. HTML
+that Rally rewrites (the social tags, the annotation script, a prior
+version's base) is a new body each time and is always sent whole.
 
 For successful current-version HTML, the Worker adds the manifest's normalized
 canonical, description, Open Graph, and Twitter/X tags after authored tags, so
@@ -946,6 +957,32 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-15 — Stored files and assets answer byte ranges
+
+**What changed:** Published files, static assets and `env.ASSETS` reads go
+through one helper that honours a single byte range (`206`, `416`), and sends
+`Accept-Ranges`, `Content-Length` and `ETag` on every response. A `HEAD` reads
+metadata only. The site content-type table gained `rss`, `atom`, `ics` and
+`m4a`.
+
+**Why:** A podcast feed's audio could not be seeked: every response was the
+whole object with `200`, so a player could not skip ahead until an episode had
+downloaded, and Apple's podcast directory refuses media that does not answer
+ranges. Assets also sent no length. A `HEAD` read the whole object to throw it
+away.
+
+**Considered and rejected:** Multipart responses for several ranges, which no
+player needs; RFC 9110 lets the whole object answer instead. Handing the
+`Range` header straight to R2, which leaves a range past the end to R2's own
+error rather than a `416`; a ranged request reads metadata first instead, one
+extra read only when a range is asked for. Relaxing `private, no-store` for
+public reads, which is a separate decision: a shared cache cannot tell an
+anonymous response from a personalized one.
+
+**Consequences:** A new path that serves stored bytes uses
+`storedObjectResponse` rather than `PAYLOADS.get`, or it loses ranges again.
+Each stored key is one immutable version, so a range never splices versions.
 
 ### 2026-11-15 — Viewer sessions last a year from the last open
 

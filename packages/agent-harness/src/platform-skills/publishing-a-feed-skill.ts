@@ -95,7 +95,8 @@ format.
 
 8. **Check it as an app would.** From Terminal, request the feed URL with no
    cookies and confirm a 200 and the format's content type; for media, a
-   \`HEAD\` on one file's URL. A new file can take a few seconds to serve
+   \`HEAD\` on one file's URL, which should report \`accept-ranges: bytes\`
+   and the file's length. A new file can take a few seconds to serve
    after it is published. If Terminal cannot reach the URL, say you could not
    check it rather than reporting that it works.
 
@@ -108,13 +109,8 @@ format.
 
 ## What Rally does not do yet
 
-Say these when they matter; do not build around them.
+Say this when it matters; do not build around it.
 
-- **No seeking within media.** Rally sends a whole file and does not answer
-  byte-range requests, so some podcast apps cannot skip ahead until an
-  episode has downloaded. Apple's podcast directory requires byte ranges:
-  treat a podcast feed as a link to subscribe to, never a show to submit to
-  a directory.
 - **No caching.** Every refresh by every app reaches the site.
 
 ## Anti-patterns
