@@ -6267,9 +6267,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 .tool-summary strong {
   color: var(--av-ref-color-neutral-10);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 18px;
 }
 
 .tool-summary strong::before {
@@ -6279,9 +6276,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 .plugin-activity .tool-summary strong {
   color: var(--av-ref-color-neutral-11);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 18px;
 }
 
 .plugin-activity .tool-summary strong::before {
