@@ -682,7 +682,6 @@ function isUnprovisioned(manifest) {
 export async function deployLakehouseBindings(options = {}) {
   const environment = options.environment ?? process.env;
   const log = options.log ?? console.log;
-  const reconcile = options.reconcile ?? ensureCloudflareLakehouses;
   const fingerprint = accountFingerprint(required('CLOUDFLARE_ACCOUNT_ID', environment));
   const manifests = options.manifests ?? await Promise.all([
     loadInferenceLakehouseManifest(),
@@ -731,7 +730,7 @@ export async function deployLakehouseBindings(options = {}) {
     reconciled = manifests;
     kept = [];
   }
-  const { provisioned } = await reconcile({ ...options, manifests: reconciled, create: true, adoptStreamIds: true });
+  const { provisioned } = await ensureCloudflareLakehouses({ ...options, manifests: reconciled, create: true, adoptStreamIds: true });
   const adopted = provisioned.map(({ manifest }) => ({ ...manifest, pinnedAccount: fingerprint }));
   if (options.writeManifests !== false) {
     for (const manifest of adopted) {
