@@ -434,6 +434,34 @@ describe('shared Queue indexing pipeline', () => {
       .includes(JSON.stringify(['generation', 'Eq', job.generation])))).toBe(true);
   });
 
+  it('backs off before redelivering a source that changed while it was being indexed', async () => {
+    const workspace = await seedResource();
+    // The resource moves to a new body while its embedding jobs fan out, so the
+    // post-publication freshness check finds the source changed underneath it.
+    publish.mockImplementation(async () => {
+      await env.PAYLOADS.put('pipeline/body-2', 'changed during indexing');
+      await runInDurableObject(workspace, (_instance, state) => {
+        state.storage.sql.exec("UPDATE resources SET content_ref = 'pipeline/body-2' WHERE id = ?", resourceId);
+      });
+      return { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
+    });
+    // The test pool's queue result records which messages retried, not their
+    // delay, so each delivery here is a message whose retry options are observed.
+    const deliver = async (attempts: number) => {
+      const message = { id: `attempt-${attempts}`, timestamp: new Date(), body: resourceMessage(), attempts,
+        ack: vi.fn(), retry: vi.fn() };
+      await consumeActivityQueue({ queue: 'avalon-do-runtime-test-activity', messages: [message],
+        metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } }, ackAll: vi.fn(), retryAll: vi.fn() }, pipelineEnv);
+      expect(message.ack).not.toHaveBeenCalled();
+      return message.retry.mock.calls;
+    };
+    expect(await deliver(1)).toEqual([[{ delaySeconds: 5 }]]);
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET content_ref = 'pipeline/body' WHERE id = ?", resourceId);
+    });
+    expect(await deliver(4)).toEqual([[{ delaySeconds: 40 }]]);
+  });
+
   it('retries only a failed child and preserves completed chunks out of order', async () => {
     await seedResource();
     await env.PAYLOADS.put('pipeline/body', documentBody.repeat(40));

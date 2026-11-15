@@ -9,6 +9,7 @@ import {
   type InteractiveQueueMessage,
 } from "../services/interactive-queue";
 import { SlackAgentService } from "../services/slack-agent-service";
+import { queueRetryDelaySeconds } from "./retry-backoff";
 
 /**
  * What one kind of interactive work does. `run` does the work and throws to
@@ -110,7 +111,7 @@ export function interactiveFailureReason(kind: InteractiveKind, error: unknown):
  * Slack ingress, whose retry this was.
  */
 function interactiveRetryDelaySeconds(attempts: number, error: unknown): number {
-  const exponential = Math.min(300, 5 * 2 ** Math.min(Math.max(1, attempts) - 1, 6));
+  const exponential = queueRetryDelaySeconds(attempts);
   const provider = Math.ceil((connectorRetryAfterMs(error) ?? 0) / 1_000);
   return Math.min(43_200, Math.max(exponential, provider));
 }
