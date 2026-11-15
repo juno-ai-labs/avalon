@@ -153,76 +153,43 @@ stateful artifact runs. See [`reactive-web-artifacts.md`](reactive-web-artifacts
 
 ### Tool-call audit log
 
-Every `tools/call` that reaches a tool handler is recorded as rows in the
-`avalon.engineering_mcp_audit` Iceberg table, sent through the
-`ENGINEERING_AUDIT_LAKEHOUSE` Pipeline binding and queryable with
-`query_data_lake` (`lakehouse: "engineering_mcp_audit"`). The table is a fourth
-Global lakehouse, declared like the others in
-`config/engineering-mcp-audit-lakehouse.json` and its stream schema, but its
-binding belongs to this Worker rather than the API Worker.
+Every `tools/call` that reaches a tool handler is recorded in the
+`avalon.engineering_mcp_audit` lakehouse table, sent through this Worker's
+`ENGINEERING_AUDIT_LAKEHOUSE` Pipeline binding and read with `query_data_lake`.
+`config/engineering-mcp-audit-lakehouse-stream-schema.json` holds its columns.
 `createEngineeringMcpServer` replaces `server.registerTool` before any tool is
 registered, so a tool added later is audited without opting in.
 
-Each event is one row:
-
-| `event` | Sent | Columns it fills |
+| `event` | Sent | Carries |
 | --- | --- | --- |
-| `tool_call_started` | Before the handler runs, awaited | `call_id`, `tool`, the validated `arguments` (JSON) |
-| `tool_call_finished` | After the handler returns, in `waitUntil` | `call_id`, `outcome` (`succeeded`, `failed`, `task_created`), `error_code` when failed, `task_id` when a task was created, `duration_ms` |
-| `task_finished` | When `EngineeringTaskDO` finishes or cancels a task | `task_id`, `outcome` (`succeeded`, `failed`, `cancelled`), `error_code` when failed |
+| `tool_call_started` | Before the handler runs, awaited | `call_id`, the validated `arguments` |
+| `tool_call_finished` | After the handler returns, in `waitUntil` | `call_id`, `outcome`, `error_code`, `task_id`, `duration_ms` |
+| `task_finished` | When `EngineeringTaskDO` finishes or cancels a task | `task_id`, `outcome`, `error_code` |
 
-Every row also has `schema_version`, `event_id`, `occurred_at`, the Access
-actor (`actor_subject`, `actor_email`, `actor_audience`) and `worker_version`.
-Pair a call's rows by `call_id`, and a deferred call's execution by `task_id`.
-`error_code` is the code `engineering_mcp_tool_failed` logs (`toolErrorCode`).
-Rows take about five minutes to become queryable, as in every lakehouse here.
-Pipeline delivery to the table is exactly-once, but a send the Worker retried
-would be a second row, so count distinct `event_id`.
+Pair a call's rows by `call_id` and a deferred call's execution by `task_id`;
+count distinct `event_id`, since a retried send is a second row.
 
-**A call whose started row the stream does not accept does not run.**
-`send()` resolves only once the stream confirms ingestion, and a stream is
-durable from then on, so a running tool always has a row on its way to the
-table. A refused send returns `engineering_audit_unavailable` (with the
-platform's code when it gave one); a Worker with no binding returns
-`engineering_audit_unconfigured`. Both log
-`engineering_mcp_audit_write_failed`. The finished and task rows follow an
-effect that has already happened, so a failed send there is only logged.
+**A call whose started row the stream does not accept does not run.** It
+fails as `engineering_audit_unavailable`, with the platform's code when it
+gave one (`pipeline_message_too_large` for a row over the binding's 1 MB
+limit), or as `engineering_audit_unconfigured` when the Worker has no
+binding. The finished and task rows follow an effect that already happened,
+so a failed send there is only logged as `engineering_mcp_audit_write_failed`.
 
 Recorded: the arguments as the SDK validated them, which include SQL text and
 bindings, Basin queries and message bodies sent with `send_message`. Not
 recorded: results, and calls the SDK rejects before a handler runs (an unknown
-tool or arguments that fail the input schema), since those execute nothing.
-`tasks/get`, `tasks/update` and `tasks/cancel` are not tool calls; a
-cancellation appears as a `cancelled` `task_finished` row. Querying the audit
-table through `query_data_lake` is itself a recorded call.
+tool or arguments that fail the input schema). `tasks/*` methods are not tool
+calls; a cancellation appears as a `cancelled` `task_finished` row.
 
-**A row over 1 MB is refused before it is sent.** The Pipeline binding
-refuses any single record above 1 MB (`CF_PIPELINE_MESSAGE_TOO_LARGE`), so a
-call whose arguments make its started row larger than that fails as
-`engineering_audit_row_too_large`, and the log names `row_bytes`. The figure is
-Cloudflare's, not ours. A call that size is a multi-megabyte SQL batch or
-message body; split it, or run it outside this MCP.
-
-**Provisioning.** The manifest lands with the all-zero stream ID and no
-`pinnedAccount`. The API deploy's `--deploy-bindings` step treats that as a new
-lakehouse: it creates the stream, bucket, catalog, sink and pipeline in the
-deploy account and writes the adopted stream ID into the checkout's manifest,
-without touching the pinned lakehouses
-([`inference-lakehouse.md`](inference-lakehouse.md#deployment-bindings-and-explicit-reconciliation)).
-It leaves this manifest out of the API Worker's regional configs, since the
-binding is not the API Worker's. The engineering MCP deploys later in the same
-job, so `apps/engineering-mcp/scripts/deploy.mjs` reads the adopted ID and
-binds it. Commit that ID and the account marker to take the step off the
-Pipelines control plane. A deploy run outside that job, with the manifest
-still unprovisioned, binds nothing, warns, and every tool refuses as
-`engineering_audit_unconfigured`. `BASIN_SQL_API_TOKEN` must also be widened to
-the new bucket before `query_data_lake` can read the table.
-
-The table has no retention or compaction policy of its own, so rows are kept
-until someone deletes them. Retention is the team's to set
+The API deploy provisions the table
+([`inference-lakehouse.md`](inference-lakehouse.md#deployment-bindings-and-explicit-reconciliation)),
+and `apps/engineering-mcp/scripts/deploy.mjs`, later in the same job, binds
+the stream ID it adopted. A deploy run outside that job while the manifest is
+still unprovisioned binds nothing, and every tool refuses as
+`engineering_audit_unconfigured`. Retention is unset, so rows are kept until
+someone deletes them; the period is the team's to choose
 ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
-This log is separate from the content-free attempt and result rows that
-product writes keep in `AUDIT_DB` (see [Product creation](#product-creation)).
 
 ### Deferred engineering tasks
 
@@ -567,7 +534,7 @@ names the view only; filter values and the needle can quote product data.
   logs. Audit events contain Access subject/email, tool name, target IDs, and a
   fixed outcome code only. SQL text and bindings, and every other argument, do
   enter the tool-call audit table; returned rows never do.
-- No tool runs without a `tool_call_started` record in R2.
+- No tool runs without a `tool_call_started` row accepted by the audit lakehouse's stream.
 - The private regional entrypoint has no HTTP route. Only a Worker with the
   named Service Binding can call it.
 - **A per-object-kind id on the SQL result is optional and omitted, never a
@@ -846,9 +813,8 @@ row before it runs, and its outcome after.
 
 The rows go through a Pipeline into an Iceberg table rather than into plain R2
 objects, so the log answers questions ("every `run_d1_sql` by this operator
-last week") with one `query_data_lake` statement instead of a bucket listing.
-The first version of this change wrote one R2 object per event, which nothing
-could query. Workers Analytics Engine was rejected because it samples writes,
+last week") with one `query_data_lake` statement instead of a bucket listing,
+which plain objects cannot. Workers Analytics Engine was rejected because it samples writes,
 and an audit log cannot drop rows. D1 was rejected because rows can be large
 (a statement or a message body) and keeping them out of `AUDIT_DB` keeps that
 database content-free.
@@ -858,10 +824,10 @@ task-creating call returns before `tool` runs and a future tool may not use the
 helper. The started send is awaited and fails the call closed, at the cost of
 one Pipeline ingest of latency per call; this holds because `send()` resolves
 only after the stream confirms ingestion. The finished send uses `waitUntil`
-so it adds none. A row over the Pipeline's 1 MB record limit is refused by
-name rather than spilled to R2 the way the inference lakehouse does, because a
-call that large is rare and an audit row that omits its arguments would
-defeat the log. The binding is the MCP Worker's own, so the API deploy
+so it adds none. A row over the Pipeline's 1 MB record limit is refused
+rather than spilled to R2 the way the inference lakehouse does: a call that
+large is rare, and an audit row that omits its arguments would defeat the
+log. The binding is the MCP Worker's own, so the API deploy
 provisions it with `--deploy-bindings` but leaves it out of the API Worker's
 configs. Retention is left open for the team to set.
 

@@ -12,7 +12,7 @@ import { configuredRegions } from "./regions.mjs";
  */
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isEntryPoint } from './entry-point.mjs';
@@ -732,6 +732,12 @@ export async function deployLakehouseBindings(options = {}) {
   }
   const { provisioned } = await ensureCloudflareLakehouses({ ...options, manifests: reconciled, create: true, adoptStreamIds: true });
   const adopted = provisioned.map(({ manifest }) => ({ ...manifest, pinnedAccount: fingerprint }));
+  // Both values must be committed together: a stream ID without the marker
+  // sends the next deploy down the fork path, which fails the stale-marker check.
+  for (const manifest of adopted) {
+    const streamIds = LAKEHOUSE_REGIONS.map((regionName) => `regions.${regionName}.streamId = "${manifest.regions[regionName].streamId}"`);
+    log(`To pin ${manifest.binding}, commit in ${relative(repositoryDirectory, manifestPaths[manifest.binding])}: ${streamIds.join(', ')}, pinnedAccount = "${fingerprint}"`);
+  }
   if (options.writeManifests !== false) {
     for (const manifest of adopted) {
       const path = manifestPaths[manifest.binding];
