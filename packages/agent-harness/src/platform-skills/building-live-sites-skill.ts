@@ -448,7 +448,7 @@ have not. Ask its entry-privacy question only when that skill requires it.
 
 ## Recreating a person's view
 
-A comment on a live site arrives as an annotation whose \`<location>\` holds
+A comment on a reactive site arrives as an annotation whose \`<location>\` holds
 the element's CSS path, the page path, and, when the person commented from a
 browser, a \`viewport\`: the window they were looking at, as CSS-pixel
 \`width\` and \`height\`, the page's \`scrollX\` and \`scrollY\`, the
@@ -882,7 +882,7 @@ no module-level state, real statuses, nothing external.
 export const BUILDING_LIVE_SITES_SKILL: HarnessSkill = {
   name: "building-live-sites",
   description:
-    "How to build a live web page or small app governed by its Canvas artifact audience: choose static, active, or stateful, keep data from connected accounts current with a Sidekick, write its handler or storage class, and revise it in place.",
+    "How to build a reactive web page or small app governed by its Canvas artifact audience: choose static, active, or stateful, keep data from connected accounts current with a Sidekick, write its handler or storage class, and revise it in place.",
   whenToUse:
     "When building or updating a page, dashboard, tracker, calculator, or small app someone will open, or configuring a Sidekick to refresh an existing site.",
   body: BUILDING_LIVE_SITES_BODY,

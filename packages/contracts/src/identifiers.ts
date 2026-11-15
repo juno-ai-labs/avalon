@@ -12,7 +12,7 @@ export type UserId = z.infer<typeof UserIdSchema>;
 export const SubstreamIdSchema = z.union([z.literal("0"), IdSchema]).brand<"SubstreamId">();
 export type SubstreamId = z.infer<typeof SubstreamIdSchema>;
 /**
- * A live web artifact's id.
+ * A reactive web artifact's id.
  *
  * Branded like the rest, and for the sharpest form of the reason the others
  * are: this id is the artifact's hostname label *and* the segment its

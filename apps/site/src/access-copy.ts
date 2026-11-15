@@ -4,7 +4,7 @@ export const accessCopy = {
   /** The hero headline, in two parts: the claim, then its italic turn. Both home pages use them. */
   headline: 'Docs that update',
   headlineTurn: 'as work happens.',
-  description: 'Rally makes documents, spreadsheets, dashboards and sites that keep themselves current. When something happens in Linear, Slack, Gmail or your other tools, Rally publishes a new version. Share a Canvas, and your whole team works from the same live page.',
+  description: 'Rally makes documents, spreadsheets, dashboards and sites that keep themselves current. When something happens in Linear, Slack, Gmail or your other tools, Rally publishes a new version. Share a Canvas, and your whole team works from the same reactive page.',
 };
 
 export function renderAccessCopy(html: string): string {

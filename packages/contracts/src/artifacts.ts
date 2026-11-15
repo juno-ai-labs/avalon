@@ -2,9 +2,9 @@ import { regions, regionConfiguration } from "./regions";
 import type { Region } from "@rally/contracts/regions";
 import { RegionSchema } from "@rally/contracts/regions";
 /**
- * Live web artifacts: the shapes both sides of the artifact boundary agree on.
+ * Reactive web artifacts: the shapes both sides of the artifact boundary agree on.
  *
- * A live artifact is a directory a run published — a page, a dashboard, a poll —
+ * A reactive artifact is a directory a run published — a page, a dashboard, a poll —
  * that Rally serves from an isolated per-artifact origin. Three parties read
  * what is here and none may import another: `apps/api` writes the manifest at
  * publish, the serving Worker reads it on every request, and the desktop
@@ -12,7 +12,7 @@ import { RegionSchema } from "@rally/contracts/regions";
  * MIME type that identifies it, and the hostname derivation live in contracts,
  * parsed on both sides rather than trusted across.
  *
- * See `docs/live-web-artifacts.md` for the subsystem and
+ * See `docs/reactive-web-artifacts.md` for the subsystem and
  * `docs/PRDs/2026-08-29_live-web-artifacts/prd.md` for why it is shaped this
  * way.
  */

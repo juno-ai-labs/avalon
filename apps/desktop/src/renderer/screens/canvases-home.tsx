@@ -19,17 +19,17 @@ import { useCollaborationSession, useShellCapabilities } from '../lib/collaborat
 import { useDocumentTitle } from '../lib/document-title';
 import { formatSidebarActivityTime } from '../lib/format';
 
-type CanvasFilter = 'all' | 'live' | 'data' | 'mine' | 'shared';
+type CanvasFilter = 'all' | 'reactive' | 'data' | 'mine' | 'shared';
 
 const FILTERS: ReadonlyArray<readonly [CanvasFilter, string]> = [
   ['all', 'All'],
-  ['live', 'Live'],
+  ['reactive', 'Reactive'],
   ['data', 'Data backed'],
   ['mine', 'Made by me'],
   ['shared', 'Shared with me'],
 ];
 
-function isLiveUpdating(canvas: CanvasSidebarRow): boolean {
+function isReactive(canvas: CanvasSidebarRow): boolean {
   return canvas.sidekicks?.some((sidekick) => sidekick.status === 'active'
     && sidekick.triggerKinds?.some((kind) => kind === 'schedule' || kind === 'external_event')) ?? false;
 }
@@ -37,7 +37,7 @@ function isLiveUpdating(canvas: CanvasSidebarRow): boolean {
 function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserId: string | undefined): boolean {
   switch (filter) {
     case 'all': return true;
-    case 'live': return isLiveUpdating(row);
+    case 'reactive': return isReactive(row);
     case 'data': return row.hasStoredData === true;
     case 'mine': return row.createdByUserId === currentUserId;
     case 'shared': return row.sharedWithMe;
@@ -74,14 +74,14 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     });
     // A server older than attaching sends none.
     const attachedSidekicks = canvas.sidekicks ?? [];
-    const liveUpdating = isLiveUpdating(canvas);
+    const reactive = isReactive(canvas);
     const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.appearance);
     return <li className="dashboard-card" key={canvas.id}>
       <div aria-hidden="true" className="dashboard-card-preview" style={{ background: tint }}>
         <Icon aria-hidden="true" color={ink} size={44} />
         {present.length > 0 && <span className="canvas-card-presence"><AvatarStack currentUserId={currentUserId} members={present} nameTooltip={false} presentUserIds={canvas.presentUserIds} showTooltip={false} /></span>}
         <span className="canvas-card-indicators">
-          {liveUpdating && <span className="canvas-card-badge" id={`canvas-live-${canvas.id}`}><IconBolt aria-hidden="true" size={16} stroke={1.9} />Live updating</span>}
+          {reactive && <span className="canvas-card-badge" id={`canvas-reactive-${canvas.id}`}><IconBolt aria-hidden="true" size={16} stroke={1.9} />Reactive</span>}
           {canvas.hasStoredData && <span className="canvas-card-badge" id={`canvas-data-${canvas.id}`}><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data backed</span>}
           {attachedSidekicks.length > 0 && <Link className="canvas-card-badge canvas-card-sidekicks" tabIndex={-1} to={canvasRoute(canvas.id)}>
             <IconHexagon aria-hidden="true" size={16} stroke={1.9} />
@@ -90,7 +90,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
         </span>
       </div>
       <div className="canvas-card-body">
-        <h3><Link aria-describedby={[liveUpdating ? `canvas-live-${canvas.id}` : null, canvas.hasStoredData ? `canvas-data-${canvas.id}` : null,
+        <h3><Link aria-describedby={[reactive ? `canvas-reactive-${canvas.id}` : null, canvas.hasStoredData ? `canvas-data-${canvas.id}` : null,
           attachedSidekicks.length > 0 ? `canvas-sidekicks-${canvas.id}` : null].filter(Boolean).join(' ') || undefined} className="dashboard-card-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
         <small><CanvasSharingStatus canvas={canvas} currentUserId={currentUserId} /><RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
       </div>
@@ -111,7 +111,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       </div>
       <div className="sidekicks-library-actions window-no-drag">{newCanvas}</div>
     </header> : <header className="sidekicks-library-heading canvases-home-heading window-drag">
-      <div className="canvases-home-title is-collapsible"><h1>Canvases</h1><p>Live pages your team and Rally build together.</p></div>
+      <div className="canvases-home-title is-collapsible"><h1>Canvases</h1><p>Reactive pages your team and Rally build together.</p></div>
       <div className="sidekicks-library-actions window-no-drag">
         {!guest && <Button className="button-secondary" onClick={() => setMarketplaceOpen(true)}><Store aria-hidden="true" size={16} />Marketplace</Button>}
         {newCanvas}

@@ -115,7 +115,7 @@ export interface TerminalPublishedArchiveOutput
 }
 
 /**
- * A directory that published as a live site.
+ * A directory that published as a reactive site.
  *
  * `sizeBytes` and `sourceSha256` from the file shape are deliberately renamed
  * here rather than reused: `totalBytes` is the tree's total and

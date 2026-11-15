@@ -686,7 +686,7 @@ run it already made. The object must hold an accepted revision
 **App invocations** use normal unattended principal selection, occurrence
 admission and tool policy. Their trigger records app ID, serving version, binding
 name and operation ID; their opening carries the input and resource ID. See
-[the app runtime](live-web-artifacts.md#calling-dedicated-sidekicks) for binding
+[the app runtime](reactive-web-artifacts.md#calling-dedicated-sidekicks) for binding
 ownership, lifecycle, input admission and the asynchronous response.
 
 **Connector events** follow one regional path. The regional activity Queue
@@ -1695,7 +1695,7 @@ Sidekick's runs:
   (`terminal:<canvasId>:<path>`), so publishing a path the Chat published is a
   new version of that artifact;
 - write rows into a stateful artifact the Canvas holds, with
-  `write_artifact_data` ([`live-web-artifacts.md`](live-web-artifacts.md#writing-rows-from-a-run)).
+  `write_artifact_data` ([`reactive-web-artifacts.md`](reactive-web-artifacts.md#writing-rows-from-a-run)).
 
 Three things write a row, and nothing removes one:
 

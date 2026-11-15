@@ -147,7 +147,7 @@ describe("kind transitions across republishes of one path", () => {
     expect(() => assertKindTransitionAllowed("archive", "site")).not.toThrow();
   });
 
-  it("refuses to turn a live site back into an archive", () => {
+  it("refuses to turn a reactive site back into an archive", () => {
     // A URL participants hold is never killed by an accident of file layout.
     const error = refusal(() => assertKindTransitionAllowed("site", "archive"));
     expect(error.code).toBe("site_entry_removed");

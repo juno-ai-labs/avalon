@@ -161,7 +161,7 @@ beforeEach(async () => {
     .initializeWorkspace(OTHER_WORKSPACE_ID, "wnam");
 });
 
-describe("engineering inspection of a live web artifact's supervisor", () => {
+describe("engineering inspection of a reactive web artifact's supervisor", () => {
   it("lists a registered artifact and runs SQL against the supervisor it names", async () => {
     await publishArtifact();
     const inspection = bridge();

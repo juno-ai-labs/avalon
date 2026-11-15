@@ -105,7 +105,7 @@ async function refusal(run: () => Promise<unknown>): Promise<ApiError> {
   throw new Error("expected an ApiError");
 }
 
-describe("minting access to a live artifact", () => {
+describe("minting access to a reactive artifact", () => {
   it('returns a shareable address without creating a viewer session or reading a profile',async()=>{
     const {service,openForViewer,readProfile}=fixture();
     expect(await service.link(RESOURCE)).toEqual({artifactId:ARTIFACT,canonicalUrl:`https://${HOSTNAME_STUB}-g.rallyusercontent.test`});

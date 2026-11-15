@@ -1733,7 +1733,7 @@ export class RallyApi {
   }
 
   /**
-   * Mint this person's access to a live artifact.
+   * Mint this person's access to a reactive artifact.
    *
    * A POST because it creates a single-use code, and a GET would be
    * prefetchable and cacheable — both wrong for a credential. The `openUrl` it

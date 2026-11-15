@@ -15,7 +15,7 @@ import { CopyButton, CopyStatus, copyStateLabel } from './copy-button';
 import { EmptyState, InsetSurface, SegmentedControl } from './primitives';
 
 /**
- * The rail's detail for a **live artifact**: a published site Rally serves.
+ * The rail's detail for a **reactive artifact**: a published site Rally serves.
  *
  * It is the one resource detail whose body is not something the renderer drew.
  * The preview is an Electron view the *main process* composites over the
@@ -27,7 +27,7 @@ import { EmptyState, InsetSurface, SegmentedControl } from './primitives';
  * and get out of the way. Everything below the pane — the actions, the data,
  * the error log — is ordinary Rally UI reading ordinary authorized routes.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 
 export interface SiteArtifactAccess {
@@ -98,7 +98,7 @@ export interface SiteResourceDetailProps {
  * navigation, popups or downloads. The artifact host is a different
  * registrable domain and allows exactly the browser origin to frame it, so
  * `allow-same-origin` means the artifact's origin, never the app's. Widening
- * this is a security change: see `docs/live-web-artifacts.md`.
+ * this is a security change: see `docs/reactive-web-artifacts.md`.
  */
 const ARTIFACT_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
