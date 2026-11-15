@@ -153,9 +153,9 @@ function dismissedCanvases(): string[] {
 export function CanvasNoticesJoinToast({ canvas }: { canvas: CanvasDetail | undefined }): React.JSX.Element | null {
   const actions = useCanvasNoticeActions(canvas?.id ?? '');
   const [dismissed, setDismissed] = useState(() => dismissedCanvases());
-  if (!canvas) return null;
-  const open = canvas.visibility === 'workspace' && canvas.notices !== null && canvas.notices !== undefined
-    && !canvas.notices.participant && !dismissed.includes(canvas.id);
+  // Mounted only on a Canvas that can offer it, so no other Canvas carries its live region.
+  if (!canvas || canvas.visibility !== 'workspace' || !canvas.notices || canvas.notices.participant) return null;
+  const open = !dismissed.includes(canvas.id);
   const dismiss = () => {
     const next = [...new Set([...dismissedCanvases(), canvas.id])];
     try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(next)); } catch { /* the toast stays hidden for this view */ }
