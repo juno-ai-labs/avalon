@@ -192,6 +192,11 @@ export class CanvasService {
     return (await this.workspace()).canvasSetAudience({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), update });
   }
 
+  /** Join a Canvas this person may open, so its notices reach them; see `HostedCanvas.join`. */
+  async join(canvasId: string): Promise<CanvasDetail> {
+    return (await this.workspace()).canvasJoin({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });
+  }
+
   /** Whether this member may ask to open a Canvas they cannot; see `HostedCanvas.access`. */
   async access(canvasId: string): Promise<CanvasAccess> {
     return (await this.workspace()).canvasAccess({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });

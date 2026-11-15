@@ -80,6 +80,7 @@ import { desktopBridge } from '../lib/platform';
 import { AboutRally } from '../components/easter-eggs/about-credits';
 import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, connectorStartsHere } from '../lib/browser-connectors';
 import { disableWebPush, enableWebPush, webPushState } from '../lib/web-push';
+import { browserPushState, devicePushNotice, macPushState, type DevicePushNotice } from '../lib/device-push';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useEscapeClosesWindow } from '../lib/window-escape';
 import { useWorkspaceMembers } from '../lib/workspace-members';
@@ -163,6 +164,13 @@ function NotificationNotice({ title, detail, onOpen }: {
   );
 }
 
+/** A device's push notice, in the words a Canvas's notices record uses too (`devicePushNotice`). */
+function DeviceNotice({ notice, onOpen }: { notice: DevicePushNotice | null; onOpen?: () => void }): React.JSX.Element | null {
+  if (!notice) return null;
+  return <NotificationNotice title={notice.title} {...(notice.detail ? { detail: notice.detail } : {})}
+    {...(notice.action?.kind === 'open-settings' && onOpen ? { onOpen } : {})} />;
+}
+
 /** Settings → Notifications in a browser tab: this browser's Web Push subscription. */
 function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Element {
   const queryClient = useQueryClient();
@@ -181,13 +189,11 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
           disabled={!current || current === 'unsupported' || current === 'home-screen' || current === 'unavailable' || current === 'denied' || update.isPending}
           onChange={(event) => update.mutate(event.currentTarget.checked)}
           role="switch" />
-        {/* Why it is off is a row of the card, as the Mac's is. */}
-        {current === 'unsupported' && <NotificationNotice title="Not available in this browser" detail="This browser cannot show Rally notifications." />}
-        {current === 'home-screen' && <NotificationNotice title="Add Rally to your Home Screen"
-          detail="To get notifications on this device, tap Share, then Add to Home Screen. Open Rally from your Home Screen and turn this on there." />}
-        {current === 'unavailable' && <NotificationNotice title="Browser notifications are not available yet" />}
-        {current === 'denied' && <NotificationNotice title="Blocked for this site"
-          detail="Allow notifications in your browser's site settings, then turn this on." />}
+        {/* Why it is off is a row of the card, as the Mac's is. The toggle is
+            the way to turn it on here, so `off` says nothing more. */}
+        {current === 'unavailable'
+          ? <NotificationNotice title="Browser notifications are not available yet" />
+          : <DeviceNotice notice={current === 'off' ? null : devicePushNotice('browser', browserPushState(current))} />}
       </div>
       {state.error && <ErrorNotice occurrence={state.error}>{state.error.message}</ErrorNotice>}
       {/* A browser's own subscribe() error names its internals, not anything the member can act on. */}
@@ -1679,15 +1685,12 @@ export function WorkspaceSettingsScreen({
                     checked={applicationSettings?.pushNotificationsEnabled ?? true}
                     disabled={!applicationSettings || applicationSettings.pushNotificationStatus === 'unavailable' || updatePushNotifications.isPending}
                     onChange={(event) => updatePushNotifications.mutate(event.currentTarget.checked)} />
-                  {applicationSettings?.pushNotificationStatus === 'unavailable' && (
-                    <NotificationNotice title="Not available in this build"
-                      detail="Notifications need an installed release build of Rally." />
-                  )}
-                  {applicationSettings?.pushNotificationStatus === 'denied' && (
-                    <NotificationNotice title="Turned off in macOS"
-                      detail="Rally can't show alerts or a Dock badge until you allow notifications."
-                      onOpen={() => void bridge.openNotificationSettings()} />
-                  )}
+                  {(() => {
+                    // The toggle is the way to turn it on here, so `off` says nothing more.
+                    const state = macPushState(applicationSettings);
+                    return <DeviceNotice notice={state === 'off' ? null : devicePushNotice('mac', state)}
+                      onOpen={() => void bridge.openNotificationSettings()} />;
+                  })()}
                   {applicationSettings?.pushNotificationStatus === 'enabled' && applicationSettings.notificationBadgeStatus === 'disabled' && (
                     <NotificationNotice title="Badges turned off in macOS"
                       detail="The Dock icon won't show what needs your attention until you allow badges."
