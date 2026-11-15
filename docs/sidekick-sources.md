@@ -39,6 +39,7 @@ notice are.
 | `apps/api/src/services/semantic-trigger-admission.ts` | The delivery: asks, judges the source's condition and the trigger's, admits with both verdicts. |
 | `apps/api/src/services/sidekick-source-service.ts`, `apps/api/src/routes/automations.ts` | The routes a signed-in person and an agent use. |
 | `apps/api/src/services/sidekick-source-tools.ts`, `apps/api/src/services/integrations.ts` (`asksForSources`, `builtInSkillsFor`) | The agent's tools (list, ask, and try a filter), which turns are offered them, and which turns list the skill. |
+| `apps/api/src/services/wizard-canvas-cards.ts` | `wizardTurnCanvasId` and `postWizardCard`: the card a wizard turn a Canvas's Chat started posts into that Chat. |
 | `packages/agent-harness/src/platform-skills/filtered-trigger-skill.ts` | `setting-up-a-filtered-trigger`, the wizard's procedure. |
 | `apps/api/src/services/sidekick-event-content.ts`, `packages/connectors/src/types.ts` (`readActivityContent`) | The host's read of what an admitted event is about, and the run's opening with it. |
 
@@ -188,7 +189,15 @@ A request names the conversation it was asked from (`place`), and its card is
 drawn there for everyone who can open that conversation: they see who was
 asked, for what, and where it stands. Only the person asked can act on it.
 An agent's ask takes its place from the loop, never from a tool argument: a
-Canvas's Chat or a Sidekick's shared conversation.
+Canvas's Chat or a Sidekick's shared conversation. A wizard turn that a
+Canvas's Chat started by messaging the wizard (`wizardTurnCanvasId`) asks
+from that Chat: the place is the Canvas, and besides its own block in the
+wizard's conversation the tool posts a Sidekick message into the Chat whose
+`automation_activation` carries `sourceRequests: { requestIds }`
+(`postWizardCard`, keyed `sidekick-source-card:<receipt>`). The client draws
+the same card under that post. Test, in
+`apps/api/test-workers/conversation-tools.test.ts`: "is drawn in the Chat
+whose message started the wizard's turn, once per receipt".
 
 ### Which connections a rule is registered on
 
@@ -784,12 +793,14 @@ one as it is resolved; the resolution becomes a changelog entry.
 
 ## Changelog
 
-### 2026-11-14 — Only a Sidekick run is refused the source tools
+### 2026-11-14 — Only a Sidekick run is refused the source tools, and a Canvas's ask is drawn in it
 
 **What changed:** `asksForSources` refuses a Sidekick run and its delegation
 workers, and nothing else. Wizard and Chat turns another agent's message
 started, review-notice turns, and background agents now get the source tools
-and `setting-up-a-filtered-trigger`.
+and `setting-up-a-filtered-trigger`. When a Canvas's Chat started the wizard's
+turn, the request's place is that Canvas and its card is posted into the
+Chat, so the person who asked approves their own request where they asked.
 
 **Why:** The Canvas Chat prompt tells the Chat to hand a Sidekick's setup to
 the wizard and name the people and the filter. The wizard's turn was an
@@ -801,7 +812,9 @@ runs are refused.
 
 **Considered and rejected:** Opening only the wizard's agent-message turns.
 The owner chose one rule: a run carries event content, and nothing else needs
-a guard, since an ask approves nobody.
+a guard, since an ask approves nobody. Leaving the card in the Sidekick's own
+conversation, where the requester is not reading and which a Canvas member
+who manages the Sidekick may not be able to open.
 
 **What a future change has to respect:** No loop approves. Each source is
 still one person's own press on the request (`decideSourceRequest`). A run

@@ -118,6 +118,14 @@ function explicitReply(call: ProviderCall, text: string): ProviderReply {
 }
 const provider = useOpenRouterDouble(withSuccessfulSidekickOutcome(async (call) => {
   const latestInput = memberInputs(call).at(-1);
+  // A Canvas's Chat asks the wizard something it has to ask the person: the wizard asks, which ends its turn.
+  if (JSON.stringify(latestInput?.content ?? "").includes("ASK_WHICH_ALEX")) {
+    const ask = call.toolNames.find((name) => name === "request_elicitation");
+    if (!ask) throw new Error("wizard_question_tool_missing");
+    return { callTool: { name: ask, arguments: { prompt: "Which Alex?", responseType: "radio",
+      options: [{ value: "work", label: "Work", description: null }, { value: "personal", label: "Personal", description: null }],
+      minimumSelections: 1, maximumSelections: 1 } } };
+  }
   if (sidekickChangeRequest) {
     const latest = JSON.stringify(latestInput?.content ?? "");
     // The run, continued by the wizard's answer (under the host's continuation
@@ -482,6 +490,32 @@ describe("a room Sidekick's run and the room's agents", () => {
     await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
     await settledRun(runChild(started.runId));
     await expect.poll(revision, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBeGreaterThan(before);
+  });
+
+  it("draws the wizard's question in the Canvas's Chat whose message started its turn", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "canvas", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    const wizardAgent = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
+    await new AgentCommunicationService(TEST_ENV, input).send({ agentId: wizardAgent,
+      message: "ASK_WHICH_ALEX: ask Adam which Alex's mailbox to use.", attachmentIds: [] }, context);
+    const wizard = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID)));
+    await runDurableObjectAlarm(wizard);
+    let elicitationId: string | undefined;
+    await expect.poll(async () => {
+      elicitationId = await runInDurableObject(wizard, (_instance, state) => state.storage.sql.exec<{ id: string }>(
+        "SELECT elicitation_id AS id FROM elicitation_requests WHERE status = 'pending'").toArray()[0]?.id);
+      return elicitationId;
+    }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBeDefined();
+    const posts = await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ text: string; json: string }>(
+      `SELECT content AS text, structured_content_json AS json FROM canonical_conversation_turn_details
+        WHERE message_type = 'automation_activation'`).toArray());
+    expect(posts.map((row) => ({ text: row.text, question: (JSON.parse(row.json) as { question?: unknown }).question })))
+      .toEqual([{ text: "Pull request counter asks: Which Alex?", question: { elicitationId } }]);
   });
 
   it("refuses a change request from a conversation that is not a Sidekick run", async () => {

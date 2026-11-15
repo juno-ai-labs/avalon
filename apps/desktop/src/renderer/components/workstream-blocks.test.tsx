@@ -163,6 +163,35 @@ describe('MessageBlock model timing', () => {
     expect(screen.queryByRole('article', { name: /Source request/u })).not.toBeInTheDocument();
   });
 
+  it("draws a Sidekick wizard's question posted into a Canvas's Chat, read from the Sidekick and answered there", async () => {
+    const SIDEKICK = '00000000-0000-7000-8000-0000000000d1';
+    const QUESTION = '00000000-0000-7000-8000-0000000000f1';
+    const message: Message = { ...baseMessage, id: 'question-post', authorType: 'system', author: undefined,
+      messageType: 'automation_activation', text: 'Pilot CRM sync asks: Which Alex?',
+      automationActivation: { automationId: SIDEKICK, automationName: 'Pilot CRM sync', question: { elicitationId: QUESTION } } };
+    let status: 'open' | 'answered' = 'open';
+    const readSidekickQuestion = vi.fn(async () => ({ id: QUESTION, prompt: 'Which Alex?', responseType: 'radio' as const, status,
+      options: [{ value: 'work', label: 'Work' }, { value: 'personal', label: 'Personal' }], minimumSelections: 1, maximumSelections: 1,
+      ...(status === 'answered' ? { answer: 'work' } : {}) }));
+    const answerSidekickQuestion = vi.fn(async () => { status = 'answered'; });
+    render(
+      <CollaborationSessionProvider api={{ readSidekickQuestion, answerSidekickQuestion } as never} session={{ user: { id: 'user-adam' } } as never}>
+        <QueryClientProvider client={new QueryClient()}>
+          <MessageBlock {...actions} message={message} />
+        </QueryClientProvider>
+      </CollaborationSessionProvider>,
+    );
+    await screen.findByText('Which Alex?');
+    // The panel says what the post's text says; the text is for the Chat's agent.
+    expect(screen.queryByText('Pilot CRM sync asks: Which Alex?')).not.toBeInTheDocument();
+    expect(readSidekickQuestion).toHaveBeenCalledWith(SIDEKICK, QUESTION, expect.anything());
+    fireEvent.click(screen.getByText('Work'));
+    fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
+    await waitFor(() => expect(answerSidekickQuestion).toHaveBeenCalledWith(SIDEKICK, QUESTION, 'work', undefined));
+    // Read again once answered, so the card shows the answer the Sidekick holds.
+    expect(await screen.findByLabelText('Elicitation response')).toHaveTextContent('Work');
+  });
+
   it('live-counts an active provider stream and settles its wording when complete', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-05T12:00:00.000Z'));

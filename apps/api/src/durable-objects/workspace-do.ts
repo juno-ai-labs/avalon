@@ -5550,6 +5550,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * conversation already admitted, so it names no viewer; `null` for an id
    * that is no Canvas.
    */
+  /** A Sidekick's name as its directory row holds it, for a post written in its name. */
+  async sidekickDisplayName(input: { workspaceId: string; sidekickId: string }): Promise<string> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    return this.state.storage.sql.exec<{ title: string }>(
+      `SELECT title FROM automation_directory WHERE automation_id = ?`, input.sidekickId,
+    ).toArray()[0]?.title || "New Sidekick";
+  }
+
   async canvasContext(rawInput: { workspaceId: string; canvasId: string }) {
     const input = parseRpcInput(CanvasContextRequestSchema, rawInput, "canvas_context");
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
