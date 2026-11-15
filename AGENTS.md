@@ -106,7 +106,9 @@ Do not add tool-approval dialogs, confirmation queues, execution pauses, or mode
 instructions asking permission before each tool call. Authentication, capability
 checks, execution receipts and safe handling of uncertain outcomes still apply.
 `mode: "write"` describes execution and retry policy; it does not imply human
-approval. Documentation claiming an existing tool-confirmation flow is incorrect
+approval. **Never hide a tool because of who or what started a turn**: offer it,
+and have it refuse by name with the route to a turn that may use it
+([`docs/agent-tools.md`](docs/agent-tools.md), rule 14). Documentation claiming an existing tool-confirmation flow is incorrect
 and must be corrected, not implemented. See
 [`docs/hosted-mcp-connectors.md`](docs/hosted-mcp-connectors.md).
 

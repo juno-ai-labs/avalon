@@ -823,10 +823,11 @@ It is written to give the model latitude: it states what one event carries,
 how a filter is judged and that the person reads and approves the same text,
 gives a way to try a draft on real events, and leaves the wording to the
 model. It names its owner plugin's three source tools, as an owned skill may.
-Those tools are offered only to a turn a person started and to a wizard turn
-a Canvas's Chat started for them (`asksForSources` in
-`apps/api/src/services/integrations.ts`): no loop that works from content a
-person did not write may ask in anyone's name. The skill tells the
+Only a turn a person started and a wizard turn a Canvas's Chat started for
+them may ask (`asksForSources` in `apps/api/src/services/integrations.ts`):
+no loop that works from content a person did not write may ask in anyone's
+name. Every other loop holds a `request_source` that refuses and says which
+turn may. The skill tells the
 model to call `sidekick_request_source`, so the host lists it only where a
 plugin in scope holds that tool (`builtInSkillsFor`): owning the plugin is
 not enough, because a run carries the Sidekicks plugin without the source
