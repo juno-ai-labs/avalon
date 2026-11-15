@@ -69,8 +69,12 @@ export async function storedObjectResponse(
   key: string,
   request: Request,
   headers: Record<string, string>,
+  options: { ranges?: boolean } = {},
 ): Promise<StoredObjectResponse> {
-  const rangeHeader = request.method === "GET" ? request.headers.get("range") : null;
+  // A caller whose response may be rewritten after this returns (an active
+  // site's HTML, which Rally injects into) asks for no ranges: a range of the
+  // stored page would be spliced into a page that is no longer those bytes.
+  const rangeHeader = request.method === "GET" && options.ranges !== false ? request.headers.get("range") : null;
   // A plain GET reads the object once. A HEAD reads only its metadata, and a
   // ranged GET reads that first so the range is checked against the real size.
   if (request.method !== "HEAD" && rangeHeader === null) {

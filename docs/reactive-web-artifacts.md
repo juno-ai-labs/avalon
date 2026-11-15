@@ -299,7 +299,12 @@ and the object's `ETag`. A `GET` with one range (`bytes=a-b`, `bytes=a-`,
 a request for several ranges, or an `If-Range` naming another version, gets
 the whole object with `200`. A `HEAD` reads only the object's metadata. HTML
 that Rally rewrites (the social tags, the annotation script, a prior
-version's base) is a new body each time and is always sent whole.
+version's base) is a new body each time and is always sent whole: a static
+site's rewritten page is built fresh, an `env.ASSETS` read of HTML ignores
+`Range` because the serving Worker may inject into an active site's response
+afterwards, and an injected response loses its `Content-Length`, `ETag`,
+`Accept-Ranges` and `Content-Range`, which `HTMLRewriter` would otherwise keep
+from the stored page.
 
 For successful current-version HTML, the Worker adds the manifest's normalized
 canonical, description, Open Graph, and Twitter/X tags after authored tags, so
@@ -988,6 +993,10 @@ anonymous response from a personalized one.
 
 **Consequences:** A new path that serves stored bytes uses
 `storedObjectResponse` rather than `PAYLOADS.get`, or it loses ranges again.
+A path that rewrites a response after it is served strips the stored body's
+headers (`withoutStoredBodyHeaders`): `HTMLRewriter` keeps them, and review
+found that the new `Content-Length` would have truncated every active-site page
+Rally injects into.
 Each stored key is one immutable version, so a range never splices versions.
 
 ### 2026-11-15 — Viewer sessions last a year from the last open
