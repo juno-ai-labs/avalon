@@ -35,6 +35,7 @@ import { conversationParentStub, hostedParentStub } from "./conversation-parent-
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { isCanvasChat } from "../lib/canvas-chat";
+import { drivenByPerson } from "../lib/driven-by-person";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -5268,12 +5269,11 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  * started it, a stranger's email among it, and asking in its delegate's name
  * is not something what it read may bring about. A background agent works from content the same
  * way, and so does a turn another agent's message or Rally's own review
- * notice started, the wizard's included: nobody typed it.
+ * notice started, the wizard's included: nobody typed it. A wake-up is
+ * whatever the turn that scheduled it was (`drivenByPerson`).
  */
-function asksForSources(input: Pick<WorkstreamWorkflowInput,
-  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "reason">): boolean {
-  return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true
-    && !input.agentExchange && input.reason !== "sidekick_review";
+function asksForSources(input: Parameters<typeof drivenByPerson>[0]): boolean {
+  return drivenByPerson(input);
 }
 
 /**
@@ -8692,6 +8692,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           prompt: args.prompt,
           dueAt: resolved.dueAt,
           idempotencyKey: providerIdempotencyKey,
+          scheduledByPerson: drivenByPerson(input),
         });
         try {
           await refreshAgentTimerAlarm(

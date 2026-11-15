@@ -4,9 +4,10 @@ Every kind of agent loop Rally runs, how the host tells them apart, and the
 gates that already treat them differently. **Read it before adding or
 changing a tool, a plugin, a prompt, or any behavior that depends on which
 loop is running, and give every row below an answer.** A gate written for the
-loops its author had in mind is how a wake-up ended up with the wizard's
-artifact access and none of its other tools (see
-[Open questions](#open-questions)).
+loops its author had in mind is how a wizard's wake-up once woke with the
+wizard's artifact access and none of its other tools, and how a run's
+worker's wake-up was refused as a run that did not exist (see the
+[changelog](#changelog)).
 
 The tool design rules are [`agent-tools.md`](agent-tools.md)'s; the harness
 mechanics are [`agent-harness.md`](agent-harness.md)'s; what a Sidekick is
@@ -21,7 +22,8 @@ This document owns only the catalogue and the matrix.
 | `packages/contracts/src/conversation-parent.ts` | `parentKind`: `canvas` or `automation` (a Sidekick). There is no third. |
 | `apps/api/src/lib/canvas-chat.ts` | `isCanvasChat`, the one answer to "is this a Canvas's Chat itself". It does not check the principal. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | `claimPersistentLoopExecution`, which builds most turns from a pending input and sets `sidekickWizard`, `backgroundAgent`, `automationRun`, `automationContinuation`, `automationDelegation` and `agentExchange`. |
-| `apps/api/src/services/workstream-service.ts` | `launchWorkstreamHarness`, the wake-up path, which sets `scheduledWakeupId` and never sets `sidekickWizard` or `agentExchange`. |
+| `apps/api/src/services/workstream-service.ts` | `fireWorkstreamWakeup` and `launchWorkstreamHarness`, the wake-up path, which derives the woken turn's loop kind as the claim does for any input. |
+| `apps/api/src/lib/driven-by-person.ts` | `drivenByPerson`, the one answer to whether a person drove a turn. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | A run's first activation; `reason` is its trigger kind. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Admission (`reason` is the admission's `origin`) and Retry. |
 | `apps/api/src/services/agent-model-flags.ts` | `conversationModelRole`: `canvas`, `sidekick_wizard` or `sidekick_run`. |
@@ -46,6 +48,7 @@ the host and none chosen by the model:
 | `automationDelegation` | A background agent whose root is a run: it carries the run's authority, not its instructions. |
 | `agentExchange` | Another agent's message started this turn. |
 | `scheduledWakeupId` | A due wake-up started this turn. |
+| `wakeupScheduledByPerson` | Beside `scheduledWakeupId`: whether a person's turn scheduled the wake-up. |
 | `slackOrigin` | A reply in a Slack thread bound to a run started this turn. |
 | `executionPrincipal` | Who the turn acts as: a person (`user`) or the Organization (`workspace`), for a Sidekick that runs as itself. |
 | `reason` | What admitted the turn: `human_message`, `elicitation_answer`, `resource_authorization`, `manual_retry`, `agent_message`, `scheduled_wakeup`, `sidekick_review`, `external_conversation_binding`, or a run's trigger kind. |
@@ -59,7 +62,7 @@ principal. It acts as the person and belongs to its own Canvas.
 | --- | --- | --- |
 | Person | `human_message`, `elicitation_answer`, `resource_authorization`, `manual_retry` | Yes |
 | Agent exchange | `agent_message` with `agentExchange` | No |
-| Wake-up | `scheduled_wakeup` with `scheduledWakeupId` | No |
+| Wake-up | `scheduled_wakeup` with `scheduledWakeupId` | As the turn that scheduled it |
 
 **2. A Sidekick's wizard.** `parentKind` `automation`, substream `"0"`, no
 `automationRun`, `sidekickWizard: true`. A person's message there is the
@@ -72,7 +75,7 @@ Sidekick's attached Canvases.
 | Person | A manager's edit, `elicitation_answer`, `resource_authorization`, `manual_retry` | That person | Yes |
 | Agent exchange | `agent_message`, only when the principal manages the Sidekick | The principal | No |
 | Self-review | `sidekick_review`: Rally's review notice after enough runs | An eligible coordinator delegate | No |
-| Wake-up | `scheduled_wakeup` | The principal | No (and `sidekickWizard` is not set; see Open questions) |
+| Wake-up | `scheduled_wakeup`, only while the principal manages the Sidekick | The principal | As the turn that scheduled it |
 
 `reviewOwnsThisTurn` also claims the later turns that the review's own
 workers wake, so the review can record its submission.
@@ -108,6 +111,15 @@ the input, so a gate tells the roots apart this way:
 Nothing on the input tells a wizard-rooted agent started by a self-review
 from one started by a person's wizard turn.
 
+**A wake-up is not a loop of its own either.** It continues the loop that
+scheduled it: the same conversation, the same flags the claim would derive
+for an input there (a run's continuation, a worker's root authority, the
+wizard's `sidekickWizard` after the manager check), and whether a person
+drove the scheduling turn, recorded on the wake-up and carried as
+`wakeupScheduledByPerson`. So a wake-up takes the row of the turn that
+scheduled it. [`agent-harness.md`](agent-harness.md#scheduled-wake-ups)
+owns the mechanism.
+
 **Retry** is not a loop of its own. It replays the failed turn's stored
 context with `reason` `manual_retry` and the person retrying as the
 principal, so it takes the row of the turn it retries.
@@ -133,11 +145,11 @@ that differs from its neighbours:
 | --- | --- |
 | Canvas's Chat | Person |
 | Canvas's Chat | Agent exchange |
-| Canvas's Chat | Wake-up |
+| Canvas's Chat | Wake-up (as the turn that scheduled it, unless you say why not) |
 | Sidekick's wizard | Person |
 | Sidekick's wizard | Agent exchange |
 | Sidekick's wizard | Self-review |
-| Sidekick's wizard | Wake-up |
+| Sidekick's wizard | Wake-up (as the turn that scheduled it, unless you say why not) |
 | Sidekick run | Schedule, event, Run now, message, invocation |
 | Run continuation | Any input |
 | Background agent | Rooted in a Canvas's Chat |
@@ -153,7 +165,7 @@ this loop acts as" fails there.
 
 | Gate | Where | Offered to |
 | --- | --- | --- |
-| Source tools (`asksForSources`) | `integrations.ts` | A person's Chat or wizard turn. Not runs, delegation workers, background agents, agent exchange, or self-review. |
+| Source tools (`asksForSources`, `drivenByPerson`) | `integrations.ts` | A person's Chat or wizard turn, and a wake-up one of those scheduled. Not runs, delegation workers, background agents, agent exchange, self-review, or a wake-up one of those scheduled. |
 | Elicitation and connection cards | `integrations.ts` (`routesAnswersToAgent`) | Not background agents, nor a Sidekick turn with `agentExchange`. |
 | Authoring tools | `integrations.ts` | Wizard turns (`sidekickWizard`). |
 | Conversation tools | `conversation-tools.ts` | Wizard (with `attach`) and runs (without). Not a Canvas's Chat. |
@@ -176,7 +188,12 @@ this loop acts as" fails there.
   wake-ups, self-review, runs and background agents are content-driven or
   host-driven. Behavior that speaks for a person (asking in their name,
   answering as them) is limited to a person's turn; `asksForSources` is the
-  model to copy.
+  model to copy, through `drivenByPerson`. Guard: `connector-tool-selection.test.ts`
+  and `driven-by-person.test.ts`.
+- **A wake-up continues the loop that scheduled it.** A derivation the claim
+  path makes for an input belongs in `fireWorkstreamWakeup` too, or the woken
+  turn is a different loop from the one that asked for it. Guard: the firing
+  tests in `workstream-wakeup.test.ts`.
 - **A new field or `reason` adds a row here** in the same change, with each
   existing gate's answer for it.
 
@@ -204,21 +221,10 @@ the host would never combine.
 
 ## Open questions
 
-1. **A wake-up in a Sidekick's shared conversation has no `sidekickWizard`,**
-   so it gets no authoring or conversation tools, but `write_artifact_data`'s
-   gate still answers `sidekick_wizard` because it does not read the flag. The
-   gates disagree; which is intended is not recorded.
-2. **A wake-up in a Canvas's Chat is offered source tools,** because
-   `asksForSources` reads neither `scheduledWakeupId` nor `reason`. Nobody
-   typed that turn, so it likely should not be.
-3. **A wake-up in a background agent under a Sidekick** appears to call
-   `continueSidekickRun` with the worker's substream as the run id, which
-   would be refused and consume the wake-up. Inferred from the code, not
-   reproduced.
-4. **A retried run under the Organization principal** keeps `automationRun`
+1. **A retried run under the Organization principal** keeps `automationRun`
    but runs as the person retrying. Whether that is intended is not
    recorded.
-5. **A self-review's background agents** are indistinguishable from a
+2. **A self-review's background agents** are indistinguishable from a
    person's wizard turn's. A rule that treats them differently needs the
    root turn's `reason` recorded beside `root_substream_id`.
 
@@ -236,6 +242,15 @@ a run's delegation worker, wake-ups. Each existing gate had been written
 against its own list, and three of them already disagree about wake-ups. The
 owner asked for one list so every new tool covers the whole matrix.
 
+Writing it found three wake-up gaps, fixed in the same change
+([`agent-harness.md`](agent-harness.md#changelog)): a wizard's wake-up woke
+without `sidekickWizard`, a run's worker's wake-up asked about its own id as
+a run, and a wake-up did not record whether a person scheduled it. The owner
+set the rule that fixed all three: a wake-up continues the loop as it was.
+
 **Considered and rejected:** Extending [`agent-harness.md`](agent-harness.md),
 which owns the harness's mechanics, not the product's loop kinds; the matrix
 would be lost in it.
+
+**Consequences:** A new loop field or `reason` adds a row here, and a new
+tool fills the matrix in its own PRD or document.

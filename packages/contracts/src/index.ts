@@ -3014,6 +3014,14 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * nullable so every existing producer keeps parsing unchanged.
    */
   scheduledWakeupId: IdSchema.optional(),
+  /**
+   * Set beside `scheduledWakeupId`: whether a person's turn scheduled the
+   * wake-up. A wake-up continues the loop that scheduled it, and this is the
+   * one fact about that turn the woken input cannot otherwise carry.
+   * Optional so every existing producer keeps parsing unchanged; absent
+   * reads as a person's. `docs/agent-loop-types.md` owns it.
+   */
+  wakeupScheduledByPerson: z.boolean().optional(),
   executionPrincipal: ExecutionPrincipalSchema,
   /** Server-injected correlation for a user-started semantic run journey. */
   telemetryOperationId: IdSchema.optional(),
