@@ -39,8 +39,8 @@ A **Live artifact** became a **Reactive artifact**, and a **Live site** a
 **Reactive site**: Rally updates them from incoming events as they happen, not
 on a schedule, and "live" did not say that. Stable ids kept the old word: the
 `building-live-sites` skill name (saved Sidekick instructions load it by name),
-the site's `live-*` CSS classes and carousel files, shipped migration
-descriptions, and frozen PRDs.
+the site's `live-*` CSS classes and carousel files, shipped migrations
+(their SQL, comments included, is hashed), and frozen PRDs.
 
 ## How we build
 

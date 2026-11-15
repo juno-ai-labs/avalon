@@ -118,7 +118,7 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       redeemed_at INTEGER,
       -- When this principal's work-stream visibility was last confirmed
       -- against WorkstreamDO, and what the answer was. Cached for a bounded
-      -- interval rather than asked per request: a reactive artifact must not put
+      -- interval rather than asked per request: a live artifact must not put
       -- a Durable Object hop in front of every asset byte.
       visibility_checked_at INTEGER,
       visible INTEGER NOT NULL DEFAULT 0 CHECK (visible IN (0, 1))
