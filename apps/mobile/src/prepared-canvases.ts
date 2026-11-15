@@ -9,9 +9,14 @@ export type PreparedPins = {
 };
 
 /** Descriptors share Home's authenticated session; one-time access URLs are
- * never kept. `store` carries descriptors and canonical URLs across launches. */
+ * never kept. `store` carries descriptors and canonical URLs across launches;
+ * `direct` asks for fresh access without Home, which is asked only if it fails. */
 export function usePreparedCanvases(directory: MobileSnapshot | null, send: (command: MobileCommand) => void, wake: () => void,
-  store?: { initial: PreparedPins | null; save: (pins: PreparedPins) => void }) {
+  options: {
+    store?: { initial: PreparedPins | null; save: (pins: PreparedPins) => void };
+    direct?: (directory: MobileSnapshot, canvas: PreparedCanvas) => Promise<NativeArtifact | null>;
+  } = {}) {
+  const { store, direct } = options;
   const sendRef = useRef(send);
   sendRef.current = send;
   const [requests] = useState(() => preparedRequests<PreparedCanvas, NativeArtifact>((command) => sendRef.current(command)));
@@ -48,13 +53,16 @@ export function usePreparedCanvases(directory: MobileSnapshot | null, send: (com
     }
     return false;
   }, [requests, fail]);
-  const open = useCallback((canvas: PreparedCanvas) => {
+  const open = useCallback(async (canvas: PreparedCanvas) => {
     const directory = current.current;
-    if (!directory) return Promise.resolve(null);
+    if (!directory) return null;
+    const scope = `${directory.userId}:${directory.workspaceId}`;
+    const access = direct ? await direct(directory, canvas) : null;
+    if (access) return current.current && `${current.current.userId}:${current.current.workspaceId}` === scope ? access : null;
     const opening = requests.open(randomUUID(), directory.userId, directory.workspaceId, canvas);
     wake();
     return opening;
-  }, [requests, wake]);
+  }, [requests, wake, direct]);
   const rememberSession = useCallback((scope: string, artifact: NativeArtifact) => {
     if (scope !== `${current.current?.userId}:${current.current?.workspaceId}`) return;
     // Only the ordinary URL survives redemption. The cookie stays in WebKit /
