@@ -34,7 +34,7 @@ import { renderGoogleMailCalendarSystemMessage } from "@rally/prompts/api/google
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
-import { isCanvasChat } from "../lib/canvas-chat";
+import { actsAsSidekickWizard, canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -6024,9 +6024,9 @@ async function loadHarnessTools(
     ? await createCustomToolsPlugin(codeMode, runDefinition.definition.customTools, { loader: env.CODE_LOADER, input })
     : null;
   // In a Sidekick's shared conversation the authoring tools are the wizard's,
-  // and a turn there is the wizard's only once the Sidekick routed it so.
-  const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && input.parentKind === "automation"
-    && (input.substreamId ?? "0") === "0" && input.sidekickWizard === true
+  // and a turn there is the wizard's only once the Sidekick routed it so. An
+  // agent the wizard started acts with the wizard's authority and holds them too.
+  const automationsPlugin = actsAsSidekickWizard(input)
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages, codeMode)
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
@@ -6061,8 +6061,8 @@ async function loadHarnessTools(
     createSidekickTaskOutcomePlugin(input),
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input, () => turnIsSelfReview(env, input)),
       agentCoordinationRoleGuidance(input),
-      { sidekickRun: input.automationRun !== undefined,
-        canvasChat: isCanvasChat(input) && input.executionPrincipal.type === "user" }),
+      { sidekickRun: loopAuthority(input)?.kind === "sidekick_run",
+        canvasChat: canvasChatAuthority(input) !== null }),
     workstreamPlugin,
     webPlugin,
     terminalPlugin,
@@ -8578,9 +8578,10 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       // Only a Canvas's Chat and a Sidekick run get `write_artifact_data`.
       write: artifactDataWriteAccess(input),
     })),
-    // A Canvas's Chat sets who opens its own artifacts, as its person; the
-    // object refuses anyone who does not manage the Canvas.
-    ...(artifactDataWriteAccess(input)?.kind === "canvas_chat" && input.executionPrincipal.type === "user"
+    // A Canvas's Chat, and any agent it started, sets who opens its own
+    // artifacts, as its person; the object refuses anyone who does not manage
+    // the Canvas.
+    ...(canvasChatAuthority(input) !== null && input.executionPrincipal.type === "user"
       ? [createArtifactAudienceTool(env, {
         workspaceId: input.workspaceId, canvasId: input.parentId, userId: input.executionPrincipal.userId,
       })]

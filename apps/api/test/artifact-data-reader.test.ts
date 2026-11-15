@@ -34,8 +34,8 @@ describe("who a run reads a site's data as", () => {
 
 describe("which runs are offered write_artifact_data", () => {
   it("offers it to a Canvas's Chat run by a person", () => {
-    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas" })).toEqual({ kind: "canvas_chat" });
-    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", substreamId: "0" }))
+    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", parentId: "c" })).toEqual({ kind: "canvas_chat" });
+    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", parentId: "c", substreamId: "0" }))
       .toEqual({ kind: "canvas_chat" });
   });
 
@@ -57,31 +57,39 @@ describe("which runs are offered write_artifact_data", () => {
       .toEqual({ kind: "sidekick_wizard", sidekickId: "s" });
   });
 
-  it("offers it to nobody else", () => {
-    // A wizard under Organization authority, a wizard's background agent, and
-    // a run child woken without its run.
-    expect(artifactDataWriteAccess({ executionPrincipal: { type: "workspace" }, parentKind: "automation", parentId: "s" }))
-      .toBeNull();
+  it("offers a background agent its root's access: the Chat's, the wizard's, or its run's", () => {
+    expect(artifactDataWriteAccess({
+      executionPrincipal: member, parentKind: "canvas", parentId: "c", substreamId: "helper", backgroundAgent: true,
+    })).toEqual({ kind: "canvas_chat" });
     expect(artifactDataWriteAccess({
       executionPrincipal: member, parentKind: "automation", parentId: "s", substreamId: "helper", backgroundAgent: true,
-    })).toBeNull();
+    })).toEqual({ kind: "sidekick_wizard", sidekickId: "s" });
+    // A run's worker writes as its run, whoever that run acts as.
+    expect(artifactDataWriteAccess({
+      executionPrincipal: { type: "workspace" }, parentKind: "automation", parentId: "s", substreamId: "worker",
+      backgroundAgent: true, automationDelegation: { runId: "r", stopGeneration: 0 },
+    })).toEqual({ kind: "sidekick_run", sidekickId: "s", runId: "r" });
+  });
+
+  it("offers it to nobody else", () => {
+    // A wizard under Organization authority, and a run child woken without its run.
+    expect(artifactDataWriteAccess({ executionPrincipal: { type: "workspace" }, parentKind: "automation", parentId: "s" }))
+      .toBeNull();
     expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "automation", parentId: "s", substreamId: "run-child" }))
       .toBeNull();
-    // A background agent, whether a Canvas's or one a Sidekick run started.
-    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", substreamId: "0", backgroundAgent: true }))
-      .toBeNull();
+    // A Chat's agent under Organization authority has no person to write as either.
     expect(artifactDataWriteAccess({
-      executionPrincipal: coordinator, parentKind: "automation", substreamId: "worker",
-      automationDelegation: { runId: "r", stopGeneration: 0 },
+      executionPrincipal: { type: "workspace" }, parentKind: "canvas", parentId: "c", substreamId: "helper", backgroundAgent: true,
     })).toBeNull();
+    // A run carried by a loop marked as a background agent is no shape the host builds.
     expect(artifactDataWriteAccess({
       executionPrincipal: coordinator, parentKind: "automation", substreamId: "worker", automationRun: run, backgroundAgent: true,
     })).toBeNull();
     // A Chat under Organization authority has no person to write as.
-    expect(artifactDataWriteAccess({ executionPrincipal: { type: "workspace" }, parentKind: "canvas" })).toBeNull();
+    expect(artifactDataWriteAccess({ executionPrincipal: { type: "workspace" }, parentKind: "canvas", parentId: "c" })).toBeNull();
     // Any other conversation under a Canvas, and any other parent kind.
-    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", substreamId: "side" })).toBeNull();
-    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "workstream" })).toBeNull();
-    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", automationRun: run })).toBeNull();
+    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", parentId: "c", substreamId: "side" })).toBeNull();
+    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "workstream", parentId: "w" })).toBeNull();
+    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", parentId: "c", automationRun: run })).toBeNull();
   });
 });
