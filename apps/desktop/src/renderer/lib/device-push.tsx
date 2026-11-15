@@ -18,9 +18,10 @@ import { enableWebPush, webPushState, type WebPushState } from './web-push';
  * - `blocked`: the browser refused them for this site.
  * - `home-screen`: iPhone and iPad Safari offer them only to a Home Screen app.
  * - `unavailable`: this build or browser cannot show them at all.
+ * - `unconfigured`: this deployment has no Web Push key, so no browser can.
  * - `unknown`: not known yet, or not knowable from this host.
  */
-export type DevicePushState = 'ready' | 'off' | 'denied' | 'blocked' | 'home-screen' | 'unavailable' | 'unknown';
+export type DevicePushState = 'ready' | 'off' | 'denied' | 'blocked' | 'home-screen' | 'unavailable' | 'unconfigured' | 'unknown';
 
 /** What a surface says about a device that is not ready, and the action it offers. */
 export interface DevicePushNotice {
@@ -54,6 +55,8 @@ export function devicePushNotice(device: 'mac' | 'browser', state: DevicePushSta
     case 'home-screen':
       return { title: 'Add Rally to your Home Screen',
         detail: 'To get notifications on this device, tap Share, then Add to Home Screen. Open Rally from your Home Screen and turn this on there.' };
+    case 'unconfigured':
+      return { title: 'Browser notifications are not available yet' };
     case 'unavailable':
       return device === 'mac'
         ? { title: 'Not available in this build', detail: 'Notifications need an installed release build of Rally.' }
@@ -77,8 +80,8 @@ export function browserPushState(state: WebPushState | undefined): DevicePushSta
     case 'off': return 'off';
     case 'denied': return 'blocked';
     case 'home-screen': return 'home-screen';
-    case 'unsupported':
-    case 'unavailable': return 'unavailable';
+    case 'unsupported': return 'unavailable';
+    case 'unavailable': return 'unconfigured';
   }
 }
 
