@@ -1,4 +1,4 @@
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId, type NotificationChannel } from "@rally/contracts";
 import type { AddCanvasSidekickRequest, AddedCanvasSidekick, CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
@@ -190,6 +190,11 @@ export class CanvasService {
 
   async setAudience(canvasId: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
     return (await this.workspace()).canvasSetAudience({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), update });
+  }
+
+  /** This person's channels for a Canvas's notices; see `HostedCanvas.setNoticeChoice`. */
+  async setNoticeChoice(canvasId: string, channels: NotificationChannel[] | null): Promise<CanvasDetail> {
+    return (await this.workspace()).canvasSetNoticeChoice({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), channels });
   }
 
   /** Join a Canvas this person may open, so its notices reach them; see `HostedCanvas.join`. */

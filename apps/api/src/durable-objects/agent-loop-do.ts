@@ -77,7 +77,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 
-import { ConversationPostRequestSchema } from "./workspace-conversation-tool-protocol";
+import { ConversationPostRequestSchema, HostRecordRequestSchema } from "./workspace-conversation-tool-protocol";
 import {
   revocationClosesSession,
   SocketAccessRevocationSchema,
@@ -1927,6 +1927,56 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           : "sidekick_draft_card_appended",
       };
     }, true);
+  }
+
+  /**
+   * Land a host-written record in this conversation's shared transcript: a
+   * system message whose structured content the client draws by its `kind`
+   * (a Canvas's notices record). Like a post it does not wake this
+   * conversation's agent, is keyed on the caller's client message id so a
+   * retry answers with the message it already wrote, and is refused for any
+   * conversation but the addressed one's `"0"` or an archived one. Whoever
+   * may write it was decided by the caller.
+   */
+  async appendHostRecord(input: unknown): Promise<{
+    outcome: "appended" | "replayed" | "refused";
+    code: string;
+    messageId: string | null;
+  }> {
+    await this.initialized;
+    const request = parseRpcInput(HostRecordRequestSchema, input, "append_host_record");
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentKind !== request.parentKind
+      || identity.parentId !== request.workstreamId || this.externalSubstreamId() !== "0") {
+      return { outcome: "refused", code: "workstream_destination_mismatch", messageId: null };
+    }
+    const existing = this.messages.messageByClientId({ clientMessageId: request.clientMessageId });
+    if (existing) return { outcome: "replayed", code: "host_record_replayed", messageId: existing.id };
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(request.occurredAt),
+      clientMessageId: request.clientMessageId,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      text: request.text,
+      structuredContentJson: JSON.stringify(request.structuredContent),
+      producedByRunId: null,
+      now: request.occurredAt,
+    });
+    const result = await this.product.commitRuntimeMutation(() => {
+      const authority = this.ctx.storage.sql.exec<{ archived_at: number | null }>(
+        `SELECT archived_at FROM workstream WHERE id = 1`,
+      ).toArray()[0];
+      if (!authority) return { outcome: "refused" as const, code: "workstream_not_found", messageId: null };
+      if (authority.archived_at !== null) return { outcome: "refused" as const, code: "workstream_archived", messageId: null };
+      const appended = this.messages.appendPreparedMessage(prepared);
+      return appended.outcome === "replayed"
+        ? { outcome: "replayed" as const, code: "host_record_replayed", messageId: appended.messageId }
+        : { outcome: "appended" as const, code: "host_record_appended", messageId: appended.messageId };
+    }, true);
+    if (result.outcome === "appended") await this.flushSemanticRealtimeOutboxBestEffort();
+    return result;
   }
 
   /**

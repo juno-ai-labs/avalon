@@ -185,6 +185,7 @@ function parentWords(notice: ParentNotice): { title: string; body: string; actor
       body: sourceNoticeText(notice), actorName: notice.personName };
     case "source_declined": return { title: `${notice.personName} declined their ${notice.connectorName} for ${notice.parentTitle}`,
       body: sourceNoticeText(notice), actorName: notice.personName };
+    case "canvas_notice": return { title: notice.title, body: notice.body, actorName: notice.senderName };
   }
 }
 

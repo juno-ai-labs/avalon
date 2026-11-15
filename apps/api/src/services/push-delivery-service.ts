@@ -30,10 +30,17 @@ export async function enqueueNotice(
   env: Env,
   address: { workspaceId: string; recipientUserId: string; intentId: string },
   channels: readonly NotificationChannel[],
+  /**
+   * When both channels are chosen, send only one: a push when one can be
+   * queued for a device of theirs, and email otherwise. A kind whose pair
+   * means "wherever it reaches them" asks for this (Canvas notices).
+   */
+  options: { pushElseEmail?: boolean } = {},
 ): Promise<boolean> {
   const message = { region: env.AVALON_REGION, ...address };
   const push = channels.includes("push") && await enqueuePushDelivery(env, message);
-  const email = channels.includes("email") && env.PUSH_DELIVERY_QUEUE !== undefined;
+  const email = channels.includes("email") && env.PUSH_DELIVERY_QUEUE !== undefined
+    && !(push && options.pushElseEmail === true && channels.includes("push"));
   if (email) await env.PUSH_DELIVERY_QUEUE!.send({ ...message, channel: "email" } satisfies PushDeliveryMessage);
   return push || email;
 }

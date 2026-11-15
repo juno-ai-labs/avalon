@@ -157,7 +157,7 @@ import {
   type OnboardingJourney,
   type UpdateOnboardingJourney,
 } from "@rally/contracts";
-import { RALLY_HEADERS, SOURCE_ACTIVITY_CLIENT_CONTRACT, USAGE_PLANS_CLIENT_CONTRACT, readRallyHeader } from "@rally/contracts/http-headers";
+import { CANVAS_NOTICE_ACTIVITY_CLIENT_CONTRACT, RALLY_HEADERS, SOURCE_ACTIVITY_CLIENT_CONTRACT, USAGE_PLANS_CLIENT_CONTRACT, readRallyHeader } from "@rally/contracts/http-headers";
 import type { OrganizationUsage, WorkspaceUsageEvent } from "@rally/contracts/usage";
 
 import { sendInteractive } from "../services/interactive-queue";
@@ -760,6 +760,7 @@ import { ArtifactDataWriteFactsRequestSchema, artifactDataWriteFacts, type Artif
 import { SIDEKICK_DELEGATION_SCHEMA_STATEMENTS, SidekickDelegationStorage } from "./sidekick-delegation-storage";
 import { SIDEKICK_SOURCE_SCHEMA_STATEMENTS } from "./sidekick-source-storage";
 import { SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS } from "./sidekick-source-notices";
+import { CANVAS_NOTICES_SCHEMA_STATEMENTS, canvasNoticeOverride } from "./canvas-notices";
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_delegations", "sidekick_delegation_receipts", "sidekick_delegation_preparations", "sidekick_claim_access",
@@ -4489,6 +4490,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "the audiences a new Canvas starts with, chosen by the Organization's administrators",
   // See canvas-sharing-defaults.ts. No row is every default.
   statements: CANVAS_SHARING_DEFAULTS_STATEMENTS,
+}, {
+  version: 150,
+  description: "a Canvas's notices: the kind they record, whether a Canvas turned them on, and each person's choice for one Canvas",
+  // See canvas-notices.ts and docs/PRDs/2026-11-14_canvas-notices.
+  statements: CANVAS_NOTICES_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4582,6 +4588,11 @@ function viewerOf(attachment: WorkspaceSocketAttachment): Viewer {
  */
 function readsSourceActivity(attachment: WorkspaceSocketAttachment): boolean {
   return (attachment.clientContract ?? 0) >= SOURCE_ACTIVITY_CLIENT_CONTRACT;
+}
+
+/** Whether this socket's build parses a Canvas notice's Activity kind (`CANVAS_NOTICE_ACTIVITY_CLIENT_CONTRACT`). */
+function readsCanvasNoticeActivity(attachment: WorkspaceSocketAttachment): boolean {
+  return (attachment.clientContract ?? 0) >= CANVAS_NOTICE_ACTIVITY_CLIENT_CONTRACT;
 }
 
 function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
@@ -5620,6 +5631,89 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.hostedCanvas(input.canvasId, input.workspaceId)).access(input);
   }
 
+  /** Choose one's channels for a Canvas's notices; see `HostedCanvas.setNoticeChoice`. */
+  async canvasSetNoticeChoice(input: Parameters<HostedCanvas["setNoticeChoice"]>[0]) {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => canvas.setNoticeChoice(input));
+  }
+
+  /**
+   * Turn on, or send, the notices of the Canvas a loop works on, for the
+   * `rally:notifications` tools (docs/PRDs/2026-11-14_canvas-notices). The
+   * Canvas is the loop's own for a Canvas's Chat or its background agents;
+   * for a Sidekick's loops it is the one Canvas the Sidekick is attached to,
+   * counted before any access filter, so two attachments are never read as
+   * one. Reach follows `sidekickReach`: a run nobody asked for reaches its
+   * Canvas by the attachment, anyone else only if their person can open it.
+   * Answers a refusal with its code rather than throwing, which an RPC would
+   * reduce to a bare error.
+   */
+  async canvasNotices(input: {
+    workspaceId: string;
+    loop: { parentKind: "canvas" | "automation"; parentId: string; reachRunId?: string; actingUserId: string | null };
+    action: { kind: "register"; purpose: string; operationId: string } | { kind: "send"; title: string; body: string; sourceId: string };
+  }): Promise<
+    | { outcome: "registered"; canvasId: string; purpose: string; changed: boolean; recordMessageId: string }
+    | { outcome: "sent"; canvasId: string; recipients: number }
+    | { outcome: "refused"; code: string; available?: { canvasId: string; title: string }[] }
+  > {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    const sql = this.state.storage.sql;
+    let canvasId: string;
+    let agent: { kind: "rally" | "sidekick"; id: string | null; name: string };
+    if (input.loop.parentKind === "canvas") {
+      canvasId = input.loop.parentId;
+      agent = { kind: "rally", id: null, name: "Rally" };
+    } else {
+      const sidekickId = input.loop.parentId;
+      const attached = sql.exec<{ canvas_id: string; title: string }>(
+        `SELECT canvas.canvas_id, canvas.title FROM sidekick_conversation_attachments attachment
+           JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
+          WHERE attachment.automation_id = ?1 AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0'
+            AND canvas.workspace_id = ?2 AND canvas.archived_at IS NULL
+            AND (canvas.writer_sidekick_id IS NULL OR canvas.writer_sidekick_id <> ?1)
+          ORDER BY attachment.attached_at, attachment.parent_id`,
+        sidekickId, input.workspaceId,
+      ).toArray();
+      if (attached.length === 0) return { outcome: "refused", code: "notifications_sidekick_has_no_canvas" };
+      if (attached.length > 1) {
+        return { outcome: "refused", code: "notifications_sidekick_has_several_canvases",
+          available: attached.map((row) => ({ canvasId: row.canvas_id, title: row.title })) };
+      }
+      canvasId = attached[0]!.canvas_id;
+      const reach = this.sidekickReach(sidekickId, input.loop.reachRunId, input.loop.actingUserId);
+      if (!reach.itself) {
+        const row = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, canvasId).toArray()[0]!;
+        const relationship = reach.userId === null ? null : await this.readRelationship(input.workspaceId, reach.userId);
+        const actorRole = relationship?.accessClass === "member" ? relationship.role ?? "member" : null;
+        if (reach.userId === null || relationship?.status !== "active"
+          || !canvasReaderAllows(row, { userId: reach.userId, actorRole }, sql)) {
+          return { outcome: "refused", code: "canvas_access_denied" };
+        }
+      }
+      const name = sql.exec<{ title: string }>(`SELECT title FROM automation_directory WHERE automation_id = ?`, sidekickId).toArray()[0]?.title;
+      agent = { kind: "sidekick", id: sidekickId, name: name || "A Sidekick" };
+    }
+    try {
+      const canvas = await this.hostedCanvas(canvasId, input.workspaceId);
+      const action = input.action;
+      if (action.kind === "register") {
+        const registered = await this.canvasWrite(() => canvas.registerNotices({
+          workspaceId: input.workspaceId, canvasId, purpose: action.purpose, agent, operationId: action.operationId,
+        }));
+        return { outcome: "registered", ...registered };
+      }
+      const sent = await this.canvasWrite(() => canvas.notify({
+        workspaceId: input.workspaceId, canvasId, agent, title: action.title, body: action.body, sourceId: action.sourceId,
+      }));
+      return { outcome: "sent", ...sent };
+    } catch (error) {
+      if (error instanceof ApiError) return { outcome: "refused", code: error.code };
+      throw error;
+    }
+  }
+
   /** Join a Canvas's participant list; see `HostedCanvas.join`. */
   async canvasJoin(input: Parameters<HostedCanvas["join"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
@@ -5845,7 +5939,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const attachment = readAttachment(socket);
       if (!attachment?.subscribed || !recipients.has(attachment.userId)) continue;
       // One read per person, kind of access and what their build reads, however many sockets they hold.
-      const key = `${attachment.userId}:${viewerOf(attachment).accessClass}:${readsSourceActivity(attachment)}`;
+      const key = `${attachment.userId}:${viewerOf(attachment).accessClass}:${readsSourceActivity(attachment)}:${readsCanvasNoticeActivity(attachment)}`;
       if (!lists.has(key)) {
         lists.set(key, this.sidebarListFrame("workspace_activity_list", attachment.userId, () => WorkspaceActivityListEventSchema.parse({
           type: "workspace_activity_list", occurredAt, waterline, ...this.activityList(attachment),
@@ -5869,7 +5963,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       SIDEBAR_LIST_LIMIT, SIDEBAR_SIDEKICK_LISTED_SQL,
       (sidekickId) => writerSidekickAdmits(this.state.storage.sql, sidekickId,
         { userId: attachment.userId, actorRole: member ? "member" : null }),
-      { sourceKinds: readsSourceActivity(attachment) });
+      { sourceKinds: readsSourceActivity(attachment), canvasNoticeKind: readsCanvasNoticeActivity(attachment) });
   }
 
   /** Who is in each Canvas now: the people whose foreground socket has it open. */
@@ -8650,6 +8744,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(NotificationAllowsRequestSchema, input, "notification_allows");
     this.assertWorkspace(request.workspaceId);
+    // A person's choice for one Canvas's notices outranks their Settings for it.
+    const override = request.kind === "canvas_notice" && request.parentId !== undefined
+      ? canvasNoticeOverride(this.state.storage.sql, request.parentId, request.userId) : undefined;
+    if (override !== undefined) return override.includes(request.channel);
     return notificationAllows(this.readMemberPreferences(request.userId).notify, request.kind, request.channel);
   }
 

@@ -27,6 +27,7 @@ const KIND_SETTINGS: Record<OfferedNotificationKind, SettingDefinition> = {
   artifactUpdates: settings.notifyArtifactUpdates,
   accessRequests: settings.notifyAccessRequests,
   sourceRequests: settings.notifySourceRequests,
+  canvasNotices: settings.notifyCanvasNotices,
 };
 
 /** Product nouns keep their capital mid-sentence ("Sidekick runs", "pinned Canvas updates"). */
