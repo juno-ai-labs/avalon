@@ -398,6 +398,14 @@
   --av-sys-font-size-meta: 10.5px;
   --av-sys-font-size-title: 15px;
 
+  /* A multiplier on reading text: message prose, its markdown headings, the
+   * feed byline, and the composer field with the line height and floor that
+   * hold it. `1` in both appearances; a host raises it on the subtree it wants
+   * read larger, and every size it multiplies moves together, so the
+   * composer's two text layers and the opening skeleton's placeholders stay in
+   * step with what they stand for. */
+  --av-sys-font-scale-reading: 1;
+
   /* Line height. */
   --av-sys-font-leading-prose: 1.85;
   --av-sys-font-leading-base: 1.4285714286;
@@ -832,6 +840,8 @@
   --av-sys-font-size-row: 14.5px;
   --av-sys-font-size-meta: 10.5px;
   --av-sys-font-size-title: 15px;
+
+  --av-sys-font-scale-reading: 1;
 
   --av-sys-font-leading-prose: 1.85;
   --av-sys-font-leading-base: 1.4285714286;

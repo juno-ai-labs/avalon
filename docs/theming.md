@@ -250,6 +250,34 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-11-15 — `sys.font.scale.reading` enlarges a conversation on a phone
+
+**What changed:** A new number token, `sys.font.scale.reading`, is `1` in both
+appearances. The stylesheet multiplies every reading size by it: the feed's
+message text and line height (a literal `14px / 20px` that overrides the prose
+token), the tool summary line, `.markdown-body` prose and headings, the feed
+byline, and the composer field with its line height, floor and the touch
+rule's 16px. `apps/browser/src/mobile.css` sets it to `1.15` on
+`.mobile-conversation`.
+
+**Why:** On a phone the conversation and composer read small, and nearly every
+size in the shared UI is a `px` literal, so neither a root `rem` change nor
+page zoom could target them. A multiplier lets one number move them together.
+It is applied where a size is read, not baked into the size tokens, for two
+reasons. First, a custom property's `var()` resolves where it is declared, and
+the tokens are declared on the root, so a scale inside the token could only be
+set page-wide. Applied at the use site, a host can scope it to a subtree, which
+is how the artifact view on the same phone keeps its own sizes. Second,
+`markdown-mermaid-theme.ts` reads `--av-sys-font-size-prose` as a value, and a
+`calc()` there would hand Mermaid an expression instead of a length.
+
+**What to respect:** a new reading size in the feed or composer multiplies by
+the token, or it stays put while its neighbours grow. The composer's textarea
+and highlight layer must take the same multiplier, or highlighted mentions
+drift off the typed text. Whole-page zoom (viewport width or CSS `zoom`) was
+rejected because it also enlarges chrome and the artifact view, which nobody
+asked for.
+
 ### 2026-11-12 — Use the source palette in Expo navigation
 
 The custom mobile sidebar and native tab images read the same source tokens as Electron. The operating system owns native navigation materials and geometry. React Native resolves the small set of color references it needs instead of maintaining a second palette, keeping the shared mobile navigation consistent with the desktop's neutral surfaces and selected rows.
