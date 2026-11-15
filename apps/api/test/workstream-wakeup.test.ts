@@ -10,6 +10,8 @@ import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AgentExchangeSchema,
+  agentIdForAddress,
   WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
@@ -255,11 +257,11 @@ function context(providerIdempotencyKey = "receipt-1") {
   };
 }
 
-function wakeupTools(env: Env) {
+function wakeupTools(env: Env, input: WorkstreamWorkflowInput = workflowInput()) {
   // A tool's wake-up operation reaches the work stream through its typed port.
   const tools = __integrationTesting.createAvalonTools(
     env,
-    workflowInput(),
+    input,
   );
   return {
     schedule: tools.find((tool) => tool.definition.name === "schedule_wakeup")!,
@@ -284,10 +286,10 @@ function pendingRow(objectStore: DatabaseSync, wakeupId: string): WorkstreamWake
   // the thing this slice deletes.
   const row = objectGet<{
     wakeup_id: string; execution_principal_json: string; prompt: string;
-    due_at: number; status: string; version: number; created_at: number;
+    due_at: number; status: string; version: number; created_at: number; scheduled_by_person: number;
   }>(
     objectStore,
-    `SELECT wakeup_id, execution_principal_json, prompt, due_at, status, version, created_at
+    `SELECT wakeup_id, execution_principal_json, prompt, due_at, status, version, created_at, scheduled_by_person
        FROM workstream_wakeups WHERE wakeup_id = ?`,
     wakeupId,
   )!;
@@ -301,6 +303,7 @@ function pendingRow(objectStore: DatabaseSync, wakeupId: string): WorkstreamWake
     status: row.status,
     version: row.version,
     created_at: new Date(row.created_at).toISOString(),
+    scheduled_by_person: row.scheduled_by_person === 1,
   });
 }
 
@@ -981,7 +984,7 @@ describe("firing a due wake-up", () => {
     };
 
     /** The Organization object's half: whether the Sidekick lets this run go on. */
-    function withSidekick(env: Env, answer: unknown): { env: Env; asked: unknown[] } {
+    function withSidekick(env: Env, answer: unknown, manages = true): { env: Env; asked: unknown[] } {
       const asked: unknown[] = [];
       const workspaces = createCloudflareTestBinding<DurableObjectNamespace>({
         idFromName: (name: string) => createTestDurableObjectId(name),
@@ -990,6 +993,7 @@ describe("firing a due wake-up", () => {
             asked.push(request);
             return answer;
           },
+          sidekickAllowsManager: async () => manages,
         }),
       });
       const withWorkspaces = new Proxy(env, {
@@ -1051,6 +1055,135 @@ describe("firing a due wake-up", () => {
       expect(objectGet(run.store, "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", run.row.id))
         .toEqual({ status: "fired" });
       expect(wakeupNotes(run.store)).toEqual([]);
+    });
+
+    const workerId = asSubstreamId("00000000-0000-4000-8000-0000000000e2");
+
+    it("continues a run's worker under its root run's authority, not as a run of its own", async () => {
+      const { objectStores, env: fixtureEnv, dispatches } = fixture();
+      const { env: base, asked } = withSidekick(fixtureEnv, {
+        outcome: "continue",
+        automationRun,
+        executionPrincipal: { type: "user", userId: runAsUserId },
+        stopGeneration: 4,
+      });
+      const worker = childConversation(base, objectStores, workerId, "Check the export again");
+
+      const outcome = await fireWorkstreamWakeup(
+        worker.env,
+        worker.row,
+        schedulingPort(worker.store),
+        { parentKind: "automation", substreamId: workerId, backgroundAgent: true, rootSubstreamId: runId },
+      );
+
+      expect(outcome.fired).toBe(true);
+      expect(asked).toEqual([{ workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID, runId, sender: { kind: "system" } }]);
+      expect(dispatches).toHaveLength(1);
+      expect(dispatches[0]).toMatchObject({
+        parentKind: "automation",
+        substreamId: workerId,
+        backgroundAgent: true,
+        executionPrincipal: { type: "user", userId: runAsUserId },
+        automationDelegation: { runId, stopGeneration: 4 },
+      });
+      expect(dispatches[0]).not.toHaveProperty("automationRun");
+    });
+
+    it("runs a wizard's worker without asking the Sidekick about a run", async () => {
+      const { objectStores, env: fixtureEnv, dispatches } = fixture();
+      const { env: base, asked } = withSidekick(fixtureEnv, { outcome: "refused", code: "sidekick_paused" });
+      const worker = childConversation(base, objectStores, workerId, "Check the export again");
+
+      const outcome = await fireWorkstreamWakeup(
+        worker.env,
+        worker.row,
+        schedulingPort(worker.store),
+        { parentKind: "automation", substreamId: workerId, backgroundAgent: true, rootSubstreamId: "0" },
+      );
+
+      expect(outcome.fired).toBe(true);
+      expect(asked).toEqual([]);
+      expect(dispatches[0]).toMatchObject({ parentKind: "automation", substreamId: workerId, backgroundAgent: true });
+      expect(dispatches[0]).not.toHaveProperty("automationDelegation");
+    });
+  });
+
+  describe("in a Sidekick's shared conversation", () => {
+    const SHARED: WakeupConversation = { parentKind: "automation", substreamId: "0", backgroundAgent: false };
+
+    /**
+     * The Organization object's answer to whether the wake-up's principal
+     * manages the Sidekick. The legacy fixture database predates the
+     * membership column the manager check reads, so it is added here.
+     */
+    function withManager(database: DatabaseSync, env: Env, manages: boolean): Env {
+      database.exec("ALTER TABLE workspace_members ADD COLUMN access_class TEXT");
+      const workspaces = createCloudflareTestBinding<DurableObjectNamespace>({
+        idFromName: (name: string) => createTestDurableObjectId(name),
+        get: () => ({ sidekickAllowsManager: async () => manages }),
+      });
+      return new Proxy(env, {
+        get: (target, property, receiver) => property === "WORKSPACE_DOS"
+          ? workspaces
+          : Reflect.get(target, property, receiver) as unknown,
+      });
+    }
+
+    it("wakes the wizard that scheduled it, with the wizard's tools", async () => {
+      const { database, objectStore, env: fixtureEnv, dispatches } = fixture();
+      const env = withManager(database, fixtureEnv, true);
+      const { schedule } = wakeupTools(env, { ...workflowInput(), parentKind: "automation", sidekickWizard: true });
+      const scheduled = await schedule.execute({ prompt: "Check the first run", delay: "1 hour" }, context());
+      const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
+
+      const outcome = await fireWorkstreamWakeup(env, pendingRow(objectStore, wakeupId), schedulingPort(objectStore), SHARED);
+
+      expect(outcome.fired).toBe(true);
+      expect(dispatches[0]).toMatchObject({ parentKind: "automation", sidekickWizard: true, reason: "scheduled_wakeup" });
+    });
+
+    it("consumes without running a wake-up whose principal no longer manages the Sidekick", async () => {
+      const { database, objectStore, env: fixtureEnv, dispatches } = fixture();
+      const env = withManager(database, fixtureEnv, false);
+      const { schedule } = wakeupTools(env, { ...workflowInput(), parentKind: "automation", sidekickWizard: true });
+      const scheduled = await schedule.execute({ prompt: "Check the first run", delay: "1 hour" }, context());
+      const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
+
+      const outcome = await fireWorkstreamWakeup(env, pendingRow(objectStore, wakeupId), schedulingPort(objectStore), SHARED);
+
+      expect(outcome.fired).toBe(false);
+      expect(dispatches).toHaveLength(0);
+      expect(objectGet(objectStore, "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", wakeupId))
+        .toEqual({ status: "fired" });
+    });
+  });
+
+  describe("who scheduled it", () => {
+    it("tells the woken turn a person's turn scheduled it", async () => {
+      const { objectStore, env, dispatches } = fixture();
+      const { schedule } = wakeupTools(env);
+      const scheduled = await schedule.execute({ prompt: "Check the deploy", delay: "1 hour" }, context());
+      const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
+
+      await fireWorkstreamWakeup(env, pendingRow(objectStore, wakeupId), schedulingPort(objectStore), MAIN);
+
+      expect(dispatches[0]).toMatchObject({ wakeupScheduledByPerson: true });
+    });
+
+    it("tells the woken turn another agent's message scheduled it", async () => {
+      const { objectStore, env, dispatches } = fixture();
+      const sender = agentIdForAddress({ parentKind: "canvas", parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") });
+      const { schedule } = wakeupTools(env, {
+        ...workflowInput(),
+        reason: "agent_message",
+        agentExchange: AgentExchangeSchema.parse({ teamId: sender, senderAgentId: sender, messageId: "00000000-0000-4000-8000-0000000000f1" }),
+      });
+      const scheduled = await schedule.execute({ prompt: "Check the deploy", delay: "1 hour" }, context());
+      const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
+
+      await fireWorkstreamWakeup(env, pendingRow(objectStore, wakeupId), schedulingPort(objectStore), MAIN);
+
+      expect(dispatches[0]).toMatchObject({ wakeupScheduledByPerson: false });
     });
   });
 

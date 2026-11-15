@@ -32,7 +32,7 @@ import {
   type WorkstreamWakeupRow,
 } from "./workstream-wakeup-service";
 
-import { continueSidekickRun } from "./sidekick-run-continuation";
+import { continueSidekickRun, personManagesSidekick } from "./sidekick-run-continuation";
 
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { createIdentityObjectPort } from "../runtime/identity-port";
@@ -146,6 +146,12 @@ export async function launchWorkstreamHarness(
     /** A Sidekick run child's run, as `continueSidekickRun` answered for it. */
     automationRun?: WorkstreamWorkflowInput["automationRun"];
     automationContinuation?: WorkstreamWorkflowInput["automationContinuation"];
+    /** A run-rooted worker's root run authority, as `continueSidekickRun` answered for it. */
+    automationDelegation?: WorkstreamWorkflowInput["automationDelegation"];
+    /** A wake-up in a Sidekick's shared conversation continues its wizard. */
+    sidekickWizard?: true;
+    /** Whether a person's turn scheduled the wake-up (`drivenByPerson`). */
+    wakeupScheduledByPerson?: boolean;
   },
   publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
@@ -157,7 +163,12 @@ export async function launchWorkstreamHarness(
   const model = await scheduledWorkstreamModelForExisting(executionEnv, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
-    ...conversationModelContext({ parentKind, backgroundAgent: backgroundAgent === true, automationRun: input.automationRun }, substreamId),
+    ...conversationModelContext({
+      parentKind,
+      backgroundAgent: backgroundAgent === true,
+      automationRun: input.automationRun,
+      automationDelegation: input.automationDelegation,
+    }, substreamId),
   });
   const runs = createHarnessRunObjectPort(
     executionEnv,
@@ -213,8 +224,11 @@ export async function launchWorkstreamHarness(
       ? { transcriptFenceMessageId: input.transcriptFenceMessageId }
       : {}),
     ...(input.scheduledWakeupId ? { scheduledWakeupId: input.scheduledWakeupId } : {}),
+    ...(input.wakeupScheduledByPerson !== undefined ? { wakeupScheduledByPerson: input.wakeupScheduledByPerson } : {}),
     ...(input.automationRun ? { automationRun: input.automationRun } : {}),
     ...(input.automationContinuation ? { automationContinuation: input.automationContinuation } : {}),
+    ...(input.automationDelegation ? { automationDelegation: input.automationDelegation } : {}),
+    ...(input.sidekickWizard ? { sidekickWizard: true as const } : {}),
     // As the message path derives it: a delegated worker's run uses its
     // owner's sandbox and reports to its owner rather than publishing.
     ...(backgroundAgent ? { backgroundAgent: true } : {}),
@@ -332,6 +346,12 @@ export interface WakeupConversation {
   substreamId: SubstreamId | "0";
   /** This conversation's delegated-worker state, from its `background_agent` row. */
   backgroundAgent: "stopped" | boolean;
+  /**
+   * A worker's root conversation, from the same row: `"0"` for a Canvas's
+   * Chat or a Sidekick's wizard, a run id for a run's worker. Absent for a
+   * conversation that is not a worker, and read as `"0"`.
+   */
+  rootSubstreamId?: SubstreamId | "0";
 }
 
 /**
@@ -382,22 +402,35 @@ export async function fireWorkstreamWakeup(
     }
     // A stopped worker admits nothing new, and its wake-ups stay consumed.
     if (conversation.backgroundAgent === "stopped") return { fired: false };
-    // A Sidekick run child runs only as its Sidekick allows, the same question
-    // a member's message there asks. A refusal — paused, archived, run-as
-    // changed — stays consumed like a revoked principal: a retry gets the same
-    // answer.
+    // A wake-up continues the loop that scheduled it, so it is asked what an
+    // input to this conversation is asked in `claimPersistentLoopExecution`.
+    // A Sidekick run child, or a worker whose root is a run, runs only as
+    // its Sidekick allows the run. A refusal — paused, archived, run-as
+    // changed — stays consumed like a revoked principal: a retry gets the
+    // same answer.
+    const worker = conversation.backgroundAgent === true;
+    const authorityRunId = worker ? conversation.rootSubstreamId ?? "0" : conversation.substreamId;
     let continuation: Extract<Awaited<ReturnType<typeof continueSidekickRun>>, { outcome: "continue" }> | null = null;
-    if (conversation.parentKind === "automation" && conversation.substreamId !== "0") {
+    if (conversation.parentKind === "automation" && authorityRunId !== "0") {
       const decided = await continueSidekickRun(env, {
         region: env.AVALON_REGION,
         workspaceId: row.workspace_id,
         automationId: row.workstream_id,
-        runId: conversation.substreamId,
+        runId: authorityRunId,
         // The run scheduled this wake-up itself; nobody sent it.
         sender: { kind: "system" },
       });
       if (decided.outcome === "refused") return { fired: false };
       continuation = decided;
+    }
+    // The Sidekick's shared conversation is its wizard's, and a wizard turn
+    // is taken only for a principal who still manages the Sidekick, the rule
+    // every input there that a person did not type meets.
+    const wizard = conversation.parentKind === "automation" && conversation.substreamId === "0" && !worker;
+    if (wizard && !(principal.type === "user" && await personManagesSidekick(env, {
+      workspaceId: row.workspace_id, automationId: row.workstream_id, userId: principal.userId,
+    }))) {
+      return { fired: false };
     }
 
     await appendWakeupSystemMessage(env, row, conversation.substreamId);
@@ -409,8 +442,12 @@ export async function fireWorkstreamWakeup(
       origin: "scheduled_wakeup",
       executionPrincipal: continuation?.executionPrincipal ?? principal,
       scheduledWakeupId: row.id,
+      wakeupScheduledByPerson: row.scheduled_by_person,
       conversation,
-      ...(continuation
+      ...(continuation && worker
+        ? { automationDelegation: { runId: authorityRunId, stopGeneration: continuation.stopGeneration } }
+        : {}),
+      ...(continuation && !worker
         ? {
             automationRun: continuation.automationRun,
             automationContinuation: {
@@ -420,6 +457,7 @@ export async function fireWorkstreamWakeup(
             },
           }
         : {}),
+      ...(wizard ? { sidekickWizard: true as const } : {}),
     });
     return { fired: true, harnessRunId };
   } catch (error) {

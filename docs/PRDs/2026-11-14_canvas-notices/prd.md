@@ -344,6 +344,7 @@ reads.
   | A run's delegation worker (`automationDelegation`) | No | Yes |
   | A turn another agent's message started (`agentExchange`) | As the conversation it runs in | As the conversation it runs in |
   | A background agent (`backgroundAgent`) | As its root conversation | As its root conversation |
+  | A wake-up (`scheduledWakeupId`) | As the turn that scheduled it | As the turn that scheduled it |
   | An MCP client | No | No |
 
   A background agent takes the row of the conversation that started it,
