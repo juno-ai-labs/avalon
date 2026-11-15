@@ -38,6 +38,10 @@ function nativeColors(appearance: typeof lightTheme | typeof darkTheme) {
 }
 const light = nativeColors(lightTheme);
 const dark = nativeColors(darkTheme);
+/** One appearance's palette, for a surface drawn in a scheme other than the device's. */
+export function themeColors(scheme: 'light' | 'dark') {
+  return scheme === 'dark' ? dark : light;
+}
 export function useTheme() {
   const isDark = useColorScheme() === 'dark';
   return { colors: isDark ? dark : light, isDark };
