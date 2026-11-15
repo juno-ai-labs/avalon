@@ -145,7 +145,8 @@ managed `daytonaio/sandbox:0.10.0` base with SQLite, `gh`, pnpm, and `tsx`
 preinstalled by `terminal:build-snapshot`, plus Playwright with its Chromium
 under `/opt/rally/ms-playwright` (`PLAYWRIGHT_BROWSERS_PATH`), which the
 acceptance gate requires rather than a per-sandbox probe (the changelog entry
-of 2026-10-15 says why). On first creation an idempotent
+of 2026-10-15 says why), and ffmpeg with ffprobe on the same terms
+(`terminalMediaToolsInstallCommand`, gated by `ffmpeg-episode-audio`). On first creation an idempotent
 compatibility bootstrap creates the owned `/workspace`, installs only missing
 SQLite/`gh`/pnpm/`tsx` capabilities through the compiled Trusted-only apt/npm
 hosts — a no-op against the owned snapshot — and then executes the complete
@@ -1450,7 +1451,7 @@ update lag before changing the default.
 
 ## Changelog
 
-### 2026-11-15 — A file published into a Canvas returns its URL
+### 2026-11-15 — Canvas files return their URL, and the snapshot ships ffmpeg
 
 **What changed:** `publish_resource` returns `url` for a file or archive that
 lands in a Canvas, as it already did for a site, by reserving the file's host
@@ -1468,6 +1469,16 @@ is a second call after every publish for a value the publish already decides.
 **Consequences:** Only a file the Canvas actually noted returns a URL, on a
 recovered publish as on a direct one: a file kept in its conversation, or one
 whose note failed, has none, because its host would never serve it.
+
+**Also:** the Rally-owned image now bakes in ffmpeg and ffprobe, which
+`creating-a-podcast-episode` uses to join, level and chapter a recording and
+resize its art. A production Sidekick found them already present, but nothing
+guaranteed it. They follow Playwright's terms rather than the bootstrap's:
+installing them per sandbox would put a large apt install on every cold start
+from a snapshot built before this, and a probe would refuse those sandboxes
+until the rebuild is adopted. The acceptance gate makes a real episode-shaped
+file (encode, join, chapter, read back) before any rebuild is adopted, and the
+skill installs them itself on an older sandbox.
 
 ### 2026-11-09 — Creation reconciliation uses ordinary sandbox recovery
 
