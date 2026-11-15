@@ -4721,7 +4721,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   flex: 0 0 auto;
   width: 0;
   margin-left: calc(-1 * var(--composer-submit-gap));
-  transform: translateX(35px);
+  transform: translateX(calc(30px + var(--composer-submit-gap)));
   visibility: hidden;
   transition: width 240ms ease, margin-left 240ms ease, transform 240ms ease, visibility 240ms;
 }
@@ -8118,10 +8118,11 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 @media (hover: none) and (pointer: coarse) {
   .has-message-capsule .is-message-capsule :is(.composer-tools, .composer-submit-area) {
     --composer-submit-gap: 16px;
-    gap: 16px;
+    gap: var(--composer-submit-gap);
     padding: 8px;
   }
-  .has-message-capsule .is-message-capsule :is(.composer-action-trigger, .dictation-button, .composer-send, .stop-button) { position: relative; }
+  /* `.icon-button` already positions the other three. */
+  .has-message-capsule .is-message-capsule .composer-send { position: relative; }
   .has-message-capsule .is-message-capsule :is(.composer-action-trigger, .dictation-button, .composer-send, .stop-button)::before {
     /* Centred and sized outright rather than inset from the edges: an
        absolute box measures from inside the border, and the microphone has

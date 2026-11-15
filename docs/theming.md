@@ -252,39 +252,26 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ### 2026-11-15 — `sys.font.scale.reading` sets a phone's conversation at Body size
 
-**What changed:** A new number token, `sys.font.scale.reading`, is `1` in both
-appearances. The stylesheet multiplies every reading size by it: the feed's
-message text and line height (a literal `14px / 20px` that overrides the prose
-token), the tool summary line, `.markdown-body` prose and headings, the feed
-byline, and the composer field with its line height. On a touch
-screen the composer is `max(16px, 14px × scale)`, so it keeps the 16px floor
-that stops iOS zooming into it and otherwise matches the messages.
-`apps/browser/src/mobile.css` sets the token to `calc(17 / 14)` on
-`.mobile-conversation`, which puts message and composer text at 17pt, Apple's
-Body size, and the byline at about 14.6pt.
+**What changed:** A number token, `sys.font.scale.reading` (`1` by default),
+multiplies every conversation reading size where it is read: message text and
+line height, the tool summary line, `.markdown-body` prose and headings, the
+byline, and the composer's textarea and highlight layer. On a touch screen the
+composer is `max(16px, 14px × scale)`. `apps/browser/src/mobile.css` sets it
+to `calc(17 / 14)` on `.mobile-conversation`.
 
-**Why:** On a phone the conversation read at 14pt, under the Body size Apple's
-own apps use for conversation text. Nearly every size in the shared UI is a
-`px` literal, so neither a root `rem` change nor page zoom could reach them. A
-multiplier lets one number move them together. It is applied where a size is
-read, not baked into the size tokens, for two reasons. First, a custom
-property's `var()` resolves where it is declared, and the tokens are declared
-on the root, so a scale inside the token could only be set page-wide. Applied
-at the use site, a host can scope it to a subtree, which is how the artifact
-view on the same phone keeps its own sizes. Second,
-`markdown-mermaid-theme.ts` reads `--av-sys-font-size-prose` as a value, and a
-`calc()` there would hand Mermaid an expression instead of a length.
+**Why:** Phone conversation text was 14pt, under the 17pt Body size Apple's
+apps use. Nearly every size is a `px` literal, so a root `rem` change could not
+reach them. The scale sits at the use site, not inside the size tokens, because
+a `var()` resolves where it is declared: inside a root token it could only be
+set page-wide, while at the use site a host scopes it to a subtree, which keeps
+the phone's artifact view at its own sizes. `markdown-mermaid-theme.ts` also
+reads `--av-sys-font-size-prose` as a length, which a `calc()` would break.
 
 **What to respect:** a new reading size in the feed or composer multiplies by
-the token, or it stays put while its neighbours grow. The composer's textarea
-and highlight layer must take the same multiplier, or highlighted mentions
-drift off the typed text. The textarea's 42px floor does not scale: it is
-the one-line height that centres the line on the controls beside it under the
-fixed 9px top padding, and scaling it to 51px left the placeholder 4px above
-their centre. A longer draft grows the field on its own. Whole-page zoom (viewport width or CSS `zoom`) was
-rejected because it also enlarges chrome and the artifact view, which nobody
-asked for. The scale is fixed, not tied to the person's Dynamic Type setting;
-WebKit's `-apple-system-body` font could supply that, untested here.
+the token. The textarea and highlight layer take the same multiplier, or
+mentions drift off the typed text. The textarea's 42px floor does not scale:
+it is the one-line height that centres the line on the controls under the
+fixed top padding.
 
 ### 2026-11-12 — Use the source palette in Expo navigation
 
