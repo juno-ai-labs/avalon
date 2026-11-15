@@ -54,6 +54,8 @@ const api = vi.hoisted(() => ({
   updateMyPersonalSystemPrompt: vi.fn(),
   getMyPreferences: vi.fn(),
   updateMyPreferences: vi.fn(),
+  canvasNoticeChoices: vi.fn(async () => ({ canvases: [] })),
+  setCanvasNoticeChoice: vi.fn(),
   getMyMemory: vi.fn<(signal?: AbortSignal) => Promise<MemoryReview>>(async () => ({ facts: [] })),
   forgetMyMemory: vi.fn(async (factId: string) => ({ factId, retractedAt: '2026-10-19T12:00:00.000Z' })),
   getConnectedApps: vi.fn(async () => ({ apps: [] as ConnectedMcpApp[] })),

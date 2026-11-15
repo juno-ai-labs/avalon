@@ -82,6 +82,7 @@ import {
   isUnknownSocketEvent,
   safeParseSocketEvent,
   type AutomationDetail,
+  type CanvasNoticeChoices,
   type SidekickAttachment,
   type SidekickSkillSource,
 } from "@rally/contracts";
@@ -760,7 +761,7 @@ import { ArtifactDataWriteFactsRequestSchema, artifactDataWriteFacts, type Artif
 import { SIDEKICK_DELEGATION_SCHEMA_STATEMENTS, SidekickDelegationStorage } from "./sidekick-delegation-storage";
 import { SIDEKICK_SOURCE_SCHEMA_STATEMENTS } from "./sidekick-source-storage";
 import { SIDEKICK_SOURCE_NOTICE_SCHEMA_STATEMENTS } from "./sidekick-source-notices";
-import { CANVAS_NOTICES_SCHEMA_STATEMENTS, canvasNoticeOverride } from "./canvas-notices";
+import { CANVAS_NOTICES_SCHEMA_STATEMENTS, canvasNoticeChoicesFor, canvasNoticeOverride } from "./canvas-notices";
 
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_delegations", "sidekick_delegation_receipts", "sidekick_delegation_preparations", "sidekick_claim_access",
@@ -5629,6 +5630,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Whether a member who cannot open a Canvas may ask to; see `HostedCanvas.access`. */
   async canvasAccess(input: Parameters<HostedCanvas["access"]>[0]) {
     return (await this.hostedCanvas(input.canvasId, input.workspaceId)).access(input);
+  }
+
+  /** The Canvases whose notices reach this person, with their choice for each, for Settings. */
+  async canvasNoticeChoices(input: unknown): Promise<CanvasNoticeChoices> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }), input, "canvas_notice_choices");
+    this.assertWorkspace(request.workspaceId);
+    return { canvases: canvasNoticeChoicesFor(this.state.storage.sql, request.workspaceId, request.userId) };
   }
 
   /** Choose one's channels for a Canvas's notices; see `HostedCanvas.setNoticeChoice`. */

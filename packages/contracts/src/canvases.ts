@@ -173,6 +173,21 @@ export const CanvasNoticesViewSchema = z.object({
 });
 export type CanvasNoticesView = z.infer<typeof CanvasNoticesViewSchema>;
 
+/**
+ * One Canvas whose notices reach this person, for Settings: its title, what
+ * its notices are about, and their own choice for it (`null` follows the
+ * Canvas notices default).
+ */
+export const CanvasNoticeChoiceRowSchema = z.object({
+  canvasId: WorkstreamIdSchema,
+  title: z.string(),
+  purpose: z.string(),
+  channels: z.array(z.enum(["push", "email"])).nullable(),
+});
+export type CanvasNoticeChoiceRow = z.infer<typeof CanvasNoticeChoiceRowSchema>;
+export const CanvasNoticeChoicesSchema = z.object({ canvases: z.array(CanvasNoticeChoiceRowSchema) });
+export type CanvasNoticeChoices = z.infer<typeof CanvasNoticeChoicesSchema>;
+
 /** A viewer's channels for one Canvas's notices: a list (empty mutes it), or `null` to follow Settings. */
 export const CanvasNoticeChoiceUpdateSchema = z.strictObject({
   channels: z.array(z.enum(["push", "email"])).max(2).nullable(),
