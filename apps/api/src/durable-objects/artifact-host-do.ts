@@ -1310,8 +1310,12 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   }
 
   private pruneExpired(now: number): void {
+    // An open code is dead a minute after it is minted, but its row carries the
+    // session's year-long expiry; redemption clears `code_expires_at`, so a row
+    // that still has one past its time was never redeemed.
     this.state.storage.sql.exec(
-      `DELETE FROM viewer_sessions WHERE expires_at <= ?`,
+      `DELETE FROM viewer_sessions WHERE expires_at <= ? OR code_expires_at <= ?`,
+      now,
       now,
     );
   }

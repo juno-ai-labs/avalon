@@ -367,10 +367,10 @@ Use a custom token restricted to the Rally Cloudflare account and the `rallywith
   `pnpm cloudflare:d1-kv:ensure` runs it locally).
 - Account: Workers KV Storage Write/Edit: the same script lists and creates
   pinned KV namespaces, and Wrangler provisions the unpinned ones on deploy.
-- Account: Workers R2 Storage Write/Edit: also lets the API and browser
-  deployments create any R2 bucket a Wrangler file declares
-  (`pnpm cloudflare:r2:ensure` runs the same step locally). The
-  `site-production` token the browser deploy uses needs it too.
+- Account: Workers R2 Storage Write/Edit: Wrangler creates any R2 bucket a
+  binding names on deploy, and the browser deploy creates its asset archive
+  bucket before uploading to it. The `site-production` token the browser deploy
+  uses needs it too.
 - Account: R2 Admin Read & Write — used by explicit lakehouse reconciliation to
   create the Global analytical buckets and Data Catalogs and as the
   non-interactive credential source for their Global Catalog sinks
@@ -499,11 +499,10 @@ release artifacts that are rarely restored. See Cloudflare's
 [storage-class](https://developers.cloudflare.com/r2/buckets/storage-classes/)
 and [pricing](https://developers.cloudflare.com/r2/pricing/) documentation.
 
-Both buckets are created by `scripts/ensure-cloudflare-r2-buckets.mjs` if
-missing, with the location and storage class in `config/r2-bucket-settings.json`
-(applied only at creation). To inspect the archive bucket:
+Create the archive bucket only if it does not already exist:
 
 ```text
+pnpm dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler r2 bucket create avalon-desktop-releases-archive --location wnam --storage-class InfrequentAccess
 pnpm dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler r2 bucket info avalon-desktop-releases-archive
 ```
 
@@ -529,9 +528,8 @@ rolling 24-hour window. The JSON receipt records when Stable last moved.
 Production retention is automated by the private `avalon-release-retention`
 Worker in `apps/release-retention`. It has no route, `workers.dev` URL, preview
 URL, or application secret. Its only capabilities are bindings to the active and
-archive release buckets. `.github/workflows/deploy-release-retention.yml`
-deploys it on every merge that touches it, after its typecheck and tests. To
-deploy by hand from the repository root:
+archive release buckets. No workflow deploys it; a merged change is not live
+until someone runs, from the repository root:
 
 ```text
 pnpm deploy:release-retention

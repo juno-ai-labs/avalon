@@ -341,6 +341,10 @@ it('prepares a canvas with several artifacts only for a shell that draws their p
   };
   const prepared = async (capabilities: string[] | undefined) => {
     const events: Array<{ event: { type: string; canvas?: unknown } }> = [];
+    // Each shell starts clean, so the second gets its directory from its own
+    // socket rather than the first shell's closed one or its cached copy.
+    BrowserSocket.instances = [];
+    sessionStorage.clear();
     vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'test-capability');
     vi.stubGlobal('__RALLY_MOBILE_CAPABILITIES__', capabilities);
     vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw)) });
