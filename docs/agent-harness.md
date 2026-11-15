@@ -1928,9 +1928,8 @@ who may open the feed before building, which the owner ruled out: sites default
 to public and confirm afterwards. A feed with no page, which leaves the person
 nowhere to copy the link from.
 
-**Consequences:** The skill states what Rally does not do yet (byte ranges,
-caching) so an agent does not promise a directory listing; when serving gains
-byte ranges, that section changes with it.
+**Consequences:** The skill states what Rally does not do yet (caching) so an
+agent does not promise it; that section changes when serving does.
 
 ### 2026-11-15 — A wake-up continues the loop that scheduled it
 

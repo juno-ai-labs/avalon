@@ -90,7 +90,7 @@ function manifest(version: number): ArtifactManifest {
  * records.
  */
 let nextVersion = 0;
-async function serve(path: string): Promise<Response> {
+async function serve(path: string, init: RequestInit = {}): Promise<Response> {
   nextVersion += 1;
   const version = nextVersion;
   const site = manifest(version);
@@ -124,7 +124,7 @@ async function serve(path: string): Promise<Response> {
     globalOutbound: null,
   }));
   return await worker.getEntrypoint().fetch(
-    new Request(`https://${ARTIFACT}-g.rallyusercontent.test${path}`),
+    new Request(`https://${ARTIFACT}-g.rallyusercontent.test${path}`, init),
   );
 }
 
@@ -137,6 +137,15 @@ describe("a stateless active site's isolate", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe(PAGE_HTML);
     expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+  });
+
+  it("passes a visitor's byte range through the ASSETS binding to the stored file", async () => {
+    // The module hands its request on (`env.ASSETS.fetch(request)`), so a
+    // player seeking in a site's own media reaches the stored bytes.
+    const response = await serve("/", { headers: { range: "bytes=0-3" } });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-range")).toBe(`bytes 0-3/${PAGE_HTML.length}`);
+    expect(await response.text()).toBe(PAGE_HTML.slice(0, 4));
   });
 
   it("accepts the relative string the skill teaches for a server-side read", async () => {
