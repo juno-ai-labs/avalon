@@ -1268,6 +1268,9 @@ future agent tool or plugin, not just this family.
 14. `capability` is covered by the connector manifest, the descriptor matches it
     in provider type and tool order, the plugin system message is updated, and
     `pnpm lint`, `pnpm typecheck`, and `pnpm test` are green.
+15. Which loops are offered the tool is answered for every row of
+    [`agent-loop-types.md`](agent-loop-types.md#the-matrix), not only the
+    loops the tool was designed for.
 
 ## See also
 
