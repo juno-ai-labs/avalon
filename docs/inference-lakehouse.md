@@ -147,7 +147,10 @@ reconciles and adopts that manifest alone, writes its stream ID and marker into
 the checkout, and keeps the pinned ones off the control plane, so a new
 lakehouse works from its first deploy. It reconciles on every deploy until its
 ID and marker are committed, and the deploy log prints both values to commit
-together. Until then `--check` and `--reconcile` fail on it: before the first
+together. A failure there fails the deploy only for an API Worker lakehouse,
+which must exist before the API Worker binds it. For another Worker's, the
+deploy warns and continues: the API release changed none of its own bindings,
+and that Worker deploys unbound and says how to fix it. Until then `--check` and `--reconcile` fail on it: before the first
 deploy its stream is missing, and after it the committed all-zero ID drifts
 from the real one. Only the API Worker's lakehouses are materialized
 into the regional configs: the engineering MCP's audit table is provisioned
@@ -367,7 +370,9 @@ rejected: its missing marker would have sent production into the stale-marker
 check, which fails when the pinned streams exist.
 
 **Consequences:** A new lakehouse's deploys call the Pipelines control plane
-until its stream ID and `pinnedAccount` are committed. A lakehouse for a Worker
+until its stream ID and `pinnedAccount` are committed. Only a new API Worker
+lakehouse can fail the API deploy that way; another Worker's failure is a
+warning, so the 2026-09-01 rule still holds for the API Worker's own bindings. A lakehouse for a Worker
 other than the API stays out of `API_WORKER_BINDINGS` and is bound by that
 Worker's own deploy; added to the loader list alone, it is provisioned but
 bound nowhere.
