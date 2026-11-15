@@ -337,6 +337,57 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect(await response.text()).toBe("episode one audio");
   });
 
+  it("serves a byte range of a public file and a site's asset, as a player seeking asks for one", async () => {
+    await share("public");
+    await sync(SITE_HOST, SITE);
+    await sync(FILE);
+    const fileStub = (await env.PLATFORM_DB.prepare("SELECT hostname_stub FROM artifact_hostname_routes WHERE artifact_id=?")
+      .bind(FILE).first<{ hostname_stub: string }>())!.hostname_stub;
+    // As an anonymous player sends it: no cookie, no fetch metadata.
+    const fetchFrom = async (stub: string, init: RequestInit) => {
+      const ctx = createExecutionContext();
+      const response = await artifactWorker.fetch(new Request(`https://${stub}-g.rallyusercontent.com/`, init), {
+        APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+        ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+        PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
+      }, ctx);
+      await waitOnExecutionContext(ctx);
+      return response;
+    };
+    const read = async (response: Response) => ({
+      status: response.status,
+      body: await response.text(),
+      length: response.headers.get("content-length"),
+      range: response.headers.get("content-range"),
+      accepts: response.headers.get("accept-ranges"),
+    });
+
+    // The stored file is "Published file", 14 bytes.
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=0-8" } })))
+      .toEqual({ status: 206, body: "Published", length: "9", range: "bytes 0-8/14", accepts: "bytes" });
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=-4" } })))
+      .toMatchObject({ status: 206, body: "file", range: "bytes 10-13/14" });
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=10-" } })))
+      .toMatchObject({ status: 206, body: "file", range: "bytes 10-13/14" });
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=14-" } })))
+      .toMatchObject({ status: 416, body: "", range: "bytes */14" });
+    expect(await read(await fetchFrom(fileStub, {})))
+      .toEqual({ status: 200, body: "Published file", length: "14", range: null, accepts: "bytes" });
+    expect(await read(await fetchFrom(fileStub, { method: "HEAD" })))
+      .toEqual({ status: 200, body: "", length: "14", range: null, accepts: "bytes" });
+    // A resumed download that holds another version gets the whole current one.
+    const etag = (await fetchFrom(fileStub, { method: "HEAD" })).headers.get("etag");
+    expect(etag).toBeTruthy();
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=0-8", "if-range": "\"another-version\"" } })))
+      .toMatchObject({ status: 200, body: "Published file" });
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=0-8", "if-range": etag! } })))
+      .toMatchObject({ status: 206, body: "Published" });
+
+    // A static site's asset, "<h1>Website</h1>", answers a range the same way.
+    expect(await read(await fetchFrom("quiet-blue-river-garden", { headers: { range: "bytes=4-10" } })))
+      .toEqual({ status: 206, body: "Website", length: "7", range: "bytes 4-10/16", accepts: "bytes" });
+  });
+
   it("artifact-only users can use artifacts but cannot read the conversation; old cookies lose access", async () => {
     await share("participants", [READER]);
     await sync(SITE_HOST, SITE);
