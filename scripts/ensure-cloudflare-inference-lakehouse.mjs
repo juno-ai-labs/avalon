@@ -298,9 +298,11 @@ export async function loadEngineeringAuditLakehouseManifest() {
 /**
  * The engineering MCP Worker's own Pipeline binding, which its deploy writes
  * into its generated Wrangler config. Not one of the API Worker's lakehouses,
- * so the regional materializer leaves it out. Null until reconciliation pins
- * the stream: the MCP then deploys without it and refuses every tool call
- * as `engineering_audit_unconfigured`.
+ * so the regional materializer leaves it out. Read from this checkout's
+ * manifest, where an earlier `--deploy-bindings` step in the same job wrote
+ * any stream ID it adopted. Null while the stream is still unprovisioned: the
+ * MCP then deploys without it and refuses every tool call as
+ * `engineering_audit_unconfigured`.
  */
 export async function engineeringAuditLakehouseBinding() {
   const manifest = await loadEngineeringAuditLakehouseManifest();
@@ -644,7 +646,15 @@ const manifestPaths = {
   INFERENCE_LAKEHOUSE: manifestPath,
   ANALYTICS_LAKEHOUSE: analyticsManifestPath,
   USAGE_LAKEHOUSE: usageManifestPath,
+  ENGINEERING_AUDIT_LAKEHOUSE: engineeringAuditManifestPath,
 };
+
+/** The bindings the regional API Worker carries; the rest belong to other Workers. */
+const API_WORKER_BINDINGS = new Set(['INFERENCE_LAKEHOUSE', 'ANALYTICS_LAKEHOUSE', 'USAGE_LAKEHOUSE']);
+
+function isUnprovisioned(manifest) {
+  return LAKEHOUSE_REGIONS.some((regionName) => manifest.regions[regionName]?.streamId === UNPROVISIONED_STREAM_ID);
+}
 
 /**
  * What a deploy runs. In the account the manifests were pinned for, this is
@@ -655,47 +665,73 @@ const manifestPaths = {
  * checkout's manifests, then materializes. Nothing is committed; the next
  * deploy of a fork reconciles again, which is idempotent.
  *
+ * A manifest that lands with the all-zero stream ID is a new lakehouse, not a
+ * fork: in the pinned account it alone is reconciled and adopted the same way,
+ * so it works from its first deploy, and the others stay off the control
+ * plane. It reconciles on every deploy until its adopted ID and marker are
+ * committed.
+ *
  * A mismatch while the pinned streams exist in this account means the marker
  * is stale (the account id changed, or the marker was never updated), not a
  * fork. Adopting there would silently re-point production, so it fails.
+ *
+ * Only the API Worker's lakehouses are materialized into its regional
+ * configs; another Worker's (the engineering MCP's audit table) is left in the
+ * checkout manifest for that Worker's own deploy to read.
  */
 export async function deployLakehouseBindings(options = {}) {
   const environment = options.environment ?? process.env;
   const log = options.log ?? console.log;
+  const reconcile = options.reconcile ?? ensureCloudflareLakehouses;
   const fingerprint = accountFingerprint(required('CLOUDFLARE_ACCOUNT_ID', environment));
   const manifests = options.manifests ?? await Promise.all([
     loadInferenceLakehouseManifest(),
     loadAnalyticsLakehouseManifest(),
     loadUsageLakehouseManifest(),
+    loadEngineeringAuditLakehouseManifest(),
   ]);
-  if (manifests.every((manifest) => manifest.pinnedAccount === fingerprint)) {
-    log('Lakehouse stream IDs are pinned for this account; materializing without a control-plane read');
-    return materializePinnedLakehouseWranglerConfigs({ ...options, manifests });
-  }
-  const client = {
-    accountId: required('CLOUDFLARE_ACCOUNT_ID', environment),
-    token: required('CLOUDFLARE_API_TOKEN', environment),
-    fetchImpl: options.fetchImpl ?? globalThis.fetch,
-    log,
-    randomImpl: options.randomImpl,
-    waitImpl: options.waitImpl,
-  };
-  for (const manifest of manifests) {
-    for (const regionName of LAKEHOUSE_REGIONS) {
-      const { stream, streamId } = manifest.regions[regionName];
-      if (!streamId) continue;
-      try {
-        await apiRequest(client, `/pipelines/v1/streams/${encodeURIComponent(streamId)}`);
-      } catch (error) {
-        if (isMissing(error)) continue;
-        throw error;
-      }
-      throw new Error(`${manifest.binding} pins ${stream} to ${streamId}, which exists in this account, but its pinnedAccount is for another account. `
-        + `Set pinnedAccount to ${fingerprint} in the manifest rather than adopting new stream IDs.`);
+  const materialize = (chosen) => materializePinnedLakehouseWranglerConfigs({
+    ...options, manifests: chosen.filter((manifest) => API_WORKER_BINDINGS.has(manifest.binding)),
+  });
+  const pinned = manifests.filter((manifest) => !isUnprovisioned(manifest));
+  let kept;
+  let reconciled;
+  if (pinned.every((manifest) => manifest.pinnedAccount === fingerprint)) {
+    reconciled = manifests.filter(isUnprovisioned);
+    if (reconciled.length === 0) {
+      log('Lakehouse stream IDs are pinned for this account; materializing without a control-plane read');
+      return materialize(manifests);
     }
+    log(`New lakehouses with no pinned stream: ${reconciled.map(({ binding }) => binding).join(', ')}; provisioning them in this account`);
+    kept = pinned;
+  } else {
+    const client = {
+      accountId: required('CLOUDFLARE_ACCOUNT_ID', environment),
+      token: required('CLOUDFLARE_API_TOKEN', environment),
+      fetchImpl: options.fetchImpl ?? globalThis.fetch,
+      log,
+      randomImpl: options.randomImpl,
+      waitImpl: options.waitImpl,
+    };
+    for (const manifest of pinned) {
+      for (const regionName of LAKEHOUSE_REGIONS) {
+        const { stream, streamId } = manifest.regions[regionName];
+        if (!streamId) continue;
+        try {
+          await apiRequest(client, `/pipelines/v1/streams/${encodeURIComponent(streamId)}`);
+        } catch (error) {
+          if (isMissing(error)) continue;
+          throw error;
+        }
+        throw new Error(`${manifest.binding} pins ${stream} to ${streamId}, which exists in this account, but its pinnedAccount is for another account. `
+          + `Set pinnedAccount to ${fingerprint} in the manifest rather than adopting new stream IDs.`);
+      }
+    }
+    log('Lakehouse stream IDs are pinned for another account; reconciling this account and adopting its stream IDs');
+    reconciled = manifests;
+    kept = [];
   }
-  log('Lakehouse stream IDs are pinned for another account; reconciling this account and adopting its stream IDs');
-  const { provisioned } = await ensureCloudflareLakehouses({ ...options, manifests, create: true, adoptStreamIds: true });
+  const { provisioned } = await reconcile({ ...options, manifests: reconciled, create: true, adoptStreamIds: true });
   const adopted = provisioned.map(({ manifest }) => ({ ...manifest, pinnedAccount: fingerprint }));
   if (options.writeManifests !== false) {
     for (const manifest of adopted) {
@@ -706,7 +742,7 @@ export async function deployLakehouseBindings(options = {}) {
       await writeFile(path, `${JSON.stringify(raw, null, 2)}\n`);
     }
   }
-  return materializePinnedLakehouseWranglerConfigs({ ...options, manifests: adopted });
+  return materialize([...kept, ...adopted]);
 }
 
 export function parseLakehouseMode(arguments_) {
