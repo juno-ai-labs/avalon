@@ -37,6 +37,7 @@ const SETTING_LABEL: Partial<Record<PushNotificationData["kind"], string>> = {
   source_request: "Source requests",
   source_approved: "Source requests",
   source_declined: "Source requests",
+  canvas_notice: "Canvas notices",
 };
 
 /** Who the email goes to, read now: an inactive member is sent nothing. */

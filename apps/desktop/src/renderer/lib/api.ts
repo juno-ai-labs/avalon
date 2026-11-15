@@ -1,3 +1,4 @@
+import type { NotificationChannel } from '@rally/contracts';
 import { WorkstreamMessageAdmissionReceiptSchema, type CreateMessageRequestSchema, type WorkstreamMessageAdmissionReceipt } from '@rally/contracts';
 import { CrashIngestResponseSchema, type ProductAnalyticsPreference } from '@rally/contracts/telemetry';
 import type { MobileCrashReport } from '@rally/contracts/crash-reports';
@@ -1390,6 +1391,11 @@ export class RallyApi {
   /** Change who can open a Canvas; its creator's, an administrator's, or its Sidekick's manager's. */
   setCanvasAudience(id: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
     return this.request(`/canvases/${encodeURIComponent(id)}/audience`, { method: 'POST', body: update, schema: CanvasDetailSchema });
+  }
+
+  /** This person's channels for a Canvas's notices: a list (empty mutes it), or `null` to follow Settings. */
+  setCanvasNoticeChoice(id: string, channels: NotificationChannel[] | null): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/notifications`, { method: 'PUT', body: { channels }, schema: CanvasDetailSchema });
   }
 
   /** Join a Canvas's participant list, so its notices reach this person. */

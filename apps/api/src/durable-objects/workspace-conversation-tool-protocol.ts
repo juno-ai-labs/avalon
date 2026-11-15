@@ -46,6 +46,24 @@ export const ConversationPostRequestSchema = z.strictObject({
 });
 export type ConversationPostRequest = z.input<typeof ConversationPostRequestSchema>;
 
+/**
+ * A record the host writes into a Canvas's Chat or a Sidekick's shared
+ * conversation (`appendHostRecord`): a system message whose structured
+ * content the client draws by its `kind`, keyed so a retry lands once. A
+ * Canvas's notices record is one.
+ */
+export const HostRecordRequestSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  workspaceId: z.string().min(1),
+  parentKind: z.enum(["automation", "canvas"]),
+  workstreamId: z.string().min(1),
+  clientMessageId: z.string().min(1).max(300),
+  text: z.string().min(1).max(MESSAGE_MAX_CHARACTERS),
+  structuredContent: z.looseObject({ kind: z.string().min(1).max(100) }),
+  occurredAt: z.number().int().nonnegative(),
+});
+export type HostRecordRequest = z.input<typeof HostRecordRequestSchema>;
+
 const Addressed = {
   workspaceId: WorkspaceIdSchema,
   userId: UserIdSchema,

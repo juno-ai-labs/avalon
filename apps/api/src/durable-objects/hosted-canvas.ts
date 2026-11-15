@@ -66,6 +66,13 @@ import { createMessageObjectPort } from "../runtime/message-port";
 import { canvasTitleFromOpening } from "../services/canvas-naming";
 import { canvasRunningActivity, projectionIsRunning } from "./canvas-agent-activity";
 import { readCanvasSharingDefaults } from "./canvas-sharing-defaults";
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, type CanvasNoticesRecord, type NotificationChannel } from "@rally/contracts";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { conversationObjectName } from "./names";
+import {
+  canvasNoticeRegistration, canvasNoticesView, tellCanvasParticipants, writeCanvasNoticeChoice, writeCanvasNoticeRegistration,
+  type CanvasNoticeAgent,
+} from "./canvas-notices";
 
 /** Who is asking: their id and, for a member, their Organization role; a guest has none. */
 export const CanvasActorSchema = z.strictObject({
@@ -246,6 +253,8 @@ export function canvasSummary(row: CanvasRow, report: InvalidCanvasAppearanceRep
 const CANVAS_DISCARD_STATEMENTS = [
   "DELETE FROM canvas_directory WHERE canvas_id = ?",
   "DELETE FROM canvas_participants WHERE canvas_id = ?",
+  "DELETE FROM canvas_notice_registrations WHERE canvas_id = ?",
+  "DELETE FROM canvas_notification_choices WHERE canvas_id = ?",
   "DELETE FROM canvas_artifact_users WHERE canvas_id = ?",
   "DELETE FROM canvas_artifact_access_state WHERE canvas_id = ?",
   "DELETE FROM sidekick_children WHERE sidekick_id = ?",
@@ -736,7 +745,85 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       canManage,
       // Whoever decides on the people sees the requests waiting on them.
       ...(canManage ? { pendingAccessRequests: pendingAccessRequests(this.sql, this.canvasId) } : {}),
+      notices: canvasNoticesView(this.sql, this.canvasId, {
+        userId: request.actor.userId,
+        participant: request.actor.userId === row.created_by_user_id || this.participantUserIds().includes(request.actor.userId),
+      }),
     });
+  }
+
+  /**
+   * Turn this Canvas's notices on, or say again what they are about, for the
+   * agent the caller resolved (docs/PRDs/2026-11-14_canvas-notices). A new
+   * sentence lands a record in the Canvas's Chat, keyed on the caller's
+   * operation so a retry lands it once, and then is stored; the same sentence
+   * again changes nothing. Who may call this was decided by the caller from
+   * its loop: the host derives the Canvas, never the model.
+   */
+  async registerNotices(input: {
+    workspaceId: string; canvasId: string; purpose: string; agent: CanvasNoticeAgent; operationId: string;
+  }): Promise<{ canvasId: string; purpose: string; changed: boolean; recordMessageId: string }> {
+    const row = this.assertCanvas(input.workspaceId, input.canvasId, true);
+    if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas is archived");
+    const purpose = input.purpose.trim();
+    const existing = canvasNoticeRegistration(this.sql, this.canvasId);
+    if (existing?.purpose === purpose) {
+      return { canvasId: this.canvasId, purpose, changed: false, recordMessageId: existing.record_message_id };
+    }
+    const workspaceId = asWorkspaceId(row.workspace_id);
+    const record: CanvasNoticesRecord = { kind: "canvas_notices_record", canvasId: asWorkstreamId(this.canvasId), purpose, registeredBy: { kind: input.agent.kind, name: input.agent.name } };
+    const chat = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
+      conversationObjectName(this.env.AVALON_REGION, workspaceId, this.canvasId, asSubstreamId("0")));
+    const appended = await chat.appendHostRecord({
+      schemaVersion: 1, workspaceId, parentKind: "canvas", workstreamId: this.canvasId,
+      clientMessageId: `canvas-notices-record:${input.operationId}`,
+      text: `This Canvas sends notices: ${purpose}`, structuredContent: record, occurredAt: Date.now(),
+    });
+    if (appended.outcome === "refused" || appended.messageId === null) {
+      throw new ApiError(409, appended.code === "workstream_archived" ? "canvas_archived" : appended.code, "The Canvas's Chat did not take the record");
+    }
+    const recordMessageId = appended.messageId;
+    this.storage.transactionSync(() => {
+      writeCanvasNoticeRegistration(this.sql, { canvasId: this.canvasId, purpose, agent: input.agent, recordMessageId, now: Date.now() });
+      this.host.noteCanvasDirectoryChanged(this.canvasId);
+    });
+    return { canvasId: this.canvasId, purpose, changed: true, recordMessageId };
+  }
+
+  /**
+   * Tell this Canvas's participants something happened, from the agent the
+   * caller resolved, once per `sourceId`. Refused while notices are off.
+   */
+  async notify(input: {
+    workspaceId: string; canvasId: string; agent: CanvasNoticeAgent; title: string; body: string; sourceId: string;
+  }): Promise<{ canvasId: string; recipients: number }> {
+    const row = this.assertCanvas(input.workspaceId, input.canvasId, true);
+    if (row.archived_at !== null) throw new ApiError(409, "canvas_archived", "This Canvas is archived");
+    if (!canvasNoticeRegistration(this.sql, this.canvasId)) {
+      throw new ApiError(409, "canvas_notices_not_registered", "This Canvas has not turned on notices");
+    }
+    const recipients = await tellCanvasParticipants(
+      { env: this.env, storage: this.storage, noteActivityChanged: (userId) => this.host.noteActivityChanged(userId) },
+      { workspaceId: row.workspace_id, canvasId: this.canvasId, canvasTitle: row.title, generation: row.authority_generation,
+        createdByUserId: row.created_by_user_id, sender: input.agent, title: input.title.trim(), body: input.body.trim(), sourceId: input.sourceId },
+    );
+    return { canvasId: this.canvasId, recipients };
+  }
+
+  /**
+   * Choose the reader's channels for this Canvas's notices, mute it with an
+   * empty list, or follow Settings again with `null`. Anyone the Canvas
+   * admits may; a choice reaches them only while they are a participant.
+   */
+  setNoticeChoice(input: CanvasActorRequest & { channels: readonly NotificationChannel[] | null }): CanvasDetail {
+    const request = parseRpcInput(CanvasActorRequestSchema, { workspaceId: input.workspaceId, canvasId: input.canvasId, actor: input.actor },
+      "canvas_notice_choice");
+    const row = this.assertCanvas(request.workspaceId, request.canvasId);
+    if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
+    this.storage.transactionSync(() => writeCanvasNoticeChoice(this.sql, {
+      canvasId: this.canvasId, userId: request.actor.userId, channels: input.channels, now: Date.now(),
+    }));
+    return this.detail(request);
   }
 
   /**

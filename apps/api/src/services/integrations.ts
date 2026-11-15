@@ -35,6 +35,7 @@ import { conversationParentStub, hostedParentStub } from "./conversation-parent-
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { isCanvasChat } from "../lib/canvas-chat";
+import { createNotificationsPlugin } from "./notification-tools";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -6002,6 +6003,10 @@ async function loadHarnessTools(
   const tools: HarnessTool[] = [...coreTools];
   const builtinPlugins = [
     createSidekickTaskOutcomePlugin(input),
+    createNotificationsPlugin(input, {
+      canvasNotices: async (request) => (await hostedParentStub(env, input.workspaceId)).canvasNotices(request),
+      turnIsSelfReview: async () => reviewOwnsThisTurn(env, input, await hostedParentStub(env, input.workspaceId)),
+    }),
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input,
       async () => reviewOwnsThisTurn(env, input, await hostedParentStub(env, input.workspaceId))),
       agentCoordinationRoleGuidance(input),
