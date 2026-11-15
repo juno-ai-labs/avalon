@@ -528,6 +528,11 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
     const menu = () => setSidebar(true);
     const create = showDashboard ? createFromDashboard : undefined;
     navigation.getParent()?.setOptions({
+      // iOS 26 fades content under the transparent header in the app's own
+      // appearance, which tints an artifact that draws its own colours (white
+      // over a dark site). Artifacts own their pixels; the native dashboard and
+      // chat keep the system effect.
+      scrollEdgeEffects: { top: view === 'artifact' && !close ? 'hidden' : 'automatic' },
       headerLeft: signedIn ? () => <HeaderButton kind="menu" label="Open sidebar" onPress={menu} /> : undefined,
       headerRight: close ? () => <HeaderButton kind="close" label="Close conversation" onPress={close} /> : create ? () => <HeaderButton kind="create" label="Create a canvas" onPress={create} /> : chat ? () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} /> : undefined,
       unstable_headerLeftItems: () => signedIn ? [{ type: 'button', label: 'Open sidebar', icon: { type: 'sfSymbol', name: 'sidebar.left' }, onPress: menu }] : [],
@@ -619,6 +624,8 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
     previousConnection.current = network.isConnected;
     if (focused && reconnected) controls.current.get('Home')?.send({ type: 'refresh' });
   }, [focused, network.isConnected, controls]);
+  // A pinned site is always an artifact: no system fade over its pixels.
+  useEffect(() => { if (focused) navigation.getParent()?.setOptions({ scrollEdgeEffects: { top: 'hidden' } }); }, [focused, navigation]);
   useEffect(() => {
     if (!focused || !directory) return;
     const chat = () => openChat(canvas.canvasId, canvas.title);
