@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useRef, type ReactNode } from 'react';
 import { Animated, View, type ViewStyle } from 'react-native';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,6 +18,9 @@ export interface EdgePullTarget {
  */
 export function EdgePull({ x, target, enabled, style, children }: { x: Animated.Value; target: EdgePullTarget | null; enabled: boolean; style?: ViewStyle; children: ReactNode }) {
   const insets = useSafeAreaInsets();
+  // The pull ends on the sidebar it began on, even if focus moved mid-pull and
+  // another screen (or none) is registered by release.
+  const pulled = useRef<EdgePullTarget | null>(null);
   const onUpdate = useMemo(() => Animated.event([{ nativeEvent: { handlerData: { translationX: x } } }], { useNativeDriver: true }), [x]);
   const pan = usePanGesture({
     enabled: enabled && target !== null,
@@ -26,10 +29,24 @@ export function EdgePull({ x, target, enabled, style, children }: { x: Animated.
     failOffsetY: [-EDGE_SWIPE_ACTIVATION, EDGE_SWIPE_ACTIVATION],
     runOnJS: true,
     useAnimated: true,
-    onActivate: () => target?.begin(),
+    onActivate: () => { pulled.current = target; target?.begin(); },
     onUpdate,
     // Reset the offset even when no sidebar took the pull, so none starts from a stale one.
-    onDeactivate: (event) => { target?.end(event.translationX, event.velocityX, event.canceled); x.setValue(0); },
+    onDeactivate: (event) => {
+      const started = pulled.current;
+      pulled.current = null;
+      // A pull whose screen lost focus closes rather than opening over the new one.
+      started?.end(event.translationX, event.velocityX, event.canceled || started !== target);
+      x.setValue(0);
+    },
+    // A pan disabled mid-pull (its screen unregistered) may skip onDeactivate;
+    // close whatever pull is still open so its Modal does not stay up.
+    onFinalize: () => {
+      const started = pulled.current;
+      pulled.current = null;
+      started?.end(0, 0, true);
+      x.setValue(0);
+    },
   });
   return <GestureDetector gesture={pan}><View collapsable={false} style={style}>{children}</View></GestureDetector>;
 }
