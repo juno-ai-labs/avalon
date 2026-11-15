@@ -46,7 +46,7 @@ exists.
 | `apps/api/src/durable-objects/workspace-artifact-data-write.ts` | WorkspaceDO's one read for the write gate (`artifactDataWriteFacts`): the artifact a resource is, its Canvas, whether that Canvas is archived, and whether it is attached to the Sidekick named. |
 | `packages/prompts/harness/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
 | `packages/agent-harness/src/platform-skills/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
-| `packages/agent-harness/src/platform-skills/publishing-a-feed-skill.ts` | The loadable skill for a podcast or calendar feed an app subscribes to without signing in, composing the build craft above. |
+| `packages/agent-harness/src/platform-skills/publishing-a-feed-skill.ts` | The loadable skill for any feed an app subscribes to without signing in, with its page and copyable link, composing the build craft above. |
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions and lazy menu levels it contributes to its host, and the Stored data pop-out. |
 | `apps/desktop/src/renderer/components/detail-header-actions.tsx` | How a detail hands its actions to the header of the rail or panel showing it, as data the host draws as its own. Not artifact-specific: it is what keeps this detail's controls out of the page it is showing. |
