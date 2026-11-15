@@ -1,5 +1,5 @@
 import { notificationPayload } from './notification-target';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
@@ -80,5 +80,5 @@ export function useNotifications(directory: MobileSnapshot | null, send: (comman
     setRegistration(event.ok ? event.enabled ? 'registered' : 'off' : 'registration failed');
     if (!event.ok) recordFailure('notification_registration_failed');
   }, []);
-  return { permission, registration, enable: () => synchronize(true), retry: () => synchronize(), receive };
+  return useMemo(() => ({ permission, registration, enable: () => synchronize(true), retry: () => synchronize(), receive }), [permission, registration, synchronize, receive]);
 }

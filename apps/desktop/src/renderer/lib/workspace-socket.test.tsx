@@ -763,6 +763,37 @@ describe('WorkspaceSocketProvider', () => {
     expect(socketTelemetry()).toEqual([]);
   });
 
+  it('replaces a socket that still reads open when its host says the page was suspended', async () => {
+    const queryClient = new QueryClient();
+    const ticket = {
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    };
+    const getWorkspaceSocketTicket = vi.fn(() => Promise.resolve(ticket));
+    let socketApi!: ReturnType<typeof useWorkspaceSocket>;
+    function Probe() { socketApi = useWorkspaceSocket(); return null; }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider region="global" api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"><Probe /></WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const slept = FakeWebSocket.instances[0]!;
+    act(() => slept.open());
+    // retry() trusts an OPEN socket; a suspended page's socket can read OPEN with its connection gone.
+    act(() => socketApi.retry());
+    await flushPromises();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    act(() => socketApi.replace());
+    await flushPromises();
+    expect(slept.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(getWorkspaceSocketTicket).toHaveBeenCalledTimes(2);
+    queryClient.clear();
+  });
+
   it('times out a stranded reconnect ticket and starts another organization attempt', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
