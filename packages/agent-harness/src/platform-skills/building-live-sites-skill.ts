@@ -43,6 +43,10 @@ change. Build it to stay current, not as a snapshot:
    ones a refresh rewrites. Columns people edit on the page (status, notes,
    next step) a refresh never touches. Write each refresh as an upsert on the
    key that sets only the source columns, so it never undoes someone's edit.
+   Runs can finish out of order, so never let an older one win: keep dates
+   such as last contact with \`MAX(last_contact, excluded.last_contact)\`, and
+   give each row a \`source_updated_at\` column the upsert's \`WHERE\` compares,
+   so a row only changes when the incoming source is newer.
 3. **Offer a Sidekick to keep it current.** After publishing, offer once, in
    one question, to create a Sidekick that updates the site. Name what would
    start each run, chosen from the sources you read: each new email in a named
@@ -51,15 +55,19 @@ change. Build it to stay current, not as a snapshot:
    site to stay up to date, skip the question and create it.
 4. **On yes, create the Sidekick from this Canvas.** Give its wizard what
    **Configure a Sidekick to refresh an existing site** lists for a site that
-   stores its own data, plus the columns runs must never write, the sources
+   stores its own data, plus the newer-source rule from step 2, the columns
+   runs must never write, the sources
    and accounts to watch, and what makes a record belong (for example, "a
    two-way conversation about piloting Rally"). Wait for the wizard's
    confirmation before saying the Sidekick is set up.
 5. **Name the accounts you cannot reach.** A trigger on another person's
    account needs that person: they connect the account if they have not, and
-   approve it as a source themselves. Tell the wizard whose accounts to
-   request, and tell the person which accounts still wait on someone else.
-   Never present the site as covering an account you could not read.
+   approve it as a source themselves. The wizard cannot send that request
+   from your handoff: only a turn a person is driving can ask for a source.
+   So tell the person to open the Sidekick and ask its wizard to request
+   each missing account, and say those accounts are not covered until the
+   request is sent and approved. Never present the site as covering an
+   account you could not read.
 
 A snapshot fits only data fixed at one time: a report as of today, a finished
 event's results, or a site the person asked to be a snapshot. In a Sidekick

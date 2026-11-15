@@ -964,7 +964,11 @@ itself from both accounts.
 **Consequences:** The offer is a question, not a default action, unless the
 request already asks for updates; a Sidekick run skips it. A trigger on another
 person's account still needs that person to connect it and approve it as a
-source, so the agent must say which accounts are not covered.
+source. The Canvas agent's handoff cannot send that request (`asksForSources`
+refuses agent-started turns), so the person asks the wizard themselves.
+Overlapping runs can finish out of order, so refreshes only move a row
+forward: dates merge with `MAX` and other source facts change only when a
+newer `source_updated_at` arrives.
 
 ### 2026-11-12 — Public sites accept anonymous writes by default
 
