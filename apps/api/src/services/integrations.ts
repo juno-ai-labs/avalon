@@ -295,7 +295,7 @@ import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { setsDelegation, sidekickDelegationTools } from "./sidekick-delegation-tools";
 import { sidekickSourceRequestCard, sidekickSourceTools } from "./sidekick-source-tools";
-import { refusingTool, type ToolRefusal } from "./tool-refusal";
+import { refusingTool, toolRefusal, type ToolRefusal } from "./tool-refusal";
 import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
@@ -5291,9 +5291,7 @@ function asksForSources(input: Pick<WorkstreamWorkflowInput,
  * question here would wait on nobody.
  */
 function questionRefusal(input: Pick<WorkstreamWorkflowInput, "backgroundAgent">): ToolRefusal {
-  return input.backgroundAgent
-    ? { code: "question_from_background_agent", message: "A background agent cannot ask a person a question: nobody is reading this conversation, so it would wait on nobody. Send the question to the agent you work for with send_message; it can ask its person and send you the answer." }
-    : { code: "question_from_agent_message", message: "This turn was started by another agent's message, and nobody is reading this conversation, so a question here would wait on nobody. Reply to that agent with the question; it can ask its person, or a Sidekick's wizard asks directly when a Canvas's Chat messages it." };
+  return toolRefusal(input.backgroundAgent ? "question_from_background_agent" : "question_from_agent_message");
 }
 
 /**
@@ -5308,9 +5306,7 @@ function questionRefusal(input: Pick<WorkstreamWorkflowInput, "backgroundAgent">
 function organizationSidekicksPlugin(env: Env, input: WorkstreamWorkflowInput, readsRuns: boolean,
   paged: (tool: HarnessTool) => HarnessTool[]): HarnessPlugin {
   const nobody = asUserId("00000000-0000-0000-0000-000000000000");
-  const refusal = input.automationRun
-    ? { code: "sidekick_tools_need_a_person", message: "This run acts as the Sidekick itself, not as a person, so it cannot use the tools that read or change Sidekicks in a person's name. Say in your result what is needed and for whom, so a person who manages this Sidekick can do it from its conversation or from a Canvas's Chat." }
-    : { code: "sidekick_tools_need_a_person", message: "This turn acts for the Organization, not for a person, so it cannot use the tools that read or change Sidekicks in a person's name. Say in your reply what is needed and for whom, so a person who manages the Sidekick can do it from its conversation or from a Canvas's Chat." };
+  const refusal = toolRefusal("sidekick_tools_need_a_person");
   return {
     canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
     displayName: "Sidekick delegation",
@@ -7909,7 +7905,8 @@ export async function reenterInterruptedWriteForRecovery(
         shortWireName: "sidekick", description: "Sidekick delegation recovery", preload: false,
         // Every tool, whatever the loop: a run's change recorded before runs lost the tool still has to reconcile.
         tools: [...sidekickDelegationTools(env, input, userId, false, true),
-          ...sidekickSourceTools(env, input, userId, false, asksForSources(input))] };
+          // Reconciling a write that may have happened is not a new ask.
+          ...sidekickSourceTools(env, input, userId, false, true)] };
     }
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };

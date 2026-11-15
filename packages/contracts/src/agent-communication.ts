@@ -41,6 +41,12 @@ export const AgentExchangeSchema = z.strictObject({
   teamId: AgentIdSchema,
   messageId: IdSchema,
   senderAgentId: AgentIdSchema,
+  /**
+   * Set when a person started the sender's turn, so what the message asks
+   * traces to them and not to content the sender read. A Sidekick's wizard
+   * asks people directly only on such a message from a Canvas's Chat.
+   */
+  fromPersonTurn: z.literal(true).optional(),
   /** Absent on a model-authored message, which is every message but two. */
   notice: AgentExchangeNoticeSchema.optional(),
   /**

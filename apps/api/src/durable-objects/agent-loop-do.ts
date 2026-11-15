@@ -1951,22 +1951,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * A Sidekick's `conversation_post`, appended to this conversation as a
-   * message from the Sidekick, and nothing else.
-   *
-   * It accepts a Canvas's chat or a Sidekick's own shared conversation
-   * (parent kind `automation`, substream `"0"`, never a run's, which no post
-   * may reach), and it does not
-   * wake this conversation's agent: a post is something people here read, not
-   * a request to the agent here. The agent's next run still reads it: the
-   * gap-fill appends it to the model's context, attributed to the Sidekick.
-   * The row is keyed by the caller's host-derived client message id, so a
-   * retried receipt lands once and answers with the message it already wrote.
-   * Who may post here was decided by the caller against WorkspaceDO's
-   * admission and the Sidekick's attachments; this object decides only that
-   * it is the addressed conversation and that it is not archived.
-   */
-  /**
    * Send a Sidekick's post here to the room again, so the cards drawn under it
    * re-read what they show: the wizard's question it mirrors was answered or
    * cancelled where it lives. The post itself does not change. Nothing for a
@@ -1986,6 +1970,22 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return { revised: true };
   }
 
+  /**
+   * A Sidekick's `conversation_post`, appended to this conversation as a
+   * message from the Sidekick, and nothing else.
+   *
+   * It accepts a Canvas's chat or a Sidekick's own shared conversation
+   * (parent kind `automation`, substream `"0"`, never a run's, which no post
+   * may reach), and it does not
+   * wake this conversation's agent: a post is something people here read, not
+   * a request to the agent here. The agent's next run still reads it: the
+   * gap-fill appends it to the model's context, attributed to the Sidekick.
+   * The row is keyed by the caller's host-derived client message id, so a
+   * retried receipt lands once and answers with the message it already wrote.
+   * Who may post here was decided by the caller against WorkspaceDO's
+   * admission and the Sidekick's attachments; this object decides only that
+   * it is the addressed conversation and that it is not archived.
+   */
   async appendConversationPost(input: unknown): Promise<{
     outcome: "appended" | "replayed" | "refused";
     code: string;
@@ -5809,7 +5809,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       case "elicitation_cancelled": {
         const elicitation = this.product.elicitationById(pending.reference.elicitationId);
         if (!elicitation) throw new Error("semantic_realtime_elicitation_missing");
-        await this.settleMirroredQuestion(elicitation.id);
+        this.ctx.waitUntil(this.settleMirroredQuestion(elicitation.id));
         return ServerSocketEventSchema.parse({
           ...base,
           type: "elicitation_answered",
@@ -6846,9 +6846,10 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     event: Record<string, unknown>,
   ): Promise<"published" | "deferred"> {
     const parentId = "parentId" in attachment ? attachment.parentId : attachment.workstreamId;
-    // An answered wizard question drawn in a Canvas moves its card there too.
+    // An answered wizard question drawn in a Canvas moves its card there too,
+    // off this room's path: it is another object's commit.
     const answered = event["type"] === "elicitation_answered" ? (event["elicitation"] as { id?: unknown } | undefined)?.id : undefined;
-    if (typeof answered === "string") await this.settleMirroredQuestion(answered);
+    if (typeof answered === "string") this.ctx.waitUntil(this.settleMirroredQuestion(answered));
     const response = await this.acceptEvent(new Request(
       "https://room.internal/internal/events",
       {

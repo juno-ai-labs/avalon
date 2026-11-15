@@ -713,7 +713,7 @@ export function createConversationsPlugin(
   const attach: HarnessTool = {
     definition: {
       name: "attach",
-      description: "Let this Sidekick read and post in a Canvas's Chat or a Sidekick's conversation the person can read. Pass the link or id the person gave you. Runs of the Sidekick can then use it. Attaching it to a Canvas also lets everyone who can open that Canvas manage this Sidekick: change it, run it, share it and archive it. Tell the person that before you attach it.",
+      description: "Let this Sidekick read and post in a Canvas's Chat or a Sidekick's conversation the person can read. Pass the link or id the person gave you. Runs of the Sidekick can then use it. Attaching it to a Canvas also lets everyone who can open that Canvas manage this Sidekick: change it, run it, share it and archive it. Tell the person this when you attach it.",
       capability: "rally.conversation.attach",
       mode: "write",
       idempotency: "provider_key",
