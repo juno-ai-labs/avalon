@@ -33,6 +33,7 @@ import { isEntryPoint } from './entry-point.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const tokensDirectory = join(root, 'config', 'design-tokens');
 const themesDirectory = join(tokensDirectory, 'themes');
+const densitiesDirectory = join(tokensDirectory, 'densities');
 const desktopSource = join(root, 'apps', 'desktop', 'src');
 const sharedUiSource = join(root, 'packages', 'ui', 'src');
 const stylesheetPath = join(sharedUiSource, 'styles', 'themes.css');
@@ -87,7 +88,49 @@ export function readTokenSources() {
   // The default theme first: it is emitted as `:root` as well, so it has to be
   // the block every other theme's omissions fall through to.
   themes.sort((a, b) => (a.default ? -1 : b.default ? 1 : a.id.localeCompare(b.id)));
-  return { registry, base, themes };
+  const densities = readdirSync(densitiesDirectory)
+    .filter((entry) => entry.endsWith('.json'))
+    .map((entry) => readJson(join(densitiesDirectory, entry)))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  return { registry, base, themes, densities };
+}
+
+/** The token paths a value names with `{a.b.c}`. */
+function referencesIn(value) {
+  return [...JSON.stringify(value).matchAll(/\{([a-z0-9.-]+)\}/giu)].map((match) => match[1]);
+}
+
+/**
+ * What a density re-declares: the base tokens it sets, and every base token
+ * that reaches one of them through an alias.
+ *
+ * A density is a subtree's choice (`data-density` on any element), so it meets
+ * the same trap the themes do: `--av-sys-font-size-base: var(--av-sys-type-body)`
+ * declared on `:root` is substituted there, and a subtree that redeclares
+ * `--av-sys-type-body` would leave the alias at the root's value. Re-declaring
+ * the dependents beside the overrides makes the alias resolve on the density's
+ * own element. Only base tokens may be set: a density changes measurements, and
+ * an appearance token re-declared here would pin one appearance's value under
+ * every `data-theme`.
+ */
+export function densityTokens(density, base, registry) {
+  for (const path of Object.keys(density.tokens)) {
+    if (!registry.tokens[path]) throw new Error(`${density.id}: sets unknown token ${path}`);
+    if (!(path in base.tokens)) throw new Error(`${density.id}: ${path} is not a base token; a density may set only base tokens`);
+  }
+  const values = { ...density.tokens };
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [path, value] of Object.entries(base.tokens)) {
+      if (path in values) continue;
+      if (referencesIn(value).some((reference) => reference in values)) {
+        values[path] = value;
+        grew = true;
+      }
+    }
+  }
+  return values;
 }
 
 /**
@@ -328,7 +371,7 @@ export function exportSyntaxPalette(themes, base) {
     });
 }
 
-export function generate({ registry, base, themes }) {
+export function generate({ registry, base, themes, densities = [] }) {
   const order = Object.keys(registry.tokens);
   // Every block declares every token, including the ones a theme was content to
   // inherit. Falling through to `:root` works only while `data-theme` is on the
@@ -366,6 +409,32 @@ export function generate({ registry, base, themes }) {
     ].join('\n');
   });
 
+  // After the themes, so a density on the same element as a `data-theme` wins
+  // at equal specificity. `default` restores the base values for a subtree
+  // nested inside another density, and declares exactly the tokens some
+  // density changes, so it is only as large as the densities make it.
+  const densityBlocks = [];
+  if (densities.length) {
+    const declared = (values) => order
+      .filter((path) => path in values)
+      .map((path) => `  ${customProperty(path)}: ${resolveValue(values[path], registry, { id: 'density' }, path)};`);
+    const changed = new Set(densities.flatMap((density) => Object.keys(densityTokens(density, base, registry))));
+    densityBlocks.push([
+      '/* The base measurements, for a subtree inside another density. */',
+      `[data-density='default'] {`,
+      ...declared(Object.fromEntries([...changed].map((path) => [path, base.tokens[path]]))),
+      '}',
+    ].join('\n'));
+    for (const density of densities) {
+      densityBlocks.push([
+        `/* ${density.name} — ${density.description} */`,
+        `[data-density='${density.id}'] {`,
+        ...declared(densityTokens(density, base, registry)),
+        '}',
+      ].join('\n'));
+    }
+  }
+
   const faces = fontFaces(themes).map((font) => fontFaceRule(font, 'themes'));
 
   return [
@@ -381,6 +450,7 @@ export function generate({ registry, base, themes }) {
     '',
     ...(faces.length ? [...faces, ''] : []),
     ...blocks,
+    ...densityBlocks,
     '',
   ].join('\n');
 }

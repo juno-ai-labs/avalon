@@ -30,7 +30,7 @@
    * any control looks like under the pointer, and a change to either should
    * not have to argue about the other. */
   --av-cmp-control-radius: 8px;
-  --av-cmp-control-font-size: 13px;
+  --av-cmp-control-font-size: var(--av-sys-type-callout);
   --av-cmp-control-background-quiet: rgba(119, 119, 119, 0.09);
 
   /* Shared secondary cards, dialogs and menus, independent of message bubbles. */
@@ -358,6 +358,11 @@
   /* The height of a control. */
   --av-sys-size-control-height: 36px;
 
+  /* A touch screen's minimum target, Apple's 44pt, and the gap that keeps two
+   * neighbouring targets from overlapping. */
+  --av-sys-size-touch-target: 44px;
+  --av-sys-size-touch-gap: 16px;
+
   /* Between one turn and the next in the feed: the space under the action row
    * a turn lays out beneath itself. */
   --av-sys-space-stack-gap: var(--av-ref-space-unit);
@@ -390,17 +395,30 @@
   --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
-  /* The sizes the interface sets, as against the document size a theme
-   * inherits. */
-  --av-sys-font-size-base: 14px;
+  /* Named sizes older than the type scale, each now an alias of a role. */
+  --av-sys-font-size-base: var(--av-sys-type-body);
   --av-sys-font-size-prose: 16.5px;
-  --av-sys-font-size-row: 14.5px;
-  --av-sys-font-size-meta: 10.5px;
-  --av-sys-font-size-title: 15px;
+  --av-sys-font-size-row: var(--av-sys-type-body);
+  --av-sys-font-size-meta: var(--av-sys-type-caption-1);
+  --av-sys-font-size-title: var(--av-sys-type-headline);
 
-  /* Multiplier on conversation reading text: prose, headings, byline and
-   * composer. `1` by default; a host raises it on a subtree. */
-  --av-sys-font-scale-reading: 1;
+  /* The type scale: twelve roles named after Apple's text styles, from
+   * `caption-2` to `display`. A rule names a role, never a size, so a density
+   * can move every one together; `scripts/check-type-scale.mjs` rejects a
+   * literal. The base values are the desktop sizes; `densities/touch.json`
+   * holds the touch ones, which are iOS's defaults for the same styles. */
+  --av-sys-type-caption-2: 9.5px;
+  --av-sys-type-caption-1: 10.5px;
+  --av-sys-type-footnote: 11px;
+  --av-sys-type-subheadline: 12px;
+  --av-sys-type-callout: 13px;
+  --av-sys-type-body: 14px;
+  --av-sys-type-headline: 15px;
+  --av-sys-type-title-3: 16px;
+  --av-sys-type-title-2: 18px;
+  --av-sys-type-title-1: 22px;
+  --av-sys-type-large-title: 28px;
+  --av-sys-type-display: 34px;
 
   /* Line height. */
   --av-sys-font-leading-prose: 1.85;
@@ -414,7 +432,7 @@
   /* The four properties that decide whether a label is sentence case or
    * letterspaced small capitals. They apply to the label over a turn in the
    * feed as well as the one over a group of navigation rows. */
-  --av-sys-label-font-size: 10px;
+  --av-sys-label-font-size: var(--av-sys-type-caption-1);
   --av-sys-label-tracking: 0.18em;
   --av-sys-label-transform: uppercase;
   --av-sys-label-weight: 500;
@@ -510,7 +528,7 @@
 
   /* The reading column's width, and the identity line over a turn in it. */
   --av-cmp-feed-width: 880px;
-  --av-cmp-feed-byline-font-size: 12px;
+  --av-cmp-feed-byline-font-size: var(--av-sys-type-subheadline);
   --av-cmp-feed-byline-author-weight: 500;
   --av-cmp-feed-byline-time-weight: 420;
 
@@ -589,7 +607,7 @@
   color-scheme: dark;
 
   --av-cmp-control-radius: 8px;
-  --av-cmp-control-font-size: 13px;
+  --av-cmp-control-font-size: var(--av-sys-type-callout);
   --av-cmp-control-background-quiet: rgba(119, 119, 119, 0.17);
 
   --av-cmp-surface-radius: 12px;
@@ -814,6 +832,9 @@
 
   --av-sys-size-control-height: 36px;
 
+  --av-sys-size-touch-target: 44px;
+  --av-sys-size-touch-gap: 16px;
+
   --av-sys-space-stack-gap: var(--av-ref-space-unit);
 
   --av-sys-space-seam-gap: calc(var(--av-ref-space-unit) * 8);
@@ -831,13 +852,24 @@
   --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
-  --av-sys-font-size-base: 14px;
+  --av-sys-font-size-base: var(--av-sys-type-body);
   --av-sys-font-size-prose: 16.5px;
-  --av-sys-font-size-row: 14.5px;
-  --av-sys-font-size-meta: 10.5px;
-  --av-sys-font-size-title: 15px;
+  --av-sys-font-size-row: var(--av-sys-type-body);
+  --av-sys-font-size-meta: var(--av-sys-type-caption-1);
+  --av-sys-font-size-title: var(--av-sys-type-headline);
 
-  --av-sys-font-scale-reading: 1;
+  --av-sys-type-caption-2: 9.5px;
+  --av-sys-type-caption-1: 10.5px;
+  --av-sys-type-footnote: 11px;
+  --av-sys-type-subheadline: 12px;
+  --av-sys-type-callout: 13px;
+  --av-sys-type-body: 14px;
+  --av-sys-type-headline: 15px;
+  --av-sys-type-title-3: 16px;
+  --av-sys-type-title-2: 18px;
+  --av-sys-type-title-1: 22px;
+  --av-sys-type-large-title: 28px;
+  --av-sys-type-display: 34px;
 
   --av-sys-font-leading-prose: 1.85;
   --av-sys-font-leading-base: 1.4285714286;
@@ -846,7 +878,7 @@
   --av-sys-font-weight-heading: 480;
   --av-sys-font-weight-emphasis: 500;
 
-  --av-sys-label-font-size: 10px;
+  --av-sys-label-font-size: var(--av-sys-type-caption-1);
   --av-sys-label-tracking: 0.18em;
   --av-sys-label-transform: uppercase;
   --av-sys-label-weight: 500;
@@ -897,7 +929,7 @@
   --av-cmp-composer-send-foreground: #141414;
 
   --av-cmp-feed-width: 880px;
-  --av-cmp-feed-byline-font-size: 12px;
+  --av-cmp-feed-byline-font-size: var(--av-sys-type-subheadline);
   --av-cmp-feed-byline-author-weight: 500;
   --av-cmp-feed-byline-time-weight: 420;
 
@@ -926,4 +958,58 @@
   --av-cmp-button-primary-background: #fcfcfc;
   --av-cmp-button-primary-color: #070707;
   --av-cmp-button-primary-hover: #dedede;
+}
+/* The base measurements, for a subtree inside another density. */
+[data-density='default'] {
+  --av-cmp-control-font-size: var(--av-sys-type-callout);
+  --av-sys-font-size-base: var(--av-sys-type-body);
+  --av-sys-font-size-prose: 16.5px;
+  --av-sys-font-size-row: var(--av-sys-type-body);
+  --av-sys-font-size-meta: var(--av-sys-type-caption-1);
+  --av-sys-font-size-title: var(--av-sys-type-headline);
+  --av-sys-type-caption-2: 9.5px;
+  --av-sys-type-caption-1: 10.5px;
+  --av-sys-type-footnote: 11px;
+  --av-sys-type-subheadline: 12px;
+  --av-sys-type-callout: 13px;
+  --av-sys-type-body: 14px;
+  --av-sys-type-headline: 15px;
+  --av-sys-type-title-3: 16px;
+  --av-sys-type-title-2: 18px;
+  --av-sys-type-title-1: 22px;
+  --av-sys-type-large-title: 28px;
+  --av-sys-type-display: 34px;
+  --av-sys-label-font-size: var(--av-sys-type-caption-1);
+  --av-cmp-feed-byline-font-size: var(--av-sys-type-subheadline);
+  --av-cmp-markdown-heading-1: 25px;
+  --av-cmp-markdown-heading-2: 21px;
+  --av-cmp-markdown-heading-3: 18.5px;
+  --av-cmp-markdown-heading-4: 17px;
+}
+/* Touch — iOS's default text sizes for each role, for a subtree read on a phone. Set with data-density="touch". Each role reads --av-dynamic-type-<role> first, which the mobile host sets from the person's Dynamic Type setting. */
+[data-density='touch'] {
+  --av-cmp-control-font-size: var(--av-sys-type-callout);
+  --av-sys-font-size-base: var(--av-sys-type-body);
+  --av-sys-font-size-prose: var(--av-sys-type-body);
+  --av-sys-font-size-row: var(--av-sys-type-body);
+  --av-sys-font-size-meta: var(--av-sys-type-caption-1);
+  --av-sys-font-size-title: var(--av-sys-type-headline);
+  --av-sys-type-caption-2: var(--av-dynamic-type-caption-2, 11px);
+  --av-sys-type-caption-1: var(--av-dynamic-type-caption-1, 12px);
+  --av-sys-type-footnote: var(--av-dynamic-type-footnote, 13px);
+  --av-sys-type-subheadline: var(--av-dynamic-type-subheadline, 15px);
+  --av-sys-type-callout: var(--av-dynamic-type-callout, 16px);
+  --av-sys-type-body: var(--av-dynamic-type-body, 17px);
+  --av-sys-type-headline: var(--av-dynamic-type-headline, 17px);
+  --av-sys-type-title-3: var(--av-dynamic-type-title-3, 20px);
+  --av-sys-type-title-2: var(--av-dynamic-type-title-2, 22px);
+  --av-sys-type-title-1: var(--av-dynamic-type-title-1, 28px);
+  --av-sys-type-large-title: var(--av-dynamic-type-large-title, 34px);
+  --av-sys-type-display: var(--av-dynamic-type-display, 38px);
+  --av-sys-label-font-size: var(--av-sys-type-caption-1);
+  --av-cmp-feed-byline-font-size: var(--av-sys-type-footnote);
+  --av-cmp-markdown-heading-1: 30px;
+  --av-cmp-markdown-heading-2: 25.5px;
+  --av-cmp-markdown-heading-3: 22.5px;
+  --av-cmp-markdown-heading-4: 20.5px;
 }
