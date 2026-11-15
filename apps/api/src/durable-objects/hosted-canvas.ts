@@ -739,6 +739,34 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     });
   }
 
+  /**
+   * Add the reader to the Canvas's participant list, so its notices reach
+   * them (docs/PRDs/2026-11-14_canvas-notices). Only someone the Canvas
+   * already admits may, so it never widens who can open it: a member it
+   * admits by Organization visibility, a writer Sidekick's audience, or an
+   * owner or administrator. A join is an `added` row whose adder is the
+   * person themselves. Joining again, or as its creator, changes nothing.
+   */
+  join(input: CanvasActorRequest): CanvasDetail {
+    const request = parseRpcInput(CanvasActorRequestSchema, input, "canvas_join");
+    const row = this.assertCanvas(request.workspaceId, request.canvasId);
+    if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
+    if (request.actor.userId !== row.created_by_user_id) {
+      this.host.storage.transactionSync(() => {
+        const joined = this.sql.exec(
+          `INSERT INTO canvas_participants (canvas_id, user_id, source, added_by_user_id, added_at)
+           VALUES (?, ?, 'added', ?, ?) ON CONFLICT(canvas_id, user_id) DO NOTHING RETURNING user_id`,
+          this.canvasId, request.actor.userId, request.actor.userId, Date.now(),
+        ).toArray();
+        if (joined.length > 0) {
+          this.host.noteCanvasDirectoryChanged(this.canvasId);
+          this.host.noteAttachedCanvasChanged(this.canvasId);
+        }
+      });
+    }
+    return this.detail(request);
+  }
+
   // ---------------------------------------------------------------------------
   // Access requests: a member who cannot open the Canvas asks, its deciders
   // approve or deny. `docs/canvas-access-requests.md`.
@@ -854,6 +882,14 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         throw new ApiError(409,'canvas_sharing_changed','Sharing changed. Reload it before saving.');
       }
       const kept = new Set<string>(userIds);
+      // An Organization-wide Canvas's sharing names only its guests, since
+      // every member is admitted already; a member who joined it themselves
+      // is not in that list and is kept, or each save would drop them.
+      if (request.update.visibility === "workspace") {
+        for (const joined of this.sql.exec<{ user_id: string }>(
+          `SELECT user_id FROM canvas_participants WHERE canvas_id = ? AND added_by_user_id = user_id`, this.canvasId,
+        ).toArray()) kept.add(joined.user_id);
+      }
       const current = this.participantUserIds();
       for (const userId of current) {
         if (!kept.has(userId)) this.sql.exec(`DELETE FROM canvas_participants WHERE canvas_id = ? AND user_id = ?`, this.canvasId, userId);

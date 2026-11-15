@@ -10,7 +10,7 @@
 > [`push-notifications.md`](../../push-notifications.md)'s; attachments are
 > [Sidekicks attached to Canvases](../2026-11-10_sidekicks-attached-to-canvases/prd.md)'s,
 > unchanged.
-> Standing contract:
+> Build plan: [plan.md](plan.md). Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
 ## Summary
@@ -209,7 +209,80 @@ confirmation, and turning notices on asks nobody.
 
 ## Decision log
 
-None yet.
+### 2026-11-15 — A join is an `added` row, not a new `self` source
+
+**Decided:** `canvasJoin` inserts the person into `canvas_participants` with
+source `added` and themselves as `added_by_user_id`. No `self` source.
+
+**Why:** The source column's CHECK cannot widen in place, and the table
+carries six triggers (memory digest, sharing revision, artifact access) a
+rebuild must restate. A join is already distinguishable: `added_by_user_id`
+equals `user_id` only for a join.
+
+**Changes:** Supersedes decision 2's "source `self`" and the Data model's
+`canvas_participants.source` bullet. Nothing else moves.
+
+### 2026-11-15 — The sharing save already refuses a stale list
+
+**Decided:** No change-based audience save. Decision 3 is dropped.
+
+**Why:** `setAudience` already checks `expectedRevision` against
+`canvas_directory.sharing_revision`, which triggers raise on every
+participant insert or delete, and the sharing dialog sends it. A join while
+the dialog is open makes the save fail with "Sharing changed. Reload it
+before saving." rather than drop the person silently. That is the failure
+decision 3 worried about, and it already shows.
+
+**Changes:** Decision 3, Rollout step 1 and Acceptance 6 (the joined person
+stays listed because the stale save is refused, not merged).
+
+### 2026-11-15 — An Organization-wide save keeps the people who joined
+
+**Decided:** `setAudience` with visibility `workspace` keeps every
+participant whose row they added themselves.
+
+**Why:** For an Organization-wide Canvas the sharing dialog names only
+guests, so a save, even a fresh one, would have removed everyone who joined.
+Found while building `canvasJoin`.
+
+**Changes:** Adds to decision 2.
+
+### 2026-11-15 — The iPhone app shows no device line for now
+
+**Decided:** In the iPhone app the record shows no device line; the page
+provides `unknown` to `useDevicePushReadiness()`.
+
+**Why:** The app is notified through its native shell, and the page has no
+bridge message to read or change that permission. Adding one changes the
+app's shell, which ships through its own release and needs a phone to test.
+
+**Changes:** Narrows Product behavior's device table: the two iPhone app rows
+wait for that bridge. The app's own Enable notifications still works. To
+pick it up: a `MobileCommand` that reports the permission and `MobileEvent`s
+that ask for it and open Settings, provided through
+`DevicePushReadinessContext`.
+
+### 2026-11-15 — A refusal names Canvases in `available`
+
+**Decided:** The two Sidekick refusals carry the Canvases in
+`data.details.available`, not `canvases`.
+
+**Why:** Bind forwards only allowlisted detail keys
+([`agent-tools.md`](../../agent-tools.md)), and `available` is the one that
+means "the values you could have meant".
+
+**Changes:** The Failures section's detail key.
+
+### 2026-11-15 — The self-review is known by its turn, not only its `reason`
+
+**Decided:** A loop is the self-review when its `reason` is
+`sidekick_review` or `reviewOwnsThisTurn` claims it; `root_reason` records
+`sidekick_review` for an agent started in either.
+
+**Why:** The review's own workers wake later wizard turns whose `reason` is
+`agent_message`, and those turns are the review's.
+
+**Changes:** Decision 11 and the plugin matrix's self-review row.
 
 ## Key design decisions
 

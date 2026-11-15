@@ -112,7 +112,14 @@ Conversation migration 60 stores the background principal and a stop timestamp.
 Migration 69 adds the root conversation: the first conversation up the
 delegation chain that nobody delegated. `start_agent` sets it to the starter's
 own conversation, or to the starter's root when the starter is itself a
-background agent.
+background agent. Migration 88 adds what started that root
+(`root_reason`): the starting turn's `reason`, `sidekick_review` when the
+self-review owns the turn (`reviewOwnsThisTurn`, asked only when an agent is
+started), or the starter's own `root_reason` for an agent another agent
+started. Every activation carries it as `backgroundAgentRootReason`
+([`agent-loop-types.md`](agent-loop-types.md)), so a gate can tell the
+self-review's agents from a person's wizard agents, whose root is the same
+`"0"`.
 Under a Sidekick, a non-main root is the worker's run authority: activation and
 model/tool boundaries retain that run's pause, principal and stop-generation
 fences without loading its instructions. Authoring-rooted workers have no run
@@ -450,6 +457,23 @@ owned Sidekick contact, the refusal of an inaccessible personal Sidekick, and a
 guest's grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-11-15 — A background agent records what started its root
+
+**What changed:** `background_agent.root_reason` (conversation migration 88),
+written by `start_agent` and inherited down a chain of workers, reaches every
+activation as `backgroundAgentRootReason`, wake-ups included.
+
+**Why:** The Canvas notices tools deny the self-review and its agents, and
+the notice tools have no approval step behind them. The root substream alone
+cannot tell a self-review's agent from a person's wizard agent.
+
+**Considered and rejected:** Deriving it at each activation by walking the
+delegation chain to the turn that started it, which costs a cross-object read
+on every turn for a fact that never changes after start.
+
+**Consequences:** An agent started before migration 88 carries no root
+reason and is treated as not the self-review's.
 
 ### 2026-11-10 — A Canvas's Chat makes and archives its own Sidekicks, and contact is decided by managing
 

@@ -5620,6 +5620,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.hostedCanvas(input.canvasId, input.workspaceId)).access(input);
   }
 
+  /** Join a Canvas's participant list; see `HostedCanvas.join`. */
+  async canvasJoin(input: Parameters<HostedCanvas["join"]>[0]) {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => canvas.join(input));
+  }
+
   /** Ask to open a Canvas; see `HostedCanvas.requestAccess`. */
   async canvasRequestAccess(input: Parameters<HostedCanvas["requestAccess"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);

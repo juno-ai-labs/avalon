@@ -6002,7 +6002,9 @@ async function loadHarnessTools(
   const tools: HarnessTool[] = [...coreTools];
   const builtinPlugins = [
     createSidekickTaskOutcomePlugin(input),
-    createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input),
+    createAgentCommunicationPlugin(new AgentCommunicationService(env, input,
+      async () => reviewOwnsThisTurn(env, input, await hostedParentStub(env, input.workspaceId))),
+      agentCoordinationRoleGuidance(input),
       { sidekickRun: input.automationRun !== undefined,
         canvasChat: isCanvasChat(input) && input.executionPrincipal.type === "user" }),
     workstreamPlugin,

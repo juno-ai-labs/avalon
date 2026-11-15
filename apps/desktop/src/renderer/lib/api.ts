@@ -1392,6 +1392,11 @@ export class RallyApi {
     return this.request(`/canvases/${encodeURIComponent(id)}/audience`, { method: 'POST', body: update, schema: CanvasDetailSchema });
   }
 
+  /** Join a Canvas's participant list, so its notices reach this person. */
+  joinCanvas(id: string): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/join`, { method: 'POST', schema: CanvasDetailSchema });
+  }
+
   /** Pin a Canvas in, or out of, the Canvas list's Pinned group. */
   async setCanvasPinned(id: string, pinned: boolean): Promise<void> {
     await this.requestVoid(`/canvases/${encodeURIComponent(id)}/pin`, { method: 'POST', body: { pinned } });

@@ -271,3 +271,33 @@ describe("who can open a Canvas", () => {
     expect(await opens(guest(GUEST))).toBe(false);
   });
 });
+
+describe("joining a Canvas", () => {
+  async function participants(): Promise<string[]> {
+    return (await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) })).participantUserIds;
+  }
+
+  it("lists a member an Organization-wide Canvas admits, and keeps them through the sharing dialog's save", async () => {
+    const before = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(MEMBER) });
+    const joined = await workspace().canvasJoin({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(MEMBER) });
+    expect(joined.participantUserIds).toEqual([MEMBER]);
+    expect(joined.sharingRevision).toBeGreaterThan(before.sharingRevision ?? 0);
+    // Joining again changes nothing.
+    expect((await workspace().canvasJoin({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(MEMBER) })).sharingRevision)
+      .toBe(joined.sharingRevision);
+    // The dialog names only guests for an Organization-wide Canvas; the joined member stays.
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
+      update: { visibility: "workspace", userIds: [], expectedRevision: joined.sharingRevision } });
+    expect(await participants()).toEqual([MEMBER]);
+  });
+
+  it("refuses a member the Canvas does not admit, and still does not open it to them", async () => {
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    await expect(runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.canvasJoin({
+      workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(OTHER),
+    }))).rejects.toMatchObject({ code: "canvas_not_found" });
+    expect(await opens(member(OTHER))).toBe(false);
+    expect(await participants()).toEqual([MEMBER]);
+  });
+});

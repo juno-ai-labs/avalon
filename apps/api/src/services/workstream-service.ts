@@ -154,7 +154,7 @@ export async function launchWorkstreamHarness(
   publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
   const executionEnv = env;
-  const { parentKind, substreamId, backgroundAgent } = input.conversation;
+  const { parentKind, substreamId, backgroundAgent, rootReason } = input.conversation;
   const id = await stableActivationRunId(input);
   const at = nowIso();
   const executionPrincipalJson = JSON.stringify(input.executionPrincipal);
@@ -229,6 +229,7 @@ export async function launchWorkstreamHarness(
     // As the message path derives it: a delegated worker's run uses its
     // owner's sandbox and reports to its owner rather than publishing.
     ...(backgroundAgent ? { backgroundAgent: true } : {}),
+    ...(backgroundAgent && rootReason ? { backgroundAgentRootReason: rootReason } : {}),
     ...(input.telemetryOperationId && input.telemetrySubjectUserId ? {
       telemetryOperationId: input.telemetryOperationId,
       telemetrySubjectUserId: input.telemetrySubjectUserId,
@@ -349,6 +350,8 @@ export interface WakeupConversation {
    * conversation that is not a worker, and read as `"0"`.
    */
   rootSubstreamId?: SubstreamId | "0";
+  /** A worker's `root_reason`, from the same row, carried as `backgroundAgentRootReason`. */
+  rootReason?: string;
 }
 
 /**
