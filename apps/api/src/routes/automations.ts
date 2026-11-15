@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
+  AnswerElicitationRequestSchema,
+  ElicitationSchema,
   AutomationDetailSchema,
   type AutomationDetail,
   AutomationRunSchema,
@@ -23,6 +25,7 @@ import { CanvasService } from "../services/canvas-service";
 import { SidebarPinRequestSchema } from "@rally/contracts/canvases";
 import { SidekickDelegationService } from "../services/sidekick-delegation-service";
 import { SidekickSourceService } from "../services/sidekick-source-service";
+import { WorkstreamObjectClient } from "../services/workstream-object-client";
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
@@ -70,6 +73,24 @@ automationRoutes.post("/:id/delegation", zValidator("param", idParam), zValidato
   return c.json(SidekickDelegationMutationResultSchema.parse(await new SidekickDelegationService(c.env, auth.workspaceId, auth.userId)
     .setOwn(c.req.valid("param").id, input.allowed, input.operationId, "self_service")));
 });
+// The wizard's questions, for a manager who may not open the Sidekick: what a
+// question's card in a Canvas's Chat reads and answers. The Sidekick's shared
+// conversation decides who manages it. docs/sidekick-sources.md.
+const wizard = (c: Parameters<typeof getWorkspaceAuth>[0], sidekickId: string) =>
+  WorkstreamObjectClient.forParent(c.env, getWorkspaceAuth(c), "automation", sidekickId, "0");
+const questionParam = z.object({ id: IdSchema, elicitationId: IdSchema });
+const WizardQuestionSchema = z.object({ elicitation: ElicitationSchema });
+const AnsweredWizardQuestionSchema = z.object({ elicitation: ElicitationSchema.nullable() });
+automationRoutes.get("/:id/questions/:elicitationId", zValidator("param", questionParam), async (c) => {
+  const { id, elicitationId } = c.req.valid("param");
+  return c.json(WizardQuestionSchema.parse({ elicitation: await wizard(c, id).readWizardQuestion(elicitationId) }));
+});
+automationRoutes.post("/:id/questions/:elicitationId/answer", zValidator("param", questionParam),
+  zValidator("json", AnswerElicitationRequestSchema), async (c) => {
+    const { id, elicitationId } = c.req.valid("param");
+    const answered = await wizard(c, id).answerElicitation(elicitationId, c.req.valid("json"));
+    return c.json(AnsweredWizardQuestionSchema.parse({ elicitation: answered.elicitation ?? null }));
+  });
 // Sources: whose events may start this Sidekick. docs/sidekick-sources.md.
 const sources = (c: Parameters<typeof getWorkspaceAuth>[0]) => {
   const auth = getWorkspaceAuth(c);

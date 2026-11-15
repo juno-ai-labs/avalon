@@ -1277,6 +1277,47 @@ export class WorkstreamObjectProductService {
     return root;
   }
 
+  /**
+   * Whether this is a Sidekick's shared conversation, whose questions are its
+   * wizard's: false anywhere else, true for a manager there, and refused by
+   * name for anybody else.
+   */
+  private async wizardQuestionAuthority(auth: AuthContext): Promise<boolean> {
+    const identity = this.objectStore.identity();
+    if (identity?.parentKind !== "automation" || this.externalSubstreamId() !== "0") return false;
+    if (await this.sidekickAllowsManager({ workspaceId: auth.workspaceId, automationId: identity.parentId,
+      actor: { userId: auth.userId, actorRole: auth.role } })) return true;
+    throw new ApiError(403, "sidekick_edit_requires_manager", "Only the people who manage this Sidekick can answer its questions");
+  }
+
+  /**
+   * The root for a manager acting on the wizard's questions, who need not be
+   * able to open the Sidekick: managing is not opening. The session was
+   * verified at the product boundary, so only the workspace and archive
+   * checks `locallyAuthorizedRoot` makes are made here.
+   */
+  private wizardQuestionRoot(auth: AuthContext): RootRow {
+    const root = this.root();
+    if (root.parent_workspace_key !== auth.workspaceId || root.workstream_key === "" || root.archived_at !== null) {
+      throw new ApiError(404, "workstream_not_found", "Conversation not found");
+    }
+    return root;
+  }
+
+  /**
+   * One of the wizard's questions as it stands, for a manager: what a card
+   * drawn for it in a Canvas's Chat reads.
+   */
+  async readWizardQuestion(auth: AuthContext, elicitationId: string): Promise<Elicitation> {
+    if (!await this.wizardQuestionAuthority(auth)) {
+      throw new ApiError(404, "elicitation_not_found", "This question does not exist");
+    }
+    this.wizardQuestionRoot(auth); // for its refusal: a closed or foreign conversation answers 404
+    const elicitation = this.elicitationsIncludingResolved(elicitationId).find((entry) => entry.id === elicitationId);
+    if (!elicitation) throw new ApiError(404, "elicitation_not_found", "This question does not exist");
+    return elicitation;
+  }
+
   async authorize(auth: AuthContext, includeArchived = false): Promise<RootRow> {
     const root = this.locallyAuthorizedRoot(auth, includeArchived);
     const membership = await this.env.DB.prepare(
@@ -4544,9 +4585,12 @@ export class WorkstreamObjectProductService {
       authorUserId: auth.userId,
       input,
     });
-    const authorizedRoot = () => reauthorizeWorkspaceMembership
-      ? this.authorize(auth)
-      : Promise.resolve(this.locallyAuthorizedRoot(auth));
+    // Refused before anything is reserved, so a manager can still answer.
+    const wizardQuestion = await this.wizardQuestionAuthority(auth);
+    const authorizedRoot = () => wizardQuestion ? Promise.resolve(this.wizardQuestionRoot(auth))
+      : reauthorizeWorkspaceMembership
+        ? this.authorize(auth)
+        : Promise.resolve(this.locallyAuthorizedRoot(auth));
     const replayedElicitation = (): Elicitation | undefined => {
       const elicitation = this.elicitationsIncludingResolved().find((entry) => entry.id === elicitationId);
       if (!elicitation) return undefined;
@@ -4603,17 +4647,7 @@ export class WorkstreamObjectProductService {
         inserted: false,
       };
     }
-    // In a Sidekick's shared conversation every question is the wizard's,
-    // and so is its answer, which only a manager may give. Refused before
-    // anything is reserved for the answer, so a manager can still give it.
     const identity = this.objectStore.identity();
-    if (identity?.parentKind === "automation" && this.externalSubstreamId() === "0"
-      && !await this.sidekickAllowsManager({
-        workspaceId: auth.workspaceId, automationId: identity.parentId,
-        actor: { userId: auth.userId, actorRole: auth.role },
-      })) {
-      throw new ApiError(403, "sidekick_edit_requires_manager", "Only the people who manage this Sidekick can answer its questions");
-    }
     // In a run, the answer continues the run as its principal, so it is
     // refused by the rule that refuses a message there, and before anything
     // is reserved, so the question stays open for the person who may answer.
@@ -4624,7 +4658,7 @@ export class WorkstreamObjectProductService {
       });
       if (refusal) throw new ApiError(403, refusal, "Only the people this run acts for can answer its questions");
     }
-    const localRoot = this.locallyAuthorizedRoot(auth);
+    const localRoot = wizardQuestion ? this.wizardQuestionRoot(auth) : this.locallyAuthorizedRoot(auth);
     const reservationNow = Date.now();
     const preparation = await this.reserveInputPreparation({
       root: localRoot,
@@ -4799,6 +4833,8 @@ export class WorkstreamObjectProductService {
           actorRole: auth.role,
           confirmedParticipantUserIds: [],
           participantEpochs: this.pendingParticipantEpochs([auth.userId]),
+          // A manager answering the wizard need not be able to open the Sidekick, and answering does not open it.
+          ...(wizardQuestion && !this.canRead(auth.userId) ? { seatsAuthor: false } : {}),
           reason: "elicitation_answer",
           elicitationId,
           parentHarnessRunId: row.run_id,

@@ -5544,6 +5544,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return canvasesWrittenBy(this.state.storage.sql, input.sidekickId, input.actor, canvasAppearanceReporter(this.env));
   }
 
+  /** A Sidekick's name as its directory row holds it, for a post written in its name. */
+  async sidekickDisplayName(rawInput: { workspaceId: string; sidekickId: string }): Promise<string> {
+    await this.initialized;
+    const input = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, sidekickId: IdSchema }), rawInput, "sidekick_display_name");
+    this.assertWorkspace(input.workspaceId);
+    return this.state.storage.sql.exec<{ title: string }>(
+      `SELECT title FROM automation_directory WHERE automation_id = ?`, input.sidekickId,
+    ).toArray()[0]?.title || "New Sidekick";
+  }
+
   /**
    * What Rally is told about the Canvas whose Chat it answers in: its title
    * and its artifacts at their current versions. A host read for a run the
@@ -5555,7 +5565,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
     const row = canvas?.row();
     if (!canvas || !row || row.archived_at !== null || row.workspace_id !== input.workspaceId) return null;
-    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.agentArtifacts(), sidekicks: canvas.sidekicks() };
+    return { canvasId: row.canvas_id, title: row.title, writerSidekickId: row.writer_sidekick_id,
+      artifacts: canvas.agentArtifacts(), sidekicks: canvas.sidekicks() };
   }
 
   /**

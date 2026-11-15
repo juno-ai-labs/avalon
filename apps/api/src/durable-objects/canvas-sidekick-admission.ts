@@ -7,8 +7,9 @@ import { canvasAdmits, sidekickAdmits } from "../services/authorization-policy";
  * The rules read each other, so they live in one module:
  *  * a Canvas a Sidekick run made admits whoever that Sidekick admits
  *    (`canvas_directory.writer_sidekick_id`);
- *  * a Sidekick a Canvas's Chat made is managed by everyone that Canvas
- *    admits (the `made_here` attachment). It is not opened by them: who reads
+ *  * a Sidekick is managed by everyone a Canvas it is attached to admits,
+ *    the Canvas whose Chat made it among them, except a Canvas its own runs
+ *    made. It is not opened by them: who reads
  *    a Sidekick never depends on a Canvas, so the chain ends after one step.
  * Both are read live, so nothing copies one list into the other.
  *
@@ -88,22 +89,22 @@ export function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor:
 }
 
 /**
- * Whether the Canvas whose Chat made a Sidekick admits this person: the
- * Canvas its `made_here` attachment names. A Sidekick made anywhere else has
- * none and answers `false`; so does one whose Canvas was archived, which
- * archives the Sidekick with it.
-
+ * Whether a Canvas the Sidekick is attached to admits this person: the Canvas
+ * whose Chat made it, or any Canvas it was attached to later. A Canvas this
+ * Sidekick's own runs made is left out: it admits whoever reads the Sidekick
+ * (`writerSidekickAdmits`), so counting it would make every reader a manager.
+ * An archived Canvas admits nobody (`canvasReaderAllows`).
  */
-export function sidekickMadeInCanvasAdmits(sql: SqlStorage, sidekickId: string, actor: AdmissionActor): boolean {
-  const canvas = sql.exec<CanvasAdmissionRow & Record<string, SqlStorageValue>>(
+export function sidekickCanvasAdmits(sql: SqlStorage, sidekickId: string, actor: AdmissionActor): boolean {
+  const canvases = sql.exec<CanvasAdmissionRow & Record<string, SqlStorageValue>>(
     `SELECT canvas.canvas_id, canvas.created_by_user_id, canvas.writer_sidekick_id, canvas.visibility, canvas.archived_at
        FROM sidekick_conversation_attachments attachment
        JOIN canvas_directory canvas ON canvas.canvas_id = attachment.parent_id
       WHERE attachment.automation_id = ? AND attachment.parent_kind = 'canvas' AND attachment.substream_id = '0'
-        AND attachment.made_here = 1`,
+        AND canvas.writer_sidekick_id IS NOT attachment.automation_id`,
     sidekickId,
-  ).toArray()[0];
-  return canvas !== undefined && canvasReaderAllows(canvas, actor, sql);
+  ).toArray();
+  return canvases.some((canvas) => canvasReaderAllows(canvas, actor, sql));
 }
 
 /**
@@ -125,7 +126,7 @@ export function sidekickReaderAllows(row: SidekickAdmissionRow, actor: Admission
 /**
  * Who manages a Sidekick, from its row alone: its author, the person it runs
  * as, and for an Organization one its owners and administrators.
- * `sidekickManages` adds the Canvas whose Chat made it.
+ * `sidekickManages` adds the Canvases it is attached to.
  */
 export function sidekickManagerAllows(
   row: { scope: string; author_user_id: string; run_as_user_id: string | null },
@@ -136,8 +137,8 @@ export function sidekickManagerAllows(
 }
 
 /**
- * Who manages a Sidekick: `sidekickManagerAllows`, and everyone the Canvas
- * whose Chat made it admits. Managing is not opening: such a person reads its
+ * Who manages a Sidekick: `sidekickManagerAllows`, and everyone a Canvas it is
+ * attached to admits (`sidekickCanvasAdmits`). Managing is not opening: such a person reads its
  * conversation and runs only once it is shared with them.
  */
 export function sidekickManages(
@@ -146,7 +147,7 @@ export function sidekickManages(
   sql: SqlStorage,
 ): boolean {
   return sidekickManagerAllows(row, actor)
-    || sidekickMadeInCanvasAdmits(sql, row.automation_id, { userId: actor.userId, actorRole: actor.actorRole ?? null });
+    || sidekickCanvasAdmits(sql, row.automation_id, { userId: actor.userId, actorRole: actor.actorRole ?? null });
 }
 
 /**
