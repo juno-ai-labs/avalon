@@ -693,16 +693,33 @@ export async function deployLakehouseBindings(options = {}) {
     ...options, manifests: chosen.filter((manifest) => API_WORKER_BINDINGS.has(manifest.binding)),
   });
   const pinned = manifests.filter((manifest) => !isUnprovisioned(manifest));
+  const reconcile = async (chosen) => (await ensureCloudflareLakehouses({
+    ...options, manifests: chosen, create: true, adoptStreamIds: true,
+  })).provisioned;
   let kept;
-  let reconciled;
+  let provisioned;
   if (pinned.every((manifest) => manifest.pinnedAccount === fingerprint)) {
-    reconciled = manifests.filter(isUnprovisioned);
+    const reconciled = manifests.filter(isUnprovisioned);
     if (reconciled.length === 0) {
       log('Lakehouse stream IDs are pinned for this account; materializing without a control-plane read');
       return materialize(manifests);
     }
     log(`New lakehouses with no pinned stream: ${reconciled.map(({ binding }) => binding).join(', ')}; provisioning them in this account`);
     kept = pinned;
+    // A new API Worker lakehouse must exist before the API Worker binds it, so
+    // its failure fails the deploy. Another Worker's must not stop the API
+    // release, which changed none of its own bindings: that Worker deploys
+    // without the binding and its own refusal says how to fix it.
+    provisioned = await reconcile(reconciled.filter((manifest) => API_WORKER_BINDINGS.has(manifest.binding)));
+    for (const manifest of reconciled.filter((candidate) => !API_WORKER_BINDINGS.has(candidate.binding))) {
+      try {
+        provisioned.push(...await reconcile([manifest]));
+      } catch (error) {
+        console.warn(`${manifest.binding} could not be provisioned, so the API deploy continues without it and its Worker deploys unbound: `
+          + `${error instanceof Error ? error.message : String(error)}. The next deploy tries again; `
+          + '`pnpm cloudflare:lakehouses:ensure` provisions it by hand and reports the stream ID to pin.');
+      }
+    }
   } else {
     const client = {
       accountId: required('CLOUDFLARE_ACCOUNT_ID', environment),
@@ -727,10 +744,9 @@ export async function deployLakehouseBindings(options = {}) {
       }
     }
     log('Lakehouse stream IDs are pinned for another account; reconciling this account and adopting its stream IDs');
-    reconciled = manifests;
     kept = [];
+    provisioned = await reconcile(manifests);
   }
-  const { provisioned } = await ensureCloudflareLakehouses({ ...options, manifests: reconciled, create: true, adoptStreamIds: true });
   const adopted = provisioned.map(({ manifest }) => ({ ...manifest, pinnedAccount: fingerprint }));
   // Both values must be committed together: a stream ID without the marker
   // sends the next deploy down the fork path, which fails the stale-marker check.
