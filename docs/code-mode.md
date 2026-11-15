@@ -360,7 +360,7 @@ Deliberately not here: the receipt tables and their fences
 Terminal, which is a computer with a filesystem and no callback into Rally
 tools ([`terminal-workspaces.md`](terminal-workspaces.md)); the artifact
 loader, which shares the binding type and nothing else
-([`live-web-artifacts.md`](live-web-artifacts.md)); how a tool call row is
+([`reactive-web-artifacts.md`](reactive-web-artifacts.md)); how a tool call row is
 drawn ([`plugin-activity-rows.md`](plugin-activity-rows.md)): a program is one
 row of the Rally group, and its nested calls are receipts without rows of their
 own.
@@ -771,7 +771,7 @@ run's model cannot misread.
 evidence.
 
 **Considered and rejected:** A loopback `WorkerEntrypoint` as the program's
-capability, as the live artifacts use; its calls back into the Durable Object
+capability, as the reactive artifacts use; its calls back into the Durable Object
 would be self-RPC, which the self-RPC audit shows ends a run at the subrequest
 depth limit. The gateway is an `RpcTarget` passed as an argument instead, and
 the spike on real workerd confirmed the callback. `@cloudflare/codemode`, which

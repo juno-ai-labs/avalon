@@ -194,7 +194,7 @@ To add an audience, add an entry to `liveExamples`. Its events must be ones a
 Sidekick can be started by, as the help center's Triggers and schedules page
 lists them; a tool read on a schedule (Google Drive, Calendar) is labelled
 as the schedule. Every example is a **Site**: its people tick rows, and
-nobody types into a Document or Spreadsheet directly, while a live site that
+nobody types into a Document or Spreadsheet directly, while a reactive site that
 remembers things takes visitors' entries and a Sidekick's runs write rows
 into it.
 
@@ -308,16 +308,16 @@ caused style drift, so browser views and card crops share one coordinated master
 homepage rule per selector and breakpoint, one source for artwork geometry,
 illustrative-only demo actions, catalog-driven pricing, and acquisition IDs.
 
-### 2026-11-09 — The site becomes "the shared page" and leads with live artifacts
+### 2026-11-09 — The site becomes "the shared page" and leads with reactive artifacts
 
 **What changed:** The marketing site was redesigned from a blank page: one
 stylesheet with light and dark tokens, three typefaces, a single accent for
-Rally and a colour per person. The home page leads with a carousel of live
+Rally and a colour per person. The home page leads with a carousel of reactive
 artifacts, one per audience, explains the mechanism with scrubbable figures,
 and follows with multiplayer. `/canvases/` and `/sidekicks/` were added, and
 the blog, comparison and Trust Center pages took on the same system.
 
-**Why:** The product owner set the order, live artifacts first and
+**Why:** The product owner set the order, reactive artifacts first and
 multiplayer second, and the pivot to Canvases and Sidekicks had left the home
 page telling an older story. A first pass borrowed the launch films' dark,
 volt style; it was set aside for a system designed for the site, so the films

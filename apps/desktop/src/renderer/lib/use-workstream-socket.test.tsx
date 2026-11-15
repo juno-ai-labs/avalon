@@ -1778,7 +1778,7 @@ describe('useWorkstreamSocket', () => {
     );
   });
 
-  it('opens the newest batched live artifact and preserves the restored panel across a revisit snapshot', async () => {
+  it('opens the newest batched reactive artifact and preserves the restored panel across a revisit snapshot', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const client = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000095';

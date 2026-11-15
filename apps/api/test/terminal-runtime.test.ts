@@ -1549,7 +1549,7 @@ describe("Daytona Terminal runtime", () => {
       .rejects.toMatchObject({ code: "single_file_directory" });
   });
 
-  it("refuses a republish that would downgrade a live site to an archive", async () => {
+  it("refuses a republish that would downgrade a reactive site to an archive", async () => {
     const { files, resources, runtime } = fixture();
     vi.mocked(resources.publishedKindForPath).mockResolvedValue("site");
     files.set("/workspace/.rally-output/rsvp/a.txt", new TextEncoder().encode("one"));

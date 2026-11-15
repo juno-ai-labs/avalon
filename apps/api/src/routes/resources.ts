@@ -119,7 +119,7 @@ resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
   resourceReader(c).content(c.req.valid("param").id),
 );
 /**
- * Mint this person's access to a live artifact.
+ * Mint this person's access to a reactive artifact.
  *
  * `POST` rather than `GET` because it *creates* something — a single-use code —
  * and because a `GET` would be prefetchable and cacheable, both of which are

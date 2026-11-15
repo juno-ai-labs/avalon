@@ -25,7 +25,7 @@ it("serves the push service worker from the root and lets the shell register it"
   expect(worker.headers.get("cache-control")).toBe("no-cache");
   const shell = await exports.default.fetch("https://browser.example.test/");
   expect(shell.headers.get("content-security-policy")).toContain("worker-src 'self'");
-  // The member shell previews live artifacts in a frame on their own domain, and nowhere else.
+  // The member shell previews reactive artifacts in a frame on their own domain, and nowhere else.
   expect(shell.headers.get("content-security-policy")).toContain("frame-src https://*.rallyusercontent.com;");
 });
 

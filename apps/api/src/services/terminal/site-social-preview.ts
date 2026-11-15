@@ -44,7 +44,7 @@ export async function prepareSocialPreview(
     htmlMetaContent(source, "name", "twitter:description"),
     htmlMetaContent(source, "name", "description"),
     htmlElementText(source, "p"),
-    `A live site about ${title}.`,
+    `A reactive site about ${title}.`,
   ), 500);
   const image = findAuthoredPreview(source, files);
   if (image) {

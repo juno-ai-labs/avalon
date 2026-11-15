@@ -37,7 +37,7 @@ Copying puts content on your clipboard, so it goes wherever you paste it next.
 - Right-click inside a message for **Copy**, which keeps the formatting (headings, bold, lists and links) for pasting into an email or a document, and **Copy as markdown**, which copies the plain Markdown. If you have selected part of the message, **Copy** copies only the selection. Both are described in [Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md).
 - Code blocks have their own **Copy code** button.
 - On a Mac, the same right-click menu has **Share**, which hands the message's text to the Mac's own sharing menu.
-- For a live site that keeps data, **Copy as CSV** in the **Stored data** view copies a table for pasting into a spreadsheet (up to its first 200 rows). See [Live sites](03-live-sites.md#seeing-what-visitors-submitted).
+- For a reactive site that keeps data, **Copy as CSV** in the **Stored data** view copies a table for pasting into a spreadsheet (up to its first 200 rows). See [Reactive sites](03-reactive-sites.md#seeing-what-visitors-submitted).
 
 ## Downloading files
 
@@ -46,7 +46,7 @@ Any file in a Canvas, whether you attached it or Rally made it, can be downloade
 ## Sharing links
 
 - Click a Canvas's name in its header pill and choose **Copy link**. A link opens that place in Rally, for people who are allowed to see it. Links are covered in [Search and links](../02-canvases/11-search-and-links.md).
-- A live site has a public link that anyone can open. Read [Sharing a site, and who can see it](03-live-sites.md#sharing-a-site-and-who-can-see-it) before you send one.
+- A reactive site has a public link that anyone can open. Read [Sharing a site, and who can see it](03-reactive-sites.md#sharing-a-site-and-who-can-see-it) before you send one.
 
 ## Every way content leaves Rally
 
@@ -57,10 +57,10 @@ If you look after your team's data, or someone has asked exactly where their inf
 | **Image** and **PDF** under a reply | One reply, as a file on your Mac | Whoever you give the file to |
 | **Copy**, **Copy as markdown**, **Copy code** | Text you copied | Wherever you paste it |
 | **Share** in a message's right-click menu (Mac) | The message's text | The app or person you share it with |
-| **Copy as CSV** on a live site's data | Up to 200 rows of a site's stored data | Wherever you paste it |
+| **Copy as CSV** on a reactive site's data | Up to 200 rows of a site's stored data | Wherever you paste it |
 | Download a file | The original file, on your Mac | Whoever you give the file to |
 | **Copy link** in a Canvas's menu | A link only | Only people who can already see that place in Rally |
-| A live site's public link | The latest version of the site | Anyone who has the link |
+| A reactive site's public link | The latest version of the site | Anyone who has the link |
 | Guests (see [Sharing with people outside your Organization](../02-canvases/09-sharing-with-guests.md)) | The conversation you shared | The person you invited |
 
 Rally itself can also send content out when you ask it to, for example by posting in Slack or writing to a Google Doc through a connection you made. Those are covered tool by tool in [Connecting your other tools](../05-connecting-your-tools/index.md).

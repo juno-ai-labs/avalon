@@ -73,7 +73,7 @@ export interface Env extends FeatureFlagEnvironment {
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   BILLING_COORDINATORS: DurableObjectNamespace<BillingCoordinatorDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
-  /** One supervisor per live web artifact, named by the artifact's own id. */
+  /** One supervisor per reactive web artifact, named by the artifact's own id. */
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
   /**
    * Cloudflare's Worker Loader, which materializes model-authored code.
@@ -143,7 +143,7 @@ export interface Env extends FeatureFlagEnvironment {
 
   PUBLIC_WEB_BASE_URL: string;
   /**
-   * The registrable domain live artifacts are served from.
+   * The registrable domain reactive artifacts are served from.
    *
    * Not `rallywith.ai` and deliberately not a subdomain of it. Model-authored
    * pages get their own registrable domain in the `*usercontent.com` idiom the

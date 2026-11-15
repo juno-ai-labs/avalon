@@ -28,7 +28,7 @@ Rally guesses from what you asked, and you can overrule the guess either way.
 
 Documents are written in Markdown, a plain-text format with headings, lists, tables and links that Rally shows nicely formatted. A document is not a Word file. If you need Word or another format, ask Rally for it in the Canvas, and see [Opening, docking and downloading](02-opening-and-downloading.md#download-the-original-file) for what to expect.
 
-Rally can also make other kinds of files: pictures and voice recordings (see [Pictures and voices](../04-working-with-rally/04-pictures-and-voices.md)), spreadsheets and data from its own computer (see [Code, data and the Terminal](../04-working-with-rally/03-code-files-and-the-terminal.md)), and whole websites, which have their own page: [Live sites](03-live-sites.md).
+Rally can also make other kinds of files: pictures and voice recordings (see [Pictures and voices](../04-working-with-rally/04-pictures-and-voices.md)), spreadsheets and data from its own computer (see [Code, data and the Terminal](../04-working-with-rally/03-code-files-and-the-terminal.md)), and whole websites, which have their own page: [Reactive sites](03-reactive-sites.md).
 
 > [!NOTE]
 > Rally makes files on its private computer, the Terminal. If that computer cannot be reached at the moment, Rally tells you it could not create the file and gives you the content in the chat instead, so nothing is lost. Ask again later if you still want the file.

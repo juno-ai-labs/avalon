@@ -103,7 +103,7 @@ does not change the Canvases it already made.
 **Copy link** copies an artifact's address. Its Canvas's artifact audience
 decides who can open it. **Anyone with the link** allows unsigned visitors;
 other audiences require the right account. Making artifacts public never makes
-the conversation public. [Live sites](../06-things-rally-makes/03-live-sites.md)
+the conversation public. [Reactive sites](../06-things-rally-makes/03-reactive-sites.md)
 explains how this works for websites.
 
 ## Roles

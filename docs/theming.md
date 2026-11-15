@@ -766,7 +766,7 @@ rule that carries no `.app-shell` ancestor.
 
 **Why:** Every rule the GrokBot rewrite added hangs off `.app-shell`, and a
 Radix portal mounts on `document.body`, outside it. That is invisible until a
-surface renders through one: the live-artifact detail moved into the resource
+surface renders through one: the reactive-artifact detail moved into the resource
 lightbox on 2026-09-04 and silently reverted to the pre-rewrite look, drawing
 outlined buttons as a tab strip and a bordered card per error, because none of
 the shell's rules could reach it. Scoping to the shell was never a decision
