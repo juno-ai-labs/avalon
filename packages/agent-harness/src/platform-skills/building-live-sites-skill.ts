@@ -232,6 +232,9 @@ have not. Ask its entry-privacy question only when that skill requires it.
        own data — figures from a connector, internal plans, people's
        details — or the request names the team or company as the audience.
      - **\`editors\`** only when the request asks for it to stay private.
+     - A feed an app subscribes to follows \`publishing-a-feed\`'s rule
+       instead: public, even of connected data, then confirmed with the
+       person.
      When in doubt, choose the more open one. Public access never exposes
      the Chat and never lets visitors redesign the site. If the result says
      \`changed: false\`, someone already chose the audience: leave it. Use
