@@ -1921,8 +1921,11 @@ is made with the image generator. `creating-a-podcast-episode` covers only the
 episode: a script rewritten for the speech model (formatting removed, lists
 and tables as sentences, numbers as spoken, URLs to the show notes), one voice
 and reading style per show, pieces recorded with a ledger and joined with
-ffmpeg at -16 LUFS, a length check against the script, and generated episode
-art with no text.
+ffmpeg at -16 LUFS, a length check against the script, chapters timed from
+the measured pieces and written into the MP3's ID3 frames, and generated
+episode art with no text. The same chapters become rows the feed serves as a
+Podcasting 2.0 chapters file, which Apple Podcasts reads from the feed on iOS
+26.2 and later; supplying both covers players that read either.
 
 **Why:** A Canvas asked for a podcast feed of its newsletter recordings
 reported a hosting blocker. The real blockers were its own reader's viewer
