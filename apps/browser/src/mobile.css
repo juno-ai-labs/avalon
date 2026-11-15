@@ -12,12 +12,9 @@ html[data-mobile-host],html[data-mobile-host] body,html[data-mobile-host] #root 
 .mobile-section-heading h2{font-size:12px;font-weight:600}
 .mobile-section-heading span{font-size:11px;color:var(--mobile-muted)}
 .mobile-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}
-.mobile-card{border:0;border-radius:20px;background:#e3ebdb;padding:18px;text-align:left;overflow:hidden;color:#283d2d;min-height:176px}
-.mobile-card:first-child{grid-column:1/-1;min-height:220px;background:linear-gradient(145deg,#b1c3a2,#456b53);color:white}
-.mobile-card-1{background:#e8e3d7}
-.mobile-card-2{background:#dfe9dc}
-.mobile-card-3{background:#e1e5eb}
-.mobile-card-art{height:76px;display:flex;align-items:center;justify-content:center;opacity:.55}
+.mobile-card{border:0;border-radius:20px;padding:18px;text-align:left;overflow:hidden;min-height:176px}
+.mobile-card:first-child{grid-column:1/-1;min-height:220px}
+.mobile-card-art{height:76px;display:flex;align-items:center;justify-content:center}
 .mobile-card:first-child .mobile-card-art{height:107px}
 .mobile-card h3{font-size:16px;font-weight:550;line-height:1.35;overflow-wrap:anywhere;margin:12px 0 8px}
 .mobile-card:first-child h3{font:29px/1.15 Georgia,serif;letter-spacing:-.7px}
@@ -41,11 +38,6 @@ html[data-mobile-host],html[data-mobile-host] body,html[data-mobile-host] #root 
 .mobile-create>p{font-size:14px;line-height:1.7;color:var(--mobile-muted);max-width:300px}
 .mobile-create-composer{margin-top:auto;padding-top:40px}
 .mobile-canvas-app button:focus-visible,.mobile-canvas-app input:focus-visible,.mobile-canvas-app select:focus-visible{outline:2px solid var(--av-sys-color-border-strong);outline-offset:3px}
-@media(prefers-color-scheme:dark){.mobile-card{background:#304332;color:#edf3e8}
-.mobile-card-1{background:#443d30}
-.mobile-card-2{background:#2d4033}
-.mobile-card-3{background:#303b46}
-.mobile-card:first-child{background:linear-gradient(145deg,#566e4b,#283d30)}}
 @media(min-width:700px){.mobile-grid{grid-template-columns:repeat(3,1fr)}
 .mobile-card:first-child{grid-column:span 2;grid-row:span 2}
 .mobile-card:first-child .mobile-card-art{height:230px}}
