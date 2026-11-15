@@ -772,6 +772,10 @@ describe("connector tools selected for harness runs", () => {
     expect(await sourceTools(workflowInput())).toEqual(all);
     expect(await sourceTools({ ...workflowInput(), agentExchange: agentMessage })).toEqual(all);
     expect(await sourceTools(childWorkflowInput())).toEqual(all);
+    // A wake-up continues its conversation, and keeps the tools in the Chat and the wizard.
+    const wakeup = { reason: "scheduled_wakeup", scheduledWakeupId: "00000000-0000-7000-8000-00000000e002" };
+    expect(await sourceTools({ ...workflowInput(), ...wakeup })).toEqual(all);
+    expect(await sourceTools({ ...automationConversationInput(), ...wakeup, sidekickWizard: true })).toEqual(all);
 
     // A run reads outside content, and its background worker reads the same: both inspect delegation and neither
     // changes it. A conversation's own background agent and every loop a person is driving still can.

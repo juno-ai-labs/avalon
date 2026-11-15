@@ -7222,13 +7222,14 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       if (this.agentTimerStillPending(alarm.key)) throw new Error("agent_timer_wakeup_unreachable");
       return;
     }
-    const background = this.state.storage.sql.exec<{ stopped_at: number | null }>(
-      "SELECT stopped_at FROM background_agent WHERE id = 1",
+    const background = this.state.storage.sql.exec<{ stopped_at: number | null; root_substream_id: string | null }>(
+      "SELECT stopped_at, root_substream_id FROM background_agent WHERE id = 1",
     ).toArray()[0];
     const { fired } = await fireWorkstreamWakeup(executionEnv, wakeup, scheduling, {
       parentKind: identity.parentKind,
       substreamId,
       backgroundAgent: background ? (background.stopped_at !== null ? "stopped" : true) : false,
+      ...(background ? { rootSubstreamId: (background.root_substream_id ?? "0") as SubstreamId | "0" } : {}),
     });
     // Not firing is a decision that consumes the row. One still pending lost
     // its claim to a writer that has not settled it.

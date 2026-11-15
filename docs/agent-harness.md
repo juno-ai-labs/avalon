@@ -1397,6 +1397,8 @@ columns.
 
 The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. A wake-up belongs to the conversation whose run scheduled it — a Canvas's Chat, a Sidekick's conversation, or a Sidekick run child — and lives in that conversation's object, whose own alarm fires it into that conversation's loop. A child's wake-up never runs in its parent's `"0"`, which would write the child's prompt into another transcript; a Sidekick run child's continues its run only as `continueSidekickRun` allows, the question a member's message there asks, and a refusal consumes it. A delegated worker's wake-up runs as that worker, with its owner's sandbox and reporting, and a stopped worker's is consumed without running. Firing claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same conversation; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
 
+**A wake-up continues the loop that scheduled it.** It is asked what an input to its conversation is asked in `claimPersistentLoopExecution`, so the woken turn is the same kind of loop: a run child's continues its run; a worker whose root is a run (`background_agent.root_substream_id`, which the alarm passes as `rootSubstreamId`) asks `continueSidekickRun` about that root run and carries `automationDelegation`, not a run of its own; a wizard's worker asks nothing; a wake-up in a Sidekick's shared conversation is a wizard turn (`sidekickWizard`), taken only while its principal still manages the Sidekick. Each refusal is consumed and logged as `workstream_wakeup_refused` with its code. Which tools the woken turn gets is [`agent-loop-types.md`](agent-loop-types.md)'s.
+
 Every conversation response carries `nextPendingWakeup`, the earliest pending
 row by due time, derived with an indexed lookup; the bounded prompt prefix is
 cut before the data crosses the API boundary. No sidebar row draws it now; the
@@ -1898,6 +1900,30 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-15 — A wake-up continues the loop that scheduled it
+
+**What changed:** `fireWorkstreamWakeup` derives the woken turn's loop kind
+as `claimPersistentLoopExecution` does for any input. A wake-up in a
+Sidekick's shared conversation is a wizard turn, after the manager check. A
+worker's wake-up asks about its root run, not its own substream.
+
+**Why:** The wake-up path built its input by hand and left out what the
+message path derives. A wizard that said "I'll check back and adjust" woke
+without its authoring tools; a run's worker asked `continueSidekickRun` about
+its own id, which is no run, so its wake-up was refused and lost. The owner
+set the rule: a wake-up continues the loop as it was.
+
+**Considered and rejected:** Admitting a wake-up as a pending input so the
+claim path derives everything itself. It is the cleaner end state, but it
+moves the claim, the transcript note and the run receipt into a new path;
+this keeps them and mirrors the two derivations. Recording whether a
+person's turn scheduled each wake-up, to withhold the source tools from one
+an agent's message or the self-review scheduled: unneeded, since those tools
+no longer depend on who drove a turn ([`sidekick-sources.md`](sidekick-sources.md)).
+
+**Consequences:** A new derivation in `claimPersistentLoopExecution` belongs in
+`fireWorkstreamWakeup` too, until the two paths are one.
 
 ### 2026-11-15 — A port that runs several checks names the one that failed
 
