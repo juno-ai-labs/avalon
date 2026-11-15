@@ -1,4 +1,4 @@
-import type { HarnessSkill } from "../index";
+import type { HarnessSkill } from "../types";
 
 /**
  * How to publish any feed an app subscribes to: a podcast, a calendar, a news

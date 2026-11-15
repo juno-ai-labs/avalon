@@ -1,4 +1,4 @@
-import type { HarnessSkill } from "../index";
+import type { HarnessSkill } from "../types";
 
 const POLLING_FOR_EVENTS_BODY = `When work should happen **after an external change**, configure a Sidekick:
 saved instructions that start a separate run when a schedule or event triggers
