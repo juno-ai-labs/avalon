@@ -93,8 +93,10 @@ The deploy workflows already create these, so they are not on the list: R2
 buckets a Wrangler file declares, Queues and their dead-letter queues, D1
 databases and KV namespaces (found by name and their ids pinned into the
 Wrangler files during the deploy), D1 migrations, Worker custom domains on
-existing zones, and the engineering MCP's Worker secrets and Access settings.
-A local deploy to a new account runs `pnpm cloudflare:d1-kv:ensure` first.
+existing zones, the engineering MCP's Worker secrets and Access settings, the lakehouse
+pipelines (reconciled, with the account's own stream IDs adopted, on a deploy to
+any account other than the pinned one), the desktop release buckets with their
+location and storage class, and the release-retention Worker.
 
 ### Cloudflare account and zones
 
@@ -119,18 +121,6 @@ A local deploy to a new account runs `pnpm cloudflare:d1-kv:ensure` first.
   Analytics Engine are available on the account.
 - Run `pnpm cloudflare:observability` once for Logpush and the saved
   Observability views. No workflow runs it.
-
-### Cloudflare resources still created by hand
-
-A fresh account must create these by hand:
-
-- Pipeline streams, sinks and catalogs: run `pnpm cloudflare:lakehouses:ensure`,
-  then commit the stream ids it prints into the three `config/*-lakehouse.json`
-  files.
-- The `avalon-desktop-releases-archive` bucket, created with its location hint
-  and Infrequent Access storage class, which a Wrangler binding cannot express.
-- The release-retention Worker: `pnpm deploy:release-retention`. No workflow
-  deploys it.
 
 ### GitHub repository
 

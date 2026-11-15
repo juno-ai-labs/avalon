@@ -15,9 +15,11 @@ import { configuredRegions } from "./regions.mjs";
  * that read-only form for a laptop: it reports what a deploy would create and
  * fails if anything is missing, without creating it.
  *
- * Only the name and jurisdiction are provisioned. A location hint, storage
- * class, lifecycle rule or CORS policy is not in the Wrangler file, so it is
- * not set here; the buckets that need one (docs/runbook.md) stay explicit.
+ * A binding carries only the name and jurisdiction. A bucket that needs a
+ * location hint or storage class at creation (the desktop release buckets)
+ * declares it in config/r2-bucket-settings.json, which is applied only when the
+ * bucket is created: an existing bucket is never changed. Lifecycle rules, CORS
+ * and custom domains are not provisioned here.
  */
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -31,18 +33,31 @@ const SAFE_BUCKET = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u;
 /** Cloudflare's "Authentication error": the token lacks the permission. */
 const PERMISSION_ERROR_CODE = 10000;
 
-/**
- * Every Wrangler file whose buckets a deploy may create. `apps/release-retention`
- * is left out on purpose: its archive bucket needs a location hint and the
- * Infrequent Access storage class (docs/runbook.md), which a binding cannot
- * express, so creating it here would create it wrong.
- */
+const settingsPath = join(repositoryDirectory, 'config/r2-bucket-settings.json');
+const LOCATION_HINTS = new Set(['apac', 'eeur', 'enam', 'weur', 'wnam', 'oc']);
+const STORAGE_CLASSES = new Set(['Standard', 'InfrequentAccess']);
+
+/** Every Wrangler file whose buckets a deploy may create. */
 const bucketConfigs = [
   ...configuredRegions.flatMap((region) => ['', 'artifacts.'].map((service) => ({
     surface: `api-${service}${region}`, path: join(repositoryDirectory, `apps/api/wrangler.${service}${region}.jsonc`),
   }))),
   { surface: 'browser', path: join(repositoryDirectory, 'apps/browser/wrangler.jsonc') },
+  { surface: 'release-retention', path: join(repositoryDirectory, 'apps/release-retention/wrangler.jsonc') },
 ];
+
+/** Creation settings by bucket name, validated so a typo fails before any create. */
+export async function bucketSettings(path = settingsPath) {
+  const settings = JSON.parse(await readFile(path, 'utf8'));
+  for (const [name, setting] of Object.entries(settings)) {
+    assertSafe('settings', 'bucket', name);
+    const unknown = Object.keys(setting).filter((key) => key !== 'locationHint' && key !== 'storageClass');
+    if (unknown.length > 0) throw new Error(`Unknown R2 setting(s) for ${name}: ${unknown.join(', ')}`);
+    if (setting.locationHint !== undefined && !LOCATION_HINTS.has(setting.locationHint)) throw new Error(`Unknown R2 location hint for ${name}: ${setting.locationHint}`);
+    if (setting.storageClass !== undefined && !STORAGE_CLASSES.has(setting.storageClass)) throw new Error(`Unknown R2 storage class for ${name}: ${setting.storageClass}`);
+  }
+  return settings;
+}
 
 function required(name, environment) {
   const value = environment[name]?.trim();
@@ -84,7 +99,8 @@ export async function configuredR2Buckets() {
       buckets.push(bucket);
     }
   }
-  return buckets;
+  const settings = await bucketSettings();
+  return buckets.map((bucket) => ({ ...bucket, settings: settings[bucket.name] ?? {} }));
 }
 
 function bucketsUrl(accountId) {
@@ -132,7 +148,7 @@ export async function createBucket({ accountId, token, fetchImpl }, bucket) {
   const response = await fetchImpl(bucketsUrl(accountId), {
     method: 'POST',
     headers: { ...headers(token, bucket), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: bucket.name }),
+    body: JSON.stringify({ name: bucket.name, ...bucket.settings }),
   });
   const body = await response.json().catch(() => null);
   if (response.ok && body?.success === true) return;
@@ -164,7 +180,8 @@ export async function ensureRequiredR2Buckets(options = {}) {
   for (const bucket of missing) {
     try {
       await createBucket(account, bucket);
-      log(`Created R2 bucket ${bucket.name} (${bucket.jurisdiction}) for ${bucket.surface}/${bucket.binding}`);
+      const extra = Object.entries(bucket.settings ?? {}).map(([key, value]) => `${key} ${value}`).join(', ');
+      log(`Created R2 bucket ${bucket.name} (${bucket.jurisdiction}${extra ? `, ${extra}` : ''}) for ${bucket.surface}/${bucket.binding}`);
     } catch (error) {
       // A refused permission must surface, never pass as a race.
       if (error.permission) throw error;
