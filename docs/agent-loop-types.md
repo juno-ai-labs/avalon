@@ -174,7 +174,7 @@ this loop acts as" fails there.
 | `sidekick_report_outcome` | `sidekick-task-outcome.ts` | Runs. |
 | Run reading | `sidekick-run-tools.ts` | The wizard and its background agents. |
 | Model route | `agent-model-flags.ts` | `canvas`, `sidekick_wizard` (wizard and its background agents), `sidekick_run` (runs and delegation workers). |
-| Notifications (`rally:notifications`, proposed) | [Canvas notices PRD](PRDs/2026-11-14_canvas-notices/prd.md) | Its own matrix. |
+| Notifications (`notificationToolsAllowed`) | `notification-tools.ts` | Both tools to every loop. A run and its delegation workers refuse `register`; the self-review, a wizard turn it claims, and its background agents refuse both ([`push-notifications.md`](push-notifications.md#canvas-notices)). |
 
 ## Invariants
 

@@ -998,6 +998,8 @@ as one sent before a delete: it is acknowledged unapplied and logged as
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
 | `sidekick_conversation_attachments` | `(automation_id, parent_kind, …)` | Migration 137 widens `parent_kind` to admit `canvas`. |
 | `workspace_pins` | `(user_id, item_kind, item_id)` | Migration 137 admits `canvas` and `sidekick`, with no parent. |
+| `canvas_notice_registrations` | `canvas_id` | Migration 150: whether the Canvas sends notices, the sentence saying what about, who turned them on (Rally or a Sidekick, by name) and the record's message ([`push-notifications.md`](push-notifications.md#canvas-notices)). |
+| `canvas_notification_choices` | `(canvas_id, user_id)` | Migration 150: one person's channels for this Canvas's notices, `[]` for muted; no row follows Settings. Discarding a Canvas deletes both tables' rows. |
 | `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 137: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because the Thread-era resource-link table's foreign key named a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
 ## Retired documents
@@ -1028,6 +1030,27 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-15 — A Canvas sends notices to its people
+
+**What changed:** A Canvas holds a notices registration and each person's
+choice for it, and its detail carries the viewer's view of them (`notices`).
+The Chat shows the record an agent's `register` lands, the title menu gains
+Notifications, and an Organization-wide Canvas a viewer is not listed in
+shows a banner under the title offering to join.
+[`push-notifications.md`](push-notifications.md#canvas-notices) owns the
+delivery.
+
+**Why:** The owner asked that a Canvas, not a tool call, decide who hears
+its notices, with choices per Canvas.
+
+**Considered and rejected:** A toast at the top of the Canvas: it covered
+the title pill and was cut off at narrow widths; the banner sits in the
+header's flow.
+
+**Consequences:** A notice goes only to listed participants and the creator,
+so Organization visibility alone admits a reader but not a recipient; the
+banner and `canvasJoin` close that gap.
 
 ### 2026-11-15 — A person the Canvas admits can join its participant list
 

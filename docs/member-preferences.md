@@ -16,9 +16,16 @@ follow the member across devices. Two kinds today:
   notices), **Pinned Canvas updates** (`artifactUpdates`), **Access
   requests** (`accessRequests`, for whoever decides on a Canvas's people) and
   **Source requests** (`sourceRequests`, for being asked to let your events
-  start a Sidekick and for the answer to your own ask). Every kind defaults to
-  push alone but the last, which defaults to push and email: a source request
-  is answered from its email ([`sidekick-sources.md`](sidekick-sources.md)).
+  start a Sidekick and for the answer to your own ask) and **Canvas notices**
+  (`canvasNotices`, what an agent sends a Canvas's people). Every kind defaults
+  to push alone but the last two, which default to push and email: a source
+  request is answered from its email
+  ([`sidekick-sources.md`](sidekick-sources.md)), and a Canvas notice with
+  both goes by push where one can be queued, else email
+  ([`push-notifications.md`](push-notifications.md#canvas-notices)). A person
+  may override **Canvas notices** for one Canvas, or mute it; that choice
+  lives with the Canvas (`canvas_notification_choices`), not here, and
+  `notificationAllows` reads it when given the Canvas.
   In the client, each kind's picker offers **Push** (only where this
   deployment can push, though a stored `push` stays in a save) and **Email**,
   the same two for every kind (`NotificationChannelSettings`); a stored
@@ -125,6 +132,20 @@ each pushed kind reads.
 migrations 106 and 107 over populated rows.
 
 ## Changelog
+
+### 2026-11-15 — Canvas notices, with a per-Canvas override kept beside the Canvas
+
+**What changed:** `canvasNotices` joins the offered kinds, defaulting to push
+and email. `NotificationAllowsRequest` takes an optional `parentId`, and for
+`canvas_notice` the Canvas's own choice for that person wins over this record.
+
+**Why:** The owner asked for choices per Canvas. Keeping them in the Canvas's
+table, not in `notify_json`, means discarding or archiving a Canvas takes its
+choices with it, and the one record stays the same size however many
+Canvases a person mutes.
+
+**Consequences:** A caller that checks `canvas_notice` without the Canvas
+reads only Settings; the push consumer passes it.
 
 ### 2026-11-09 — Notifications go by push and email only, and Settings offers only kinds a producer records
 
