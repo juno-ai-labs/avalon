@@ -163,8 +163,8 @@ this loop acts as" fails there.
 
 | Gate | Where | Offered to |
 | --- | --- | --- |
-| Source tools (`asksForSources`) | `integrations.ts` | Every loop but a run and its delegation workers: an ask approves nobody ([`sidekick-sources.md`](sidekick-sources.md)). |
-| Elicitation and connection cards | `integrations.ts` (`routesAnswersToAgent`) | Not background agents, nor a Sidekick turn with `agentExchange`. |
+| Source tools (`asksForSources`) | `integrations.ts` | Ask from a person's turn, a wake-up in a Chat or a wizard, and a wizard turn a person-started Canvas Chat turn messaged (`fromPersonTurn`). Every other loop holds them and refuses by name ([`sidekick-sources.md`](sidekick-sources.md)). |
+| Elicitation and connection cards | `integrations.ts` (`routesAnswersToAgent`) | Asked by every loop but background agents and a Sidekick turn with `agentExchange` (unless a person-started Canvas Chat turn sent it); those hold them and refuse with where to send the question. |
 | Authoring tools | `integrations.ts` | Wizard turns (`sidekickWizard`). |
 | Conversation tools | `conversation-tools.ts` | Wizard (with `attach`) and runs (without). Not a Canvas's Chat. |
 | `write_artifact_data` | `workstream-artifact-data-wiring.ts` | Canvas's Chat and wizard under a user principal; runs. Not background agents or delegation workers. |
@@ -184,10 +184,11 @@ this loop acts as" fails there.
   loop it is in lets content choose its own tools.
 - **Content does not act in a person's name without a person's say.** A run
   and its delegation workers are handed an event's content, so a behavior
-  that speaks for a person is refused to them unless someone still approves
-  it, as a source request is (`asksForSources`). Agent exchange, self-review,
-  background agents and wake-ups are content- or host-driven too; a behavior
-  with no approval step behind it says which of them it allows. Guard:
+  that speaks for a person is refused to them. Agent exchange, self-review
+  and background agents are content- or host-driven too, and a source request
+  is refused to all of them (`asksForSources`); a behavior says which rows it
+  allows. A refused behavior is offered and refuses by name
+  ([`agent-tools.md`](agent-tools.md) rule 14). Guard:
   `connector-tool-selection.test.ts`.
 - **A wake-up continues the loop that scheduled it.** A derivation the claim
   path makes for an input belongs in `fireWorkstreamWakeup` too, or the woken
