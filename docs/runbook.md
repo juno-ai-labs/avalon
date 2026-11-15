@@ -363,7 +363,10 @@ Use a custom token restricted to the Rally Cloudflare account and the `rallywith
 - Account: Account Settings Read
 - Account: Workers Scripts Write (shown as Edit in older dashboards)
 - Account: D1 Write/Edit
-- Account: Workers R2 Storage Write/Edit
+- Account: Workers R2 Storage Write/Edit: also lets the API and browser
+  deployments create any R2 bucket a Wrangler file declares
+  (`pnpm cloudflare:r2:ensure` runs the same step locally). The
+  `site-production` token the browser deploy uses needs it too.
 - Account: R2 Admin Read & Write — used by explicit lakehouse reconciliation to
   create the Global analytical buckets and Data Catalogs and as the
   non-interactive credential source for their Global Catalog sinks
