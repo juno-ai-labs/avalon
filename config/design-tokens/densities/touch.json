@@ -17,10 +17,10 @@
     "sys.type.large-title": "var(--av-dynamic-type-large-title, 34px)",
     "sys.type.display": "var(--av-dynamic-type-display, 38px)",
     "sys.font.size.prose": "{sys.type.body}",
-    "cmp.markdown.heading-1": "30px",
-    "cmp.markdown.heading-2": "25.5px",
-    "cmp.markdown.heading-3": "22.5px",
-    "cmp.markdown.heading-4": "20.5px",
+    "cmp.markdown.heading-1": "calc({sys.type.body} * 30 / 17)",
+    "cmp.markdown.heading-2": "calc({sys.type.body} * 25.5 / 17)",
+    "cmp.markdown.heading-3": "calc({sys.type.body} * 22.5 / 17)",
+    "cmp.markdown.heading-4": "calc({sys.type.body} * 20.5 / 17)",
     "cmp.feed.byline.font-size": "{sys.type.footnote}"
   }
 }
