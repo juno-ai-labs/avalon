@@ -834,6 +834,9 @@ importers:
       react-native:
         specifier: 0.88.1
         version: 0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0)
+      react-native-gesture-handler:
+        specifier: ~3.3.0
+        version: 3.3.0(react-native@0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
       react-native-safe-area-context:
         specifier: ~5.11.1
         version: 5.11.1(react-native@0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
@@ -7635,6 +7638,9 @@ packages:
   '@types/istanbul-reports@3.0.4':
     resolution: { integrity: sha512-pk2B1NWalF9toCRu6gjBzR69syFjP4Od8WRAX+0mmf9lAjCRicLOWc+ZrxZHx/0XRjotgkF9t6iaMJ+aXcOdZQ== }
 
+  '@types/react-test-renderer@19.3.1':
+    resolution: {integrity: sha512-9AwMfeBOcXsN5kC4oAauNTOKEwqLHtc69tkJC2CihQ5fCELDwzfQvookvtyaxm6i+vc5LLD0V5OLB8arzY8Smw==}
+
   '@types/react@19.3.0':
     resolution: { integrity: sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg== }
 
@@ -8451,6 +8457,12 @@ packages:
 
   react-is@19.3.1:
     resolution: { integrity: sha512-RRieF6IyxQBkcK6pP8xOHprLTPW6QjRkbGdImtqNme+/hYVwCZkLQLdlZGOhUqXwkS9IEynaGvPJtv6XB/cz0Q== }
+
+  react-native-gesture-handler@3.3.0:
+    resolution: {integrity: sha512-ZCTlJ09nE3GPbm7J74lvwpxmx1TQ/7MDlHZNLARVYTN82k21mJUJ7BmI9eWjEi8eevHiAudI5O1Cpnt0rJfoJA==}
+    peerDependencies:
+      react: '*'
+      react-native: '*'
 
   react-native-safe-area-context@5.11.1:
     resolution: { integrity: sha512-yCltXXwhwp42vMqfhAsH5BWgAysbLNgwfn3PDwNpOn/CgwfM+eMWgScZIbHbMzJYNLi5bKJEOIUEG4RwKNiECA== }
@@ -16427,6 +16439,10 @@ snapshots:
     dependencies:
       '@types/istanbul-lib-report': 3.0.3
 
+  '@types/react-test-renderer@19.3.1':
+    dependencies:
+      '@types/react': 19.3.0
+
   '@types/react@19.3.0':
     dependencies:
       csstype: 3.2.3
@@ -17531,6 +17547,13 @@ snapshots:
   react-is@18.3.1: {}
 
   react-is@19.3.1: {}
+
+  react-native-gesture-handler@3.3.0(react-native@0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0):
+    dependencies:
+      '@types/react-test-renderer': 19.3.1
+      invariant: 2.2.4
+      react: 19.3.0
+      react-native: react-native@0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0)
 
   react-native-safe-area-context@5.11.1(react-native@0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0):
     dependencies:
