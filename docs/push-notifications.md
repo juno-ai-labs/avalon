@@ -424,6 +424,24 @@ they all fit beside the row's words, one menu of checkboxes when they do not.
 Each row measures itself, because the number of channels grows with the
 person's connectors.
 
+## Whether this device can show them
+
+`useDevicePushReadiness()` (`apps/desktop/src/renderer/lib/device-push.tsx`)
+is the one answer to whether the device Rally is running on can show its
+notifications, and what to offer when it cannot: `ready`, `off` (Rally can
+turn them on from a click), `denied` (macOS refused them; Open System
+Settings), `blocked` (the browser refused them for the site), `home-screen`
+(iPhone and iPad Safari), `unavailable` (this build or browser cannot),
+`unconfigured` (this deployment has no Web Push key, so no browser can), or
+`unknown`. On the Mac it reads
+the main process's permission and the device switch; in a browser, the Web
+Push state Settings reads under the same query key. `devicePushNotice` holds
+the words, so Settings and a Canvas's notices record say the same thing about
+a device. A host that knows its device better provides its own answer through
+`DevicePushReadinessContext`; the iPhone app's page provides `unknown`,
+because the app gets its notifications from its native shell, not Web Push,
+and the page cannot read that permission yet.
+
 ## Web Push for browser members
 
 A member's browser tab registers a `webpush` device: `token` is the
@@ -668,6 +686,23 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-15 — One answer to whether this device can show notifications
+
+**What changed:** `useDevicePushReadiness()` and `devicePushNotice` give a
+device's push state and its fix, and Settings → Notifications reads its
+device rows' words from them.
+
+**Why:** A Canvas's notices record shows the same device line Settings does,
+and two copies of the states would drift.
+
+**Considered and rejected:** Reading the iPhone app's native permission
+through the browser bridge now. The page has no message for it yet, and the
+app's shell changes ship through its own release; the context lets it supply
+an answer later without touching the record.
+
+**Consequences:** The iPhone app shows no device line until its shell reports
+its permission.
 
 ### 2026-11-13 — Register Expo phones through the existing delivery pipeline
 

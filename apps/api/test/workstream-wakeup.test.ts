@@ -1094,12 +1094,14 @@ describe("firing a due wake-up", () => {
         worker.env,
         worker.row,
         schedulingPort(worker.store),
-        { parentKind: "automation", substreamId: workerId, backgroundAgent: true, rootSubstreamId: "0" },
+        { parentKind: "automation", substreamId: workerId, backgroundAgent: true, rootSubstreamId: "0", rootReason: "sidekick_review" },
       );
 
       expect(outcome.fired).toBe(true);
       expect(asked).toEqual([]);
-      expect(dispatches[0]).toMatchObject({ parentKind: "automation", substreamId: workerId, backgroundAgent: true });
+      expect(dispatches[0]).toMatchObject({
+        parentKind: "automation", substreamId: workerId, backgroundAgent: true, backgroundAgentRootReason: "sidekick_review",
+      });
       expect(dispatches[0]).not.toHaveProperty("automationDelegation");
     });
   });

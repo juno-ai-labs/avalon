@@ -271,3 +271,51 @@ describe("who can open a Canvas", () => {
     expect(await opens(guest(GUEST))).toBe(false);
   });
 });
+
+describe("joining a Canvas", () => {
+  async function participants(): Promise<string[]> {
+    return (await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) })).participantUserIds;
+  }
+
+  it("lists a member an Organization-wide Canvas admits, and keeps them through the sharing dialog's save", async () => {
+    const before = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(MEMBER) });
+    const joined = await workspace().canvasJoin({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(MEMBER) });
+    expect(joined.participantUserIds).toEqual([MEMBER]);
+    expect(joined.sharingRevision).toBeGreaterThan(before.sharingRevision ?? 0);
+    // Joining again changes nothing.
+    expect((await workspace().canvasJoin({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(MEMBER) })).sharingRevision)
+      .toBe(joined.sharingRevision);
+    // The dialog names only guests for an Organization-wide Canvas; the joined member stays.
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
+      update: { visibility: "workspace", userIds: [], expectedRevision: joined.sharingRevision } });
+    expect(await participants()).toEqual([MEMBER]);
+  });
+
+  it("keeps a member who joined when a manager narrows the Canvas from the whole Organization", async () => {
+    await workspace().canvasJoin({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(MEMBER) });
+    // The dialog names only the people it shows: the joined member is not among them.
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
+      update: { visibility: "participants", userIds: [OTHER] } });
+    expect(await participants()).toEqual(expect.arrayContaining([MEMBER, OTHER]));
+    expect(await opens(member(MEMBER))).toBe(true);
+  });
+
+  it("lets nobody join through an admission that can be withdrawn, an administrator's role among them", async () => {
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    await expect(runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.canvasJoin({
+      workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: { userId: ADMIN, actorRole: "admin" },
+    }))).rejects.toMatchObject({ code: "canvas_join_requires_organization_visibility" });
+    expect(await participants()).toEqual([MEMBER]);
+  });
+
+  it("refuses a member the Canvas does not admit, and still does not open it to them", async () => {
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    await expect(runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.canvasJoin({
+      workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(OTHER),
+    }))).rejects.toMatchObject({ code: "canvas_not_found" });
+    expect(await opens(member(OTHER))).toBe(false);
+    expect(await participants()).toEqual([MEMBER]);
+  });
+});

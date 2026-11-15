@@ -42,7 +42,13 @@ export class AgentCommunicationService {
   private readonly teamPreparation = new Preparation(() => this.resolveTeam());
   private readonly guestPreparation = new Preparation(() => this.principalIsGuest());
 
-  constructor(private readonly env: Env, private readonly input: WorkstreamWorkflowInput) {
+  /**
+   * @param turnIsSelfReview Whether the turn using this service is the
+   * Sidekick self-review's, which `reviewOwnsThisTurn` decides for a turn whose
+   * own `reason` does not say so. Asked only when an agent is started.
+   */
+  constructor(private readonly env: Env, private readonly input: WorkstreamWorkflowInput,
+    private readonly turnIsSelfReview: () => Promise<boolean> = async () => input.reason === "sidekick_review") {
     this.senderId = agentIdForAddress({ parentKind: input.parentKind, parentId: input.parentId, substreamId: input.substreamId ?? asSubstreamId("0") });
   }
 
@@ -104,6 +110,11 @@ export class AgentCommunicationService {
     const rootSubstreamId = asSubstreamId(origin?.background
       ? origin.rootSubstreamId ?? "0"
       : this.input.substreamId ?? "0");
+    // What started the root, inherited the same way: a gate that treats the
+    // self-review's agents apart reads it (docs/agent-loop-types.md).
+    const rootReason = origin?.background
+      ? origin.rootReason ?? null
+      : await this.turnIsSelfReview() ? "sidekick_review" : this.input.reason;
     await this.validateAttachments(args.attachmentIds);
     const id = await this.messageId(context);
     const childId = agentIdForAddress({ parentKind: this.input.parentKind, parentId: this.input.parentId, substreamId: asSubstreamId(id) });
@@ -127,7 +138,7 @@ export class AgentCommunicationService {
       participantUserIds: this.input.executionPrincipal.type === "user" ? [this.input.executionPrincipal.userId] : [],
       harnessStatus: "idle", titleStatus: "settled",
       systemKind: null, modelOverride: identity.model_override, now: Date.now(),
-    }, executionPrincipal: this.input.executionPrincipal, rootSubstreamId });
+    }, executionPrincipal: this.input.executionPrincipal, rootSubstreamId, rootReason });
     if (initialized.status !== 200) {
       const body = rpcResultBody(initialized);
       const code = body && typeof body === "object" && "error" in body && typeof body.error === "string"
