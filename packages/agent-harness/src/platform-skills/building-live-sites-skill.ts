@@ -237,11 +237,14 @@ have not. Ask its entry-privacy question only when that skill requires it.
      \`changed: false\`, someone already chose the audience: leave it. Use
      \`personAsked: true\` only when the person asks you to change who can
      open it. End your reply by saying who can open the site, and make your
-     last question whether they want that changed. If the tool says the
-     person does not manage the Canvas, or you do not have the tool (a
-     Sidekick run), say who can open it now and that the Canvas's creator
-     or an Organization admin can change it in the Canvas's Share screen.
-     Do not add a server solely to protect a page.
+     last question whether they want that changed. A background agent a
+     Canvas's Chat started holds the Chat's tools, this one and
+     \`write_artifact_data\` included, so it sets the audience and seeds rows
+     itself rather than handing them back. If the tool says the person does
+     not manage the Canvas, or you do not have the tool (a Sidekick run, or
+     an agent one started), say who can open it now and that the Canvas's
+     creator or an Organization admin can change it in the Canvas's Share
+     screen. Do not add a server solely to protect a page.
 
 2. **Lay out one stable directory** beneath the workspace's resource
    output directory, named for the site (\`launch-checklist/\`, not
@@ -445,6 +448,43 @@ have not. Ask its entry-privacy question only when that skill requires it.
    site and strands the existing URL. Keep chat narration short and free of
    the site's code, and announce a confirmed publication with an embed citation.
 
+## Media, downloads and feeds
+
+Rally serves a site's files in ways a page can rely on:
+
+- **Audio and video play and seek.** Rally answers byte-range requests for
+  every file it serves, so an \`<audio>\` or \`<video>\` element seeks without
+  downloading the whole file. Put the media file in the site's directory
+  and reference it by relative path, as for any asset.
+- **A page loads media, images and scripts only from its own site.** Its
+  security policy refuses any other origin, and a file published on its
+  own (below) has an origin of its own. So a page plays only media in its
+  own directory, and links to anything else.
+- **Large or growing sets of files publish one by one.** One site publish
+  has a size cap, which a refused publish states, and one long recording
+  can fill it. For media too long to fit, or a set that grows (one file per
+  episode or report), publish each file with \`publish_resource\`. When it
+  lands in this Canvas, the result carries its \`url\` and \`sizeBytes\`.
+  Store those in a row, and link the file with an ordinary
+  \`<a href="…">\`: the browser opens it in its own player, which seeks.
+  Never point \`<audio src>\` or \`<img src>\` at that \`url\`; the policy
+  refuses it and the element stays empty. A result with no \`url\` means
+  the file stayed in this conversation, outside the Canvas, and nobody can
+  open it from the site: publish from the Canvas's Chat, or from a run
+  that names this Canvas.
+- **An active site passes the visitor's request on.** End with
+  \`env.ASSETS.fetch(request)\`, the request as it arrived: it carries a
+  player's range, and a new \`Request\` built from the path drops it.
+- **A route returns any content type.** An active site's route may answer
+  JSON, XML, plain text or a calendar with its own \`content-type\`. A
+  static file takes its type from its extension: pages, styles, scripts,
+  JSON, CSV, Markdown, images, fonts, \`mp3\`, \`m4a\`, \`wav\`, \`mp4\`,
+  \`webm\`, \`pdf\`, \`xml\`, \`rss\`, \`atom\` and \`ics\`. Any other
+  extension downloads rather than displays.
+- **A link people add to an app is a feed.** For a podcast, a calendar
+  subscription or a feed reader, load \`publishing-a-feed\`: it builds on
+  this skill.
+
 ## Recreating a person's view
 
 A comment on a reactive site arrives as an annotation whose \`<location>\` holds
@@ -567,6 +607,11 @@ HTML the annotation quotes and say the view could not be rebuilt.
   told a visitor their session was unavailable. Do instead: let every
   write through, and check the header only on a route that needs to know
   who is acting.
+- **Embedding a separately published file.** An \`<audio>\` or \`<img>\`
+  whose \`src\` is a published file's \`url\` stays empty, because the page
+  loads media only from its own site. Do instead: put media the page plays
+  in the site's directory, and link a separately published file with
+  \`<a href>\`.
 - **Streaming the site into chat.** The transcript gets a sentence and
   a citation; the code lives in the files. If someone asks to see the
   code, publish the files as ordinary resources or read out the
@@ -881,7 +926,7 @@ no module-level state, real statuses, nothing external.
 export const BUILDING_LIVE_SITES_SKILL: HarnessSkill = {
   name: "building-live-sites",
   description:
-    "How to build a reactive web page or small app governed by its Canvas artifact audience: choose static, active, or stateful, keep data from connected accounts current with a Sidekick, write its handler or storage class, and revise it in place.",
+    "How to build a reactive web page or small app governed by its Canvas artifact audience: choose static, active, or stateful, keep data from connected accounts current with a Sidekick, write its handler or storage class, serve media and files, and revise it in place.",
   whenToUse:
     "When building or updating a page, dashboard, tracker, calculator, or small app someone will open, or configuring a Sidekick to refresh an existing site.",
   body: BUILDING_LIVE_SITES_BODY,

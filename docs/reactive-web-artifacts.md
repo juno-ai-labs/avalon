@@ -964,7 +964,13 @@ shows its saved quote and image. The script and trust boundaries are owned by
 through one helper that honours a single byte range (`206`, `416`), and sends
 `Accept-Ranges`, `Content-Length` and `ETag` on every response. A `HEAD` reads
 metadata only. The site content-type table gained `rss`, `atom`, `ics` and
-`m4a`.
+`m4a`. `building-live-sites` gained a section on media, downloads and feeds:
+media plays and seeks from the site's own directory, a separately published
+file is linked by the `url` its publish returns and never embedded (the page's
+`media-src 'self'` and `img-src 'self'` refuse its origin), an active site
+passes the visitor's request to `env.ASSETS` so the range survives, and a
+background agent a Canvas's Chat started sets the audience and seeds rows
+itself.
 
 **Why:** A podcast feed's audio could not be seeked: every response was the
 whole object with `200`, so a player could not skip ahead until an episode had
