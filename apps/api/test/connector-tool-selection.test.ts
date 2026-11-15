@@ -695,11 +695,17 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
 }
 
 describe("connector tools selected for harness runs", () => {
-  it("withholds Sidekick management from workspace-principal runs", async () => {
+  it("offers Sidekick management to a turn acting for the Organization, every tool refusing with who can act instead", async () => {
     const selected = await __integrationTesting.loadHarnessTools(env(new ToolSelectionDatabase([])), {
       ...workflowInput(), executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
     });
-    expect(selected.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
+    const sidekicks = selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")!;
+    expect(sidekicks.tools.map((tool) => tool.definition.name)).toEqual(["my_delegations_list", "delegates_list", "set_delegation",
+      "sources_list", "request_source", "test_source_condition"]);
+    const refusals = await Promise.all(sidekicks.tools.map((tool) => tool.execute({}, {} as never)
+      .then(() => null, (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }))));
+    expect(refusals.every((refusal) => refusal?.code === "sidekick_tools_need_a_person"
+      && refusal.routes.includes("a person who manages the Sidekick can do it"))).toBe(true);
   });
   it("gives background substreams normal writes, independent discovery and recursive agent tools", async () => {
     const database = new ToolSelectionDatabase([

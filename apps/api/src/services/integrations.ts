@@ -295,6 +295,7 @@ import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { setsDelegation, sidekickDelegationTools } from "./sidekick-delegation-tools";
 import { sidekickSourceRequestCard, sidekickSourceTools } from "./sidekick-source-tools";
+import { refusingTool } from "./tool-refusal";
 import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
@@ -5285,6 +5286,32 @@ function asksForSources(input: Pick<WorkstreamWorkflowInput,
 }
 
 /**
+ * The Sidekicks plugin for a turn that acts for the Organization rather than
+ * a person: a Sidekick run that acts as itself, or a turn with no person
+ * behind it. Its tools read and change Sidekicks in a person's name, so each
+ * one refuses, by name and with the route to a person who can, rather than
+ * being withheld (`docs/agent-tools.md`, rule 14). The tools are built as a
+ * person's turn would have them, for their names and arguments only: the
+ * person they are built for is never used, since no call reaches them.
+ */
+function organizationSidekicksPlugin(env: Env, input: WorkstreamWorkflowInput, readsRuns: boolean,
+  paged: (tool: HarnessTool) => HarnessTool[]): HarnessPlugin {
+  const nobody = asUserId("00000000-0000-0000-0000-000000000000");
+  const refusal = input.automationRun
+    ? { code: "sidekick_tools_need_a_person", message: "This run acts as the Sidekick itself, not as a person, so it cannot use the tools that read or change Sidekicks in a person's name. Say in your result what is needed and for whom, so a person who manages this Sidekick can do it from its conversation or from a Canvas's Chat." }
+    : { code: "sidekick_tools_need_a_person", message: "This turn acts for the Organization, not for a person, so it cannot use the tools that read or change Sidekicks in a person's name. Say in your reply what is needed and for whom, so a person who manages the Sidekick can do it from its conversation or from a Canvas's Chat." };
+  return {
+    canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
+    displayName: "Sidekick delegation",
+    description: "Sidekick delegation and sources. This turn acts for the Organization, so each tool says who can use it instead.",
+    preload: false, explicit: false,
+    tools: [...(readsRuns ? createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref)).flatMap(paged) : []),
+      ...sidekickDelegationTools(env, input, nobody, false),
+      ...sidekickSourceTools(env, input, nobody, false)].map((tool) => refusingTool(tool, refusal)),
+  };
+}
+
+/**
  * The built-in skills a loop is offered. A skill that names tools is listed
  * only where a plugin in scope holds them: `setting-up-a-filtered-trigger`
  * tells the model to call `sidekick_request_source`, which only a loop with
@@ -5994,7 +6021,7 @@ async function loadHarnessTools(
         .flatMap((tool) => expandPages(tool, "sidekick", null)) : []),
       ...sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
       ...sidekickSourceTools(env, input, input.executionPrincipal.userId, false, asksForSources(input))],
-    } : null;
+    } : organizationSidekicksPlugin(env, input, readsRuns, (tool) => expandPages(tool, "sidekick", null));
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
   // Sidekick's configuration conversation and runs reach its own

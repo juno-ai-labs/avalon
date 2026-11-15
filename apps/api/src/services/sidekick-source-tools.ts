@@ -5,12 +5,12 @@ import {
   IdSchema, UserIdSchema, asWorkspaceId, type UserId, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import type { Env } from "../env";
-import { ApiError } from "../lib/api-error";
 import { runtimeDeferral } from "../lib/defer";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import { SidekickSourceService } from "./sidekick-source-service";
+import { refusingTool } from "./tool-refusal";
 import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 
 /**
@@ -66,24 +66,16 @@ export function sidekickSourceRequestCard(event: { pluginId?: string | undefined
  * An agent that needs a source asked for then hands the ask to one that may,
  * by the messaging it already has. `docs/sidekick-sources.md#agent-tools`.
  */
-export function sidekickSourceRefusalTool(input: WorkstreamWorkflowInput, room: boolean): HarnessTool {
+export function sidekickSourceRefusalTool(input: WorkstreamWorkflowInput, request: HarnessTool): HarnessTool {
   const refusal = input.automationRun || input.automationDelegation
     ? { code: "sidekick_source_request_from_run", message: "A Sidekick run cannot ask people for a source: it works from the event that started it, and nothing a run reads may send a request in a person's name. Say in your result who should be asked, for which connector and event types, and with what filter, so a person who manages this Sidekick can ask from its conversation or from a Canvas's Chat." }
     : input.backgroundAgent === true
       ? { code: "sidekick_source_request_from_background_agent", message: "A background agent cannot ask people for a source: it works from content no person wrote here. Send the agent you work for who should be asked, for which connector and event types, and with what filter, with send_message; it can ask from a turn its person started." }
       : { code: "sidekick_source_request_from_agent_message", message: "This turn was started by another agent's message, not by a person, so it cannot ask people for a source. Reply to that agent with who should be asked, for which connector and event types, and with what filter; a person's own turn can ask, and so can a Sidekick's wizard when a Canvas's Chat messages it." };
-  return {
-    definition: {
-      name: room ? "sidekick_request_source" : "request_source",
-      description: "Asking people for a source is not available on this turn. Calling this asks nobody: it says which turn can ask, and how to hand the request to it.",
-      capability: "rally.sidekick.sources.request_elsewhere", mode: "read" as const, idempotency: "safe" as const,
-      inputSchema: z.toJSONSchema(RequestSourceInputSchema),
-    },
-    validateInput: (raw) => RequestSourceInputSchema.safeParse(raw).error ?? null,
-    execute: async () => {
-      throw new ApiError(403, refusal.code, refusal.message);
-    },
-  };
+  return refusingTool(request, refusal, {
+    description: "Asking people for a source is not available on this turn. Calling this asks nobody: it says which turn can ask, and how to hand the request to it.",
+    capability: "rally.sidekick.sources.request_elsewhere",
+  });
 }
 
 /** How many of the person's own recent events one test judges. A product choice: one screenful to read. */
@@ -212,7 +204,7 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   }];
   // The ask is the one tool a loop may be refused, and it is refused by name rather than withheld.
   return asks ? tools : tools.map((tool) => tool.definition.capability === "rally.sidekick.sources.request"
-    ? sidekickSourceRefusalTool(input, room) : tool);
+    ? sidekickSourceRefusalTool(input, tool) : tool);
 }
 
 function requestOutput(request: { requestId: string; person: { userId: string; displayName: string }; connectorType: string;
