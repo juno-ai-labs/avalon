@@ -915,6 +915,28 @@ selection and message protocol.
 
 ## Changelog
 
+### 2026-11-15 — The capsule composer's controls answer a 44pt touch
+
+**What changed:** On a touch screen (`hover: none` and `pointer: coarse`) the
+capsule composer's plus, microphone, Send and Stop buttons each carry a
+transparent `::before` 44px square centred on the 28px circle. The control
+groups take 16px gaps and 8px padding on every side there, and the closed Stop
+slot's negative margin now reads the gap from `--composer-submit-gap` rather
+than a literal `-5px`.
+
+**Why:** Apple's minimum touch target is 44×44pt, and the 28px circles were
+well under it on a phone. Enlarging the circles would change the composer's
+look everywhere; an invisible hit area keeps the look and fixes the touch. The
+square is centred and sized outright rather than inset from the edges because
+an absolute box measures from inside the border, and the microphone's 1px
+border made a `-8px` inset come out 42px. The 16px gap keeps neighbouring
+squares from overlapping, and the 8px padding keeps them inside the
+composer's own clip; at 7px the bottom pixel was cut off.
+
+**What to respect:** a new control in either group on a touch screen needs the
+same `::before` and keeps 16px from its neighbour. The bottom corners of the
+outer squares follow the composer's rounded corners, which is expected.
+
 ### 2026-11-12 — An empty Canvas offers the Marketplace's templates under a centred composer
 
 **What changed:** `ConversationSurface` takes `renderStarters`. The Canvas

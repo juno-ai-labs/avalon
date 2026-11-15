@@ -4640,7 +4640,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 [data-theme='dark'] .composer-mention { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 .composer-toolbar { align-items: center; display: flex; justify-content: space-between; min-height: 38px; padding: 2px 7px 6px; }
 .composer-tools,
-.composer-submit-area { align-items: center; display: flex; gap: 5px; }
+.composer-submit-area { --composer-submit-gap: 5px; align-items: center; display: flex; gap: var(--composer-submit-gap); }
 .composer-hint { color: var(--av-sys-color-text-muted); flex: 1; font-size: 10px; margin: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .socket-state { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: 9.5px; gap: 5px; }
 .socket-state > span { background: var(--av-ref-color-neutral-9); border-radius: 50%; height: 5px; width: 5px; }
@@ -4720,7 +4720,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .composer-stop-slot {
   flex: 0 0 auto;
   width: 0;
-  margin-left: -5px;
+  margin-left: calc(-1 * var(--composer-submit-gap));
   transform: translateX(35px);
   visibility: hidden;
   transition: width 240ms ease, margin-left 240ms ease, transform 240ms ease, visibility 240ms;
@@ -8098,15 +8098,43 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
  * field instead; maximum-scale=1 would also stop it but takes pinch zoom away
  * on Android. Important because the field rules it overrides are scoped deeper
  * than any one rule here could be. That also shrinks a larger field to 16px,
- * so a field styled above 16px has to be added to the :not() list. The
- * reading scale multiplies the floor, so a host that raises it grows its fields
- * with its text.
+ * so a field styled above 16px has to be added to the :not() list. A host
+ * that raises the reading scale grows its fields with its text, from the same
+ * 14px base the composer uses on desktop, never below the 16px floor; so the
+ * composer reads at the size of the messages above it once that passes 16px.
  */
 @media (hover: none) and (pointer: coarse) {
   input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']),
   textarea,
   select,
-  .workstream-composer .composer-highlight { font-size: calc(16px * var(--av-sys-font-scale-reading)) !important; }
+  .workstream-composer .composer-highlight { font-size: max(16px, calc(14px * var(--av-sys-font-scale-reading))) !important; }
+}
+
+/* Apple's minimum touch target is 44pt. The capsule composer's controls keep
+   their 28px circles; on a touch screen each answers an invisible 44px square
+   centred on it. The groups hold 16px between controls and 8px of padding
+   on every side, so no two squares overlap and none is cut off by the
+   composer's own clip. */
+@media (hover: none) and (pointer: coarse) {
+  .has-message-capsule .is-message-capsule :is(.composer-tools, .composer-submit-area) {
+    --composer-submit-gap: 16px;
+    gap: 16px;
+    padding: 8px;
+  }
+  .has-message-capsule .is-message-capsule :is(.composer-action-trigger, .dictation-button, .composer-send, .stop-button) { position: relative; }
+  .has-message-capsule .is-message-capsule :is(.composer-action-trigger, .dictation-button, .composer-send, .stop-button)::before {
+    /* Centred and sized outright rather than inset from the edges: an
+       absolute box measures from inside the border, and the microphone has
+       one, so an inset of -8px came out 42px. A Send that has widened into
+       a labelled pill keeps 8px beyond it either side. */
+    content: '';
+    height: 44px;
+    left: 50%;
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: max(44px, calc(100% + 16px));
+  }
 }
 
 /* A touch screen has no keyboard to press the Submit shortcut or an option's letter with. */
