@@ -191,9 +191,7 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
           role="switch" />
         {/* Why it is off is a row of the card, as the Mac's is. The toggle is
             the way to turn it on here, so `off` says nothing more. */}
-        {current === 'unavailable'
-          ? <NotificationNotice title="Browser notifications are not available yet" />
-          : <DeviceNotice notice={current === 'off' ? null : devicePushNotice('browser', browserPushState(current))} />}
+        <DeviceNotice notice={current === 'off' ? null : devicePushNotice('browser', browserPushState(current))} />
       </div>
       {state.error && <ErrorNotice occurrence={state.error}>{state.error.message}</ErrorNotice>}
       {/* A browser's own subscribe() error names its internals, not anything the member can act on. */}
