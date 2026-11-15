@@ -55,8 +55,6 @@ export const WorkstreamWakeupRowSchema = z.object({
   status: z.enum(["pending", "fired", "cancelled"]),
   version: z.number().int().nonnegative(),
   created_at: z.string(),
-  /** Whether a person's turn scheduled it, which the woken turn carries on. */
-  scheduled_by_person: z.boolean(),
 });
 
 export type WorkstreamWakeupRow = z.infer<typeof WorkstreamWakeupRowSchema>;
@@ -513,7 +511,6 @@ export async function createWorkstreamWakeup(
     prompt: string;
     dueAt: Date;
     idempotencyKey: string;
-    scheduledByPerson: boolean;
   },
 ): Promise<{ wakeupId: string; created: boolean }> {
   const now = Date.now();
@@ -524,7 +521,6 @@ export async function createWorkstreamWakeup(
     prompt: input.prompt,
     dueAt: input.dueAt.getTime(),
     idempotencyKey: input.idempotencyKey,
-    scheduledByPerson: input.scheduledByPerson,
     now,
   });
   if (outcome === "workstream_archived") throw new Error("workstream_wakeup_target_unavailable");
@@ -602,7 +598,6 @@ export async function loadWorkstreamWakeup(
     status: row.status,
     version: row.version,
     created_at: new Date(row.created_at).toISOString(),
-    scheduled_by_person: row.scheduled_by_person === 1,
   });
 }
 

@@ -10,8 +10,6 @@ import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  AgentExchangeSchema,
-  agentIdForAddress,
   WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
@@ -286,10 +284,10 @@ function pendingRow(objectStore: DatabaseSync, wakeupId: string): WorkstreamWake
   // the thing this slice deletes.
   const row = objectGet<{
     wakeup_id: string; execution_principal_json: string; prompt: string;
-    due_at: number; status: string; version: number; created_at: number; scheduled_by_person: number;
+    due_at: number; status: string; version: number; created_at: number;
   }>(
     objectStore,
-    `SELECT wakeup_id, execution_principal_json, prompt, due_at, status, version, created_at, scheduled_by_person
+    `SELECT wakeup_id, execution_principal_json, prompt, due_at, status, version, created_at
        FROM workstream_wakeups WHERE wakeup_id = ?`,
     wakeupId,
   )!;
@@ -303,7 +301,6 @@ function pendingRow(objectStore: DatabaseSync, wakeupId: string): WorkstreamWake
     status: row.status,
     version: row.version,
     created_at: new Date(row.created_at).toISOString(),
-    scheduled_by_person: row.scheduled_by_person === 1,
   });
 }
 
@@ -1155,35 +1152,6 @@ describe("firing a due wake-up", () => {
       expect(dispatches).toHaveLength(0);
       expect(objectGet(objectStore, "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", wakeupId))
         .toEqual({ status: "fired" });
-    });
-  });
-
-  describe("who scheduled it", () => {
-    it("tells the woken turn a person's turn scheduled it", async () => {
-      const { objectStore, env, dispatches } = fixture();
-      const { schedule } = wakeupTools(env);
-      const scheduled = await schedule.execute({ prompt: "Check the deploy", delay: "1 hour" }, context());
-      const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
-
-      await fireWorkstreamWakeup(env, pendingRow(objectStore, wakeupId), schedulingPort(objectStore), MAIN);
-
-      expect(dispatches[0]).toMatchObject({ wakeupScheduledByPerson: true });
-    });
-
-    it("tells the woken turn another agent's message scheduled it", async () => {
-      const { objectStore, env, dispatches } = fixture();
-      const sender = agentIdForAddress({ parentKind: "canvas", parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") });
-      const { schedule } = wakeupTools(env, {
-        ...workflowInput(),
-        reason: "agent_message",
-        agentExchange: AgentExchangeSchema.parse({ teamId: sender, senderAgentId: sender, messageId: "00000000-0000-4000-8000-0000000000f1" }),
-      });
-      const scheduled = await schedule.execute({ prompt: "Check the deploy", delay: "1 hour" }, context());
-      const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
-
-      await fireWorkstreamWakeup(env, pendingRow(objectStore, wakeupId), schedulingPort(objectStore), MAIN);
-
-      expect(dispatches[0]).toMatchObject({ wakeupScheduledByPerson: false });
     });
   });
 

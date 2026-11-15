@@ -5269,8 +5269,8 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  * started it, a stranger's email among it, and asking in its delegate's name
  * is not something what it read may bring about. A background agent works from content the same
  * way, and so does a turn another agent's message or Rally's own review
- * notice started, the wizard's included: nobody typed it. A wake-up is
- * whatever the turn that scheduled it was (`drivenByPerson`).
+ * notice started, the wizard's included: nobody typed it. A wake-up in a
+ * Chat or a wizard is offered them (`drivenByPerson`).
  */
 function asksForSources(input: Parameters<typeof drivenByPerson>[0]): boolean {
   return drivenByPerson(input);
@@ -8692,7 +8692,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           prompt: args.prompt,
           dueAt: resolved.dueAt,
           idempotencyKey: providerIdempotencyKey,
-          scheduledByPerson: drivenByPerson(input),
         });
         try {
           await refreshAgentTimerAlarm(

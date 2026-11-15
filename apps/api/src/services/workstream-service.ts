@@ -150,8 +150,6 @@ export async function launchWorkstreamHarness(
     automationDelegation?: WorkstreamWorkflowInput["automationDelegation"];
     /** A wake-up in a Sidekick's shared conversation continues its wizard. */
     sidekickWizard?: true;
-    /** Whether a person's turn scheduled the wake-up (`drivenByPerson`). */
-    wakeupScheduledByPerson?: boolean;
   },
   publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
@@ -224,7 +222,6 @@ export async function launchWorkstreamHarness(
       ? { transcriptFenceMessageId: input.transcriptFenceMessageId }
       : {}),
     ...(input.scheduledWakeupId ? { scheduledWakeupId: input.scheduledWakeupId } : {}),
-    ...(input.wakeupScheduledByPerson !== undefined ? { wakeupScheduledByPerson: input.wakeupScheduledByPerson } : {}),
     ...(input.automationRun ? { automationRun: input.automationRun } : {}),
     ...(input.automationContinuation ? { automationContinuation: input.automationContinuation } : {}),
     ...(input.automationDelegation ? { automationDelegation: input.automationDelegation } : {}),
@@ -442,7 +439,6 @@ export async function fireWorkstreamWakeup(
       origin: "scheduled_wakeup",
       executionPrincipal: continuation?.executionPrincipal ?? principal,
       scheduledWakeupId: row.id,
-      wakeupScheduledByPerson: row.scheduled_by_person,
       conversation,
       ...(continuation && worker
         ? { automationDelegation: { runId: authorityRunId, stopGeneration: continuation.stopGeneration } }
