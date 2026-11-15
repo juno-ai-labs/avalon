@@ -36,7 +36,7 @@ import type { Region } from "@rally/contracts/regions";
  *                                  assets, loader, or facet
  * ```
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import {
   ARTIFACT_ANNOTATION_SCRIPT_PATH_PATTERN,

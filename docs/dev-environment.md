@@ -483,7 +483,7 @@ message before capturing or clicking the row.
   means no answered question and no pending answer either.
 - **Unless keys are set: a real run, and the Terminal tools.** With
   `OPENROUTER_API_KEY` in `.env.local` (then `pnpm env:sync` and a Worker
-  restart) a run completes, and the data tools of a live site work against
+  restart) a run completes, and the data tools of a reactive site work against
   local storage. The Terminal tools need more: `DAYTONA_API_KEY`,
   `DAYTONA_TARGET`, a snapshot the key's organization holds, and
   `TERMINAL_REGION_CAPABILITY=supported`. Without all four the region stays
@@ -511,7 +511,7 @@ message before capturing or clicking the row.
   that a `--hidden` launch still loads the menu's content in the main process,
   and that a deep link delivered to that instance opens the Canvas. See
   [`menu-bar.md`](menu-bar.md).
-- **A live site drawn in the artifact panel.** A site's origin is
+- **A reactive site drawn in the artifact panel.** A site's origin is
   `https://<stub>-<region>.rallyusercontent.localhost`, and nothing local
   answers it: the dev runner starts the API, document, Terminal and telemetry
   Workers, not the artifact-serving one, and there is no local TLS for that

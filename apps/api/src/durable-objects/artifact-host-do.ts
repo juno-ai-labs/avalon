@@ -2,7 +2,7 @@ import { ArtifactAccessSnapshotSchema, PublishedArtifactFileSchema, type Artifac
 import { revocationClosesSession } from "../services/access-revocation";
 import { RegionSchema } from "@rally/contracts/regions";
 /**
- * One supervisor object per live web artifact.
+ * One supervisor object per reactive web artifact.
  *
  * It owns the artifact's *serving-side* truth — which version is current, who
  * currently holds a viewer session, and the bounded log of what the model's
@@ -30,7 +30,7 @@ import { RegionSchema } from "@rally/contracts/regions";
  * - Canvas audience snapshots arrive through the same Queue. Ordinary content
  *   requests read only local policy and identity, without polling the source.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import {
   ArtifactManifestSchema,
@@ -118,7 +118,7 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
       redeemed_at INTEGER,
       -- When this principal's work-stream visibility was last confirmed
       -- against WorkstreamDO, and what the answer was. Cached for a bounded
-      -- interval rather than asked per request: a live artifact must not put
+      -- interval rather than asked per request: a reactive artifact must not put
       -- a Durable Object hop in front of every asset byte.
       visibility_checked_at INTEGER,
       visible INTEGER NOT NULL DEFAULT 0 CHECK (visible IN (0, 1))

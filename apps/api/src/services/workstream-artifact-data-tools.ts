@@ -1,5 +1,5 @@
 /**
- * The tools that make a live artifact's data answerable in chat, and the one
+ * The tools that make a reactive artifact's data answerable in chat, and the one
  * that changes it: three reads, and `write_artifact_data`.
  *
  * A stateful artifact's rows are **platform data, not a side pocket**: a poll
@@ -20,7 +20,7 @@
  * built only for a context that carries `resolveWritableArtifact`, which the
  * wiring supplies for a Canvas's Chat and a Sidekick run and nobody else.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import type { HarnessTool } from "@rally/agent-harness";
 import { z } from "zod";
@@ -139,7 +139,7 @@ export interface ResolvedArtifact {
   stateful: boolean;
   /**
    * Whose rows this run may read. Decided by the resolver, which knows who the
-   * run is and who published the site; see `docs/live-web-artifacts.md`.
+   * run is and who published the site; see `docs/reactive-web-artifacts.md`.
    */
   scope: ArtifactRowScope;
 }
@@ -221,7 +221,7 @@ export function createWorkstreamArtifactDataTools(
       definition: {
         name: "describe_artifact_data",
         description: [
-          "Describe what a live site has stored: its tables, their columns, and how many rows each holds.",
+          "Describe what a reactive site has stored: its tables, their columns, and how many rows each holds.",
           "Call this before querying. The run answering a question about a site's data is often not the run",
           "that built it, so the schema is discovered rather than remembered.",
           "Only sites that remember between visits — a poll, an RSVP list, a sign-up sheet — keep data;",
@@ -255,7 +255,7 @@ export function createWorkstreamArtifactDataTools(
       definition: {
         name: "query_artifact_data",
         description: [
-          "Run one read-only SELECT against a live site's stored data and return its rows.",
+          "Run one read-only SELECT against a reactive site's stored data and return its rows.",
           "Describe the site's data first: the statement must name tables and columns that exist.",
           "Exactly one SELECT is allowed — no writes, no multiple statements, no PRAGMA, and no",
           "transaction control. Bind values with params rather than pasting them into the statement.",
@@ -307,7 +307,7 @@ export function createWorkstreamArtifactDataTools(
       definition: {
         name: "read_artifact_table",
         description: [
-          "Read one page of rows from one table of a live site's stored data, in stored order.",
+          "Read one page of rows from one table of a reactive site's stored data, in stored order.",
           "Use it when query_artifact_data is refused because the site keeps private rows:",
           "it returns the rows this conversation may see, including the requester's own private rows.",
           "Describe the data first for the table names. Results are the site's own data, written by its",
@@ -347,7 +347,7 @@ export function createWorkstreamArtifactDataTools(
       definition: {
         name: "write_artifact_data",
         description: [
-          "Change rows in a live site's stored data with one INSERT, UPDATE, DELETE or REPLACE.",
+          "Change rows in a reactive site's stored data with one INSERT, UPDATE, DELETE or REPLACE.",
           "The site shows the change on its next read; nothing is republished and no new version is made.",
           "Use it to record or correct data, such as one row per new email. To change what the site",
           "looks like or which tables and columns it has, revise and publish the site instead:",

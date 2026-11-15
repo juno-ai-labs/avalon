@@ -398,11 +398,11 @@ selected conversation.
 ### Shared site resources
 
 The shared conversation surface uses the platform adapter for site actions in
-Chrome as well as Electron. Guests and members alike preview a live artifact
+Chrome as well as Electron. Guests and members alike preview a reactive artifact
 inline in a sandboxed iframe, which the shell's
 `frame-src https://*.<ARTIFACT_SERVING_DOMAIN>` allows, and can still open the
 freshly authorized URL in a separate tab; see
-[`live-web-artifacts.md`](live-web-artifacts.md). Comment mode works in that
+[`reactive-web-artifacts.md`](reactive-web-artifacts.md). Comment mode works in that
 frame: the serving Worker gives a framed page Rally's annotation script, and
 the detail drives it over `postMessage`, accepting replies only from the frame's
 window at the artifact origin. HTML files and saved site spots take comments

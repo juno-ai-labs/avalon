@@ -5,7 +5,7 @@ change its artifacts; artifact users can open and interact with its published
 outputs. Editors always have artifact access. Artifact access never grants
 conversation access. This module owns the serving projection and propagation;
 [Canvases](canvases.md) owns the parent and editor audience,
-[live web artifacts](live-web-artifacts.md) owns website execution, and
+[reactive web artifacts](reactive-web-artifacts.md) owns website execution, and
 [access revocation](access-revocation.md) owns identity/session retractions.
 
 ## Where the code lives

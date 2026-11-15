@@ -78,7 +78,7 @@ Every draggable edge, the sidebar's and the right panel's, takes the same hit
 width, `--resize-hit-size` in `packages/ui/src/styles/app.css`. The sidebar's
 is centred on its line. The panel's sits inside the panel and reaches only 2px
 over the conversation, so the transcript's
-scrollbar beside them stays draggable. A panel holding a live site or a
+scrollbar beside them stays draggable. A panel holding a reactive site or a
 browser page is the exception: its native view covers the panel's body and
 takes the pointer from anything under it, so there the target reaches over
 the conversation instead and covers the scrollbar's last few pixels.
@@ -208,19 +208,19 @@ share one hit width, 14px, through `--resize-hit-size`; they had been 12px,
 
 **Why:** At 320px most generated sites fell into their phone layout and a
 document read as a narrow column. The panel's target sat inside its edge,
-where a live site's composited view takes the pointer, so only the strip
+where a reactive site's composited view takes the pointer, so only the strip
 beside the header could be grabbed and it felt like one pixel; the edges had
 also drifted apart one by one. Growing the window by the conversation's whole
 width, rather than 320px, made the old leftward drift on close large enough to
 notice: a default window on a laptop ended pinned to the screen's left edge.
 
-**Considered and rejected:** Splitting evenly only for live sites, and only
+**Considered and rejected:** Splitting evenly only for reactive sites, and only
 when the panel was narrower than the split, was the first version. Every kind
 of panel had the same narrow-column problem, and a rule that sometimes kept
 the old width made the opening width hard to predict. Saving the split as the
 conversation's width was rejected because every opening would then overwrite
 the width the person dragged to. Putting every target over the conversation,
-as a live site needs, covered the transcript's scrollbar on every panel.
+as a reactive site needs, covered the transcript's scrollbar on every panel.
 
 **Consequences:** The renderer predicts how far the main process will grow the
 window; a change to `conversation-details-geometry.ts`'s rules has to move

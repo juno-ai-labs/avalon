@@ -62,9 +62,9 @@ be one of the people who built Rally, and you should be getting back to work.
 - **Hover a time for the exact time.** "7 minutes ago" is friendly, but rest
   your pointer on it for a moment and the exact date and time appear, in your
   own time zone.
-- **A live site's data copies as CSV.** If Rally built you a site that collects
+- **A reactive site's data copies as CSV.** If Rally built you a site that collects
   answers, **Copy as CSV** in its stored data puts a table straight into your
-  spreadsheet. See [Live sites](../06-things-rally-makes/03-live-sites.md).
+  spreadsheet. See [Reactive sites](../06-things-rally-makes/03-reactive-sites.md).
 
 ## Getting around the sidebar
 

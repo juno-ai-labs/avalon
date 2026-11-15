@@ -42,7 +42,7 @@ export const ATTACHMENT_KIND_ENTRIES = [
   { kind: "spreadsheet", description: "a spreadsheet or workbook such as XLSX" },
   { kind: "presentation", description: "a slide presentation such as PPTX" },
   { kind: "text", description: "another readable text, source-code, or structured-data file" },
-  { kind: "site", description: "a live web page or small web app published as a site" },
+  { kind: "site", description: "a reactive web page or small web app published as a site" },
   { kind: "other", description: "a resource outside the readable or viewable kinds above" },
 ] as const;
 

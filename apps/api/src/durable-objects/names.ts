@@ -56,7 +56,7 @@ export function substreamLoopId(
 }
 
 /**
- * One supervisor object per live web artifact.
+ * One supervisor object per reactive web artifact.
  *
  * Unlike every other name here this one carries no workspace segment, and that
  * keeps the supervisor identity stable when the public name changes. The

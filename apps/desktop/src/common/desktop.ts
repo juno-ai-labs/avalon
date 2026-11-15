@@ -537,7 +537,7 @@ export interface RallyDesktopBridge {
   connectCanva?: (operationId?: string) => Promise<{ url: string; attemptId: string }>;
   openExternal: (url: string) => Promise<void>;
   /**
-   * Show a live artifact in the rail's preview region.
+   * Show a reactive artifact in the rail's preview region.
    *
    * The renderer never embeds artifact content: it hands over an artifact id, a
    * one-shot access URL, and the rectangle it measured, and the main process
