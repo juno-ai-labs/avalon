@@ -371,8 +371,10 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
 
 - **Offered to a turn a person started, and to a wizard turn a Canvas's
   Chat started for them** (`asksForSources`). The latter is a wizard turn
-  whose `agentExchange` sender is a Canvas's Chat, or the turn an answer to
-  one of its questions started (`wizardTurnCanvasId`). Every other loop with
+  whose `agentExchange` sender is a Canvas's Chat turn a person started
+  (`fromPersonTurn`, set by the sender from `derivedFromOf`), or the turn an
+  answer to one of its questions started (`wizardTurnCanvasId`). A Chat turn
+  another agent's message started cannot pass an ask on through the wizard. Every other loop with
   the Sidekicks plugin is offered the same three, with a `request_source`
   that asks nobody and refuses by name with the route to a turn that may ask
   (`sidekickSourceRefusalTool`; [`agent-tools.md`](agent-tools.md) rule 14):
@@ -524,14 +526,13 @@ file is named.
   other" and "refuses a link whose signature does not match any one of its
   fields, before reading anything".
 - **Only a person's turn, or a wizard turn a Canvas's Chat started for
-  them, is offered the source tools and the skill.** Nothing a loop read
-  may ask in a person's name. Guard: `asksForSources` and
+  them, may ask for a source.** Nothing a loop read may ask in a person's
+  name; every other loop's `request_source` refuses with where to ask. Guard: `asksForSources` and
   `builtInSkillsFor`. Test, in
-  `apps/api/test/connector-tool-selection.test.ts`: "offers the source tools
-  to a person's turn and a wizard turn a Canvas's Chat started, to nothing a
-  loop read".
-  No test runs `builtInSkillsFor`; the skill's listing has no automated
-  guard.
+  `apps/api/test/connector-tool-selection.test.ts`: "lets a person's turn and
+  a wizard turn a Canvas's Chat started ask for a source, refuses every loop
+  that read content by name, …", which also checks where `builtInSkillsFor`
+  lists the skill.
 - **Withdrawing needs no access.** A person ends their own source whatever
   they can still read. Guard: `withdrawSource` reads no relationship and no
   reader list. Test, in `sidekick-source-routes.test.ts`: "takes a person's
