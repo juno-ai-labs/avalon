@@ -388,6 +388,67 @@ describe("Canvas artifact access propagated to local serving", () => {
       .toEqual({ status: 206, body: "Website", length: "7", range: "bytes 4-10/16", accepts: "bytes" });
   });
 
+  it("sends an active site's page whole, with no stale length, when Rally injects into it", async () => {
+    // An active site that ends in the taught `env.ASSETS.fetch(request)`, with
+    // a share card Rally injects into its page on the way out.
+    const page = "<html><head><title>Board</title></head><body>Board</body></html>";
+    const activeResource = crypto.randomUUID();
+    const activeHost = asArtifactId(crypto.randomUUID());
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO resources(id,workspace_id,resource_type,provider,title,mime_type,content_ref,metadata_json,
+        attachment_status,publication_parent_id,revision_author_kind,revision_author_user_id,revision_cause,created_at,updated_at)
+        VALUES(?,?,'generated_site','avalon_generated','Board','application/vnd.rally.site-manifest+json','active-manifest','{}',
+        'attached',?,'member',?,'created','2026-11-11T12:00:00.000Z','2026-11-11T12:00:00.000Z')`,
+        activeResource, workspaceId, CANVAS, OWNER);
+      state.storage.sql.exec(
+        `INSERT INTO artifact_registry(artifact_id,workspace_id,workstream_id,resource_id,mode,stateful,current_version,
+        manifest_ref,created_at,updated_at,hostname_stub) VALUES(?,?,?,?,'active',0,1,'active-manifest',1,1,'calm-green-active-page')`,
+        activeHost, workspaceId, CANVAS, activeResource);
+    });
+    await env.PLATFORM_DB.prepare("INSERT INTO artifact_hostname_routes VALUES('calm-green-active-page','global',?,'2026-11-11T12:00:00Z')")
+      .bind(activeHost).run();
+    await env.PAYLOADS.put(`artifact/${activeHost}/v1/assets/index.js`,
+      "export default { async fetch(request, env) { return env.ASSETS.fetch(request); } };");
+    await env.PAYLOADS.put(`artifact/${activeHost}/v1/assets/index.html`, page);
+    await host(activeHost).recordPublish({
+      artifactId: activeHost, workspaceId, workstreamId: CANVAS, resourceId: activeResource, region: "global",
+      manifest: {
+        version: 1, artifactId: activeHost, artifactVersion: 1, mode: "active", stateful: false,
+        serverModuleSha256: "a".repeat(64), totalBytes: page.length, publishedAt: "2026-11-11T12:00:00.000Z",
+        assets: [{ path: "index.html", contentType: "text/html; charset=utf-8", sizeBytes: page.length, sha256: "b".repeat(64) }],
+        socialPreview: {
+          title: "Board", description: "The team's board",
+          image: { path: "social-preview.png", contentType: "image/png", width: 1200, height: 630, alt: "Board", generated: true },
+        },
+      },
+    });
+    await share("public");
+    await sync(activeHost, activeResource);
+    const loader = env.ARTIFACT_LOADER;
+    if (!loader) throw new Error("this test needs the worker_loaders binding");
+    const fetchPage = async (headers: Record<string, string>) => {
+      const ctx = createExecutionContext();
+      const response = await artifactWorker.fetch(new Request("https://calm-green-active-page-g.rallyusercontent.com/", { headers }), {
+        APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+        ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+        ARTIFACT_LOADER: loader, PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
+      }, ctx);
+      await waitOnExecutionContext(ctx);
+      const body = await response.text();
+      return { status: response.status, body, length: response.headers.get("content-length"), range: response.headers.get("content-range") };
+    };
+    for (const headers of [{}, { range: "bytes=0-9" }]) {
+      const served = await fetchPage(headers);
+      expect(served.status).toBe(200);
+      expect(served.range).toBeNull();
+      // Rally's card is in the page, and no header claims the stored page's shorter length.
+      expect(served.body).toContain('property="og:title"');
+      expect(served.body).toContain("<body>Board</body>");
+      expect(served.length === null || Number(served.length) === new TextEncoder().encode(served.body).length).toBe(true);
+    }
+  });
+
   it("artifact-only users can use artifacts but cannot read the conversation; old cookies lose access", async () => {
     await share("participants", [READER]);
     await sync(SITE_HOST, SITE);
