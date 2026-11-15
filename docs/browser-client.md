@@ -544,6 +544,10 @@ the shared confirmation modal.
 ## Invariants
 
 - HTML is private and no-store; shared cached HTML must never acquire user data.
+- Built files under `/assets/` are `public, max-age=31536000, immutable`: Vite
+  names each by its content hash, so a name never changes meaning. Anything
+  served there must keep a content-hashed name, because the R2 archive keeps
+  every name ever deployed and never overwrites one with different bytes.
 - Email proofs are never in server query strings, bootstrap JSON or persistent
   JavaScript storage. Server GET requests do not consume them.
 - The browser receives metadata only. Cookies remain HttpOnly; API bearer and
@@ -584,6 +588,16 @@ an unrelated conflicting DNS record. No browser secrets are added: `GLOBAL_API`
 already connects to `avalon-api-global` through a service binding. A new
 deployment needs its own `<bindingPrefix>_API` binding here, and its identity
 bridge on Global, before the browser can reach it.
+
+Before deploying, the workflow uploads the built `/assets/` files to the
+`rally-browser-assets` R2 bucket (`scripts/archive-browser-assets.mjs`), then
+deploys those same files without rebuilding. Static assets hold only the current
+deploy's files; when one lacks a requested `/assets/` file, the Worker serves it
+from the bucket, so a page left open across deploys still loads a lazy chunk it
+had not fetched. The script creates the bucket if the account lacks it, since
+Wrangler would create it only at deploy, after the upload; the deploy token
+needs Workers R2 Storage Edit. The package's `deploy` script runs the same
+upload, so a manual deploy archives too. Nothing removes old files; a retention rule is the team's to set.
 
 The API deploy workflow independently applies its checked-in browser origin and
 email policy. The team selected six-digit OTPs, ten-minute expiry and five failed
@@ -709,6 +723,27 @@ must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
+
+### 2026-11-15 — Cache hashed build files for a year, and keep every deploy's
+
+**What changed:** `/assets/` responses carry `public, max-age=31536000,
+immutable`. The shell HTML stays `no-store`. Each deploy's `/assets/` files are
+uploaded to R2 first, and the Worker serves a file from there when the current
+deploy lacks it. The read-only `check-cloudflare-r2-buckets.mjs` preflight is
+gone: Wrangler 4 creates a missing bucket a binding names on deploy.
+
+**Why:** With Workers' default headers, a cold start revalidated every chunk:
+one round trip per file before the mobile dashboard could draw. Caching the HTML
+too was rejected: it still needs a round trip to see a deploy, and a stale copy
+would name chunks a new deploy removed. The web host ships 20 to 30 times a day,
+and the mobile shell keeps its Home page open for days, so a lazy chunk fetched
+after a deploy routinely 404'd and left a Reload button. Keeping old files in
+static assets is not possible, since a deploy replaces the whole set. Rally is
+to be open-sourced, so a fresh account must be set up by its first release. A
+script that created every declared bucket was tried and dropped in review:
+Wrangler already does that on deploy, so only the archive bucket, which is
+written before the deploy, needs a create step. The desktop release buckets stay
+manual, since their location and storage class are set at creation.
 
 ### 2026-11-14 — Restore mobile organizations without reloading the page
 

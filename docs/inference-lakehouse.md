@@ -18,8 +18,8 @@ product authority, and a capture failure does not change the inference outcome.
 | `apps/api/src/queues/inference-lakehouse-consumer.ts` | Validate the pointer and archived bytes, enforce the regional boundary, fit the row to Pipeline's per-record limit, and send it through `INFERENCE_LAKEHOUSE`. |
 | `config/inference-lakehouse.json` | Source of truth for the Global bucket, stream, pinned stream ID, sink, pipeline, namespace, table, and binding name. |
 | `config/inference-lakehouse-stream-schema.json` | Immutable structured-stream schema and analytical column contract. |
-| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Locally materializes pinned bindings for application deploys; explicit modes check or reconcile every Global lakehouse (inference, analytics events and usage). |
-| `.github/workflows/deploy-api.yml` | Materializes pinned Wrangler configs locally and deploys them without a Pipelines management-plane preflight. |
+| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | `--deploy-bindings` materializes pinned bindings locally in the pinned account, and reconciles and adopts stream IDs in any other; explicit modes check or reconcile every Global lakehouse (inference, analytics events and usage). |
+| `.github/workflows/deploy-api.yml` | Runs `--deploy-bindings`: no Pipelines management-plane read in the pinned account. |
 
 ### Capture and archive
 
@@ -119,7 +119,9 @@ table when the first records arrive.
 The API deployment keeps application delivery independent from the Pipelines
 management API:
 
-Normal merges do not list, create, or verify Pipelines resources. The streams,
+Each manifest records `pinnedAccount`, the SHA-256 of the account id its
+stream IDs belong to. Normal merges to that account do not list, create, or
+verify Pipelines resources. The streams,
 sinks, and pipelines are immutable infrastructure, and a transient outage in
 their management plane must not prevent an unrelated Worker release. A missing
 or malformed pin fails local manifest validation, as does reusing one stream ID
@@ -128,6 +130,16 @@ stream no longer exists; regional health proves that the Worker exposes each
 binding, not that its remote stream accepts rows. That is why creation and
 replacement require explicit reconciliation, while failed ingestion remains
 visible through Queue retries and the dead-letter queues.
+
+A deploy to any other account (an open-source fork or a fresh deployment) cannot
+use those pins, so `--deploy-bindings` reconciles that account instead: it
+creates whatever is missing, adopts the account's stream IDs in place of the
+pinned ones, writes them and the account marker into that checkout's manifests,
+and materializes from them. Nothing is committed, so each deploy of a fork
+reconciles again; reconciliation is idempotent. Before adopting, it looks up
+each pinned stream ID in the account and fails if one exists: that means the
+marker is stale for this account, not that this is a fork, and adopting would
+re-point production's bindings.
 
 Infrastructure work uses an explicit mode. `--check` reads every resource and
 fails on absence or drift without mutation. `--reconcile` may create missing
@@ -325,6 +337,27 @@ delivery alarm. `inference_lakehouse_delivered` includes only identifiers,
 source, event type, and whether the row used the oversized fallback.
 
 ## Changelog
+
+### 2026-11-15 — A deploy to a new account provisions its own lakehouses
+
+**What changed:** Manifests record `pinnedAccount`. The deploy runs
+`--deploy-bindings`: in the pinned account it materializes offline as before; in
+any other it reconciles with `adoptStreamIds`, then materializes from the
+account's own stream IDs.
+
+**Why:** Rally is to be open-sourced, and a fresh account had to run
+`--reconcile` by hand and commit the stream IDs it printed before any deploy
+could succeed. Calling the control plane on every deploy was rejected: the
+2026-09-01 entry below records why production deploys must not depend on it.
+The account is identified by a hash, not its id, so the public manifests do not
+name it.
+
+**Consequences:** A fork's deploys depend on the Pipelines control plane until
+it commits its own stream IDs and `pinnedAccount`. Adopting replaces the
+drift check only in a foreign account; `--reconcile` in the pinned account still
+refuses a stream ID that differs from the pin. Review found that a wrong marker
+alone would have made production adopt fresh streams, so the deploy first checks
+whether the pinned streams exist in the account and fails if they do.
 
 ### 2026-11-10 — Overflow at the Pipeline's 1 MB per-record limit, not the 5 MB request limit
 

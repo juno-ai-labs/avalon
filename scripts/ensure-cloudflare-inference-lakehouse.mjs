@@ -29,7 +29,7 @@ const SAFE_TOKEN_ID = /^[a-f0-9]{32}$/u;
 const SAFE_STREAM_ID = /^[a-f0-9]{32}$/u;
 const WORKER_REGIONS = configuredRegions;
 const LAKEHOUSE_REGIONS = configuredRegions;
-const LAKEHOUSE_MODES = new Set(['--check', '--materialize-bindings', '--reconcile']);
+const LAKEHOUSE_MODES = new Set(['--check', '--materialize-bindings', '--reconcile', '--deploy-bindings']);
 
 // This pre-install provisioner deliberately gets ten total attempts because the
 // affected Pipelines control plane was failing most reads during the incident.
@@ -548,6 +548,7 @@ export async function ensureInferenceLakehouse(options = {}) {
   const token = required('CLOUDFLARE_API_TOKEN', environment);
   const manifest = options.manifest ?? await loadInferenceLakehouseManifest();
   assertManifest(manifest);
+  if (options.adoptStreamIds) manifest.regions = structuredClone(manifest.regions);
   const client = {
     accountId,
     token,
@@ -563,7 +564,8 @@ export async function ensureInferenceLakehouse(options = {}) {
     const region = manifest.regions[regionName];
     const stream = await ensureStream(client, region, manifest.streamSchema, create, log);
     if (stream.id !== region.streamId) {
-      throw new PinnedStreamIdDriftError(region.stream, region.streamId, stream.id);
+      if (!options.adoptStreamIds) throw new PinnedStreamIdDriftError(region.stream, region.streamId, stream.id);
+      region.streamId = stream.id;
     }
     await ensureBucket(client, regionName, region, create, log);
     if (region.sinkType === 'r2_data_catalog') {
@@ -605,9 +607,83 @@ export async function ensureCloudflareLakehouses(options = {}) {
   return { provisioned };
 }
 
+/** The marker a manifest carries for the account its stream IDs belong to. */
+export function accountFingerprint(accountId) {
+  return `sha256:${createHash('sha256').update(accountId).digest('hex')}`;
+}
+
+const manifestPaths = {
+  INFERENCE_LAKEHOUSE: manifestPath,
+  ANALYTICS_LAKEHOUSE: analyticsManifestPath,
+  USAGE_LAKEHOUSE: usageManifestPath,
+};
+
+/**
+ * What a deploy runs. In the account the manifests were pinned for, this is
+ * `--materialize-bindings`: no Pipelines control-plane read, as before. In any
+ * other account (a fork or a fresh deployment), the pinned stream IDs belong to
+ * someone else, so it reconciles: creates whatever is missing, adopts the
+ * account's stream IDs, writes them and the account marker into this
+ * checkout's manifests, then materializes. Nothing is committed; the next
+ * deploy of a fork reconciles again, which is idempotent.
+ *
+ * A mismatch while the pinned streams exist in this account means the marker
+ * is stale (the account id changed, or the marker was never updated), not a
+ * fork. Adopting there would silently re-point production, so it fails.
+ */
+export async function deployLakehouseBindings(options = {}) {
+  const environment = options.environment ?? process.env;
+  const log = options.log ?? console.log;
+  const fingerprint = accountFingerprint(required('CLOUDFLARE_ACCOUNT_ID', environment));
+  const manifests = options.manifests ?? await Promise.all([
+    loadInferenceLakehouseManifest(),
+    loadAnalyticsLakehouseManifest(),
+    loadUsageLakehouseManifest(),
+  ]);
+  if (manifests.every((manifest) => manifest.pinnedAccount === fingerprint)) {
+    log('Lakehouse stream IDs are pinned for this account; materializing without a control-plane read');
+    return materializePinnedLakehouseWranglerConfigs({ ...options, manifests });
+  }
+  const client = {
+    accountId: required('CLOUDFLARE_ACCOUNT_ID', environment),
+    token: required('CLOUDFLARE_API_TOKEN', environment),
+    fetchImpl: options.fetchImpl ?? globalThis.fetch,
+    log,
+    randomImpl: options.randomImpl,
+    waitImpl: options.waitImpl,
+  };
+  for (const manifest of manifests) {
+    for (const regionName of LAKEHOUSE_REGIONS) {
+      const { stream, streamId } = manifest.regions[regionName];
+      if (!streamId) continue;
+      try {
+        await apiRequest(client, `/pipelines/v1/streams/${encodeURIComponent(streamId)}`);
+      } catch (error) {
+        if (isMissing(error)) continue;
+        throw error;
+      }
+      throw new Error(`${manifest.binding} pins ${stream} to ${streamId}, which exists in this account, but its pinnedAccount is for another account. `
+        + `Set pinnedAccount to ${fingerprint} in the manifest rather than adopting new stream IDs.`);
+    }
+  }
+  log('Lakehouse stream IDs are pinned for another account; reconciling this account and adopting its stream IDs');
+  const { provisioned } = await ensureCloudflareLakehouses({ ...options, manifests, create: true, adoptStreamIds: true });
+  const adopted = provisioned.map(({ manifest }) => ({ ...manifest, pinnedAccount: fingerprint }));
+  if (options.writeManifests !== false) {
+    for (const manifest of adopted) {
+      const path = manifestPaths[manifest.binding];
+      const raw = JSON.parse(await readFile(path, 'utf8'));
+      for (const regionName of LAKEHOUSE_REGIONS) raw.regions[regionName].streamId = manifest.regions[regionName].streamId;
+      raw.pinnedAccount = fingerprint;
+      await writeFile(path, `${JSON.stringify(raw, null, 2)}\n`);
+    }
+  }
+  return materializePinnedLakehouseWranglerConfigs({ ...options, manifests: adopted });
+}
+
 export function parseLakehouseMode(arguments_) {
   if (arguments_.length !== 1 || !LAKEHOUSE_MODES.has(arguments_[0])) {
-    throw new Error('Choose exactly one lakehouse mode: --materialize-bindings, --check, or --reconcile');
+    throw new Error('Choose exactly one lakehouse mode: --deploy-bindings, --materialize-bindings, --check, or --reconcile');
   }
   return arguments_[0];
 }
@@ -615,6 +691,7 @@ export function parseLakehouseMode(arguments_) {
 if (isEntryPoint(import.meta.url)) {
   const mode = parseLakehouseMode(process.argv.slice(2));
   if (mode === '--materialize-bindings') await materializePinnedLakehouseWranglerConfigs();
+  else if (mode === '--deploy-bindings') await deployLakehouseBindings();
   else await ensureCloudflareLakehouses({
     create: mode === '--reconcile',
   });

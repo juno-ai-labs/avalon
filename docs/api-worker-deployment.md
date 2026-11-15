@@ -146,6 +146,13 @@ logic consumes.
   refreshes either catalog inline. Each resident `AgentLoopDO` retains its
   model-window snapshot in memory after one KV read.
 
+- Before migrations or deploys read the Wrangler files, the deploy runs
+  `scripts/ensure-cloudflare-d1-kv.mjs`. A committed D1 or pinned KV id the
+  account holds is always kept. Only when it is absent (a fork) is the resource
+  found by name (`database_name`; a KV title equal to its binding), and created
+  if missing. So in a fork, renaming a database or a KV binding creates a new,
+  empty resource rather than following the old one.
+
 - Every successful version is tagged with the immutable Git SHA that passed the
   workflow's complete verification matrix.
 

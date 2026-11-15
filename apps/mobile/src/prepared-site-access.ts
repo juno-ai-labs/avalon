@@ -13,7 +13,10 @@ export function usePreparedSiteAccess(canvas: PreparedCanvas, sessions: Record<s
     let active = true;
     setFailed(false);
     // A preparation finishing later must not cancel an opening already in flight.
-    const session = attempt === 0 ? currentSessions.current[canvas.canvasId] : null;
+    // A pin's saved session is for its preferred site; another artifact chosen
+    // in its picker asks for its own access.
+    const saved = attempt === 0 ? currentSessions.current[canvas.canvasId] : undefined;
+    const session = saved?.resourceId === canvas.resourceId ? saved : null;
     void (session ? Promise.resolve({ ...session, version: canvas.version }) : open(canvas)).then((artifact) => {
       if (!active) return;
       if (artifact && trustedArtifact(artifact, domain)) setAccess(artifact);

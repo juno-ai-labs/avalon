@@ -1,0 +1,89 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { deployConfigPaths, pinStorageIds, resolveStorageId, storageFromWrangler } from './ensure-cloudflare-d1-kv.mjs';
+import { parseWranglerConfig } from './wrangler-config.mjs';
+
+const config = `{
+  "d1_databases": [
+    {
+      // The usage ledger, apart from DB.
+      "binding": "USAGE_DB",
+      "database_name": "avalon-global-usage",
+      "database_id": "fb6235ab-8856-44c0-afc0-04deb6dc62e0",
+      "migrations_dir": "../../packages/db/usage-migrations"
+    },
+    { "binding": "PLATFORM_DB", "database_name": "rally-platform" }
+  ],
+  "vars": { "DOCS_URL": "https://example.test/a//b" },
+  "kv_namespaces": [
+    { "binding": "FAVICON_CACHE" },
+    { "binding": "INFERENCE_PRICING_CACHE", "id": "ea2442c2ee744decbad3d1ca03fce728" }
+  ]
+}`;
+
+test('pins the account ids into a Wrangler file, keeping comments, URLs and unpinned bindings', () => {
+  const pinned = pinStorageIds(config, {
+    databases: { 'avalon-global-usage': '11111111-1111-1111-1111-111111111111', 'rally-platform': '22222222-2222-2222-2222-222222222222' },
+    namespaces: { INFERENCE_PRICING_CACHE: 'ffffffffffffffffffffffffffffffff', FAVICON_CACHE: 'should-not-appear' },
+  });
+  const parsed = parseWranglerConfig(pinned);
+  assert.deepEqual(parsed.d1_databases.map((database) => database.database_id), [
+    '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+  ]);
+  assert.equal(parsed.d1_databases[0].migrations_dir, '../../packages/db/usage-migrations');
+  assert.deepEqual(parsed.kv_namespaces, [
+    { binding: 'FAVICON_CACHE' },
+    { binding: 'INFERENCE_PRICING_CACHE', id: 'ffffffffffffffffffffffffffffffff' },
+  ]);
+  assert.equal(parsed.vars.DOCS_URL, 'https://example.test/a//b');
+  assert.match(pinned, /\/\/ The usage ledger, apart from DB\./u);
+});
+
+test('leaves a file whose ids already match byte for byte unchanged', () => {
+  const same = pinStorageIds(config, {
+    databases: { 'avalon-global-usage': 'fb6235ab-8856-44c0-afc0-04deb6dc62e0' },
+    namespaces: { INFERENCE_PRICING_CACHE: 'ea2442c2ee744decbad3d1ca03fce728' },
+  });
+  assert.equal(same, config);
+});
+
+test('declares only D1 databases and KV namespaces that carry an id', () => {
+  assert.deepEqual(storageFromWrangler(config, 'test'), {
+    databases: [
+      { name: 'avalon-global-usage', id: 'fb6235ab-8856-44c0-afc0-04deb6dc62e0' },
+      { name: 'rally-platform', id: null },
+    ],
+    namespaces: [{ title: 'INFERENCE_PRICING_CACHE', id: 'ea2442c2ee744decbad3d1ca03fce728' }],
+  });
+});
+
+test('finds every deploy and migration config, including the migration-only platform config, and no test copy', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'd1-kv-'));
+  await mkdir(join(root, 'apps', 'api'), { recursive: true });
+  for (const name of ['wrangler.global.jsonc', 'platform.wrangler.jsonc', 'wrangler.test.jsonc', 'wrangler.dry-run.jsonc', 'notes.jsonc']) {
+    await writeFile(join(root, 'apps', 'api', name), '{}');
+  }
+  const found = (await deployConfigPaths(root)).map((path) => path.slice(root.length + 1));
+  assert.deepEqual(found, ['apps/api/platform.wrangler.jsonc', 'apps/api/wrangler.global.jsonc']);
+});
+
+test('keeps a committed id the account holds, even when another resource has the name', () => {
+  const present = new Map([['avalon-global', 'by-name'], ['renamed-global', 'committed']]);
+  assert.equal(resolveStorageId('avalon-global', [{ where: 'a', id: 'committed' }, { where: 'b', id: null }], present), 'committed');
+});
+
+test('falls back to the name only when the committed id is not in the account', () => {
+  const present = new Map([['avalon-global', 'fork-id']]);
+  assert.equal(resolveStorageId('avalon-global', [{ where: 'a', id: 'production-id' }], present), 'fork-id');
+  assert.equal(resolveStorageId('rally-platform', [{ where: 'a', id: null }], present), null);
+});
+
+test('refuses files that pin one name to two ids the account both holds', () => {
+  const present = new Map([['one', 'first'], ['two', 'second']]);
+  assert.throws(() => resolveStorageId('one', [{ where: 'a', id: 'first' }, { where: 'b', id: 'second' }], present), /different ids that both exist/u);
+});

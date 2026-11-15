@@ -1,11 +1,17 @@
 import { MOBILE_SIGN_IN_PATH } from '../../mobile/src/auth-contract';
-import { MOBILE_CHANNEL, MOBILE_COMMAND_EVENT, VISIBLE_PIN_COUNT, MobileCommandSchema, type MobileEvent } from '../../mobile/src/protocol';
+import { MOBILE_CAPABILITIES_GLOBAL, MOBILE_CHANNEL, MOBILE_COMMAND_EVENT, VISIBLE_PIN_COUNT, MobileCommandSchema, type MobileEvent } from '../../mobile/src/protocol';
 
 let latest: MobileEvent | null = null;
 let screenReady = false;
 let latestArtifact: MobileEvent | null = null;
 const preparedCanvases = new Map<string, Extract<MobileEvent, { type: 'prepared-canvas' }>>();
 let preview: { token: string; origin: string } | null = null;
+
+/** Whether the native shell declared a capability before this page loaded. */
+export function mobileCapability(name: string): boolean {
+  const declared: unknown = typeof window === 'undefined' ? undefined : Reflect.get(window, MOBILE_CAPABILITIES_GLOBAL);
+  return Array.isArray(declared) && declared.includes(name);
+}
 
 export function isMobileHost(): boolean {
   if (typeof window === 'undefined' || location.pathname.startsWith(`${MOBILE_SIGN_IN_PATH}/`)) return false;
@@ -43,7 +49,9 @@ export function postMobileEvent(event: MobileEvent): void {
 export function installMobileBridge(): void {
   if (!isMobileHost()) return;
   document.documentElement.dataset.mobileHost = 'true';
-  const ready = () => { postMobileEvent({ type: 'ready', waitForContent: true }); if (screenReady) postMobileEvent({ type: 'screen-ready' }); if (latest) postMobileEvent(latest); if (latestArtifact) postMobileEvent(latestArtifact); for (const prepared of preparedCanvases.values()) postMobileEvent(prepared); };
+  // Native compares this with the deployed entry on resume, to reload a stale Home while it is hidden.
+  const build = document.querySelector('script[type="module"][src^="/assets/"]')?.getAttribute('src') ?? undefined;
+  const ready = () => { postMobileEvent({ type: 'ready', waitForContent: true, build }); if (screenReady) postMobileEvent({ type: 'screen-ready' }); if (latest) postMobileEvent(latest); if (latestArtifact) postMobileEvent(latestArtifact); for (const prepared of preparedCanvases.values()) postMobileEvent(prepared); };
   window.addEventListener('rally:mobile-ready', ready);
   window.addEventListener('message', (event: MessageEvent) => {
     // Only the preview's direct parent may attach. Native uses a token injected

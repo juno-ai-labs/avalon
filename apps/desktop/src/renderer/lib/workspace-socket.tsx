@@ -161,6 +161,14 @@ interface WorkspaceSocketContextValue {
    * window that relays another window's socket.
    */
   retry(): void;
+  /**
+   * Replace the transport now, whatever its state: for a host that knows the
+   * page was suspended. A suspended page's socket can still read OPEN while its
+   * connection is gone, and a ping would take the pong timeout to find out.
+   * Desktop gets this from the power-state bridge; the mobile shell sends it
+   * on resume. A no-op in a window that relays another window's socket.
+   */
+  replace(): void;
 }
 
 const WorkspaceSocketContext = createContext<WorkspaceSocketContextValue | null>(null);
@@ -279,6 +287,8 @@ export function WorkspaceSocketProvider({
   const markAllActivitySeen = useCallback((): void => markAllActivitySeenRef.current(), []);
   const retryRef = useRef<() => void>(() => undefined);
   const retry = useCallback((): void => retryRef.current(), []);
+  const replaceRef = useRef<() => void>(() => undefined);
+  const replace = useCallback((): void => replaceRef.current(), []);
 
   useEffect(() => {
     if (!ownSocket) return;
@@ -905,14 +915,19 @@ export function WorkspaceSocketProvider({
     };
     window.addEventListener('online', online);
     window.addEventListener('offline', offline);
+    const replaceTransport = (): void => {
+      if (stopped || permanentlyClosed) return;
+      cancelTicketAttempt();
+      const retired = socket;
+      releaseSocket();
+      try { retired?.close(); } catch { /* Wake replaces the pre-sleep transport. */ }
+      online();
+    };
+    replaceRef.current = replaceTransport;
     const stopPowerState = bridge.onPowerStateChanged((state) => {
       if (stopped || permanentlyClosed) return;
       if (state === 'resumed') {
-        cancelTicketAttempt();
-        const retired = socket;
-        releaseSocket();
-        try { retired?.close(); } catch { /* Wake replaces the pre-sleep transport. */ }
-        online();
+        replaceTransport();
         return;
       }
       suspended = true;
@@ -953,6 +968,7 @@ export function WorkspaceSocketProvider({
       reportPresenceRef.current = () => undefined;
       markAllActivitySeenRef.current = () => undefined;
       retryRef.current = () => undefined;
+      replaceRef.current = () => undefined;
       clearReconnect();
       activeTicketAbort?.abort();
       activeTicketAbort = null;
@@ -1119,10 +1135,12 @@ export function WorkspaceSocketProvider({
       requestConversationView,
       markAllActivitySeen,
       retry,
+      replace,
     }),
     [
       markAllActivitySeen,
       retry,
+      replace,
       requestConversationView,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,

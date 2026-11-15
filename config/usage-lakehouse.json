@@ -2,6 +2,7 @@
   "schemaVersion": 5,
   "binding": "USAGE_LAKEHOUSE",
   "deploymentTokenOwner": "account",
+  "pinnedAccount": "sha256:cce2a1818ae191fc58d4d772975dc1cf87ff3d887a5bf978396aee23ebc69f39",
   "namespace": "avalon",
   "table": "usage_events",
   "streamSchema": "config/usage-lakehouse-stream-schema.json",
