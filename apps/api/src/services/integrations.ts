@@ -93,6 +93,7 @@ import {
   type HarnessSkill,
   HarnessToolEffectUnresolvedError,
   HarnessLimitError,
+  HarnessPortStepError,
   type HarnessToolContext,
   type HarnessToolResult,
   type HarnessToolReplayRefusal,
@@ -4425,7 +4426,12 @@ export async function runWorkstreamHarness(
       // work is independently authorized by beforeToolCall above. Treating
       // archive as a renewal failure masks Bind's durable stop transition.
       if (stage === "before_model") {
-        await requireRunUsageAllowance(env, input.workspaceId);
+        // Three checks share this port; each names itself when it fails, so
+        // the log says which one rather than "liveness renewal" for all three.
+        // A used-up allowance is a HarnessLimitError and passes through as is.
+        await requireRunUsageAllowance(env, input.workspaceId).catch((error: unknown) => {
+          throw error instanceof HarnessLimitError ? error : new HarnessPortStepError("Usage allowance read failed", error);
+        });
         const authorityStartedAt = Date.now();
         await Promise.all([
           liveness.pulse(stage, true).then(() => {
@@ -4441,7 +4447,9 @@ export async function runWorkstreamHarness(
             if (!firstInferenceBreakdownLogged) {
               startupDurations.before_model_run_authority_ms = Date.now() - runAuthorityStartedAt;
             }
-          })(),
+          })().catch((error: unknown) => {
+            throw error instanceof HarnessLimitError ? error : new HarnessPortStepError("Run authority check failed", error);
+          }),
         ]);
         if (!firstInferenceBreakdownLogged) {
           startupDurations.before_model_authority_ms = Date.now() - authorityStartedAt;

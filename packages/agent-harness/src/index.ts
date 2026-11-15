@@ -79,7 +79,7 @@ import { renderStructuredOutputRetryMessage } from "@rally/prompts/harness/struc
 export * from "./completion-verification";
 export { classifyMessageAdmission, classifyMessageContinuation, classifyMessageContinuationWithTypeSafe } from "./message-continuation";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
-export { AmbiguousExternalWriteError, HarnessLimitError } from "./bind-runtime";
+export { AmbiguousExternalWriteError, HarnessLimitError, HarnessPortStepError } from "./bind-runtime";
 export {
   formatToolArgumentValidationError,
   modelToolArgumentSchema,

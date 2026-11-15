@@ -280,6 +280,20 @@ export class HarnessLimitError extends Error {
   }
 }
 
+/**
+ * Thrown by a host port that runs several steps, to name the step that failed.
+ * `requiredPort` keeps the port's failure code and reports this label instead
+ * of the port's own, so a port that checks authority and renews a lease does
+ * not report an authority refusal as "liveness renewal failed". The label is
+ * a fixed string: it reaches logs and crosses RPC.
+ */
+export class HarnessPortStepError extends Error {
+  constructor(readonly label: string, readonly causeValue: unknown) {
+    super(label);
+    this.name = "HarnessPortStepError";
+  }
+}
+
 function classifiedToolFailure(
   code: string,
   message: string,
@@ -4094,6 +4108,7 @@ async function requiredPort<T>(
     return await operation();
   } catch (error) {
     if (error instanceof FatalHarnessPortError || error instanceof HarnessLimitError) throw error;
+    if (error instanceof HarnessPortStepError) throw new FatalHarnessPortError(code, error.label, error.causeValue);
     throw new FatalHarnessPortError(code, label, error);
   }
 }

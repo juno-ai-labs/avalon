@@ -1900,6 +1900,29 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-11-15 — A port that runs several checks names the one that failed
+
+**What changed:** The harness exports `HarnessPortStepError(label, cause)`.
+`requiredPort` keeps the port's failure code and reports that label and cause
+in place of the port's own. The API's `before_model` liveness port wraps its
+usage allowance read and its run authority check in it, so they report "Usage
+allowance read failed" and "Run authority check failed". Lease renewal keeps
+"Run liveness renewal failed".
+
+**Why:** On 2026-11-12 every run in one Organization failed for half an hour
+as "Run liveness renewal failed" when the real reason was a used-up weekly
+allowance (Growth, $50 a week). The 2026-11-12 entries below gave the
+allowance its own limit code and logged `failure_cause_code`, but the
+authority check and the lease still shared one label. An operator reading the
+log would start from the wrong check.
+
+**Considered and rejected:** Splitting `onLiveness` into three harness ports.
+That widens every host's interface for a distinction only the host knows.
+
+**What a future change has to respect:** A step label is a fixed string; it
+reaches logs and crosses RPC. A `HarnessLimitError` is never wrapped as a
+step: it ends the run under its own code.
+
 ### 2026-11-13 — A replay keeps its admitted input, an attempt records the clamp it got, and an unknown model is named
 
 **What changed:** A replayed activation input keeps the copy first admitted
