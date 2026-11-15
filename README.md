@@ -90,9 +90,11 @@ order for each. The goal is to automate this list away; remove an item here in
 the change that automates it.
 
 The deploy workflows already create these, so they are not on the list: R2
-buckets a Wrangler file declares, Queues and their dead-letter queues, KV
-namespaces bound without an id, D1 migrations, Worker custom domains on existing
-zones, and the engineering MCP's Worker secrets and Access settings.
+buckets a Wrangler file declares, Queues and their dead-letter queues, D1
+databases and KV namespaces (found by name and their ids pinned into the
+Wrangler files during the deploy), D1 migrations, Worker custom domains on
+existing zones, and the engineering MCP's Worker secrets and Access settings.
+A local deploy to a new account runs `pnpm cloudflare:d1-kv:ensure` first.
 
 ### Cloudflare account and zones
 
@@ -118,16 +120,10 @@ zones, and the engineering MCP's Worker secrets and Access settings.
 - Run `pnpm cloudflare:observability` once for Logpush and the saved
   Observability views. No workflow runs it.
 
-### Cloudflare resources with pinned ids
+### Cloudflare resources still created by hand
 
-A fresh account must create these and commit their ids:
+A fresh account must create these by hand:
 
-- Six D1 databases named in `apps/api/wrangler.global.jsonc`: `avalon-global`,
-  `rally-global-message-issues`, `avalon-global-telemetry`,
-  `avalon-global-audit`, `avalon-global-usage` and `rally-platform`
-  (`rally-platform`'s id is also in `apps/api/wrangler.artifacts.global.jsonc`).
-- The `INFERENCE_PRICING_CACHE` KV namespace, whose id is in
-  `apps/api/wrangler.global.jsonc` and `apps/api/wrangler.pricing.global.jsonc`.
 - Pipeline streams, sinks and catalogs: run `pnpm cloudflare:lakehouses:ensure`,
   then commit the stream ids it prints into the three `config/*-lakehouse.json`
   files.

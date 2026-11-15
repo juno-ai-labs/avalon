@@ -28,6 +28,7 @@ on:
       # binding materializer, their shared module, and the health check. A change
       # to any of them is a change to the deployment, and a redeploy is idempotent.
       - "scripts/ensure-cloudflare-r2-buckets.mjs"
+      - "scripts/ensure-cloudflare-d1-kv.mjs"
       - "scripts/ensure-cloudflare-queues.mjs"
       - "scripts/ensure-cloudflare-inference-lakehouse.mjs"
       - "config/inference-lakehouse.json"
@@ -296,6 +297,14 @@ jobs:
       # create; the loser re-lists and passes if the queue exists.
       - name: Ensure every Queue the Wrangler configs declare exists
         run: node scripts/ensure-cloudflare-queues.mjs
+
+      # D1 and pinned KV bindings link to their resource only by a committed id.
+      # Find each by name, create what the account lacks, and pin the account's
+      # ids into this checkout's Wrangler files before the lakehouse configs are
+      # materialized from them and migrations or deploys read them. In the
+      # production account the ids already match and no file changes.
+      - name: Ensure every D1 database and pinned KV namespace exists, and pin their ids
+        run: node scripts/ensure-cloudflare-d1-kv.mjs
 
       # Pipeline stream IDs are stable, production-account identifiers recorded
       # in the lakehouse manifests. Materializing the ignored regional Wrangler
