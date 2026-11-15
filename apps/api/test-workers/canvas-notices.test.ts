@@ -132,13 +132,16 @@ describe("a Canvas's notices", () => {
 
     const records = await runInDurableObject(chat(), (_instance, state) => state.storage.sql.exec<{ content_json: string }>(
       `SELECT structured_content_json AS content_json FROM canonical_conversation_turn_details WHERE message_type = 'system'`).toArray());
-    expect(records.map((row) => JSON.parse(row.content_json))).toEqual([{
+    const landed = records.map((row) => JSON.parse(row.content_json) as { recordedAt: number });
+    expect(landed).toEqual([{
       kind: "canvas_notices_record", canvasId: CANVAS, purpose: "Tell you when a new newsletter becomes a podcast.",
-      registeredBy: { kind: "rally", name: "Rally" },
+      registeredBy: { kind: "rally", name: "Rally" }, recordedAt: expect.any(Number),
     }]);
-    expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS, actor: { userId: PARTICIPANT, actorRole: "member" } })).notices)
-      .toEqual({ purpose: "Tell you when a new newsletter becomes a podcast.", registeredBy: { kind: "rally", name: "Rally" },
-        participant: true, channels: null });
+    const notices = (await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS, actor: { userId: PARTICIPANT, actorRole: "member" } })).notices;
+    expect(notices).toEqual({ purpose: "Tell you when a new newsletter becomes a podcast.", registeredBy: { kind: "rally", name: "Rally" },
+      participant: true, channels: null, updatedAt: expect.any(Number) });
+    // A client reads the Canvas again only for a record newer than its view; the current record never is.
+    expect(landed[0]!.recordedAt).toBeLessThanOrEqual(notices!.updatedAt!);
   });
 
   it("tell the creator and every participant but one who muted it, once per send, and the push opens the Canvas", async () => {

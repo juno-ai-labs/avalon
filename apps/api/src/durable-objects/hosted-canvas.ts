@@ -771,13 +771,15 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       return { canvasId: this.canvasId, purpose, changed: false, recordMessageId: existing.record_message_id };
     }
     const workspaceId = asWorkspaceId(row.workspace_id);
-    const record: CanvasNoticesRecord = { kind: "canvas_notices_record", canvasId: asWorkstreamId(this.canvasId), purpose, registeredBy: { kind: input.agent.kind, name: input.agent.name } };
+    const recordedAt = Date.now();
+    const record: CanvasNoticesRecord = { kind: "canvas_notices_record", canvasId: asWorkstreamId(this.canvasId), purpose,
+      registeredBy: { kind: input.agent.kind, name: input.agent.name }, recordedAt };
     const chat = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
       conversationObjectName(this.env.AVALON_REGION, workspaceId, this.canvasId, asSubstreamId("0")));
     const appended = await chat.appendHostRecord({
       schemaVersion: 1, workspaceId, parentKind: "canvas", workstreamId: this.canvasId,
       clientMessageId: `canvas-notices-record:${input.operationId}`,
-      text: `This Canvas sends notices: ${purpose}`, structuredContent: record, occurredAt: Date.now(),
+      text: `This Canvas sends notices: ${purpose}`, structuredContent: record, occurredAt: recordedAt,
     });
     if (appended.outcome === "refused" || appended.messageId === null) {
       throw new ApiError(409, appended.code === "workstream_archived" ? "canvas_archived" : appended.code, "The Canvas's Chat did not take the record");

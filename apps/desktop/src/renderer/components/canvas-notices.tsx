@@ -1,14 +1,17 @@
-import type { CanvasDetail, CanvasNoticesRecord, NotificationChannel } from '@rally/contracts';
+import { DEFAULT_NOTIFICATION_CHANNELS, type CanvasDetail, type CanvasNoticesRecord, type NotificationChannel } from '@rally/contracts';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconBell, IconBellOff } from '@tabler/icons-react';
+import { Bell, Mail } from 'lucide-react';
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { TitleMenuSeparator } from '@rally/ui/components/title-pill';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 
 import { canvasDetailQueryKey } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { devicePushNotice, useDevicePushReadiness } from '../lib/device-push';
+import { useMemberPreferences } from '../lib/use-member-preferences';
+import { ChannelPicker, type ChannelOption } from './channel-picker';
 import { Button, ErrorNotice } from './primitives';
 
 /**
@@ -57,25 +60,46 @@ function DevicePushLine(): React.JSX.Element | null {
   </div>;
 }
 
+const CHANNEL_OPTIONS: ChannelOption[] = [
+  { id: 'push', label: 'Push', hint: 'On every device signed in', icon: <Bell aria-hidden="true" size={14} /> },
+  { id: 'email', label: 'Email', hint: 'To your account address', icon: <Mail aria-hidden="true" size={14} /> },
+];
+
 /**
  * The record a Canvas's Chat shows when its notices are turned on. Drawn for
  * everyone who can open the Canvas, with the viewer's own controls under the
- * newest one: join for someone not listed, mute or turn back on for a
- * participant, and the device line while they get them by push.
+ * newest one: join for someone not listed; for a participant, which channels
+ * this Canvas uses, mute or turn back on; and the device line while they get
+ * them by push.
  */
 export function CanvasNoticesRecordCard({ record }: { record: CanvasNoticesRecord }): React.JSX.Element {
-  const { api } = useCollaborationSession();
+  const { api, session } = useCollaborationSession();
   const detail = useQuery({
     queryKey: canvasDetailQueryKey(record.canvasId),
     queryFn: ({ signal }) => api!.getCanvas(record.canvasId, signal),
     enabled: Boolean(api),
     staleTime: 5_000,
   });
+  const queryClient = useQueryClient();
   const actions = useCanvasNoticeActions(record.canvasId);
   const notices = detail.data?.notices;
+  // A record newer than the view this client holds means notices were turned
+  // on or changed since it was read: read it once more. Both times are the
+  // server's, and the registration commits right after the record lands.
+  const stale = detail.isSuccess && (notices == null
+    || (record.recordedAt !== undefined && notices.updatedAt !== undefined && record.recordedAt > notices.updatedAt));
+  useEffect(() => {
+    if (stale) void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(record.canvasId) });
+  }, [stale, queryClient, record.canvasId]);
   // Only the record that says what notices are about now carries controls; an older one is history.
   const current = notices?.purpose === record.purpose ? notices : null;
+  // A guest is refused the members' preference routes and keeps the defaults.
+  const settingsChannels = useMemberPreferences(session?.workspace?.accessClass === 'guest' ? null : api,
+    session?.workspace?.id ?? 'unbound').data.notify.canvasNotices ?? DEFAULT_NOTIFICATION_CHANNELS.canvasNotices;
   const muted = current?.channels?.length === 0;
+  const chosen = current?.channels ?? settingsChannels;
+  const toggle = (channel: NotificationChannel) =>
+    actions.choose.mutate(chosen.includes(channel) ? chosen.filter((candidate) => candidate !== channel) : [...chosen, channel]);
   const pushing = current?.participant && !muted && (current.channels === null || current.channels.includes('push'));
   return <section aria-label="Canvas notices" className="canvas-notices-record">
     <div className="canvas-notices-record-heading">
@@ -89,7 +113,13 @@ export function CanvasNoticesRecordCard({ record }: { record: CanvasNoticesRecor
         <span>{channelsWords(current.channels)}</span>
         {muted
           ? <Button disabled={actions.choose.isPending} onClick={() => actions.choose.mutate(null)}>Turn on</Button>
-          : <Button disabled={actions.choose.isPending} onClick={() => actions.choose.mutate([])}>Mute this Canvas</Button>}
+          : <>
+            <ChannelPicker disabled={actions.choose.isPending} label="How this Canvas tells you" none="Muted"
+              onToggle={(channel) => toggle(channel as NotificationChannel)} options={CHANNEL_OPTIONS} selected={chosen} />
+            {current.channels !== null
+              && <Button disabled={actions.choose.isPending} onClick={() => actions.choose.mutate(null)}>Use Settings</Button>}
+            <Button disabled={actions.choose.isPending} onClick={() => actions.choose.mutate([])}>Mute this Canvas</Button>
+          </>}
       </div>
       // Only an Organization-wide Canvas can be joined; anyone else not listed is added by a manager.
       : <div className="canvas-notices-record-controls">
