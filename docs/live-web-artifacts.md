@@ -946,7 +946,9 @@ shows its saved quote and image. The script and trust boundaries are owned by
 **What changed:** `building-live-sites` gained "Keep data from connected
 accounts live", described under **Sites built from structured data**. The
 source key must be declared unique at build time, because `write_artifact_data`
-refuses schema changes and an upsert needs the constraint. A row-writing
+refuses schema changes and an upsert needs the constraint. Seed rows are
+written once after publishing, from the Chat, never in `SiteData`'s setup,
+which runs on every start and would undo newer writes. A row-writing
 refresh needs no shared-output claim and succeeds when its writes do. The
 "ship data as files" and "no network" steps now limit a data file to data that
 will not change.
