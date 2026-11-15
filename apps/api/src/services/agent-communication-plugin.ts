@@ -57,7 +57,7 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationTools,
     preload: true,
     tools: [
       tool("sidekicks_list", options.canvasChat
-        ? "List the Sidekicks this Canvas made, each with its sidekickId, name, status and authoring agentId. Message that agentId to change one; archive one with archive_sidekick. Reusable instructions are listed under Skills. A draft or sent setup request is not evidence of activation."
+        ? "List the Sidekicks attached to this Canvas, each with its sidekickId, name, status, authoring agentId and whether this Canvas made it (madeHere). Everyone in this Canvas manages them: message that agentId to change one. Archive one this Canvas made with archive_sidekick. Reusable instructions are listed under Skills. A draft or sent setup request is not evidence of activation."
         : "List the Sidekick this conversation belongs to, marked isCurrentSidekick: true. Each item includes authoring agentId, status, nextRunAt and lastRunAt. Reusable instructions are listed under Skills. A draft or sent setup request is not evidence of activation.", z.strictObject({}), () => service.sidekicks()),
       tool("find_sidekick", "Find editable Sidekicks by the exact name the person explicitly asked to change, including personal or organization Sidekicks. Use only for a named edit, never for setup discovery. If several match, ask which one the person means.", z.strictObject({ name: z.string().min(1).describe("Exact Sidekick name from the person’s request.") }), (input) => service.findSidekick(input.name)),
       tool("create_sidekick", options.canvasChat
