@@ -915,23 +915,11 @@ selection and message protocol.
 
 ## Changelog
 
-### 2026-11-15 — Every turn's actions and every icon button meet 44pt on touch
+### 2026-11-15 — A turn's actions meet 44pt on touch
 
-**What changed:** The capsule composer's own touch hit areas became the
-generic rule in `theming.md`: every `.icon-button` and Send answer a 44pt
-square on a touch screen. A turn's Copy, Speak and Oopsie reach 44pt downward
-only, into the space after the turn, and the `.virtual-message-row` whose
-actions show rises above its neighbours.
-
-**Why:** The actions were 18pt tall. A centred square would lie over the
-turn's last line and take taps meant for its links, and growing the row would
-add its height under every turn whether revealed or not. Each row is a
-transformed element with its own stacking context, so the next row painted
-over the lower half of the area until the revealed row was raised.
-
-**What to respect:** the actions take no pointer events until revealed, and
-their pseudo-element inherits that, which is what keeps the area from
-catching taps while hidden.
+**What changed:** Copy, Speak and Oopsie reach 44pt downward only, and the
+revealed `.virtual-message-row` rises above the next. The why, and the rule
+for every icon button, is in `theming.md`'s entry of the same date.
 
 ### 2026-11-15 — The capsule composer's controls answer a 44pt touch
 

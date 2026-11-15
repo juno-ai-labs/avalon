@@ -600,8 +600,8 @@ are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ### 2026-11-15 — The mobile host reads at iOS sizes and follows Dynamic Type
 
-**What changed:** `MobileCanvasApp` carries `data-density="touch"`, so its
-dashboard, Chat and creation form take the touch density's role sizes: 17pt
+**What changed:** `MobileCanvasApp` sets `data-density="touch"` on `<html>`
+while mounted, so its dashboard, Chat, creation form and portaled dialogs take the touch density's role sizes: 17pt
 body, the iOS default. Artifact content sits in a `display: contents` wrapper
 with `data-density="default"` and keeps its document sizes. `dynamic-type.ts`
 measures the `-apple-system-*` font styles on a hidden probe at launch and on

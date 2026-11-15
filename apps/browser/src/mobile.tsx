@@ -36,7 +36,14 @@ export type Descriptor = Pick<MobileSnapshot, 'view' | 'title' | 'artifactId' | 
 
 /** Cookie-authenticated web content. The native shell never receives tokens. */
 export function MobileCanvasApp(): React.JSX.Element | null {
-  useEffect(() => installDynamicType(), []);
+  useEffect(() => {
+    // On <html> rather than this tree, so dialogs and lightboxes portaled to
+    // <body> read at the same density. Artifact content resets itself below.
+    const root = document.documentElement;
+    root.dataset.density = 'touch';
+    const uninstall = installDynamicType(root);
+    return () => { uninstall(); delete root.dataset.density; };
+  }, []);
   const { api, session, surrenderActiveWorkspace } = useAppSession();
   if (!api || !session?.workspace) return null;
   const scope = localCacheScope(session.user.id, session.workspace.region, session.workspace.id, session.workspace.accessClass ?? 'member');
@@ -226,7 +233,7 @@ function MobileContent(): React.JSX.Element {
       artifactId: descriptor?.artifactId ?? null, artifactPicker: descriptor?.artifactPicker ?? false,
     } });
   }, [session, rows, summaries, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, conversation, descriptors]);
-  return <main className="mobile-canvas-app" data-density="touch">
+  return <main className="mobile-canvas-app">
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
     <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={create} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}

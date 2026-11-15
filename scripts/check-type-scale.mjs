@@ -41,12 +41,15 @@ export function typeLiterals(css) {
     const code = text.replace(/\/\*.*?\*\//gu, '');
     for (const match of code.matchAll(/(?<![\w-])(font-size|font)\s*:\s*([^;}]+)/gu)) {
       const value = match[2].trim();
-      // The shorthand's size is the length before an optional `/line-height`;
-      // a token in the line height does not excuse a literal size. A literal
-      // beside a token in one expression, such as `max(16px, var(--av-sys-type-body))`,
-      // is a floor on a role and passes.
-      const size = match[1] === 'font' ? value.split('/')[0] : value;
-      if (!size.includes('var(') && LENGTH.test(size)) found.push({ line: index + 1, declaration: `${match[1]}: ${value}` });
+      // In the shorthand, a token elsewhere (the family, the line height) does
+      // not excuse a literal size: drop every `var()` from the part before an
+      // optional `/line-height` and look for a length in what is left. In
+      // `font-size`, a literal beside a token in one expression, such as
+      // `max(16px, var(--av-sys-type-body))`, is a floor on a role and passes.
+      const literal = match[1] === 'font'
+        ? LENGTH.test(value.split('/')[0].replace(/var\([^()]*(\([^()]*\)[^()]*)*\)/gu, ''))
+        : !value.includes('var(') && LENGTH.test(value);
+      if (literal) found.push({ line: index + 1, declaration: `${match[1]}: ${value}` });
     }
   });
   return found;
