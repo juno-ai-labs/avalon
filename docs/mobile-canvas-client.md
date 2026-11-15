@@ -598,6 +598,25 @@ are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
 
+### 2026-11-15 — The mobile host reads at iOS sizes and follows Dynamic Type
+
+**What changed:** `MobileCanvasApp` carries `data-density="touch"`, so its
+dashboard, Chat and creation form take the touch density's role sizes: 17pt
+body, the iOS default. Artifact content sits in a `display: contents` wrapper
+with `data-density="default"` and keeps its document sizes. `dynamic-type.ts`
+measures the `-apple-system-*` font styles on a hidden probe at launch and on
+each return to the foreground, and sets them as `--av-dynamic-type-<role>`,
+which the touch roles read first. `mobile.css` names roles instead of px.
+
+**Why:** Phone text was 14pt, under the size iOS uses for body text, and a
+fixed size ignores the person's text-size setting. The density belongs to the
+design tokens (see `theming.md`); this host only decides which subtrees use it.
+
+**What to respect:** a new mobile surface that is not artifact content should
+sit inside the touch subtree. The Dynamic Type path is unverified on a real
+WKWebView: Chromium has no `-apple-system-*` keywords, and only the plumbing
+was exercised, with `CSS.supports` stubbed.
+
 ### 2026-11-15 — Pull the iOS sidebar in from the left edge, and slide it in and out
 
 **What changed:** On iOS, an edge pull drags the sidebar out under the finger

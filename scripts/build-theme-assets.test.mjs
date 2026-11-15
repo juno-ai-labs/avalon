@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   assetManifest,
   defaultTheme,
+  densityTokens,
   fontCacheId,
   fontFaces,
   generate,
@@ -14,7 +15,7 @@ import {
   selectorFor,
 } from './build-theme-assets.mjs';
 
-const { registry, base, themes } = readTokenSources();
+const { registry, base, themes, densities } = readTokenSources();
 
 /**
  * The JSON is the source of truth and `themes.css` is its output.
@@ -25,7 +26,7 @@ const { registry, base, themes } = readTokenSources();
  * through `pnpm test:scripts`.
  */
 test('every committed artefact is what the token JSON produces', () => {
-  for (const { path, contents } of outputs({ registry, base, themes })) {
+  for (const { path, contents } of outputs({ registry, base, themes, densities })) {
     assert.equal(
       readFileSync(path, 'utf8'),
       contents,
@@ -492,3 +493,33 @@ test('a card composer states its top edge as its frame, and a rule keeps a visib
     );
   }
 });
+
+test('a density re-declares the aliases that reach a token it sets', () => {
+  const tinyBase = { tokens: { 'sys.type.body': '14px', 'sys.font.size.base': '{sys.type.body}', 'cmp.control.font-size': '{sys.font.size.base}', 'sys.size.radius.sm': '6px' } };
+  const density = { id: 'touch', name: 'Touch', description: 'd', tokens: { 'sys.type.body': '17px' } };
+  assert.deepEqual(densityTokens(density, tinyBase, registry), {
+    'sys.type.body': '17px',
+    'sys.font.size.base': '{sys.type.body}',
+    'cmp.control.font-size': '{sys.font.size.base}',
+  });
+});
+
+test('a density may set only base tokens the registry declares', () => {
+  const appearanceToken = Object.keys(themes[0].tokens)[0];
+  assert.throws(() => densityTokens({ id: 'x', tokens: { 'sys.type.nope': '1px' } }, base, registry), /unknown token sys\.type\.nope/u);
+  assert.throws(() => densityTokens({ id: 'x', tokens: { [appearanceToken]: '1px' } }, base, registry), /not a base token/u);
+});
+
+test('a density block follows the themes and a default block restores the base values', () => {
+  const density = { id: 'touch', name: 'Touch', description: 'd', tokens: { 'sys.type.body': '17px' } };
+  const css = generate({ registry, base, themes, densities: [density] });
+  const touch = css.indexOf("[data-density='touch'] {");
+  const restore = css.indexOf("[data-density='default'] {");
+  const lastTheme = css.lastIndexOf("[data-theme='");
+  assert.ok(touch > lastTheme && restore > lastTheme, 'density blocks come after every theme block');
+  const block = (start) => css.slice(start, css.indexOf('}', start));
+  assert.match(block(touch), /--av-sys-type-body: 17px;/u);
+  assert.match(block(touch), /--av-sys-font-size-base: var\(--av-sys-type-body\);/u);
+  assert.match(block(restore), new RegExp(`--av-sys-type-body: ${base.tokens['sys.type.body']};`, 'u'));
+});
+

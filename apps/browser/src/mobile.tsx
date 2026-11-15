@@ -20,6 +20,7 @@ import { CANVASES_ROUTE, canvasRoute, openCanvasId, useCanvasList } from '../../
 import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/speech-playback';
 import { canvasMark } from '../../desktop/src/renderer/components/canvas-mark';
 import { mobileCapability, mobileScreenReady, postMobileEvent } from './mobile-bridge';
+import { installDynamicType } from './dynamic-type';
 import './mobile.css';
 import { useMobileCanvasDetail, useMobileCanvasUpdates } from './mobile-canvas-detail';
 // Chat/composition and file previews are paid for only when those screens open.
@@ -35,6 +36,7 @@ export type Descriptor = Pick<MobileSnapshot, 'view' | 'title' | 'artifactId' | 
 
 /** Cookie-authenticated web content. The native shell never receives tokens. */
 export function MobileCanvasApp(): React.JSX.Element | null {
+  useEffect(() => installDynamicType(), []);
   const { api, session, surrenderActiveWorkspace } = useAppSession();
   if (!api || !session?.workspace) return null;
   const scope = localCacheScope(session.user.id, session.workspace.region, session.workspace.id, session.workspace.accessClass ?? 'member');
@@ -224,7 +226,7 @@ function MobileContent(): React.JSX.Element {
       artifactId: descriptor?.artifactId ?? null, artifactPicker: descriptor?.artifactPicker ?? false,
     } });
   }, [session, rows, summaries, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, conversation, descriptors]);
-  return <main className="mobile-canvas-app">
+  return <main className="mobile-canvas-app" data-density="touch">
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
     <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={create} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
@@ -330,7 +332,7 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
     {resource.kind === 'site'
       ? <HostedSite key={`${resource.resourceId}:${version}`} canvasId={id} resourceId={resource.resourceId} version={version ?? resource.version} title={resource.title} active={active} />
       : content.isError ? <Recovery title="This artifact couldn’t load" retry={() => void content.refetch()} /> : !content.data ? <div className="mobile-empty" role="status">Opening artifact…</div>
-      : <AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} /></Suspense></AppErrorBoundary>}
+      : <div className="mobile-artifact-content" data-density="default"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} /></Suspense></AppErrorBoundary></div>}
   </>;
 }
 
