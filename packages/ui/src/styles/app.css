@@ -8093,9 +8093,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
  * on Android. Important because the field rules it overrides are scoped deeper
  * than any one rule here could be. That also shrinks a larger field to 16px,
  * so a field styled above 16px has to be added to the :not() list, or given
- * a rule of its own below. Under the touch density the composer takes the body
- * role, 17px, so it reads at the size of the messages above it, but never less
- * than the floor: a small Dynamic Type setting can take body below 16px.
+ * a rule of its own below. Under the touch density a field with a role takes
+ * `max(16px, <its role>)`, so it follows Dynamic Type above the floor: the
+ * composer reads at the size of the messages above it.
  */
 @media (hover: none) and (pointer: coarse) {
   input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']),
@@ -8103,25 +8103,14 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   select,
   .workstream-composer .composer-highlight { font-size: 16px !important; /* type-scale: iOS focus-zoom floor */ }
   [data-density='touch'] .workstream-composer :is(textarea, .composer-highlight) { font-size: max(16px, var(--av-sys-type-body)) !important; }
+  [data-density='touch'] .mobile-search input { font-size: max(16px, var(--av-sys-type-subheadline)) !important; }
 }
 
-/* Apple's minimum touch target is 44pt (`sys.size.touch.target`), and on a
-   touch screen every control meets it. An icon button keeps the size it draws
-   at and answers a square of the target's size centred on it, so `::before`
-   on an icon button is reserved for that here; the microphone's menu trigger
-   draws its divider there and is left out. The square is centred and sized
-   outright rather than inset from the edges, because an absolute box measures
-   from inside the border and a bordered button would come out short. A
-   labelled control that is already wider keeps its own width. A message's
-   actions reach the target downward only, into the space after the turn: a
-   centred square would lie over the message's last line and take the taps
-   meant for its links. They take no pointer events until a tap reveals them,
-   and the pseudo-element inherits that, so the area is live only while they
-   show. Growing the row instead would add its height under every turn,
-   revealed or not. Controls in
-   a group keep `sys.size.touch.gap` apart so neighbouring squares never
-   overlap, and the composer's groups pad their edge by the difference between
-   the target and the 28px circle so the composer's own clip cannot cut one. */
+/* 44pt touch targets; `docs/theming.md` has the rule. `::before` on an icon
+   button is reserved for the target (the microphone's menu trigger draws its
+   divider there and is left out). A message's actions reach the target
+   downward only: a centred square would cover the turn's last line and take
+   taps meant for its links. */
 @media (hover: none) and (pointer: coarse) {
   .composer-send { position: relative; }
   :is(.icon-button:not(.microphone-menu-trigger), .composer-send)::before {
