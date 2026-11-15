@@ -236,6 +236,37 @@ decision 3 worried about, and it already shows.
 **Changes:** Decision 3, Rollout step 1 and Acceptance 6 (the joined person
 stays listed because the stale save is refused, not merged).
 
+### 2026-11-15 — An Organization-wide Canvas offers to join from a banner
+
+**Decided:** On an Organization-wide Canvas with notices on, a viewer who is
+not a participant sees a banner at the top of the Canvas offering to add them
+as a participant, so they get its notices. Joining from it is `canvasJoin`;
+dismissing it hides it for that Canvas on that device.
+
+**Why:** The owner's call. The record scrolls away and the menu item is easy
+to miss, and an Organization-wide Canvas is where most viewers are not
+listed.
+
+**Changes:** Adds to Product behavior. The record and the menu still offer
+the same join.
+
+### 2026-11-15 — Both channels on means push if a device is set up, else email
+
+**Decided:** Canvas notices default to both Push and Email chosen, and that
+pair means "push when a device is set up, otherwise email". One channel alone
+means that channel. The choice is made when the notice is queued, by
+whether a push can be queued for the person.
+
+**Why:** The stored preferences cannot tell a kind left at its default from
+one set to its default, and the consumer re-checks each queued channel
+against them. Reading "both" as the device-dependent default keeps both
+working unchanged, and the push queue already answers whether the person
+has a device that can receive it.
+
+**Changes:** Supersedes decision 4's send-time resolution and its `default`
+queue marker. A person who wants both push and email for every notice gets
+the device-dependent one instead; nobody has asked for that.
+
 ### 2026-11-15 — An Organization-wide save keeps the people who joined
 
 **Decided:** `setAudience` with visibility `workspace` keeps every

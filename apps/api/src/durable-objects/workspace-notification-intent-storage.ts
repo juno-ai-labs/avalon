@@ -138,7 +138,7 @@ export interface ParentNoticeRecord {
   parentId: string;
   generation: number;
   kind: "new_message" | "artifact_updated" | "access_request" | "access_granted" | "access_denied"
-    | "source_request" | "source_approved" | "source_declined";
+    | "source_request" | "source_approved" | "source_declined" | "canvas_notice";
   recipientUserId: string;
   intentId: string;
   /** With the recipient and the kind, what makes a repeat one intent. */
@@ -286,7 +286,7 @@ type NotificationIntentRow = Record<string, SqlStorageValue> & {
   required_directory_version: number;
   notification_kind: "mention" | "participant_added" | "needs_input" | "run_finished"
     | "new_message" | "artifact_updated" | "access_request" | "access_granted" | "access_denied"
-    | "source_request" | "source_approved" | "source_declined";
+    | "source_request" | "source_approved" | "source_declined" | "canvas_notice";
   payload_json: string | null;
   state: "pending" | "processing" | "delivered" | "skipped" | "failed";
 };

@@ -1,3 +1,4 @@
+import { createNotificationsPlugin } from "../src/services/notification-tools";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -106,6 +107,8 @@ function allPlugins(): HarnessPlugin[] {
       conversationToolPorts(env, input),
       (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX),
     ),
+    // A Canvas's Chat is offered both tools.
+    createNotificationsPlugin(input, { canvasNotices: async () => ({ outcome: "refused", code: "unused" }), turnIsSelfReview: async () => false }),
   ].filter((plugin): plugin is HarnessPlugin => plugin !== null);
 }
 
@@ -141,6 +144,7 @@ describe("plugin wire names", () => {
       "rally:core",
       "rally:memory",
       "rally:multimodal-generation",
+      "rally:notifications",
       "rally:tables",
       "rally:terminal",
       "rally:web",

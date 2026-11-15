@@ -16,6 +16,7 @@ import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import type { ArtifactAudienceControl } from '../components/artifact-card-tools';
 import { editorUserIds } from '../lib/canvas-sharing';
 import { CanvasTemplateStarters } from '../components/canvas-template-picker';
+import { CanvasNoticesJoinToast, CanvasNoticesMenuSection } from '../components/canvas-notices';
 import { CanvasSidekicksSection, madeSidekicksArchiveCopy } from '../components/canvas-sidekicks-menu';
 import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasCreation, useCanvasList, useCanvasNameSources, type CanvasCreation } from '../lib/canvases';
@@ -389,6 +390,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       }}
       sidekicks={sidekicks}
     />
+    <CanvasNoticesMenuSection canvas={canvas.data} />
     {canvas.data?.canManage && <>
       <TitleMenuSeparator />
       <TitleMenuItem danger disabled={!api || archiving} icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
@@ -435,6 +437,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   };
   const madeSidekicksCopy = madeSidekicksArchiveCopy(sidekicks);
   return <>
+    <CanvasNoticesJoinToast canvas={canvas.data} />
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
     {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
     {audienceError && <ErrorNotice occurrence={audienceError} title="Artifact access was not changed">{audienceError instanceof ApiError && audienceError.code === 'canvas_sharing_changed'

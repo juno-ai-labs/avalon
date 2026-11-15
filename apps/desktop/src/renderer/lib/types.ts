@@ -1,4 +1,5 @@
 import type { ImportedMessageProvenance } from "@rally/contracts";
+import type { CanvasNoticesRecord } from "@rally/contracts/canvases";
 import type { ConnectorConnectionCardInput, WorkstreamAppearance } from '@rally/contracts';
 import type {
   AgentModelOverride,
@@ -609,6 +610,8 @@ export interface Message {
     suggestedScope: 'personal' | 'workspace';
     ready: boolean;
   };
+  /** Set on a Canvas's notices record: what it notifies about and who turned it on (`CanvasNoticesRecordCard`). */
+  canvasNoticesRecord?: CanvasNoticesRecord;
   /**
    * Set on an activation row: which Sidekick delivered this result, under the
    * name frozen at delivery. The author slot reads it instead of the generic

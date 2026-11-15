@@ -156,6 +156,41 @@ export const CanvasSidekickSchema = z.object({
 export type CanvasSidekick = z.infer<typeof CanvasSidekickSchema>;
 
 /** A Canvas as the person opening it sees it: its row, who it is shared with, and its artifacts newest first. */
+/**
+ * A Canvas's notices as one viewer sees them: what the Canvas said it will
+ * notify about, who turned them on, whether this viewer is a participant
+ * (so its notices reach them), and the channels they chose for this Canvas,
+ * `null` while they follow Settings. An empty list is muted.
+ * docs/PRDs/2026-11-14_canvas-notices.
+ */
+export const CanvasNoticesViewSchema = z.object({
+  purpose: z.string(),
+  registeredBy: z.object({ kind: z.enum(["rally", "sidekick"]), name: z.string() }),
+  participant: z.boolean(),
+  /** The values of `NotificationChannelSchema`, which this module cannot import without a cycle. */
+  channels: z.array(z.enum(["push", "email"])).nullable(),
+});
+export type CanvasNoticesView = z.infer<typeof CanvasNoticesViewSchema>;
+
+/** A viewer's channels for one Canvas's notices: a list (empty mutes it), or `null` to follow Settings. */
+export const CanvasNoticeChoiceUpdateSchema = z.strictObject({
+  channels: z.array(z.enum(["push", "email"])).max(2).nullable(),
+});
+export type CanvasNoticeChoiceUpdate = z.infer<typeof CanvasNoticeChoiceUpdateSchema>;
+
+/**
+ * The record a Canvas's Chat shows when notices are turned on: a system
+ * message's structured content, drawn as a card with each viewer's own
+ * controls.
+ */
+export const CanvasNoticesRecordSchema = z.object({
+  kind: z.literal("canvas_notices_record"),
+  canvasId: WorkstreamIdSchema,
+  purpose: z.string().min(1),
+  registeredBy: z.object({ kind: z.enum(["rally", "sidekick"]), name: z.string() }),
+});
+export type CanvasNoticesRecord = z.infer<typeof CanvasNoticesRecordSchema>;
+
 export const CanvasDetailSchema = CanvasSummarySchema.extend({
   /** Everyone on the participant list besides the creator, guests among them. */
   participantUserIds: z.array(UserIdSchema),
@@ -178,6 +213,8 @@ export const CanvasDetailSchema = CanvasSummarySchema.extend({
     message: z.string().nullable(),
     requestedAt: TimestampSchema,
   })).optional(),
+  /** Its notices, when they are on; absent from a server older than Canvas notices. */
+  notices: CanvasNoticesViewSchema.nullable().optional(),
 });
 export type CanvasDetail = z.infer<typeof CanvasDetailSchema>;
 

@@ -212,7 +212,8 @@ const ACTIVITY_SEEN_SQL = `(
   OR (item.kind = 'needs_input' AND item.parent_kind = 'automation' AND EXISTS (
       SELECT 1 FROM sidekick_runs run
        WHERE run.sidekick_id = item.parent_id AND run.run_id = item.run_id AND run.state <> 'needs_input'))
-  OR (item.kind = 'artifact_updated' AND reads.user_id IS NOT NULL AND reads.updated_at >= item.created_at)
+  -- A pinned Canvas's new version and a Canvas notice clear once the person reads the Canvas after it.
+  OR (item.kind IN ('artifact_updated', 'canvas_notice') AND reads.user_id IS NOT NULL AND reads.updated_at >= item.created_at)
   OR (item.kind = 'access_request' AND EXISTS (
       SELECT 1 FROM canvas_access_requests request WHERE request.request_id = item.subject_id AND request.state <> 'pending'))
   OR (item.kind = 'access_denied' AND EXISTS (
@@ -253,7 +254,8 @@ export interface ActivityViewer {
  * one filter the page and the counts read, so they cannot disagree. Binds
  * `?1` the user, `?2` the Organization, `?3` member (1) or guest (0), `?5`
  * the admitting writer Sidekicks (JSON) and `?6` whether the Sidekick source
- * kinds list (1) or are left out for a build that cannot parse them (0).
+ * kinds list (1) or are left out for a build that cannot parse them (0), and
+ * `?7` the same for the Canvas notice kind.
  */
 function listedSql(sidekickListedSql: string): string {
   return `WITH mine AS (
@@ -277,6 +279,8 @@ function listedSql(sidekickListedSql: string): string {
                 -- asked about that Sidekick by name: each lists while the
                 -- Sidekick exists, whoever its readers are now.
                 -- Left out whole for a build that cannot parse these kinds (?6).
+                -- Left out for a build that cannot parse it (?7).
+                WHEN mine.kind = 'canvas_notice' AND ?7 = 0 THEN 0
                 WHEN mine.kind IN ${SOURCE_KINDS_SQL} THEN ?6 = 1 AND directory.automation_id IS NOT NULL
                   AND directory.workspace_id = ?2 AND directory.lifecycle <> 'deleted'
                 WHEN canvas.canvas_id IS NOT NULL THEN canvas.archived_at IS NULL AND (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
@@ -321,6 +325,8 @@ function admittingWriters(sql: SqlStorage, writerAdmits: (sidekickId: string) =>
 export interface ActivityReads {
   /** The three kinds a Sidekick source request writes. */
   sourceKinds: boolean;
+  /** The kind a Canvas notice writes (`CANVAS_NOTICE_ACTIVITY_CLIENT_CONTRACT`); absent reads as readable. */
+  canvasNoticeKind?: boolean;
 }
 
 /**
@@ -364,6 +370,7 @@ export function activityPage(
       ORDER BY listed.created_at DESC, listed.item_id DESC
       LIMIT ?4`,
     viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(writers), reads.sourceKinds ? 1 : 0,
+    reads.canvasNoticeKind === false ? 0 : 1,
   ).toArray();
   return {
     unseenCount: rows[0]?.unseen_count ?? 0,
@@ -418,7 +425,7 @@ export function activityCounts(
             SUM(CASE WHEN kind = 'mention' THEN 1 - seen ELSE 0 END) AS unseen_mentions
        FROM listed`,
     // Every kind: this count is the person's, whatever build asks for it.
-    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, null, JSON.stringify(admittingWriters(sql, writerAdmits)), 1,
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, null, JSON.stringify(admittingWriters(sql, writerAdmits)), 1, 1,
   ).toArray()[0];
   return { unseen: row?.unseen ?? 0, unseenNeedsInput: row?.unseen_needs_input ?? 0, unseenMentions: row?.unseen_mentions ?? 0 };
 }

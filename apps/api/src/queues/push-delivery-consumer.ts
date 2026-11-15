@@ -67,7 +67,8 @@ export async function deliverPush(
   }
   const notice = rendered.notice;
   // Every kind: a choice changed since this was queued holds too.
-  if (!await workspace.notificationAllows({ workspaceId: id, userId: message.recipientUserId, kind: notice.kind, channel })) {
+  if (!await workspace.notificationAllows({ workspaceId: id, userId: message.recipientUserId, kind: notice.kind, channel,
+    ...(notice.kind === "canvas_notice" ? { parentId: notice.parentId } : {}) })) {
     logInfo(env, channel === "push" ? "push_delivery_skipped" : "notification_email_skipped",
       { intent_id: pointer, reason: `${channel}_preference_off` });
     return true;
@@ -101,7 +102,9 @@ async function sendPushNotice(env: Env, workspace: DurableObjectStub<WorkspaceDO
   // pinned Canvas's new version the one before it about that Canvas; every
   // other kind keeps its own.
   const collapseId = await pushCollapseId(notice.workspaceId, notice.kind === "new_message" ? `conversation:${notice.parentId}:${notice.substreamId ?? "0"}`
-    : notice.kind === "artifact_updated" ? `artifacts:${notice.parentId}` : notice.intentId);
+    : notice.kind === "artifact_updated" ? `artifacts:${notice.parentId}`
+    // A Canvas's newer notice replaces the one before it on screen.
+    : notice.kind === "canvas_notice" ? `notices:${notice.parentId}` : notice.intentId);
   const { title, body } = notice;
   const payload: PushPayloads = {
     apns: renderPushPayload({ title, body, threadKey: notice.parentId, badge: attention.readerAttentionCount, data }),
