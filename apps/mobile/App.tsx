@@ -133,7 +133,10 @@ function AppContent() {
   const releaseStatusBar = useCallback((owner: string) => setArtifactStatusBar((current) => current?.owner === owner ? null : current), []);
   useEffect(() => { saveRememberedSites(rememberedSites); }, [rememberedSites]);
   const updateDirectory = useCallback((next: MobileSnapshot | null) => {
-    if (!next) { setSavedDirectory(null); setRememberedSites({}); }
+    // A signed-out answer can come before any live directory, when the key below
+    // is already empty; the saved copy must still go, or the last account's
+    // canvases reappear at the next launch.
+    if (!next) { setSavedDirectory(null); setRememberedSites({}); saveDirectory(null); }
     const key = directoryKey(next);
     if (key === directoryKeyRef.current) return;
     directoryKeyRef.current = key;
@@ -675,8 +678,11 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
         </View>;
       })}
       {showDashboard && <View style={StyleSheet.absoluteFill}>
-        <Dashboard canvases={shownDirectory?.canvases ?? []} loading={!shownDirectory} failed={failed} topInset={headerHeight + 12} bottomInset={0}
-          open={openFromDashboard} create={createFromDashboard} retry={() => { setFailed(false); web.current?.reload(); }} />
+        {/* The page reports a directory it could not load (a socket refusal or an
+            update it needs) as directoryError; the dashboard covers the page's
+            own recovery, so it offers that retry itself. */}
+        <Dashboard canvases={shownDirectory?.canvases ?? []} loading={!shownDirectory} failed={failed || Boolean(snapshot?.directoryError)} topInset={headerHeight + 12} bottomInset={0}
+          open={openFromDashboard} create={createFromDashboard} retry={() => { if (failed) { setFailed(false); web.current?.reload(); } else sendHome({ type: 'refresh' }); }} />
       </View>}
       {!showDashboard && !optimistic && (opening !== null || !contentReady || failed) && <Loading failed={failed && opening === null} retry={() => { setFailed(false); web.current?.reload(); }} />}
     </KeyboardAvoidingView>
