@@ -4,7 +4,6 @@ html[data-mobile-host],html[data-mobile-host] body,html[data-mobile-host] #root 
 .mobile-page{position:absolute;inset:0;min-height:0;overflow:auto;overscroll-behavior:contain}
 .mobile-page[hidden]{display:none}
 .mobile-dashboard{padding:calc(var(--mobile-top-inset) + 25px) 24px 36px;max-width:900px;margin:auto}
-.mobile-eyebrow{font-size:10px;letter-spacing:1.7px;text-transform:uppercase;color:var(--mobile-muted);margin:0 0 12px}
 .mobile-dashboard h1{font-size:34px;font-weight:600;letter-spacing:-1.4px;margin:0 0 23px}
 .mobile-search{display:flex;align-items:center;gap:10px;background:var(--mobile-surface);border-radius:15px;padding:13px 15px;color:var(--mobile-muted);margin-bottom:28px}
 .mobile-search input{background:transparent;border:0;outline:none;width:100%;font-size:15px;color:var(--mobile-ink)}
