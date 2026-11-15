@@ -31,10 +31,16 @@ a spreadsheet, pull requests, a CRM) is out of date as soon as those accounts
 change. Build it to stay current, not as a snapshot:
 
 1. **Store the records in the site, not in a file.** Make it a stateful site
-   (**Stateful sites** below): the records are rows in its tables, seeded from
-   what you read now, and the page reads them through its own API with the
-   polling loop in item 8 of that section. A row a Sidekick writes later then
-   reaches every open page at its next poll, with no republish.
+   (**Stateful sites** below): the records are rows in its tables, and the
+   page reads them through its own API with the polling loop in item 8 of
+   that section. A row a Sidekick writes later then reaches every open page
+   at its next poll, with no republish.
+   **Seed the rows once, after publishing,** with \`write_artifact_data\`
+   from the Chat itself, since a background agent cannot write rows: one
+   upsert per call, a few rows per statement. Never seed in the
+   storage class or from a bundled data file: the class runs its setup on
+   every start, so a seed there would undo newer writes or bring back
+   deleted rows.
 2. **Keep source facts apart from people's edits.** Give each record a stable
    key from its source: a message id, an email address, a document id.
    Declare that key \`PRIMARY KEY\` or \`UNIQUE\` when you build the site: an
@@ -522,7 +528,8 @@ HTML the annotation quotes and say the view could not be rebuilt.
   place.
 - **\`localStorage\` as shared state.** It is per-viewer, per-browser —
   fine for one person's UI preference, never for anything two viewers
-  should both see. Do instead: shared content is a published file.
+  should both see. Do instead: shared content that stays fixed is a
+  published file; shared content that changes is a stateful site's rows.
 - **A misnamed entry.** \`app.js\` or \`main.html\` at the root publishes
   your directory as a downloadable archive, not a site. The publish
   result tells you what it made — read it; if it says archive where you
