@@ -1044,7 +1044,8 @@ it('keeps an explicitly requested mobile organization picker usable and selects 
   const view = render(<BrowserEntry renderCollaboration={() => <p>Canvas dashboard</p>} />);
   try {
     const organization = await screen.findByRole('link', { name: 'Shared team' });
-    expect(events).toContain('screen-ready');
+    // Posted from a passive effect, which can run just after the commit findByRole saw.
+    await waitFor(() => expect(events).toContain('screen-ready'));
     fireEvent.click(organization);
     await screen.findByText('Canvas dashboard');
     expect(location.pathname).toBe(`/app/workspaces/global/${workspace.id}`);

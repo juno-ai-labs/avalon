@@ -250,6 +250,29 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
+### 2026-11-15 — `sys.font.scale.reading` sets a phone's conversation at Body size
+
+**What changed:** A number token, `sys.font.scale.reading` (`1` by default),
+multiplies every conversation reading size where it is read: message text and
+line height, the tool summary line, `.markdown-body` prose and headings, the
+byline, and the composer's textarea and highlight layer. On a touch screen the
+composer is `max(16px, 14px × scale)`. `apps/browser/src/mobile.css` sets it
+to `calc(17 / 14)` on `.mobile-conversation`.
+
+**Why:** Phone conversation text was 14pt, under the 17pt Body size Apple's
+apps use. Nearly every size is a `px` literal, so a root `rem` change could not
+reach them. The scale sits at the use site, not inside the size tokens, because
+a `var()` resolves where it is declared: inside a root token it could only be
+set page-wide, while at the use site a host scopes it to a subtree, which keeps
+the phone's artifact view at its own sizes. `markdown-mermaid-theme.ts` also
+reads `--av-sys-font-size-prose` as a length, which a `calc()` would break.
+
+**What to respect:** a new reading size in the feed or composer multiplies by
+the token. The textarea and highlight layer take the same multiplier, or
+mentions drift off the typed text. The textarea's 42px floor does not scale:
+it is the one-line height that centres the line on the controls under the
+fixed top padding.
+
 ### 2026-11-12 — Use the source palette in Expo navigation
 
 The custom mobile sidebar and native tab images read the same source tokens as Electron. The operating system owns native navigation materials and geometry. React Native resolves the small set of color references it needs instead of maintaining a second palette, keeping the shared mobile navigation consistent with the desktop's neutral surfaces and selected rows.
