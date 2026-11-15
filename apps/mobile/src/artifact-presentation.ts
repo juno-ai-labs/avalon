@@ -32,16 +32,31 @@ export function statusBarStyleFor(color: string): 'light' | 'dark' {
 export function artifactPresentationScript(top: number): string {
   return `(() => {
     if (location.pathname.startsWith('/__rally/')) return;
+    // Modern colour spaces (oklch, display-p3) come back as written; drawing one
+    // pixel converts any CSS colour to sRGB, which the shell reads.
+    const srgb = (color) => {
+      if (/^rgba?\\(/u.test(color)) return color;
+      try {
+        const context = document.createElement('canvas').getContext('2d');
+        context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+        const [r, g, b] = context.getImageData(0, 0, 1, 1).data;
+        return 'rgb(' + r + ', ' + g + ', ' + b + ')';
+      } catch { return color; }
+    };
     const present = () => {
       if (!document.body) return;
       ${artifactInsetScript(top)}
       requestAnimationFrame(() => requestAnimationFrame(() => {
         window.ReactNativeWebView?.postMessage(${JSON.stringify(ARTIFACT_READY)});
         // The colour the page paints under the status bar, so the shell can pick
-        // legible status bar text. A transparent page shows the WebView's white.
-        const painted = [document.body, document.documentElement].map((element) => getComputedStyle(element).backgroundColor)
-          .find((color) => color && color !== 'transparent' && !/^rgba\\(.*,\\s*0\\)$/u.test(color));
-        window.ReactNativeWebView?.postMessage(${JSON.stringify(ARTIFACT_BACKGROUND)} + (painted || 'rgb(255, 255, 255)'));
+        // legible status bar text: the element at the top centre and its
+        // ancestors first (a full-page wrapper often carries the background),
+        // then body and html. A transparent page shows the WebView's white.
+        const under = [];
+        for (let element = document.elementFromPoint?.(innerWidth / 2, 1); element; element = element.parentElement) under.push(element);
+        const painted = [...under, document.body, document.documentElement].map((element) => getComputedStyle(element).backgroundColor)
+          .find((color) => color && color !== 'transparent' && !/^rgba\\(.*,\\s*0\\)$/u.test(color) && !/\\/\\s*0\\)$/u.test(color));
+        window.ReactNativeWebView?.postMessage(${JSON.stringify(ARTIFACT_BACKGROUND)} + srgb(painted || 'rgb(255, 255, 255)'));
       }));
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', present, { once: true });
