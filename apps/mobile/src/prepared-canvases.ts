@@ -4,7 +4,7 @@ import { preparedRequests } from './prepared-requests';
 import { VISIBLE_PIN_COUNT, type MobileCommand, type MobileEvent, type MobileSnapshot, type NativeArtifact, type PreparedCanvas } from './protocol';
 
 /** Descriptors share Home's authenticated session; access URLs are never cached. */
-export function usePreparedCanvases(directory: MobileSnapshot | null, send: (command: MobileCommand) => void) {
+export function usePreparedCanvases(directory: MobileSnapshot | null, send: (command: MobileCommand) => void, wake: () => void) {
   const sendRef = useRef(send);
   sendRef.current = send;
   const [requests] = useState(() => preparedRequests<PreparedCanvas, NativeArtifact>((command) => sendRef.current(command)));
@@ -42,8 +42,10 @@ export function usePreparedCanvases(directory: MobileSnapshot | null, send: (com
   const open = useCallback((canvas: PreparedCanvas) => {
     const directory = current.current;
     if (!directory) return Promise.resolve(null);
-    return requests.open(randomUUID(), directory.userId, directory.workspaceId, canvas);
-  }, [requests]);
+    const opening = requests.open(randomUUID(), directory.userId, directory.workspaceId, canvas);
+    wake();
+    return opening;
+  }, [requests, wake]);
   const rememberSession = useCallback((scope: string, artifact: NativeArtifact) => {
     if (scope !== `${current.current?.userId}:${current.current?.workspaceId}`) return;
     // Only the ordinary URL survives redemption. The cookie stays in WebKit /
