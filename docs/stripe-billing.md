@@ -520,6 +520,8 @@ register the business or enable tax collection.
   already charged period. Tests cover replay and pre-consent exclusion.
 - Billing does not run on the inference request path. A Stripe outage cannot fail
   a model call.
+- Payment readiness never reads customer `metadata` or `name`; the webhook skips
+  `customer.updated` events confined to them.
 
 ## Boundary
 
@@ -790,7 +792,10 @@ address and tax. Queueing callers behind the busy flag was rejected because it
 changes interactive checkout and portal behaviour; dropping the counters from
 the metadata was rejected because operators read them in Stripe. A real
 readiness change landing during a settle can still get a 409, and Stripe
-redelivers it as before.
+redelivers it as before. Readiness must keep ignoring customer `metadata` and
+`name` (see Invariants), or this skip would hide a change.
+
+PR: [#1607](https://github.com/juno-ai-labs/avalon/pull/1607).
 
 ### 2026-11-12 — Keep Billing visible across permissions and loading states
 

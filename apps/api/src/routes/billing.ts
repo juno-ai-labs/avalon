@@ -110,11 +110,8 @@ function webhookPayload<T>(schema: z.ZodType<T>, value: unknown): T {
   return parsed.data;
 }
 
-/**
- * The customer fields `synchronizeStripeProfile` writes. None of them decides
- * readiness; a field that does must never join this list.
- */
-const OWN_PROFILE_FIELDS = ["metadata", "name"];
+/** Customer fields payment readiness never reads (see docs/stripe-billing.md, Invariants). */
+const NON_READINESS_CUSTOMER_FIELDS = ["metadata", "name"];
 
 export const stripeWebhookRoutes = new Hono<HonoAppEnv>();
 stripeWebhookRoutes.post("/", async (c) => {
@@ -160,9 +157,9 @@ stripeWebhookRoutes.post("/", async (c) => {
     await syncSubscription(c.env, subscription.customer, subscription.id);
   } else if (event.type === "customer.updated") {
     const customer = webhookPayload(z.object({ id: z.string() }), event.data.object);
-    // Rally's own profile write echoes back during settle; nothing readiness-related changed.
+    // Settle's own metadata write echoes back here while it holds the actor; it cannot change readiness.
     const changed = Object.keys(event.data.previous_attributes ?? {});
-    if (changed.length > 0 && changed.every((key) => OWN_PROFILE_FIELDS.includes(key))) return c.json({ received: true });
+    if (changed.length > 0 && changed.every((key) => NON_READINESS_CUSTOMER_FIELDS.includes(key))) return c.json({ received: true });
     const account = await c.env.DB.prepare("SELECT workspace_id FROM billing_accounts WHERE customer_id = ?")
       .bind(customer.id).first<{ workspace_id: string }>();
     if (account) await refreshOrganizationBilling(c.env, account.workspace_id);
