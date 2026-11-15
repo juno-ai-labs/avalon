@@ -45,6 +45,7 @@
     "sys.space.prose": "Between paragraphs.",
     "sys.font.family": "System sans-serif for application UI, including secondary windows and portals. Bundled Geist Mono remains available for code and technical content.",
     "sys.font.size": "The sizes the interface sets, as against the document size a theme inherits.",
+    "sys.font.scale": "A multiplier on reading text: message prose, its markdown headings, the feed byline, and the composer field with the line height and floor that hold it. `1` in both appearances; a host raises it on the subtree it wants read larger, and every size it multiplies moves together, so the composer's two text layers and the opening skeleton's placeholders stay in step with what they stand for.",
     "sys.font.leading": "Line height.",
     "sys.font.weight": "Weights. Only meaningful to the degree the resolved family supports them.",
     "sys.label": "The four properties that decide whether a label is sentence case or letterspaced small capitals. They apply to the label over a turn in the feed as well as the one over a group of navigation rows.",
@@ -677,6 +678,9 @@
     },
     "sys.font.size.title": {
       "$type": "dimension"
+    },
+    "sys.font.scale.reading": {
+      "$type": "number"
     },
     "sys.font.leading.prose": {
       "$type": "number"

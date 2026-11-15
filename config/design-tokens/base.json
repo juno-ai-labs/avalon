@@ -64,6 +64,7 @@
     "sys.font.size.row": "14.5px",
     "sys.font.size.meta": "10.5px",
     "sys.font.size.title": "15px",
+    "sys.font.scale.reading": "1",
     "sys.font.leading.prose": "1.85",
     "sys.font.leading.base": "1.4285714286",
     "sys.font.weight.strong": "450",
