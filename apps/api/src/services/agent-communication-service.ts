@@ -1,3 +1,4 @@
+import { derivedFromOf } from "./memory-service";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { hostedConversationParentKind } from "../durable-objects/workstream-object-storage";
 import { Preparation } from "./harness-preparation";
@@ -266,6 +267,7 @@ export class AgentCommunicationService {
       recipientAgentId: target.recipientAgentId, resumeStopped, text: args.message, attachmentIds,
       agentExchange: {
         teamId: AgentIdSchema.parse(target.teamId), senderAgentId: this.senderId, messageId,
+        ...(!notice && this.personStartedTurn() ? { fromPersonTurn: true as const } : {}),
         ...(notice ? { notice } : {}),
         ...(noticeReason ? { noticeReason } : {}),
       },
@@ -273,6 +275,16 @@ export class AgentCommunicationService {
       origin: "agent_message", now: Date.now() });
     if (!result.accepted) throw new AgentCommunicationError(result.code);
     return { messageId };
+  }
+
+  /**
+   * Whether a person started this turn, by the trust class a remembered fact
+   * takes (`derivedFromOf`), and it is no run, worker or background agent:
+   * what this turn asks for is theirs, not something it read.
+   */
+  private personStartedTurn(): boolean {
+    return derivedFromOf(this.input) === "person" && this.input.backgroundAgent !== true
+      && !this.input.automationRun && !this.input.automationDelegation;
   }
 
   private async contactSidekick(agentId: AgentId, teamId: AgentId) {
