@@ -5544,21 +5544,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return canvasesWrittenBy(this.state.storage.sql, input.sidekickId, input.actor, canvasAppearanceReporter(this.env));
   }
 
-  /**
-   * What Rally is told about the Canvas whose Chat it answers in: its title
-   * and its artifacts at their current versions. A host read for a run the
-   * conversation already admitted, so it names no viewer; `null` for an id
-   * that is no Canvas.
-   */
   /** A Sidekick's name as its directory row holds it, for a post written in its name. */
-  async sidekickDisplayName(input: { workspaceId: string; sidekickId: string }): Promise<string> {
+  async sidekickDisplayName(rawInput: { workspaceId: string; sidekickId: string }): Promise<string> {
     await this.initialized;
+    const input = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, sidekickId: IdSchema }), rawInput, "sidekick_display_name");
     this.assertWorkspace(input.workspaceId);
     return this.state.storage.sql.exec<{ title: string }>(
       `SELECT title FROM automation_directory WHERE automation_id = ?`, input.sidekickId,
     ).toArray()[0]?.title || "New Sidekick";
   }
 
+  /**
+   * What Rally is told about the Canvas whose Chat it answers in: its title
+   * and its artifacts at their current versions. A host read for a run the
+   * conversation already admitted, so it names no viewer; `null` for an id
+   * that is no Canvas.
+   */
   async canvasContext(rawInput: { workspaceId: string; canvasId: string }) {
     const input = parseRpcInput(CanvasContextRequestSchema, rawInput, "canvas_context");
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);

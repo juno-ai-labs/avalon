@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { Children, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ButtonHTMLAttributes, type PropsWithChildren } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   citationFootnotes,
   citationScheme,
@@ -66,6 +67,7 @@ import {
 } from './connector-mentions';
 import { isUnrecognizedConnectorConnectionCard } from '../lib/connector-connection-card';
 import { sidekickSourceRequestCardFromToolEvent } from '../lib/sidekick-source-request-card';
+import { useCollaborationSession } from '../lib/collaboration-session';
 import { SidekickSourceRequestCard } from './sidekick-sources';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
@@ -123,8 +125,6 @@ import {
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { Button, ConnectorMark, ErrorNotice, RallyMark, Tip, TipGroup } from './primitives';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCollaborationSession } from '../lib/collaboration-session';
 import { useSpeechPlayback } from './speech-playback';
 
 /**
@@ -2523,7 +2523,7 @@ function WorkAccordionBlock({ disclosure, message }: {
  * question is answered once wherever it is drawn. Anyone who manages the
  * Sidekick may read and answer it (`docs/sidekick-sources.md`).
  */
-function SidekickQuestionCard({ sidekickId, elicitationId }: { sidekickId: string; elicitationId: string }): React.JSX.Element | null {
+function SidekickQuestionCard({ sidekickId, elicitationId, text }: { sidekickId: string; elicitationId: string; text: string }): React.JSX.Element {
   const { api } = useCollaborationSession();
   const queryClient = useQueryClient();
   const queryKey = ['sidekick-question', sidekickId, elicitationId];
@@ -2540,7 +2540,8 @@ function SidekickQuestionCard({ sidekickId, elicitationId }: { sidekickId: strin
       <ErrorNotice automatic={false} detailsLabel="Details" occurrence={query.error} title="The question could not be loaded" />
     </>;
   }
-  if (!query.data) return null;
+  // Until the question is read, the post's own text stands in for it, so the row is never empty.
+  if (!query.data) return <AssistantMessageContent showCopy={false} text={text} />;
   // Once answered, the panel draws only the answer: keep the question above it, so the Chat still says what was asked.
   return <>
     {query.data.status !== 'open' && <AssistantMessageContent showCopy={false} text={query.data.prompt} />}
@@ -3181,7 +3182,7 @@ export function MessageBlock({
           {/* The wizard asked a question on a turn this Chat started: answered here, it answers the wizard. */}
           {message.automationActivation?.question && (
             <SidekickQuestionCard elicitationId={message.automationActivation.question.elicitationId}
-              sidekickId={message.automationActivation.automationId} />
+              sidekickId={message.automationActivation.automationId} text={message.text ?? ''} />
           )}
         </>
       )}
