@@ -1,14 +1,11 @@
 import { useMemo, useState } from 'react';
 import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { ArrowUpRight, FileText, Plus, Search, Sparkles } from 'lucide-react-native';
+import { ArrowUpRight, Plus, Search, Sparkles } from 'lucide-react-native';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import { canvasGlyph } from './CanvasIcon';
+import { mixOklab } from './color-mix';
 import type { CanvasSummary } from './protocol';
 import { useTheme } from './theme';
-
-/** Card tints, matching the browser host's mobile dashboard (apps/browser/src/mobile.css). */
-const CARD = {
-  light: { ink: '#283d2d', tints: ['#e3ebdb', '#e8e3d7', '#dfe9dc', '#e1e5eb'], hero: '#5f8268' },
-  dark: { ink: '#edf3e8', tints: ['#304332', '#443d30', '#2d4033', '#303b46'], hero: '#3d5541' },
-};
 
 type Props = {
   canvases: CanvasSummary[];
@@ -26,8 +23,7 @@ type Props = {
 /** The Home dashboard, drawn natively from the directory so it shows on the first
  * frame from the saved copy, without waiting for Home's web page to boot. */
 export function Dashboard({ canvases, loading, failed, topInset, bottomInset, open, create, retry }: Props) {
-  const { colors, isDark } = useTheme();
-  const card = isDark ? CARD.dark : CARD.light;
+  const { colors } = useTheme();
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => {
     const needle = query.toLocaleLowerCase();
@@ -54,7 +50,7 @@ export function Dashboard({ canvases, loading, failed, topInset, bottomInset, op
           <Text style={[styles.sectionTitle, { color: colors.text }]}>{query ? 'Search results' : 'Pick up where you left off'}</Text>
           <Text style={{ color: colors.muted, fontSize: 11 }}>{filtered.length} {filtered.length === 1 ? 'canvas' : 'canvases'}</Text>
         </View>
-        {hero && <CanvasCard canvas={hero} hero background={card.hero} ink="#ffffff" open={open} />}
+        {hero && <CanvasCard canvas={hero} hero open={open} />}
       </>}
   </View>;
   const empty = loading ? null : <View style={styles.empty}>
@@ -72,7 +68,7 @@ export function Dashboard({ canvases, loading, failed, topInset, bottomInset, op
     columnWrapperStyle={styles.row}
     ListHeaderComponent={header}
     ListEmptyComponent={filtered.length === 0 && empty ? empty : undefined}
-    renderItem={({ item, index }) => item ? <CanvasCard canvas={item} background={card.tints[(index + 1) % card.tints.length]!} ink={card.ink} open={open} /> : <View style={styles.cell} />}
+    renderItem={({ item }) => item ? <CanvasCard canvas={item} open={open} /> : <View style={styles.cell} />}
     keyboardShouldPersistTaps="handled"
     keyboardDismissMode="on-drag"
     contentInsetAdjustmentBehavior="never"
@@ -82,13 +78,26 @@ export function Dashboard({ canvases, loading, failed, topInset, bottomInset, op
   />;
 }
 
-function CanvasCard({ canvas, hero = false, background, ink, open }: { canvas: CanvasSummary; hero?: boolean; background: string; ink: string; open: (id: string) => void }) {
+/** A card wears its Canvas's appearance, as the browser host's card does through
+ * desktop's `canvasMark`: its glyph in the pastel ink on the pastel tint. The lead
+ * card deepens toward 20% of the hue, the browser's
+ * `color-mix(in oklab, hue 20%, tint)` at 145 degrees. */
+function CanvasCard({ canvas, hero = false, open }: { canvas: CanvasSummary; hero?: boolean; open: (id: string) => void }) {
+  const { colors } = useTheme();
+  const { tint, ink, hue } = colors.canvasColors(canvas.id, canvas.color);
+  const Icon = canvasGlyph(canvas);
   const title = canvas.title || 'Untitled canvas';
   return <Pressable accessibilityRole="button" accessibilityLabel={`Open ${title}`} onPress={() => open(canvas.id)}
-    style={({ pressed }) => [styles.card, hero ? styles.hero : styles.cell, { backgroundColor: background, opacity: pressed ? 0.8 : 1 }]}>
-    <View style={[styles.art, hero && styles.heroArt]}><FileText size={hero ? 50 : 32} strokeWidth={1} color={ink} /></View>
+    style={({ pressed }) => [styles.card, hero ? styles.hero : styles.cell, { backgroundColor: tint, opacity: pressed ? 0.8 : 1 }]}>
+    {hero && <Svg style={StyleSheet.absoluteFill} width="100%" height="100%" pointerEvents="none">
+      <Defs><LinearGradient id={`lead-${canvas.id}`} x1="0.21" y1="0.09" x2="0.79" y2="0.91">
+        <Stop offset="0" stopColor={tint} /><Stop offset="1" stopColor={mixOklab(hue, tint, 0.2)} />
+      </LinearGradient></Defs>
+      <Rect width="100%" height="100%" fill={`url(#lead-${canvas.id})`} />
+    </Svg>}
+    <View style={[styles.art, hero && styles.heroArt]}><Icon size={hero ? 50 : 32} strokeWidth={1.5} color={ink} /></View>
     <Text numberOfLines={hero ? 3 : 4} style={[hero ? styles.heroTitle : styles.cardTitle, { color: ink }]}>{title}</Text>
-    <View style={styles.cardFooter}><Text style={[styles.cardHint, { color: ink }]}>Open canvas</Text><ArrowUpRight size={14} color={ink} style={{ opacity: 0.75 }} /></View>
+    <View style={[styles.cardFooter, { opacity: hero ? 1 : 0.75 }]}><Text style={[styles.cardHint, { color: ink }]}>Open canvas</Text><ArrowUpRight size={14} color={ink} /></View>
   </Pressable>;
 }
 
@@ -105,12 +114,12 @@ const styles = StyleSheet.create({
   card: { borderRadius: 20, padding: 18, overflow: 'hidden' },
   cell: { flex: 1, minHeight: 176 },
   hero: { minHeight: 220, marginBottom: 13 },
-  art: { height: 76, alignItems: 'center', justifyContent: 'center', opacity: 0.55 },
+  art: { height: 76, alignItems: 'center', justifyContent: 'center' },
   heroArt: { height: 107 },
   cardTitle: { fontSize: 16, fontWeight: '500', lineHeight: 21, marginTop: 12, marginBottom: 8, flexGrow: 1 },
   heroTitle: { fontSize: 29, lineHeight: 33, letterSpacing: -0.7, fontFamily: Platform.select({ ios: 'Georgia', default: 'serif' }), marginTop: 12, marginBottom: 8 },
   cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardHint: { fontSize: 11, opacity: 0.75 },
+  cardHint: { fontSize: 11 },
   empty: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, paddingHorizontal: 35, gap: 14 },
   emptyTitle: { fontSize: 22, lineHeight: 29, fontWeight: '600', textAlign: 'center' },
   emptyBody: { fontSize: 14, lineHeight: 22, textAlign: 'center' },
