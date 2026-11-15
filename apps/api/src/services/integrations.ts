@@ -5269,15 +5269,19 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  */
 /**
  * Whether a loop may ask people for a source (`sidekick_request_source` and
- * its two companions): every loop but a Sidekick run and the delegation
- * workers rooted in one. A run is handed the content of the event that
- * started it, a stranger's email among it, and its workers read the same;
- * asking in its delegate's name is not something what it read may bring
- * about. Every other loop may ask, whoever or whatever started its turn,
- * because an ask approves nobody: each person asked still presses Approve.
+ * its two companions): a turn a person started, and a wizard turn a Canvas's
+ * Chat started for them (`wizardTurnCanvasId`). An ask goes out in a person's
+ * name with a filter the model wrote, and the people asked receive it by
+ * email, so nothing a loop read may bring one about: not a run or its
+ * workers, which are handed event content such as a stranger's email; not a
+ * background agent, which reads runs and other content; and not a turn
+ * another agent's message started, which includes a run asking its wizard
+ * for a change.
  */
-function asksForSources(input: Pick<WorkstreamWorkflowInput, "automationRun" | "automationDelegation">): boolean {
-  return !input.automationRun && !input.automationDelegation;
+function asksForSources(input: Pick<WorkstreamWorkflowInput,
+  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "sidekickWizard" | "wizardCanvasId">): boolean {
+  return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true
+    && (!input.agentExchange || wizardTurnCanvasId(input) !== null);
 }
 
 /**

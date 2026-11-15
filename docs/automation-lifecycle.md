@@ -1703,7 +1703,7 @@ Three things write a row, and nothing removes one:
 | --- | --- | --- |
 | `HostedCanvas.create` with a `writer` | A run's first publish makes its Canvas | 0 |
 | `HostedSidekick.create` with `madeInCanvasId` | A Canvas's Chat makes the Sidekick | 1 |
-| `conversation_attach`, the configuration conversation's tool | A manager attaches a Canvas they can open | 0 |
+| `conversation_attach`, the configuration conversation's tool | A manager attaches a Canvas they can open; the tool tells them this makes everyone in that Canvas a manager | 0 |
 
 Attaching is the consent to publish there: whoever attached it chose that
 Canvas's audience for the Sidekick's output. It changes who can open neither

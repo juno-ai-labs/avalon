@@ -8,7 +8,7 @@ import type {
 import { customToolIdentityHash, runHarness, type HarnessEvent } from "@rally/agent-harness";
 import { notionTools, granolaTools } from "@rally/connectors";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ToolDefinition } from "@rally/contracts";
+import type { AgentId, ToolDefinition } from "@rally/contracts";
 import historicalGoogleTools from "./fixtures/google-tools-before-workflows.json";
 import historicalSlackTools from "./fixtures/slack-tools-before-markdown-send.json";
 import combinedGoogleReceipts from "./fixtures/google-combined-receipts.json";
@@ -718,9 +718,8 @@ describe("connector tools selected for harness runs", () => {
         "start_agent", "list_agents", "send_message", "reply_to_message", "stop_agent",
       ]));
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
-      // A background agent asks people for a source like the conversation it works for: an ask approves nobody.
-      ?.tools.map((tool) => tool.definition.name)).toEqual(["my_delegations_list", "delegates_list", "set_delegation",
-        "sources_list", "request_source", "test_source_condition"]);
+      // A background agent works from content, so it is not offered the tools that ask people for a source.
+      ?.tools.map((tool) => tool.definition.name)).toEqual(["my_delegations_list", "delegates_list", "set_delegation"]);
     expect(selected.tools.some((tool) => tool.definition.name === "run_subagent")).toBe(false);
   });
 
@@ -737,11 +736,10 @@ describe("connector tools selected for harness runs", () => {
         "my_delegations_list", "delegates_list", "set_delegation",
         "sources_list", "request_source", "test_source_condition"]);
     // The wizard's background agent reads runs for it; a run's delegation worker does not.
-    // The background agent asks people for a source; the run's worker, which reads the run's event, does not.
+    // Neither asks people for a source: both read content, runs among it.
     const sidekicks = child.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     expect(sidekicks?.tools.map((tool) => tool.definition.name))
-      .toEqual(["runs_list", "runs_list_next", "runs_read", "runs_read_next", "my_delegations_list", "delegates_list", "set_delegation",
-        "sources_list", "request_source", "test_source_condition"]);
+      .toEqual(["runs_list", "runs_list_next", "runs_read", "runs_read_next", "my_delegations_list", "delegates_list", "set_delegation"]);
     expect(sidekicks?.preload).toBe(true);
     expect(worker.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")?.tools.map((tool) => tool.definition.name))
       .toEqual(["my_delegations_list", "delegates_list"]);
@@ -750,7 +748,7 @@ describe("connector tools selected for harness runs", () => {
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));
   });
 
-  it("offers the source tools to every loop but a Sidekick run and its workers, and neither a run nor its worker the tool that changes delegation", async () => {
+  it("offers the source tools to a person's turn and a wizard turn a Canvas's Chat started, to nothing a loop read, and neither a run nor its worker the tool that changes delegation", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const sourceTools = async (input: WorkstreamWorkflowInput) =>
       (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
@@ -758,20 +756,26 @@ describe("connector tools selected for harness runs", () => {
         .flatMap((plugin) => plugin.tools.map((tool) => tool.definition.name))
         .filter((name) => ["sources_list", "request_source", "test_source_condition"].includes(name));
     const wizard = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
-    const agentMessage = { teamId: wizard, senderAgentId: wizard, messageId: "00000000-0000-7000-8000-00000000e001" };
+    const message = (sender: AgentId) => ({ teamId: sender, senderAgentId: sender, messageId: "00000000-0000-7000-8000-00000000e001" });
+    const canvasChat = agentIdForAddress({ parentKind: "canvas", parentId: "00000000-0000-7000-8000-00000000c001", substreamId: asSubstreamId("0") });
+    const run = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("00000000-0000-7000-8000-00000000d001") });
     const all = ["sources_list", "request_source", "test_source_condition"];
 
-    // A run reads the event that started it, and its worker reads the same, so nothing either reads may ask.
+    // A person's own turn, and the wizard's turn a Canvas's Chat started for them, ask.
+    expect(await sourceTools(automationConversationInput())).toEqual(all);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toEqual(all);
+    expect(await sourceTools({ ...automationConversationInput(), wizardCanvasId: "00000000-0000-7000-8000-00000000c001" })).toEqual(all);
+    expect(await sourceTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual(all);
+    expect(await sourceTools(workflowInput())).toEqual(all);
+    // Nothing a loop read may ask: a run and its worker, a background agent, and a turn another agent's message started,
+    // a run's change request to its wizard among them.
     expect(await sourceTools(automationRunInput())).toEqual([]);
     expect(await sourceTools({ ...childWorkflowInput(automationConversationInput()),
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toEqual([]);
-    // Every other loop asks, whatever started its turn: an ask approves nobody.
-    expect(await sourceTools(automationConversationInput())).toEqual(all);
-    expect(await sourceTools({ ...automationConversationInput(), agentExchange: agentMessage })).toEqual(all);
-    expect(await sourceTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual(all);
-    expect(await sourceTools(workflowInput())).toEqual(all);
-    expect(await sourceTools({ ...workflowInput(), agentExchange: agentMessage })).toEqual(all);
-    expect(await sourceTools(childWorkflowInput())).toEqual(all);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(run) })).toEqual([]);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(wizard) })).toEqual([]);
+    expect(await sourceTools({ ...workflowInput(), agentExchange: message(wizard) })).toEqual([]);
+    expect(await sourceTools(childWorkflowInput())).toEqual([]);
     // A wake-up continues its conversation, and keeps the tools in the Chat and the wizard.
     const wakeup = { reason: "scheduled_wakeup", scheduledWakeupId: "00000000-0000-7000-8000-00000000e002" };
     expect(await sourceTools({ ...workflowInput(), ...wakeup })).toEqual(all);
@@ -796,7 +800,8 @@ describe("connector tools selected for harness runs", () => {
     const listsTheSkill = async (input: WorkstreamWorkflowInput) =>
       __integrationTesting.builtInSkillsFor((await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins)
         .some((skill) => skill.name === "setting-up-a-filtered-trigger");
-    expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: agentMessage })).toBe(true);
+    expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toBe(true);
+    expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(run) })).toBe(false);
     expect(await listsTheSkill({ ...automationConversationInput(), reason: "sidekick_review" })).toBe(true);
     expect(await listsTheSkill(automationRunInput())).toBe(false);
   });
