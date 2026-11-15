@@ -28,7 +28,8 @@ export function EdgePull({ x, target, enabled, style, children }: { x: Animated.
     useAnimated: true,
     onActivate: () => target?.begin(),
     onUpdate,
-    onDeactivate: (event) => target?.end(event.translationX, event.velocityX, event.canceled),
+    // Reset the offset even when no sidebar took the pull, so none starts from a stale one.
+    onDeactivate: (event) => { target?.end(event.translationX, event.velocityX, event.canceled); x.setValue(0); },
   });
   return <GestureDetector gesture={pan}><View collapsable={false} style={style}>{children}</View></GestureDetector>;
 }

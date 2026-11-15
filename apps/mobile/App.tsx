@@ -95,10 +95,7 @@ const CanvasRoutesContext = createContext<Record<string, string | null>>({});
 type StageFrame = { x: number; y: number; width: number; height: number };
 /** A screen with a native artifact in front hides the native header and shows these instead. */
 const FloatingHeaderContext = createContext<{ show: (owner: string, actions: FloatingHeaderActions) => void; hide: (owner: string) => void }>({ show: () => undefined, hide: () => undefined });
-/** The focused screen's sidebar, for the iOS pull in from the leading edge.
- * The pan wraps the whole tab shell, as the floating header sits over it, so
- * it covers the PinStage's sites as well as each screen's own content. `x` is
- * the finger's offset, which the pulled sidebar's drawer follows. */
+/** The focused screen's sidebar for the iOS edge pull; `x` is the finger's offset its drawer follows. */
 const SidebarEdgeContext = createContext<{ x: Animated.Value; show: (owner: string, target: EdgePullTarget) => void; hide: (owner: string) => void }>({ x: new Animated.Value(0), show: () => undefined, hide: () => undefined });
 /** Registers a screen's sidebar with the edge pull while the screen is focused. */
 function useSidebarEdge(owner: string, active: boolean, open: () => void) {
