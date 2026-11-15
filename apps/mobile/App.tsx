@@ -3,6 +3,7 @@ import { useAppResume } from './src/use-app-resume';
 import { usePreparedCanvases } from './src/prepared-canvases';
 import { directoryKey } from './src/directory';
 import { loadSavedDirectory, saveDirectory } from './src/saved-directory';
+import { loadSavedPins, savePins } from './src/saved-pins';
 import { deployedWebBuild } from './src/web-build';
 import { Dashboard } from './src/Dashboard';
 import { dashboardVisible } from './src/dashboard-visibility';
@@ -41,6 +42,7 @@ const START_URL = mobileUrl(APP_URL);
 // Opening Home at the last organization skips the session and organization-list
 // reads before it can draw. `HOME_FALLBACK` recovers if that access is gone.
 const SAVED_DIRECTORY = loadSavedDirectory();
+const SAVED_PINS = { initial: loadSavedPins(), save: savePins };
 const JS_STARTED = performance.now();
 let dashboardTimed = false;
 const HOME_URL = SAVED_DIRECTORY ? mobileUrl(APP_URL, SAVED_DIRECTORY.workspacePath) : START_URL;
@@ -105,7 +107,9 @@ function AppContent() {
   const sendHome = useCallback((command: MobileCommand) => controls.current.get('Home')?.send(command), []);
   // A queued access request needs Home now, even while it waits behind the screen in front.
   const wakeHome = useCallback(() => recovery.wake(HOME_RENDERER), []);
-  const prepared = usePreparedCanvases(directory, sendHome, wakeHome);
+  // The saved directory scopes saved pins until Home answers; requests it makes
+  // still wait for Home, so nothing reaches an unloaded page.
+  const prepared = usePreparedCanvases(directory ?? savedDirectory, sendHome, wakeHome, SAVED_PINS);
   const openNotification = useCallback((data: unknown) => {
     const target = notificationTarget(data, APP_URL);
     if (!target) { void Notifications.clearLastNotificationResponseAsync().catch(() => undefined); return; }
@@ -170,7 +174,8 @@ function AppContent() {
 }
 
 function CanvasTabs() {
-  const { directory, controls, prepared, chatReturn } = useSession();
+  // Tabs draw from the saved directory until Home answers, so pins show at launch.
+  const { shownDirectory: directory, controls, prepared, chatReturn } = useSession();
   const [images, setImages] = useState<Record<string, ImageSourcePropType>>({});
   const saveImage = useCallback((id: string, image: ImageSourcePropType) => setImages((current) => ({ ...current, [id]: image })), []);
   const { colors } = useTheme();
@@ -294,12 +299,12 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
   // Callstack tab scenes extend behind the iPhone bar. Reserve its measured
   // height, including the home indicator, once. Duo rails use native side insets.
   const bottomTabInset = Platform.OS === 'ios' && !Platform.isPad && !Platform.isTV
-    && verticalBarEdge === null && directory && !chatReturn ? tabBarHeight : 0;
+    && verticalBarEdge === null && shownDirectory && !chatReturn ? tabBarHeight : 0;
   const web = useRef<CanvasWebViewHandle>(null);
   const [url, setUrl] = useState(() => {
     if (home) return HOME_URL;
-    if (!directory) return START_URL;
-    const initial = new URL(mobileUrl(APP_URL, directory.workspacePath));
+    if (!shownDirectory) return START_URL;
+    const initial = new URL(mobileUrl(APP_URL, shownDirectory.workspacePath));
     initial.hash = `/canvases/${encodeURIComponent(canvasId)}?tab=1`;
     return initial.href;
   });

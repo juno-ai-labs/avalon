@@ -66,3 +66,25 @@ it('holds opens while the shared browser reloads and re-sends them once it is au
   await expect(failing).resolves.toBeNull();
   hook.unmount();
 });
+
+it('opens saved pins before Home answers, saves what Home prepares, and forgets them for another account', () => {
+  const directory = { userId: 'alice', workspaceId: 'work', pins: ['shopping', 'notes'], loading: false } as MobileSnapshot;
+  const shopping = { canvasId: 'shopping', resourceId: 'site', version: 2, title: 'Shopping' };
+  const site = 'https://site.rallyusercontent.com/';
+  const initial = {
+    entries: { shopping: { userId: 'alice', workspaceId: 'work', canvas: shopping } },
+    sessions: { shopping: { scope: 'alice:work', artifact: { canvasId: 'shopping', resourceId: 'site', version: 2, openUrl: site, canonicalUrl: site } } },
+  };
+  const saved: unknown[] = [];
+  const store = { initial, save: (pins: unknown) => { saved.push(pins); } };
+  const hook = renderHook(({ directory }) => usePreparedCanvases(directory, () => undefined, () => undefined, store), { initialProps: { directory } });
+  expect(hook.result.current.canvases.shopping).toEqual(shopping);
+  expect(hook.result.current.sessions.shopping?.openUrl).toBe(site);
+  const notes = { canvasId: 'notes', resourceId: 'notes-site', version: 1, title: 'Notes' };
+  act(() => { hook.result.current.receive({ type: 'prepared-canvas', userId: 'alice', workspaceId: 'work', canvasId: 'notes', canvas: notes }); });
+  expect(saved.at(-1)).toMatchObject({ entries: { shopping: { canvas: shopping }, notes: { canvas: notes } } });
+  act(() => hook.rerender({ directory: { ...directory, userId: 'bob' } }));
+  expect(hook.result.current.canvases).toEqual({});
+  expect(saved.at(-1)).toEqual({ entries: {}, sessions: {} });
+  hook.unmount();
+});
