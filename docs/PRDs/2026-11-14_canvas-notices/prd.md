@@ -172,9 +172,12 @@ Canvas.
 ### A Sidekick's Canvas
 
 A Sidekick's wizard and runs register and send from the Canvas the Sidekick
-is attached to. Which Canvases count is the set `ATTACHED CANVASES` already
-lists (`sidekickCanvasContext`): the one it was made in and any its wizard
-attached, never the Canvas a run made as its output.
+is attached to. Which Canvases count is the Sidekick's attachments a person
+or a wizard made (the one it was made in and any its wizard attached), never
+the Canvas a run made as its output. They are counted before any access
+filter: `sidekickCanvasContext` narrows `ATTACHED CANVASES` to what the
+loop's person can open, so a Sidekick on two Canvases could read as one.
+Only once there is exactly one is the loop's reach to it checked.
 
 - **One:** the wizard registers it and runs send from it.
 - **Several:** both tools refuse and name the Canvases. Nothing is sent.
@@ -264,7 +267,8 @@ None yet.
    run that publishes without naming a Canvas makes one and attaches it, so
    counting those would give any such Sidekick several Canvases after its
    second run. The count uses the attachments a person or a wizard made, the
-   set `ATTACHED CANVASES` and the Sidekick's card already show.
+   rows behind `ATTACHED CANVASES` and the Sidekick's card, counted before
+   the access filter `ATTACHED CANVASES` applies for a person's loop.
 10. **Registration is open to loops content can start.** A Sidekick source
     request is offered only to turns a person drives, because it asks in a
     delegate's name. Registration asks nothing of anyone and reaches only
