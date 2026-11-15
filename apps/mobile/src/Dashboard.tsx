@@ -86,13 +86,16 @@ function CanvasCard({ canvas, hero = false, open }: { canvas: CanvasSummary; her
   const { tint, ink, hue } = colors.canvasColors(canvas.id, canvas.color);
   const Icon = canvasGlyph(canvas);
   const title = canvas.title || 'Untitled canvas';
-  return <Pressable accessibilityRole="button" accessibilityLabel={`Open ${title}`} onPress={() => open(canvas.id)}
+  // iOS sizes a percentage SVG from its first layout, before the card has grown
+  // to its text; draw the gradient at the card's measured size instead.
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  return <Pressable onLayout={hero ? (event) => { const { width, height } = event.nativeEvent.layout; setSize((known) => known?.width === width && known.height === height ? known : { width, height }); } : undefined} accessibilityRole="button" accessibilityLabel={`Open ${title}`} onPress={() => open(canvas.id)}
     style={({ pressed }) => [styles.card, hero ? styles.hero : styles.cell, { backgroundColor: tint, opacity: pressed ? 0.8 : 1 }]}>
-    {hero && <Svg style={StyleSheet.absoluteFill} width="100%" height="100%" pointerEvents="none">
+    {hero && size && <Svg style={StyleSheet.absoluteFill} width={size.width} height={size.height} pointerEvents="none">
       <Defs><LinearGradient id={`lead-${canvas.id}`} x1="0.21" y1="0.09" x2="0.79" y2="0.91">
         <Stop offset="0" stopColor={tint} /><Stop offset="1" stopColor={mixOklab(hue, tint, 0.2)} />
       </LinearGradient></Defs>
-      <Rect width="100%" height="100%" fill={`url(#lead-${canvas.id})`} />
+      <Rect width={size.width} height={size.height} fill={`url(#lead-${canvas.id})`} />
     </Svg>}
     <View style={[styles.art, hero && styles.heroArt]}><Icon size={hero ? 50 : 32} strokeWidth={1.5} color={ink} /></View>
     <Text numberOfLines={hero ? 3 : 4} style={[hero ? styles.heroTitle : styles.cardTitle, { color: ink }]}>{title}</Text>
