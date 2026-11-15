@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthContext, HonoAppEnv } from '../src/env';
+import { ApiError } from '../src/lib/api-error';
 import { errorHandler } from '../src/middleware/errors';
 import { canvasRoutes } from '../src/routes/canvases';
 import { CanvasService } from '../src/services/canvas-service';
@@ -50,6 +51,23 @@ describe('the Canvas routes', () => {
       json({ visibility: 'creator', userIds: [USER_ID] }), env());
     expect(response.status).toBe(400);
     expect(setAudience).not.toHaveBeenCalled();
+  });
+
+  it('passes a notice choice to the service, and refuses one outside push and email by field', async () => {
+    const setNoticeChoice = vi.spyOn(CanvasService.prototype, 'setNoticeChoice')
+      .mockRejectedValue(new ApiError(404, 'canvas_not_found', 'This Canvas does not exist'));
+    const put = (body: unknown) => routedApp().request(`/canvases/${CANVAS_ID}/notifications`,
+      { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, env());
+    const refused = await put({ channels: ['sms'] });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: { code: expect.stringMatching(/^canvas_notice_choice_invalid:channels\.0:/u) } });
+    expect(setNoticeChoice).not.toHaveBeenCalled();
+    // The service decides who may; a refusal there reaches the caller as it is.
+    const hidden = await put({ channels: ['push'] });
+    expect(hidden.status).toBe(404);
+    expect(setNoticeChoice).toHaveBeenCalledWith(CANVAS_ID, ['push']);
+    await put({ channels: null });
+    expect(setNoticeChoice).toHaveBeenLastCalledWith(CANVAS_ID, null);
   });
 
   it('names the field and the reason when it refuses a retitle, and a malformed Canvas id by name', async () => {

@@ -1957,10 +1957,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * conversation's agent, is keyed on the caller's client message id so a
    * retry answers with the message it already wrote, and is refused for any
    * conversation but the addressed one's `"0"` or an archived one. Whoever
-   * may write it was decided by the caller. It is not sent to open screens
-   * here: the caller commits what the record describes, then calls
-   * `publishPending`, so a screen that reads it back never finds it missing.
-   * Should the caller stop first, the next send in this conversation carries it.
+   * may write it was decided by the caller, which also commits whatever the
+   * record describes before calling, since open screens hear of it at once.
    */
   async appendHostRecord(input: unknown): Promise<{
     outcome: "appended" | "replayed" | "refused";
@@ -2000,21 +1998,11 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       if (!authority) return { outcome: "refused" as const, code: "workstream_not_found", messageId: null };
       if (authority.archived_at !== null) return { outcome: "refused" as const, code: "workstream_archived", messageId: null };
       const appended = this.messages.appendPreparedMessage(prepared);
-      return appended.outcome === "replayed"
-        ? { outcome: "replayed" as const, code: "host_record_replayed", messageId: appended.messageId }
-        : { outcome: "appended" as const, code: "host_record_appended", messageId: appended.messageId };
+      return { outcome: appended.outcome, code: appended.outcome === "replayed" ? "host_record_replayed" : "host_record_appended",
+        messageId: appended.messageId };
     }, true);
+    if (result.outcome === "appended") await this.flushSemanticRealtimeOutboxBestEffort();
     return result;
-  }
-
-  /** Send what this conversation has committed but not yet sent to open screens (see `appendHostRecord`). */
-  async publishPending(input: unknown): Promise<void> {
-    await this.initialized;
-    const request = parseRpcInput(z.strictObject({ workspaceId: z.string().min(1), workstreamId: z.string().min(1) }),
-      input, "publish_pending");
-    const identity = this.objectStore.identity();
-    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.workstreamId) return;
-    await this.flushSemanticRealtimeOutboxBestEffort();
   }
 
   /**

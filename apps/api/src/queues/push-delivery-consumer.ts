@@ -55,7 +55,19 @@ export async function deliverPush(
     return true;
   }
   const channel = message.channel ?? "push";
-  if (channel === "push" && !await pushEnabled(env, { userId: message.recipientUserId, workspaceId: message.workspaceId })) return true;
+  // Push else email: a push that will not reach any device sends the email in
+  // its place, whether push is off for this person or every device refused
+  // it. The email message reads the person's choice again when it is consumed.
+  const fallBackToEmail = async (reason: string) => {
+    if (!message.emailFallback || !env.PUSH_DELIVERY_QUEUE) return;
+    await env.PUSH_DELIVERY_QUEUE.send({ region: message.region, workspaceId: message.workspaceId,
+      recipientUserId: message.recipientUserId, intentId: message.intentId, channel: "email" });
+    logInfo(env, "push_delivery_fell_back_to_email", { intent_id: message.intentId, reason });
+  };
+  if (channel === "push" && !await pushEnabled(env, { userId: message.recipientUserId, workspaceId: message.workspaceId })) {
+    await fallBackToEmail("push_disabled");
+    return true;
+  }
   const id = asWorkspaceId(message.workspaceId);
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, id, workspaceDOName(env.AVALON_REGION, id));
   const rendered = await renderNotice(env, workspace, message);
@@ -71,6 +83,7 @@ export async function deliverPush(
     ...(notice.kind === "canvas_notice" ? { parentId: notice.parentId } : {}) })) {
     logInfo(env, channel === "push" ? "push_delivery_skipped" : "notification_email_skipped",
       { intent_id: pointer, reason: `${channel}_preference_off` });
+    if (channel === "push") await fallBackToEmail("push_preference_off");
     return true;
   }
   if (channel === "email") {
@@ -82,14 +95,8 @@ export async function deliverPush(
     return true;
   }
   const pushed = await sendPushNotice(env, workspace, notice, send, faults);
-  // Push else email: a push that settled without reaching any device (none
-  // left live, or every token refused) sends the email in its place. The
-  // email message reads the person's choice again when it is consumed.
-  if (pushed.complete && !pushed.reached && message.emailFallback && env.PUSH_DELIVERY_QUEUE) {
-    await env.PUSH_DELIVERY_QUEUE.send({ region: message.region, workspaceId: message.workspaceId,
-      recipientUserId: message.recipientUserId, intentId: message.intentId, channel: "email" });
-    logInfo(env, "push_delivery_fell_back_to_email", { intent_id: pointer });
-  }
+  // Settled without reaching any device: none left live, or every token refused.
+  if (pushed.complete && !pushed.reached) await fallBackToEmail("no_device_reached");
   return pushed.complete;
 }
 

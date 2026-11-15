@@ -168,12 +168,8 @@ export const CanvasNoticesViewSchema = z.object({
   participant: z.boolean(),
   /** The values of `NotificationChannelSchema`, which this module cannot import without a cycle. */
   channels: z.array(z.enum(["push", "email"])).nullable(),
-  /**
-   * When notices were last turned on or changed (ms). A client holding a
-   * record newer than this knows its copy of the view is stale. Absent from a
-   * server older than it.
-   */
-  updatedAt: z.number().int().nonnegative().optional(),
+  /** When notices were last turned on or changed (ms). A client holding a record newer than this knows its copy is stale. */
+  updatedAt: z.number().int().nonnegative(),
 });
 export type CanvasNoticesView = z.infer<typeof CanvasNoticesViewSchema>;
 
@@ -193,8 +189,8 @@ export const CanvasNoticesRecordSchema = z.object({
   canvasId: WorkstreamIdSchema,
   purpose: z.string().min(1),
   registeredBy: z.object({ kind: z.enum(["rally", "sidekick"]), name: z.string() }),
-  /** When the record was written (ms), never after the registration it records. Absent from an older server. */
-  recordedAt: z.number().int().nonnegative().optional(),
+  /** When the record was written (ms), never after the registration it records. */
+  recordedAt: z.number().int().nonnegative(),
 });
 export type CanvasNoticesRecord = z.infer<typeof CanvasNoticesRecordSchema>;
 

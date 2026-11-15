@@ -24,7 +24,10 @@ import { recordParentNotice } from "./workspace-notification-intent-storage";
  * Part of WorkspaceDO migration 150, which also admits the `canvas_notice`
  * kind on the notification intents and Activity. SQLite cannot alter a CHECK
  * in place, so each table is rebuilt as migration 146 rebuilt them, with every
- * index and trigger the drop took; 146 stays as shipped.
+ * index and trigger the drop took; 146 stays as shipped. The rebuild drops the
+ * kind lists from both CHECKs: the kinds grow with the product, every one
+ * before this cost both tables a full copy in every Organization, and the
+ * contracts' kind enums already refuse an unknown kind on write and on read.
  */
 export const CANVAS_NOTICE_KIND_STATEMENTS: readonly string[] = [
   `CREATE TABLE workstream_notification_intents_v149 (
@@ -36,9 +39,7 @@ export const CANVAS_NOTICE_KIND_STATEMENTS: readonly string[] = [
     source_generation INTEGER NOT NULL CHECK (source_generation > 0),
     source_version INTEGER NOT NULL CHECK (source_version > 0),
     required_directory_version INTEGER NOT NULL CHECK (required_directory_version > 0),
-    notification_kind TEXT NOT NULL CHECK (notification_kind IN ('mention', 'participant_added', 'needs_input', 'run_finished',
-      'new_message', 'artifact_updated', 'access_request', 'access_granted', 'access_denied',
-      'source_request', 'source_approved', 'source_declined', 'canvas_notice')),
+    notification_kind TEXT NOT NULL CHECK (length(notification_kind) > 0),
     payload_json TEXT CHECK (payload_json IS NULL OR json_valid(payload_json)),
     payload_hash TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('pending', 'processing', 'delivered', 'skipped', 'failed')),
@@ -81,9 +82,7 @@ export const CANVAS_NOTICE_KIND_STATEMENTS: readonly string[] = [
     item_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     recipient_user_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('mention', 'participant_added', 'needs_input', 'run_finished',
-      'new_message', 'artifact_updated', 'access_request', 'access_granted', 'access_denied',
-      'source_request', 'source_approved', 'source_declined', 'canvas_notice')),
+    kind TEXT NOT NULL CHECK (length(kind) > 0),
     parent_kind TEXT NOT NULL CHECK (parent_kind IN ('canvas', 'automation')),
     parent_id TEXT NOT NULL,
     substream_id TEXT,
@@ -119,10 +118,17 @@ export const CANVAS_NOTICES_SCHEMA_STATEMENTS: readonly string[] = [
     registered_by_kind TEXT NOT NULL CHECK (registered_by_kind IN ('rally', 'sidekick')),
     registered_by_id TEXT,
     registered_by_name TEXT NOT NULL,
-    record_message_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    record_message_id TEXT,
     registered_at INTEGER NOT NULL CHECK (registered_at >= 0),
     updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
   ) STRICT`,
+  `CREATE TABLE canvas_notice_operations (
+    operation_id TEXT PRIMARY KEY,
+    canvas_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision > 0)
+  ) STRICT`,
+  `CREATE INDEX canvas_notice_operations_canvas_idx ON canvas_notice_operations(canvas_id)`,
   `CREATE TABLE canvas_notification_choices (
     canvas_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
@@ -137,7 +143,9 @@ interface RegistrationRow extends Record<string, SqlStorageValue> {
   registered_by_kind: "rally" | "sidekick";
   registered_by_id: string | null;
   registered_by_name: string;
-  record_message_id: string;
+  revision: number;
+  /** The Chat's record of this registration, once it has landed. */
+  record_message_id: string | null;
   updated_at: number;
 }
 
@@ -151,25 +159,43 @@ export interface CanvasNoticeAgent {
 /** The Canvas's registration, or `undefined` while its notices are off. */
 export function canvasNoticeRegistration(sql: SqlStorage, canvasId: string): RegistrationRow | undefined {
   return sql.exec<RegistrationRow>(
-    `SELECT purpose, registered_by_kind, registered_by_id, registered_by_name, record_message_id, updated_at
+    `SELECT purpose, registered_by_kind, registered_by_id, registered_by_name, revision, record_message_id, updated_at
        FROM canvas_notice_registrations WHERE canvas_id = ?`, canvasId,
   ).toArray()[0];
 }
 
-/** Record that a Canvas's notices are on, with the record its Chat now shows. */
+/**
+ * Record that a Canvas's notices are on, as a new revision, for the register
+ * call `operationId`, before its record is written to the Chat: a screen that
+ * sees the record then always finds the registration. Its record lands after.
+ */
 export function writeCanvasNoticeRegistration(sql: SqlStorage, input: {
-  canvasId: string; purpose: string; agent: CanvasNoticeAgent; recordMessageId: string; now: number;
+  canvasId: string; purpose: string; agent: CanvasNoticeAgent; revision: number; operationId: string; now: number;
 }): void {
   sql.exec(
     `INSERT INTO canvas_notice_registrations
-       (canvas_id, purpose, registered_by_kind, registered_by_id, registered_by_name, record_message_id, registered_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       (canvas_id, purpose, registered_by_kind, registered_by_id, registered_by_name, revision, record_message_id, registered_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
      ON CONFLICT(canvas_id) DO UPDATE SET purpose = excluded.purpose, registered_by_kind = excluded.registered_by_kind,
        registered_by_id = excluded.registered_by_id, registered_by_name = excluded.registered_by_name,
-       record_message_id = excluded.record_message_id, updated_at = excluded.updated_at`,
+       revision = excluded.revision, record_message_id = NULL, updated_at = excluded.updated_at`,
     input.canvasId, input.purpose, input.agent.kind, input.agent.id,
-    truncateUtf16Safe(input.agent.name, NAME_SNAPSHOT_CHARACTERS), input.recordMessageId, input.now, input.now,
+    truncateUtf16Safe(input.agent.name, NAME_SNAPSHOT_CHARACTERS), input.revision, input.now, input.now,
   );
+  sql.exec(`INSERT INTO canvas_notice_operations (operation_id, canvas_id, revision) VALUES (?, ?, ?)`,
+    input.operationId, input.canvasId, input.revision);
+}
+
+/** The revision a register call wrote, or `undefined` if it never wrote one. */
+export function canvasNoticeOperationRevision(sql: SqlStorage, operationId: string): number | undefined {
+  return sql.exec<{ revision: number }>(`SELECT revision FROM canvas_notice_operations WHERE operation_id = ?`, operationId)
+    .toArray()[0]?.revision;
+}
+
+/** Note the Chat's record of a revision, unless a newer revision has replaced it since. */
+export function noteCanvasNoticeRecord(sql: SqlStorage, canvasId: string, revision: number, messageId: string): void {
+  sql.exec(`UPDATE canvas_notice_registrations SET record_message_id = ? WHERE canvas_id = ? AND revision = ?`,
+    messageId, canvasId, revision);
 }
 
 /** The channels this person chose for this Canvas's notices, or `undefined` while they follow Settings. */
@@ -198,14 +224,16 @@ export function writeCanvasNoticeChoice(sql: SqlStorage, input: {
 }
 
 /** A Canvas's notices as one viewer sees them, or `null` while they are off. */
-export function canvasNoticesView(sql: SqlStorage, canvasId: string, viewer: { userId: string; participant: boolean }): CanvasNoticesView | null {
+export function canvasNoticesView(sql: SqlStorage, canvasId: string, userId: string,
+  participant: () => boolean): CanvasNoticesView | null {
   const registration = canvasNoticeRegistration(sql, canvasId);
+  // Most Canvases send no notices; they pay one primary-key read.
   if (!registration) return null;
   return {
     purpose: registration.purpose,
     registeredBy: { kind: registration.registered_by_kind, name: registration.registered_by_name },
-    participant: viewer.participant,
-    channels: canvasNoticeOverride(sql, canvasId, viewer.userId) ?? null,
+    participant: participant(),
+    channels: canvasNoticeOverride(sql, canvasId, userId) ?? null,
     updatedAt: registration.updated_at,
   };
 }
@@ -239,7 +267,7 @@ export async function tellCanvasParticipants(host: CanvasNoticeHost, input: {
   if (recipients.length === 0) return 0;
   const notice: ParentNotice = {
     kind: "canvas_notice", parentId: input.canvasId, parentTitle: input.canvasTitle,
-    senderKind: input.sender.kind, senderName: input.sender.name, title: input.title, body: input.body,
+    senderKind: input.sender.kind, senderName: truncateUtf16Safe(input.sender.name, NAME_SNAPSHOT_CHARACTERS), title: input.title, body: input.body,
   };
   const payloadJson = JSON.stringify(notice);
   const payloadHash = await sha256(payloadJson);
@@ -256,12 +284,10 @@ export async function tellCanvasParticipants(host: CanvasNoticeHost, input: {
       },
     }, now, host.noteActivityChanged),
   })));
-  for (const intent of recorded) {
-    if (!intent.push) continue;
-    const channels = overrides.get(intent.recipientUserId) ?? chosenChannels(sql, intent.recipientUserId, "canvas_notice");
-    await enqueueNotice(host.env, { workspaceId: input.workspaceId, recipientUserId: intent.recipientUserId, intentId: intent.intentId },
-      channels, { pushElseEmail: true });
-  }
+  // Each recipient's queueing is independent; the agent waits on all of them.
+  await Promise.all(recorded.filter((intent) => intent.push).map((intent) => enqueueNotice(host.env,
+    { workspaceId: input.workspaceId, recipientUserId: intent.recipientUserId, intentId: intent.intentId },
+    overrides.get(intent.recipientUserId) ?? chosenChannels(sql, intent.recipientUserId, "canvas_notice"), { pushElseEmail: true })));
   logInfo(host.env, "canvas_notice_recorded", { canvas_id: input.canvasId, recipients: recorded.length });
   return recorded.length;
 }

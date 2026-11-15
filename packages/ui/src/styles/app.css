@@ -8844,11 +8844,17 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .canvas-notices-record-heading { display:flex; align-items:center; gap:8px; font-size:13px; }
 .canvas-notices-record-purpose { margin:0; font-size:14px; line-height:20px; overflow-wrap:anywhere; }
 .canvas-notices-record-by { margin:0; font-size:12px; color:var(--av-sys-color-text-muted); }
-.canvas-notices-record-controls, .canvas-notices-device { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:13px; flex-wrap:wrap; }
+.canvas-notices-record.is-history { color:var(--av-sys-color-text-muted); }
+.canvas-notices-record-controls { display:flex; flex-direction:column; align-items:flex-start; gap:8px; font-size:13px; }
+.canvas-notices-record-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.canvas-notices-device { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:13px; flex-wrap:wrap; }
 .canvas-notices-device { border-top:1px solid var(--av-sys-color-border-default); padding-top:8px; }
 .canvas-notices-device-copy { display:flex; flex-direction:column; gap:2px; min-width:0; }
 .canvas-notices-device-copy small { color:var(--av-sys-color-text-muted); }
-.canvas-notices-banner { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; margin:4px 12px 0; padding:8px 12px; border:1px solid var(--av-sys-color-border-default); border-radius:12px; background:var(--av-sys-color-surface-elevated); font-size:13px; line-height:20px; }
+/* The banner sits under the title, in a row of its own: the screen's grid otherwise puts it in the transcript's row. */
+.workstream-screen:has(> .title-pill-header):has(> .canvas-notices-banner) { grid-template-rows: 64px auto minmax(0, 1fr) auto; }
+.workstream-screen.is-starting:has(> .title-pill-header):has(> .canvas-notices-banner) { grid-template-rows: 64px auto minmax(0, 1fr) auto minmax(0, 1fr); }
+.canvas-notices-banner { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; box-sizing:border-box; width:calc(100% - 2 * var(--space-8)); max-width:var(--composer-width); margin:4px auto 0; padding:8px 12px; border:1px solid var(--av-sys-color-border-default); border-radius:12px; background:var(--av-sys-color-surface-elevated); font-size:13px; line-height:20px; }
 .canvas-notices-banner > svg { flex:none; }
 .canvas-notices-banner-copy { flex:1 1 220px; min-width:0; overflow-wrap:anywhere; }
 .canvas-notices-banner-actions { display:flex; gap:8px; flex:none; }

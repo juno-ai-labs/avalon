@@ -585,7 +585,8 @@ export function orderedTranscriptMessages(
             ...(imported.success ? { importProvenance: imported.data } : {}),
             ...draftProposedFields(structured),
             ...automationActivationFields(structured, block.sidekickRun, turn.revision),
-            ...canvasNoticesRecordFields(structured),
+            // Only the host writes a notices record, as a system message.
+            ...(turn.actor === 'system' ? canvasNoticesRecordFields(structured) : {}),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
           };
         }

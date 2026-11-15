@@ -5653,7 +5653,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     loop: { parentKind: "canvas" | "automation"; parentId: string; reachRunId?: string; actingUserId: string | null };
     action: { kind: "register"; purpose: string; operationId: string } | { kind: "send"; title: string; body: string; sourceId: string };
   }): Promise<
-    | { outcome: "registered"; canvasId: string; purpose: string; changed: boolean; recordMessageId: string }
+    | { outcome: "registered"; canvasId: string; purpose: string; changed: boolean }
     | { outcome: "sent"; canvasId: string; recipients: number }
     | { outcome: "refused"; code: string; available?: { canvasId: string; title: string }[] }
   > {

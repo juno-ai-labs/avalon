@@ -101,12 +101,16 @@ describe("WorkspaceDO migration 150, a Canvas's notices", () => {
     });
     insertIntent(database, { intentId: "notice", kind: "canvas_notice", state: "delivered" });
     insertItem(database, "notice", "canvas_notice", null);
-    expect(() => insertIntent(database, { intentId: "retired", kind: "thread_started", state: "delivered" })).toThrow(/CHECK constraint failed/u);
+    // The kind is no longer a list the table holds: the contracts' enum guards it, so the next kind costs no rebuild.
+    insertIntent(database, { intentId: "later", kind: "a_later_kind", state: "delivered" });
+    expect(() => insertIntent(database, { intentId: "blank", kind: "", state: "delivered" })).toThrow(/CHECK constraint failed/u);
     expect(() => insertIntent(database, { intentId: "other", kind: "canvas_notice", state: "delivered", workspaceId: "another-workspace" }))
       .toThrow(/workspace_identity_mismatch/u);
     // A Canvas's registration and one person's choice for it.
     database.exec(`INSERT INTO canvas_notice_registrations (canvas_id, purpose, registered_by_kind, registered_by_id, registered_by_name,
-      record_message_id, registered_at, updated_at) VALUES ('canvas-one', 'New episodes', 'sidekick', 'sidekick-one', 'Podcaster', 'turn-one', 1, 1)`);
+      revision, record_message_id, registered_at, updated_at)
+      VALUES ('canvas-one', 'New episodes', 'sidekick', 'sidekick-one', 'Podcaster', 2, NULL, 1, 1)`);
+    database.exec(`INSERT INTO canvas_notice_operations (operation_id, canvas_id, revision) VALUES ('op-one', 'canvas-one', 2)`);
     database.exec(`INSERT INTO canvas_notification_choices (canvas_id, user_id, channels_json, updated_at) VALUES ('canvas-one', 'user-one', '[]', 1)`);
     expect(() => database.exec(`INSERT INTO canvas_notification_choices (canvas_id, user_id, channels_json, updated_at)
       VALUES ('canvas-one', 'user-two', '{"push":true}', 1)`)).toThrow(/CHECK constraint failed/u);
