@@ -398,6 +398,10 @@
   --av-sys-font-size-meta: 10.5px;
   --av-sys-font-size-title: 15px;
 
+  /* Multiplier on conversation reading text: prose, headings, byline and
+   * composer. `1` by default; a host raises it on a subtree. */
+  --av-sys-font-scale-reading: 1;
+
   /* Line height. */
   --av-sys-font-leading-prose: 1.85;
   --av-sys-font-leading-base: 1.4285714286;
@@ -832,6 +836,8 @@
   --av-sys-font-size-row: 14.5px;
   --av-sys-font-size-meta: 10.5px;
   --av-sys-font-size-title: 15px;
+
+  --av-sys-font-scale-reading: 1;
 
   --av-sys-font-leading-prose: 1.85;
   --av-sys-font-leading-base: 1.4285714286;

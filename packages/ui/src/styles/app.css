@@ -1571,7 +1571,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .conversation-opening-byline {
   align-items: center;
   display: flex;
-  font-size: var(--av-cmp-feed-byline-font-size);
+  font-size: calc(var(--av-cmp-feed-byline-font-size) * var(--av-sys-font-scale-reading));
   gap: var(--space-2);
   height: 1em;
   margin-bottom: var(--space-2);
@@ -1584,7 +1584,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   /* Grid, so each bar's block margins stay whole instead of collapsing into
      the next bar's and packing the lines two-thirds of a line apart. */
   display: grid;
-  font-size: var(--av-sys-font-size-prose);
+  font-size: calc(var(--av-sys-font-size-prose) * var(--av-sys-font-scale-reading));
   line-height: var(--av-sys-font-leading-prose);
 }
 .conversation-opening-prose + .conversation-opening-prose { margin-top: var(--av-sys-space-prose-gap); }
@@ -3284,7 +3284,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .unread-divider span { flex: 0 0 auto; }
 /* design.html §2's "Today": the day a run of turns was said on, in the muted
    byline type between hairlines, so each byline carries only its clock time. */
-.day-divider { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: var(--av-cmp-feed-byline-font-size); gap: var(--space-3); margin: var(--space-2) 0 var(--space-4); }
+.day-divider { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: calc(var(--av-cmp-feed-byline-font-size) * var(--av-sys-font-scale-reading)); gap: var(--space-3); margin: var(--space-2) 0 var(--space-4); }
 .day-divider::before,
 .day-divider::after { background: var(--av-sys-color-border-default); content: ''; flex: 1; height: 1px; }
 .transcript-column { margin: 0 auto; max-width: var(--av-cmp-feed-width); min-height: 100%; padding: var(--space-8) var(--space-8) 150px; }
@@ -3382,7 +3382,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   align-items: center;
   color: var(--av-sys-color-text-subtle);
   display: inline-flex;
-  font-size: var(--av-cmp-feed-byline-font-size);
+  font-size: calc(var(--av-cmp-feed-byline-font-size) * var(--av-sys-font-scale-reading));
   font-weight: var(--av-cmp-feed-byline-author-weight);
   gap: var(--space-1);
 }
@@ -3411,7 +3411,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
    that have to be kept equal by hand. Same size as the name: the line is one
    element, and it is the weight that separates who from when. */
 .message-block time,
-.message-block .message-work-summary { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-feed-byline-font-size); font-weight: var(--av-cmp-feed-byline-time-weight); }
+.message-block .message-work-summary { color: var(--av-sys-color-text-muted); font-size: calc(var(--av-cmp-feed-byline-font-size) * var(--av-sys-font-scale-reading)); font-weight: var(--av-cmp-feed-byline-time-weight); }
 /* Markdown's paint, as a group a surface can re-point in one block. Every
    markdown rule below reads one of these rather than a ramp step, because not
    every markdown surface sits on the appearance's canvas — a person's turn is
@@ -3435,7 +3435,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   --markdown-mark: var(--av-sys-color-accent-base);
   --markdown-scrollbar-thumb: var(--av-sys-color-scrollbar-thumb);
   color: var(--markdown-ink);
-  font-size: var(--av-sys-font-size-prose);
+  font-size: calc(var(--av-sys-font-size-prose) * var(--av-sys-font-scale-reading));
   line-height: var(--av-sys-font-leading-prose);
   overflow-wrap: anywhere;
 }
@@ -3456,12 +3456,12 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
    `--av-sys-font-size-prose`. A theme that raises its prose and leaves these
    fixed ends up with an h2 smaller than the paragraph under it, which is what
    Air did: 16px headings under 16.5px body text. */
-.markdown-body h1 { font-size: var(--av-cmp-markdown-heading-1); font-weight: var(--av-sys-font-weight-heading); }
-.markdown-body h2 { font-size: var(--av-cmp-markdown-heading-2); font-weight: var(--av-sys-font-weight-heading); }
-.markdown-body h3 { font-size: var(--av-cmp-markdown-heading-3); font-weight: var(--av-sys-font-weight-heading); }
+.markdown-body h1 { font-size: calc(var(--av-cmp-markdown-heading-1) * var(--av-sys-font-scale-reading)); font-weight: var(--av-sys-font-weight-heading); }
+.markdown-body h2 { font-size: calc(var(--av-cmp-markdown-heading-2) * var(--av-sys-font-scale-reading)); font-weight: var(--av-sys-font-weight-heading); }
+.markdown-body h3 { font-size: calc(var(--av-cmp-markdown-heading-3) * var(--av-sys-font-scale-reading)); font-weight: var(--av-sys-font-weight-heading); }
 .markdown-body h4,
 .markdown-body h5,
-.markdown-body h6 { font-size: var(--av-cmp-markdown-heading-4); font-weight: var(--av-sys-font-weight-heading); }
+.markdown-body h6 { font-size: calc(var(--av-cmp-markdown-heading-4) * var(--av-sys-font-scale-reading)); font-weight: var(--av-sys-font-weight-heading); }
 /* An artifact is a document, and its headings are its strongest ink, as
    design.html §2 draws "What moved" and "Open questions": the quiet heading is
    the conversation's, where a reply's headings sit back from its answer. */
@@ -4603,7 +4603,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
  */
 .workstream-composer textarea,
 .workstream-composer .composer-highlight {
-  font-size: 14px;
+  font-size: calc(14px * var(--av-sys-font-scale-reading));
   font-weight: 400;
   line-height: var(--composer-line-height);
   overflow-wrap: break-word;
@@ -4640,7 +4640,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 [data-theme='dark'] .composer-mention { background: var(--av-cmp-row-background-selected); color: var(--av-sys-color-text-default); }
 .composer-toolbar { align-items: center; display: flex; justify-content: space-between; min-height: 38px; padding: 2px 7px 6px; }
 .composer-tools,
-.composer-submit-area { align-items: center; display: flex; gap: 5px; }
+.composer-submit-area { --composer-submit-gap: 5px; align-items: center; display: flex; gap: var(--composer-submit-gap); }
 .composer-hint { color: var(--av-sys-color-text-muted); flex: 1; font-size: 10px; margin: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .socket-state { align-items: center; color: var(--av-ref-color-neutral-9); display: flex; font-size: 9.5px; gap: 5px; }
 .socket-state > span { background: var(--av-ref-color-neutral-9); border-radius: 50%; height: 5px; width: 5px; }
@@ -4720,8 +4720,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .composer-stop-slot {
   flex: 0 0 auto;
   width: 0;
-  margin-left: -5px;
-  transform: translateX(35px);
+  margin-left: calc(-1 * var(--composer-submit-gap));
+  transform: translateX(calc(30px + var(--composer-submit-gap)));
   visibility: hidden;
   transition: width 240ms ease, margin-left 240ms ease, transform 240ms ease, visibility 240ms;
 }
@@ -5095,7 +5095,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    third size in a three-part line is what made the row read as assembled rather
    than designed. Its colour and weight still separate it from the two facts
    either side: this says why the turn reads the way it does, not who or when. */
-.message-context-label { color: var(--av-ref-color-neutral-9); font-size: var(--av-cmp-feed-byline-font-size); font-weight: 450; }
+.message-context-label { color: var(--av-ref-color-neutral-9); font-size: calc(var(--av-cmp-feed-byline-font-size) * var(--av-sys-font-scale-reading)); font-weight: 450; }
 .template-path { align-items: center; background: transparent; color: var(--av-sys-color-accent-base); display: inline-flex; font-size: 10.5px; gap: 4px; margin-top: 19px; }
 .automation-composer-wrap { bottom: 13px; left: 50%; max-width: 920px; position: fixed; transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - 76px); z-index: 4; }
 .rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2 - var(--rail-slot) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - var(--rail-slot) - 76px); }
@@ -5741,7 +5741,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
      tick's own glyph is the user agent's to contrast. */
   --markdown-mark: currentColor;
   --markdown-scrollbar-thumb: color-mix(in srgb, currentColor 38%, transparent);
-  font-size: calc(var(--av-sys-font-size-prose) - 0.5px);
+  font-size: calc((var(--av-sys-font-size-prose) - 0.5px) * var(--av-sys-font-scale-reading));
   line-height: calc(var(--av-sys-font-leading-prose) - 0.14);
 }
 
@@ -6029,14 +6029,14 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 }
 .agent-message .markdown-body,
 .human-message-bubble .markdown-body {
-  font-size: 14px;
+  font-size: calc(14px * var(--av-sys-font-scale-reading));
   font-weight: 420;
-  line-height: 20px;
+  line-height: calc(20px * var(--av-sys-font-scale-reading));
 }
 :is(.agent-work-timing-label, .tool-summary strong) {
-  font-size: 13px;
+  font-size: calc(13px * var(--av-sys-font-scale-reading));
   font-weight: 500;
-  line-height: 18px;
+  line-height: calc(18px * var(--av-sys-font-scale-reading));
 }
 
 .composer-wrap { max-width: none; width: 100%; }
@@ -6267,9 +6267,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 .tool-summary strong {
   color: var(--av-ref-color-neutral-10);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 18px;
 }
 
 .tool-summary strong::before {
@@ -6279,9 +6276,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 .plugin-activity .tool-summary strong {
   color: var(--av-ref-color-neutral-11);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 18px;
 }
 
 .plugin-activity .tool-summary strong::before {
@@ -6505,15 +6499,15 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 }
 
 .has-message-capsule .workstream-composer.is-message-capsule textarea {
-  font-size: 14px;
+  font-size: calc(14px * var(--av-sys-font-scale-reading));
   font-weight: 420;
-  line-height: 20px;
+  line-height: calc(20px * var(--av-sys-font-scale-reading));
   min-height: 42px;
 }
 .has-message-capsule .workstream-composer.is-message-capsule .composer-highlight {
-  font-size: 14px;
+  font-size: calc(14px * var(--av-sys-font-scale-reading));
   font-weight: 420;
-  line-height: 20px;
+  line-height: calc(20px * var(--av-sys-font-scale-reading));
 }
 
 .has-message-capsule .workstream-composer.is-message-capsule.has-attachments textarea { min-height: 67px; }
@@ -8098,13 +8092,44 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
  * field instead; maximum-scale=1 would also stop it but takes pinch zoom away
  * on Android. Important because the field rules it overrides are scoped deeper
  * than any one rule here could be. That also shrinks a larger field to 16px,
- * so a field styled above 16px has to be added to the :not() list.
+ * so a field styled above 16px has to be added to the :not() list. A host
+ * that raises the reading scale grows its fields with its text, from the same
+ * 14px base the composer uses on desktop, never below the 16px floor; so the
+ * composer reads at the size of the messages above it once that passes 16px.
  */
 @media (hover: none) and (pointer: coarse) {
   input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']),
   textarea,
   select,
-  .workstream-composer .composer-highlight { font-size: 16px !important; }
+  .workstream-composer .composer-highlight { font-size: max(16px, calc(14px * var(--av-sys-font-scale-reading))) !important; }
+}
+
+/* Apple's minimum touch target is 44pt. The capsule composer's controls keep
+   their 28px circles; on a touch screen each answers an invisible 44px square
+   centred on it. The groups hold 16px between controls and 8px of padding
+   on every side, so no two squares overlap and none is cut off by the
+   composer's own clip. */
+@media (hover: none) and (pointer: coarse) {
+  .has-message-capsule .is-message-capsule :is(.composer-tools, .composer-submit-area) {
+    --composer-submit-gap: 16px;
+    gap: var(--composer-submit-gap);
+    padding: 8px;
+  }
+  /* `.icon-button` already positions the other three. */
+  .has-message-capsule .is-message-capsule .composer-send { position: relative; }
+  .has-message-capsule .is-message-capsule :is(.composer-action-trigger, .dictation-button, .composer-send, .stop-button)::before {
+    /* Centred and sized outright rather than inset from the edges: an
+       absolute box measures from inside the border, and the microphone has
+       one, so an inset of -8px came out 42px. A Send that has widened into
+       a labelled pill keeps 8px beyond it either side. */
+    content: '';
+    height: 44px;
+    left: 50%;
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: max(44px, calc(100% + 16px));
+  }
 }
 
 /* A touch screen has no keyboard to press the Submit shortcut or an option's letter with. */
