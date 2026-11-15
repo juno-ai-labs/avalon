@@ -103,6 +103,7 @@ export const ParentNoticeSchema = z.discriminatedUnion("kind", [
     parentId: z.string().min(1),
     parentTitle: z.string(),
     /** Rally, or the Sidekick that sent it. */
+    senderKind: z.enum(["rally", "sidekick"]),
     senderName: z.string(),
     title: z.string(),
     body: z.string(),

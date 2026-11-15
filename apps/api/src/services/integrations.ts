@@ -35,7 +35,7 @@ import { conversationParentStub, hostedParentStub } from "./conversation-parent-
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { isCanvasChat } from "../lib/canvas-chat";
-import { createNotificationsPlugin } from "./notification-tools";
+import { createNotificationsPlugin, NOTIFICATIONS_PLUGIN_ID } from "./notification-tools";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -6060,10 +6060,7 @@ async function loadHarnessTools(
   const tools: HarnessTool[] = [...coreTools];
   const builtinPlugins = [
     createSidekickTaskOutcomePlugin(input),
-    createNotificationsPlugin(input, {
-      canvasNotices: async (request) => (await hostedParentStub(env, input.workspaceId)).canvasNotices(request),
-      turnIsSelfReview: () => turnIsSelfReview(env, input),
-    }),
+    notificationsPlugin(env, input),
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input, () => turnIsSelfReview(env, input)),
       agentCoordinationRoleGuidance(input),
       { sidekickRun: input.automationRun !== undefined,
@@ -7826,6 +7823,14 @@ export type InterruptedWriteReentry =
   | { outcome: "completed"; result: HarnessToolResult }
   | { outcome: "unknown"; reason: string };
 
+/** `rally:notifications` for this loop, as the live loop and its recovery both build it. */
+function notificationsPlugin(env: Env, input: WorkstreamWorkflowInput): HarnessPlugin {
+  return createNotificationsPlugin(input, {
+    canvasNotices: async (request) => (await hostedParentStub(env, input.workspaceId)).canvasNotices(request),
+    turnIsSelfReview: () => turnIsSelfReview(env, input),
+  });
+}
+
 /**
  * Re-enter one interrupted write from *outside* a harness run.
  *
@@ -7874,7 +7879,8 @@ export async function reenterInterruptedWriteForRecovery(
   const capability = typeof plan?.capability === "string" ? plan.capability : null;
   const idempotency = plan?.idempotency;
   const keyedConnector = pluginId?.startsWith("connection:") && idempotency === "provider_key";
-  if (pluginId === null || (!keyedConnector && pluginId !== TERMINAL_PLUGIN_ID && pluginId !== AUTOMATIONS_PLUGIN_ID) || capability === null) {
+  if (pluginId === null || (!keyedConnector && pluginId !== TERMINAL_PLUGIN_ID && pluginId !== AUTOMATIONS_PLUGIN_ID
+    && pluginId !== NOTIFICATIONS_PLUGIN_ID) || capability === null) {
     return { outcome: "unknown", reason: "no_recovery_executor" };
   }
   if (idempotency !== "provider_key" && idempotency !== "record_before_execute") {
@@ -7907,6 +7913,10 @@ export async function reenterInterruptedWriteForRecovery(
     // so repair uses the same address and current access as a live tool call.
     if (pluginId === TERMINAL_PLUGIN_ID) {
       plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
+    } else if (pluginId === NOTIFICATIONS_PLUGIN_ID) {
+      // The same plugin the live loop had: its receipt key makes the re-entry
+      // land the record or the send once.
+      plugin = notificationsPlugin(env, input);
     } else if (keyedConnector) {
       // Reuse ordinary inventory admission and account selection. Building a
       // catalog activates no connector and allocates no Terminal sandbox.

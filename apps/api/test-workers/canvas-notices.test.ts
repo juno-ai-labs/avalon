@@ -10,7 +10,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
@@ -26,7 +26,11 @@ import { registerPushDevice } from "../src/services/push-device-service";
 import type { ApnsOutcome } from "../src/services/push/apns-transport";
 import type { PushPayloads } from "../src/services/push/push-payload";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
-import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { claimHarnessAttempt } from "../src/runtime/harness-run-runtime";
+import { createHarnessRunObjectPort } from "../src/runtime/harness-run-port";
+import { createToolReceiptObjectPort } from "../src/runtime/tool-receipt-port";
+import { reenterInterruptedWriteForRecovery } from "../src/services/integrations";
+import { runInput, seedExecutionReceipt, seedParticipantMessage, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000ec000");
 const CREATOR = asUserId("00000000-0000-7000-8000-0000000ec001");
@@ -171,8 +175,33 @@ describe("a Canvas's notices", () => {
     const payload = JSON.parse(((apns.mock.calls[0] as unknown[])[2] as PushPayloads).apns) as {
       aps: { alert: { title: string; body: string } }; rally: { url: string };
     };
-    expect(payload.aps.alert).toMatchObject({ title: "New episode: Stratechery", body: "Twelve minutes from this morning's issue." });
+    // The alert says which Canvas it came from.
+    expect(payload.aps.alert).toMatchObject({ title: "Reading list: New episode: Stratechery", body: "Twelve minutes from this morning's issue." });
     expect(payload.rally.url).toMatch(/\/cv\/[1-9A-Za-z]+\/$/u);
+  });
+
+  it("send the email in place of a push that reaches no device, and not beside one that does", async () => {
+    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
+      action: { kind: "register", purpose: "New episodes.", operationId: "op-1" } });
+    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
+      action: { kind: "send", title: "New episode", body: "Out now.", sourceId: "fallback" } });
+    const queue = Object.getPrototypeOf(env.PUSH_DELIVERY_QUEUE) as { send: (body: unknown) => Promise<void> };
+    const queued: unknown[] = [];
+    vi.spyOn(queue, "send").mockImplementation(async (body) => { queued.push(body); });
+    const message = { region: "global" as const, workspaceId: WORKSPACE_ID, recipientUserId: PARTICIPANT,
+      intentId: `fallback:${PARTICIPANT}`, emailFallback: true as const };
+
+    // Every device refuses its token: nothing reached them, so the email goes instead.
+    expect(await deliverPush(pushEnv(), message, async (): Promise<ApnsOutcome> => ({ outcome: "bad_token" }))).toBe(true);
+    expect(queued).toEqual([{ region: "global", workspaceId: WORKSPACE_ID, recipientUserId: PARTICIPANT,
+      intentId: `fallback:${PARTICIPANT}`, channel: "email" }]);
+
+    queued.length = 0;
+    await registerPushDevice(pushEnv(), auth(PARTICIPANT), "pp", {
+      platform: "macos", transport: "apns", topic: "ai.rallywith.desktop", apnsEnvironment: "production", token: "qq".repeat(32), appVersion: "1",
+    });
+    expect(await deliverPush(pushEnv(), message, async (): Promise<ApnsOutcome> => ({ outcome: "sent" }))).toBe(true);
+    expect(queued).toEqual([]);
   });
 
   it("refuse a Sidekick attached to two Canvases, naming both, and send from its one Canvas", async () => {
@@ -191,7 +220,73 @@ describe("a Canvas's notices", () => {
     await attach(OTHER_CANVAS);
     expect(await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop, action: { ...send, sourceId: "second" } })).toEqual({
       outcome: "refused", code: "notifications_sidekick_has_several_canvases",
-      available: [{ canvasId: CANVAS, title: "Reading list" }, { canvasId: OTHER_CANVAS, title: "Other" }],
+      available: [{ canvasId: CANVAS, title: "Reading list" }, { canvasId: OTHER_CANVAS, title: "Other" }], unnamed: 0,
     });
+    // A person who cannot open one of them is not told its title, only that it exists.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'creator' WHERE canvas_id = ?`, OTHER_CANVAS);
+    });
+    expect(await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: { ...loop, actingUserId: PARTICIPANT },
+      action: { ...send, sourceId: "third" } })).toEqual({
+      outcome: "refused", code: "notifications_sidekick_has_several_canvases",
+      available: [{ canvasId: CANVAS, title: "Reading list" }], unnamed: 1,
+    });
+  });
+
+  it("finish a send its loop was interrupted in, once, when the run is recovered", async () => {
+    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
+      action: { kind: "register", purpose: "New episodes.", operationId: "op-1" } });
+    const triggerMessageId = crypto.randomUUID();
+    const input = runInput(crypto.randomUUID(), { workspaceId: WORKSPACE_ID, parentId: CANVAS, parentKind: "canvas",
+      triggerMessageId, executionPrincipal: { type: "user", userId: CREATOR } });
+    await runInDurableObject(chat(), async (_instance, state) => {
+      await seedParticipantMessage(state, { id: triggerMessageId, sequence: 1, authorUserId: CREATOR, text: "Tell everyone." });
+      seedExecutionReceipt(state, input.harnessRunId, input, Date.now());
+    });
+    const runs = createHarnessRunObjectPort(env, WORKSPACE_ID, CANVAS);
+    const claim = await claimHarnessAttempt(runs, input, { attemptId: crypto.randomUUID(), owner: "first", leaseSeconds: 300 });
+    if (claim.state !== "claimed") throw new Error(`notice_recovery_claim_${claim.state}`);
+    const receipts = createToolReceiptObjectPort(env, WORKSPACE_ID, CANVAS);
+    const args = { title: "New episode", body: "Out now." };
+    // Recorded, then the Worker stopped before the send ran.
+    await receipts.admit({ effectIntentId: crypto.randomUUID(), runId: input.harnessRunId, toolCallId: "interrupted", toolName: "send",
+      mode: "write", connectionId: null, requestHash: "notice-request", inputJson: JSON.stringify(args),
+      executionPlanHash: "notice-plan", executionPlanJson: JSON.stringify({ pluginId: "rally:notifications",
+        canonicalToolName: "send", capability: "rally.notifications.send", mode: "write", idempotency: "record_before_execute" }),
+      compatiblePriorPlanHashes: [], providerIdempotencyKey: null,
+      fence: { runId: input.harnessRunId, attemptId: claim.lease.attemptId, owner: claim.lease.owner }, now: Date.now() });
+    await runInDurableObject(chat(), (_instance, state) => state.storage.sql.exec(
+      "UPDATE runs SET lease_expires_at=? WHERE run_id=?", Date.now() - 1, input.harnessRunId));
+    await evictDurableObject(chat());
+    const replacement = await claimHarnessAttempt(runs, input, { attemptId: crypto.randomUUID(), owner: "replacement", leaseSeconds: 300 });
+    if (replacement.state !== "claimed") throw new Error(`notice_recovery_replacement_${replacement.state}`);
+    const interrupted = (await receipts.receiptForCall({ runId: input.harnessRunId, toolCallId: "interrupted" }))!;
+
+    expect(await reenterInterruptedWriteForRecovery(env, input, { ...interrupted, startedAt: interrupted.startedAt ?? 0 }, replacement.lease, runs))
+      .toMatchObject({ outcome: "completed", result: { output: { canvasId: CANVAS, recipients: 3 } } });
+    expect((await intents()).map((intent) => intent.recipient_user_id)).toEqual([CREATOR, PARTICIPANT, MUTED].sort());
+  });
+
+  it("keep a newer registration when an older one is retried", async () => {
+    const register = (purpose: string, operationId: string) => workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
+      action: { kind: "register", purpose, operationId } });
+    await register("Drafts.", "op-a");
+    await register("New episodes.", "op-b");
+    // The first call's result was lost, so the harness runs it again.
+    expect(await register("Drafts.", "op-a")).toMatchObject({ outcome: "registered", purpose: "New episodes.", changed: false });
+    expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS,
+      actor: { userId: PARTICIPANT, actorRole: "member" } })).notices).toMatchObject({ purpose: "New episodes." });
+  });
+
+  it("refuse a Chat's agent once its person can no longer open the Canvas", async () => {
+    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
+      action: { kind: "register", purpose: "New episodes.", operationId: "op-1" } });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'creator' WHERE canvas_id = ?`, CANVAS);
+      state.storage.sql.exec(`DELETE FROM canvas_participants WHERE canvas_id = ? AND user_id = ?`, CANVAS, PARTICIPANT);
+    });
+    expect(await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: { ...CHAT_LOOP, actingUserId: PARTICIPANT },
+      action: { kind: "send", title: "New episode", body: "Out now.", sourceId: "after-removal" } }))
+      .toEqual({ outcome: "refused", code: "canvas_access_denied" });
   });
 });

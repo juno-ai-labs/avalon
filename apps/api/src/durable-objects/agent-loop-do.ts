@@ -1965,7 +1965,12 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     messageId: string | null;
   }> {
     await this.initialized;
-    const request = parseRpcInput(HostRecordRequestSchema, input, "append_host_record");
+    // Refused by name rather than thrown: a bare error loses its field crossing the RPC hop back.
+    const parsed = HostRecordRequestSchema.safeParse(input);
+    if (!parsed.success) {
+      return { outcome: "refused", code: zodDiagnosticCode(parsed.error, "append_host_record") ?? "append_host_record_invalid", messageId: null };
+    }
+    const request = parsed.data;
     const identity = this.objectStore.identity();
     if (!identity || identity.workspaceId !== request.workspaceId || identity.parentKind !== request.parentKind
       || identity.parentId !== request.workstreamId || this.externalSubstreamId() !== "0") {

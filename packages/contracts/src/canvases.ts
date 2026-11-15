@@ -155,7 +155,6 @@ export const CanvasSidekickSchema = z.object({
 });
 export type CanvasSidekick = z.infer<typeof CanvasSidekickSchema>;
 
-/** A Canvas as the person opening it sees it: its row, who it is shared with, and its artifacts newest first. */
 /**
  * A Canvas's notices as one viewer sees them: what the Canvas said it will
  * notify about, who turned them on, whether this viewer is a participant
@@ -199,6 +198,7 @@ export const CanvasNoticesRecordSchema = z.object({
 });
 export type CanvasNoticesRecord = z.infer<typeof CanvasNoticesRecordSchema>;
 
+/** A Canvas as the person opening it sees it: its row, who it is shared with, and its artifacts newest first. */
 export const CanvasDetailSchema = CanvasSummarySchema.extend({
   /** Everyone on the participant list besides the creator, guests among them. */
   participantUserIds: z.array(UserIdSchema),

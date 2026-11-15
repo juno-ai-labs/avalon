@@ -1031,27 +1031,6 @@ why the refresh lease shares the owning object's transaction.
 
 ## Changelog
 
-### 2026-11-15 — A Canvas sends notices to its people
-
-**What changed:** A Canvas holds a notices registration and each person's
-choice for it, and its detail carries the viewer's view of them (`notices`).
-The Chat shows the record an agent's `register` lands, the title menu gains
-Notifications, and an Organization-wide Canvas a viewer is not listed in
-shows a banner under the title offering to join.
-[`push-notifications.md`](push-notifications.md#canvas-notices) owns the
-delivery.
-
-**Why:** The owner asked that a Canvas, not a tool call, decide who hears
-its notices, with choices per Canvas.
-
-**Considered and rejected:** A toast at the top of the Canvas: it covered
-the title pill and was cut off at narrow widths; the banner sits in the
-header's flow.
-
-**Consequences:** A notice goes only to listed participants and the creator,
-so Organization visibility alone admits a reader but not a recipient; the
-banner and `canvasJoin` close that gap.
-
 ### 2026-11-15 — A person the Canvas admits can join its participant list
 
 **What changed:** `canvasJoin` lists a member an Organization-wide Canvas

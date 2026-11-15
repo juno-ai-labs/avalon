@@ -185,7 +185,9 @@ function parentWords(notice: ParentNotice): { title: string; body: string; actor
       body: sourceNoticeText(notice), actorName: notice.personName };
     case "source_declined": return { title: `${notice.personName} declined their ${notice.connectorName} for ${notice.parentTitle}`,
       body: sourceNoticeText(notice), actorName: notice.personName };
-    case "canvas_notice": return { title: notice.title, body: notice.body, actorName: notice.senderName };
+    // Named by its Canvas, and by the Sidekick that sent it, so the alert and the email subject say where it came from.
+    case "canvas_notice": return { title: notice.senderKind === "sidekick" ? `${notice.senderName} in ${notice.parentTitle}: ${notice.title}`
+      : `${notice.parentTitle}: ${notice.title}`, body: notice.body, actorName: notice.senderName };
   }
 }
 
