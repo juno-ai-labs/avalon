@@ -42,7 +42,10 @@ format.
    - the feed URL in a read-only field with a **Copy link** button beside it;
    - one line each on adding it in two or three common apps for its kind
      (the reference names them);
-   - the newest entries, each with its title and date.
+   - the newest entries, each with its title and date, and a link to its
+     media file when it has one. Link with \`<a href>\`: the page cannot play
+     a separately published file in an \`<audio>\` element
+     (\`building-live-sites\`, Media, downloads and feeds).
 
 3. **Keep one row per entry, keyed by the source.** Give each row a stable
    id from where the entry came from: a message id, an event id, a post's
