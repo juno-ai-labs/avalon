@@ -184,7 +184,11 @@ An approval adds the requester with source `request`, and an audience change
 that admits a person settles their waiting request.
 
 `canvasSetAudience` replaces the participant list with the one given and sets
-the visibility. Everyone named must be in the Organization, as a member or a
+the visibility. For an Organization-wide Canvas the sharing dialog names only
+its guests, since every member is admitted already, so a save from it, a
+narrowing one included, keeps the members who joined it themselves (below)
+rather than dropping them. A later save from the narrowed Canvas lists them
+and can remove them. Everyone named must be in the Organization, as a member or a
 guest (`assertAudienceInOrganization`, the check a Sidekick's audience uses;
 `canvas_audience_not_member`); a `participants` Canvas names someone other than
 its creator (`canvas_audience_participants_empty`). Narrowing the audience
@@ -192,6 +196,16 @@ backgrounds the presence of anyone it no longer admits and re-sends presence to
 the people still in the Canvas, before the one Canvas list the write sends, and
 closes the open Chat feed of each person it took away through the
 access-revocation Queue ([`access-revocation.md`](access-revocation.md)).
+
+A member an Organization-wide Canvas admits may add themselves to its
+participant list (`canvasJoin`, `POST /canvases/:id/join`), so its notices
+reach them ([Canvas notices](PRDs/2026-11-14_canvas-notices/prd.md)). A join
+is an `added` row whose `added_by_user_id` is the person themselves, which is
+how a join is told from a manager's add. Only Organization visibility admits
+a join (`canvas_join_requires_organization_visibility` otherwise): a
+participant row admits whatever the visibility, so a join through a writer
+Sidekick's audience or an administrator's role would outlast that admission.
+Someone the Canvas does not admit is told it does not exist.
 
 ### Guests
 
@@ -1014,6 +1028,29 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-15 — A person the Canvas admits can join its participant list
+
+**What changed:** `canvasJoin` lists a member an Organization-wide Canvas
+admits, as an `added` row they added themselves. A sharing save from an
+Organization-wide Canvas, narrowing included, keeps those rows.
+
+**Why:** Canvas notices go to a Canvas's listed participants, and a member
+admitted only by Organization visibility had no way onto the list but a
+manager's add. The sharing dialog names only guests for such a Canvas, so
+without the keep rule any save would have removed every member who joined.
+
+**Considered and rejected:** A `self` participant source, which needs the
+table rebuilt with its six triggers restated; `added_by_user_id = user_id`
+already tells a join apart. A save that sends adds and removes: the
+`sharing_revision` fence already refuses a save from a dialog opened before
+the join.
+
+**Consequences:** Narrowing an Organization-wide Canvas keeps whoever joined
+it. Joining is refused through any other admission, a writer Sidekick's
+audience or an administrator's role, because a participant row admits
+whatever the visibility and would outlast the admission it relied on (found
+in review).
 
 ### 2026-11-13 — New Canvases open to the Organization by default
 

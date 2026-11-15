@@ -265,9 +265,9 @@ async function runState(runId: string): Promise<string | undefined> {
   return (await workspaceStub().sidekickReadRunState({ ...addressed(), runId }))?.state;
 }
 
-async function delegatedRunWorker() {
+async function delegatedRunWorker(turn: Partial<WorkstreamWorkflowInput> = {}) {
   const runId = await completedRun();
-  const ownerInput = WorkstreamWorkflowInputSchema.parse(JSON.parse((await receipts(runId))[0]!.execution_context_json));
+  const ownerInput = { ...WorkstreamWorkflowInputSchema.parse(JSON.parse((await receipts(runId))[0]!.execution_context_json)), ...turn };
   const owner = new AgentCommunicationService(TEST_ENV, ownerInput);
   const context = {
     workspaceId: WORKSPACE_ID,
@@ -632,6 +632,21 @@ describe("Sidekick run continuation", () => {
       "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", refused).toArray()[0]?.status)).toBe("fired");
     expect(await wakeupReceipts(worker.workerId)).toHaveLength(1);
     expect(callThatSaw("Do not run this while paused.")).toBeUndefined();
+  });
+
+  it("records what started a worker's root, and a worker it starts inherits it", async () => {
+    await activeSidekick();
+    const worker = await delegatedRunWorker({ reason: "sidekick_review" });
+    expect(worker.input).toMatchObject({ backgroundAgent: true, backgroundAgentRootReason: "sidekick_review" });
+
+    const nested = await new AgentCommunicationService(TEST_ENV, worker.input).start({
+      name: "Nested checker", description: "Check the nested count", message: "Check the nested count.", attachmentIds: [],
+    }, { ...worker.context, harnessRunId: worker.input.harnessRunId, executionPrincipal: worker.input.executionPrincipal,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID() });
+    const nestedId = agentAddressForId(nested.agentId).substreamId;
+    const execution = await settledExecutionFor(nestedId, nestedId);
+    expect(WorkstreamWorkflowInputSchema.parse(JSON.parse(execution.execution_context_json)))
+      .toMatchObject({ backgroundAgent: true, backgroundAgentRootReason: "sidekick_review" });
   });
 
   it.each(["pause", "pause_resume", "run_not_found"] as const)(

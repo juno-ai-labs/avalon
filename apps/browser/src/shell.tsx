@@ -22,11 +22,20 @@ import { FaviconApiProvider } from '../../desktop/src/renderer/lib/favicon-api';
 import { clearWorkspaceLocalCache } from '../../desktop/src/renderer/lib/local-cache';
 import { desktopBridge } from '../../desktop/src/renderer/lib/platform';
 import { reconcileWebPush } from '../../desktop/src/renderer/lib/web-push';
+import { DevicePushReadinessContext, type DevicePushReadiness } from '../../desktop/src/renderer/lib/device-push';
 import { createQueryClient } from '../../desktop/src/renderer/lib/query-client';
 import { useWindowActivationTracking } from '../../desktop/src/renderer/lib/window-activation';
 import { setShellMounted } from './notification-open';
 import { shellLocation } from './session';
 import { BrowserApiError, browserRequest } from './transport';
+
+/**
+ * The iPhone app gets its notifications from its native shell, not from Web
+ * Push, so this page cannot read its device's permission and says nothing
+ * about it rather than offer Web Push's answer. The shell's own Enable
+ * notifications is where it is turned on.
+ */
+const MOBILE_PUSH_READINESS: DevicePushReadiness = { state: 'unknown', act: async () => undefined, pending: false };
 
 const MAC_APP_ONLY = 'Available in the Mac app.';
 
@@ -195,7 +204,9 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
   }), [api, getAccountOnboarding, identityApi, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
   return <AppSessionValueProvider value={value} connectorSetup={connectorSetup}>
     <FaviconApiProvider>
-      <AccountOnboardingGate onRecoveryReady={mobileScreenReady}>{isMobileHost() ? <MobileCanvasApp /> : <Suspense fallback={<BrowserBoot />}><WorkspaceApp /></Suspense>}</AccountOnboardingGate>
+      <AccountOnboardingGate onRecoveryReady={mobileScreenReady}>{isMobileHost()
+        ? <DevicePushReadinessContext.Provider value={MOBILE_PUSH_READINESS}><MobileCanvasApp /></DevicePushReadinessContext.Provider>
+        : <Suspense fallback={<BrowserBoot />}><WorkspaceApp /></Suspense>}</AccountOnboardingGate>
     </FaviconApiProvider>
   </AppSessionValueProvider>;
 }
