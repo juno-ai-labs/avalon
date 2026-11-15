@@ -2,8 +2,14 @@ import type { HarnessSkill } from "../../types";
 
 /**
  * How to make one podcast episode: a script written for the ear, an
- * AI-voiced recording of it, the episode's artwork, and the record a feed
- * needs.
+ * AI-voiced recording of it, its chapters, the episode's artwork, and the
+ * record a feed needs.
+ *
+ * Chapters go two places because players read them from two: ID3 chapter
+ * frames inside the MP3, which every chapter-aware player reads, and the rows
+ * the feed serves as a Podcasting 2.0 chapters file, which Apple Podcasts
+ * reads from the feed on iOS 26.2 and later. Supplying them also stops Apple
+ * generating its own for an episode of ten minutes or more.
  *
  * It covers only the episode. Where the episode goes (a feed, its database,
  * its page, who can open it) is `publishing-a-feed`'s, and this skill ends by
@@ -21,7 +27,7 @@ import type { HarnessSkill } from "../../types";
  */
 
 const CREATING_A_PODCAST_EPISODE_BODY = `Make one episode: a script written for the ear, an AI-voiced recording of
-it, its artwork, and the record a feed stores. Load
+it, its chapters, its artwork, and the record a feed stores. Load
 \`rally_multimodal_generation\` for speech and images, and Terminal for
 ffmpeg and \`publish_resource\`; loading this skill activates neither. Where
 the episode is published is \`publishing-a-feed\`'s, not this skill's.
@@ -59,10 +65,16 @@ the episode is published is \`publishing-a-feed\`'s, not this skill's.
    - **Add an opening and a close.** Open with the show's name, the
      episode's title and date, and one sentence saying the episode is read
      by an AI voice. Close with one sentence pointing to the show notes.
+   - **Mark the sections as you write.** Each part of the source a listener
+     would want to jump to (a story, a segment, a topic) is a section with
+     a title of a few plain words: "Opening", "The funding round",
+     "Reader questions". These become the episode's chapters. The opening
+     is the first section.
 
 3. **Split the script at paragraph, then sentence, boundaries** into pieces
-   under the per-call limit the speech generator's schema states. Never cut
-   a sentence in two, and never drop text to fit.
+   under the per-call limit the speech generator's schema states. Start
+   every section in a new piece, so each chapter begins exactly where a
+   piece does. Never cut a sentence in two, and never drop text to fit.
 
 4. **Keep one voice and one reading style.** Choose a voice and write short
    \`instructions\` for how to read: for example, "A warm, clear narrator
@@ -101,7 +113,44 @@ the episode is published is \`publishing-a-feed\`'s, not this skill's.
    suggests, a piece failed or was cut off: find it in the ledger and record
    it again before going on.
 
-8. **Make the episode's artwork.** Generate one square image about this
+8. **Add the chapters.** Give an episode with two or more sections one
+   chapter per section; an episode with one section gets none.
+   - **Time each chapter from the pieces.** Read each piece's length with
+     \`ffprobe\`. A section's start is the sum of the lengths of every piece
+     before its first one. Its end is the next section's start, and the
+     last one ends at the episode's length.
+   - **Write them into the MP3**, in a second ffmpeg pass that copies the
+     audio unchanged. Put the episode's own tags in the same file, since
+     this pass replaces them:
+
+     \`\`\`
+     ;FFMETADATA1
+     title=Episode title
+     artist=Show name
+     [CHAPTER]
+     TIMEBASE=1/1000
+     START=0
+     END=41250
+     title=Opening
+     [CHAPTER]
+     TIMEBASE=1/1000
+     START=41250
+     END=318900
+     title=The funding round
+     \`\`\`
+
+     \`\`\`
+     ffmpeg -y -i episode.mp3 -i chapters.txt -map 0:a -map_metadata 1 -map_chapters 1 \\
+       -codec copy -id3v2_version 3 -write_id3v1 0 episode-chapters.mp3
+     ffprobe -v error -show_chapters -of compact episode-chapters.mp3
+     \`\`\`
+
+     Confirm \`ffprobe\` lists every chapter with its title and start, then
+     publish \`episode-chapters.mp3\` as the episode's audio.
+   - **Keep the list** of each chapter's start in seconds and its title,
+     for the feed (step 12).
+
+9. **Make the episode's artwork.** Generate one square image about this
    episode's subject. Ask for an opaque, full-bleed scene with **no text and
    no logos**: Apple shows episode art beside the show's own cover, and text
    in generated images is often misspelled. Check it with \`view_image\`.
@@ -111,22 +160,23 @@ the episode is published is \`publishing-a-feed\`'s, not this skill's.
    ffmpeg -y -i art.png -vf "scale=3000:3000:flags=lanczos,format=rgb24" -q:v 3 art.jpg
    \`\`\`
 
-9. **Publish the recording and the artwork as files.** Use file names of
+10. **Publish the recording and the artwork as files.** Use file names of
    only letters, digits, hyphens and dots, dated so they never collide:
    \`2026-11-14-no-ai-slop.mp3\` and \`2026-11-14-no-ai-slop.jpg\`. Publish
    each with \`publish_resource\` into the feed's Canvas, and keep each
    result's \`url\` and \`sizeBytes\`. If a result has no \`url\`, the file did
    not land in a Canvas, and no podcast app can reach it.
 
-10. **Write the show notes**: two or three sentences on what the episode
+11. **Write the show notes**: two or three sentences on what the episode
     covers, a link to the source, and one sentence saying the audio is an AI
     voice. Use simple HTML: paragraphs, links and lists.
 
-11. **Hand over the episode record.** The feed stores one row per episode
+12. **Hand over the episode record.** The feed stores one row per episode
     (\`publishing-a-feed\`, \`reference/apple-podcasts.md\`): the GUID from
     step 1, the title, the show notes, the publication date, the audio's
     \`url\` and \`sizeBytes\`, its length in whole seconds, the artwork's
-    \`url\`, and the next episode number. Write that row, or give it to
+    \`url\`, the next episode number, and one chapter row per chapter (its
+    start in seconds and its title). Write that row, or give it to
     whoever writes the feed. Report what you made from the results you
     have: never say an episode is in the feed until its row write
     succeeded.
@@ -143,6 +193,9 @@ the episode is published is \`publishing-a-feed\`'s, not this skill's.
   whole show.
 - **Text in the episode art.** Generated lettering is often wrong, and
   Apple asks for none. Do instead: a scene with no text.
+- **Chapters timed by guesswork.** A chapter that starts mid-sentence sends
+  the listener to the wrong place. Do instead: start each section in a new
+  piece, and time it from the pieces' measured lengths (step 8).
 - **Reporting a finished episode on the recording alone.** Check its
   length (step 7) and confirm its row was written.
 `;
@@ -150,7 +203,7 @@ the episode is published is \`publishing-a-feed\`'s, not this skill's.
 export const CREATING_A_PODCAST_EPISODE_SKILL: HarnessSkill = {
   name: "creating-a-podcast-episode",
   description:
-    "How to make one podcast episode from a text source: rewrite it as a script for the ear, record it with an AI voice in pieces, join and level it, make its artwork, and hand the feed its record.",
+    "How to make one podcast episode from a text source: rewrite it as a script for the ear, record it with an AI voice in pieces, join and level it, add chapters, make its artwork, and hand the feed its record.",
   whenToUse:
     "When a newsletter, article, report or other text should become an audio episode, whether one-off or for a podcast feed.",
   body: CREATING_A_PODCAST_EPISODE_BODY,

@@ -46,7 +46,9 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    the feed says:
    - a **show** table with one row: the title, description, author, artwork
      path, language, category and every other channel-level value;
-   - an **entries** table with one row per episode, event or post.
+   - an **entries** table with one row per episode, event or post;
+   - for a podcast, a **chapters** table with one row per chapter of an
+     episode, keyed by the episode's id and the chapter's start.
 
    The site's code renders the feed from those rows on every request, with
    one function per element and one escaping function every value passes
@@ -54,7 +56,9 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    it alone. Adding an entry is one row write with \`write_artifact_data\`;
    changing the show's description is one update to its row. Never store
    rendered XML or calendar text in a row, and never republish the site to
-   add an entry. The reference lists each format's columns.
+   add an entry. The reference lists each format's columns. A podcast's
+   chapters file is rendered the same way, from the chapters rows, at its
+   own route (\`reference/apple-podcasts.md\`).
 
 3. **Key every entry by its source.** Give each row a stable id from where
    the entry came from: a message id, an event id, a post's URL. A retry
@@ -86,8 +90,9 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    the site's directory lets the page show it and the feed name it.
 
 6. **Serve the feed before any viewer check.** In the storage class's
-   \`fetch\`, answer the feed path first, with the format's content type, and
-   read no viewer header on it or on its media: a viewer check returns 401 to
+   \`fetch\`, answer the feed path (and a podcast's chapters path) first,
+   with the format's content type, and read no viewer header on it or on its
+   media: a viewer check returns 401 to
    every app, and the feed never updates. Keep whatever checks the site's
    other routes already have.
 
@@ -117,7 +122,8 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    cookies and confirm a 200 and the format's content type. Parse the body
    with an XML or calendar parser (\`python3\` has both in its standard
    library) rather than reading it by eye, and confirm every entry row
-   appears. For media, send a \`HEAD\` to one file's URL, which should report
+   appears. For a podcast, also fetch one episode's chapters file and parse
+   it as JSON. For media, send a \`HEAD\` to one file's URL, which should report
    \`accept-ranges: bytes\` and the file's length. A new file can take a few
    seconds to serve after it is published. If Terminal cannot reach the URL,
    say you could not check it rather than reporting that it works.
@@ -227,7 +233,8 @@ read the same tags, so write every podcast feed to these rules.
   \`\`\`xml
   <rss version="2.0"
        xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
-       xmlns:content="http://purl.org/rss/1.0/modules/content/">
+       xmlns:content="http://purl.org/rss/1.0/modules/content/"
+       xmlns:podcast="https://podcastindex.org/namespace/1.0">
   \`\`\`
 
 - Entities: use \`&amp;\`, \`&lt;\`, \`&gt;\`, \`&apos;\` and \`&quot;\`. Apple
@@ -268,6 +275,38 @@ read the same tags, so write every podcast feed to these rules.
 | \`season_number\` | \`<itunes:season>\`, only for a show that has seasons. |
 | \`episode_type\` | \`<itunes:episodeType>\`: \`full\`, \`trailer\` or \`bonus\`. |
 | \`explicit\` | \`<itunes:explicit>\` for this episode. |
+
+Each entry with chapters also gets
+\`<podcast:chapters url="…/chapters/<guid>.json" type="application/json+chapters"/>\`,
+with the absolute URL of its chapters file.
+
+## Chapters
+
+Players read chapters from two places, and the feed supplies both: the ID3
+chapter frames inside the MP3 (\`creating-a-podcast-episode\` writes them),
+and a chapters file the feed links to, which Apple Podcasts reads from the
+feed on iOS 26.2 and later. An episode with its own chapters also stops
+Apple generating chapters of its own.
+
+- **Rows:** a \`chapters\` table with \`guid\` (the episode's), \`start_seconds\`
+  and \`title\`, keyed by \`guid\` and \`start_seconds\`. The episode's
+  chapters are written with its row, from the same list that went into the
+  MP3, so the two never disagree.
+- **Route:** \`/chapters/<guid>.json\`, rendered from those rows on every
+  request, before any viewer check, with content type
+  \`application/json+chapters\`:
+
+  \`\`\`json
+  {"version": "1.2.0", "chapters": [
+    {"startTime": 0, "title": "Opening"},
+    {"startTime": 41.25, "title": "The funding round"}
+  ]}
+  \`\`\`
+
+  \`version\` is the chapters format's own version; \`startTime\` is seconds
+  from the start, in order.
+- Put only letters, digits and hyphens in a \`guid\` used in this path, or
+  encode it; Apple asks for ASCII URLs.
 
 ## Artwork
 
