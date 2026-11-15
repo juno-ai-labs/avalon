@@ -2,14 +2,15 @@ import { requireUsageAllowance } from "./usage-admission";
 import { z } from "zod";
 import { judgeSemanticTriggerCondition, type HarnessTool } from "@rally/agent-harness";
 import {
-  IdSchema, UserIdSchema, agentAddressForId, asAutomationId, asSubstreamId, asWorkspaceId, type UserId, type WorkstreamWorkflowInput,
+  IdSchema, UserIdSchema, asWorkspaceId, type UserId, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import type { Env } from "../env";
 import { runtimeDeferral } from "../lib/defer";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import { SidekickSourceService } from "./sidekick-source-service";
+import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 
 /**
  * The agent's side of a Sidekick's sources: see who lets events in, ask
@@ -55,38 +56,6 @@ export function sidekickSourceRequestCard(event: { pluginId?: string | undefined
   return asked.success
     ? { sidekickId: asked.data.sidekickId, requests: asked.data.requests.map(({ requestId }) => ({ requestId })) }
     : null;
-}
-
-/**
- * The Canvas whose Chat started this wizard turn, or null for any other loop:
- * an agent's message from a Canvas's Chat to the Sidekick's wizard.
- */
-export function wizardTurnCanvasId(input: Pick<WorkstreamWorkflowInput, "sidekickWizard" | "agentExchange">): string | null {
-  if (input.sidekickWizard !== true || !input.agentExchange) return null;
-  const sender = agentAddressForId(input.agentExchange.senderAgentId);
-  return sender.parentKind === "canvas" && sender.substreamId === "0" ? sender.parentId : null;
-}
-
-/**
- * Post the Sidekick's source-request card into a Canvas's Chat, as the
- * Sidekick: the post's text is what the Chat's agent reads, and its
- * `sourceRequests` is what the client draws.
- */
-async function postSourceRequestCard(env: Env, input: WorkstreamWorkflowInput, canvasId: string, sidekickId: string,
-  requestIds: string[], clientMessageId: string): Promise<void> {
-  const workspaceId = asWorkspaceId(input.workspaceId);
-  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
-  const canvas = await workspace.canvasContext({ workspaceId, canvasId });
-  const name = canvas?.sidekicks.find((sidekick) => sidekick.id === sidekickId)?.name || "Sidekick";
-  const chat = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, workspaceId,
-    conversationObjectName(env.AVALON_REGION, workspaceId, canvasId, asSubstreamId("0")));
-  const appended = await chat.appendConversationPost({
-    schemaVersion: 1, workspaceId, parentKind: "canvas", workstreamId: canvasId, substreamId: "0", clientMessageId,
-    text: `${name} asked ${requestIds.length === 1 ? "one person" : `${requestIds.length} people`} to let their events start it. Each person approves or declines their own request.`,
-    post: { type: "automation_activation", schemaVersion: 1, automationId: asAutomationId(sidekickId), automationName: name,
-      runId: input.harnessRunId, deliveryId: clientMessageId, occurredAt: Date.now(), sourceRequests: { requestIds } },
-  });
-  if (appended.outcome === "refused") throw new Error(`sidekick_source_card_refused:${appended.code}`);
 }
 
 /** How many of the person's own recent events one test judges. A product choice: one screenful to read. */
@@ -148,8 +117,11 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
       // a post of the Sidekick's that draws the same requests. Keyed on the
       // receipt, so a retried call posts once.
       if (askedFromCanvasId !== null) {
-        await postSourceRequestCard(env, input, askedFromCanvasId, asked.sidekickId, asked.requests.map((request) => request.requestId),
-          `sidekick-source-card:${operationId}`);
+        const requestIds = asked.requests.map((request) => request.requestId);
+        await postWizardCard(env, input, askedFromCanvasId, `sidekick-source-card:${operationId}`, (name) => ({
+          text: `${name} asked ${requestIds.length === 1 ? "one person" : `${requestIds.length} people`} to let their events start it. Each person approves or declines their own request.`,
+          card: { sourceRequests: { requestIds } },
+        }));
       }
       // The whole result is the card's input: the client reads each request's
       // id from it and draws its live state.

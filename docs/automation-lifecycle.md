@@ -1748,17 +1748,25 @@ did not make, is refused (`sidekick_id_unavailable`).
 directory row and the attachment in one transaction, the attachment marked
 `made_here`. There is no made-but-unattached state.
 
-That mark is the whole of what ties the Sidekick to the Canvas:
+What ties the Sidekick to a Canvas:
 
-- **Everyone the Canvas admits manages it.** `sidekickManages` is
-  `sidekickManagerAllows` (author, run-as, and an Organization Sidekick's
-  owners and administrators) or `canvasReaderAllows` over the Canvas its
-  `made_here` attachment names, guests of the Canvas included.
-  `HostedSidekick.managerAllows` applies it, so every managed action follows.
+- **Everyone a Canvas it is attached to admits manages it.**
+  `sidekickManages` is `sidekickManagerAllows` (author, run-as, and an
+  Organization Sidekick's owners and administrators) or
+  `sidekickCanvasAdmits`: `canvasReaderAllows` over any Canvas it is attached
+  to, the one its `made_here` attachment names and any attached later, guests
+  of the Canvas included. A Canvas the Sidekick's own runs made
+  (`writer_sidekick_id` is the Sidekick) does not count: it admits whoever
+  reads the Sidekick, so counting it would make every reader a manager.
+  `HostedSidekick.managerAllows` applies it, so every managed action follows:
+  saving through the wizard, pause, resume, Run now, sharing and archive.
 - **Managing is not opening.** `sidekickReaderAllows` does not read the mark.
   Someone in the Canvas who is not someone the Sidekick is shared with
   changes it from the Canvas and cannot open its conversation or runs, unless
   they share it with themselves, which a manager may.
+- **Only the `made_here` mark makes it the Canvas's own.** Archiving the
+  Canvas archives it, and the Chat's `archive_sidekick` reaches it. A
+  Sidekick only attached is managed from the Canvas but not archived with it.
 - **Archiving the Canvas archives it.** `HostedCanvas.archive` calls the
   host's `archiveMadeSidekicks` inside its transaction, which runs
   `HostedSidekick.archiveWithCanvas` for each one the Canvas made; the
@@ -2408,6 +2416,31 @@ conversation-object SQLite; the vocabulary, `StatusDot`, the
 survive as described above.
 
 ## Changelog
+
+### 2026-11-14 — A Canvas manages every Sidekick attached to it
+
+**What changed:** `sidekickManages` admits everyone a Canvas the Sidekick is
+attached to admits (`sidekickCanvasAdmits`), not only the Canvas whose Chat
+made it. A Canvas the Sidekick's own runs made is left out. The Canvas Chat's
+`sidekicks_list` lists every Sidekick attached there, marked `madeHere`.
+
+**Why:** The owner asked on 2026-11-14 that anyone with access to a Canvas be
+able to start a turn of its Sidekick's wizard, and chose that this cover a
+Sidekick attached to the Canvas later as well as one made there. A wizard
+turn is how a Sidekick changes, so the rule is the manager rule.
+
+**Considered and rejected:** A narrower rule for starting a wizard turn
+alone. The wizard saves as the person it acts for, so a second rule would
+have had to reach every save, pause and share the wizard can make; one rule
+keeps them together. Also rejected: counting the Canvases a Sidekick's runs
+made. Those Canvases admit whoever reads the Sidekick, so every reader would
+manage it, which undoes the split between reading and managing.
+
+**Consequences:** Attaching a Sidekick to a Canvas hands everyone in that
+Canvas its management, archive included, and only a manager can attach it.
+`sidekickReaderAllows` still reads no attachment. A change that should not
+let a Canvas archive or reshare an attached Sidekick narrows
+`sidekickManages` for those actions, not the tools.
 
 ### 2026-11-11 — Admit app-requested Sidekick runs
 

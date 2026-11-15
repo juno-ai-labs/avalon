@@ -2931,6 +2931,7 @@ function automationActivationFields(
       ...(parsed.data.trigger ? { trigger: parsed.data.trigger.kind } : {}),
       ...(parsed.data.run ? { run: parsed.data.run } : {}),
       ...(parsed.data.sourceRequests ? { sourceRequests: parsed.data.sourceRequests } : {}),
+      ...(parsed.data.question ? { question: parsed.data.question } : {}),
       ...(sidekickRun ? { requesterUserId: sidekickRun.requesterUserId, runNumber: sidekickRun.runNumber } : {}),
     },
   };

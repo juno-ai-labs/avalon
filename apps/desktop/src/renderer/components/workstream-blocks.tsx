@@ -123,6 +123,8 @@ import {
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { Button, ConnectorMark, ErrorNotice, RallyMark, Tip, TipGroup } from './primitives';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCollaborationSession } from '../lib/collaboration-session';
 import { useSpeechPlayback } from './speech-playback';
 
 /**
@@ -2514,6 +2516,47 @@ function WorkAccordionBlock({ disclosure, message }: {
   );
 }
 
+/**
+ * A Sidekick wizard's question, drawn in the Canvas's Chat whose message
+ * started the wizard's turn. The question lives in the Sidekick's shared
+ * conversation; this reads it from there and answers it there, so the same
+ * question is answered once wherever it is drawn. Anyone who manages the
+ * Sidekick may read and answer it (`docs/sidekick-sources.md`).
+ */
+function SidekickQuestionCard({ sidekickId, elicitationId }: { sidekickId: string; elicitationId: string }): React.JSX.Element | null {
+  const { api } = useCollaborationSession();
+  const queryClient = useQueryClient();
+  const queryKey = ['sidekick-question', sidekickId, elicitationId];
+  const query = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => api!.readSidekickQuestion(sidekickId, elicitationId, signal),
+    enabled: Boolean(api),
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
+  });
+  if (query.error) {
+    return <>
+      <AssistantMessageContent showCopy={false} text="This question could not be loaded. Try again in a moment, or answer it in the Sidekick's own conversation." />
+      <ErrorNotice automatic={false} detailsLabel="Details" occurrence={query.error} title="The question could not be loaded" />
+    </>;
+  }
+  if (!query.data) return null;
+  // Once answered, the panel draws only the answer: keep the question above it, so the Chat still says what was asked.
+  return <>
+    {query.data.status !== 'open' && <AssistantMessageContent showCopy={false} text={query.data.prompt} />}
+    <ElicitationPanel
+    elicitation={query.data}
+    onAnswer={async (answer, customResponse) => {
+      try {
+        await api!.answerSidekickQuestion(sidekickId, elicitationId, answer, customResponse);
+      } finally {
+        await queryClient.invalidateQueries({ queryKey });
+      }
+    }}
+    />
+  </>;
+}
+
 export function ElicitationPanel({
   disclosure,
   elicitation,
@@ -3118,7 +3161,8 @@ export function MessageBlock({
         </div>
       ) : (
         <>
-          <AssistantMessageContent
+          {/* A question's post says what the panel below it already says: the text is for the Chat's agent. */}
+          {!message.automationActivation?.question && <AssistantMessageContent
             afterText={message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
               <MessageAttachments attachments={message.attachments} loadContent={loadAttachmentContent} onOpen={onOpenAttachment} />
             ) : null}
@@ -3128,11 +3172,16 @@ export function MessageBlock({
             streaming={message.streaming}
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
-          />
+          />}
           {/* The wizard asked for sources on a turn this Chat started: the same card its own conversation draws. */}
           {message.automationActivation?.sourceRequests && (
             <SidekickSourceRequestCard card={{ sidekickId: message.automationActivation.automationId,
               requestIds: message.automationActivation.sourceRequests.requestIds, asked: null }} />
+          )}
+          {/* The wizard asked a question on a turn this Chat started: answered here, it answers the wizard. */}
+          {message.automationActivation?.question && (
+            <SidekickQuestionCard elicitationId={message.automationActivation.question.elicitationId}
+              sidekickId={message.automationActivation.automationId} />
           )}
         </>
       )}
