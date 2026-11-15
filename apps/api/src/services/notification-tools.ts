@@ -51,7 +51,7 @@ export interface NotificationToolPorts {
 }
 
 /** The refusals, one place: each says what happened and what to do next. */
-function refusal(code: string, available: { canvasId: string; title: string }[] | undefined, run: boolean, unnamed = 0): NotificationToolError {
+function refusal(code: string, available: { canvasId: string; title: string }[] | undefined, run: boolean): NotificationToolError {
   // The Chat refused the record itself, naming the field: the sentence, most likely too long.
   if (code.startsWith("append_host_record_invalid")) {
     return new NotificationToolError(code, "The Chat did not take the record of that sentence. Shorten what notices are about and register again.");
@@ -65,13 +65,10 @@ function refusal(code: string, available: { canvasId: string; title: string }[] 
       return new NotificationToolError(code, "This Canvas is archived, so it cannot send notices. Continue without sending a notice.");
     case "canvas_access_denied":
       return new NotificationToolError(code, "The person this runs for can no longer open this Canvas, so no notice was sent.");
-    case "notifications_sidekick_has_several_canvases": {
-      // Only Canvases this loop may open are named; the rest are counted.
-      const names = [...(available ?? []).map((canvas) => canvas.title), ...(unnamed > 0 ? [`${unnamed} you cannot open`] : [])];
+    case "notifications_sidekick_has_several_canvases":
       return new NotificationToolError(code,
-        `This Sidekick is attached to several Canvases (${names.join(", ")}), so it has no one Canvas to send notices from. No notice was sent.`,
-        { available: (available ?? []).map((canvas) => canvas.title), unnamed });
-    }
+        `This Sidekick is attached to several Canvases (${(available ?? []).map((canvas) => canvas.title).join(", ")}), so it has no one Canvas to send notices from. No notice was sent.`,
+        { available: (available ?? []).map((canvas) => canvas.title) });
     case "notifications_sidekick_has_no_canvas":
       return new NotificationToolError(code, "This Sidekick is not attached to a Canvas, so it has nowhere to send notices from. No notice was sent.");
     default:
@@ -121,7 +118,7 @@ export function createNotificationsPlugin(input: WorkstreamWorkflowInput, ports:
         await guard();
         const result = await ports.canvasNotices({ workspaceId: input.workspaceId, loop,
           action: { kind: "register", purpose: args.purpose, operationId: effectKey(context) } });
-        if (result.outcome === "refused") throw refusal(result.code, result.available, run, result.unnamed);
+        if (result.outcome === "refused") throw refusal(result.code, result.available, run);
         if (result.outcome !== "registered") throw new Error("notification_register_unexpected_outcome");
         const output = { canvasId: result.canvasId, purpose: result.purpose, changed: result.changed, recordMessageId: result.recordMessageId };
         return { output, summary: result.changed ? "Turned on notices for this Canvas" : "Notices were already on" };
@@ -142,7 +139,7 @@ export function createNotificationsPlugin(input: WorkstreamWorkflowInput, ports:
         await guard();
         const result = await ports.canvasNotices({ workspaceId: input.workspaceId, loop,
           action: { kind: "send", title: args.title, body: args.body, sourceId: `canvas_notice:${input.harnessRunId}:${effectKey(context)}` } });
-        if (result.outcome === "refused") throw refusal(result.code, result.available, run, result.unnamed);
+        if (result.outcome === "refused") throw refusal(result.code, result.available, run);
         if (result.outcome !== "sent") throw new Error("notification_send_unexpected_outcome");
         return { output: { canvasId: result.canvasId, recipients: result.recipients }, summary: `Sent a notice to ${result.recipients} people` };
       },

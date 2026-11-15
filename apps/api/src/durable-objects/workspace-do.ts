@@ -5655,7 +5655,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }): Promise<
     | { outcome: "registered"; canvasId: string; purpose: string; changed: boolean; recordMessageId: string }
     | { outcome: "sent"; canvasId: string; recipients: number }
-    | { outcome: "refused"; code: string; available?: { canvasId: string; title: string }[]; unnamed?: number }
+    | { outcome: "refused"; code: string; available?: { canvasId: string; title: string }[] }
   > {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);
@@ -5692,12 +5692,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const reaches = async (canvas: string) => reach.itself || (reach.userId !== null && await opens(canvas, reach.userId));
       if (attached.length === 0) return { outcome: "refused", code: "notifications_sidekick_has_no_canvas" };
       if (attached.length > 1) {
-        // Counted before any access filter, so the refusal holds for everyone;
-        // named only where this reach may open the Canvas, as its context does.
-        const named: { canvasId: string; title: string }[] = [];
-        for (const row of attached) if (await reaches(row.canvas_id)) named.push({ canvasId: row.canvas_id, title: row.title });
-        return { outcome: "refused", code: "notifications_sidekick_has_several_canvases", available: named,
-          unnamed: attached.length - named.length };
+        return { outcome: "refused", code: "notifications_sidekick_has_several_canvases",
+          available: attached.map((row) => ({ canvasId: row.canvas_id, title: row.title })) };
       }
       canvasId = attached[0]!.canvas_id;
       if (!await reaches(canvasId)) return { outcome: "refused", code: "canvas_access_denied" };

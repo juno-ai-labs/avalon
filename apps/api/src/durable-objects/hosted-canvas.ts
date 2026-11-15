@@ -795,6 +795,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       this.host.noteCanvasDirectoryChanged(this.canvasId);
       return null;
     });
+    // Only now do open screens hear of the record, so one that reads this
+    // Canvas back on seeing it finds the registration already there.
+    await chat.publishPending({ workspaceId, workstreamId: this.canvasId });
     if (newer) return { canvasId: this.canvasId, purpose: newer.purpose, changed: false, recordMessageId: newer.record_message_id };
     return { canvasId: this.canvasId, purpose, changed: true, recordMessageId };
   }
