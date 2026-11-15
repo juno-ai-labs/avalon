@@ -9,6 +9,8 @@
 import type { Pipeline } from "cloudflare:pipelines";
 import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 
+import auditLakehouse from "../../../config/engineering-mcp-audit-lakehouse.json";
+
 import type { AccessPrincipal } from "./access";
 
 /** Bump with the stream schema; a reader filters on it. */
@@ -91,6 +93,36 @@ export function auditFailureCode(error: unknown): string {
   if (error instanceof AuditUnconfiguredError) return error.message;
   const platform = platformErrorCode(error);
   return platform ? `engineering_audit_unavailable:${platform}` : "engineering_audit_unavailable";
+}
+
+const AUDIT_DOCS = "docs/engineering-mcp.md#tool-call-audit-log";
+
+/**
+ * What the operator reads when a call is refused: the code first, then why
+ * the tool did not run and what fixes it. The fix is the useful part, since
+ * whoever sees this is usually not whoever deployed the Worker.
+ */
+export function auditRefusalText(error: unknown): string {
+  const code = auditFailureCode(error);
+  if (error instanceof AuditUnconfiguredError) {
+    return `${code}: the tool did not run. This engineering MCP Worker has no ENGINEERING_AUDIT_LAKEHOUSE Pipeline binding, `
+      + "so it cannot write the audit row every call needs first. "
+      + "To fix it, redeploy through the API deploy workflow (.github/workflows/deploy-api.yml): its --deploy-bindings step "
+      + `creates the ${auditLakehouse.regions.global.stream} stream and writes its ID into config/engineering-mcp-audit-lakehouse.json, `
+      + "and the engineering MCP deploy later in the same job binds it. For a manual deploy, run "
+      + "`node scripts/ensure-cloudflare-inference-lakehouse.mjs --deploy-bindings` and then "
+      + "`pnpm --filter @rally/engineering-mcp run deploy` from the same checkout, with the deploy's CLOUDFLARE_API_TOKEN. "
+      + `See ${AUDIT_DOCS}.`;
+  }
+  if (code === "engineering_audit_unavailable:pipeline_message_too_large") {
+    return `${code}: the tool did not run. Its audit row is over the Pipeline's 1 MB per-record limit, almost always because of its arguments. `
+      + "Split the statement or message into smaller calls.";
+  }
+  return `${code}: the tool did not run, because the ${auditLakehouse.regions.global.stream} Pipeline stream refused its audit row. `
+    + "Retry the call. If it keeps failing, check that the stream still exists in the Cloudflare account and that "
+    + "config/engineering-mcp-audit-lakehouse.json pins its current ID. If it was deleted, `pnpm cloudflare:lakehouses:ensure` "
+    + "recreates it and reports the new stream ID to pin there; commit it and redeploy. "
+    + `See ${AUDIT_DOCS}.`;
 }
 
 export function logAuditWriteFailure(principal: AccessPrincipal, event: AuditEvent, error: unknown) {
