@@ -810,9 +810,11 @@ facet that holds a stateful artifact's data. It does not own:
   Both surfaces are therefore asked whether they still exist before they are
   detached or closed; the window and the view are asked separately, because a
   view whose contents closed themselves is still attached to a live window.
-- **Numeric limits.** Viewer session lifetime is 24 hours, fixed from mint and
-  never sliding — the shape, not just the number, is the sleep guarantee, since
-  compute per open is bounded by rate ceiling × lifetime. The open code lives 60
+- **Numeric limits.** Viewer session lifetime is one year from the last open,
+  renewed only when a person opens the page (a top-level navigation from
+  outside the artifact), never by the page's own requests. The shape, not just
+  the number, is the sleep guarantee, since compute per open is bounded by rate
+  ceiling × lifetime: an abandoned page stops within a year of its last open. The open code lives 60
   seconds. A publish carries at most 25,000,000 bytes, transcribed from the file
   path's existing bound rather than chosen. A data page returns at most 200 rows.
 
@@ -940,6 +942,31 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-15 — Viewer sessions last a year from the last open
+
+**What changed:** `VIEWER_SESSION_LIFETIME_MS` is one year, and `admitRequest`
+renews it when the serving Worker reports an open: a `top_level` fetch-metadata
+verdict, which a page's own fetches and same-origin navigations never produce.
+The Worker re-sets the cookie with the renewed `Max-Age`.
+
+**Why:** The mobile app keeps pinned artifacts loaded and opens them on their
+cookie. A fixed day meant every pinned tab expired overnight and the morning's
+first tap paid a visible trip through the app's API for fresh access. The team
+chose the year (2026-11-15).
+
+**Considered and rejected:** Renewing on any request: an abandoned page would
+poll forever, deleting the sleep guarantee. Keeping 24 hours and renewing in the
+app in the background: kept the cap, but the team preferred fewer moving parts.
+
+**Consequences:** The guarantee's bound is now a year after the last open, not a
+day after mint. A page that navigates itself from outside its own origin would
+renew; one that only fetches or reloads within its origin does not. Revocation
+still ends a session at once through membership incarnations, but a
+resource-scope change that publishes no artifact-session revocation (see the
+2026-09-21 entry below) no longer lapses within a day: it
+holds for as long as the person keeps opening the page. Any such change that
+must cut access has to publish a revocation.
 
 ### 2026-11-14 — Sites of connected data stay live and offer a Sidekick
 
