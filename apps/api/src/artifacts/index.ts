@@ -259,16 +259,7 @@ const artifactServer = {
       // requests. A partitioned `None` cookie is kept only for this artifact
       // under that one top-level site, so it is no wider than the frame.
       const framed = request.headers.get("sec-fetch-dest") === "iframe" && Boolean(env.BROWSER_APP_ORIGIN);
-      headers.append("set-cookie", [
-        `${SESSION_COOKIE}=${redeemed.session}`,
-        "Path=/",
-        "HttpOnly",
-        "Secure",
-        // `Lax` rather than `Strict` so the desktop's own top-level navigation
-        // to the artifact carries the cookie it just set.
-        ...(framed ? ["SameSite=None", "Partitioned"] : ["SameSite=Lax"]),
-        `Max-Age=${Math.max(0, Math.floor((redeemed.expiresAt - Date.now()) / 1_000))}`,
-      ].join("; "));
+      headers.append("set-cookie", sessionCookie(redeemed.session, redeemed.expiresAt, framed));
       return withSecurityHeaders(new Response(null, { status: 303, headers }));
     }
 
@@ -277,7 +268,9 @@ const artifactServer = {
     const verdict = classifyFetchMetadata(request, origin);
     const session = verdict === 'same_origin' || verdict === 'top_level' ? readCookie(request,SESSION_COOKIE) : null;
     let admission: Awaited<ReturnType<ArtifactHostDO['admitRequest']>>;
-    try { admission=await artifact.admitRequest({session}); }
+    // Only a navigation from outside the artifact is a person opening it; the
+    // page's own fetches and same-origin navigations never renew its session.
+    try { admission=await artifact.admitRequest({session, opened: verdict === 'top_level'}); }
     catch(error) {
       logWarn({LOG_LEVEL:'info',AVALON_REGION:env.AVALON_REGION},'artifact_admission_failed',{
         artifact_id:artifactId,code:diagnosticErrorCode(error,'artifact_admission_failed'),
@@ -288,6 +281,25 @@ const artifactServer = {
       const target=admission.status===401 && isDocumentNavigation(request) ? signInUrl(env,host,url.pathname+url.search) : null;
       return target ? redirect(target) : html(neutralPage(),admission.status);
     }
+    const served = await serveAdmitted(env, ctx, artifact, artifactId, request, url, host, admission);
+    if (!session || admission.sessionExpiresAt === undefined) return served;
+    // The open renewed the session; the browser's copy of the cookie follows.
+    const renewed = new Response(served.body, served);
+    renewed.headers.append("set-cookie", sessionCookie(session, admission.sessionExpiresAt, false));
+    return renewed;
+  },
+};
+
+async function serveAdmitted(
+  env: ArtifactServingEnv,
+  ctx: ExecutionContext,
+  artifact: Parameters<typeof serveCurrent>[2],
+  artifactId: string,
+  request: Request,
+  url: URL,
+  host: NonNullable<ReturnType<typeof parseArtifactHost>>,
+  admission: Extract<Awaited<ReturnType<ArtifactHostDO['admitRequest']>>, { allowed: true }>,
+): Promise<Response> {
     if(admission.kind==='file') {
       if(request.method!=='GET' && request.method!=='HEAD') return html(neutralPage(),405);
       const mount=splitVersionMount(url.pathname);
@@ -330,8 +342,25 @@ const artifactServer = {
       if (target) return redirect(target);
     }
     return response;
-  },
-};
+}
+
+/** The viewer-session cookie, with a `Max-Age` that ends when the session does. */
+function sessionCookie(session: string, expiresAt: number, framed: boolean): string {
+  return [
+    `${SESSION_COOKIE}=${session}`,
+    "Path=/",
+    "HttpOnly",
+    "Secure",
+    // Redeemed inside the browser client's preview frame, the artifact is a
+    // cross-site frame, and a `Lax` cookie would never be sent with its
+    // requests. A partitioned `None` cookie is kept only for this artifact
+    // under that one top-level site, so it is no wider than the frame. `Lax`
+    // rather than `Strict` so the desktop's own top-level navigation carries
+    // the cookie it just set.
+    ...(framed ? ["SameSite=None", "Partitioned"] : ["SameSite=Lax"]),
+    `Max-Age=${Math.max(0, Math.floor((expiresAt - Date.now()) / 1_000))}`,
+  ].join("; ");
+}
 
 /**
  * The browser client's page that signs a person in and opens this site at

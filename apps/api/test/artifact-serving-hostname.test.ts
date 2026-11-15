@@ -320,7 +320,7 @@ describe("artifact serving hostname routes", () => {
     );
     expect(body).toContain(`name="twitter:card" content="summary_large_image"`);
     expect(response.headers.get("content-security-policy")).toBeTruthy();
-    expect(admitRequest).toHaveBeenCalledWith({session:null});
+    expect(admitRequest).toHaveBeenCalledWith({session:null,opened:false});
     expect(admitRequest).toHaveBeenCalledOnce();
 
     const image = await artifactWorker.fetch(
@@ -440,7 +440,7 @@ describe("artifact serving hostname routes", () => {
       viewerName: null,
     });
     expect(forwarded).toHaveBeenCalledOnce();
-    expect(admitRequest).toHaveBeenCalledWith({session:null});
+    expect(admitRequest).toHaveBeenCalledWith({session:null,opened:false});
     expect(admitRequest).toHaveBeenCalledOnce();
   });
 
@@ -469,7 +469,7 @@ describe("artifact serving hostname routes", () => {
     );
 
     expect(response.status).toBe(401);
-    expect(admitRequest).toHaveBeenCalledWith({session:null});
+    expect(admitRequest).toHaveBeenCalledWith({session:null,opened:false});
   });
 
   it("fails a stateless active site closed when its handler cannot run", async () => {
@@ -540,7 +540,7 @@ describe("artifact serving hostname routes", () => {
       viewerId: "user-1",
       viewerName: "Ada%20Lovelace",
     });
-    expect(admitRequest).toHaveBeenCalledWith({session:"secret"});
+    expect(admitRequest).toHaveBeenCalledWith({session:"secret",opened:false});
   });
 
   it("fails closed when local admission is unavailable", async () => {
@@ -868,6 +868,6 @@ describe("submissions from people who are not signed in", () => {
     }), env, context());
 
     expect(await response.json()).toEqual({ viewerId: null, cookie: null });
-    expect(admitRequest).toHaveBeenCalledWith({session:null});
+    expect(admitRequest).toHaveBeenCalledWith({session:null,opened:false});
   });
 });

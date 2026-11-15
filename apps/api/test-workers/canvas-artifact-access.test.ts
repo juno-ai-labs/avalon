@@ -346,6 +346,52 @@ describe("Canvas artifact access propagated to local serving", () => {
     );
   });
 
+  it("renews a viewer session for a year when a person opens the page, never on the page's own requests", async () => {
+    await share("participants", [READER]);
+    await sync(SITE_HOST, SITE);
+    const { code } = await host(SITE_HOST).openForViewer({
+      userId: READER,
+      displayName: "Reader",
+      appSessionId: "reader-session",
+    });
+    const viewer = await host(SITE_HOST).redeemCode(code);
+    const sessionExpiry = () => runInDurableObject(host(SITE_HOST), async (_instance, state) =>
+      state.storage.sql.exec<{ expires_at: number }>("SELECT expires_at FROM viewer_sessions WHERE redeemed_at IS NOT NULL").one().expires_at);
+    // A session a minute from expiry, as one last opened a year ago would be.
+    const soon = Date.now() + 60_000;
+    await runInDurableObject(host(SITE_HOST), async (_instance, state) => {
+      state.storage.sql.exec("UPDATE viewer_sessions SET expires_at=? WHERE redeemed_at IS NOT NULL", soon);
+    });
+    const poll = await visit("quiet-blue-river-garden", "/", viewer!.session);
+    expect(poll.status).toBe(200);
+    expect(poll.headers.get("set-cookie")).toBeNull();
+    expect(await sessionExpiry()).toBe(soon);
+
+    const ctx = createExecutionContext();
+    const opened = await artifactWorker.fetch(
+      new Request("https://quiet-blue-river-garden-g.rallyusercontent.com/", {
+        headers: {
+          cookie: `__rally_artifact_session=${viewer!.session}`,
+          "sec-fetch-site": "none", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document",
+        },
+      }),
+      {
+        APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+        ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+        PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
+      },
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(opened.status).toBe(200);
+    const yearSeconds = 365 * 24 * 60 * 60;
+    const maxAge = Number(/Max-Age=(\d+)/u.exec(opened.headers.get("set-cookie") ?? "")?.[1]);
+    expect(maxAge).toBeGreaterThan(yearSeconds - 60);
+    expect(maxAge).toBeLessThanOrEqual(yearSeconds);
+    expect(opened.headers.get("set-cookie")).toContain(`__rally_artifact_session=${viewer!.session}`);
+    expect(await sessionExpiry()).toBeGreaterThan(Date.now() + (yearSeconds - 60) * 1_000);
+  });
+
   it("keeps source and administrative data editor-only for artifact users", async () => {
     await share("participants", [READER]);
     const authorization = new AuthorizationService(env);
