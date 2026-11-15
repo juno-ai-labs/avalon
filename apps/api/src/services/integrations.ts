@@ -35,7 +35,6 @@ import { conversationParentStub, hostedParentStub } from "./conversation-parent-
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { isCanvasChat } from "../lib/canvas-chat";
-import { drivenByPerson } from "../lib/driven-by-person";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -5270,10 +5269,12 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  * is not something what it read may bring about. A background agent works from content the same
  * way, and so does a turn another agent's message or Rally's own review
  * notice started, the wizard's included: nobody typed it. A wake-up in a
- * Chat or a wizard is offered them (`drivenByPerson`).
+ * Chat or a wizard is offered them (`docs/agent-loop-types.md`).
  */
-function asksForSources(input: Parameters<typeof drivenByPerson>[0]): boolean {
-  return drivenByPerson(input);
+function asksForSources(input: Pick<WorkstreamWorkflowInput,
+  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "reason">): boolean {
+  return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true
+    && !input.agentExchange && input.reason !== "sidekick_review";
 }
 
 /**
