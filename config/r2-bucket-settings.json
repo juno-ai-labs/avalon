@@ -1,0 +1,4 @@
+{
+  "avalon-desktop-releases": { "locationHint": "wnam" },
+  "avalon-desktop-releases-archive": { "locationHint": "wnam", "storageClass": "InfrequentAccess" }
+}

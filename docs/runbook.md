@@ -499,10 +499,11 @@ release artifacts that are rarely restored. See Cloudflare's
 [storage-class](https://developers.cloudflare.com/r2/buckets/storage-classes/)
 and [pricing](https://developers.cloudflare.com/r2/pricing/) documentation.
 
-Create the archive bucket only if it does not already exist:
+Both buckets are created by `scripts/ensure-cloudflare-r2-buckets.mjs` if
+missing, with the location and storage class in `config/r2-bucket-settings.json`
+(applied only at creation). To inspect the archive bucket:
 
 ```text
-pnpm dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler r2 bucket create avalon-desktop-releases-archive --location wnam --storage-class InfrequentAccess
 pnpm dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler r2 bucket info avalon-desktop-releases-archive
 ```
 
@@ -528,8 +529,9 @@ rolling 24-hour window. The JSON receipt records when Stable last moved.
 Production retention is automated by the private `avalon-release-retention`
 Worker in `apps/release-retention`. It has no route, `workers.dev` URL, preview
 URL, or application secret. Its only capabilities are bindings to the active and
-archive release buckets. No workflow deploys it; a merged change is not live
-until someone runs, from the repository root:
+archive release buckets. `.github/workflows/deploy-release-retention.yml`
+deploys it on every merge that touches it, after its typecheck and tests. To
+deploy by hand from the repository root:
 
 ```text
 pnpm deploy:release-retention
