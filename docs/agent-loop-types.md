@@ -227,7 +227,9 @@ the host would never combine.
    recorded.
 2. **A self-review's background agents** are indistinguishable from a
    person's wizard turn's. A rule that treats them differently needs the
-   root turn's `reason` recorded beside `root_substream_id`.
+   root turn's `reason` recorded beside `root_substream_id`; the
+   [Canvas notices PRD](PRDs/2026-11-14_canvas-notices/prd.md) adds it as
+   `background_agent.root_reason` (its decision 11).
 
 ## Changelog
 
