@@ -12,6 +12,8 @@ test('a size in the font shorthand is refused, and its line height alone is not'
   assert.deepEqual(typeLiterals('.a { font: 600 29px/1.15 Georgia, serif; }'), [{ line: 1, declaration: 'font: 600 29px/1.15 Georgia, serif' }]);
   assert.deepEqual(typeLiterals('.a { font: var(--av-sys-type-title-1)/32px Georgia; }'), []);
   assert.deepEqual(typeLiterals('.a { font: inherit; }'), []);
+  // A token in the line height does not excuse a literal size.
+  assert.deepEqual(typeLiterals('.a { font: 13px/var(--x) serif; }'), [{ line: 1, declaration: 'font: 13px/var(--x) serif' }]);
 });
 
 test('a role, a token built on one, and a relative size all pass', () => {

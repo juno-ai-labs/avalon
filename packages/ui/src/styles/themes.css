@@ -1008,8 +1008,8 @@
   --av-sys-type-display: var(--av-dynamic-type-display, 38px);
   --av-sys-label-font-size: var(--av-sys-type-caption-1);
   --av-cmp-feed-byline-font-size: var(--av-sys-type-footnote);
-  --av-cmp-markdown-heading-1: 30px;
-  --av-cmp-markdown-heading-2: 25.5px;
-  --av-cmp-markdown-heading-3: 22.5px;
-  --av-cmp-markdown-heading-4: 20.5px;
+  --av-cmp-markdown-heading-1: calc(var(--av-sys-type-body) * 30 / 17);
+  --av-cmp-markdown-heading-2: calc(var(--av-sys-type-body) * 25.5 / 17);
+  --av-cmp-markdown-heading-3: calc(var(--av-sys-type-body) * 22.5 / 17);
+  --av-cmp-markdown-heading-4: calc(var(--av-sys-type-body) * 20.5 / 17);
 }
