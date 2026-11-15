@@ -4757,8 +4757,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .mention-icon :is(.avatar-small, .provider-icon) { height: 16px; width: 16px; }
 .mention-icon-sidekick { display: block; height: 16px; width: 16px; }
 .mention-icon-sidekick > svg { display: block; height: 100%; width: 100%; }
-/* A Sidekick's description is a sentence, not an address: the name keeps its room and the sentence gives way. */
-.mention-popover button.is-sidekick strong { flex-shrink: 0; max-width: 60%; }
+/* The name is what is being picked: it keeps its room and the address, or a Sidekick's description, gives way. */
+.mention-popover button strong { flex-shrink: 0; max-width: 60%; }
 .mention-popover-copy { align-items: baseline; display: flex; flex: 1; gap: 8px; min-width: 0; }
 .mention-popover strong { font-size: var(--av-sys-type-callout); font-weight: 400; line-height: calc(var(--av-sys-type-callout) * 18 / 13); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-popover small { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-callout); font-weight: 420; line-height: calc(var(--av-sys-type-callout) * 18 / 13); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
