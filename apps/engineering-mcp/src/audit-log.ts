@@ -14,14 +14,6 @@ import type { AccessPrincipal } from "./access";
 /** Bump with the stream schema; a reader filters on it. */
 export const AUDIT_SCHEMA_VERSION = 1;
 
-/**
- * Cloudflare's own per-record ceiling: the Pipeline binding refuses any single
- * record above 1 MB (`CF_PIPELINE_MESSAGE_TOO_LARGE`), the same figure
- * `PIPELINE_MESSAGE_BYTES` mirrors for the inference lakehouse. Not a number
- * of ours; measured here only so the refusal names itself.
- */
-export const PIPELINE_RECORD_BYTES = 1_000_000;
-
 export interface AuditLogEnvironment {
   /** Absent until the stream is provisioned and pinned; every tool call then refuses. */
   ENGINEERING_AUDIT_LAKEHOUSE?: Pipeline;
@@ -44,14 +36,6 @@ export class AuditUnconfiguredError extends Error {
   constructor() {
     super("engineering_audit_unconfigured");
     this.name = "AuditUnconfiguredError";
-  }
-}
-
-/** The row is over the Pipeline's per-record limit, almost always for its arguments. */
-export class AuditRowTooLargeError extends Error {
-  constructor(readonly bytes: number) {
-    super("engineering_audit_row_too_large");
-    this.name = "AuditRowTooLargeError";
   }
 }
 
@@ -87,10 +71,7 @@ export async function writeAuditEvent(
   event: AuditEvent,
 ): Promise<void> {
   if (!env.ENGINEERING_AUDIT_LAKEHOUSE) throw new AuditUnconfiguredError();
-  const row = auditRow(env, principal, event);
-  const bytes = new TextEncoder().encode(JSON.stringify(row)).byteLength;
-  if (bytes > PIPELINE_RECORD_BYTES) throw new AuditRowTooLargeError(bytes);
-  await env.ENGINEERING_AUDIT_LAKEHOUSE.send([row]);
+  await env.ENGINEERING_AUDIT_LAKEHOUSE.send([auditRow(env, principal, event)]);
 }
 
 /** For events after the effect: a failed send is logged, never surfaced. */
@@ -107,7 +88,7 @@ export async function writeAuditEventOrLog(
 }
 
 export function auditFailureCode(error: unknown): string {
-  if (error instanceof AuditUnconfiguredError || error instanceof AuditRowTooLargeError) return error.message;
+  if (error instanceof AuditUnconfiguredError) return error.message;
   const platform = platformErrorCode(error);
   return platform ? `engineering_audit_unavailable:${platform}` : "engineering_audit_unavailable";
 }
@@ -121,6 +102,5 @@ export function logAuditWriteFailure(principal: AccessPrincipal, event: AuditEve
     ...("callId" in event ? { call_id: event.callId } : {}),
     ...("taskId" in event && event.taskId ? { task_id: event.taskId } : {}),
     error_code: auditFailureCode(error),
-    ...(error instanceof AuditRowTooLargeError ? { row_bytes: error.bytes } : {}),
   }));
 }
