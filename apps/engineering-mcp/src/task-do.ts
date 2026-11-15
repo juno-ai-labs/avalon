@@ -134,12 +134,12 @@ export class EngineeringTaskDO extends DurableObject<Env> {
     // Retirement is irreversible. Cancellation acknowledges intent but never
     // abandons a half-retired Organization; the extension permits this.
     if (task.snapshot.status !== "working" || task.name === "retire_org") return true;
-    await this.finish("cancelled", undefined, undefined);
+    await this.finish("cancelled");
     return true;
   }
 
   /** `errorCode` names a failed result, as `tool` logged it, for the audit record. */
-  private async finish(status: "completed" | "cancelled", result: TaskResult | undefined, errorCode: string | undefined) {
+  private async finish(status: "completed" | "cancelled", result?: TaskResult, errorCode?: string) {
     let finished: StoredTask | undefined;
     const expiresAt = this.ctx.storage.transactionSync(() => {
       const current = this.loadTask();

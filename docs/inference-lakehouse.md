@@ -146,7 +146,10 @@ new lakehouse, not a fork. In the pinned account `--deploy-bindings`
 reconciles and adopts that manifest alone, writes its stream ID and marker into
 the checkout, and keeps the pinned ones off the control plane, so a new
 lakehouse works from its first deploy. It reconciles on every deploy until its
-ID and marker are committed. Only the API Worker's lakehouses are materialized
+ID and marker are committed, and the deploy log prints both values to commit
+together. Until then `--check` and `--reconcile` fail on it: before the first
+deploy its stream is missing, and after it the committed all-zero ID drifts
+from the real one. Only the API Worker's lakehouses are materialized
 into the regional configs: the engineering MCP's audit table is provisioned
 here but bound by that Worker's own deploy, which reads the checkout manifest
 later in the same job.
@@ -368,7 +371,6 @@ until its stream ID and `pinnedAccount` are committed. A lakehouse for a Worker
 other than the API stays out of `API_WORKER_BINDINGS` and is bound by that
 Worker's own deploy; added to the loader list alone, it is provisioned but
 bound nowhere.
-
 
 ### 2026-11-15 — A deploy to a new account provisions its own lakehouses
 
