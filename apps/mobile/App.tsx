@@ -479,21 +479,24 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   const keyboardVisible = useKeyboardVisible();
   const scope = useRef<string | null>(null);
   const snapshotSeen = useRef(false);
-  // A dashboard tap can come before Home's page answers; hold it until it does.
-  const queued = useRef<MobileCommand | null>(null);
+  // Commands wait until the page answers with a snapshot: `ready` comes from
+  // the bridge before the signed-in page installs its command listener, and a
+  // terminated page answers nothing until it reloads.
+  const queued = useRef<MobileCommand[]>([]);
+  const [answering, setAnswering] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
   const sendHome = useCallback((command: MobileCommand) => {
-    if (ready) web.current?.send(command);
-    else queued.current = command;
-  }, [ready]);
+    if (answering) web.current?.send(command);
+    else queued.current.push(command);
+  }, [answering]);
   useEffect(() => {
-    if (!ready || !queued.current) return;
-    web.current?.send(queued.current);
-    queued.current = null;
-  }, [ready]);
+    if (!answering || queued.current.length === 0) return;
+    for (const command of queued.current.splice(0)) web.current?.send(command);
+  }, [answering]);
   const open = useCallback((id: string) => {
     if (chatReturn) closeChat();
-    if (directory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(id)) {
+    // The tab bar draws the saved pins before Home answers; so does this.
+    if (shownDirectory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(id)) {
       const destination = Object.keys(routeCanvases).find((name) => routeCanvases[name] === id);
       if (destination) tabs.navigate(destination);
     }
@@ -501,7 +504,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
       tabs?.navigate('Home');
       controls.current.get('Home')?.send({ type: 'open', id, pinned: false });
     }
-  }, [controls, directory?.pins, routeCanvases, tabs, chatReturn, closeChat]);
+  }, [controls, shownDirectory?.pins, routeCanvases, tabs, chatReturn, closeChat]);
   const send = useCallback((command: MobileCommand) => {
     if (command.type === 'open') { open(command.id); return; }
     if (command.type === 'pin' || command.type === 'reorder' || command.type === 'refresh' || command.type === 'load-more') {
@@ -546,6 +549,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
     });
     if (event.type === 'snapshot') {
       snapshotSeen.current = true;
+      setAnswering(true);
       if (event.snapshot.view !== 'home') { setOpening(null); setOptimistic(null); }
       const nextScope = `${event.snapshot.userId}:${event.snapshot.workspaceId}`;
       if (scope.current !== nextScope) { scope.current = nextScope; setArtifacts({}); setOptimistic(null); }
@@ -610,7 +614,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   // open inline chat, create flow or canvas lives in the page and is never cut.
   useEffect(() => { if (home && homeStale && (!focused || showDashboard)) web.current?.reload(); }, [home, homeStale, focused, showDashboard]);
   const openFromDashboard = useCallback((id: string) => {
-    if (directory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(id)) { open(id); return; }
+    if (shownDirectory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(id)) { open(id); return; }
     setOpening(id);
     sendHome({ type: 'open', id, pinned: false });
     // Canonical-first: a canvas whose site this account has opened before shows
@@ -620,7 +624,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
       setArtifacts((current) => ({ ...current, [id]: current[id]?.resourceId === known.resourceId ? current[id]! : known }));
       setOptimistic(id);
     }
-  }, [directory?.pins, open, sendHome, rememberedSite]);
+  }, [shownDirectory?.pins, open, sendHome, rememberedSite]);
   const createFromDashboard = useCallback(() => { setOpening('create'); sendHome({ type: 'create' }); }, [sendHome]);
   useEffect(() => {
     if (!focused) return;
@@ -662,11 +666,17 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
       <View collapsable={false} style={styles.fill} accessibilityElementsHidden={hosted || showDashboard || !focused} importantForAccessibility={hosted || showDashboard || !focused ? 'no-hide-descendants' : 'auto'}>
         <CanvasWebView ref={web} url={url} appUrl={APP_URL} background={colors.background} topInset={headerHeight + 12} onEvent={receive}
           focused={focused && !hosted} recoveryId={`web:${canvasId}`}
+          onTerminated={() => setAnswering(false)}
           onLoading={() => {
             // Loading Home must not close other tabs and discard their drafts.
             // Authentication snapshots and signed-out events own the directory.
-            if (home) { prepared.reset(); setChatReturn(null); } setReady(false); setContentReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
-          }} onError={() => { if (home) prepared.fail(); setFailed(true); }} />
+            if (home) { prepared.reset(); setChatReturn(null); } setReady(false); setAnswering(false); setContentReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
+          }} onError={() => {
+            // A tap waiting on this page will not be answered: drop it, so the
+            // failure and its retry show instead of an endless spinner.
+            if (home) prepared.fail();
+            queued.current = []; setOpening(null); setOptimistic(null); setAnswering(false); setFailed(true);
+          }} />
       </View>
       {Object.values(artifacts).map((access) => {
         const visible = shownArtifact(access);
@@ -674,7 +684,13 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
           <ArtifactView key={access.version} appUrl={APP_URL} topInset={snapshot?.artifactPicker ? 0 : headerHeight + 12} access={access} background={colors.background} focused={focused && visible}
             onPresented={() => rememberSite(access)}
             onBackground={(color) => setPageBackgrounds((known) => known[access.canvasId] === color ? known : { ...known, [access.canvasId]: color })}
-            onRetry={() => { renewing.current.add(access.canvasId); web.current?.send({ type: 'reopen-artifact', canvasId: access.canvasId, resourceId: access.resourceId }); }} />
+            onRetry={() => {
+              // The page may be waiting behind this artifact's own recovery:
+              // wake it, and hold the renewal until it answers.
+              renewing.current.add(access.canvasId);
+              recovery.wake(`web:${canvasId}`);
+              sendHome({ type: 'reopen-artifact', canvasId: access.canvasId, resourceId: access.resourceId });
+            }} />
         </View>;
       })}
       {showDashboard && <View style={StyleSheet.absoluteFill}>

@@ -34,13 +34,14 @@ const PERMISSION_ERROR_CODE = 10000;
 const PAGE_SIZE = 100;
 const PAGE_LIMIT = 20;
 
-/** Every tracked deploy config under apps/, test and dry-run copies excluded. */
+/** Every tracked deploy or migration config under apps/, test and dry-run copies excluded. */
 export async function deployConfigPaths(root = repositoryDirectory) {
   const paths = [];
   for (const app of await readdir(join(root, 'apps'), { withFileTypes: true })) {
     if (!app.isDirectory()) continue;
     for (const file of await readdir(join(root, 'apps', app.name))) {
-      if (/^wrangler(?:\.[\w-]+)*\.jsonc$/u.test(file) && !SKIPPED_CONFIG.test(file)) paths.push(join(root, 'apps', app.name, file));
+      // `platform.wrangler.jsonc` is migration-only but pins the same database.
+      if (/^(?:[\w-]+\.)?wrangler(?:\.[\w-]+)*\.jsonc$/u.test(file) && !SKIPPED_CONFIG.test(file)) paths.push(join(root, 'apps', app.name, file));
     }
   }
   return paths.sort();

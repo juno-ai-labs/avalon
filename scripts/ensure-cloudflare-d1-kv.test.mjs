@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { pinStorageIds, storageFromWrangler } from './ensure-cloudflare-d1-kv.mjs';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { deployConfigPaths, pinStorageIds, storageFromWrangler } from './ensure-cloudflare-d1-kv.mjs';
 import { parseWranglerConfig } from './wrangler-config.mjs';
 
 const config = `{
@@ -56,4 +60,14 @@ test('declares only D1 databases and KV namespaces that carry an id', () => {
     ],
     namespaces: [{ title: 'INFERENCE_PRICING_CACHE', id: 'ea2442c2ee744decbad3d1ca03fce728' }],
   });
+});
+
+test('finds every deploy and migration config, including the migration-only platform config, and no test copy', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'd1-kv-'));
+  await mkdir(join(root, 'apps', 'api'), { recursive: true });
+  for (const name of ['wrangler.global.jsonc', 'platform.wrangler.jsonc', 'wrangler.test.jsonc', 'wrangler.dry-run.jsonc', 'notes.jsonc']) {
+    await writeFile(join(root, 'apps', 'api', name), '{}');
+  }
+  const found = (await deployConfigPaths(root)).map((path) => path.slice(root.length + 1));
+  assert.deepEqual(found, ['apps/api/platform.wrangler.jsonc', 'apps/api/wrangler.global.jsonc']);
 });
