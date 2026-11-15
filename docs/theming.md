@@ -256,7 +256,7 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 appearances. The stylesheet multiplies every reading size by it: the feed's
 message text and line height (a literal `14px / 20px` that overrides the prose
 token), the tool summary line, `.markdown-body` prose and headings, the feed
-byline, and the composer field with its line height and floor. On a touch
+byline, and the composer field with its line height. On a touch
 screen the composer is `max(16px, 14px × scale)`, so it keeps the 16px floor
 that stops iOS zooming into it and otherwise matches the messages.
 `apps/browser/src/mobile.css` sets the token to `calc(17 / 14)` on
@@ -278,7 +278,10 @@ view on the same phone keeps its own sizes. Second,
 **What to respect:** a new reading size in the feed or composer multiplies by
 the token, or it stays put while its neighbours grow. The composer's textarea
 and highlight layer must take the same multiplier, or highlighted mentions
-drift off the typed text. Whole-page zoom (viewport width or CSS `zoom`) was
+drift off the typed text. The textarea's 42px floor does not scale: it is
+the one-line height that centres the line on the controls beside it under the
+fixed 9px top padding, and scaling it to 51px left the placeholder 4px above
+their centre. A longer draft grows the field on its own. Whole-page zoom (viewport width or CSS `zoom`) was
 rejected because it also enlarges chrome and the artifact view, which nobody
 asked for. The scale is fixed, not tied to the person's Dynamic Type setting;
 WebKit's `-apple-system-body` font could supply that, untested here.
