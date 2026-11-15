@@ -268,9 +268,13 @@ const artifactServer = {
     const verdict = classifyFetchMetadata(request, origin);
     const session = verdict === 'same_origin' || verdict === 'top_level' ? readCookie(request,SESSION_COOKIE) : null;
     let admission: Awaited<ReturnType<ArtifactHostDO['admitRequest']>>;
-    // Only a navigation from outside the artifact is a person opening it; the
-    // page's own fetches and same-origin navigations never renew its session.
-    try { admission=await artifact.admitRequest({session, opened: verdict === 'top_level'}); }
+    // Only a person opening the page renews its session: a top-level navigation
+    // from the address bar or an app's WebView (`Sec-Fetch-Site: none`) or one a
+    // click started (`Sec-Fetch-User: ?1`). A page that bounces itself through an
+    // outside redirect on a timer sends neither, so it cannot keep itself alive.
+    const opened = verdict === 'top_level'
+      && (request.headers.get('sec-fetch-site') === 'none' || request.headers.get('sec-fetch-user') === '?1');
+    try { admission=await artifact.admitRequest({session, opened}); }
     catch(error) {
       logWarn({LOG_LEVEL:'info',AVALON_REGION:env.AVALON_REGION},'artifact_admission_failed',{
         artifact_id:artifactId,code:diagnosticErrorCode(error,'artifact_admission_failed'),

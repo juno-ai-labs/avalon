@@ -947,7 +947,9 @@ shows its saved quote and image. The script and trust boundaries are owned by
 
 **What changed:** `VIEWER_SESSION_LIFETIME_MS` is one year, and `admitRequest`
 renews it when the serving Worker reports an open: a `top_level` fetch-metadata
-verdict, which a page's own fetches and same-origin navigations never produce.
+verdict that also carries `Sec-Fetch-Site: none` (an address bar or an app's
+WebView) or `Sec-Fetch-User: ?1` (a click). A page's own fetches, reloads and
+scripted navigations produce neither.
 The Worker re-sets the cookie with the renewed `Max-Age`.
 
 **Why:** The mobile app keeps pinned artifacts loaded and opens them on their
@@ -960,8 +962,9 @@ poll forever, deleting the sleep guarantee. Keeping 24 hours and renewing in the
 app in the background: kept the cap, but the team preferred fewer moving parts.
 
 **Consequences:** The guarantee's bound is now a year after the last open, not a
-day after mint. A page that navigates itself from outside its own origin would
-renew; one that only fetches or reloads within its origin does not. Revocation
+day after mint. A page cannot renew itself by bouncing through an outside
+redirect on a timer, since that navigation has no user activation; review found
+that a `top_level` verdict alone would have allowed it. Revocation
 still ends a session at once through membership incarnations, but a
 resource-scope change that publishes no artifact-session revocation (see the
 2026-09-21 entry below) no longer lapses within a day: it

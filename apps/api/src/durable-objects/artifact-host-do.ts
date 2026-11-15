@@ -172,8 +172,8 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
  * guarantee.** Nothing about an artifact executes without a viewer request, so
  * compute per open is bounded by the request-rate ceiling times this lifetime.
  * The lifetime therefore renews only when a person opens the page (a top-level
- * navigation from outside the artifact, see `admitRequest`), never on the
- * page's own requests: renewal on use would let an abandoned-but-visible page
+ * navigation they or their app started, see the serving Worker), never on the
+ * page's own requests or navigations: renewal on use would let an abandoned-but-visible page
  * poll forever.
  *
  * One year is a team-set value, not an author's guess. It replaced a fixed
@@ -766,7 +766,7 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   /** The serving door. All authorization reads are from this object's own SQLite. */
   async admitRequest(input: {
     session: string | null;
-    /** A person opened the page: a top-level navigation from outside the artifact. */
+    /** A person opened the page: a top-level navigation they or their app started, not one the page scripted. */
     opened?: boolean;
   }): Promise<ArtifactRequestAdmission> {
     await this.initialized;

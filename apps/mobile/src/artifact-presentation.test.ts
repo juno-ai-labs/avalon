@@ -52,3 +52,22 @@ it('reports the page background after presenting, and picks status bar text that
   expect(artifactBackground(messages[1]!, 'https://other.example/', 'https://site.example/')).toBeNull();
   expect(artifactBackground('rally:artifact-background url(evil)', 'https://site.example/', 'https://site.example/')).toBeNull();
 });
+
+it('reads the background from the element under the status bar when body and html are transparent', () => {
+  const frames: Array<() => void> = [];
+  const messages: string[] = [];
+  const body = { hasAttribute: () => true, getAttribute: () => '0', setAttribute: () => undefined, style: { paddingTop: '0px' }, parentElement: null };
+  const wrapper = { parentElement: body, style: {} };
+  const environment = {
+    innerWidth: 390,
+    document: { readyState: 'complete', body, documentElement: { style: { setProperty: () => undefined } }, addEventListener: () => undefined,
+      elementFromPoint: (x: number, y: number) => x === 195 && y === 1 ? wrapper : null },
+    location: { pathname: '/' },
+    getComputedStyle: (element: unknown) => ({ paddingTop: '0px', backgroundColor: element === wrapper ? 'rgb(15, 23, 42)' : 'rgba(0, 0, 0, 0)' }),
+    requestAnimationFrame: (frame: () => void) => frames.push(frame),
+    window: { ReactNativeWebView: { postMessage: (message: string) => messages.push(message) } },
+  };
+  runInNewContext(artifactPresentationScript(64), environment);
+  while (frames.length) frames.shift()!();
+  expect(artifactBackground(messages[1]!, 'https://site.example/', 'https://site.example/')).toBe('rgb(15, 23, 42)');
+});
