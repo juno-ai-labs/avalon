@@ -6047,7 +6047,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   border-radius: 22px;
   box-shadow: var(--av-sys-elevation-shadow-sm);
 }
-.workstream-composer textarea { min-height: calc(42px * var(--av-sys-font-scale-reading)); }
+.workstream-composer textarea { min-height: 42px; }
 .composer-toolbar { min-height: 34px; padding: 1px 6px 5px; }
 .composer-tools > .icon-button { border-radius: var(--av-sys-size-radius-pill); }
 .composer-send { height: 30px; width: 30px; }
@@ -6508,7 +6508,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   font-size: calc(14px * var(--av-sys-font-scale-reading));
   font-weight: 420;
   line-height: calc(20px * var(--av-sys-font-scale-reading));
-  min-height: calc(42px * var(--av-sys-font-scale-reading));
+  min-height: 42px;
 }
 .has-message-capsule .workstream-composer.is-message-capsule .composer-highlight {
   font-size: calc(14px * var(--av-sys-font-scale-reading));
