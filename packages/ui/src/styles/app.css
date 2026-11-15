@@ -659,9 +659,9 @@ pre {
  * the font's own cap height and baseline centres the glyphs themselves, in
  * whatever font the platform resolves.
  */
-.avatar-fallback { color: var(--av-ref-color-neutral-14); font-size: var(--av-sys-type-caption-2); font-weight: 650; text-box: trim-both cap alphabetic; }
-.avatar-medium .avatar-fallback { font-size: var(--av-sys-type-caption-1); }
-.avatar-large .avatar-fallback { font-size: var(--av-sys-type-footnote); }
+.avatar-fallback { color: var(--av-ref-color-neutral-14); font-size: 9px; /* type-scale: glyph sized to its tile */ font-weight: 650; text-box: trim-both cap alphabetic; }
+.avatar-medium .avatar-fallback { font-size: 10px; /* type-scale: glyph sized to its tile */ }
+.avatar-large .avatar-fallback { font-size: 11px; /* type-scale: glyph sized to its tile */ }
 /* Rally's own mark: brand yellow on a fixed near-black disc, so the yellow
    keeps its contrast in both appearances. */
 .avatar-rally { background: var(--av-sys-color-brand-on); }
@@ -1940,7 +1940,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 /* An invitation row you follow rather than answer: an organization to open. */
 .signin-choice { color: var(--av-sys-color-text-muted); gap: 12px; padding-block: 12px; transition: background-color 140ms ease, border-color 140ms ease; }
 .signin-choice:hover { background-image: var(--hover-layer); border-color: var(--av-ref-color-line-4); color: var(--av-sys-color-text-default); }
-.signin-choice .workspace-mark { border-radius: var(--av-sys-size-radius-sm); flex-basis: 26px; font-size: var(--av-sys-type-callout); height: 26px; }
+.signin-choice .workspace-mark { border-radius: var(--av-sys-size-radius-sm); flex-basis: 26px; font-size: 13px; /* type-scale: glyph sized to its tile */ height: 26px; }
 .signin-choice-name { color: var(--av-sys-color-text-default); flex: 1; font-size: var(--av-sys-type-body); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .boot-mark .rally-mark { animation: active-pulse 1.35s ease-in-out infinite; height: 38px; width: 38px; }
@@ -3398,7 +3398,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   display: inline-grid;
   flex: none;
   /* The design's 16px avatar holds its letter at about 55% of its size. */
-  font-size: var(--av-sys-type-caption-2);
+  font-size: 9px; /* type-scale: glyph sized to its tile */
   font-weight: 600;
   height: 16px;
   line-height: 1;
@@ -5146,9 +5146,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .automation-plugin-check { align-items: center; border: 1px solid var(--av-ref-color-line-5); border-radius: var(--av-sys-size-radius-xs); color: var(--av-sys-color-text-on-inverse); display: flex; flex: 0 0 auto; height: 17px; justify-content: center; margin-top: 1px; width: 17px; }
 .automation-plugin-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .automation-plugin-copy strong { align-items: center; display: flex; gap: 6px; }
-.automation-plugin-copy small { color: var(--av-sys-color-text-muted); font-family: var(--av-sys-font-family-mono); font-size: 8.5px /* type-scale: glyph */; }
+.automation-plugin-copy small { color: var(--av-sys-color-text-muted); font-family: var(--av-sys-font-family-mono); font-size: var(--av-sys-type-caption-2); }
 .automation-plugin-copy p { color: var(--av-ref-color-neutral-11); font-size: var(--av-sys-type-caption-2); margin: 5px 0 0; }
-.automation-plugin-tools { color: var(--av-ref-color-neutral-9); font-size: 8.5px /* type-scale: glyph */; margin-top: 3px; }
+.automation-plugin-tools { color: var(--av-ref-color-neutral-9); font-size: var(--av-sys-type-caption-2); margin-top: 3px; }
 .automation-plugin-empty { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-caption-2); margin: 0; }
 
 /* Automation overview */
@@ -7339,7 +7339,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .settings-account-profile { display: grid; gap: 12px; }
 .settings-support-note { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-subheadline); margin: 0; padding: 0 8px; }
 .settings-account-profile .settings-profile-card { border-radius: 0; }
-.settings-account-avatar { width: 38px; height: 38px; font-size: var(--av-sys-type-callout); }
+.settings-account-avatar { width: 38px; height: 38px; font-size: 13px; /* type-scale: glyph sized to its tile */ }
 .settings-account-profile .settings-preference-row { font-size: var(--av-sys-type-callout); grid-template-columns: minmax(100px, 1fr) minmax(0, 280px); }
 .settings-account-profile input { width: min(280px, 100%); min-width: 0; padding: 7px 10px; font-size: var(--av-sys-type-callout); border-radius: 8px; }
 .settings-account-profile .personal-colors { justify-content: flex-end; gap: 10px; padding: 5px; }
@@ -8015,7 +8015,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-pill-menu .menu-item:not(.menu-item-danger) { color: var(--av-sys-color-text-default); }
 .title-pill-menu .menu-item:not(.menu-item-danger) > svg { color: var(--av-ref-color-neutral-11); flex: none; }
 .title-pill-menu .avatar-stack .avatar { border-color: var(--av-sys-color-surface-raised); height: 28px; width: 28px; }
-.title-pill-menu .avatar-stack .avatar-fallback { font-size: var(--av-sys-type-caption-1); }
+.title-pill-menu .avatar-stack .avatar-fallback { font-size: 10px; /* type-scale: glyph sized to its tile */ }
 .title-pill-menu .avatar-stack-item + .avatar-stack-item { margin-left: -8px; }
 .title-menu-header { align-items: center; display: flex; gap: 10px; padding: 4px 4px 8px; }
 .title-menu-header-icon {
@@ -8286,7 +8286,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-pin-drop-before { box-shadow: inset 0 2px var(--av-sys-color-text-default); }
 .navigation-pin-drop-end { box-shadow: inset 0 -2px var(--av-sys-color-text-default); }
 /* The account's avatar fills the design's 28px circle. */
-.navigation-rail-icon > .avatar { font-size: var(--av-sys-type-subheadline); height: 28px; width: 28px; }
+.navigation-rail-icon > .avatar { font-size: 12px; /* type-scale: glyph sized to its tile */ height: 28px; width: 28px; }
 /* A support session: the staff member acting, over the corner of the person acted as. */
 .navigation-rail-impersonator { bottom: -4px; display: flex; position: absolute; right: -4px; }
 .navigation-rail-impersonator .avatar { border: 2px solid var(--av-cmp-sidebar-background-solid); height: 16px; width: 16px; }

@@ -49,12 +49,19 @@ export function dynamicTypeSizes(defaults: Record<TypeRole, number>, measure: (k
   return sizes;
 }
 
+/**
+ * Measures on a hidden probe and touches `root` only for a value
+ * that changed, so a return to the foreground with the same text size, nearly
+ * every one, restyles nothing but the probe. The probe resets the host's
+ * variables on itself with `initial`, which makes a custom property invalid, so
+ * its touch roles fall back to their design values without clearing `root`.
+ */
 function apply(root: HTMLElement): void {
-  for (const role of TYPE_ROLES) root.style.removeProperty(`--av-dynamic-type-${role}`);
   const probe = document.createElement('span');
   probe.dataset.density = 'touch';
   probe.setAttribute('aria-hidden', 'true');
   probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none';
+  for (const role of TYPE_ROLES) probe.style.setProperty(`--av-dynamic-type-${role}`, 'initial');
   document.body.appendChild(probe);
   try {
     const computed = getComputedStyle(probe);
@@ -63,13 +70,18 @@ function apply(root: HTMLElement): void {
       // An unsupported keyword leaves `font` as it was, which would measure the
       // previous style again.
       if (!CSS.supports('font', keyword)) return null;
-      probe.style.font = '';
+      probe.style.removeProperty('font');
       probe.style.font = keyword;
       const size = Number.parseFloat(getComputedStyle(probe).fontSize);
       return Number.isFinite(size) && size > 0 ? size : null;
     };
     const sizes = dynamicTypeSizes(defaults, measure);
-    if (sizes) for (const role of TYPE_ROLES) root.style.setProperty(`--av-dynamic-type-${role}`, `${sizes[role]}px`);
+    if (!sizes) return;
+    for (const role of TYPE_ROLES) {
+      const name = `--av-dynamic-type-${role}`;
+      const value = `${sizes[role]}px`;
+      if (root.style.getPropertyValue(name) !== value) root.style.setProperty(name, value);
+    }
   } finally {
     probe.remove();
   }
