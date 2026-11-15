@@ -20,6 +20,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/Dashboard.tsx` | Home's dashboard, drawn natively from the directory (the saved copy until Home answers) over Home's page. |
 | `apps/mobile/src/dashboard-visibility.ts` | When the native dashboard covers Home's page. |
 | `apps/mobile/src/directory.ts` | Compares Home snapshots on the fields the shell shows, so `updatedAt` ticks and Home's own navigation do not re-render every tab. |
+| `apps/mobile/src/artifact-access.ts` | The one data request the native shell makes itself: fresh access to a pinned artifact on the shared session cookie, so renewal never waits for Home. |
 | `apps/mobile/src/saved-pins.ts` | The tab-bar pins' descriptors and canonical artifact URLs, saved per account so a pinned tab opens on its cookie at launch. |
 | `apps/mobile/src/saved-directory.ts` | The last directory, saved on the device per account and removed on sign-out; launch opens Home at its organization. |
 | `apps/mobile/src/recovery-order.ts` | Orders WebView recovery after a renderer crash: the visible screen first, hidden ones (Home included) once it has presented, shown or needed. |
@@ -309,7 +310,7 @@ default cadence; delivery is opportunistic, and iOS Simulator cannot run this
 task. Resume and reconnection refresh the existing browser/socket data. There is
 no offline canvas content, queued editing system, or background content polling. The last canvas directory (titles, icons, pins) is saved on the device for one account and removed on sign-out; launch opens Home directly at that organization, and falls back to the plain start once if the page asks for sign-in before its first snapshot. Diagnostics records the latest launch-to-dashboard, first pin tap-to-artifact and visible crash-recovery times. Home reports its web build (its entry script) in `ready`; on resume native reads the deployed `index.html`, and a newer build reloads Home when its page is hidden: off screen or under the native dashboard, never under an open inline chat, create flow or canvas.
 
-Home's dashboard is native (`Dashboard.tsx`). Its cards wear each Canvas's appearance as the browser host's do through `canvasMark`: the chosen glyph (else the unchosen one) in the pastel ink on the pastel tint, and the lead card's 145-degree gradient toward 20% of the hue, mixed in Oklab by `color-mix.ts` to match the stylesheet's `color-mix`. It draws from the live directory, or from the saved copy until Home's page answers, so launch shows the canvases on the first frame. Home's page stays mounted behind it for the socket, inline chat, creation and the canvases it opens. A tap on a pinned canvas switches tabs; any other tap, and Create, is sent to the page (held until the page is ready) and shows a spinner until the page reports that view. The saved copy is for display and for the tab bar: notification and crash-report registration wait for the live directory. The pins' descriptors and canonical URLs are saved too (`saved-pins.ts`, never a one-time open URL), so the tab bar and each hosted pin open at launch on the artifact's cookie without Home. Access requests a pin makes still wait for Home.
+Home's dashboard is native (`Dashboard.tsx`). Its cards wear each Canvas's appearance as the browser host's do through `canvasMark`: the chosen glyph (else the unchosen one) in the pastel ink on the pastel tint, and the lead card's 145-degree gradient toward 20% of the hue, mixed in Oklab by `color-mix.ts` to match the stylesheet's `color-mix`. It draws from the live directory, or from the saved copy until Home's page answers, so launch shows the canvases on the first frame. Home's page stays mounted behind it for the socket, inline chat, creation and the canvases it opens. A tap on a pinned canvas switches tabs; any other tap, and Create, is sent to the page (held until the page is ready) and shows a spinner until the page reports that view. The saved copy is for display and for the tab bar: notification and crash-report registration wait for the live directory. The pins' descriptors and canonical URLs are saved too (`saved-pins.ts`, never a one-time open URL), so the tab bar and each hosted pin open at launch on the artifact's cookie without Home. A pin that needs fresh access asks the browser API directly (`artifact-access.ts`), and asks Home only if that fails.
 
 Settings and diagnostics is available from the sidebar's settings button.
 Notification permission is requested only through Enable notifications. The
@@ -424,6 +425,7 @@ platform's bundle first to catch resolution errors before device testing.
 - Reactive artifact open and canonical URLs share one origin under the configured artifact domain. The validator's tests reject nested, deceptive, credential-bearing, and cross-origin URLs. Artifact WebViews accept only their presentation-ready marker, which can dismiss a loading cover and has no shell actions, account metadata or credentials. Never route it through the application bridge.
 - Home cannot be removed or reordered. Pin ordering preserves every server pin, including desktop overflow; `movePin` tests cover preservation and invalid moves. The fixed Home control is verified visually, with no automated guard.
 - A failed resource request cannot imply no artifact. Error recovery precedes fallback routing; `mobile-session.test.ts` checks the routing decision, and browser acceptance exercises the stale-cache and recovery paths.
+- Native makes exactly one data request of its own (`artifact-access.ts`): fresh access to a pinned artifact, on the browser transport's endpoint and the same HttpOnly session cookie the WebViews hold, with the app's `Origin`. It reads no token and stores nothing but the canonical URL. Any failure falls back to asking Home. Adding another native data request is a decision, not a convenience.
 - Credentials remain in browser cookies. The bridge transmits display metadata, commands, short-lived artifact open URLs, APNs registration tokens, account-bound regional crash envelopes and the single-use sign-in redemption proof, never a password, access/refresh token or session cookie. Runtime schemas define this boundary.
 
 ## Boundary
@@ -620,7 +622,12 @@ load reloads each time, as the earlier retry did; no cap was added. In-artifact
 unsaved state is still lost on termination. While Home waits, its socket is
 down, so pins and notifications catch up once it reloads. Anything that needs
 Home sooner must `wake` it, as fresh access does. A new snapshot field the shell
-shows must be added to `directoryKey`, or its changes are dropped. Not yet
+shows must be added to `directoryKey`, or its changes are dropped. Pinned tabs
+open at launch from saved descriptors and canonical URLs on a viewer cookie that
+now lasts a year from the last open (reactive-web-artifacts.md), and fresh
+access is asked of the browser API directly. That direct request reverses the
+earlier "no separate REST client" position for one call only, by the founder's
+decision: renewal waiting on Home's boot was the slowest path left. Not yet
 measured on a device.
 
 ### 2026-11-14 — Reduce mobile launch and pinned-canvas startup work
