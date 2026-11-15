@@ -295,7 +295,7 @@ import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { setsDelegation, sidekickDelegationTools } from "./sidekick-delegation-tools";
 import { sidekickSourceRequestCard, sidekickSourceTools } from "./sidekick-source-tools";
-import { refusingTool } from "./tool-refusal";
+import { refusingTool, type ToolRefusal } from "./tool-refusal";
 import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
@@ -5286,6 +5286,17 @@ function asksForSources(input: Pick<WorkstreamWorkflowInput,
 }
 
 /**
+ * Why a loop whose answers go to an agent may not ask a person a question,
+ * and where to send it instead: no person is reading this conversation, so a
+ * question here would wait on nobody.
+ */
+function questionRefusal(input: Pick<WorkstreamWorkflowInput, "backgroundAgent">): ToolRefusal {
+  return input.backgroundAgent
+    ? { code: "question_from_background_agent", message: "A background agent cannot ask a person a question: nobody is reading this conversation, so it would wait on nobody. Send the question to the agent you work for with send_message; it can ask its person and send you the answer." }
+    : { code: "question_from_agent_message", message: "This turn was started by another agent's message, and nobody is reading this conversation, so a question here would wait on nobody. Reply to that agent with the question; it can ask its person, or a Sidekick's wizard asks directly when a Canvas's Chat messages it." };
+}
+
+/**
  * The Sidekicks plugin for a turn that acts for the Organization rather than
  * a person: a Sidekick run that acts as itself, or a turn with no person
  * behind it. Its tools read and change Sidekicks in a person's name, so each
@@ -5965,11 +5976,13 @@ async function loadHarnessTools(
   }).flatMap((tool) => {
     const tableTool = tool.definition.capability.startsWith("table.");
     return expandPages(tool, tableTool ? "table" : "workstream", null, tableTool ? "table" : "");
-  }).filter((tool) =>
+  }).map((tool) =>
     // Both pause on a question a person answers; where answers go to an agent
-    // instead, neither may ask one.
-    !routesAnswersToAgent || (tool.definition.name !== AVALON_REQUEST_ELICITATION_TOOL_DEFINITION.name
-      && tool.definition !== AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION));
+    // instead, neither may ask one, and each says where to send the question
+    // (`docs/agent-tools.md`, rule 14).
+    routesAnswersToAgent && (tool.definition.name === AVALON_REQUEST_ELICITATION_TOOL_DEFINITION.name
+      || tool.definition === AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION)
+      ? refusingTool(tool, questionRefusal(input)) : tool);
   const corePlugins = createWorkstreamCorePlugins(coreTools);
   const workstreamPlugin = createAvalonWorkstreamPlugin(coreTools);
   const webPlugin = createAvalonWebPlugin(coreTools);
