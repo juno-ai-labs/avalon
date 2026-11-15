@@ -3,7 +3,6 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconBell, IconBellOff } from '@tabler/icons-react';
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { TitleMenuSeparator } from '@rally/ui/components/title-pill';
-import { Toast } from '@rally/ui/components/toast';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 
@@ -15,8 +14,8 @@ import { Button, ErrorNotice } from './primitives';
 /**
  * A Canvas's notices on the client (docs/PRDs/2026-11-14_canvas-notices):
  * the record its Chat shows when an agent turns them on, the title menu's
- * Notifications section, and the toast that offers a member of an
- * Organization-wide Canvas to join it. All three read the viewer's
+ * Notifications section, and the banner under its title that offers a member of an
+ * Organization-wide Canvas to join it (a banner under its title). All three read the viewer's
  * `notices` on the Canvas detail and change it through the same two calls.
  */
 
@@ -45,6 +44,8 @@ function channelsWords(channels: NotificationChannel[] | null): string {
 function DevicePushLine(): React.JSX.Element | null {
   const { api, host } = useCollaborationSession();
   const readiness = useDevicePushReadiness(api ?? null);
+  // A device that cannot get push here at all has nothing to fix; the record says nothing about it.
+  if (readiness.state === 'unavailable' || readiness.state === 'unconfigured') return null;
   const notice = devicePushNotice(host === 'desktop' ? 'mac' : 'browser', readiness.state);
   if (!notice) return null;
   return <div className="canvas-notices-device">
@@ -134,7 +135,7 @@ export function CanvasNoticesMenuSection({ canvas }: { canvas: CanvasDetail | un
   </>;
 }
 
-const DISMISSED_KEY = 'rally.canvas-notices-toast-dismissed';
+const DISMISSED_KEY = 'rally.canvas-notices-banner-dismissed';
 
 function dismissedCanvases(): string[] {
   try {
@@ -146,26 +147,26 @@ function dismissedCanvases(): string[] {
 }
 
 /**
- * At the top of an Organization-wide Canvas with notices on, for a viewer
- * who is not a participant: join it to get its notices. Dismissing it hides
- * it for this Canvas on this device.
+ * At the top of an Organization-wide Canvas with notices on, under its title,
+ * for a viewer who is not a participant: join it to get its notices.
+ * Dismissing it hides it for this Canvas on this device.
  */
-export function CanvasNoticesJoinToast({ canvas }: { canvas: CanvasDetail | undefined }): React.JSX.Element | null {
+export function CanvasNoticesJoinBanner({ canvas }: { canvas: CanvasDetail | undefined }): React.JSX.Element | null {
   const actions = useCanvasNoticeActions(canvas?.id ?? '');
   const [dismissed, setDismissed] = useState(() => dismissedCanvases());
-  // Mounted only on a Canvas that can offer it, so no other Canvas carries its live region.
-  if (!canvas || canvas.visibility !== 'workspace' || !canvas.notices || canvas.notices.participant) return null;
-  const open = !dismissed.includes(canvas.id);
+  if (!canvas || canvas.visibility !== 'workspace' || !canvas.notices || canvas.notices.participant || dismissed.includes(canvas.id)) return null;
   const dismiss = () => {
     const next = [...new Set([...dismissedCanvases(), canvas.id])];
-    try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(next)); } catch { /* the toast stays hidden for this view */ }
+    try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(next)); } catch { /* hidden for this view */ }
     setDismissed(next);
   };
-  return <div className="canvas-notices-toast">
-    <Toast icon={<IconBell aria-hidden="true" size={16} stroke={1.9} />} open={open}>
-      <span className="canvas-notices-toast-copy">This Canvas sends notices: {canvas.notices?.purpose}</span>
+  return <div aria-label="Canvas notices" className="canvas-notices-banner" role="region">
+    <IconBell aria-hidden="true" size={16} stroke={1.8} />
+    <span className="canvas-notices-banner-copy">This Canvas sends notices: {canvas.notices.purpose}</span>
+    <span className="canvas-notices-banner-actions">
       <Button disabled={actions.join.isPending} onClick={() => actions.join.mutate()}>Get notifications</Button>
       <Button onClick={dismiss}>Not now</Button>
-    </Toast>
+    </span>
+    {actions.error && <ErrorNotice occurrence={actions.error}>{actions.error.message}</ErrorNotice>}
   </div>;
 }
