@@ -1398,7 +1398,7 @@ columns.
 
 The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. A wake-up belongs to the conversation whose run scheduled it — a Canvas's Chat, a Sidekick's conversation, or a Sidekick run child — and lives in that conversation's object, whose own alarm fires it into that conversation's loop. A child's wake-up never runs in its parent's `"0"`, which would write the child's prompt into another transcript; a Sidekick run child's continues its run only as `continueSidekickRun` allows, the question a member's message there asks, and a refusal consumes it. A delegated worker's wake-up runs as that worker, with its owner's sandbox and reporting, and a stopped worker's is consumed without running.
 
-**A wake-up continues the loop that scheduled it.** It is asked what an input to its conversation is asked in `claimPersistentLoopExecution`, so the woken turn is the same kind of loop ([`agent-loop-types.md`](agent-loop-types.md)): a run child's continues its run; a worker whose root is a run (`background_agent.root_substream_id`, which the alarm passes as `rootSubstreamId`) asks `continueSidekickRun` about that root run and carries `automationDelegation`, not a run of its own; a wizard's worker asks nothing; a wake-up in a Sidekick's shared conversation is a wizard turn (`sidekickWizard`), taken only while its principal still manages the Sidekick and consumed otherwise. Whether a person drove the scheduling turn is the one fact the woken input cannot read from its own conversation, so `schedule_wakeup` records it (`workstream_wakeups.scheduled_by_person`, from `drivenByPerson`) and the woken input carries it as `wakeupScheduledByPerson`: a wake-up an agent's message or the self-review scheduled offers no more than that turn did. Firing claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same conversation; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
+**A wake-up continues the loop that scheduled it.** It is asked what an input to its conversation is asked in `claimPersistentLoopExecution`, so the woken turn is the same kind of loop ([`agent-loop-types.md`](agent-loop-types.md)): a run child's continues its run; a worker whose root is a run (`background_agent.root_substream_id`, which the alarm passes as `rootSubstreamId`) asks `continueSidekickRun` about that root run and carries `automationDelegation`, not a run of its own; a wizard's worker asks nothing; a wake-up in a Sidekick's shared conversation is a wizard turn (`sidekickWizard`), taken only while its principal still manages the Sidekick and consumed otherwise. Who scheduled it is not recorded: a wake-up in a Chat or a wizard is a person's turn (`drivenByPerson`), whether a person's message, another agent's or the self-review scheduled it, because what such a turn may do in a person's name, such as asking for a source, still waits for a person to approve. Firing claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same conversation; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
 
 Every conversation response carries `nextPendingWakeup`, the earliest pending
 row by due time, derived with an indexed lookup; the bounded prompt prefix is
@@ -1907,26 +1907,22 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 **What changed:** `fireWorkstreamWakeup` derives the woken turn's loop kind
 as `claimPersistentLoopExecution` does for any input. A wake-up in a
 Sidekick's shared conversation is a wizard turn, after the manager check. A
-worker's wake-up asks about its root run, not its own substream. Each
-wake-up records whether a person's turn scheduled it
-(`scheduled_by_person`, AgentLoopDO migration 88), and the woken input
-carries it.
+worker's wake-up asks about its root run, not its own substream.
 
 **Why:** The wake-up path built its input by hand and left out what the
 message path derives. A wizard that said "I'll check back and adjust" woke
 without its authoring tools; a run's worker asked `continueSidekickRun` about
-its own id, which is no run, so its wake-up was refused and lost; and making
-a woken wizard turn a wizard would have handed source tools to wake-ups an
-agent's message or the self-review scheduled. The owner set the rule: a
-wake-up continues the loop as it was.
+its own id, which is no run, so its wake-up was refused and lost. The owner
+set the rule: a wake-up continues the loop as it was.
 
 **Considered and rejected:** Admitting a wake-up as a pending input so the
 claim path derives everything itself. It is the cleaner end state, but it
 moves the claim, the transcript note and the run receipt into a new path;
-this keeps them and mirrors the two derivations. Walking the scheduling
-run's `origin` instead of a column: a chain of wake-ups ends at a woken run
-whose origin is `scheduled_wakeup`, and nothing leads from it back to the
-wake-up that started it.
+this keeps them and mirrors the two derivations. Recording whether a
+person's turn scheduled each wake-up, so one an agent's message or the
+self-review scheduled would not get the source tools: the owner judged it
+unneeded, since a source request still waits for the person asked to
+approve it.
 
 **Consequences:** A new derivation in `claimPersistentLoopExecution` belongs in
 `fireWorkstreamWakeup` too, until the two paths are one. A new

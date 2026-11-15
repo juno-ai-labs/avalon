@@ -26,14 +26,8 @@ describe("drivenByPerson", () => {
     expect(drivenByPerson({ reason: "sidekick_review" })).toBe(false);
   });
 
-  it("is a wake-up's turn exactly when the turn that scheduled it was a person's", () => {
-    expect(drivenByPerson({ reason: "scheduled_wakeup", scheduledWakeupId: "w", wakeupScheduledByPerson: true })).toBe(true);
-    expect(drivenByPerson({ reason: "scheduled_wakeup", scheduledWakeupId: "w", wakeupScheduledByPerson: false })).toBe(false);
-    // A wake-up scheduled before the column is read as a person's, as it always was.
-    expect(drivenByPerson({ reason: "scheduled_wakeup", scheduledWakeupId: "w" })).toBe(true);
-  });
-
-  it("keeps a run's wake-up a run's, whoever scheduled it", () => {
-    expect(drivenByPerson({ reason: "scheduled_wakeup", scheduledWakeupId: "w", wakeupScheduledByPerson: true, automationRun: RUN })).toBe(false);
+  it("is a person's turn for a wake-up in a Chat or a wizard, and not for a run's wake-up", () => {
+    expect(drivenByPerson({ reason: "scheduled_wakeup" })).toBe(true);
+    expect(drivenByPerson({ reason: "scheduled_wakeup", automationRun: RUN })).toBe(false);
   });
 });

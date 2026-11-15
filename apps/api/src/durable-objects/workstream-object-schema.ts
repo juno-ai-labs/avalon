@@ -60,7 +60,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 88;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 87;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3872,19 +3872,6 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     statements: [
       `CREATE INDEX participant_transcript_message_recency_idx ON participant_transcript_turns(created_at DESC)
          WHERE entry_kind = 'conversation' AND message_type <> 'tool'`,
-    ],
-  },
-  {
-    version: 88,
-    description: "record whether a person's turn scheduled each wake-up",
-    // A wake-up continues the loop that scheduled it, and whether a person
-    // drove that turn is the one fact about it the woken turn cannot read
-    // from its own input (docs/agent-loop-types.md). A row from before this
-    // version was scheduled when every woken turn was treated as a person's,
-    // so the default keeps it that way.
-    statements: [
-      `ALTER TABLE workstream_wakeups ADD COLUMN scheduled_by_person INTEGER NOT NULL DEFAULT 1
-         CHECK (scheduled_by_person IN (0, 1))`,
     ],
   },
 ];
