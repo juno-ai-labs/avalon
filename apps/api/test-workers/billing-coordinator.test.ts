@@ -176,6 +176,32 @@ it('creates a no-card signup trial through the actor and refreshes payment readi
 });
 
 
+it('acknowledges a customer webhook echoing only Rally-written metadata while settlement holds the actor', async () => {
+  const app = new Hono<HonoAppEnv>(); app.onError(errorHandler); app.route('/webhook', stripeWebhookRoutes);
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const calls: string[] = [];
+  vi.stubGlobal('fetch', async (url: string) => {
+    calls.push(url);
+    if (calls.length === 1) await held;
+    if (url.includes('/customers/cus_1')) return Response.json({ invoice_settings: { default_payment_method: 'pm_card' } });
+    if (url.includes('/subscriptions?')) return Response.json({ data: [], has_more: false });
+    throw new Error(`Unexpected provider call: ${url}`);
+  });
+  const settling = Promise.resolve(stub().refresh(ORG));
+  await expect.poll(() => calls.length).toBe(1);
+  const send = async (previous: Record<string, unknown>) => {
+    const body = JSON.stringify({ type: 'customer.updated', data: { object: { id: 'cus_1' }, previous_attributes: previous } });
+    return app.request('/webhook', { method: 'POST', body, headers: { 'stripe-signature': await signature(body) } }, testEnv());
+  };
+  expect((await send({ metadata: { usage_pending_hours: '3' } })).status).toBe(200);
+  expect((await send({ invoice_settings: { default_payment_method: null } })).status).toBe(409);
+  expect(calls).toHaveLength(1);
+  release();
+  await settling;
+});
+
+
 it('refreshes payment readiness for legacy billing settings through the actor', async () => {
   await env.DB.prepare("UPDATE billing_accounts SET subscription_id='sub_legacy', status='active', offer_id='grow', currency='usd'").run();
   const subscription = { id: 'sub_legacy', customer: 'cus_1', status: 'active', currency: 'usd', metadata: { offer_id: 'grow' }, items: { data: [{ price: { id: 'price_grow' } }] } };
