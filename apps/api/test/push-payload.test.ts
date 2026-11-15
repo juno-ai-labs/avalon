@@ -12,6 +12,13 @@ describe('push payload', () => {
     expect(new TextEncoder().encode(longTitle).length).toBeLessThanOrEqual(APNS_PAYLOAD_BYTES);
     expect(JSON.parse(longTitle).aps.badge).toBe(0);
   });
+  it('sends a kind newer than installed apps as one they open, and keeps the rest as they are', () => {
+    const rallyKind = (kind: 'new_message' | 'canvas_notice' | 'artifact_updated') =>
+      JSON.parse(renderPushPayload({ title: 'Launch plan', body: 'New episode', threadKey: 'thread', badge: 1, data: { ...data, kind } })).rally.kind;
+    expect(rallyKind('canvas_notice')).toBe('mention');
+    expect(rallyKind('new_message')).toBe('mention');
+    expect(rallyKind('artifact_updated')).toBe('artifact_updated');
+  });
   it('gives existing non-UUID intent IDs stable, distinct collapse IDs', async () => {
     expect(await pushCollapseId('workspace', 'mention:message:person')).toMatch(/^[a-f0-9]{64}$/);
     expect(await pushCollapseId('workspace', 'a')).not.toBe(await pushCollapseId('workspace', 'b'));

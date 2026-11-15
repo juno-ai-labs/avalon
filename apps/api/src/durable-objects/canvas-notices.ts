@@ -138,6 +138,7 @@ interface RegistrationRow extends Record<string, SqlStorageValue> {
   registered_by_id: string | null;
   registered_by_name: string;
   record_message_id: string;
+  updated_at: number;
 }
 
 /** Who turned a Canvas's notices on, or sends one: Rally in its Chat, or a Sidekick. */
@@ -150,7 +151,7 @@ export interface CanvasNoticeAgent {
 /** The Canvas's registration, or `undefined` while its notices are off. */
 export function canvasNoticeRegistration(sql: SqlStorage, canvasId: string): RegistrationRow | undefined {
   return sql.exec<RegistrationRow>(
-    `SELECT purpose, registered_by_kind, registered_by_id, registered_by_name, record_message_id
+    `SELECT purpose, registered_by_kind, registered_by_id, registered_by_name, record_message_id, updated_at
        FROM canvas_notice_registrations WHERE canvas_id = ?`, canvasId,
   ).toArray()[0];
 }
@@ -205,6 +206,7 @@ export function canvasNoticesView(sql: SqlStorage, canvasId: string, viewer: { u
     registeredBy: { kind: registration.registered_by_kind, name: registration.registered_by_name },
     participant: viewer.participant,
     channels: canvasNoticeOverride(sql, canvasId, viewer.userId) ?? null,
+    updatedAt: registration.updated_at,
   };
 }
 
