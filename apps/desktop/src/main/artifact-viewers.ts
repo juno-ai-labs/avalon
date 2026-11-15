@@ -2,10 +2,10 @@ import { AnnotationCommentActionSchema, ArtifactPickerPinSchema, type Annotation
 import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { z, type ZodType } from 'zod';
 /**
- * The two surfaces that show a live artifact, and the one isolation contract
+ * The two surfaces that show a reactive artifact, and the one isolation contract
  * both are built from.
  *
- * A live artifact is **model-authored web content served from an origin Rally
+ * A reactive artifact is **model-authored web content served from an origin Rally
  * does not control the contents of**. It is shown in two places — a
  * `WebContentsView` composited over the right rail's preview region, and a
  * pop-out window — and they share one creation path deliberately: two window
@@ -20,7 +20,7 @@ import { z, type ZodType } from 'zod';
  * rail's rectangle, and the renderer can only *ask for an artifact*: it can
  * never navigate one.
  *
- * See `docs/live-web-artifacts.md` and `docs/security.md`.
+ * See `docs/reactive-web-artifacts.md` and `docs/security.md`.
  */
 import { ARTIFACT_RESERVED_PREFIX, parseArtifactHost } from '@rally/contracts';
 import type { Session } from 'electron';
@@ -527,7 +527,7 @@ export interface ArtifactLinkHandoff {
  * so a page that wants to leak through a click still can — one URL per press.
  * What was bought is that every such handoff is somebody's own press, inside
  * the five seconds a browser would also call theirs.
- * `docs/live-web-artifacts.md` carries the whole of what is and is not closed
+ * `docs/reactive-web-artifacts.md` carries the whole of what is and is not closed
  * here.
  *
  * A **redirect is not a click** and is refused whatever the activation says.

@@ -22,7 +22,7 @@ export function DetailActionMenu({ actions, children, rowsOnly = false }: { acti
  * A panel header already owns the surface's own controls: the title,
  * versions, archive, close. What it cannot know is that the thing it is showing
  * has controls of its own, and a detail that draws them in its body puts chrome
- * inside the content — which, for a live artifact, means a row of buttons that
+ * inside the content — which, for a reactive artifact, means a row of buttons that
  * reads as part of the page being previewed rather than as Rally's.
  *
  * So the host listens and the detail declares. The alternative was to hoist

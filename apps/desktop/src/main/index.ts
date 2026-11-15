@@ -3536,7 +3536,7 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
 /**
  * One isolated native window for both forms of generated artifact.
  *
- * A live site keeps its own session partition deliberately — a person who
+ * A reactive site keeps its own session partition deliberately — a person who
  * authorized the artifact in the rail should not authorize it again to see it
  * bigger. A generated file instead carries the already-authorized preview
  * bytes; a renderer page draws the shared preview and returns pins to its owning composer.

@@ -1,10 +1,10 @@
-# Live web artifacts
+# Reactive web artifacts
 
 ## Canvas artifact access
 
 Published websites and files now inherit the Canvas’s artifact audience. The serving host authorizes each request from a local versioned snapshot; public access is explicit. This replaces the earlier public-by-default fallback and session-as-permission model. Routing remains unchanged. See [Canvas artifact access](canvas-artifact-access.md).
 
-A **live artifact** is a directory a Canvas's Chat or a Sidekick run published that Rally also
+A **reactive artifact** is a directory a Canvas's Chat or a Sidekick run published that Rally also
 *serves publicly*, at a stable per-artifact HTTPS origin. A landing page, a
 dashboard, a calculator, a poll: the model
 writes ordinary files in the Terminal sandbox exactly as it writes a document,
@@ -584,7 +584,7 @@ is the only place that can forward into it.
   on a label boundary before anything loads.
 - **The browser client is the one exception, and it frames.** A browser has no
   main process to composite a view, so its guest and member shells preview a
-  live artifact in an `<iframe>` with
+  reactive artifact in an `<iframe>` with
   `sandbox="allow-scripts allow-same-origin allow-forms"`, a constant beside the
   element in `site-resource-detail.tsx`.
   `allow-same-origin` keeps the artifact in *its own* origin on the artifact
@@ -708,7 +708,7 @@ is the only place that can forward into it.
   row moves: otherwise a D1 failure followed by an equal-content retry can
   mistake the changed resource for a completed publish and return the old
   artifact version.
-- **A republish never downgrades a live site to an archive.** Archive→site
+- **A republish never downgrades a reactive site to an archive.** Archive→site
   upgrades freely — that is the archive fallback's own recovery — but the
   reverse fails loudly, because a URL participants hold is never killed by an
   accident of file layout.
@@ -953,12 +953,12 @@ refresh needs no shared-output claim and succeeds when its writes do. The
 "ship data as files" and "no network" steps now limit a data file to data that
 will not change.
 `creating-an-app` points app requests built from connected data at that
-section, and `reporting-on-data` builds a live site for anything the person
+section, and `reporting-on-data` builds a reactive site for anything the person
 will keep using as the data changes, not only when they ask for a refresh.
 
 **Why:** A request for "a micro-CRM of who Alex and I have talked to about
 piloting Rally" was built with its contacts baked into a seed file and no
-Sidekick. The skills never suggested one: `reporting-on-data` allowed a live
+Sidekick. The skills never suggested one: `reporting-on-data` allowed a reactive
 site only when asked, and `building-live-sites` taught that outside data is
 fetched once and published as a file. The person expected a CRM that updates
 itself from both accounts.
@@ -1358,12 +1358,12 @@ dropping the factor reintroduces the gap or the overlap.
 
 ### 2026-10-13 — A detail's header actions are data the header draws
 
-**What changed:** A live site's Stored data, Open in a new window, Copy public
+**What changed:** A reactive site's Stored data, Open in a new window, Copy public
 link and Open in browser are now `IconGroupAction`s the detail declares with
 `useDetailHeaderActions`, and the panel header puts them in its `IconGroup`
 beside Expand. They are round like Close and fold into "⋯" when the header is
 crowded or at phone width. `IconGroupAction` gained `pressed`, for the Stored
-data toggle (a check on its row once folded). Over a live site the header's
+data toggle (a check on its row once folded). Over a reactive site the header's
 labels, "⋯" and Close included, open to the left of their buttons. The rail and
 copy button now draw Tabler icons, like the header around them.
 
@@ -1393,7 +1393,7 @@ Shipped in #1219.
 **What changed:** With `BROWSER_APP_ORIGIN` configured, artifact responses
 allow that one origin in `frame-ancestors` and drop `X-Frame-Options`, and a
 redemption inside a frame sets a partitioned `SameSite=None` viewer cookie. The
-browser client, guest and member shells alike, previews live artifacts in a
+browser client, guest and member shells alike, previews reactive artifacts in a
 sandboxed iframe.
 
 **Why:** A browser has no main process to composite the preview, and the full
@@ -1725,7 +1725,7 @@ this; the entry above is the shipped answer.
 
 **Why:** Everything Rally drew around the page was a second frame inside the
 lightbox's, and everything it drew above the page competed with content the
-model authored. A live artifact is the one resource whose detail *is* the thing
+model authored. A reactive artifact is the one resource whose detail *is* the thing
 itself, so the chrome belongs where the surface already keeps chrome. Two
 defects only visible in a window came out of it: an icon-only action is
 unreadable without its tooltip, and every tooltip in this lightbox was opening

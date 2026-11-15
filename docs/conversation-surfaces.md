@@ -1415,7 +1415,7 @@ an **Open in a new window** action, using Tabler's `window-maximize` glyph, and 
 **Open in a righthand sidebar** action using `layout-sidebar-right-inactive`.
 The sidebar action dismisses the lightbox and
 hands the full-bleed document to the shell's resizable right-rail primitive,
-whose only chrome is the document title and Close. Live sites still mint a fresh
+whose only chrome is the document title and Close. Reactive sites still mint a fresh
 one-shot navigation and share their per-artifact browser session; generated
 files read through the existing authorized preview route and hand those preview
 bytes to either the rail reader or the main process, which opens the image,

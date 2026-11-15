@@ -73,7 +73,7 @@ const RevocationTargetSchema = z.discriminatedUnion("scope", [
    */
   z.strictObject({ scope: z.literal("workstream_audience_narrowed"), workstreamId: IdSchema }),
   /**
-   * A live web artifact's supervisor, a sibling of the work streams.
+   * A reactive web artifact's supervisor, a sibling of the work streams.
    *
    * It hangs off the workspace hop rather than a work stream's because
    * `artifact_registry` lives in WorkspaceDO beside the resource authority,

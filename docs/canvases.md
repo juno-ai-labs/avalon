@@ -3,7 +3,7 @@
 A **Canvas** is the shared home for work in Rally: a conversation with Rally
 that everyone in the Canvas can read and take part in, and the artifacts that
 conversation generates — documents, spreadsheets, images, PDFs, archives and
-live sites. A Canvas is a conversation first. Its id is the parent id of its
+reactive sites. A Canvas is a conversation first. Its id is the parent id of its
 `canvas`-kind conversation, so one Canvas can generate many artifacts, and a
 new Canvas has none until its Chat publishes one.
 
@@ -11,7 +11,7 @@ This document owns a Canvas's identity, who can open it, its directory row,
 its participants and guests, and how its artifacts hang off its conversation.
 The conversation engine is [`workstream-durable-object.md`](workstream-durable-object.md)'s;
 the hosting inside `WorkspaceDO` is [`hosted-conversation-parents.md`](hosted-conversation-parents.md)'s;
-what a published artifact becomes is [`live-web-artifacts.md`](live-web-artifacts.md)'s.
+what a published artifact becomes is [`reactive-web-artifacts.md`](reactive-web-artifacts.md)'s.
 The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md#decision-log).
 
 ## Where the code lives
@@ -349,7 +349,7 @@ under the identity it always has, `terminal:<conversation>:<path>`, and the
 conversation is now the Canvas. The first publish of a path is a new resource,
 version 1; a later publish of the same path is a new version of it; a different
 path is another artifact. A file of any kind, or a directory that becomes a
-site or an archive, as [`live-web-artifacts.md`](live-web-artifacts.md) decides.
+site or an archive, as [`reactive-web-artifacts.md`](reactive-web-artifacts.md) decides.
 
 A person can also publish a file or a static site made elsewhere, through
 `POST /canvases/:id/artifacts` (`CanvasPublicationService`, used by the
@@ -488,7 +488,7 @@ and archives one it made
 keyed by the Canvas id) and the Terminal's `publish_resource`, which publishes
 into the Canvas. One of the data tools writes: `write_artifact_data` changes
 rows in a stateful site linked to the Canvas without republishing it
-([live web artifacts](live-web-artifacts.md#writing-rows-from-a-run)). It has no conversation tools; those serve a Sidekick
+([reactive web artifacts](reactive-web-artifacts.md#writing-rows-from-a-run)). It has no conversation tools; those serve a Sidekick
 ([`conversation-tools.md`](conversation-tools.md)).
 
 Rally is told about the Canvas in a host-provided message, `CANVAS CONTEXT`
@@ -788,7 +788,7 @@ mechanics it shares with a Sidekick
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), the share
 primitive's delivery and claim mechanics
 ([`scope-invitations.md`](scope-invitations.md)), or what a published artifact
-becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
+becomes ([`reactive-web-artifacts.md`](reactive-web-artifacts.md)).
 
 ## Failure modes and limits
 
@@ -918,7 +918,7 @@ archived Canvas. Writer Sidekicks cannot select an archived Canvas for another
 publication, whether selected explicitly or reused implicitly for the same run.
 The transaction also marks memory digest copies for withdrawal, advances each
 Activity recipient's waterline, and saves one alarm entry per Chat child and
-live artifact. Those entries stop the child loop and cancel its timers, publish
+reactive artifact. Those entries stop the child loop and cancel its timers, publish
 Chat revocations through the existing access-revocation Queue, and withdraw
 artifact viewer sessions. Failed deliveries retain their original targets behind
 the alarm store's retry gate; retrying the archive never needs to reconstruct an

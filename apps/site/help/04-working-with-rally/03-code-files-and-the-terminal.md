@@ -25,7 +25,7 @@ needs them. In practice that means it can:
 - Analyse a spreadsheet, a log file or a pile of CSVs.
 - Make charts, datasets, reports, images and zip archives.
 - Build documents and small web sites
-  (see [Live sites](../06-things-rally-makes/03-live-sites.md)).
+  (see [Reactive sites](../06-things-rally-makes/03-reactive-sites.md)).
 
 You do not need to know any of those languages. Ask for the result and Rally
 picks the tool.

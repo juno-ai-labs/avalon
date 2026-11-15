@@ -107,7 +107,7 @@ thirty days, or customers whose ticket volume rose before they churned.
 Lead with the answer, then the table or views, then a short **Sources** note:
 which sources you joined, on which keys, how many rows matched, and what you
 could not connect. A one-time answer is a document: deliver it as your
-Documents instructions say. Build a live site with \`building-live-sites\`
+Documents instructions say. Build a reactive site with \`building-live-sites\`
 when the person asks for an interactive dashboard or a page that refreshes,
 or for something they will keep using as the data changes (a tracker, a
 pipeline, a CRM, a list of who said what). That skill keeps the site's data

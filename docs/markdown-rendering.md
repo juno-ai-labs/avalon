@@ -811,7 +811,7 @@ never a type string**, and calls the exported `resourceIconType` itself: a
 provenance type (`generated_file`, `uploaded_file`) says who made the resource
 rather than what it is, and only that function replaces it with the attachment
 kind its MIME and filename classify to. A caller holding a raw `resourceType`
-cannot see that a `generated_file` carrying the site manifest is a live site.
+cannot see that a `generated_file` carrying the site manifest is a reactive site.
 The glyph is then chosen by substrings of that one name, with a published site
 matched whole ahead of the chain — under both `generated_site` and `site` — and
 drawn as a Tabler `app-window`. Heading collapse is off unless a host explicitly
@@ -1409,7 +1409,7 @@ artifact list.
 
 **Why:** A site fell off the end of the substring chain to the generic file
 mark, so the one artifact kind that is a page somebody opens looked identical to
-the ones they download — the sidebar showed a live site under the same sheet of
+the ones they download — the sidebar showed a reactive site under the same sheet of
 paper as a `.docx`. The chain itself is why the match is exact and comes first:
 `includes('site')` would claim a `website` or `web_page` type that the `web`
 branch below already answers correctly with a link mark.
@@ -1421,7 +1421,7 @@ there. That is not a hypothetical gap: `assertKindTransitionAllowed` lets an
 `archive → site` republish through by design, and `swapPublishedContent`'s
 `UPDATE` rewrites `mime_type` without ever touching `resource_type` — nothing in
 `apps/api/src` does — so a folder republished with an entry file stays
-`generated_file` with the site manifest MIME. A live site, drawn as a file, in
+`generated_file` with the site manifest MIME. A reactive site, drawn as a file, in
 the very rail this change set out to fix. The inspector rail disagreed with
 itself over it: its `isSiteResource` classifies by MIME and opens the row as a
 live page, beside an icon that called it a document.

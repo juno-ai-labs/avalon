@@ -15,7 +15,7 @@ import { z } from "zod";
  * It admits nobody by itself. The caller has already resolved the resource as
  * one the acting person can read, and decides from these facts
  * (`workstream-artifact-data-wiring.ts`); the rule is in
- * `docs/live-web-artifacts.md`.
+ * `docs/reactive-web-artifacts.md`.
  */
 export const ArtifactDataWriteFactsRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
