@@ -95,6 +95,11 @@ describe("which runs are offered write_artifact_data", () => {
       executionPrincipal: { type: "workspace" }, parentKind: "canvas", parentId: "c", substreamId: "helper", backgroundAgent: true,
       backgroundAgentRootSubstreamId: "0",
     })).toBeNull();
+    // A delegation on a loop that is not a background agent is no shape the host builds either.
+    expect(artifactDataWriteAccess({
+      executionPrincipal: coordinator, parentKind: "automation", parentId: "s", substreamId: "worker",
+      automationDelegation: { runId: "r", stopGeneration: 0 },
+    })).toBeNull();
     // A run carried by a loop marked as a background agent is no shape the host builds.
     expect(artifactDataWriteAccess({
       executionPrincipal: coordinator, parentKind: "automation", substreamId: "worker", automationRun: run, backgroundAgent: true,

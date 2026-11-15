@@ -191,6 +191,18 @@ describe("which loops get the conversation tools", () => {
       tools: ["list", "read", "search", "post"], scope: { kind: "sidekick", automationId: SIDEKICK_ID } });
   });
 
+  it("gives a background agent its root's scope: the wizard's with attach, a run's worker the run's", () => {
+    const agent = (overrides: Record<string, unknown>) => loop({ parentKind: "automation", parentId: SIDEKICK_ID,
+      substreamId: "helper" as never, backgroundAgent: true, ...overrides });
+    expect(conversationToolAccess(agent({ backgroundAgentRootSubstreamId: "0" }))).toEqual({ actingUserId: USER_ID,
+      tools: ["list", "read", "search", "post", "attach"], scope: { kind: "sidekick", automationId: SIDEKICK_ID, authoring: true } });
+    expect(conversationToolAccess(agent({ backgroundAgentRootSubstreamId: RUN_ID,
+      automationDelegation: { runId: RUN_ID, stopGeneration: 0 } }))).toEqual({ actingUserId: USER_ID, runId: RUN_ID,
+      tools: ["list", "read", "search", "post"], scope: { kind: "sidekick", automationId: SIDEKICK_ID } });
+    // An agent with no recorded root gets nothing.
+    expect(conversationToolAccess(agent({}))).toBeNull();
+  });
+
   it("gives a run that acts as the Sidekick itself the same reach, with no person", () => {
     expect(conversationToolAccess({ ...runLoop(), executionPrincipal: { type: "workspace", workspaceId: runLoop().workspaceId } }))
       .toEqual({ actingUserId: null, runId: RUN_ID,
