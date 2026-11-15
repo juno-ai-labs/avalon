@@ -1,4 +1,4 @@
-import type { HarnessSkill } from "../index";
+import type { HarnessSkill } from "../types";
 
 const USING_THE_LOCAL_INAPP_BROWSER_BODY = `## 1. Explain the current limitation
 
