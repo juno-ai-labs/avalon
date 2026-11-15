@@ -120,7 +120,7 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
         const requestIds = asked.requests.map((request) => request.requestId);
         await postWizardCard(env, input, askedFromCanvasId, `sidekick-source-card:${operationId}`, {
           text: `Asked ${requestIds.length === 1 ? "one person" : `${requestIds.length} people`} to let their events start this Sidekick. Each person approves or declines their own request.`,
-          card: { sourceRequests: { requestIds } },
+          card: { sourceRequests: { requestIds } }, sidekickId: asked.sidekickId,
         });
       }
       // The whole result is the card's input: the client reads each request's

@@ -68,6 +68,7 @@ import {
 import { isUnrecognizedConnectorConnectionCard } from '../lib/connector-connection-card';
 import { sidekickSourceRequestCardFromToolEvent } from '../lib/sidekick-source-request-card';
 import { useCollaborationSession } from '../lib/collaboration-session';
+import { ApiError } from '../lib/api';
 import { SidekickSourceRequestCard } from './sidekick-sources';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
@@ -2534,6 +2535,8 @@ function SidekickQuestionCard({ sidekickId, elicitationId, text }: { sidekickId:
     refetchOnReconnect: true,
     refetchOnWindowFocus: true,
   });
+  // Someone in the Canvas who does not manage the Sidekick reads the post's text, not a failure.
+  if (query.error instanceof ApiError && query.error.status === 403) return <AssistantMessageContent showCopy={false} text={text} />;
   if (query.error) {
     return <>
       <AssistantMessageContent showCopy={false} text="This question could not be loaded. Try again in a moment, or answer it in the Sidekick's own conversation." />

@@ -1,6 +1,7 @@
 import { MemoryRouter } from 'react-router-dom';
 import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ApiError } from '../lib/api';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
@@ -190,6 +191,26 @@ describe('MessageBlock model timing', () => {
     await waitFor(() => expect(answerSidekickQuestion).toHaveBeenCalledWith(SIDEKICK, QUESTION, 'work', undefined));
     // Read again once answered, so the card shows the answer the Sidekick holds.
     expect(await screen.findByLabelText('Elicitation response')).toHaveTextContent('Work');
+  });
+
+  it("shows a wizard question's post text to someone in the Canvas who does not manage the Sidekick", async () => {
+    const message: Message = { ...baseMessage, id: 'question-post', authorType: 'system', author: undefined,
+      messageType: 'automation_activation', text: 'Which Alex?',
+      automationActivation: { automationId: '00000000-0000-7000-8000-0000000000d1', automationName: 'Pilot CRM sync',
+        question: { elicitationId: '00000000-0000-7000-8000-0000000000f1' } } };
+    const readSidekickQuestion = vi.fn(async () => {
+      throw new ApiError('Only the people who manage this Sidekick can answer its questions', 403, 'sidekick_edit_requires_manager');
+    });
+    render(
+      <CollaborationSessionProvider api={{ readSidekickQuestion } as never} session={{ user: { id: 'user-maya' } } as never}>
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MessageBlock {...actions} message={message} />
+        </QueryClientProvider>
+      </CollaborationSessionProvider>,
+    );
+    await waitFor(() => expect(readSidekickQuestion).toHaveBeenCalled());
+    expect(await screen.findByText('Which Alex?')).toBeInTheDocument();
+    expect(screen.queryByText('The question could not be loaded')).not.toBeInTheDocument();
   });
 
   it('live-counts an active provider stream and settles its wording when complete', async () => {
