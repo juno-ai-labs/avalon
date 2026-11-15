@@ -60,15 +60,28 @@ describe("which runs are offered write_artifact_data", () => {
   it("offers a background agent its root's access: the Chat's, the wizard's, or its run's", () => {
     expect(artifactDataWriteAccess({
       executionPrincipal: member, parentKind: "canvas", parentId: "c", substreamId: "helper", backgroundAgent: true,
+      backgroundAgentRootSubstreamId: "0",
     })).toEqual({ kind: "canvas_chat", canvasId: "c" });
     expect(artifactDataWriteAccess({
       executionPrincipal: member, parentKind: "automation", parentId: "s", substreamId: "helper", backgroundAgent: true,
+      backgroundAgentRootSubstreamId: "0",
     })).toEqual({ kind: "sidekick_wizard", sidekickId: "s" });
     // A run's worker writes as its run, whoever that run acts as.
     expect(artifactDataWriteAccess({
       executionPrincipal: { type: "workspace" }, parentKind: "automation", parentId: "s", substreamId: "worker",
-      backgroundAgent: true, automationDelegation: { runId: "r", stopGeneration: 0 },
+      backgroundAgent: true, backgroundAgentRootSubstreamId: "r", automationDelegation: { runId: "r", stopGeneration: 0 },
     })).toEqual({ kind: "sidekick_run", sidekickId: "s", runId: "r" });
+  });
+
+  it("offers nothing to an agent recorded before roots were, rather than guessing its root", () => {
+    // A run's agent from then has no delegation either; read as the wizard's,
+    // it would gain the wizard's reach.
+    expect(artifactDataWriteAccess({
+      executionPrincipal: member, parentKind: "automation", parentId: "s", substreamId: "helper", backgroundAgent: true,
+    })).toBeNull();
+    expect(artifactDataWriteAccess({
+      executionPrincipal: member, parentKind: "canvas", parentId: "c", substreamId: "helper", backgroundAgent: true,
+    })).toBeNull();
   });
 
   it("offers it to nobody else", () => {
@@ -80,6 +93,7 @@ describe("which runs are offered write_artifact_data", () => {
     // A Chat's agent under Organization authority has no person to write as either.
     expect(artifactDataWriteAccess({
       executionPrincipal: { type: "workspace" }, parentKind: "canvas", parentId: "c", substreamId: "helper", backgroundAgent: true,
+      backgroundAgentRootSubstreamId: "0",
     })).toBeNull();
     // A run carried by a loop marked as a background agent is no shape the host builds.
     expect(artifactDataWriteAccess({

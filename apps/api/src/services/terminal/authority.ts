@@ -12,6 +12,7 @@ import {
 import { workspaceDOName } from "../../durable-objects/names";
 import type { Env } from "../../env";
 import { TerminalToolError } from "./tools";
+import { loopAuthority } from "../../lib/loop-authority";
 import { logWarn } from "../../observability/logger";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 
@@ -137,10 +138,16 @@ export async function resolveTerminalRunScope(
  * Sidekick's own conversation has no home to publish into.
  */
 export async function resolveTerminalPublicationHome(env: Env, input: Pick<WorkstreamWorkflowInput,
-  "workspaceId" | "parentKind" | "parentId" | "substreamId" | "executionPrincipal">,
+  "workspaceId" | "parentKind" | "parentId" | "substreamId" | "executionPrincipal">
+    & Partial<Pick<WorkstreamWorkflowInput, "automationRun" | "automationDelegation" | "backgroundAgent" | "backgroundAgentRootSubstreamId">>,
   request: { canvas?: string | undefined; title?: string | undefined } = {}): Promise<{ parentId: string; substreamId: string } | null> {
   if (input.parentKind !== "automation") return null;
-  const runId = input.substreamId && input.substreamId !== "0" ? input.substreamId : null;
+  // A background agent publishes where its root does (`loopAuthority`): a run's
+  // worker into its run's Canvas, a wizard's agent nowhere, as the wizard.
+  const authority = loopAuthority(input);
+  const runId = authority?.kind === "sidekick_run" ? authority.runId
+    : authority?.kind === "sidekick_wizard" ? null
+      : input.substreamId && input.substreamId !== "0" ? input.substreamId : null;
   if (runId !== null) {
     const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS,
       asWorkspaceId(input.workspaceId), workspaceDOName(env.AVALON_REGION, input.workspaceId));
@@ -190,7 +197,8 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
  * as Rally, a Sidekick run into the Canvas it writes as the Sidekick; `null`
  * for a conversation whose publications can land in no Canvas.
  */
-export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentKind" | "parentId" | "substreamId">):
+export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentKind" | "parentId" | "substreamId">
+    & Partial<Pick<WorkstreamWorkflowInput, "automationDelegation">>):
   ((target: { parentId: string; substreamId: string }, resourceId: string) => Promise<boolean>) | null {
   if (input.parentKind !== "canvas" && !(input.parentKind === "automation" && (input.substreamId ?? "0") !== "0")) return null;
   // Answers whether the resource is now one of a Canvas's artifacts, which is
@@ -203,8 +211,9 @@ export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInpu
       workspaceId: input.workspaceId, canvasId: target.parentId, resourceId,
       ...(input.parentKind === "canvas"
         ? { editor: { kind: "rally", id: null } }
-        // `canvasArtifactNoter` admits only a run of a Sidekick, whose substream id is the run's id.
-        : { editor: { kind: "sidekick", id: input.parentId }, runId: input.substreamId ?? null }),
+        // `canvasArtifactNoter` admits only a run of a Sidekick and the agents
+        // under it; a run's worker notes as its run, not as its own conversation.
+        : { editor: { kind: "sidekick", id: input.parentId }, runId: input.automationDelegation?.runId ?? input.substreamId ?? null }),
     });
     // This run's publications land in a Canvas, so one the Organization does
     // not hold is a defect to see, not a case to pass over.
@@ -216,3 +225,4 @@ export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInpu
     return noted;
   };
 }
+

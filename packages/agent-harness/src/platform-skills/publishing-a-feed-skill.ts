@@ -51,9 +51,12 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
      episode, keyed by the episode's id and the chapter's start.
 
    The site's code renders the feed from those rows on every request, with
-   one function per element and one escaping function every value passes
-   through. Write that renderer once, check its output (step 8), and leave
-   it alone. Adding an entry is one row write with \`write_artifact_data\`;
+   one function per element and one escaping function every text value
+   passes through. Store values as plain text (\`&\`, not \`&amp;\`) and let
+   that function escape them. The one exception is show notes stored as
+   HTML, which go unescaped inside \`<![CDATA[…]]>\`; split any \`]]>\`
+   inside them. Write that renderer once, check its output (step 9), and
+   leave it alone. Adding an entry is one row write with \`write_artifact_data\`;
    changing the show's description is one update to its row. Never store
    rendered XML or calendar text in a row, and never republish the site to
    add an entry. The reference lists each format's columns. A podcast's
@@ -76,14 +79,13 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    - one line each on adding it in two or three common apps for its kind
      (the reference names them);
    - the newest entries, each with its title and date, and a link to its
-     media file when it has one. Link with \`<a href>\`: the page cannot play
-     a separately published file in an \`<audio>\` element
-     (\`building-live-sites\`, Media, downloads and feeds).
+     media file when it has one (\`building-live-sites\`, Media, downloads
+     and feeds, says how).
 
 5. **Give the feed its artwork.** A podcast or news feed needs a cover:
-   load \`rally_multimodal_generation\` and generate one square image that
-   represents the show, following the artwork rules in the reference for
-   its format. Check it with \`view_image\`, and generate again if any text
+   load \`rally_multimodal_generation\` and generate one image at size
+   \`1024x1024\` that represents the show, following the artwork rules in
+   the reference for its format. Check it with \`view_image\`, and generate again if any text
    in it is misspelled or unreadable. Convert it in Terminal to the size
    and format the reference names, save it in the site's directory (for
    example \`cover.jpg\`), and store its path in the show row. Keeping it in
@@ -112,23 +114,14 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    video or per-entry artwork, publish each file with \`publish_resource\`
    and store its \`url\` and \`sizeBytes\` in the entry's row. Never bundle
    media into the site's own files: a site publish has a size cap one long
-   episode can fill. If the result has no \`url\`, the file stayed in this
-   conversation, where no app can reach it: publish from the Canvas's
-   Chat, or from a run that writes that Canvas. To make a podcast episode
-   (the script, the audio and its artwork), load
-   \`creating-a-podcast-episode\`.
+   episode can fill. In a Sidekick run, name the feed's Canvas in
+   \`publish_resource\`'s \`canvas\` argument, or the file lands in the
+   run's own Canvas, with a different audience from the feed's. A result
+   with no \`url\` is a file no app can reach (\`building-live-sites\`,
+   Media, downloads and feeds). To make a podcast episode (the script, the
+   audio and its artwork), load \`creating-a-podcast-episode\`.
 
-8. **Check it as an app would.** From Terminal, request the feed URL with no
-   cookies and confirm a 200 and the format's content type. Parse the body
-   with an XML or calendar parser (\`python3\` has both in its standard
-   library) rather than reading it by eye, and confirm every entry row
-   appears. For a podcast, also fetch one episode's chapters file and parse
-   it as JSON. For media, send a \`HEAD\` to one file's URL, which should report
-   \`accept-ranges: bytes\` and the file's length. A new file can take a few
-   seconds to serve after it is published. If Terminal cannot reach the URL,
-   say you could not check it rather than reporting that it works.
-
-9. **Set the audience after publishing, as every site does.** An app never
+8. **Set the audience right after publishing, as every site does.** An app never
    signs in, so the feed works only when the Canvas's artifacts are **public:
    anyone with the link**. Set the Canvas's artifact audience to public as
    your default choice, not as a change the person asked for. Do not stop
@@ -139,6 +132,17 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    - A Sidekick run cannot set the audience. Say who can open it now, and
      that the Canvas's creator or an Organization admin can change it in the
      Canvas's Share screen.
+
+9. **Check it as an app would.** From Terminal, request the feed URL with no
+   cookies and confirm a 200 and the format's content type. Check the body
+   with a program rather than by eye: parse RSS with \`python3\`'s
+   \`xml.etree.ElementTree\`; for a calendar, confirm every line ends in CRLF
+   and every \`VEVENT\` has a \`UID\` and \`DTSTART\`. Confirm every entry row
+   appears. For a podcast, also fetch one episode's chapters file and parse
+   it as JSON. For media, send a \`HEAD\` to one file's URL, which should report
+   \`accept-ranges: bytes\` and the file's length. A new file can take a few
+   seconds to serve after it is published. If Terminal cannot reach the URL,
+   say you could not check it rather than reporting that it works.
 
 10. **End with the links, who can open them, and one question.** Give the
     page's URL and the feed URL. Say plainly that anyone with either link
@@ -169,7 +173,7 @@ Say this when it matters; do not build around it.
 - **A new id on every retry.** Subscribers get the entry twice. Derive it
   from the source.
 - **Reporting the feed works without fetching it.** Parse it as an app
-  would (step 8), or say you could not.
+  would (step 9), or say you could not.
 `;
 
 const FEED_FORMATS = `# Feed formats
@@ -253,11 +257,11 @@ read the same tags, so write every podcast feed to these rules.
 | \`owner_name\`, \`owner_email\` | \`<itunes:owner>\` holding \`<itunes:name>\` and \`<itunes:email>\`. Apple uses the email to confirm who owns the show when it is submitted, and the feed shows it to anyone. Use only an address the person gives for this, and leave both out until they do. |
 | \`link\` | \`<link>\`: the site's URL. |
 | \`language\` | \`<language>\`, such as \`en-us\`. |
-| \`category\`, \`subcategory\` | \`<itunes:category text="News"><itunes:category text="Tech News"/></itunes:category>\`, from Apple's list below, exactly as written there. Self-close it when there is no subcategory. |
+| \`category\`, \`subcategory\` | \`<itunes:category text="News"><itunes:category text="Tech News"/></itunes:category>\`, from Apple's list below, stored as written there. Self-close it when there is no subcategory. |
 | \`explicit\` | \`<itunes:explicit>true</itunes:explicit>\` or \`false\`. |
 | \`show_type\` | \`<itunes:type>\`: \`episodic\` when episodes stand alone, newest first; \`serial\` when they are meant in order. |
 | \`cover_path\` | \`<itunes:image href="…"/>\` and \`<image>\`, with the absolute URL of the cover in the site's directory. |
-| \`copyright\` | \`<copyright>\`, such as \`&#xA9; 2026\` followed by the author. |
+| \`copyright\` | \`<copyright>\`, such as \`© 2026\` followed by the author, as plain text. |
 | \`voice\`, \`voice_instructions\` | Not rendered. The voice and reading style every episode uses (\`creating-a-podcast-episode\`). |
 
 ## Each entry row and its \`<item>\`
@@ -284,9 +288,10 @@ with the absolute URL of its chapters file.
 
 Players read chapters from two places, and the feed supplies both: the ID3
 chapter frames inside the MP3 (\`creating-a-podcast-episode\` writes them),
-and a chapters file the feed links to, which Apple Podcasts reads from the
-feed on iOS 26.2 and later. An episode with its own chapters also stops
-Apple generating chapters of its own.
+and a chapters file the feed links to. Third-party reports, not Apple's
+own documentation, say Apple Podcasts reads that file on iOS 26.2 and later,
+and generates chapters of its own for an episode that has none; supplying
+both covers players that read either.
 
 - **Rows:** a \`chapters\` table with \`guid\` (the episode's), \`start_seconds\`
   and \`title\`, keyed by \`guid\` and \`start_seconds\`. The episode's
@@ -320,12 +325,9 @@ Show cover (required by Apple):
 Episode art (optional, in \`creating-a-podcast-episode\`): the same size and
 format rules, with no text and no show logo.
 
-The image generator makes squares of 1024 pixels, below Apple's minimum.
-Ask for an opaque, full-bleed background, then convert in Terminal:
-
-\`\`\`
-ffmpeg -y -i cover.png -vf "scale=3000:3000:flags=lanczos,format=rgb24" -q:v 3 cover.jpg
-\`\`\`
+The image generator's square size, \`1024x1024\`, is below Apple's minimum.
+Ask for it with an opaque, full-bleed background, then convert it with the
+artwork command in \`creating-a-podcast-episode\`.
 
 ## Hosting
 
@@ -334,29 +336,30 @@ byte-range requests. Rally serves both for files and site assets.
 
 ## Apple's categories
 
-Write the category and subcategory exactly as below.
+Write the category and subcategory exactly as below, as plain text: the
+renderer escapes the \`&\` in a name like it escapes every value.
 
-- Arts: Books, Design, Fashion &amp; Beauty, Food, Performing Arts, Visual Arts
+- Arts: Books, Design, Fashion & Beauty, Food, Performing Arts, Visual Arts
 - Business: Careers, Entrepreneurship, Investing, Management, Marketing, Non-Profit
 - Comedy: Comedy Interviews, Improv, Stand-Up
 - Education: Courses, How To, Language Learning, Self-Improvement
 - Fiction: Comedy Fiction, Drama, Science Fiction
 - Government
 - History
-- Health &amp; Fitness: Alternative Health, Fitness, Medicine, Mental Health, Nutrition, Sexuality
-- Kids &amp; Family: Education for Kids, Parenting, Pets &amp; Animals, Stories for Kids
-- Leisure: Animation &amp; Manga, Automotive, Aviation, Crafts, Games, Hobbies, Home &amp; Garden, Video Games
+- Health & Fitness: Alternative Health, Fitness, Medicine, Mental Health, Nutrition, Sexuality
+- Kids & Family: Education for Kids, Parenting, Pets & Animals, Stories for Kids
+- Leisure: Animation & Manga, Automotive, Aviation, Crafts, Games, Hobbies, Home & Garden, Video Games
 - Music: Music Commentary, Music History, Music Interviews
 - News: Business News, Daily News, Entertainment News, News Commentary, Politics, Sports News, Tech News
-- Religion &amp; Spirituality: Buddhism, Christianity, Hinduism, Islam, Judaism, Religion, Spirituality
+- Religion & Spirituality: Buddhism, Christianity, Hinduism, Islam, Judaism, Religion, Spirituality
 - Science: Astronomy, Chemistry, Earth Sciences, Life Sciences, Mathematics, Natural Sciences, Nature, Physics, Social Sciences
-- Society &amp; Culture: Documentary, Personal Journals, Philosophy, Places &amp; Travel, Relationships
+- Society & Culture: Documentary, Personal Journals, Philosophy, Places & Travel, Relationships
 - Sports: Baseball, Basketball, Cricket, Fantasy Sports, Football, Golf, Hockey, Rugby, Running, Soccer, Swimming, Tennis, Volleyball, Wilderness, Wrestling
 - Technology
 - True Crime
-- TV &amp; Film: After Shows, Film History, Film Interviews, Film Reviews, TV Reviews
+- TV & Film: After Shows, Film History, Film Interviews, Film Reviews, TV Reviews
 
-The \`&amp;\` above is how the name is written inside the \`text\` attribute.
+The \`&\` above is how the name is written inside the \`text\` attribute.
 
 ## Apps
 
