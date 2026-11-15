@@ -17,6 +17,8 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/Sidebar.tsx`, `SidebarDragRow.tsx`, `sidebar-drop.ts` | Long-press pin/unpin/reorder with edge scrolling, Edit controls and accessible move actions. |
 | `apps/mobile/App.web.tsx`, `src/PreviewTabBar.tsx`, `src/Glass.tsx` | Development-only browser preview; its custom controls do not model native geometry. |
 | `apps/mobile/src/CanvasWebView.tsx` | Application WebView and isolated first-party reactive artifact WebViews. |
+| `apps/mobile/src/Dashboard.tsx` | Home's dashboard, drawn natively from the directory (the saved copy until Home answers) over Home's page. |
+| `apps/mobile/src/dashboard-visibility.ts` | When the native dashboard covers Home's page. |
 | `apps/mobile/src/directory.ts` | Compares Home snapshots on the fields the shell shows, so `updatedAt` ticks and Home's own navigation do not re-render every tab. |
 | `apps/mobile/src/saved-directory.ts` | The last directory, saved on the device per account and removed on sign-out; launch opens Home at its organization. |
 | `apps/mobile/src/recovery-order.ts` | Orders WebView recovery after a renderer crash: the visible screen first, hidden ones (Home included) once it has presented, shown or needed. |
@@ -304,7 +306,9 @@ cold launch, or after the user chooses Restart in diagnostics.
 compatible updates. WorkManager/BGTaskScheduler choose execution using their
 default cadence; delivery is opportunistic, and iOS Simulator cannot run this
 task. Resume and reconnection refresh the existing browser/socket data. There is
-no offline canvas content, queued editing system, or background content polling. The last canvas directory (titles, icons, pins) is saved on the device for one account and removed on sign-out; launch opens Home directly at that organization, and falls back to the plain start once if the page asks for sign-in before its first snapshot. Diagnostics records the latest launch-to-dashboard, first pin tap-to-artifact and visible crash-recovery times. Home reports its web build (its entry script) in `ready`; on resume native reads the deployed `index.html`, and a newer build reloads Home the next time its tab is not on screen, never under an open inline chat or create flow.
+no offline canvas content, queued editing system, or background content polling. The last canvas directory (titles, icons, pins) is saved on the device for one account and removed on sign-out; launch opens Home directly at that organization, and falls back to the plain start once if the page asks for sign-in before its first snapshot. Diagnostics records the latest launch-to-dashboard, first pin tap-to-artifact and visible crash-recovery times. Home reports its web build (its entry script) in `ready`; on resume native reads the deployed `index.html`, and a newer build reloads Home when its page is hidden: off screen or under the native dashboard, never under an open inline chat, create flow or canvas.
+
+Home's dashboard is native (`Dashboard.tsx`). It draws from the live directory, or from the saved copy until Home's page answers, so launch shows the canvases on the first frame. Home's page stays mounted behind it for the socket, inline chat, creation and the canvases it opens. A tap on a pinned canvas switches tabs; any other tap, and Create, is sent to the page (held until the page is ready) and shows a spinner until the page reports that view. The saved copy is display only: notifications, crash reporting and prepared pins wait for the live directory, and the tab bar appears with it.
 
 Settings and diagnostics is available from the sidebar's settings button.
 Notification permission is requested only through Enable notifications. The
@@ -574,7 +578,8 @@ that change nothing the shell shows are dropped, and the shared session value is
 memoized. The directory is saved on the device and Home opens at its
 organization. Native refreshes Home on every resume, and Diagnostics records
 three timings. A web build newer than Home's reloads Home
-once it is off screen.
+once its page is hidden. Home's dashboard is drawn natively from the directory,
+the saved copy until the page answers.
 
 **Why:** A field report showed a pinned tab stuck on "Rally couldn't load" after
 `artifact_process_terminated`, and Try again took far longer than the 500 ms
@@ -592,8 +597,12 @@ founder accepted saving titles and pins on the device for speed, reversing the
 earlier no-cache position. Without timings, "laggy" had no number to test. The
 web host ships 20 to 30 times a day while Home stays open for days; reloading
 Home while hidden picks up fixes without a spinner. Reloading a visible Home was
-rejected until the native dashboard lands, because its tab shows the loading
-cover.
+rejected: its tab would show the loading cover, so the native dashboard now
+covers that reload instead. The web dashboard waited for the page's boot,
+session and socket before drawing anything; the native one draws from the
+saved directory on the first frame. Making the saved copy the live directory
+was rejected: notification and crash-report registration act on the account
+the moment it appears, and their commands would reach a page not yet loaded.
 
 **Considered and rejected:** `reload()` on the same WebView: if the crash came
 before redemption finished, the last URL is the spent open ticket. Waiting on a
