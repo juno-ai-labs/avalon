@@ -123,6 +123,8 @@ class ToolSelectionDatabase {
   readonly submittedDefinitions: Array<Record<string, unknown>> = [];
   /** The plugin defaults the automation's definition names; see {@link runDefinition}. */
   defaultPluginIds: string[] = [];
+  /** The saved tools the automation's definition carries; see {@link runDefinition}. */
+  customTools: AutomationRunDefinitionV1["definition"]["customTools"] = [];
   readonly runDefinitionReads: Array<Record<string, unknown>> = [];
   readonly proposedDraftCards: Array<Record<string, unknown>> = [];
   /** Every `create` request, so an edit can be shown not to make a second automation. */
@@ -591,7 +593,7 @@ function runDefinition(database: ToolSelectionDatabase): AutomationRunDefinition
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
-      customTools: [],
+      customTools: database.customTools,
     },
     defaultPluginIds: database.defaultPluginIds,
     activitySourcePluginIds: {},
@@ -697,7 +699,16 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
 
 describe("connector tools selected for harness runs", () => {
   it("offers a background agent every tool the loop it was started from has, except the run's own report_outcome", async () => {
-    const runtimeEnv = env(new ToolSelectionDatabase([]));
+    const database = new ToolSelectionDatabase([]);
+    // A run with a saved tool, which only Code Mode materializes: a worker
+    // that missed its run's definition would miss the tool.
+    database.customTools = [{
+      name: "day_math", description: "Doubles a day count.",
+      inputSchema: { type: "object", properties: { days: { type: "integer", description: "Days to double." } },
+        required: ["days"], additionalProperties: false },
+      code: "return { doubled: input.days * 2 };", requiredPlugins: ["rally_core"],
+    }];
+    const runtimeEnv = createTestEnv({ ...env(database), CODE_LOADER: { get: vi.fn() } as unknown as WorkerLoader });
     const toolNames = async (input: WorkstreamWorkflowInput) => {
       const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, input);
       return [...new Set([
@@ -717,6 +728,7 @@ describe("connector tools selected for harness runs", () => {
       [automationRunInput(), { ...runRoot, automationDelegation: { runId: RUN_ID, stopGeneration: 0 } },
         ["rally:sidekick-outcome report_outcome"]],
     ];
+    expect((await toolNames(automationRunInput())).some((name) => name.includes("day_math"))).toBe(true);
     for (const [root, agent, rootOnly] of roots) {
       const rootTools = await toolNames(root);
       expect(rootTools).toEqual(expect.arrayContaining(rootOnly));

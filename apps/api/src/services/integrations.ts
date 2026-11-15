@@ -3047,7 +3047,7 @@ export async function runWorkstreamHarness(
   });
   // Independent reads begin while the lease heartbeat is checked. No prepared
   // value grants authority, and tool/prompt setup still waits for the heartbeat.
-  const runDefinitionPreparation = new Preparation(() => input.automationRun
+  const runDefinitionPreparation = new Preparation(() => loopAuthority(input)?.kind === "sidekick_run"
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null));
   const inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input));
   runDefinitionPreparation.get();
@@ -5371,7 +5371,7 @@ async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
   workstream: { title: string; objective: string },
-  runDefinitionPreparation = new Preparation(() => input.automationRun
+  runDefinitionPreparation = new Preparation(() => loopAuthority(input)?.kind === "sidekick_run"
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null)),
 ): Promise<{
   systemPrompt: string;
@@ -5877,7 +5877,7 @@ async function loadHarnessTools(
   input: WorkstreamWorkflowInput,
   runAuthoritySnapshot?: RunAuthoritySnapshot,
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
-  runDefinitionPreparation = new Preparation(() => input.automationRun
+  runDefinitionPreparation = new Preparation(() => loopAuthority(input)?.kind === "sidekick_run"
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null)),
   inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input)),
   paginationLease?: AttemptLease,
@@ -7317,19 +7317,24 @@ async function readAutomationRunDefinition(
   env: Env,
   input: WorkstreamWorkflowInput,
 ): Promise<AutomationRunDefinitionV1> {
+  // A run's worker reads its run's definition, so it holds the run's saved
+  // tools, default plugins and account bindings; its prompt still carries none
+  // of the run's instructions, which `loadRunPromptContext` reads only for the
+  // run itself.
+  const authority = loopAuthority(input);
+  if (authority?.kind !== "sidekick_run") throw new Error("sidekick_run_reference_missing");
   const run = input.automationRun;
-  if (!run) throw new Error("sidekick_run_reference_missing");
   const workspace = await hostedParentStub(env, input.workspaceId);
   return AutomationRunDefinitionV1Schema.parse(await workspace.sidekickReadRunDefinition({
     workspaceId: asWorkspaceId(input.workspaceId),
-    automationId: run.automationId,
-    runId: run.runId,
+    automationId: authority.sidekickId,
+    runId: authority.runId,
     // A continued run reads the revision accepted when it continued, not the
     // run row's own. Only a continuation names it: every other read keeps the
     // request shape an older SidekickDO's strict schema accepts, so a
     // mixed-version rollout refuses continuations at worst, never scheduled
     // runs.
-    ...(input.automationContinuation ? { definitionRevision: run.definitionRevision } : {}),
+    ...(input.automationContinuation && run ? { definitionRevision: run.definitionRevision } : {}),
   }));
 }
 

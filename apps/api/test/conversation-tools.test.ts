@@ -396,6 +396,14 @@ describe("conversation_post", () => {
     expect(ports.posted[0]?.post.externalSource).toEqual({ provider: "slack", displayName: "Adam" });
   });
 
+  it("posts from a run's worker as that run, not under the worker's own attempt", async () => {
+    const ports = new Ports();
+    const worker = loop({ parentKind: "automation", parentId: SIDEKICK_ID, substreamId: "worker" as never,
+      backgroundAgent: true, automationDelegation: { runId: RUN_ID, stopGeneration: 0 } });
+    await tools(worker, ports).get("conversation_post")!.execute({ text: "Found it." }, context("r"));
+    expect(ports.posted[0]?.post.runId).toBe(RUN_ID);
+  });
+
   it("posts from the configuration conversation under its harness run, with no trigger", async () => {
     const ports = new Ports();
     await tools(configLoop(), ports).get("conversation_post")!.execute({ text: "Set up." }, context("r"));
