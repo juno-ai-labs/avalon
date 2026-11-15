@@ -1,4 +1,4 @@
-import type { CanvasNoticesView, NotificationChannel } from "@rally/contracts";
+import { asWorkstreamId, type CanvasNoticeChoiceRow, type CanvasNoticesView, type NotificationChannel } from "@rally/contracts";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 
 import type { Env } from "../env";
@@ -196,6 +196,29 @@ export function canvasNoticeOperationRevision(sql: SqlStorage, operationId: stri
 export function noteCanvasNoticeRecord(sql: SqlStorage, canvasId: string, revision: number, messageId: string): void {
   sql.exec(`UPDATE canvas_notice_registrations SET record_message_id = ? WHERE canvas_id = ? AND revision = ?`,
     messageId, canvasId, revision);
+}
+
+/**
+ * Every Canvas whose notices reach this person: it sends notices, is not
+ * archived, and they made it or are on its list. Its title, what its notices
+ * are about, and their choice for it. Settings lists these under the Canvas
+ * notices default.
+ */
+export function canvasNoticeChoicesFor(sql: SqlStorage, workspaceId: string, userId: string): CanvasNoticeChoiceRow[] {
+  return sql.exec<{ canvas_id: string; title: string; purpose: string }>(
+    `SELECT canvas.canvas_id, canvas.title, registration.purpose
+       FROM canvas_notice_registrations registration
+       JOIN canvas_directory canvas ON canvas.canvas_id = registration.canvas_id
+      WHERE canvas.workspace_id = ?1 AND canvas.archived_at IS NULL
+        AND (canvas.created_by_user_id = ?2
+          OR EXISTS (SELECT 1 FROM canvas_participants participant
+                      WHERE participant.canvas_id = canvas.canvas_id AND participant.user_id = ?2))
+      ORDER BY canvas.title COLLATE NOCASE, canvas.canvas_id`,
+    workspaceId, userId,
+  ).toArray().map((row) => ({
+    canvasId: asWorkstreamId(row.canvas_id), title: row.title, purpose: row.purpose,
+    channels: canvasNoticeOverride(sql, row.canvas_id, userId) ?? null,
+  }));
 }
 
 /** The channels this person chose for this Canvas's notices, or `undefined` while they follow Settings. */

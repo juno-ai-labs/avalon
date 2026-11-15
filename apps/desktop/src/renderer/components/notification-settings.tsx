@@ -1,16 +1,19 @@
 import {
   OFFERED_NOTIFICATION_KINDS,
+  type CanvasNoticeChoices,
   type NotificationChannel,
   type OfferedNotificationKind,
 } from '@rally/contracts';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, Mail } from 'lucide-react';
 
 import type { RallyApi } from '../lib/api';
+import { canvasDetailQueryKey } from '../lib/canvases';
 import { useMemberPreferences, useSaveMemberPreferences } from '../lib/use-member-preferences';
 import { settings, type SettingDefinition } from '../settings/registry';
 import { SettingCopy } from '../settings/setting-label';
 import { ChannelPicker, type ChannelOption } from './channel-picker';
-import { ErrorNotice } from './primitives';
+import { Button, ErrorNotice } from './primitives';
 
 const ICON_SIZE = 14;
 
@@ -45,7 +48,7 @@ function midSentence(label: string): string {
  * every kind.
  */
 export function NotificationChannelSettings({ api, workspaceId, pushAvailable, email }: {
-  api: Pick<RallyApi, 'getMyPreferences' | 'updateMyPreferences'>;
+  api: Pick<RallyApi, 'getMyPreferences' | 'updateMyPreferences' | 'canvasNoticeChoices' | 'setCanvasNoticeChoice'>;
   workspaceId: string;
   /** Push is offered only where this deployment can push. */
   pushAvailable: boolean;
@@ -74,7 +77,7 @@ export function NotificationChannelSettings({ api, workspaceId, pushAvailable, e
         <p>Pick how each kind reaches you. Applies on every device in this Organization.</p>
       </div>
       <div className="settings-list-card">
-        {OFFERED_NOTIFICATION_KINDS.map((kind) => ({ kind, setting: KIND_SETTINGS[kind] })).map(({ kind, setting }) => (
+        {OFFERED_NOTIFICATION_KINDS.map((kind) => ({ kind, setting: KIND_SETTINGS[kind] })).map(({ kind, setting }) => [
           <div className="settings-preference-row" key={kind}>
             <SettingCopy setting={setting} />
             <ChannelPicker
@@ -84,11 +87,67 @@ export function NotificationChannelSettings({ api, workspaceId, pushAvailable, e
               options={options}
               selected={notify[kind] ?? []}
             />
-          </div>
-        ))}
+          </div>,
+          // The Canvas notices row is the default; each Canvas that sends notices follows it until changed.
+          kind === 'canvasNotices'
+            && <CanvasNoticeRows api={api} defaults={notify.canvasNotices ?? []} key="canvas-notice-rows" options={options} workspaceId={workspaceId} />,
+        ])}
       </div>
       <p className="settings-footnote">None selected means you won't be told.</p>
       {save.error && <ErrorNotice occurrence={save.error}>{save.error.message}</ErrorNotice>}
     </section>
   );
+}
+
+/**
+ * One row per Canvas whose notices reach this person, under the Canvas
+ * notices default. A Canvas with no choice of its own shows the default; a
+ * change here becomes that Canvas's choice, and Use default drops it.
+ */
+function CanvasNoticeRows({ api, workspaceId, defaults, options }: {
+  api: Pick<RallyApi, 'canvasNoticeChoices' | 'setCanvasNoticeChoice'>;
+  workspaceId: string;
+  defaults: readonly NotificationChannel[];
+  options: ChannelOption[];
+}): React.JSX.Element | null {
+  const queryClient = useQueryClient();
+  const key = ['canvas-notice-choices', workspaceId];
+  const choices = useQuery({ queryKey: key, queryFn: ({ signal }) => api.canvasNoticeChoices(signal) });
+  const choose = useMutation({
+    scope: { id: `canvas-notice-choices:${workspaceId}` },
+    mutationFn: ({ canvasId, channels }: { canvasId: string; channels: NotificationChannel[] | null }) =>
+      api.setCanvasNoticeChoice(canvasId, channels),
+    onMutate: async ({ canvasId, channels }) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<CanvasNoticeChoices>(key);
+      if (previous) queryClient.setQueryData(key, { canvases: previous.canvases.map((row) => row.canvasId === canvasId ? { ...row, channels } : row) });
+      return { previous };
+    },
+    onError: (_error, _choice, context) => { if (context?.previous) queryClient.setQueryData(key, context.previous); },
+    // The open Canvas's record and menu read the same choice.
+    onSuccess: (detail) => queryClient.setQueryData(canvasDetailQueryKey(detail.id), detail),
+  });
+  const rows = choices.data?.canvases ?? [];
+  if (rows.length === 0 && !choices.error) return null;
+  return <>
+    {rows.map((row) => {
+      const selected = row.channels ?? defaults;
+      const toggle = (channel: NotificationChannel) => choose.mutate({ canvasId: row.canvasId,
+        channels: selected.includes(channel) ? selected.filter((candidate) => candidate !== channel) : [...selected, channel] });
+      return <div className="settings-preference-row settings-preference-row-nested" key={row.canvasId}>
+        <span className="settings-row-copy">
+          <strong>{row.title}</strong>
+          <small>{row.channels === null ? 'Follows the default above.' : 'Set for this Canvas.'} {row.purpose}</small>
+          {row.channels !== null && <span className="settings-row-inline-action">
+            <Button onClick={() => choose.mutate({ canvasId: row.canvasId, channels: null })}>Use default</Button>
+          </span>}
+        </span>
+        {/* A direct child of the row, which it measures to decide between buttons and a menu. */}
+        <ChannelPicker label={`How ${row.title} tells you`} none="Off" onToggle={(channel) => toggle(channel as NotificationChannel)}
+          options={options} selected={selected} />
+      </div>;
+    })}
+    {choices.error && <ErrorNotice occurrence={choices.error}>Your Canvases' notices could not be loaded.</ErrorNotice>}
+    {choose.error && <ErrorNotice occurrence={choose.error}>{choose.error.message}</ErrorNotice>}
+  </>;
 }

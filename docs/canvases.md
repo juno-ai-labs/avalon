@@ -28,7 +28,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasUpdate` (the title and the appearance), `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Conversation object migration 83: its root row admits the `canvas` parent kind. |
 | `apps/api/src/services/canvas-service.ts` | `createCanvas`: the directory row, then the Chat's object, bootstrapped and provisioned with the creator seated; `CanvasService`, the routes' service. |
-| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/archive`, `POST /canvases/:id/discard` (delete one its creator left blank), `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /canvases/pinned-order` orders personal Canvas pins for members and guests. |
+| `apps/api/src/routes/canvases.ts` | `GET /canvases` (the reader's list, as their sidebar socket sends it, for a client with no socket such as the [MCP server](rally-mcp.md)), `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`, `POST /canvases/:id/archive`, `POST /canvases/:id/discard` (delete one its creator left blank), `PUT /canvases/:id/notifications` (the viewer's channels for this Canvas's notices, `[]` to mute, `null` to follow Settings) and `POST /canvases/:id/join` (a member joins an Organization-wide Canvas to get its notices; [`push-notifications.md`](push-notifications.md#canvas-notices)), `POST /canvases/:id/artifacts` (a person publishing a file or static site made elsewhere; [`rally-mcp.md`](rally-mcp.md#publishing)). `PUT /canvases/pinned-order` orders personal Canvas pins for members and guests. |
 | `apps/api/src/services/integrations.ts` | `canvasRunContextMessage`: the `CANVAS CONTEXT` message a run in a Canvas's Chat is given. |
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
@@ -702,9 +702,19 @@ card grid with Sidekicks; the shared layout is described in
   Open artifact is disabled until the Canvas has an artifact and while its
   artifact panel is already open; closing the panel enables it again. A tooltip
   explains either disabled state on hover or keyboard focus. Rename… and
-  Change appearance follow as rows, with **Archive canvas** last, separated
-  and in danger styling, for a manager. It confirms before writing and returns
-  to Canvases after success; a failure keeps the Canvas and confirmation open.
+  Change appearance follow as rows, then the **Sidekicks** section, then,
+  while the Canvas sends notices, a **Notifications** section
+  (`CanvasNoticesMenuSection`): **Get notifications** for a member not listed
+  on an Organization-wide Canvas, else **Mute notifications**, or **Turn on
+  notifications** while none reach the viewer. The menu closes on a choice,
+  so a failure shows on the Canvas screen. **Archive canvas** is last,
+  separated and in danger styling, for a manager. It confirms before writing
+  and returns to Canvases after success; a failure keeps the Canvas and
+  confirmation open.
+  On an Organization-wide Canvas that sends notices, a member who is not
+  listed sees a banner under the title (`CanvasNoticesJoinBanner`), in its
+  own row of the screen's grid, with **Get notifications** and **Not now**,
+  which hides it for this Canvas on this device.
   The pill's title is
   the detail's, and a change to the list row's title is written into the
   detail's cache once the socket has applied the list, so the header follows a
@@ -998,8 +1008,9 @@ as one sent before a delete: it is acknowledged unapplied and logged as
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
 | `sidekick_conversation_attachments` | `(automation_id, parent_kind, …)` | Migration 137 widens `parent_kind` to admit `canvas`. |
 | `workspace_pins` | `(user_id, item_kind, item_id)` | Migration 137 admits `canvas` and `sidekick`, with no parent. |
-| `canvas_notice_registrations` | `canvas_id` | Migration 150: whether the Canvas sends notices, the sentence saying what about, who turned them on (Rally or a Sidekick, by name) and the record's message ([`push-notifications.md`](push-notifications.md#canvas-notices)). |
-| `canvas_notification_choices` | `(canvas_id, user_id)` | Migration 150: one person's channels for this Canvas's notices, `[]` for muted; no row follows Settings. Discarding a Canvas deletes both tables' rows. |
+| `canvas_notice_registrations` | `canvas_id` | Migration 150: whether the Canvas sends notices, the sentence saying what about (`purpose`), who turned them on (Rally or a Sidekick, by name), the `revision` each register call writes, the Chat's record of it (`record_message_id`, null until it lands) and `updated_at`, which the record carries as `recordedAt` ([`push-notifications.md`](push-notifications.md#canvas-notices)). |
+| `canvas_notice_operations` | `operation_id` | Migration 150: the revision each register call wrote, keyed on the call's operation, so a retry finds it. Indexed by Canvas. |
+| `canvas_notification_choices` | `(canvas_id, user_id)` | Migration 150: one person's channels for this Canvas's notices, `[]` for muted; no row follows Settings. Discarding a Canvas deletes all three tables' rows. |
 | `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 137: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because the Thread-era resource-link table's foreign key named a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
 ## Retired documents

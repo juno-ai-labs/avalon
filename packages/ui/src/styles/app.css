@@ -8844,6 +8844,9 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .canvas-notices-record-heading { display:flex; align-items:center; gap:8px; font-size:13px; }
 .canvas-notices-record-purpose { margin:0; font-size:14px; line-height:20px; overflow-wrap:anywhere; }
 .canvas-notices-record-by { margin:0; font-size:12px; color:var(--av-sys-color-text-muted); }
+/* Settings → Notifications: each Canvas's row sits under the Canvas notices default. */
+.settings-preference-row-nested { padding-left: calc(var(--space-6) + 12px); }
+.settings-row-inline-action { display:block; margin-top:6px; }
 .canvas-notices-record.is-history { color:var(--av-sys-color-text-muted); }
 .canvas-notices-record-controls { display:flex; flex-direction:column; align-items:flex-start; gap:8px; font-size:13px; }
 .canvas-notices-record-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }

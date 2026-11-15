@@ -349,6 +349,25 @@ query per historical activity. No clock ticks are streamed. An admitted socket o
 participant authorization decision and reuses it for all transcript slices and
 hydration; socket session validation remains the separate connection check.
 
+### Host-written records
+
+`appendHostRecord` is the sibling of `appendConversationPost`
+([`conversation-tools.md`](conversation-tools.md)). It lands a record the host
+writes, not a person or an agent, in a Canvas's Chat or a Sidekick's own
+conversation: a system message with text that stands alone and structured
+content the client draws by its `kind`. A Canvas's notices record
+(`canvas_notices_record`) is the one today
+([`push-notifications.md`](push-notifications.md#canvas-notices)). The request
+(`HostRecordRequestSchema`) is keyed on its client message id, so a retry
+answers with the message it already wrote (`replayed`). Like a post, it does
+not wake the conversation's agent. It refuses by name rather than throwing:
+`append_host_record_invalid:<field>` for a request that does not parse,
+`workstream_destination_mismatch` for any conversation but the addressed
+one's `"0"`, and `workstream_archived`. Who may write it is the caller's
+decision. The record is published to open screens as soon as it is appended
+(`flushSemanticRealtimeOutboxBestEffort`, else the next alarm), so the caller
+commits whatever the record describes before it calls.
+
 ### Object hierarchy and identity
 
 Names include region for operator clarity and deterministic routing:
@@ -1193,6 +1212,7 @@ complete relationship map is:
 | a run's loop | WorkspaceDO | typed RPC | `readRunDefinition` at loop start (the definition revision is immutable, so a reference rather than a copy travels in the loop input) and `readRunState` before every provider write |
 | a Sidekick run child's `claimPersistentLoopExecution` | WorkspaceDO | typed RPC | `sidekickContinueRun` before a pending input activates the loop: the run's context and run-as principal at the accepted revision, or a refusal code the child settles the input with ([continuing a run](automation-lifecycle.md#continuing-a-run)) |
 | a loop with a conversation scope | WorkspaceDO, then the target Canvas's or Sidekick's AgentLoopDO | typed RPC | the conversation tools: `conversationToolScope` and `resolveConversationToolTarget` (scope, then `authorizeViewer`), then the target's `readableMessagesBefore` or `appendConversationPost`, keyed on the harness run and receipt; see [`conversation-tools.md`](conversation-tools.md) |
+| WorkspaceDO (a hosted Canvas turning its notices on) | the Canvas's `"0"` AgentLoopDO | typed RPC | `appendHostRecord`: the Canvas saves its registration first, keyed on the register call's operation, then the record lands in the Chat keyed on that operation and is published at once; a refusal comes back by name and a retry of the call lands the record ([`push-notifications.md`](push-notifications.md#canvas-notices)) |
 
 | connector ingress Worker | regional Queue | Cloudflare Queue | one bounded normalized event plus region/workspace/ingress UUID/content hash per workspace target; raw bytes remain in R2 |
 | regional Queue Worker | WorkspaceDO | typed RPC | complete normalized connector event plus content hash; object-local provider/dedupe constraints and ingress receipt choose the canonical ID |
@@ -1394,6 +1414,7 @@ misrouted product statement now fails because the table or column is absent.
 - **The conversation object never decides a reader.** Who may open a Canvas's or a Sidekick's conversation is its parent's audience rule (`canvasAdmits`, `sidekickAdmits`); the conversation seats whom the parent admitted. A second rule in the conversation would let one surface admit a reader the other refuses.
 - **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a conversation nobody can open.
 - **A transcript turn id is an opaque key, not an entity id.** A participant turn carries the client message UUID, while an assistant turn's id is derived as `<loopId>:turn:<ordinal>`. Anything that reads a turn id out of `canonical_conversation_turn_details` and passes it on — the manual retry's `transcriptFenceMessageId` above all — validates it as `TranscriptTurnIdSchema`; typed as a UUID it accepts exactly the turns a person wrote and rejects every one the agent did.
+- **A host-written record is published the moment it is appended, so its caller commits what the record describes first.** `appendHostRecord` flushes it to open screens before it returns, and an alarm sends it otherwise; a caller that writes its own state after the record lets a screen that reads that state back on seeing the record find it missing. Guard: `test-workers/canvas-notices.test.ts`.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
 
 ## Boundary
@@ -1862,6 +1883,31 @@ the tab may go to any site, the boundary being the one tab. The Workers proof
 of the creator-only rule went with the import suite and was never replaced.
 
 ## Changelog
+
+### 2026-11-15 — A conversation takes host-written records
+
+**What changed:** `appendHostRecord` appends a system message whose
+structured content a client draws by its `kind`, keyed on the caller's client
+message id, without waking the agent, and refuses a bad request by name.
+
+**Why:** A Canvas's notices need a record in its Chat that says what they are
+about and carries each viewer's controls. A post is a Sidekick speaking and a
+draft card belongs to the wizard; neither fits a record the host writes. A
+screen that sees the record reads the Canvas back, so the record must not
+reach it before what it describes is saved.
+
+**Considered and rejected:** Writing the record without sending it and
+leaving the send to the caller once its own state was saved
+(`publishPending`), tried first in this change. An alarm flushes the same
+outbox, so the record could reach a screen before the registration did, and
+that screen read notices as off. The caller saving first needs no second
+publish path.
+
+**Consequences:** The record publishes at once, so a caller must commit what
+it describes before calling. A refusal comes back as a code rather than an
+error, because a thrown `ZodError` loses its field crossing the RPC hop.
+
+Design: `docs/PRDs/2026-11-14_canvas-notices/prd.md`.
 
 ### 2026-11-09 — Propagate Canvas archive to Chat execution
 

@@ -53,6 +53,14 @@ describe('the Canvas routes', () => {
     expect(setAudience).not.toHaveBeenCalled();
   });
 
+  it('answers the Canvases whose notices reach this person, not as a Canvas id', async () => {
+    vi.spyOn(CanvasService.prototype, 'noticeChoices')
+      .mockResolvedValue({ canvases: [{ canvasId: CANVAS_ID as never, title: 'Newsletter', purpose: 'New episodes.', channels: null }] });
+    const response = await routedApp().request('/canvases/notice-choices', { method: 'GET' }, env());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ canvases: [{ canvasId: CANVAS_ID, title: 'Newsletter', purpose: 'New episodes.', channels: null }] });
+  });
+
   it('passes a notice choice to the service, and refuses one outside push and email by field', async () => {
     const setNoticeChoice = vi.spyOn(CanvasService.prototype, 'setNoticeChoice')
       .mockRejectedValue(new ApiError(404, 'canvas_not_found', 'This Canvas does not exist'));
