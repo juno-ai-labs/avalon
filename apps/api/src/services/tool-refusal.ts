@@ -9,6 +9,7 @@ import { ApiError } from "../lib/api-error";
 export const TOOL_REFUSALS = {
   sidekick_source_request_from_run: "A Sidekick run cannot ask people for a source: it works from the event that started it, and nothing a run reads may send a request in a person's name. Say in your result who should be asked, for which connector and event types, and with what filter, so a person who manages this Sidekick can ask.",
   sidekick_source_request_from_background_agent: "A background agent cannot ask people for a source: it works from content no person wrote here. Send the agent you work for who should be asked, for which connector and event types, and with what filter, with send_message; it can ask its person.",
+  sidekick_source_request_from_review: "A Sidekick's scheduled self-review cannot ask people for a source: no person started it, and it reads runs, which hold content no person wrote. Name in your review who should be asked, for which connector and event types, and with what filter, so a person who manages this Sidekick can ask.",
   sidekick_source_request_from_agent_message: "This turn was started by another agent's message, not by a person, so it cannot ask people for a source. Reply to that agent with who should be asked, for which connector and event types, and with what filter, so a person can ask.",
   question_from_background_agent: "A background agent cannot ask a person a question: nobody is reading this conversation, so it would wait on nobody. Send the question to the agent you work for with send_message; it can ask its person and send you the answer.",
   question_from_agent_message: "This turn was started by another agent's message, and nobody is reading this conversation, so a question here would wait on nobody. Reply to that agent with the question; it can ask its person.",
@@ -40,11 +41,20 @@ export interface ToolRefusal {
  */
 export function refusingTool(tool: HarnessTool, refusal: ToolRefusal,
   overrides: { description?: string; capability?: string } = {}): HarnessTool {
-  return {
+  const refusing: HarnessTool = {
     definition: { ...tool.definition, ...overrides, mode: "read", idempotency: "safe" },
     ...(tool.validateInput ? { validateInput: tool.validateInput } : {}),
     execute: async () => {
       throw new ApiError(403, refusal.code, refusal.message);
     },
   };
+  REFUSING.add(refusing);
+  return refusing;
+}
+
+const REFUSING = new WeakSet<HarnessTool>();
+
+/** Whether a tool is a refusing copy: offered, but unable to do the work. */
+export function isRefusingTool(tool: HarnessTool): boolean {
+  return REFUSING.has(tool);
 }

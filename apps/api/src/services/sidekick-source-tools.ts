@@ -66,9 +66,15 @@ export function sidekickSourceRequestCard(event: { pluginId?: string | undefined
  * An agent that needs a source asked for then hands the ask to one that may,
  * by the messaging it already has. `docs/sidekick-sources.md#agent-tools`.
  */
+/** Why this turn may not ask for a source, and where to send the ask. */
+function sourceRefusal(input: WorkstreamWorkflowInput) {
+  return toolRefusal(input.automationRun || input.automationDelegation ? "sidekick_source_request_from_run"
+    : input.backgroundAgent === true ? "sidekick_source_request_from_background_agent"
+      : input.reason === "sidekick_review" ? "sidekick_source_request_from_review" : "sidekick_source_request_from_agent_message");
+}
+
 function sidekickSourceRefusalTool(input: WorkstreamWorkflowInput, request: HarnessTool): HarnessTool {
-  const refusal = toolRefusal(input.automationRun || input.automationDelegation ? "sidekick_source_request_from_run"
-    : input.backgroundAgent === true ? "sidekick_source_request_from_background_agent" : "sidekick_source_request_from_agent_message");
+  const refusal = sourceRefusal(input);
   return refusingTool(request, refusal, {
     description: "Asking people for a source is not available on this turn. Calling this asks nobody: it says which turn can ask, and how to hand the request to it.",
     capability: "rally.sidekick.sources.request_elsewhere",
@@ -200,8 +206,11 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
     },
   }];
   // The ask is the one tool a loop may be refused, and it is refused by name rather than withheld.
+  // Asking, and trying a filter on the acting person's own events, are refused by
+  // name rather than withheld; the list of sources stays readable.
   return asks ? tools : tools.map((tool) => tool.definition.capability === "rally.sidekick.sources.request"
-    ? sidekickSourceRefusalTool(input, tool) : tool);
+    ? sidekickSourceRefusalTool(input, tool)
+    : tool.definition.capability === "rally.sidekick.sources.test" ? refusingTool(tool, sourceRefusal(input)) : tool);
 }
 
 function requestOutput(request: { requestId: string; person: { userId: string; displayName: string }; connectorType: string;
