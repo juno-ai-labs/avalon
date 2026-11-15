@@ -1,6 +1,6 @@
 import { recordFailure, recordTiming } from './diagnostics';
 import { artifactInsetScript } from './layout';
-import { artifactPresented, artifactPresentationScript } from './artifact-presentation';
+import { artifactBackground, artifactPresented, artifactPresentationScript } from './artifact-presentation';
 import { useTheme } from './theme';
 import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
 import { recovery } from './recovery-order';
@@ -125,7 +125,7 @@ export function ArtifactSessionPreparation({ access, onReady }: { access: Native
  * A terminated renderer recovers in place: the redeemed cookie lives in the
  * platform cookie store, not the dead process, so a new WebView on the canonical
  * URL needs no fresh access from Home. A lost cookie still reaches `renew`. */
-export function ArtifactView({ access, appUrl, background, topInset, focused = true, onRetry, onPresented }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; focused?: boolean; onRetry: () => void; onPresented?: () => void }) {
+export function ArtifactView({ access, appUrl, background, topInset, focused = true, onRetry, onPresented, onBackground }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; focused?: boolean; onRetry: () => void; onPresented?: () => void; onBackground?: (color: string) => void }) {
   const { colors } = useTheme();
   const web = useRef<WebView<unknown>>(null);
   const [loading, setLoading] = useState(true);
@@ -172,7 +172,12 @@ export function ArtifactView({ access, appUrl, background, topInset, focused = t
       removeIosKeyboardObserver
       injectedJavaScriptBeforeContentLoaded={artifactPresentationScript(topInset)}
       injectedJavaScriptBeforeContentLoadedForMainFrameOnly
-      onMessage={(event) => { if (artifactPresented(event.nativeEvent.data, event.nativeEvent.url, access.canonicalUrl)) presented(); }}
+      onMessage={(event) => {
+        const { data, url } = event.nativeEvent;
+        if (artifactPresented(data, url, access.canonicalUrl)) { presented(); return; }
+        const color = artifactBackground(data, url, access.canonicalUrl);
+        if (color) onBackground?.(color);
+      }}
       onLoadStart={() => { presentedLoad.current = false; setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); presented(); }}
       onError={() => { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }}
       onHttpError={(event) => {

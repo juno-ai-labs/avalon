@@ -10,6 +10,8 @@ import { acceptFreshAccess } from './src/canonical-first';
 import { deployedWebBuild } from './src/web-build';
 import { Dashboard } from './src/Dashboard';
 import { ArtifactPicker, ARTIFACT_PICKER_HEIGHT } from './src/ArtifactPicker';
+import { FloatingHeader, type FloatingHeaderActions } from './src/FloatingHeader';
+import { statusBarStyleFor } from './src/artifact-presentation';
 import { dashboardVisible } from './src/dashboard-visibility';
 import { HOME_RENDERER, recovery } from './src/recovery-order';
 import { useCrashReporting } from './src/crashes';
@@ -27,7 +29,7 @@ import { NavigationContainer, StackActions, createNavigationContainerRef, Defaul
 import { createNativeBottomTabNavigator, type NativeBottomTabScreenProps } from '@bottom-tabs/react-navigation';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useHeaderHeight } from '@react-navigation/elements';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SafeAreaView } from 'react-native-screens/experimental';
 import { Menu, MessageCircle, Plus, X } from 'lucide-react-native';
 import { StatusBar, useVerticalBarEdgeIOS } from 'expo-status-bar';
@@ -81,10 +83,23 @@ type Session = {
   /** The site a canvas last showed, on its cookie, for this account. */
   rememberedSite: (canvasId: string) => NativeArtifact | null;
   rememberSite: (access: NativeArtifact) => void;
+  claimStatusBar: (owner: string, style: 'light' | 'dark') => void;
+  releaseStatusBar: (owner: string) => void;
 };
 const SessionContext = createContext<Session | null>(null);
 const CanvasRoutesContext = createContext<Record<string, string | null>>({});
 type StageFrame = { x: number; y: number; width: number; height: number };
+/** A screen with a native artifact in front hides the native header and shows these instead. */
+const FloatingHeaderContext = createContext<{ show: (owner: string, actions: FloatingHeaderActions) => void; hide: (owner: string) => void }>({ show: () => undefined, hide: () => undefined });
+let knownHeaderHeight = 0;
+/** The header's height, kept while the header is hidden over an artifact, so the
+ * artifact's inset does not jump when the native header gives way to the floating one. */
+function useArtifactHeaderHeight(): number {
+  const height = useHeaderHeight();
+  const insets = useSafeAreaInsets();
+  if (height > 0) knownHeaderHeight = height;
+  return knownHeaderHeight || insets.top + 44;
+}
 /** How a pinned tab tells the PinStage where its frame is and whether it is in front. */
 const PinStageContext = createContext<{
   frame: (canvasId: string, frame: StageFrame) => void;
@@ -109,6 +124,11 @@ function AppContent() {
   // the live directory. Hooks that act on the account wait for the live one.
   const [savedDirectory, setSavedDirectory] = useState(SAVED_DIRECTORY);
   const [rememberedSites, setRememberedSites] = useState(REMEMBERED_SITES);
+  // An artifact in front sets the status bar text to read over its own
+  // background; whoever claimed it releases it when the artifact leaves.
+  const [artifactStatusBar, setArtifactStatusBar] = useState<{ owner: string; style: 'light' | 'dark' } | null>(null);
+  const claimStatusBar = useCallback((owner: string, style: 'light' | 'dark') => setArtifactStatusBar((current) => current?.owner === owner && current.style === style ? current : { owner, style }), []);
+  const releaseStatusBar = useCallback((owner: string) => setArtifactStatusBar((current) => current?.owner === owner ? null : current), []);
   useEffect(() => { saveRememberedSites(rememberedSites); }, [rememberedSites]);
   const updateDirectory = useCallback((next: MobileSnapshot | null) => {
     if (!next) { setSavedDirectory(null); setRememberedSites({}); }
@@ -191,11 +211,11 @@ function AppContent() {
       return { ...sites, [access.canvasId]: { scope: shownScope, resourceId: access.resourceId, version: access.version, canonicalUrl: access.canonicalUrl } };
     });
   }, [shownScope]);
-  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, shownDirectory: directory ?? savedDirectory, rememberedSite, rememberSite }),
-    [chatReturn, prepared, directory, savedDirectory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, rememberedSite, rememberSite]);
+  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, shownDirectory: directory ?? savedDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar }),
+    [chatReturn, prepared, directory, savedDirectory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar]);
   const theme = isDark ? DarkTheme : DefaultTheme;
   return <SafeAreaProvider>
-    <StatusBar style={isDark ? 'light' : 'dark'} />
+    <StatusBar style={artifactStatusBar?.style ?? (isDark ? 'light' : 'dark')} />
     <SessionContext value={session}>
       <NavigationContainer ref={rootNavigation} theme={{ ...theme, colors: { ...theme.colors, background: colors.background, card: colors.surface, text: colors.text, primary: colors.accent, border: colors.line } }}>
         <Stack.Navigator initialRouteName="Canvases">
@@ -231,6 +251,11 @@ function CanvasTabs() {
   const [stageFrames, setStageFrames] = useState<Record<string, StageFrame>>({});
   const [frontPin, setFrontPin] = useState<string | null>(null);
   const [browserPins, setBrowserPins] = useState<Record<string, string>>({});
+  const [floating, setFloating] = useState<{ owner: string; actions: FloatingHeaderActions } | null>(null);
+  const floatingHeader = useMemo(() => ({
+    show: (owner: string, actions: FloatingHeaderActions) => setFloating({ owner, actions }),
+    hide: (owner: string) => setFloating((current) => current?.owner === owner ? null : current),
+  }), []);
   const stage = useMemo(() => ({
     browserPins,
     browser: (canvasId: string, resourceId: string) => setBrowserPins((pins) => ({ ...pins, [canvasId]: resourceId })),
@@ -240,7 +265,7 @@ function CanvasTabs() {
     }),
     front: (canvasId: string, focused: boolean) => setFrontPin((front) => focused ? canvasId : front === canvasId ? null : front),
   }), [browserPins]);
-  return <PinStageContext value={stage}><View style={styles.fill}>
+  return <FloatingHeaderContext value={floatingHeader}><PinStageContext value={stage}><View style={styles.fill}>
     {Object.values(prepared.canvases).map((canvas) => <PrepareArtifactSession key={`${scope}:${canvas.canvasId}:${canvas.resourceId}`} canvas={canvas} scope={scope} />)}
     {tabs.map((id) => <TabIconAsset key={id} id={id} canvas={directory?.canvases.find((canvas) => canvas.id === id)} save={saveImage} />)}
     <CanvasRoutesContext value={routeCanvases}><Tabs.Navigator backBehavior="firstRoute" labeled={false} tabBarHidden={!directory || Boolean(chatReturn)}
@@ -260,7 +285,8 @@ function CanvasTabs() {
     />)}
   </Tabs.Navigator></CanvasRoutesContext>
     <PinStage canvases={prepared.canvases} frames={stageFrames} front={frontPin} handedOff={browserPins} />
-  </View></PinStageContext>;
+    {floating && !chatReturn && <FloatingHeader actions={floating.actions} />}
+  </View></PinStageContext></FloatingHeaderContext>;
 }
 
 /**
@@ -289,9 +315,16 @@ function PinStage({ canvases, frames, front, handedOff }: { canvases: Record<str
 }
 
 function StagedPin({ canvas, frame, origin, visible }: { canvas: PreparedCanvas; frame: StageFrame; origin: { x: number; y: number }; visible: boolean }) {
-  const { prepared } = useSession();
+  const { prepared, claimStatusBar, releaseStatusBar } = useSession();
   const { colors } = useTheme();
-  const headerHeight = useHeaderHeight();
+  const headerHeight = useArtifactHeaderHeight();
+  const [pageBackground, setPageBackground] = useState<string | null>(null);
+  const owner = `pin:${canvas.canvasId}`;
+  useEffect(() => {
+    if (visible && pageBackground) claimStatusBar(owner, statusBarStyleFor(pageBackground));
+    else releaseStatusBar(owner);
+  }, [visible, pageBackground, owner, claimStatusBar, releaseStatusBar]);
+  useEffect(() => () => releaseStatusBar(owner), [owner, releaseStatusBar]);
   const stage = useContext(PinStageContext);
   // A canvas with several artifacts opens its preferred site, as the browser
   // host would; its picker switches sites natively and hands a plain file,
@@ -326,7 +359,7 @@ function StagedPin({ canvas, frame, origin, visible }: { canvas: PreparedCanvas;
     accessibilityElementsHidden={!visible} importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
     style={{ position: 'absolute', left: frame.x - origin.x, top: frame.y - origin.y, width: frame.width, height: frame.height, opacity: visible ? 1 : 0, backgroundColor: colors.background }}>
     <View style={[StyleSheet.absoluteFill, picker && { top: headerHeight + ARTIFACT_PICKER_HEIGHT }]}>
-      {access && <ArtifactView appUrl={APP_URL} key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={picker ? 0 : headerHeight + 12} focused={visible} onRetry={retry} onPresented={onPresented} />}
+      {access && <ArtifactView appUrl={APP_URL} key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={picker ? 0 : headerHeight + 12} focused={visible} onRetry={retry} onPresented={onPresented} onBackground={setPageBackground} />}
       {(!access || failed) && visible && <Loading failed={failed} retry={retry} />}
     </View>
     {picker && <ArtifactPicker artifacts={canvas.artifacts!} selected={shown.resourceId} onSelect={choose} top={headerHeight} />}
@@ -402,7 +435,8 @@ function useChatNavigation(navigation: NativeBottomTabScreenProps<ParamListBase>
 }
 
 function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactId, onContentReady }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string; artifactId?: string; onContentReady?: () => void }) {
-  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild, shownDirectory, rememberedSite, rememberSite } = useSession();
+  const floatingHeader = useContext(FloatingHeaderContext);
+  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild, shownDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar } = useSession();
   const { colors } = useTheme();
   const canvasId = assignedCanvasId ?? route.name;
   const routeCanvases = useContext(CanvasRoutesContext);
@@ -412,7 +446,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   const focused = useIsFocused();
   useLayoutEffect(() => { if (focused) directoryOwner.current = canvasId; }, [focused, canvasId, directoryOwner]);
   const network = useNetworkState();
-  const headerHeight = useHeaderHeight();
+  const headerHeight = useArtifactHeaderHeight();
   const tabBarHeight = useBottomTabBarHeight();
   const verticalBarEdge = useVerticalBarEdgeIOS();
   // Callstack tab scenes extend behind the iPhone bar. Reserve its measured
@@ -541,6 +575,11 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   }, [home, focused, chatReturn, closeChat]);
   // Home is refreshed once for the whole app on resume; other shells refresh themselves.
   useAppResume(() => { if (!home && focused && ready) web.current?.send({ type: 'refresh' }); });
+  const shownArtifact = (access: NativeArtifact) => optimistic === access.canvasId
+    || (snapshot?.view === 'artifact' && snapshot.canvasId === access.canvasId && snapshot.artifactId === access.resourceId);
+  const frontArtifact = Object.values(artifacts).find(shownArtifact);
+  const hosted = frontArtifact !== undefined;
+  const [pageBackgrounds, setPageBackgrounds] = useState<Record<string, string>>({});
   // Header items are native views: rebuild them only when what they show changes.
   const view = snapshot?.view;
   const viewCanvas = snapshot?.canvasId;
@@ -584,21 +623,33 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
     const close = home && chatReturn ? closeChat : undefined;
     const menu = () => setSidebar(true);
     const create = showDashboard ? createFromDashboard : undefined;
+    // A native artifact in front owns its pixels: the native header gives way to
+    // the floating one, because iOS 26 fades content under a navigation bar in
+    // the app's appearance (a white band over a dark site). The dashboard, chat
+    // and pages the browser renders keep the native header.
+    if (hosted && !close && frontArtifact) {
+      const front = frontArtifact;
+      navigation.getParent()?.setOptions({ headerShown: false });
+      floatingHeader.show(canvasId, { menu, chat: () => openChat(front.canvasId, viewTitle) });
+      return () => floatingHeader.hide(canvasId);
+    }
+    floatingHeader.hide(canvasId);
     navigation.getParent()?.setOptions({
-      // iOS 26 fades content under the transparent header in the app's own
-      // appearance, which tints an artifact that draws its own colours (white
-      // over a dark site). Artifacts own their pixels; the native dashboard and
-      // chat keep the system effect.
-      scrollEdgeEffects: { top: view === 'artifact' && !close ? 'hidden' : 'automatic' },
+      headerShown: true,
       headerLeft: signedIn ? () => <HeaderButton kind="menu" label="Open sidebar" onPress={menu} /> : undefined,
       headerRight: close ? () => <HeaderButton kind="close" label="Close conversation" onPress={close} /> : create ? () => <HeaderButton kind="create" label="Create a canvas" onPress={create} /> : chat ? () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} /> : undefined,
       unstable_headerLeftItems: () => signedIn ? [{ type: 'button', label: 'Open sidebar', icon: { type: 'sfSymbol', name: 'sidebar.left' }, onPress: menu }] : [],
       unstable_headerRightItems: () => close ? [{ type: 'button', label: 'Close conversation', icon: { type: 'sfSymbol', name: 'xmark' }, onPress: close }] : create ? [{ type: 'button', label: 'Create a canvas', icon: { type: 'sfSymbol', name: 'plus' }, onPress: create }] : chat ? [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }] : [],
     });
-  }, [signedIn, focused, navigation, view, viewCanvas, viewTitle, home, chatReturn, closeChat, openChat, showDashboard, createFromDashboard]);
-  const shownArtifact = (access: NativeArtifact) => optimistic === access.canvasId
-    || (snapshot?.view === 'artifact' && snapshot.canvasId === access.canvasId && snapshot.artifactId === access.resourceId);
-  const hosted = Object.values(artifacts).some(shownArtifact);
+  }, [signedIn, focused, navigation, view, viewCanvas, viewTitle, home, chatReturn, closeChat, openChat, showDashboard, createFromDashboard, hosted, frontArtifact, floatingHeader, canvasId]);
+  // The status bar reads over the artifact in front, as the floating header does.
+  const statusOwner = `screen:${canvasId}`;
+  const frontBackground = frontArtifact ? pageBackgrounds[frontArtifact.canvasId] : undefined;
+  useEffect(() => {
+    if (focused && hosted && !(home && chatReturn) && frontBackground) claimStatusBar(statusOwner, statusBarStyleFor(frontBackground));
+    else releaseStatusBar(statusOwner);
+  }, [focused, hosted, home, chatReturn, frontBackground, statusOwner, claimStatusBar, releaseStatusBar]);
+  useEffect(() => () => releaseStatusBar(statusOwner), [statusOwner, releaseStatusBar]);
   // Native safe areas follow the system rail (including its side in Split View).
   // Content extends behind the transparent header; the initial inset scrolls away.
   return <SafeAreaView edges={{ left: true, right: true, bottom: bottomTabInset === 0 }} style={{ backgroundColor: colors.background }}>
@@ -617,6 +668,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
         return <View key={access.canvasId} collapsable={false} accessibilityElementsHidden={!visible || !focused} importantForAccessibility={visible && focused ? 'auto' : 'no-hide-descendants'} pointerEvents={visible ? 'auto' : 'none'} style={[StyleSheet.absoluteFill, { top: snapshot?.artifactPicker ? headerHeight + 60 : 0, opacity: visible ? 1 : 0 }]}>
           <ArtifactView key={access.version} appUrl={APP_URL} topInset={snapshot?.artifactPicker ? 0 : headerHeight + 12} access={access} background={colors.background} focused={focused && visible}
             onPresented={() => rememberSite(access)}
+            onBackground={(color) => setPageBackgrounds((known) => known[access.canvasId] === color ? known : { ...known, [access.canvasId]: color })}
             onRetry={() => { renewing.current.add(access.canvasId); web.current?.send({ type: 'reopen-artifact', canvasId: access.canvasId, resourceId: access.resourceId }); }} />
         </View>;
       })}
@@ -687,19 +739,15 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
     previousConnection.current = network.isConnected;
     if (focused && reconnected) controls.current.get('Home')?.send({ type: 'refresh' });
   }, [focused, network.isConnected, controls]);
-  // A pinned site is always an artifact: no system fade over its pixels.
-  useEffect(() => { if (focused) navigation.getParent()?.setOptions({ scrollEdgeEffects: { top: 'hidden' } }); }, [focused, navigation]);
+  // A pinned site is always an artifact: the native header gives way to the
+  // floating one, so iOS draws no fade over the site's own pixels.
+  const floatingHeader = useContext(FloatingHeaderContext);
   useEffect(() => {
-    if (!focused || !directory) return;
-    const chat = () => openChat(canvas.canvasId, canvas.title);
-    const menu = () => setSidebar(true);
-    navigation.getParent()?.setOptions({
-      headerLeft: () => <HeaderButton kind="menu" label="Open sidebar" onPress={menu} />,
-      headerRight: () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} />,
-      unstable_headerLeftItems: () => [{ type: 'button', label: 'Open sidebar', icon: { type: 'sfSymbol', name: 'sidebar.left' }, onPress: menu }],
-      unstable_headerRightItems: () => [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }],
-    });
-  }, [focused, directory, canvas.canvasId, canvas.title, navigation, openChat]);
+    if (!focused) return;
+    navigation.getParent()?.setOptions({ headerShown: false });
+    floatingHeader.show(canvas.canvasId, { menu: () => setSidebar(true), chat: () => openChat(canvas.canvasId, canvas.title) });
+    return () => floatingHeader.hide(canvas.canvasId);
+  }, [focused, canvas.canvasId, canvas.title, navigation, openChat, floatingHeader]);
   return <SafeAreaView edges={{ left: true, right: true, bottom: bottomTabInset === 0 }} style={{ backgroundColor: colors.background }}>
     <KeyboardAvoidingView enabled={keyboardVisible} style={[styles.fill, { marginBottom: bottomTabInset }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View ref={frame} collapsable={false} style={styles.fill} onLayout={measure} />
