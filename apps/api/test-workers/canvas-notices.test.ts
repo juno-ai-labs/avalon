@@ -28,13 +28,13 @@ import type { PushPayloads } from "../src/services/push/push-payload";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
-let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000ee000");
-const CREATOR = asUserId("00000000-0000-7000-8000-0000000ee001");
-const PARTICIPANT = asUserId("00000000-0000-7000-8000-0000000ee002");
-const MUTED = asUserId("00000000-0000-7000-8000-0000000ee003");
-const CANVAS = "00000000-0000-7000-8000-0000000ee0c1";
-const OTHER_CANVAS = "00000000-0000-7000-8000-0000000ee0c2";
-const SIDEKICK = "00000000-0000-7000-8000-0000000ee0a1";
+let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000ec000");
+const CREATOR = asUserId("00000000-0000-7000-8000-0000000ec001");
+const PARTICIPANT = asUserId("00000000-0000-7000-8000-0000000ec002");
+const MUTED = asUserId("00000000-0000-7000-8000-0000000ec003");
+const CANVAS = "00000000-0000-7000-8000-0000000ec0c1";
+const OTHER_CANVAS = "00000000-0000-7000-8000-0000000ec0c2";
+const SIDEKICK = "00000000-0000-7000-8000-0000000ec0a1";
 const NOW = "2026-11-15T10:00:00.000Z";
 
 /** An environment that may send push, as `canvas-artifact-notices.test.ts` builds it. */
