@@ -107,6 +107,12 @@ viewer-identity sections. Loading this
 skill does not give you Terminal; if Terminal is not available, say the app
 needs it.
 
+An app built from records in connected accounts (a CRM of who the team has
+emailed, a tracker of open pull requests, a list of meeting follow-ups) must
+stay current: follow the "Keep data from connected accounts live" section of
+\`building-live-sites\`, including its offer of a Sidekick that keeps the app
+updated.
+
 ## Anti-patterns
 
 - **Asking about a tool that saves nothing.** A counter, converter or
@@ -122,7 +128,10 @@ needs it.
 - **Asking when the answer is given.** If the request already says who uses
   it, build without the question.
 - **Saying yes to a native app.** Rally cannot ship to an app store. Offer the
-  web site instead.`;
+  web site instead.
+- **A one-time copy of live data.** An app filled once from today's mail or
+  meeting notes goes stale without anyone noticing. Store the records as rows
+  and offer a Sidekick that keeps them current.`;
 
 export const CREATING_AN_APP_SKILL: HarnessSkill = {
   name: "creating-an-app",
