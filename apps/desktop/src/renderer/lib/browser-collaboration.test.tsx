@@ -344,14 +344,14 @@ it('keeps the current mobile chat, draft, and connections when closing and reope
     command({ type: 'open-chat', id: parent });
     await waitFor(() => expect(feedSockets()).toHaveLength(1));
     act(() => feedSockets()[0]!.open());
-    const input = await screen.findByPlaceholderText('Ask Rally or the people here…');
+    const input = await screen.findByPlaceholderText('Ask Rally or the team…');
     fireEvent.change(input, { target: { value: 'Keep my grocery draft' } });
     command({ type: 'close-chat' });
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Find a canvas' })).toHaveValue('Shopping'));
     expect(input).not.toBeVisible();
     command({ type: 'open-chat', id: parent });
     await waitFor(() => expect(input).toBeVisible());
-    expect(screen.getByPlaceholderText('Ask Rally or the people here…')).toBe(input);
+    expect(screen.getByPlaceholderText('Ask Rally or the team…')).toBe(input);
     expect(input).toHaveValue('Keep my grocery draft');
     expect(reads).toBe(1);
     expect(workspaceSockets()).toHaveLength(1);

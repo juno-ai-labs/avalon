@@ -801,6 +801,36 @@ describe a parameter; never raise one. A conditional surface — one whose plugi
 is not built without credentials — is only in that walk if the walk supplies
 them, so give it a sentinel in `EXPECTED_TOOLS` too.
 
+### 14. A refused tool is offered, and refuses by name
+
+Never withhold a tool because of who or what started the turn: a run, a
+background agent, another agent's message, a principal without the right. A
+model that cannot see a tool cannot tell "this does not exist" from "this is
+not mine to do here", so it reports the work as impossible, which is how a
+Canvas once told a person a colleague's mailbox could not be connected.
+Offer the tool everywhere its plugin is, and make it refuse with a named code
+and a sentence that says why this turn may not, which turn may, and how to
+reach that turn with tools this one has: a reply to the agent that sent the
+message, `send_message` to the agent a background agent works for, a run's
+result for the person who manages it. The refusal asks nobody and changes
+nothing, so it is `read` and safe to retry.
+
+`refusingTool` (`apps/api/src/services/tool-refusal.ts`) builds one from the
+tool itself: the same name and arguments, and a call that refuses. Every
+refusal's text is in one table there (`TOOL_REFUSALS`). Three uses:
+`sidekick_request_source` where a turn may not ask
+(`sidekickSourceRefusalTool`), every Sidekicks tool on a turn that acts for
+the Organization rather than a person (`organizationSidekicksPlugin`), and
+the two question tools where answers go to an agent (`questionRefusal`).
+A tool that has no target on a surface (archiving a Sidekick a Canvas made,
+outside a Canvas) is a different case, and the rule does not cover it.
+
+**Kept hidden, by the owner's decision on 2026-11-15.** These are still
+withheld by turn and are not to be converted without asking:
+`sidekick_set_delegation` for a run and its workers (`setsDelegation`), the
+conversation tools (`post`, `attach`) outside a wizard turn, and the wizard's
+authoring tools outside a wizard turn.
+
 ## Sidekick delegation tools
 
 The existing `rally:sidekicks` plugin offers `sidekick_my_delegations_list`,
@@ -1286,6 +1316,28 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-11-15 — A refused tool is offered, and refuses by name
+
+**What changed:** Rule 14. A tool withheld because of who or what started a
+turn is offered there instead and refuses with a code and the route to a turn
+that may use it. `sidekick_request_source` is the first: a run, a background
+agent and a turn another agent's message started get a refusing
+`request_source` beside the two source reads. A turn that acts for the
+Organization is offered the whole Sidekicks plugin, every tool refusing
+(`sidekick_tools_need_a_person`), where it had no plugin at all. Where a
+loop's answers go to an agent (`routesAnswersToAgent`), `request_elicitation`
+and a run's `show_connector_connection` refuse (`question_from_background_agent`,
+`question_from_agent_message`) and say where to send the question.
+
+**Why:** The owner asked on 2026-11-15 that no tool be hidden for this, so
+that an agent refused an action can hand it on by the messaging it has. A
+hidden tool reads to the model as a missing capability, and in one Canvas the
+model told a person the work was impossible.
+
+**Consequences:** The owner kept three withheld on purpose (listed under the
+rule). Any other tool withheld by turn is a defect against this rule. Refuse
+with `refusingTool`, not a hand-written copy of the tool.
 
 ### 2026-11-03 — `read_artifact_table`, and a member reads only their own private rows
 

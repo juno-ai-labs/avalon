@@ -10,6 +10,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import { SidekickSourceService } from "./sidekick-source-service";
+import { refusingTool, toolRefusal } from "./tool-refusal";
 import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 
 /**
@@ -58,10 +59,39 @@ export function sidekickSourceRequestCard(event: { pluginId?: string | undefined
     : null;
 }
 
+/**
+ * What a turn that may not ask for a source is offered instead of the three
+ * source tools: `request_source` under the same name and arguments, which asks
+ * nobody and refuses by name, saying which turn can ask and how to reach it.
+ * An agent that needs a source asked for then hands the ask to one that may,
+ * by the messaging it already has. `docs/sidekick-sources.md#agent-tools`.
+ */
+/** Why this turn may not ask for a source, and where to send the ask. */
+function sourceRefusal(input: WorkstreamWorkflowInput) {
+  return toolRefusal(input.automationRun || input.automationDelegation ? "sidekick_source_request_from_run"
+    : input.backgroundAgent === true ? "sidekick_source_request_from_background_agent"
+      : input.reason === "sidekick_review" ? "sidekick_source_request_from_review" : "sidekick_source_request_from_agent_message");
+}
+
+function sidekickSourceRefusalTool(input: WorkstreamWorkflowInput, request: HarnessTool): HarnessTool {
+  const refusal = sourceRefusal(input);
+  return refusingTool(request, refusal, {
+    description: "Asking people for a source is not available on this turn. Calling this asks nobody: it says which turn can ask, and how to hand the request to it.",
+    capability: "rally.sidekick.sources.request_elsewhere",
+  });
+}
+
 /** How many of the person's own recent events one test judges. A product choice: one screenful to read. */
 const TEST_SAMPLE_EVENTS = 10;
 
-export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, userId: UserId, room: boolean): HarnessTool[] {
+/**
+ * The three source tools. Every loop that holds the Sidekicks plugin is offered
+ * all three; one that may not ask (`asks` false, `asksForSources`) gets a
+ * `request_source` that asks nobody and says which turn can ask instead
+ * (`sidekickSourceRefusalTool`). A tool is never withheld for who is asking:
+ * `docs/agent-tools.md` rule 14.
+ */
+export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, userId: UserId, room: boolean, asks = true): HarnessTool[] {
   const service = new SidekickSourceService(env, input.workspaceId, userId);
   const name = (local: string) => room ? `sidekick_${local}` : local;
   // The request's card is drawn in the conversation it was asked from: a
@@ -73,7 +103,7 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
     : askedFromCanvasId !== null ? { parentKind: "canvas" as const, parentId: askedFromCanvasId }
     : input.parentKind === "canvas" ? { parentKind: "canvas" as const, parentId: input.parentId }
     : input.parentKind === "automation" ? { parentKind: "automation" as const, parentId: input.parentId } : null;
-  return [{
+  const tools: HarnessTool[] = [{
     definition: {
       name: name("sources_list"),
       description: "List whose events may start a Sidekick: each person's account, the event types and their filter, and the requests still waiting or declined.",
@@ -175,6 +205,12 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
       };
     },
   }];
+  // The ask is the one tool a loop may be refused, and it is refused by name rather than withheld.
+  // Asking, and trying a filter on the acting person's own events, are refused by
+  // name rather than withheld; the list of sources stays readable.
+  return asks ? tools : tools.map((tool) => tool.definition.capability === "rally.sidekick.sources.request"
+    ? sidekickSourceRefusalTool(input, tool)
+    : tool.definition.capability === "rally.sidekick.sources.test" ? refusingTool(tool, sourceRefusal(input)) : tool);
 }
 
 function requestOutput(request: { requestId: string; person: { userId: string; displayName: string }; connectorType: string;
