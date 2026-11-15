@@ -282,6 +282,22 @@ None yet.
     tools when it is `sidekick_review`. Rejected: writing it only for the
     self-review's agents, which is the same column with a special case; and
     accepting the gap with muting as the remedy, the owner's call against.
+12. **A Sidekick run with no attached Canvas cannot send.** The owner's call:
+    a Sidekick made from the Sidekicks section has no attached Canvas, so its
+    runs get `notifications_sidekick_has_no_canvas`, and nothing is sent.
+    Rejected for now: sending from the Canvas the run made as its output,
+    which was never registered and would need registering on its first
+    publish. This is expected to be rare; revisit when a Sidekick without a
+    Canvas needs to notify.
+13. **A run's background agent sends with its root run's reach.** The
+    owner's call. A run with no delegate acts as the Sidekick itself, with
+    no person behind it, and a background agent is held to the person its
+    loop acts as, so without this its agents could never send. For
+    `notifications_send` only, the host decides a run-rooted agent's Canvas
+    and reach from its root run (`automationDelegation.runId`, read with
+    `sidekickReach`), as the run itself would be decided. Rejected: giving
+    background agents their root run's reach for every tool, as Terminal does
+    for the sandbox, which widens what every agent reaches, not only notices.
 
 ## Data model
 
@@ -334,7 +350,8 @@ reads.
 - **A run's reach follows the run.** A run a schedule or an event started
   sends from its Sidekick's Canvas by the attachment alone. A run a person
   asked for sends only if that person can still open the Canvas, as its
-  publish does today.
+  publish does today. A run's background agent sends with its root run's
+  reach (decision 13), for the notice tools only.
 
 ## Agent behavior
 
@@ -367,8 +384,9 @@ reads.
   A background agent takes the row of the conversation that started it,
   which it already records as its root: rooted in a Canvas's Chat or a
   person's wizard turn it gets both tools, rooted in a run only send, rooted
-  in a self-review neither. Its reach is held to the person its loop acts as,
-  as for every background agent today. A self-review's agent is known by its
+  in a self-review neither. A run's agent sends with its root run's reach
+  (decision 13); every other agent's reach is held to the person its loop
+  acts as, as for every background agent today. A self-review's agent is known by its
   root's `reason`, which this change records (decision 11).
 
   The self-review gets neither. Rally's own notice starts it, so nobody asked
@@ -495,19 +513,3 @@ rewrites rows.
    `notifications_sidekick_has_no_canvas`.
 8. A self-review starts a background agent. That agent is offered neither
    notice tool; an agent a manager's wizard turn started is offered both.
-
-## Open questions
-
-1. **Should a run with no attached Canvas send from the Canvas it made?** A
-   Sidekick made from the Sidekicks section has no attached Canvas, so its
-   runs cannot send at all (decision 9). Sending from the run's own output
-   Canvas would cover a "your daily report is ready" Sidekick, but that
-   Canvas was never registered, so it would need registering on its first
-   publish.
-2. **Should a background agent of a run that acts as the Sidekick itself be
-   able to send?** A run with no delegate acts as nobody, and a background
-   agent is held to the person its loop acts as, so that agent's send always
-   fails with `canvas_access_denied`. The run itself can still send. Giving
-   the agent its root run's reach, as Terminal does for the sandbox, would fix
-   it, but widens what every background agent reaches, not only notices.
-   Until decided, the agent cannot send.
