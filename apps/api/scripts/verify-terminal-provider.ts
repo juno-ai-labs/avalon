@@ -14,6 +14,7 @@ import {
   terminalBaselineHostAcceptanceCommand,
   terminalPackageManagerAcceptanceCommand,
   terminalPlaywrightAcceptanceCommand,
+  terminalMediaToolsAcceptanceCommand,
   terminalSnapshotProbeCommand,
 } from "../src/services/terminal/snapshot-manifest";
 import { verifyTerminalRestartAndRestore } from "./terminal-provider-lifecycle";
@@ -120,6 +121,8 @@ try {
   await run(terminalSnapshotProbeCommand(), "zero", "snapshot");
   // See `TERMINAL_PLAYWRIGHT_VERSION` for why this is a gate, not a probe.
   await run(terminalPlaywrightAcceptanceCommand(), "zero", "playwright-screenshot");
+  // Image-only for the same reason; see `terminalMediaToolsInstallCommand`.
+  await run(terminalMediaToolsAcceptanceCommand(), "zero", "ffmpeg-episode-audio");
   await run("curl --fail --silent --show-error --max-time 15 https://example.com/ >/dev/null", "zero", "full-internet-public-control");
   await run(`curl --fail --silent --show-error --location --max-redirs 3 --max-time 15 ${shellQuote(redirectUrl.href)} >/dev/null`, "zero", "full-internet-redirect-control");
   await run(`curl --fail --silent --show-error --max-time 15 ${shellQuote(privateDnsUrl.href)} >/dev/null`, "nonzero", "private-dns");
