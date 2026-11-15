@@ -240,7 +240,7 @@ function Dashboard({ rows, loading, failed, retry, hasMore, more, open, create }
 }) {
   const [query, setQuery] = useState('');
   const filtered = rows.filter((row) => row.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
-  return <div className="mobile-dashboard"><p className="mobile-eyebrow">A little space for everything</p><h1>Your canvases</h1>
+  return <div className="mobile-dashboard"><h1>Your canvases</h1>
     <label className="mobile-search"><Search size={19} /><input aria-label="Find a canvas" placeholder="Find a canvas" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
     {failed ? <Recovery title="Your canvases couldn’t load" retry={retry} /> : loading ? <div role="status" className="mobile-skeleton">Loading your canvases…</div> : <>
       <div className="mobile-section-heading"><h2>{query ? 'Search results' : 'Pick up where you left off'}</h2><span>{filtered.length} canvases</span></div>
