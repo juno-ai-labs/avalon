@@ -777,12 +777,15 @@ describe("connector tools selected for harness runs", () => {
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));
   });
 
-  it("offers the notice tools per the Canvas notices matrix: both to a Chat, a wizard and their agents, send to a run and its worker, none to the self-review", async () => {
+  it("offers both notice tools to every loop, refusing register for a run and its worker and both for the self-review and its agents", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const noticeTools = async (input: WorkstreamWorkflowInput) => {
       const plugin = (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
-        .find((candidate) => candidate.canonicalId === "rally:notifications");
-      return plugin ? { preload: plugin.preload, tools: plugin.tools.map((tool) => tool.definition.name) } : null;
+        .find((candidate) => candidate.canonicalId === "rally:notifications")!;
+      const refusals = await Promise.all(plugin.tools.map((tool) => isRefusingTool(tool)
+        ? tool.execute({}, {} as never).then(() => "not refused", (error: { code?: string }) => `${tool.definition.name}: ${error.code}`)
+        : tool.definition.name));
+      return { preload: plugin.preload, tools: refusals };
     };
     const both = { preload: true, tools: ["register", "send"] };
     expect(await noticeTools(workflowInput())).toEqual(both);
@@ -792,12 +795,13 @@ describe("connector tools selected for harness runs", () => {
     // A wake-up is the loop it runs in.
     expect(await noticeTools({ ...workflowInput(), reason: "scheduled_wakeup", scheduledWakeupId: "00000000-0000-7000-8000-00000000e003" }))
       .toEqual(both);
-    const sendOnly = { preload: true, tools: ["send"] };
+    const sendOnly = { preload: true, tools: ["register: notifications_register_from_run", "send"] };
     expect(await noticeTools(automationRunInput())).toEqual(sendOnly);
     expect(await noticeTools({ ...childWorkflowInput(automationConversationInput()),
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toEqual(sendOnly);
-    expect(await noticeTools({ ...automationConversationInput(), reason: "sidekick_review" })).toBeNull();
-    expect(await noticeTools({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" })).toBeNull();
+    const neither = { preload: true, tools: ["register: notifications_not_for_self_review", "send: notifications_not_for_self_review"] };
+    expect(await noticeTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual(neither);
+    expect(await noticeTools({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" })).toEqual(neither);
   });
 
   it("lets a person's turn and a wizard turn a Canvas's Chat started ask for a source, refuses every loop that read content by name, and gives neither a run nor its worker the tool that changes delegation", async () => {
