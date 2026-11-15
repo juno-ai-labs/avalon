@@ -1252,16 +1252,26 @@ export function createTerminalResourceBridge(
   // artifacts; the note is idempotent, so a replayed publish notes it again.
   const noted = async <T extends { resourceId: string }>(context: HarnessToolContext,
     input: { canvas?: string | undefined; displayName?: string | undefined; providerResourceId?: string | undefined },
-    published: T): Promise<T> => {
-    if (input.providerResourceId === undefined) {
-      await noteInCanvas(await publicationAddress(context, input), published.resourceId);
-    }
-    return published;
+    published: T): Promise<{ published: T; inCanvas: boolean }> => {
+    if (input.providerResourceId !== undefined) return { published, inCanvas: false };
+    const target = await publicationAddress(context, input);
+    await noteInCanvas(target, published.resourceId);
+    return { published, inCanvas: target.substreamId === "0" };
   };
   return {
     ...bridge,
-    publishResource: async (context, input, bytes) => noted(context, input, await bridge.publishResource(context, input, bytes)),
-    publishSiteResource: async (context, input, site) => noted(context, input, await bridge.publishSiteResource(context, input, site)),
+    // A file in a Canvas is served at its own host, under the Canvas's
+    // artifact audience, once the access queue delivers it. The hostname is
+    // reserved from the resource id, idempotently, so reserving it here gives
+    // the same one the queue registers; the agent can then cite or link the
+    // file (a feed's audio, say) without asking a person to copy its link.
+    publishResource: async (context, input, bytes) => {
+      const { published, inCanvas } = await noted(context, input, await bridge.publishResource(context, input, bytes));
+      if (!inCanvas) return published;
+      const hostnameStub = await ensureArtifactHostname(env, { workspaceId: context.workspaceId, artifactId: published.resourceId });
+      return { ...published, url: artifactOrigin(hostnameStub, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN) };
+    },
+    publishSiteResource: async (context, input, site) => (await noted(context, input, await bridge.publishSiteResource(context, input, site))).published,
   };
 }
 

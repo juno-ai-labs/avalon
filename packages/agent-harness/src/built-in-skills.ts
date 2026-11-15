@@ -1,6 +1,7 @@
 import { BUILDING_LIVE_SITES_SKILL } from "./platform-skills/building-live-sites-skill";
 import { SETTING_UP_A_FILTERED_TRIGGER_SKILL } from "./platform-skills/filtered-trigger-skill";
 import { POLLING_FOR_EVENTS_SKILL } from "./platform-skills/polling-for-events-skill";
+import { PUBLISHING_A_FEED_SKILL } from "./platform-skills/publishing-a-feed-skill";
 import { TRACKING_SEEN_OR_DONE_ITEMS_SKILL } from "./platform-skills/tracking-seen-or-done-items-skill";
 import { USING_THE_LOCAL_INAPP_BROWSER_SKILL } from "./platform-skills/using-the-local-inapp-browser-skill";
 import {
@@ -16,6 +17,7 @@ export {
   BUILDING_LIVE_SITES_SKILL,
   DEEP_RESEARCH_SKILL,
   POLLING_FOR_EVENTS_SKILL,
+  PUBLISHING_A_FEED_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
   SETTING_UP_A_FILTERED_TRIGGER_SKILL,
   TRACKING_SEEN_OR_DONE_ITEMS_SKILL,
@@ -57,6 +59,8 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   // Offered only where the Terminal plugin is in scope, by its `ownerPlugin`:
   // the whole procedure ends in publishing a directory from a sandbox.
   BUILDING_LIVE_SITES_SKILL,
+  // Terminal's too: a feed is a site route and its episodes are published files.
+  PUBLISHING_A_FEED_SKILL,
   // Request-routing task skills compose the procedures above for a report or app.
   ...TASK_SKILLS,
 ];

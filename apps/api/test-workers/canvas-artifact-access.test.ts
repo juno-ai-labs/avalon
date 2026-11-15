@@ -17,6 +17,7 @@ import {
   asUserId,
   asWorkspaceId,
   asAutomationId,
+  asSubstreamId,
   type ArtifactManifest,
 } from "@rally/contracts";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
@@ -37,6 +38,8 @@ import artifactWorker from "../src/artifacts/index";
 import { AuthorizationService } from "../src/services/authorization-service";
 import { ResourceService } from "../src/services/resource-service";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
+import { canvasArtifactNoter } from "../src/services/terminal/authority";
+import { createTerminalPortFactory } from "../src/services/terminal/object-port";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import {
   pointArtifactAtVersion,
@@ -307,6 +310,31 @@ describe("Canvas artifact access propagated to local serving", () => {
         .status,
     ).toBe(401);
     expect((await visit(fileRoute!.hostname_stub)).status).toBe(401);
+  });
+
+  it("returns a published file's link, which serves the file to anyone once the Canvas is public", async () => {
+    await runInDurableObject(
+      env.SUBSTREAM_AGENTS.getByName(conversationObjectName(env.AVALON_REGION, workspaceId, CANVAS, "0")),
+      (_instance, state) => seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: CANVAS, parentKind: "canvas" }),
+    );
+    const bridge = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(env, workspaceId),
+      createTerminalPortFactory(env, undefined, "0"), undefined, null, null, null, "0",
+      canvasArtifactNoter(env, { workspaceId, parentKind: "canvas", parentId: CANVAS, substreamId: asSubstreamId("0") }));
+    const published = await bridge.publishResource({
+      workspaceId, workstreamId: CANVAS, harnessRunId: crypto.randomUUID(), toolCallId: crypto.randomUUID(),
+      effectIntentId: crypto.randomUUID(), executionPrincipal: { type: "user", userId: OWNER },
+      signal: new AbortController().signal,
+    }, { filePath: "episode-1.mp3" }, new TextEncoder().encode("episode one audio"));
+    expect(published.publishKind).toBe("file");
+    const url = new URL("url" in published && published.url ? published.url : "https://missing.invalid");
+    // The stub is the first label, ahead of the region suffix.
+    const stub = url.hostname.split(".")[0]!.replace(/-g$/u, "");
+    await share("public");
+    await sync(published.resourceId);
+    // A podcast app sends no cookie and no fetch metadata.
+    const response = await visit(stub);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("episode one audio");
   });
 
   it("artifact-only users can use artifacts but cannot read the conversation; old cookies lose access", async () => {

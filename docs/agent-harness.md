@@ -766,7 +766,7 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships eleven skills in its default catalog (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Seven are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, `using-external-structured-data`, and the two request-routing task skills described below. The other four each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` and `setting-up-a-filtered-trigger` below, `tracking-seen-or-done-items` owned by `rally:tables`, and `building-live-sites` above. The three AI-chat readers that the browser plugin owned went with it in the dead-code pass. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships twelve skills in its default catalog (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Seven are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, `using-external-structured-data`, and the two request-routing task skills described below. The other five each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` and `setting-up-a-filtered-trigger` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and `publishing-a-feed`, also owned by `rally:terminal`, which composes `building-live-sites` for a podcast or calendar feed an app subscribes to without signing in. The three AI-chat readers that the browser plugin owned went with it in the dead-code pass. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
 Platform skills live in `packages/agent-harness/src/platform-skills/`, one
 `*-skill.ts` file per skill. Its
@@ -1901,6 +1901,29 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-15 — `publishing-a-feed` joins the built-in skills
+
+**What changed:** A Terminal-owned skill for a podcast RSS or calendar feed:
+settle that the Canvas's artifacts must be public before building, one site row
+per entry with a stable id, the feed route answered before any viewer check,
+long episode audio generated in pieces and joined, and fetching the feed as an
+app would before reporting it works.
+
+**Why:** A Canvas asked for a podcast feed of its newsletter recordings
+reported a hosting blocker. The real blockers were its own reader's viewer
+check in front of every route, and that no agent could learn a published file's
+URL (fixed in [`terminal-workspaces.md`](terminal-workspaces.md#changelog)).
+Nothing taught either, and the marketplace's repository-changes podcast
+starter asks for the same feed.
+
+**Considered and rejected:** A section in `building-live-sites`, which every
+site build would load for a case most never meet. Separate podcast and calendar
+skills, which would repeat the audience and route rules that make both work.
+
+**Consequences:** The skill states what Rally does not do yet (byte ranges,
+caching) so an agent does not promise a directory listing; when serving gains
+byte ranges, that section changes with it.
 
 ### 2026-11-15 — A wake-up continues the loop that scheduled it
 
