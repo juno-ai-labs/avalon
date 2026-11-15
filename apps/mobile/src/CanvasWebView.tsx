@@ -19,6 +19,8 @@ export interface CanvasWebViewProps {
   focused?: boolean;
   /** Recovery identity, so other code can `wake` this renderer. */
   recoveryId?: string;
+  /** The page's renderer died; it answers nothing until it reloads. */
+  onTerminated?: () => void;
   onEvent: (event: MobileEvent) => void;
   onLoading: () => void;
   onError: () => void;
@@ -37,6 +39,7 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
   useEffect(() => () => recovery.forget(recoveryId), [recoveryId]);
   const terminated = () => {
     recordFailure('webview_process_terminated');
+    props.onTerminated?.();
     const reload = () => web.current?.reload();
     if (!shown.current) { recovery.defer(recoveryId, reload); return; }
     recovery.recovering(recoveryId);
