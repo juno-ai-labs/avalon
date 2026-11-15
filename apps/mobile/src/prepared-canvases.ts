@@ -3,15 +3,24 @@ import { randomUUID } from 'expo-crypto';
 import { preparedRequests } from './prepared-requests';
 import { VISIBLE_PIN_COUNT, type MobileCommand, type MobileEvent, type MobileSnapshot, type NativeArtifact, type PreparedCanvas } from './protocol';
 
-/** Descriptors share Home's authenticated session; access URLs are never cached. */
-export function usePreparedCanvases(directory: MobileSnapshot | null, send: (command: MobileCommand) => void, wake: () => void) {
+export type PreparedPins = {
+  entries: Record<string, { userId: string; workspaceId: string; canvas: PreparedCanvas }>;
+  sessions: Record<string, { scope: string; artifact: NativeArtifact }>;
+};
+
+/** Descriptors share Home's authenticated session; one-time access URLs are
+ * never kept. `store` carries descriptors and canonical URLs across launches. */
+export function usePreparedCanvases(directory: MobileSnapshot | null, send: (command: MobileCommand) => void, wake: () => void,
+  store?: { initial: PreparedPins | null; save: (pins: PreparedPins) => void }) {
   const sendRef = useRef(send);
   sendRef.current = send;
   const [requests] = useState(() => preparedRequests<PreparedCanvas, NativeArtifact>((command) => sendRef.current(command)));
   const current = useRef(directory);
   current.current = directory;
-  const [entries, setEntries] = useState<Record<string, { userId: string; workspaceId: string; canvas: PreparedCanvas }>>({});
-  const [sessions, setSessions] = useState<Record<string, { scope: string; artifact: NativeArtifact }>>({});
+  const [entries, setEntries] = useState<PreparedPins['entries']>(() => store?.initial?.entries ?? {});
+  const [sessions, setSessions] = useState<PreparedPins['sessions']>(() => store?.initial?.sessions ?? {});
+  const save = store?.save;
+  useEffect(() => { save?.({ entries, sessions }); }, [save, entries, sessions]);
   useEffect(() => () => requests.cancel(), [requests, directory?.userId, directory?.workspaceId]);
   useEffect(() => {
     setSessions((sessions) => Object.fromEntries(Object.entries(sessions).filter(([id, session]) => session.scope === `${directory?.userId}:${directory?.workspaceId}` && directory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(id))));
