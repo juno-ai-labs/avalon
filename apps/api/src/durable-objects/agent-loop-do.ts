@@ -4081,6 +4081,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         ...(sharedSidekickConversation ? this.answeredQuestionCanvas(pending.client_message_id) : {}),
         backgroundAgent: Boolean(background),
         ...(background?.root_reason ? { backgroundAgentRootReason: background.root_reason } : {}),
+        ...(background?.root_substream_id ? { backgroundAgentRootSubstreamId: background.root_substream_id } : {}),
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
@@ -7287,7 +7288,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       parentKind: identity.parentKind,
       substreamId,
       backgroundAgent: background ? (background.stopped_at !== null ? "stopped" : true) : false,
-      ...(background ? { rootSubstreamId: (background.root_substream_id ?? "0") as SubstreamId | "0" } : {}),
+      // A worker recorded before roots were has none: its wake-up carries no
+      // root, so it acts with no root's authority, as it did then.
+      ...(background?.root_substream_id ? { rootSubstreamId: background.root_substream_id as SubstreamId | "0" } : {}),
       ...(background?.root_reason ? { rootReason: background.root_reason } : {}),
     });
     // Not firing is a decision that consumes the row. One still pending lost

@@ -49,6 +49,6 @@ export class ArtifactAssetLoopback extends WorkerEntrypoint<Env, ArtifactAssetLo
     // and nothing seeks within a page.
     const served = await storedObjectResponse(this.env.PAYLOADS, artifactAssetKey(artifactId, version, resolved), request,
       { "content-type": asset.contentType }, { ranges: !asset.contentType.toLowerCase().startsWith("text/html") });
-    return served.found ? served.response : new Response("Temporarily unavailable", { status: 503 });
+    return served ?? new Response("Temporarily unavailable", { status: 503 });
   }
 }
