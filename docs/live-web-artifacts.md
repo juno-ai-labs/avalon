@@ -944,12 +944,12 @@ shows its saved quote and image. The script and trust boundaries are owned by
 ### 2026-11-14 — Sites of connected data stay live and offer a Sidekick
 
 **What changed:** `building-live-sites` gained "Keep data from connected
-accounts live": records from mail, Slack, meeting notes and similar sources
-become rows in a stateful site, keyed on a source id, with source columns kept
-apart from the columns people edit. After publishing, the agent offers a
-Sidekick that upserts new records, triggered by events where the source has
-them, and names any account it could not reach. The "ship data as files" and
-"no network" steps now limit a data file to data that will not change.
+accounts live", described under **Sites built from structured data**. The
+source key must be declared unique at build time, because `write_artifact_data`
+refuses schema changes and an upsert needs the constraint. A row-writing
+refresh needs no shared-output claim and succeeds when its writes do. The
+"ship data as files" and "no network" steps now limit a data file to data that
+will not change.
 `creating-an-app` points app requests built from connected data at that
 section, and `reporting-on-data` builds a live site for anything the person
 will keep using as the data changes, not only when they ask for a refresh.

@@ -37,6 +37,8 @@ change. Build it to stay current, not as a snapshot:
    reaches every open page at its next poll, with no republish.
 2. **Keep source facts apart from people's edits.** Give each record a stable
    key from its source: a message id, an email address, a document id.
+   Declare that key \`PRIMARY KEY\` or \`UNIQUE\` when you build the site: an
+   upsert needs it, and a Sidekick run cannot add a constraint later.
    Columns the source fills (name, company, last contact, source link) are the
    ones a refresh rewrites. Columns people edit on the page (status, notes,
    next step) a refresh never touches. Write each refresh as an upsert on the
@@ -47,12 +49,11 @@ change. Build it to stay current, not as a snapshot:
    account, each new meeting note, each new message in a channel, or a daily
    schedule for a source with no events. If the request already asks for the
    site to stay up to date, skip the question and create it.
-4. **On yes, create the Sidekick from this Canvas.** Give its wizard the
-   site's artifactId and resourceId, its tables and columns, the source key,
-   the upsert each run sends with \`write_artifact_data\`, the columns runs must
-   never write, the sources and accounts to watch, and what makes a record
-   belong (for example, "a two-way conversation about piloting Rally"). Ask it
-   to trigger on events where the source has them. Wait for the wizard's
+4. **On yes, create the Sidekick from this Canvas.** Give its wizard what
+   **Configure a Sidekick to refresh an existing site** lists for a site that
+   stores its own data, plus the columns runs must never write, the sources
+   and accounts to watch, and what makes a record belong (for example, "a
+   two-way conversation about piloting Rally"). Wait for the wizard's
    confirmation before saying the Sidekick is set up.
 5. **Name the accounts you cannot reach.** A trigger on another person's
    account needs that person: they connect the account if they have not, and
@@ -134,8 +135,9 @@ Prefer attaching the site with the setup message using \`attachmentIds\` in
 it. Use \`sidekick_attach_resource({ sidekickId, resourceId })\` to add context
 without a message. Confirm that the wizard can import it.
 
-Load \`tracking-seen-or-done-items\` and save its shared-output claim procedure,
-keyed by site resource ID. Each refresh must hold that claim through import,
+For a site whose content is its files, load \`tracking-seen-or-done-items\` and
+save its shared-output claim procedure, keyed by site resource ID. A stateful
+site's row writes need no claim. Each file refresh must hold that claim through import,
 editing, verification and publication; release it when the run finishes.
 
 Save this sequence for each activation:
@@ -175,8 +177,9 @@ Report these outcomes separately:
 
 - **Site published:** The publication tool returned success.
 - **Sidekick activated:** You checked that the saved Sidekick is active.
-- **Refresh succeeded:** A Sidekick run read the source, updated and checked
-  the files, and confirmed publication. Setup alone does not establish this.
+- **Refresh succeeded:** A Sidekick run read the source and either updated
+  and checked the files and confirmed publication, or, for a stateful site,
+  had its row writes succeed. Setup alone does not establish this.
 
 ## Build and verify the site
 
