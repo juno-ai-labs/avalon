@@ -4,6 +4,7 @@ import { usePreparedCanvases } from './src/prepared-canvases';
 import { directoryKey } from './src/directory';
 import { loadSavedDirectory, saveDirectory } from './src/saved-directory';
 import { loadSavedPins, savePins } from './src/saved-pins';
+import { requestArtifactAccess } from './src/artifact-access';
 import { deployedWebBuild } from './src/web-build';
 import { Dashboard } from './src/Dashboard';
 import { dashboardVisible } from './src/dashboard-visibility';
@@ -42,7 +43,10 @@ const START_URL = mobileUrl(APP_URL);
 // Opening Home at the last organization skips the session and organization-list
 // reads before it can draw. `HOME_FALLBACK` recovers if that access is gone.
 const SAVED_DIRECTORY = loadSavedDirectory();
-const SAVED_PINS = { initial: loadSavedPins(), save: savePins };
+const PREPARED_PINS = {
+  store: { initial: loadSavedPins(), save: savePins },
+  direct: (directory: MobileSnapshot, canvas: PreparedCanvas) => requestArtifactAccess(APP_URL, directory, canvas),
+};
 const JS_STARTED = performance.now();
 let dashboardTimed = false;
 const HOME_URL = SAVED_DIRECTORY ? mobileUrl(APP_URL, SAVED_DIRECTORY.workspacePath) : START_URL;
@@ -109,7 +113,7 @@ function AppContent() {
   const wakeHome = useCallback(() => recovery.wake(HOME_RENDERER), []);
   // The saved directory scopes saved pins until Home answers; requests it makes
   // still wait for Home, so nothing reaches an unloaded page.
-  const prepared = usePreparedCanvases(directory ?? savedDirectory, sendHome, wakeHome, SAVED_PINS);
+  const prepared = usePreparedCanvases(directory ?? savedDirectory, sendHome, wakeHome, PREPARED_PINS);
   const openNotification = useCallback((data: unknown) => {
     const target = notificationTarget(data, APP_URL);
     if (!target) { void Notifications.clearLastNotificationResponseAsync().catch(() => undefined); return; }
