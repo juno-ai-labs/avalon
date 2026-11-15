@@ -801,6 +801,25 @@ describe a parameter; never raise one. A conditional surface — one whose plugi
 is not built without credentials — is only in that walk if the walk supplies
 them, so give it a sentinel in `EXPECTED_TOOLS` too.
 
+### 14. A refused tool is offered, and refuses by name
+
+Never withhold a tool because of who or what started the turn: a run, a
+background agent, another agent's message, a principal without the right. A
+model that cannot see a tool cannot tell "this does not exist" from "this is
+not mine to do here", so it reports the work as impossible, which is how a
+Canvas once told a person a colleague's mailbox could not be connected.
+Offer the tool everywhere its plugin is, and make it refuse with a named code
+and a sentence that says why this turn may not, which turn may, and how to
+reach that turn with tools this one has: a reply to the agent that sent the
+message, `send_message` to the agent a background agent works for, a run's
+result for the person who manages it. The refusal asks nobody and changes
+nothing, so it is `read` and safe to retry.
+
+`sidekick_request_source` is the in-repo example
+(`sidekickSourceRefusalTool` in `apps/api/src/services/sidekick-source-tools.ts`).
+A tool that has no target on a surface (archiving a Sidekick a Canvas made,
+outside a Canvas) is a different case, and the rule does not cover it.
+
 ## Sidekick delegation tools
 
 The existing `rally:sidekicks` plugin offers `sidekick_my_delegations_list`,
@@ -1286,6 +1305,24 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-11-15 — A refused tool is offered, and refuses by name
+
+**What changed:** Rule 14. A tool withheld because of who or what started a
+turn is offered there instead and refuses with a code and the route to a turn
+that may use it. `sidekick_request_source` is the first: a run, a background
+agent and a turn another agent's message started get a refusing
+`request_source` beside the two source reads.
+
+**Why:** The owner asked on 2026-11-15 that no tool be hidden for this, so
+that an agent refused an action can hand it on by the messaging it has. A
+hidden tool reads to the model as a missing capability, and in one Canvas the
+model told a person the work was impossible.
+
+**Consequences:** Every tool still withheld by turn is a defect against this
+rule, to be turned into a refusal: `request_elicitation` where answers route
+to an agent, `sidekick_set_delegation` for runs and their workers, and the
+conversation tools and authoring tools outside a wizard turn.
 
 ### 2026-11-03 — `read_artifact_table`, and a member reads only their own private rows
 
