@@ -152,9 +152,16 @@ function dismissedCanvases(): string[] {
  * Dismissing it hides it for this Canvas on this device.
  */
 export function CanvasNoticesJoinBanner({ canvas }: { canvas: CanvasDetail | undefined }): React.JSX.Element | null {
-  const actions = useCanvasNoticeActions(canvas?.id ?? '');
+  // Decided before any hook, so a Canvas with nothing to offer mounts nothing:
+  // the header renders this over states that hold no query client.
+  if (!canvas || canvas.visibility !== 'workspace' || !canvas.notices || canvas.notices.participant) return null;
+  return <JoinBanner canvas={canvas} purpose={canvas.notices.purpose} />;
+}
+
+function JoinBanner({ canvas, purpose }: { canvas: CanvasDetail; purpose: string }): React.JSX.Element | null {
+  const actions = useCanvasNoticeActions(canvas.id);
   const [dismissed, setDismissed] = useState(() => dismissedCanvases());
-  if (!canvas || canvas.visibility !== 'workspace' || !canvas.notices || canvas.notices.participant || dismissed.includes(canvas.id)) return null;
+  if (dismissed.includes(canvas.id)) return null;
   const dismiss = () => {
     const next = [...new Set([...dismissedCanvases(), canvas.id])];
     try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(next)); } catch { /* hidden for this view */ }
@@ -162,7 +169,7 @@ export function CanvasNoticesJoinBanner({ canvas }: { canvas: CanvasDetail | und
   };
   return <div aria-label="Canvas notices" className="canvas-notices-banner" role="region">
     <IconBell aria-hidden="true" size={16} stroke={1.8} />
-    <span className="canvas-notices-banner-copy">This Canvas sends notices: {canvas.notices.purpose}</span>
+    <span className="canvas-notices-banner-copy">This Canvas sends notices: {purpose}</span>
     <span className="canvas-notices-banner-actions">
       <Button disabled={actions.join.isPending} onClick={() => actions.join.mutate()}>Get notifications</Button>
       <Button onClick={dismiss}>Not now</Button>
