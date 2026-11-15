@@ -113,10 +113,10 @@ from one started by a person's wizard turn.
 scheduled it: the same conversation, the same flags the claim would derive
 for an input there (a run's continuation, a worker's root authority, the
 wizard's `sidekickWizard` after the manager check). Which turn scheduled it
-is not recorded, so a wake-up in a Chat or a wizard counts as a person's
-turn whether a person, another agent or the self-review scheduled it: what
-it may do in a person's name still waits for a person to approve. [`agent-harness.md`](agent-harness.md#scheduled-wake-ups)
-owns the mechanism.
+is not recorded, so a gate that must tell a person's turn from another
+agent's or the self-review's cannot do it for a wake-up; none needs to
+today. [`agent-harness.md`](agent-harness.md#scheduled-wake-ups) owns the
+mechanism.
 
 **Retry** is not a loop of its own. It replays the failed turn's stored
 context with `reason` `manual_retry` and the person retrying as the
@@ -143,11 +143,11 @@ that differs from its neighbours:
 | --- | --- |
 | Canvas's Chat | Person |
 | Canvas's Chat | Agent exchange |
-| Canvas's Chat | Wake-up (as a person's turn, unless you say why not) |
+| Canvas's Chat | Wake-up |
 | Sidekick's wizard | Person |
 | Sidekick's wizard | Agent exchange |
 | Sidekick's wizard | Self-review |
-| Sidekick's wizard | Wake-up (as a person's turn, unless you say why not) |
+| Sidekick's wizard | Wake-up |
 | Sidekick run | Schedule, event, Run now, message, invocation |
 | Run continuation | Any input |
 | Background agent | Rooted in a Canvas's Chat |
@@ -163,7 +163,7 @@ this loop acts as" fails there.
 
 | Gate | Where | Offered to |
 | --- | --- | --- |
-| Source tools (`asksForSources`) | `integrations.ts` | A person's Chat or wizard turn, and any wake-up there. Not runs, delegation workers, background agents, agent exchange, or self-review. |
+| Source tools (`asksForSources`) | `integrations.ts` | Every loop but a run and its delegation workers: an ask approves nobody ([`sidekick-sources.md`](sidekick-sources.md)). |
 | Elicitation and connection cards | `integrations.ts` (`routesAnswersToAgent`) | Not background agents, nor a Sidekick turn with `agentExchange`. |
 | Authoring tools | `integrations.ts` | Wizard turns (`sidekickWizard`). |
 | Conversation tools | `conversation-tools.ts` | Wizard (with `attach`) and runs (without). Not a Canvas's Chat. |
@@ -182,12 +182,13 @@ this loop acts as" fails there.
 - **The loop kind is host-derived.** No field above is a tool argument or
   model choice. A gate that reads a model-supplied value to decide which
   loop it is in lets content choose its own tools.
-- **A turn nobody typed does not act in a person's name.** Agent exchange,
-  self-review, runs and background agents are content-driven or
-  host-driven. Behavior that speaks for a person (asking in their name,
-  answering as them) is limited to a person's turn; `asksForSources` is the
-  model to copy. A wake-up in a Chat or a wizard counts as a person's turn
-  (see [The loops](#the-loops)). Guard: `connector-tool-selection.test.ts`.
+- **Content does not act in a person's name without a person's say.** A run
+  and its delegation workers are handed an event's content, so a behavior
+  that speaks for a person is refused to them unless someone still approves
+  it, as a source request is (`asksForSources`). Agent exchange, self-review,
+  background agents and wake-ups are content- or host-driven too; a behavior
+  with no approval step behind it says which of them it allows. Guard:
+  `connector-tool-selection.test.ts`.
 - **A wake-up continues the loop that scheduled it.** A derivation the claim
   path makes for an input belongs in `fireWorkstreamWakeup` too, or the woken
   turn is a different loop from the one that asked for it. Guard: the firing

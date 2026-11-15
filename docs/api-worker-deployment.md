@@ -41,7 +41,7 @@ Organization-wide lists preserve the released trigger vocabulary and advertise
 invocation through optional metadata, so older clients keep loading them.
 Invocation-specific definitions and history require matching desktop/browser
 clients. Stateful app facets use an API-local exported loopback instead.
-[Live artifacts](live-web-artifacts.md#calling-dedicated-sidekicks) owns runtime
+[Reactive artifacts](reactive-web-artifacts.md#calling-dedicated-sidekicks) owns runtime
 admission and binding behavior.
 
 ### Email Service

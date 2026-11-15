@@ -160,6 +160,22 @@ export const AutomationActivationV1Schema = z.strictObject({
     stepCount: z.number().int().nonnegative(),
     reply: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
   }).optional(),
+  /**
+   * Present on a post the wizard made in a Canvas's Chat after asking people
+   * for a source on a turn that Chat started: the requests whose card the
+   * Chat draws. Each request's state is read live, as the wizard's own card
+   * reads it; nothing about the requests is stored here.
+   */
+  sourceRequests: z.strictObject({
+    requestIds: z.array(IdSchema).min(1),
+  }).optional(),
+  /**
+   * Present on a post the wizard made in a Canvas's Chat when it asked a
+   * question on a turn that Chat started: the question its card draws and
+   * answers. The question lives in the Sidekick's shared conversation and is
+   * read from there live.
+   */
+  question: z.strictObject({ elicitationId: IdSchema }).optional(),
 });
 export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
 

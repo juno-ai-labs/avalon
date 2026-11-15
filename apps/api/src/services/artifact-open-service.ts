@@ -1,5 +1,5 @@
 /**
- * Minting one person's access to one live artifact.
+ * Minting one person's access to one reactive artifact.
  *
  * This checks resource access before creating a viewer identity session.
  * ArtifactHostDO checks that identity against its current local Canvas policy
@@ -13,7 +13,7 @@
  * bar, and posts the code in a request body to an endpoint that never serves
  * artifact content.
  *
- * See `docs/live-web-artifacts.md` and `docs/security.md`.
+ * See `docs/reactive-web-artifacts.md` and `docs/security.md`.
  */
 import {
   ARTIFACT_RESERVED_PREFIX,

@@ -361,4 +361,11 @@ export class WorkstreamObjectClient {
     return { elicitation: parsed.elicitation };
   }
 
+  /** One of a Sidekick wizard's questions, for a manager (`readWizardQuestion`). */
+  async readWizardQuestion(elicitationId: string): Promise<Elicitation> {
+    return z.object({ elicitation: ElicitationSchema }).parse(await this.request({
+      operation: "read_wizard_question", elicitationId,
+    })).elicitation;
+  }
+
 }

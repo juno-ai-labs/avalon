@@ -174,7 +174,7 @@ objects stay ignorant of the transport — they return lists, and the consumer
 decides what carries them onward. An object that later needs a different carrier,
 or another object type, changes the consumer and nothing else.
 
-A **live artifact** is a sibling for the same reason, and holds no socket at all:
+A **reactive artifact** is a sibling for the same reason, and holds no socket at all:
 what it holds is viewer sessions, and one that outlived a membership would keep
 serving a page to somebody no longer in the workspace. Its list comes from
 `artifact_registry`, which lives in WorkspaceDO beside the resource authority —
@@ -776,7 +776,7 @@ than adding a command-local check.
 
 ### 2026-09-01 — ArtifactHostDO joins the walk, holding sessions rather than sockets
 
-**What changed:** A live artifact's supervisor is now a child the workspace hop
+**What changed:** A reactive artifact's supervisor is now a child the workspace hop
 names, from `artifact_registry`. Its `revokeSocketAccess` drops viewer-session
 rows and returns no children. Every child list the consumer reads is defaulted
 to empty.

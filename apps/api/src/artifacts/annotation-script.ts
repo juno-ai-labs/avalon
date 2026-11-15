@@ -1,7 +1,7 @@
 /**
  * Getting Rally's annotation script into the pages Rally viewers see.
  *
- * The desktop and the browser client both point at parts of a live artifact,
+ * The desktop and the browser client both point at parts of a reactive artifact,
  * and neither can add a script to the artifact's document from outside: the
  * desktop's view has no preload and the browser's frame is another origin. So
  * the serving Worker puts the script into the page itself, for every HTML
@@ -10,7 +10,7 @@
  *
  * The script is served from a reserved path on the artifact origin so the
  * artifact CSP's `script-src 'self'` admits it. See
- * `docs/artifact-annotations.md` and `docs/live-web-artifacts.md`.
+ * `docs/artifact-annotations.md` and `docs/reactive-web-artifacts.md`.
  */
 import { artifactAnnotationScript, artifactAnnotationScriptPath } from "@rally/contracts";
 

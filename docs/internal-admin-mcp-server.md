@@ -161,7 +161,7 @@ Begin with inventory. Do not guess a region or Durable Object name:
    registered child, such as a Sidekick run's conversation.
 4. Inspect the schema before querying application rows.
 
-For a live web artifact, start from `list_artifacts` with the `workspaceId`.
+For a reactive web artifact, start from `list_artifacts` with the `workspaceId`.
 `run_artifact_sql` opens the supervisor, which holds `artifact_state` (the
 current version), `viewer_sessions`, and `error_log` — the last being what a
 broken artifact page is usually diagnosed from. A stateful artifact's *own*
@@ -221,7 +221,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `pause_sidekick`, `resume_sidekick` | `orgId`, `userId`, `sidekickId` | Pauses or resumes the Sidekick as that user, through the app's own Pause and Resume path. The user must be allowed to manage it; its author always is. Returns the resulting lifecycle. |
 | `archive_sidekick` | `orgId`, `userId`, `sidekickId` | Archives the Sidekick as that user, through the app's own Archive path, in any lifecycle. There is no undo. The user must be allowed to manage it; its author always is. |
 | `retire_org` | `orgId` | Retires the Organization permanently through Ace's retirement door. There is no undo. If the receipt says `complete: false`, call again to resume. |
-| `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
+| `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO reactive web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Canvas's parent state in `canvas_directory` and its shares in the `parent_*` tables. |
 | `run_canvas_sql` | `workspaceId`, `conversationId` (a Canvas or Sidekick ID), optional `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in the conversation object (AgentLoopDO), or in a registered child conversation. |
 | `run_artifact_sql` | `workspaceId`, `artifactId`, `sql`, optional `bindings` | Runs arbitrary SQLite in ArtifactHostDO — the artifact's supervisor, not its facet. |

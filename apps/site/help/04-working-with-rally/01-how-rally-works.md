@@ -124,8 +124,8 @@ The built-in skills are:
   notifications, and otherwise checks no more often than every ten minutes.
   Sidekicks have their own chapter, starting at
   [What a Sidekick is](../03-sidekicks/01-what-a-sidekick-is.md).
-- **Building live sites.** How to build and host a small web page or app (see
-  [Live sites](../06-things-rally-makes/03-live-sites.md)).
+- **Building reactive sites.** How to build and host a small web page or app (see
+  [Reactive sites](../06-things-rally-makes/03-reactive-sites.md)).
 
 A skill is guidance only. It never gives Rally a new tool or permission. There
 is a limit on how many skills can be loaded at once in a single run. If Rally

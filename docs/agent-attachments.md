@@ -798,7 +798,7 @@ holds now carries no text instead of the boundary. The boundary appears once:
 on the final tool-less turn, or as the participant notice when the run ends on a
 withheld turn.
 
-**Why:** A coordinator asked to compare a competitor with "our live artifact"
+**Why:** A coordinator asked to compare a competitor with "our reactive artifact"
 found the artifact's resource ID in another Thread through admin SQL and passed
 it to `read_resource`, which correctly refused it as not in scope. The guard
 latched on that refusal. Nothing later could clear it, so every turn's prose,

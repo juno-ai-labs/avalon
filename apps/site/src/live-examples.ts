@@ -1,5 +1,5 @@
 /**
- * The hero carousel: one live artifact for each kind of person Rally is for.
+ * The hero carousel: one reactive artifact for each kind of person Rally is for.
  * Each example is data, rendered to HTML at build time (Node only) by
  * `renderLiveCarousel`, and played in the browser by `live-carousel.ts`.
  *
@@ -34,8 +34,8 @@ export interface LiveExample {
   readonly title: string;
   /**
    * Always a Site: a person ticks rows, and nobody types into a Canvas
-   * directly. A live site that remembers things takes visitors' entries, and
-   * a Sidekick's runs write rows into it (help/06-things-rally-makes/03-live-sites.md).
+   * directly. A reactive site that remembers things takes visitors' entries, and
+   * a Sidekick's runs write rows into it (help/06-things-rally-makes/03-reactive-sites.md).
    */
   readonly kind: 'Site';
   readonly text: string;
@@ -235,15 +235,15 @@ function renderSlide(example: LiveExample, index: number): string {
     + `<p class="gotcha is-on" data-at="4"><b>${escape(gotcha.big)}</b><span>${escape(gotcha.text)}</span></p></div></div></div>`;
 }
 
-/** The hero carousel: a tab per audience, a slide per live artifact. */
+/** The hero carousel: a tab per audience, a slide per reactive artifact. */
 export function renderLiveCarousel(): string {
   const tabs = liveExamples.map(({ id, who }, index) =>
     `<button class="carousel-tab" type="button" role="tab" id="tab-${id}" aria-controls="slide-${id}" aria-selected="${index === 0}"${index === 0 ? '' : ' tabindex="-1"'}>`
     + `<span>${escape(who)}</span><i class="carousel-progress" aria-hidden="true"></i></button>`).join('');
-  return `<figure class="carousel" data-carousel aria-roledescription="carousel" aria-label="Live artifacts, one for each kind of person">`
+  return `<figure class="carousel" data-carousel aria-roledescription="carousel" aria-label="Reactive artifacts, one for each kind of person">`
     + `<div class="carousel-bar"><div class="carousel-tabs" role="tablist" aria-label="Who it is for">${tabs}</div>`
     + `<button class="carousel-pause" type="button" data-carousel-pause aria-label="Pause the examples" aria-pressed="false" hidden>`
     + `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path class="icon-pause" d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/><path class="icon-play" d="M4 2.5v11l9-5.5z"/></svg></button></div>`
     + `<div class="carousel-slides">${liveExamples.map(renderSlide).join('')}</div>`
-    + `<figcaption class="fig-caption"><span></span>Seven live artifacts. In each, a Sidekick reads events in connected tools and publishes a new version; then a person ticks off what they own. Pick one, or let them play.</figcaption></figure>`;
+    + `<figcaption class="fig-caption"><span></span>Seven reactive artifacts. In each, a Sidekick reads events in connected tools and publishes a new version; then a person ticks off what they own. Pick one, or let them play.</figcaption></figure>`;
 }

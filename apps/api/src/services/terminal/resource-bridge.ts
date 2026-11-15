@@ -1071,7 +1071,7 @@ export function createTerminalResourceBridge(
       const existing = await existingPublication(context, target, input.filePath, providerResourceId);
       const settled = existing ?? await publicationRow(context.workspaceId, `terminal:${effectIntentId}`);
 
-      // A republish that would turn a live site back into an archive never
+      // A republish that would turn a reactive site back into an archive never
       // reaches here — the runtime refuses it — but a republish that changes
       // nothing does, and it must not mint a version. The manifest carries the
       // version number and the timestamp, so the comparison is over the files

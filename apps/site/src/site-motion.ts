@@ -10,7 +10,7 @@ import { applyStep, reducedMotion as reduced, whenVisible } from './steps';
 
 /**
  * Seconds each step holds before the next. The last one holds, then the loop
- * restarts. The story is a live Canvas first, then the team in it: a Linear
+ * restarts. The story is a reactive Canvas first, then the team in it: a Linear
  * issue closes (1), a Slack message moves the date (2) and a call's notes land
  * (3), each publishing a new version; then Maya asks (4), and Rally answers
  * while Theo comments (5).

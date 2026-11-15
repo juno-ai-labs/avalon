@@ -13,7 +13,7 @@
  * about the sandbox. A model that could not see its own server could not revise
  * it.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import { artifactAssetKey, type ArtifactManifest } from "@rally/contracts";
 

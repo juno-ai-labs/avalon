@@ -93,6 +93,7 @@ import {
   type HarnessSkill,
   HarnessToolEffectUnresolvedError,
   HarnessLimitError,
+  HarnessPortStepError,
   type HarnessToolContext,
   type HarnessToolResult,
   type HarnessToolReplayRefusal,
@@ -294,6 +295,7 @@ import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { setsDelegation, sidekickDelegationTools } from "./sidekick-delegation-tools";
 import { sidekickSourceRequestCard, sidekickSourceTools } from "./sidekick-source-tools";
+import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
@@ -4425,15 +4427,19 @@ export async function runWorkstreamHarness(
       // work is independently authorized by beforeToolCall above. Treating
       // archive as a renewal failure masks Bind's durable stop transition.
       if (stage === "before_model") {
-        await requireRunUsageAllowance(env, input.workspaceId);
-        const authorityStartedAt = Date.now();
-        await Promise.all([
-          liveness.pulse(stage, true).then(() => {
+        let authorityStartedAt = Date.now();
+        await runBeforeModelChecks({
+          usageAllowance: async () => {
+            await requireRunUsageAllowance(env, input.workspaceId);
+            authorityStartedAt = Date.now();
+          },
+          renewLease: async () => {
+            await liveness.pulse(stage, true);
             if (!firstInferenceBreakdownLogged) {
               startupDurations.before_model_heartbeat_ms = Date.now() - authorityStartedAt;
             }
-          }),
-          (async () => {
+          },
+          runAuthority: async () => {
             const runAuthorityStartedAt = Date.now();
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot, (name, durationMs) => {
               if (!firstInferenceBreakdownLogged) startupDurations[`before_model_${name}_ms`] = durationMs;
@@ -4441,8 +4447,8 @@ export async function runWorkstreamHarness(
             if (!firstInferenceBreakdownLogged) {
               startupDurations.before_model_run_authority_ms = Date.now() - runAuthorityStartedAt;
             }
-          })(),
-        ]);
+          },
+        });
         if (!firstInferenceBreakdownLogged) {
           startupDurations.before_model_authority_ms = Date.now() - authorityStartedAt;
         }
@@ -5263,18 +5269,15 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  */
 /**
  * Whether a loop may ask people for a source (`sidekick_request_source` and
- * its two companions): only a turn a person is driving, in a conversation
- * they are talking in. A Sidekick run is handed the content of the event that
- * started it, a stranger's email among it, and asking in its delegate's name
- * is not something what it read may bring about. A background agent works from content the same
- * way, and so does a turn another agent's message or Rally's own review
- * notice started, the wizard's included: nobody typed it. A wake-up in a
- * Chat or a wizard is offered them (`docs/agent-loop-types.md`).
+ * its two companions): every loop but a Sidekick run and the delegation
+ * workers rooted in one. A run is handed the content of the event that
+ * started it, a stranger's email among it, and its workers read the same;
+ * asking in its delegate's name is not something what it read may bring
+ * about. Every other loop may ask, whoever or whatever started its turn,
+ * because an ask approves nobody: each person asked still presses Approve.
  */
-function asksForSources(input: Pick<WorkstreamWorkflowInput,
-  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "reason">): boolean {
-  return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true
-    && !input.agentExchange && input.reason !== "sidekick_review";
+function asksForSources(input: Pick<WorkstreamWorkflowInput, "automationRun" | "automationDelegation">): boolean {
+  return !input.automationRun && !input.automationDelegation;
 }
 
 /**
@@ -5876,8 +5879,10 @@ async function loadHarnessTools(
     for (const row of rows.results) attached.add(row.connection_id);
   }
   const registry = connectorRegistryForEnv(env);
+  // A wizard turn a Canvas's Chat started asks its person directly: its
+  // question is drawn in that Chat too (`wizard-canvas-cards.ts`).
   const routesAnswersToAgent = input.backgroundAgent
-    || (input.parentKind === "automation" && !!input.agentExchange);
+    || (input.parentKind === "automation" && !!input.agentExchange && wizardTurnCanvasId(input) === null);
   const pageReceipts = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
   const paginationSources = new WeakMap<HarnessTool, HarnessTool>();
   const priorPaginationTools = (tools: readonly HarnessTool[]) => prePaginationTools(
@@ -8870,6 +8875,10 @@ async function openToolQuestion(
     ? `Asked for the ${question.connection.connectorId} ${question.connection.scope} connection`
     : "Requested human input";
   const halted = { output: { elicitationId: id }, summary, providerOperationId: id, halt: "needs_input" as const };
+  // A wizard turn a Canvas's Chat started draws its question in that Chat as
+  // well, after the question is announced, keyed on it so a replay posts once.
+  // The question records the Canvas, so the turn its answer starts asks there too.
+  const askingCanvasId = toolName === "request_elicitation" ? wizardTurnCanvasId(input) : null;
   // The replay check used to be a read of its own in front of the batch,
   // because the batch could not both ask and act. It is the operation's
   // first statement now, so a retried receipt is answered by the write
@@ -8888,10 +8897,16 @@ async function openToolQuestion(
       maximumSelections: question.maximumSelections,
       targetUserId: null,
       messageId: id,
-      structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation }),
+      structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation,
+        ...(askingCanvasId !== null ? { askedFromCanvasId: askingCanvasId } : {}) }),
       now: Date.parse(at),
     });
-  if (opened.outcome === "exists") return halted;
+  const mirrored = async () => {
+    if (askingCanvasId !== null) await postWizardCard(env, input, askingCanvasId, `sidekick-question-card:${id}`,
+      { text: question.prompt, card: { question: { elicitationId: id } } });
+    return halted;
+  };
+  if (opened.outcome === "exists") return mirrored();
   // Announced in the room of the conversation that asked, not Main's.
   await publishWorkstreamEvent(
     env,
@@ -8911,7 +8926,7 @@ async function openToolQuestion(
     responseType: question.responseType,
     optionCount: question.options.length,
   }));
-  return halted;
+  return mirrored();
 }
 
 const WEB_RECENCY_TO_TBS = {
@@ -9626,6 +9641,32 @@ export async function requireRunUsageAllowance(
   } catch (error) {
     if (!isUsageAllowanceExhausted(error)) throw error;
     throw new HarnessLimitError("usage_allowance_exhausted", "The organization's included weekly usage is used up");
+  }
+}
+
+/**
+ * The checks a run passes before each model call, each named when it fails.
+ * They share one harness port, so without a name every failure read as the
+ * lease ("Run liveness renewal failed"), which is how a used-up allowance hid
+ * on 2026-11-12. The usage read runs first, so a used-up allowance ends the
+ * run before any other work; the lease and authority checks then run
+ * together. A `HarnessLimitError` passes through under its own code, and a
+ * lease failure keeps the port's own label.
+ */
+export async function runBeforeModelChecks(checks: {
+  usageAllowance: () => Promise<void>;
+  renewLease: () => Promise<void>;
+  runAuthority: () => Promise<void>;
+}): Promise<void> {
+  await namedPortStep("Usage allowance read failed", checks.usageAllowance);
+  await Promise.all([checks.renewLease(), namedPortStep("Run authority check failed", checks.runAuthority)]);
+}
+
+async function namedPortStep(label: string, check: () => Promise<void>): Promise<void> {
+  try {
+    await check();
+  } catch (error) {
+    throw error instanceof HarnessLimitError ? error : new HarnessPortStepError(label, error);
   }
 }
 

@@ -105,7 +105,7 @@ function Harness({ props }: { props: SiteResourceDetailProps }): React.JSX.Eleme
   );
 }
 
-describe('showing a live artifact in the rail', () => {
+describe('showing a reactive artifact in the rail', () => {
   it('keeps a toast above the native preview and restores the page after dismissal', async () => {
     // Geometry and the native surface are absent in jsdom. Exercise the real
     // Toast and detail against a measured pane; Electron verifies composition.

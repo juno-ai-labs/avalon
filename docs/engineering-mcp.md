@@ -2,7 +2,7 @@
 
 The engineering MCP is Rally's authenticated operator path to the authoritative
 SQLite database inside a workspace, a Canvas's or Sidekick's conversation, or
-a live web artifact Durable Object, and to each region's D1 databases.
+a reactive web artifact Durable Object, and to each region's D1 databases.
 It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
 repair writes. It also runs read-only queries against the
@@ -147,7 +147,7 @@ an operator diagnosing a broken artifact wants. The facet's tables are reachable
 only through the product's own read-only admitted query path
 (`queryData`/`pageData`, behind work-stream authorization), and giving the
 console arbitrary SQL there would mean changing the facet host module every
-stateful artifact runs. See [`live-web-artifacts.md`](live-web-artifacts.md).
+stateful artifact runs. See [`reactive-web-artifacts.md`](reactive-web-artifacts.md).
 
 ### Deferred engineering tasks
 
@@ -1345,7 +1345,7 @@ way to inspect a Space's participants and resources.
 
 ### 2026-09-18 — Route ArtifactHostDO, and stop at the facet
 
-**What changed:** `list_artifacts` and `run_artifact_sql` open a live web
+**What changed:** `list_artifacts` and `run_artifact_sql` open a reactive web
 artifact's supervisor. `ArtifactHostDO` now extends
 `InternallyInspectableDurableObject` directly — it is the first inspectable
 object that is not a scheduled authority — and `EngineeringSqlLookup` carries an

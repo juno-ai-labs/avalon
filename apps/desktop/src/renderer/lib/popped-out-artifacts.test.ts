@@ -69,7 +69,7 @@ describe('refreshing detached artifact windows', () => {
     expect(updatePoppedOutArtifact).not.toHaveBeenCalled();
   });
 
-  it('mints a fresh one-shot URL when a detached live site advances', async () => {
+  it('mints a fresh one-shot URL when a detached reactive site advances', async () => {
     const site = { ...artifact, id: 'resource-site', mimeType: SITE_MANIFEST_MIME_TYPE };
     const updatePoppedOutArtifact = vi.fn(async () => false);
     await refreshPoppedOutArtifacts({

@@ -963,7 +963,7 @@ describe('resource detail content preview', () => {
     expect(await screen.findByText('The artifact couldn’t be renamed.')).toBeVisible();
   });
 
-  it('draws the Expand it is given for any artifact, a live site included', () => {
+  it('draws the Expand it is given for any artifact, a reactive site included', () => {
     const onSelect = vi.fn();
     const expandAction = [{ key: 'expand', label: 'Expand', icon: null, onSelect }];
     const { unmount } = render(
@@ -1145,7 +1145,7 @@ describe('resource detail content preview', () => {
     expect(screen.queryByText('No data yet')).toBeNull();
   });
 
-  it('shows a live artifact as a page to open rather than a record to describe', async () => {
+  it('shows a reactive artifact as a page to open rather than a record to describe', async () => {
     const artifacts = siteArtifacts();
     render(
       <Tooltip.Provider>
@@ -1159,7 +1159,7 @@ describe('resource detail content preview', () => {
     expect(button.querySelector('.tabler-icon-window-maximize')).not.toBeNull();
   });
 
-  it('opens a live site panel\'s labels beside its buttons, clear of the page below', async () => {
+  it('opens a reactive site panel\'s labels beside its buttons, clear of the page below', async () => {
     // The page is a native view composited under the header that paints above
     // all renderer DOM, so a label hanging down is behind it. Upward does not
     // fit at the top of the window, and Radix would flip it back down.
@@ -1187,7 +1187,7 @@ describe('resource detail content preview', () => {
     }
   });
 
-  it('falls back to the ordinary resource card when live artifacts are off', () => {
+  it('falls back to the ordinary resource card when reactive artifacts are off', () => {
     // Presentation only: with the flag off a site is still an ordinary resource
     // in the rail — it just is not rendered as a page.
     openDetail(site);
