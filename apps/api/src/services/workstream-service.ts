@@ -432,7 +432,10 @@ export async function fireWorkstreamWakeup(
     // is taken only for a principal who still manages the Sidekick, the rule
     // every input there that a person did not type meets.
     const wizard = conversation.parentKind === "automation" && conversation.substreamId === "0" && !worker;
-    if (wizard && !(principal.type === "user" && await personManagesSidekick(env, {
+    // An agent the wizard started holds the wizard's tools, so its wake-up
+    // meets the same rule (`claimPersistentLoopExecution`, `wizardRootedAgent`).
+    const wizardAuthority = conversation.parentKind === "automation" && authorityRunId === "0";
+    if (wizardAuthority && !(principal.type === "user" && await personManagesSidekick(env, {
       workspaceId: row.workspace_id, automationId: row.workstream_id, userId: principal.userId,
     }))) {
       logStructuredEvent(env, "info", "workstream_wakeup_refused", {

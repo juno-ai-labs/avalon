@@ -191,10 +191,12 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
  * for a conversation whose publications can land in no Canvas.
  */
 export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentKind" | "parentId" | "substreamId">):
-  ((target: { parentId: string; substreamId: string }, resourceId: string) => Promise<void>) | null {
+  ((target: { parentId: string; substreamId: string }, resourceId: string) => Promise<boolean>) | null {
   if (input.parentKind !== "canvas" && !(input.parentKind === "automation" && (input.substreamId ?? "0") !== "0")) return null;
+  // Answers whether the resource is now one of a Canvas's artifacts, which is
+  // what decides that its publish returns a URL that will serve.
   return async (target, resourceId) => {
-    if (target.substreamId !== "0") return;
+    if (target.substreamId !== "0") return false;
     const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, asWorkspaceId(input.workspaceId),
       workspaceDOName(env.AVALON_REGION, input.workspaceId));
     const { noted } = await workspace.canvasNoteArtifact({
@@ -211,5 +213,6 @@ export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInpu
         workspace_id: input.workspaceId, parent_id: target.parentId, resource_id: resourceId, error_code: "canvas_not_found",
       });
     }
+    return noted;
   };
 }

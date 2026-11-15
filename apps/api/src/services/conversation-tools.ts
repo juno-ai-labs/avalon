@@ -183,18 +183,21 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
   const workspaceId = asWorkspaceId(input.workspaceId);
   const messages = (target: ConversationToolEntry) => createMessageObjectPort(env, workspaceId, target.parentId,
     undefined, target.substreamId);
+  // A run's worker posts for its run, so a refused post is that run's to report.
+  const authority = loopAuthority(input);
+  const run = authority?.kind === "sidekick_run" ? authority : null;
   return {
-    ...(input.automationRun ? { notePostRefused: async () => {
+    ...(run ? { notePostRefused: async () => {
       try {
         const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
           workspaceDOName(env.AVALON_REGION, workspaceId));
-        await workspace.sidekickNotePermissionReportUnavailable({ workspaceId, automationId: input.automationRun!.automationId,
-          runId: input.automationRun!.runId });
+        await workspace.sidekickNotePermissionReportUnavailable({ workspaceId, automationId: run.sidekickId,
+          runId: run.runId });
       } catch (error) {
         // Attention is diagnostic; its failure must not replace the posting
         // refusal the model needs to explain and recover from.
         logWarn(env, "sidekick_permission_attention_failed", { workspace_id: workspaceId,
-          automation_id: input.automationRun!.automationId, run_id: input.automationRun!.runId,
+          automation_id: run.sidekickId, run_id: run.runId,
           code: diagnosticErrorCode(error, "permission_attention_failed") });
       }
     } } : {}),
@@ -677,7 +680,8 @@ export function createConversationsPlugin(
           schemaVersion: 1,
           automationId: asAutomationId(automationId),
           automationName: resolved.sidekickName ?? "Sidekick",
-          runId: run?.runId ?? input.harnessRunId,
+          // A run's worker posts as its run; a wizard's post keeps its own attempt.
+          runId: access.runId ?? input.harnessRunId,
           deliveryId: clientMessageId,
           ...(run ? { trigger: { kind: run.trigger.kind } } : {}),
           occurredAt,
@@ -759,7 +763,7 @@ export function createConversationsPlugin(
     displayName: "Conversations",
     searchAliases: ["canvas", "chat", "sidekick conversation", "messages", "search", "post"],
     description: "List, read, search, and post to the Rally conversations this agent can reach.",
-    systemMessage: conversationsSystemMessage({ posts, attaches, run: input.automationRun !== undefined,
+    systemMessage: conversationsSystemMessage({ posts, attaches, run: access.runId !== undefined,
       reads: access.tools.includes("read") }),
     tools,
     preload: true,

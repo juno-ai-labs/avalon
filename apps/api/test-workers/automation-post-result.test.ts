@@ -495,6 +495,47 @@ describe("a room Sidekick's run and the room's agents", () => {
     await expect.poll(revision, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBeGreaterThan(before);
   });
 
+  it("refuses a wizard-rooted agent's turn unless the person it runs as manages the Sidekick", async () => {
+    const memberId = asUserId("00000000-0000-7000-8000-00000000ad1c");
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+        VALUES (?, ?, 'active', 'member', ?)`).bind(WORKSPACE_ID, memberId, NOW),
+      env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+        VALUES (?, 'member-c@example.com', 'Member C', NULL, 'UTC', ?)`).bind(memberId, NOW),
+    ]);
+    // An agent started from the wizard, running as whoever the wizard turn ran as.
+    const startFromWizard = async (userId: string) => {
+      const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+        parentKind: "automation", parentId: AUTOMATION_ID, substreamId: "0", loopId: `workstream:${AUTOMATION_ID}:substream:0:loop`,
+        harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null, sidekickWizard: true,
+        executionPrincipal: { type: "user", userId }, reason: "test" });
+      const started = await new AgentCommunicationService(TEST_ENV, input).start({ name: "Helper",
+        description: "Check the draft", message: "Check the draft.", attachmentIds: [] },
+        { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: input.harnessRunId,
+          toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+          executionPrincipal: input.executionPrincipal, signal: new AbortController().signal });
+      return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID, agentAddressForId(started.agentId).substreamId)));
+    };
+    const refusals = (child: DurableObjectStub) => runInDurableObject(child, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'sidekick-message-refused:%'`,
+      ).one().count);
+    const runs = (child: DurableObjectStub) => runInDurableObject(child, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM runs").one().count);
+
+    // Member C manages nothing: the agent would hold the authoring tools as C.
+    const refused = await startFromWizard(memberId);
+    await runDurableObjectAlarm(refused);
+    await expect.poll(() => refusals(refused), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe(1);
+    expect(await runs(refused)).toBe(0);
+
+    // The author manages it, so the same start runs.
+    const admitted = await startFromWizard(AUTHOR_ID);
+    expect((await settledRun(admitted))[0]).toMatchObject({ status: "completed" });
+    expect(await refusals(admitted)).toBe(0);
+  });
+
   it("draws the wizard's questions in the Canvas's Chat whose message started its turn, the one after an answer too", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "canvas", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,

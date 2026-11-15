@@ -1465,9 +1465,9 @@ registers the host this publish reserved.
 **Considered and rejected:** A separate tool to look up a file's link, which
 is a second call after every publish for a value the publish already decides.
 
-**Consequences:** A Canvas file publish now writes the platform hostname route,
-so a test that publishes into a Canvas on real workerd declares
-`artifact_hostname_routes`. A file kept in its conversation still has no URL.
+**Consequences:** Only a file the Canvas actually noted returns a URL, on a
+recovered publish as on a direct one: a file kept in its conversation, or one
+whose note failed, has none, because its host would never serve it.
 
 ### 2026-11-09 — Creation reconciliation uses ordinary sandbox recovery
 
