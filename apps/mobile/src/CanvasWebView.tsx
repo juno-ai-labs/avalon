@@ -1,4 +1,4 @@
-import { recordFailure } from './diagnostics';
+import { recordFailure, recordTiming } from './diagnostics';
 import { artifactInsetScript } from './layout';
 import { artifactPresented, artifactPresentationScript } from './artifact-presentation';
 import { useTheme } from './theme';
@@ -125,7 +125,7 @@ export function ArtifactSessionPreparation({ access, onReady }: { access: Native
  * A terminated renderer recovers in place: the redeemed cookie lives in the
  * platform cookie store, not the dead process, so a new WebView on the canonical
  * URL needs no fresh access from Home. A lost cookie still reaches `renew`. */
-export function ArtifactView({ access, appUrl, background, topInset, focused = true, onRetry }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; focused?: boolean; onRetry: () => void }) {
+export function ArtifactView({ access, appUrl, background, topInset, focused = true, onRetry, onPresented }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; focused?: boolean; onRetry: () => void; onPresented?: () => void }) {
   const { colors } = useTheme();
   const web = useRef<WebView<unknown>>(null);
   const [loading, setLoading] = useState(true);
@@ -139,8 +139,19 @@ export function ArtifactView({ access, appUrl, background, topInset, focused = t
   const recoveryId = useId();
   const shown = useRef(focused);
   shown.current = focused;
+  const recoveringSince = useRef<number | null>(null);
+  const presentedLoad = useRef(false);
+  const presented = () => {
+    setLoading(false);
+    if (presentedLoad.current) return;
+    presentedLoad.current = true;
+    onPresented?.();
+    if (recoveringSince.current !== null) { recordTiming('artifact_recovery', performance.now() - recoveringSince.current); recoveringSince.current = null; }
+  };
   const terminated = () => {
     recordFailure('artifact_process_terminated');
+    // Only a recovery the person watches is timed.
+    recoveringSince.current = shown.current ? performance.now() : null;
     setFailed(false); setLoading(true);
     const openUrl = access.openUrl;
     // Changing the source alone would load into the hidden view at once, so
@@ -161,8 +172,8 @@ export function ArtifactView({ access, appUrl, background, topInset, focused = t
       removeIosKeyboardObserver
       injectedJavaScriptBeforeContentLoaded={artifactPresentationScript(topInset)}
       injectedJavaScriptBeforeContentLoadedForMainFrameOnly
-      onMessage={(event) => { if (artifactPresented(event.nativeEvent.data, event.nativeEvent.url, access.canonicalUrl)) setLoading(false); }}
-      onLoadStart={() => { setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); setLoading(false); }}
+      onMessage={(event) => { if (artifactPresented(event.nativeEvent.data, event.nativeEvent.url, access.canonicalUrl)) presented(); }}
+      onLoadStart={() => { presentedLoad.current = false; setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); presented(); }}
       onError={() => { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }}
       onHttpError={(event) => {
         const action = artifactLoadFailure({ openUrl: uri, canonicalUrl: access.canonicalUrl }, event.nativeEvent.url, event.nativeEvent.statusCode);

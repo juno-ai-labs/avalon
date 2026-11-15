@@ -709,6 +709,12 @@ move the workspace synchronization socket or dictation transport into Node.
   the desktop does around sleep. The feed does not listen for either: a
   feed socket that died while frozen is found by its 45 to 55 second heartbeat,
   which is also the desktop's behaviour around sleep.
+- **A host that knows its page was suspended calls `replace()`:** WebKit fires
+  no Page Lifecycle events, so the mobile shell's WKWebView never reports
+  `resumed`. The native app sends its Home page `refresh` on every resume, and
+  that replaces the workspace socket outright, as `resumed` does. `retry()`
+  stays a no-op on an OPEN socket, because a suspended page's socket can read
+  OPEN with its connection gone.
 
 ## Testing
 
@@ -824,6 +830,21 @@ initial connection, reconnect, wake, and delivered application frame still uses
 platform resources.
 
 ## Changelog
+
+### 2026-11-15 — Replace the workspace socket when the mobile shell resumes
+
+**What changed:** The socket context gains `replace()`, the same transport swap
+the desktop's `resumed` power state runs. The mobile browser host calls it on
+`refresh`, which native sends on resume and reconnection.
+
+**Why:** `refresh` used `retry()`, which trusts an OPEN socket. After iOS
+suspends the app, the socket often reads OPEN with nothing behind it, and only
+the 50-second heartbeat plus the 15-second pong found out. Pins, titles and
+artifact updates froze for that long. A ping on resume was rejected: it still
+waits out the pong timeout, where replacing costs one ticket and handshake.
+
+**Consequences:** Any host that learns of a suspension outside Page Lifecycle
+should call `replace()`, not `retry()`.
 
 ### 2026-11-09 — The workspace socket carries only what Canvases and Sidekicks use, and one feed serves the conversation on screen
 

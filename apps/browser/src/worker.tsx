@@ -62,7 +62,19 @@ export default {
       response.headers.set("X-Content-Type-Options", "nosniff");
       return response;
     }
-    if (url.pathname.startsWith("/assets/") || INSTALL_FILES.has(url.pathname)) return env.ASSETS.fetch(request);
+    if (url.pathname.startsWith("/assets/")) {
+      // Vite names every built file by its content hash, so a name never
+      // changes meaning. Without this, the mobile shell and every browser
+      // revalidate each chunk on a cold start: a round trip per file before
+      // the dashboard can draw. The shell HTML stays `no-store`, so a deploy
+      // is still picked up on the next load.
+      const asset = await env.ASSETS.fetch(request);
+      if (!asset.ok) return asset;
+      const response = new Response(asset.body, asset);
+      response.headers.set("Cache-Control", "public, max-age=31536000, immutable");
+      return response;
+    }
+    if (INSTALL_FILES.has(url.pathname)) return env.ASSETS.fetch(request);
     if (url.pathname === "/annotation-frame.js") {
       // The annotation script an HTML file's opaque preview frame loads from
       // this origin under its nonce. Revalidated on every check so a deploy

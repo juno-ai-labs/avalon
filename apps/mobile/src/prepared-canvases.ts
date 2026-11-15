@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { randomUUID } from 'expo-crypto';
 import { preparedRequests } from './prepared-requests';
 import { VISIBLE_PIN_COUNT, type MobileCommand, type MobileEvent, type MobileSnapshot, type NativeArtifact, type PreparedCanvas } from './protocol';
@@ -52,7 +52,12 @@ export function usePreparedCanvases(directory: MobileSnapshot | null, send: (com
     // Android's shared cookie store; no token is cached in application state.
     setSessions((sessions) => ({ ...sessions, [artifact.canvasId]: { scope, artifact: { ...artifact, openUrl: artifact.canonicalUrl } } }));
   }, []);
-  const canvases = Object.fromEntries(Object.entries(entries).filter(([id, entry]) => directory?.userId === entry.userId && directory.workspaceId === entry.workspaceId && directory.pins.slice(0, VISIBLE_PIN_COUNT).includes(id)).map(([id, entry]) => [id, entry.canvas]));
-  const readySessions = Object.fromEntries(Object.entries(sessions).filter(([id, session]) => session.scope === `${directory?.userId}:${directory?.workspaceId}` && canvases[id]?.resourceId === session.artifact.resourceId).map(([id, session]) => [id, session.artifact]));
-  return { canvases, sessions: readySessions, rememberSession, receive, open, reset, fail };
+  const visiblePins = JSON.stringify(directory?.pins.slice(0, VISIBLE_PIN_COUNT) ?? []);
+  return useMemo(() => {
+    const pins: string[] = JSON.parse(visiblePins);
+    const canvases = Object.fromEntries(Object.entries(entries).filter(([id, entry]) => directory?.userId === entry.userId && directory.workspaceId === entry.workspaceId && pins.includes(id)).map(([id, entry]) => [id, entry.canvas]));
+    const readySessions = Object.fromEntries(Object.entries(sessions).filter(([id, session]) => session.scope === `${directory?.userId}:${directory?.workspaceId}` && canvases[id]?.resourceId === session.artifact.resourceId).map(([id, session]) => [id, session.artifact]));
+    return { canvases, sessions: readySessions, rememberSession, receive, open, reset, fail };
+  // The directory object changes on every Home update; only its scope and visible pins matter here.
+  }, [entries, sessions, directory?.userId, directory?.workspaceId, visiblePins, rememberSession, receive, open, reset, fail]);
 }
