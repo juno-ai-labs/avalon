@@ -471,6 +471,23 @@ corepack pnpm --filter @rally/mobile build
 
 `apps/browser/test/mobile-session.test.ts` checks account-bound organization restoration and the stale-empty artifact race. `apps/desktop/src/renderer/lib/api.test.ts` checks that a retried opening message sends the caller’s original receipt key and attachments. The pure protocol tests execute command injection with adversarial IDs, validate the bridge and artifact origin boundaries, and exercise pin ordering. Expo export compiles iOS, Android, and web bundles; it does not install or launch native apps. Browser host tests still exercise the real Worker transport and CSP. Renderer `browser-entry`, `browser-cookie-writers`, and `browser-collaboration` tests cover transient recovery, schema diagnostics, cookie-writer ordering through a browser capability double, hosted-site remounts, socket publication/head updates, metadata recovery, inline-chat return, mention confirmation, pending submission and edited creation retry.
 
+### Native verification (2026-11-15)
+
+An iPhone 17 Pro simulator (iOS 26.5) on a fresh development build, signed in to
+the production Juno Labs organization, checked the native dashboard and the pin
+layer. Four canvases were pinned for the run and unpinned afterwards; the
+session was signed out and stopped. Three single-site pins showed a fully drawn
+page the instant their tab was first tapped, sized between the header and the
+tab bar, and took touches; Home's dashboard took touches with the hidden pins
+loaded above it. A multi-artifact pin used the browser renderer as designed. A
+cold relaunch showed the dashboard and all pinned tabs before Home's page
+answered, and a pin tapped seconds later was already drawn. Diagnostics read
+`launch_to_dashboard` 222 ms (from JavaScript start, development build) and
+`pin_tap_to_artifact` 4 to 9 ms. The run found and fixed the lead card's
+gradient covering only part of the card on iOS, and `launch_to_dashboard`
+still timing Home's page instead of the native dashboard. Release-build and
+Android timings remain unmeasured.
+
 ### Native verification (2026-11-13)
 
 SDK 58 development builds were exercised against the production Juno Labs
