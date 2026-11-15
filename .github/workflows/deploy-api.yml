@@ -27,7 +27,7 @@ on:
       # The scripts the deploy job itself runs: resource preflights, the local
       # binding materializer, their shared module, and the health check. A change
       # to any of them is a change to the deployment, and a redeploy is idempotent.
-      - "scripts/check-cloudflare-r2-buckets.mjs"
+      - "scripts/ensure-cloudflare-r2-buckets.mjs"
       - "scripts/ensure-cloudflare-queues.mjs"
       - "scripts/ensure-cloudflare-inference-lakehouse.mjs"
       - "config/inference-lakehouse.json"
@@ -281,8 +281,12 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Require every R2 bucket declared by the regional Wrangler configs
-        run: node scripts/check-cloudflare-r2-buckets.mjs
+      # Wrangler will not create the bucket a binding names. Create whatever the
+      # Wrangler files declare and the account lacks, so a fresh account is set
+      # up by its first release. The browser deployment runs the same script;
+      # the loser of a create race re-checks and passes if the bucket exists.
+      - name: Ensure every R2 bucket the Wrangler configs declare exists
+        run: node scripts/ensure-cloudflare-r2-buckets.mjs
 
       # Wrangler applies a consumer's settings but will not create the queue a
       # binding names, so a release that adds a queue would fail halfway through.

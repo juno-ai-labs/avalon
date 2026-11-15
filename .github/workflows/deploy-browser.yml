@@ -17,6 +17,7 @@ on:
       - "tsconfig.base.json"
       - ".github/workflows/deploy-browser.yml"
       - "scripts/archive-browser-assets.mjs"
+      - "scripts/ensure-cloudflare-r2-buckets.mjs"
   workflow_dispatch:
 
 permissions:
@@ -68,6 +69,11 @@ jobs:
       # The test step built the client. Archive exactly those files, then deploy
       # them without rebuilding, so every file a page can request is archived
       # before a later deploy removes it from static assets.
+      - name: Ensure every R2 bucket the Wrangler configs declare exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/ensure-cloudflare-r2-buckets.mjs
       - name: Archive this build's files for pages open across deploys
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
