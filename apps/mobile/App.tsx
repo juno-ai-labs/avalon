@@ -3,6 +3,7 @@ import { useAppResume } from './src/use-app-resume';
 import { usePreparedCanvases } from './src/prepared-canvases';
 import { directoryKey } from './src/directory';
 import { loadSavedDirectory, saveDirectory } from './src/saved-directory';
+import { deployedWebBuild } from './src/web-build';
 import { HOME_RENDERER, recovery } from './src/recovery-order';
 import { useCrashReporting } from './src/crashes';
 import { RecoveryBoundary } from './src/RecoveryBoundary';
@@ -61,6 +62,8 @@ type Session = {
   notifications: ReturnType<typeof useNotifications>;
   receiveCrashEvent: (event: MobileEvent) => void;
   notificationOpened: (url: string) => void;
+  homeStale: boolean;
+  reportHomeBuild: (build: string | undefined) => void;
 };
 const SessionContext = createContext<Session | null>(null);
 const CanvasRoutesContext = createContext<Record<string, string | null>>({});
@@ -110,7 +113,15 @@ function AppContent() {
   const receiveCrashEvent = useCrashReporting(directory, sendHome);
   useEffect(() => { void registerBackgroundSync(); }, []);
   // Home feeds every tab, so it refreshes on resume whichever screen is in front.
-  useAppResume(() => sendHome({ type: 'refresh' }));
+  // A newer web build marks Home stale; it reloads the next time it is hidden.
+  const homeBuild = useRef<string | null>(null);
+  const [homeStale, setHomeStale] = useState(false);
+  const reportHomeBuild = useCallback((build: string | undefined) => { homeBuild.current = build ?? null; setHomeStale(false); }, []);
+  useAppResume(() => {
+    sendHome({ type: 'refresh' });
+    if (!homeBuild.current) return;
+    void deployedWebBuild(APP_URL).then((deployed) => { if (deployed && homeBuild.current && deployed !== homeBuild.current) setHomeStale(true); });
+  });
   useEffect(() => {
     if (!pendingNotification || !directory || !rootNavigation.isReady()) return;
     setChatReturn(null);
@@ -133,8 +144,8 @@ function AppContent() {
     setChatReturn(null); updateDirectory(null);
     controls.current.get('Home')?.reload();
   }, []);
-  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent }),
-    [chatReturn, prepared, directory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent]);
+  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild }),
+    [chatReturn, prepared, directory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild]);
   const theme = isDark ? DarkTheme : DefaultTheme;
   return <SafeAreaProvider>
     <StatusBar style={isDark ? 'light' : 'dark'} />
@@ -259,7 +270,7 @@ function useChatNavigation(navigation: NativeBottomTabScreenProps<ParamListBase>
 }
 
 function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContentReady }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string; onContentReady?: () => void }) {
-  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner } = useSession();
+  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild } = useSession();
   const { colors } = useTheme();
   const canvasId = assignedCanvasId ?? route.name;
   const routeCanvases = useContext(CanvasRoutesContext);
@@ -329,6 +340,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
       else { tabs?.navigate('Home'); signOut(); }
       return;
     }
+    if (home && event.type === 'ready') reportHomeBuild(event.build);
     setReady(true); setFailed(false);
     if (mobileContentReady(event)) {
       setContentReady(true);
@@ -360,7 +372,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
       setArtifacts({}); setSnapshot(null); setSidebar(false);
       if (home) updateDirectory(null); else signOut();
     }
-  }, [directoryOwner, home, url, tabs, open, canvasId, signIn, signOut, updateDirectory, notifications.receive, notificationOpened, receiveCrashEvent, prepared.receive, onContentReady]);
+  }, [directoryOwner, home, url, reportHomeBuild, tabs, open, canvasId, signIn, signOut, updateDirectory, notifications.receive, notificationOpened, receiveCrashEvent, prepared.receive, onContentReady]);
   useEffect(() => {
     const registry = controls.current;
     const handle = web.current;
@@ -373,6 +385,9 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
     previousConnection.current = network.isConnected;
     if (focused && ready && reconnected) web.current?.send({ type: 'refresh' });
   }, [focused, ready, network.isConnected]);
+  // A stale Home reloads only off screen: its own tab would show the loading
+  // cover, and an open inline chat or create flow lives in this page.
+  useEffect(() => { if (home && homeStale && !focused) web.current?.reload(); }, [home, homeStale, focused]);
   useEffect(() => {
     if (!home || !focused || !chatReturn) return;
     const back = BackHandler.addEventListener('hardwareBackPress', () => { closeChat(); return true; });

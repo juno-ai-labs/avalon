@@ -14,6 +14,11 @@
     "run_worker_first": true
   },
   "services": [{ "binding": "GLOBAL_API", "service": "avalon-api-global" }],
+  // Every deploy's hashed build files, kept after the deploy that served them
+  // is replaced, so a page still open from an older deploy can load a chunk it
+  // has not fetched yet. CI uploads each build before deploying; the bucket is
+  // created once by hand, as the API's buckets are.
+  "r2_buckets": [{ "binding": "PAST_ASSETS", "bucket_name": "rally-browser-assets" }],
   // The domain artifacts are served from; the shell lets the preview frame it.
   "vars": { "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.com" },
   "observability": { "enabled": true }

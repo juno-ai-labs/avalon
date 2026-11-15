@@ -304,7 +304,7 @@ cold launch, or after the user chooses Restart in diagnostics.
 compatible updates. WorkManager/BGTaskScheduler choose execution using their
 default cadence; delivery is opportunistic, and iOS Simulator cannot run this
 task. Resume and reconnection refresh the existing browser/socket data. There is
-no offline canvas content, queued editing system, or background content polling. The last canvas directory (titles, icons, pins) is saved on the device for one account and removed on sign-out; launch opens Home directly at that organization, and falls back to the plain start once if the page asks for sign-in before its first snapshot. Diagnostics records the latest launch-to-dashboard, first pin tap-to-artifact and visible crash-recovery times.
+no offline canvas content, queued editing system, or background content polling. The last canvas directory (titles, icons, pins) is saved on the device for one account and removed on sign-out; launch opens Home directly at that organization, and falls back to the plain start once if the page asks for sign-in before its first snapshot. Diagnostics records the latest launch-to-dashboard, first pin tap-to-artifact and visible crash-recovery times. Home reports its web build (its entry script) in `ready`; on resume native reads the deployed `index.html`, and a newer build reloads Home the next time its tab is not on screen, never under an open inline chat or create flow.
 
 Settings and diagnostics is available from the sidebar's settings button.
 Notification permission is requested only through Enable notifications. The
@@ -573,7 +573,8 @@ sooner when shown or when a queued access request needs Home. Home snapshots
 that change nothing the shell shows are dropped, and the shared session value is
 memoized. The directory is saved on the device and Home opens at its
 organization. Native refreshes Home on every resume, and Diagnostics records
-three timings.
+three timings. A web build newer than Home's reloads Home
+once it is off screen.
 
 **Why:** A field report showed a pinned tab stuck on "Rally couldn't load" after
 `artifact_process_terminated`, and Try again took far longer than the 500 ms
@@ -588,7 +589,11 @@ change, including `updatedAt` ticks while agents write, and each one rebuilt the
 session value and re-rendered every tab and header. Opening Home at `/` cost a
 session read and an organization-list read in series before the dashboard. The
 founder accepted saving titles and pins on the device for speed, reversing the
-earlier no-cache position. Without timings, "laggy" had no number to test.
+earlier no-cache position. Without timings, "laggy" had no number to test. The
+web host ships 20 to 30 times a day while Home stays open for days; reloading
+Home while hidden picks up fixes without a spinner. Reloading a visible Home was
+rejected until the native dashboard lands, because its tab shows the loading
+cover.
 
 **Considered and rejected:** `reload()` on the same WebView: if the crash came
 before redemption finished, the last URL is the spent open ticket. Waiting on a

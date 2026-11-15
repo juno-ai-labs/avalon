@@ -1,6 +1,6 @@
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { mobileContentReady, type MobileSnapshot, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact } from './protocol';
+import { mobileContentReady, type MobileSnapshot, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact, webBuildFromHtml } from './protocol';
 
 const app = 'https://app.rallywith.ai';
 const token = 'main-frame-capability';
@@ -124,4 +124,11 @@ it('recognizes only the trusted authentication handoff for the current artifact'
   for (const target of ['https://evil.example' + path, app + '/app/sites/global/level-luminous-sequential-curie/%2F', app + '/', 'https://attacker@app.rallywith.ai' + path, 'not a url']) {
     expect(artifactAuthHandoff(canonical, target, app)).toBe(false);
   }
+});
+
+it('names a web build by the entry script its HTML loads', () => {
+  const html = '<html><head><link rel="manifest" href="/manifest.webmanifest">  <script type="module" crossorigin src="/assets/index-C7nZHIE4.js"></script><link rel="stylesheet" href="/assets/index-D1.css"></head></html>';
+  expect(webBuildFromHtml(html)).toBe('/assets/index-C7nZHIE4.js');
+  expect(webBuildFromHtml('<html><script src="/assets/legacy.js"></script></html>')).toBeNull();
+  expect(webBuildFromHtml('Rally is temporarily unavailable')).toBeNull();
 });
