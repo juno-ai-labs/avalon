@@ -1,5 +1,5 @@
 import { ARTIFACT_VIEWER_COLUMN } from "@rally/contracts";
-import type { HarnessSkill } from "../index";
+import type { HarnessSkill } from "../types";
 
 /**
  * How to build a live web site for Rally's artifact runtime.
