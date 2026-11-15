@@ -17,7 +17,7 @@ Data Catalog.
 | `apps/api/src/queues/analytics-lakehouse-consumer.ts` | Applies queue poison/misroute policy and sends valid Global rows through `ANALYTICS_LAKEHOUSE`. |
 | `packages/db/migrations/0095_analytics_events_lakehouse_outbox.sql` | Adds the Global lakehouse delivery state to the existing acceptance outbox; historical rows remain ineligible. |
 | `config/analytics-events-lakehouse*.json` | Immutable Pipeline stream schema plus the pinned stream ID and names for the bucket, catalog, stream, sink, pipeline, namespace, table, and binding. |
-| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Locally materializes the API Worker's pinned bindings for deploys; explicit modes check or reconcile every Global lakehouse, including the [engineering MCP audit table](engineering-mcp.md#tool-call-audit-log). |
+| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Locally materializes both pinned bindings for deploys; explicit modes check or reconcile both Global lakehouses. |
 
 ## How it works
 
