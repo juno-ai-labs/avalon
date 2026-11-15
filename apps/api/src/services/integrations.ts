@@ -295,7 +295,7 @@ import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { setsDelegation, sidekickDelegationTools } from "./sidekick-delegation-tools";
 import { sidekickSourceRequestCard, sidekickSourceTools } from "./sidekick-source-tools";
-import { refusingTool, toolRefusal, type ToolRefusal } from "./tool-refusal";
+import { isRefusingTool, refusingTool, toolRefusal, type ToolRefusal } from "./tool-refusal";
 import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
@@ -5280,8 +5280,9 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  * for a change.
  */
 function asksForSources(input: Pick<WorkstreamWorkflowInput,
-  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "sidekickWizard" | "wizardCanvasId">): boolean {
+  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "sidekickWizard" | "wizardCanvasId" | "reason">): boolean {
   return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true
+    && input.reason !== "sidekick_review"
     && (!input.agentExchange || wizardTurnCanvasId(input) !== null);
 }
 
@@ -8272,7 +8273,8 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
     || tool.definition.name === "get_connector_connection_state"
     || tool.definition.name === "show_connector_connection"
     || tool.definition.name === CHECK_RESOURCE_ACCESS_TOOL_NAME);
-  const holds = (name: string) => coreTools.some((tool) => tool.definition.name === name);
+  // A refusing tool is offered but cannot do the work, so the prompt does not tell the model to use it.
+  const holds = (name: string) => coreTools.some((tool) => tool.definition.name === name && !isRefusingTool(tool));
   const memoryTools = tools.filter((tool) => tool.definition.capability.startsWith("memory."));
   const tableTools = tools.filter((tool) => tool.definition.capability.startsWith("table."));
   return [
