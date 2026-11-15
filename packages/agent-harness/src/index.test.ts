@@ -11,6 +11,7 @@ import type { InferenceAttemptError } from "@juno-ai/bind/routing";
 import {
   __testing,
   HarnessLimitError,
+  HarnessPortStepError,
   applyBindLoopTransition,
   AzureOpenAIClient,
   canonicalToolInputHash,
@@ -1881,6 +1882,27 @@ describe("agent harness", () => {
         code: "run_state_persistence_failed",
         message: "Run liveness renewal failed",
         causeCode: "usage_allowance_exhausted",
+      },
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("reports the step a host port names, keeping the port's code and the step's cause", async () => {
+    const fetcher = vi.fn(async () => streamResponse([])) as typeof fetch;
+    const result = await runHarness({
+      ...runInput(fetcher),
+      onLiveness: async () => {
+        throw new HarnessPortStepError("Run authority check failed", new Error("workspace_member_not_found"));
+      },
+      describeFailureCause: (cause) => cause instanceof Error ? cause.message : "not_an_error",
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      failure: {
+        code: "run_state_persistence_failed",
+        message: "Run authority check failed",
+        causeCode: "workspace_member_not_found",
       },
     });
     expect(fetcher).not.toHaveBeenCalled();
