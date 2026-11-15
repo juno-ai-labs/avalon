@@ -1,11 +1,17 @@
 import { MOBILE_SIGN_IN_PATH } from '../../mobile/src/auth-contract';
-import { MOBILE_CHANNEL, MOBILE_COMMAND_EVENT, VISIBLE_PIN_COUNT, MobileCommandSchema, type MobileEvent } from '../../mobile/src/protocol';
+import { MOBILE_CAPABILITIES_GLOBAL, MOBILE_CHANNEL, MOBILE_COMMAND_EVENT, VISIBLE_PIN_COUNT, MobileCommandSchema, type MobileEvent } from '../../mobile/src/protocol';
 
 let latest: MobileEvent | null = null;
 let screenReady = false;
 let latestArtifact: MobileEvent | null = null;
 const preparedCanvases = new Map<string, Extract<MobileEvent, { type: 'prepared-canvas' }>>();
 let preview: { token: string; origin: string } | null = null;
+
+/** Whether the native shell declared a capability before this page loaded. */
+export function mobileCapability(name: string): boolean {
+  const declared: unknown = typeof window === 'undefined' ? undefined : Reflect.get(window, MOBILE_CAPABILITIES_GLOBAL);
+  return Array.isArray(declared) && declared.includes(name);
+}
 
 export function isMobileHost(): boolean {
   if (typeof window === 'undefined' || location.pathname.startsWith(`${MOBILE_SIGN_IN_PATH}/`)) return false;

@@ -298,6 +298,10 @@ it('prepares hosted pins through Home and opens fresh access without another bro
     failDetail = true;
     act(() => window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail: { type: 'refresh' } })));
     await waitFor(() => expect(detailReads).toBe(2));
+    // `refresh` replaces the socket after a suspend; later pushes arrive on the replacement.
+    await waitFor(() => expect(workspaceSockets()).toHaveLength(2));
+    const replaced = workspaceSockets()[1]!;
+    act(() => replaced.open());
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
     expect(events.filter(({ event }) => event.type === 'prepared-canvas').at(-1)?.event.canvas).toEqual({ canvasId: parent, resourceId: site, version: 1, title: 'Shopping' });
     failDetail = false;
@@ -308,7 +312,8 @@ it('prepares hosted pins through Home and opens fresh access without another bro
     command('retry');
     await waitFor(() => expect(events.find(({ event }) => event.requestId === 'retry')?.event.artifact).toMatchObject({ openUrl: `https://${site}.rallyusercontent.com/open#code-2` }));
     expect(events.some(({ event }) => event.requestId === 'wrong-account')).toBe(false);
-    expect(workspaceSockets()).toHaveLength(1);
+    // `refresh` replaces the socket after a suspend; Home still holds only one.
+    expect(workspaceSockets().filter((candidate) => candidate.readyState !== BrowserSocket.CLOSED)).toHaveLength(1);
     expect(feedSockets()).toHaveLength(0);
     expect(location.hash).toBe('#/canvases');
     fail = true;
@@ -316,9 +321,47 @@ it('prepares hosted pins through Home and opens fresh access without another bro
     await waitFor(() => expect(events.find(({ event }) => event.requestId === 'denied')?.event.artifact).toBeNull());
     act(() => { location.hash = `#/canvases/${parent}?view=chat`; window.dispatchEvent(new HashChangeEvent('hashchange')); });
     await screen.findByRole('button', { name: 'View canvas' });
-    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_resource_versions', occurredAt: at, resources: [{ resourceId: site, version: 2, title: 'Groceries', mimeType: 'text/html', updatedAt: at, contentAvailable: true, sizeBytes: 42 }] }) })));
+    act(() => replaced.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_resource_versions', occurredAt: at, resources: [{ resourceId: site, version: 2, title: 'Groceries', mimeType: 'text/html', updatedAt: at, contentAvailable: true, sizeBytes: 42 }] }) })));
     await waitFor(() => expect(events.filter(({ event }) => event.type === 'prepared-canvas').at(-1)?.event.canvas).toMatchObject({ version: 2 }));
   } finally { view.unmount(); }
+});
+
+it('prepares a canvas with several artifacts only for a shell that draws their picker', async () => {
+  const notes = '00000000-0000-7000-8000-0000000000b1', site = '00000000-0000-7000-8000-0000000000b2';
+  const canvas = { id: parent, title: 'Newsletter', createdByUserId: user.id, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: 'participants', participantUserIds: [user.id], canManage: false };
+  fetchHandler = async (input) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    if (path.endsWith('/workspace/socket')) return workspaceTicket();
+    if (path.endsWith(`/canvases/${parent}`)) return Response.json({ ...canvas, artifacts: [
+      { resourceId: notes, title: 'Notes', kind: 'file', mimeType: 'text/markdown', version: 3, updatedAt: at },
+      { resourceId: site, title: 'Reader', kind: 'site', mimeType: 'text/html', version: 2, updatedAt: at },
+    ] });
+    return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
+  };
+  const prepared = async (capabilities: string[] | undefined) => {
+    const events: Array<{ event: { type: string; canvas?: unknown } }> = [];
+    vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'test-capability');
+    vi.stubGlobal('__RALLY_MOBILE_CAPABILITIES__', capabilities);
+    vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw)) });
+    history.replaceState(null, '', `/app/workspaces/global/${workspace.id}?mobile=1#/canvases`);
+    const view = render(<BrowserShell region="global" session={cookieClientSession('global', { user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })} onSignOut={() => undefined} onRevalidate={() => undefined} />);
+    try {
+      await waitFor(() => expect(workspaceSockets().length).toBeGreaterThan(0));
+      const socket = workspaceSockets().at(-1)!;
+      act(() => socket.open());
+      const row = { ...canvas, artifactKind: 'site', unread: false, presentUserIds: [], pinnedPosition: 0, sharedWithMe: true };
+      act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'workspace_canvas_list', occurredAt: at, waterline: 1, items: [row] }) })));
+      await waitFor(() => expect(events.some(({ event }) => event.type === 'prepared-canvas')).toBe(true));
+      return events.filter(({ event }) => event.type === 'prepared-canvas').at(-1)?.event.canvas;
+    } finally { view.unmount(); }
+  };
+  // An older shell would show only the site and lose the file: it keeps the browser renderer.
+  expect(await prepared(undefined)).toBeNull();
+  expect(await prepared(['artifact-picker'])).toEqual({ canvasId: parent, resourceId: site, version: 2, title: 'Newsletter', artifacts: [
+    { resourceId: notes, title: 'Notes', version: 3, kind: 'file' },
+    { resourceId: site, title: 'Reader', version: 2, kind: 'site' },
+  ] });
 });
 
 it('keeps the current mobile chat, draft, and connections when closing and reopening it', async () => {
