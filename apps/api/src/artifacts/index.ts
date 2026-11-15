@@ -315,8 +315,8 @@ async function serveAdmitted(
       if(!version) return html(neutralPage(),404);
       const served=await storedObjectResponse(env.PAYLOADS,version.contentRef,request,
         {'content-type':version.mimeType,'content-disposition':contentDisposition('inline',admission.file.title)});
-      if(!served.found) return html(neutralPage(),503);
-      return withSecurityHeaders(served.response);
+      if(!served) return html(neutralPage(),503);
+      return withSecurityHeaders(served);
     }
     const admitted: Admitted = admission;
 
@@ -450,8 +450,8 @@ async function serveAsset(
     }));
   }
   const served = await storedObjectResponse(env.PAYLOADS, key, request, { "content-type": asset.contentType });
-  if (!served.found) return html(plainErrorPage("This page is temporarily unavailable."), 503);
-  return withSecurityHeaders(served.response);
+  if (!served) return html(plainErrorPage("This page is temporarily unavailable."), 503);
+  return withSecurityHeaders(served);
 }
 
 async function serveCurrent(

@@ -5350,10 +5350,12 @@ async function sidekickCanvasContextMessage(env: Env, input: WorkstreamWorkflowI
   // A run is told its Sidekick's attachments whoever it acts as; the wizard is
   // told what its person can open, and has one.
   const userId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
-  if (userId === null && !input.automationRun) return null;
+  const authority = loopAuthority(input);
+  const run = authority?.kind === "sidekick_run" ? authority : null;
+  if (userId === null && !run) return null;
   const canvases = await (await hostedParentStub(env, input.workspaceId)).sidekickCanvasContext({
     workspaceId: input.workspaceId, sidekickId: input.parentId, userId,
-    ...(input.automationRun ? { runId: input.automationRun.runId } : {}),
+    ...(run ? { runId: run.runId } : {}),
   });
   if (canvases.length === 0) return null;
   return modelDerivative({
@@ -5362,9 +5364,9 @@ async function sidekickCanvasContextMessage(env: Env, input: WorkstreamWorkflowI
       canvases: canvases.map((canvas) => ({
         canvasId: canvas.canvasId, title: canvas.title, artifacts: canvas.artifacts.map(agentCanvasArtifact),
       })),
-      updating: input.automationRun ? RUN_CANVAS_UPDATING : WIZARD_CANVAS_UPDATING,
+      updating: run ? RUN_CANVAS_UPDATING : WIZARD_CANVAS_UPDATING,
     }),
-  }, "sidekick_canvas_context", input.triggerMessageId ?? input.automationRun?.runId ?? input.harnessRunId);
+  }, "sidekick_canvas_context", input.triggerMessageId ?? run?.runId ?? input.harnessRunId);
 }
 
 async function loadRunPromptContext(
@@ -5497,11 +5499,12 @@ async function loadRunPromptContext(
     const canvas = await canvasRunContextMessage(env, input);
     if (canvas) additionalMessages.push(canvas);
   }
-  // A run itself, or a wizard turn: the two that can act on it. A worker one
-  // of them started has neither the publish target nor the data write, so
-  // it is told nothing it could not do.
-  if (input.parentKind === "automation" && input.backgroundAgent !== true && !input.automationDelegation
-    && (input.automationRun || (input.substreamId ?? "0") === "0")) {
+  // A run or a wizard turn, and an agent either started, which acts with its
+  // root's authority (`loopAuthority`) and so can publish into and write the
+  // same Canvases' sites: each is told which those are.
+  const sidekickAuthority = loopAuthority(input);
+  if (input.parentKind === "automation"
+    && (sidekickAuthority?.kind === "sidekick_run" || sidekickAuthority?.kind === "sidekick_wizard")) {
     const attached = await sidekickCanvasContextMessage(env, input);
     if (attached) additionalMessages.push(attached);
   }
@@ -8580,7 +8583,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       workstreamId: input.parentId,
       principal: input.executionPrincipal,
       reader: artifactDataReader(input),
-      // Only a Canvas's Chat and a Sidekick run get `write_artifact_data`.
+      // A Canvas's Chat, a wizard, a run, and each one's agents (`loopAuthority`).
       write: artifactDataWriteAccess(input),
     })),
     // A Canvas's Chat, and any agent it started, sets who opens its own
@@ -8589,6 +8592,9 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
     ...(canvasChatAuthority(input) !== null && input.executionPrincipal.type === "user"
       ? [createArtifactAudienceTool(env, {
         workspaceId: input.workspaceId, canvasId: input.parentId, userId: input.executionPrincipal.userId,
+        // No person types into an agent's conversation, so it can set only a
+        // default, never override an audience someone chose.
+        ...(input.backgroundAgent === true ? { defaultOnly: true } : {}),
       })]
       : []),
     {

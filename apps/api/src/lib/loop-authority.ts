@@ -9,11 +9,12 @@
  * `report_outcome`) asks the loop's own fields instead.
  * See `docs/agent-loop-types.md#a-background-agent-acts-with-its-roots-authority`.
  *
- * A background agent's root is read from what its input already carries: under
- * a Canvas, the Chat (the only loop there that starts one); under a Sidekick, the
- * run its `automationDelegation` names, or else the wizard, since every turn of
- * the Sidekick's own conversation that runs is the wizard's (`agent-loop-do.ts`,
- * `sharedSidekickConversation`).
+ * A background agent's root is the one its `background_agent` row records,
+ * carried on the input as `backgroundAgentRootSubstreamId`: `"0"` is the
+ * Canvas's Chat or the Sidekick's wizard (every turn of a Sidekick's own
+ * conversation that runs is the wizard's: `agent-loop-do.ts`,
+ * `sharedSidekickConversation`), and a run's worker also carries the run as its
+ * `automationDelegation`. An agent with no recorded root gets no authority.
  */
 export type LoopAuthority =
   | { kind: "canvas_chat"; canvasId: string }
@@ -28,6 +29,7 @@ export interface LoopAuthorityInput {
   automationRun?: { automationId: string; runId: string } | undefined;
   automationDelegation?: { runId: string; stopGeneration?: number } | undefined;
   backgroundAgent?: boolean | undefined;
+  backgroundAgentRootSubstreamId?: string | undefined;
 }
 
 export function loopAuthority(input: LoopAuthorityInput): LoopAuthority | null {
@@ -43,9 +45,11 @@ export function loopAuthority(input: LoopAuthorityInput): LoopAuthority | null {
       ? { kind: "sidekick_run", sidekickId: input.parentId, runId: input.automationDelegation.runId }
       : null;
   }
-  // A Chat and a wizard act as the person typing into them, and so do their agents.
+  // A Chat and a wizard act as the person typing into them, and so do their
+  // agents. An agent's root is read, never guessed: one recorded before roots
+  // were has none and gets no root's authority, as it had none then.
   if (input.executionPrincipal.type !== "user" || !input.parentId) return null;
-  if ((input.substreamId ?? "0") !== "0" && !background) return null;
+  if (background ? input.backgroundAgentRootSubstreamId !== "0" : (input.substreamId ?? "0") !== "0") return null;
   if (input.parentKind === "canvas") return { kind: "canvas_chat", canvasId: input.parentId };
   if (input.parentKind === "automation") return { kind: "sidekick_wizard", sidekickId: input.parentId };
   return null;

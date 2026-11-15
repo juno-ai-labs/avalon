@@ -8,6 +8,7 @@ import { seedWorkspaceControlPlane, seedWorkstreamRoot, seedParticipantMessage, 
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { SidekickDelegationService } from "../src/services/sidekick-delegation-service";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
+import { createCanvas } from "../src/services/canvas-service";
 import { sidekickDelegationTools } from "../src/services/sidekick-delegation-tools";
 import { validateCompletedToolReplay } from "../src/services/completed-tool-replay";
 import { reenterInterruptedWriteForRecovery } from "../src/services/integrations";
@@ -151,9 +152,12 @@ describe("Sidekick consent authority in real workerd", () => {
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL
     )`),
     ]);
-    const input = runInput(crypto.randomUUID(), { workspaceId, parentId: sidekickId,
+    // A background agent of a real Canvas's Chat, as the host builds one: it
+    // acts with the Chat's authority, so its Sidekick is made in that Canvas.
+    const { canvasId } = await createCanvas(env, { workspaceId, creatorUserId: creator });
+    const input = runInput(crypto.randomUUID(), { workspaceId, parentId: canvasId, substreamId: crypto.randomUUID(),
       triggerMessageId: null, backgroundAgent: true, executionPrincipal: { type: "user", userId: creator } });
-    const context = { workspaceId, workstreamId: sidekickId, harnessRunId: input.harnessRunId,
+    const context = { workspaceId, workstreamId: canvasId, harnessRunId: input.harnessRunId,
       toolCallId: "autonomous-create", effectIntentId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal,
       signal: new AbortController().signal };
     const created = await new AgentCommunicationService(env, input).createSidekick("workspace", context);

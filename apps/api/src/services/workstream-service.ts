@@ -154,7 +154,7 @@ export async function launchWorkstreamHarness(
   publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
   const executionEnv = env;
-  const { parentKind, substreamId, backgroundAgent, rootReason } = input.conversation;
+  const { parentKind, substreamId, backgroundAgent, rootReason, rootSubstreamId } = input.conversation;
   const id = await stableActivationRunId(input);
   const at = nowIso();
   const executionPrincipalJson = JSON.stringify(input.executionPrincipal);
@@ -230,6 +230,7 @@ export async function launchWorkstreamHarness(
     // owner's sandbox and reports to its owner rather than publishing.
     ...(backgroundAgent ? { backgroundAgent: true } : {}),
     ...(backgroundAgent && rootReason ? { backgroundAgentRootReason: rootReason } : {}),
+    ...(backgroundAgent && rootSubstreamId ? { backgroundAgentRootSubstreamId: rootSubstreamId } : {}),
     ...(input.telemetryOperationId && input.telemetrySubjectUserId ? {
       telemetryOperationId: input.telemetryOperationId,
       telemetrySubjectUserId: input.telemetrySubjectUserId,

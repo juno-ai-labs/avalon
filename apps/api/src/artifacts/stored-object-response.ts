@@ -15,104 +15,110 @@
  * resuming a download with `If-Range` notice that the URL now serves another
  * version, and get the whole new one instead of a spliced file.
  *
+ * A ranged request is one R2 read: the range and any `If-Range` go to R2 with
+ * the read, and the object's metadata is fetched only when R2 refuses a range
+ * that starts past the end, to answer `416` with the size. Players ask for a
+ * range on nearly every seek, so a metadata read in front of each would be paid
+ * constantly for a check R2 already makes.
+ *
  * Only `bytes=start-end`, `bytes=start-` and `bytes=-suffix` are honoured. A
  * request for several ranges gets the whole object with `200`, which RFC 9110
  * allows and every player handles; a multipart body is not worth its parser.
  */
 
-/** The parts of an R2 bucket this needs; `env.PAYLOADS` satisfies it. */
-export interface StoredObjectBucket {
-  head(key: string): Promise<R2Object | null>;
-  get(key: string, options?: R2GetOptions): Promise<R2ObjectBody | null>;
-}
-
-export type StoredObjectResponse =
-  | { found: true; response: Response }
-  | { found: false };
-
-/** A satisfiable range as R2 reads it, or why there is none to apply. */
-type RangeDecision =
-  | { kind: "whole" }
-  | { kind: "range"; offset: number; length: number }
-  | { kind: "unsatisfiable" };
-
-/**
- * Read a `Range` header against an object's size. Anything this does not
- * understand is ignored and the whole object served, as RFC 9110 directs.
- */
-export function decideRange(header: string | null, size: number): RangeDecision {
-  if (header === null) return { kind: "whole" };
-  const match = /^bytes=(\d*)-(\d*)$/u.exec(header.trim());
-  if (!match) return { kind: "whole" };
-  const [, first, last] = match;
-  if (first === "" && last === "") return { kind: "whole" };
-  if (first === "") {
-    const suffix = Number(last);
-    if (suffix === 0 || size === 0) return { kind: "unsatisfiable" };
-    const length = Math.min(suffix, size);
-    return { kind: "range", offset: size - length, length };
-  }
-  const offset = Number(first);
-  if (offset >= size) return { kind: "unsatisfiable" };
-  const end = last === "" ? size - 1 : Math.min(Number(last), size - 1);
-  if (end < offset) return { kind: "whole" };
-  return { kind: "range", offset, length: end - offset + 1 };
-}
-
 /**
  * The response for `key`, with `headers` (its content type and anything else
- * the caller sets) on every outcome. `found: false` means the object is not
- * stored, which each caller answers in its own words.
+ * the caller sets) on every outcome, or null when the object is not stored,
+ * which each caller answers in its own words.
  */
 export async function storedObjectResponse(
-  bucket: StoredObjectBucket,
+  bucket: R2Bucket,
   key: string,
   request: Request,
   headers: Record<string, string>,
   options: { ranges?: boolean } = {},
-): Promise<StoredObjectResponse> {
+): Promise<Response | null> {
+  if (request.method === "HEAD") {
+    const metadata = await bucket.head(key);
+    return metadata ? new Response(null, { status: 200, headers: whole(metadata, headers) }) : null;
+  }
   // A caller whose response may be rewritten after this returns (an active
   // site's HTML, which Rally injects into) asks for no ranges: a range of the
   // stored page would be spliced into a page that is no longer those bytes.
-  const rangeHeader = request.method === "GET" && options.ranges !== false ? request.headers.get("range") : null;
-  // A plain GET reads the object once. A HEAD reads only its metadata, and a
-  // ranged GET reads that first so the range is checked against the real size.
-  if (request.method !== "HEAD" && rangeHeader === null) {
+  const range = request.method === "GET" && options.ranges !== false ? requestedRange(request.headers.get("range")) : null;
+  if (range === null) {
     const object = await bucket.get(key);
-    if (!object) return { found: false };
-    return { found: true, response: new Response(object.body, { status: 200, headers: whole(object, headers) }) };
+    return object ? new Response(object.body, { status: 200, headers: whole(object, headers) }) : null;
   }
-  const metadata = await bucket.head(key);
-  if (!metadata) return { found: false };
-  if (request.method === "HEAD") {
-    return { found: true, response: new Response(null, { status: 200, headers: whole(metadata, headers) }) };
-  }
-  // A client resuming a download sends the version it holds; another version
-  // gets the whole object, never a range spliced onto the old one.
+  if (range === "unsatisfiable") return unsatisfiable(bucket, key, headers);
+  // A client resuming a download sends the version it holds; R2 answers the
+  // range only if it is still that version, and another version is sent whole.
   const ifRange = request.headers.get("if-range");
-  const decision = ifRange !== null && ifRange !== metadata.httpEtag
-    ? { kind: "whole" as const }
-    : decideRange(rangeHeader, metadata.size);
-  if (decision.kind === "unsatisfiable") {
-    return { found: true, response: new Response(null, { status: 416, headers: {
-      ...headers, "accept-ranges": "bytes", "content-range": `bytes */${metadata.size}`,
-    } }) };
+  let object: R2ObjectBody | R2Object | null;
+  try {
+    object = await bucket.get(key, {
+      range,
+      ...(ifRange ? { onlyIf: { etagMatches: ifRange.replace(/^W\//u, "").replace(/^"|"$/gu, "") } } : {}),
+    });
+  } catch (error) {
+    // R2 refuses a range that starts at or past the end of the object.
+    if ("offset" in range) return unsatisfiable(bucket, key, headers);
+    throw error;
   }
-  const object = await bucket.get(key, decision.kind === "range"
-    ? { range: { offset: decision.offset, length: decision.length } }
-    : undefined);
-  if (!object) return { found: false };
-  if (decision.kind === "whole") {
-    return { found: true, response: new Response(object.body, { status: 200, headers: whole(object, headers) }) };
+  if (!object) return null;
+  if (!("body" in object)) {
+    const current = await bucket.get(key);
+    return current ? new Response(current.body, { status: 200, headers: whole(current, headers) }) : null;
   }
-  const end = decision.offset + decision.length - 1;
-  return { found: true, response: new Response(object.body, { status: 206, headers: {
+  // The range asked for, clamped to the size R2 reports, rather than R2's own
+  // echo of it, whose shape differs between runtimes.
+  const { offset, length } = resolvedRange(range, object.size);
+  return new Response(object.body, { status: 206, headers: {
     ...headers,
     "accept-ranges": "bytes",
-    "content-length": String(decision.length),
-    "content-range": `bytes ${decision.offset}-${end}/${object.size}`,
+    "content-length": String(length),
+    "content-range": `bytes ${offset}-${offset + length - 1}/${object.size}`,
     etag: object.httpEtag,
-  } }) };
+  } });
+}
+
+/**
+ * A `Range` header as R2 reads it, `"unsatisfiable"` for one no object could
+ * answer, or null for none or one this does not understand, which is served
+ * whole as RFC 9110 directs.
+ */
+function requestedRange(header: string | null): R2Range | "unsatisfiable" | null {
+  if (header === null) return null;
+  const match = /^bytes=(\d*)-(\d*)$/iu.exec(header.trim());
+  if (!match) return null;
+  const [, first = "", last = ""] = match;
+  if (first === "" && last === "") return null;
+  if (first === "") {
+    const suffix = Number(last);
+    return suffix === 0 ? "unsatisfiable" : { suffix };
+  }
+  const offset = Number(first);
+  if (last === "") return { offset };
+  const end = Number(last);
+  return end < offset ? null : { offset, length: end - offset + 1 };
+}
+
+/** The bytes a range covers in an object of `size`, clamped to its end. */
+function resolvedRange(range: R2Range, size: number): { offset: number; length: number } {
+  if ("suffix" in range) {
+    const length = Math.min(range.suffix, size);
+    return { offset: size - length, length };
+  }
+  const offset = range.offset ?? 0;
+  return { offset, length: Math.min(range.length ?? size - offset, size - offset) };
+}
+
+async function unsatisfiable(bucket: R2Bucket, key: string, headers: Record<string, string>): Promise<Response | null> {
+  const metadata = await bucket.head(key);
+  if (!metadata) return null;
+  return new Response(null, { status: 416, headers: {
+    ...headers, "accept-ranges": "bytes", "content-range": `bytes */${metadata.size}`,
+  } });
 }
 
 function whole(object: R2Object, headers: Record<string, string>): Record<string, string> {

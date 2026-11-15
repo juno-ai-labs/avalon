@@ -693,6 +693,8 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
     harnessRunId: CHILD_HARNESS_RUN_ID,
     substreamId: asSubstreamId(CHILD_HARNESS_RUN_ID),
     backgroundAgent: true,
+    // As the host reads it from the agent's row: its starter's conversation.
+    backgroundAgentRootSubstreamId: parent.substreamId ?? "0",
     reason: "agent_message",
   };
 }

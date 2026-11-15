@@ -371,6 +371,9 @@ describe("Canvas artifact access propagated to local serving", () => {
       .toMatchObject({ status: 206, body: "file", range: "bytes 10-13/14" });
     expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=14-" } })))
       .toMatchObject({ status: 416, body: "", range: "bytes */14" });
+    // A range running past the end is cut to the end, as RFC 9110 says.
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=10-99" } })))
+      .toMatchObject({ status: 206, body: "file", length: "4", range: "bytes 10-13/14" });
     expect(await read(await fetchFrom(fileStub, {})))
       .toEqual({ status: 200, body: "Published file", length: "14", range: null, accepts: "bytes" });
     expect(await read(await fetchFrom(fileStub, { method: "HEAD" })))
@@ -386,6 +389,11 @@ describe("Canvas artifact access propagated to local serving", () => {
     // A static site's asset, "<h1>Website</h1>", answers a range the same way.
     expect(await read(await fetchFrom("quiet-blue-river-garden", { headers: { range: "bytes=4-10" } })))
       .toEqual({ status: 206, body: "Website", length: "7", range: "bytes 4-10/16", accepts: "bytes" });
+
+    // A range is no way around the audience: a private file refuses it whole.
+    await share("editors");
+    await sync(FILE);
+    expect((await fetchFrom(fileStub, { headers: { range: "bytes=0-8" } })).status).toBe(401);
   });
 
   it("sends an active site's page whole, with no stale length, when Rally injects into it", async () => {
@@ -777,6 +785,16 @@ describe("Canvas artifact access propagated to local serving", () => {
       createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER })
         .execute({ audience: "public", personAsked: true }, {} as never),
     ).rejects.toMatchObject({ code: "canvas_not_found" });
+    await sync(SITE_HOST, SITE);
+    expect((await visit("quiet-blue-river-garden")).status).toBe(401);
+  });
+
+  it("never lets a background agent override the audience a manager chose, whatever it claims", async () => {
+    await share("editors");
+    // An agent's conversation has no person in it, so its "person asked" is a default.
+    const agentCall = await createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER, defaultOnly: true })
+      .execute({ audience: "public", personAsked: true }, {} as never);
+    expect(agentCall.output).toMatchObject({ audience: "editors", changed: false });
     await sync(SITE_HOST, SITE);
     expect((await visit("quiet-blue-river-garden")).status).toBe(401);
   });

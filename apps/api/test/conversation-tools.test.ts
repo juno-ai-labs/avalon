@@ -399,7 +399,7 @@ describe("conversation_post", () => {
   it("posts from a run's worker as that run, not under the worker's own attempt", async () => {
     const ports = new Ports();
     const worker = loop({ parentKind: "automation", parentId: SIDEKICK_ID, substreamId: "worker" as never,
-      backgroundAgent: true, automationDelegation: { runId: RUN_ID, stopGeneration: 0 } });
+      backgroundAgent: true, backgroundAgentRootSubstreamId: RUN_ID, automationDelegation: { runId: RUN_ID, stopGeneration: 0 } });
     await tools(worker, ports).get("conversation_post")!.execute({ text: "Found it." }, context("r"));
     expect(ports.posted[0]?.post.runId).toBe(RUN_ID);
   });

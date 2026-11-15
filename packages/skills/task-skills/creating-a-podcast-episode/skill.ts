@@ -6,10 +6,8 @@ import type { HarnessSkill } from "../../types";
  * record a feed needs.
  *
  * Chapters go two places because players read them from two: ID3 chapter
- * frames inside the MP3, which every chapter-aware player reads, and the rows
- * the feed serves as a Podcasting 2.0 chapters file, which Apple Podcasts
- * reads from the feed on iOS 26.2 and later. Supplying them also stops Apple
- * generating its own for an episode of ten minutes or more.
+ * frames inside the MP3, and the rows the feed serves as a Podcasting 2.0
+ * chapters file (`publishing-a-feed`, `reference/apple-podcasts.md`).
  *
  * It covers only the episode. Where the episode goes (a feed, its database,
  * its page, who can open it) is `publishing-a-feed`'s, and this skill ends by
@@ -31,6 +29,17 @@ it, its chapters, its artwork, and the record a feed stores. Load
 \`rally_multimodal_generation\` for speech and images, and Terminal for
 ffmpeg and \`publish_resource\`; loading this skill activates neither. Where
 the episode is published is \`publishing-a-feed\`'s, not this skill's.
+
+Before recording, check that the sandbox has ffmpeg: run
+\`ffmpeg -version && ffprobe -version\`. If either is missing, install it with
+\`sudo -n apt-get install -y --no-install-recommends ffmpeg\`; if that fails
+too, stop and say the sandbox has no ffmpeg, before spending any speech
+calls.
+
+Name the episode once, at the start, with only letters, digits, hyphens and
+dots and dated so it never collides with another, such as
+\`2026-11-14-no-ai-slop\`. Its recording and its art are published under that
+name; a fixed name would make every episode replace the last.
 
 1. **Start from the whole source.** Read the full text, never a preview or
    snippet. Keep what identifies it: its title, its date, its link, and a
@@ -141,31 +150,31 @@ the episode is published is \`publishing-a-feed\`'s, not this skill's.
 
      \`\`\`
      ffmpeg -y -i episode.mp3 -i chapters.txt -map 0:a -map_metadata 1 -map_chapters 1 \\
-       -codec copy -id3v2_version 3 -write_id3v1 0 episode-chapters.mp3
-     ffprobe -v error -show_chapters -of compact episode-chapters.mp3
+       -codec copy -id3v2_version 3 -write_id3v1 0 2026-11-14-no-ai-slop.mp3
+     ffprobe -v error -show_chapters -of compact 2026-11-14-no-ai-slop.mp3
      \`\`\`
 
-     Confirm \`ffprobe\` lists every chapter with its title and start, then
-     publish \`episode-chapters.mp3\` as the episode's audio.
+     Write the episode's own name, not this example's. Confirm \`ffprobe\`
+     lists every chapter with its title and start. An episode with no
+     chapters is renamed from \`episode.mp3\` to its own name instead.
    - **Keep the list** of each chapter's start in seconds and its title,
      for the feed (step 12).
 
-9. **Make the episode's artwork.** Generate one square image about this
-   episode's subject. Ask for an opaque, full-bleed scene with **no text and
+9. **Make the episode's artwork.** Generate one image at size \`1024x1024\`
+   about this episode's subject. Ask for an opaque, full-bleed scene with **no text and
    no logos**: Apple shows episode art beside the show's own cover, and text
    in generated images is often misspelled. Check it with \`view_image\`.
    Then convert it in Terminal to Apple's size, with no transparency:
 
    \`\`\`
-   ffmpeg -y -i art.png -vf "scale=3000:3000:flags=lanczos,format=rgb24" -q:v 3 art.jpg
+   ffmpeg -y -i art.png -vf "scale=3000:3000:flags=lanczos,format=rgb24" -q:v 3 2026-11-14-no-ai-slop.jpg
    \`\`\`
 
-10. **Publish the recording and the artwork as files.** Use file names of
-   only letters, digits, hyphens and dots, dated so they never collide:
-   \`2026-11-14-no-ai-slop.mp3\` and \`2026-11-14-no-ai-slop.jpg\`. Publish
-   each with \`publish_resource\` into the feed's Canvas, and keep each
-   result's \`url\` and \`sizeBytes\`. If a result has no \`url\`, the file did
-   not land in a Canvas, and no podcast app can reach it.
+10. **Publish the recording and the artwork as files**, under the episode's
+    name, with \`publish_resource\` into the feed's Canvas. In a Sidekick
+    run, name that Canvas in the \`canvas\` argument. Keep each result's
+    \`url\` and \`sizeBytes\`; a result with no \`url\` is a file no podcast
+    app can reach (\`building-live-sites\`, Media, downloads and feeds).
 
 11. **Write the show notes**: two or three sentences on what the episode
     covers, a link to the source, and one sentence saying the audio is an AI
@@ -205,7 +214,7 @@ export const CREATING_A_PODCAST_EPISODE_SKILL: HarnessSkill = {
   description:
     "How to make one podcast episode from a text source: rewrite it as a script for the ear, record it with an AI voice in pieces, join and level it, add chapters, make its artwork, and hand the feed its record.",
   whenToUse:
-    "When a newsletter, article, report or other text should become an audio episode, whether one-off or for a podcast feed.",
+    "When a newsletter, article, report or other text should become an episode of a podcast.",
   body: CREATING_A_PODCAST_EPISODE_BODY,
   ownerPlugin: "rally:terminal",
 };

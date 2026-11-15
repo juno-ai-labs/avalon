@@ -583,8 +583,20 @@ export function createTerminalResourceBridge(
    */
   const withFileUrl = async <T extends { resourceId: string }>(workspaceId: string, published: T, inCanvas: boolean): Promise<T> => {
     if (!inCanvas) return published;
-    const hostnameStub = await ensureArtifactHostname(env, { workspaceId, artifactId: published.resourceId });
-    return { ...published, url: artifactOrigin(hostnameStub, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN) };
+    // The file has landed, so a reservation that cannot run must not turn the
+    // publish into a failure the model would retry; it is logged by name and
+    // the result goes back without a link, as a file outside a Canvas would.
+    try {
+      const hostnameStub = await ensureArtifactHostname(env, { workspaceId, artifactId: published.resourceId });
+      return { ...published, url: artifactOrigin(hostnameStub, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN) };
+    } catch (error) {
+      logWarn(env, "canvas_file_hostname_failed", {
+        workspace_id: workspaceId, resource_id: published.resourceId,
+        error_code: error instanceof Error && isCodeShaped(error.message) ? error.message
+          : codeShaped(error instanceof Error ? error.name : typeof error),
+      });
+      return published;
+    }
   };
   const bridge: TerminalResourceBridge = {
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {

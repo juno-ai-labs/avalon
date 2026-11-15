@@ -1218,6 +1218,16 @@ describe("a Canvas's artifacts", () => {
     // A version of its artifact, noted as run #3's publish notes it.
     const { resourceId } = await publish(canvasId, "digest.md", "# Digest");
     expect(await lastWrittenBy()).toBeNull();
+    // A worker run #3 started publishes where run #3 does, and notes as run #3,
+    // not as a run of its own that would make a second Canvas.
+    const worker = { ...run, substreamId: asSubstreamId(crypto.randomUUID()), backgroundAgent: true,
+      backgroundAgentRootSubstreamId: runIds[2]!, automationDelegation: { runId: runIds[2]!, stopGeneration: 0 } };
+    expect(await resolveTerminalPublicationHome(TEST_ENV, worker, { title: "Digest" })).toEqual(home);
+    await canvasArtifactNoter(TEST_ENV, worker)!(home, resourceId);
+    expect(await lastWrittenBy()).toEqual({ sidekickId, runId: runIds[2], runNumber: 3, sidekickName: "Weekly digest" });
+    // An agent the wizard started publishes nowhere, as the wizard.
+    expect(await resolveTerminalPublicationHome(TEST_ENV, { ...run, substreamId: asSubstreamId(crypto.randomUUID()),
+      backgroundAgent: true, backgroundAgentRootSubstreamId: "0" }, { title: "Digest" })).toBeNull();
     await canvasArtifactNoter(TEST_ENV, run)!(home, resourceId);
     expect(await lastWrittenBy()).toEqual({ sidekickId, runId: runIds[2], runNumber: 3, sidekickName: "Weekly digest" });
     // A deleted Sidekick's run is no run to open.
