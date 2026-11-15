@@ -7,6 +7,7 @@ import { loadSavedPins, savePins } from './src/saved-pins';
 import { requestArtifactAccess } from './src/artifact-access';
 import { deployedWebBuild } from './src/web-build';
 import { Dashboard } from './src/Dashboard';
+import { ArtifactPicker, ARTIFACT_PICKER_HEIGHT } from './src/ArtifactPicker';
 import { dashboardVisible } from './src/dashboard-visibility';
 import { HOME_RENDERER, recovery } from './src/recovery-order';
 import { useCrashReporting } from './src/crashes';
@@ -34,7 +35,7 @@ import { CanvasWebView, ArtifactView, ArtifactSessionPreparation, type CanvasWeb
 import { NativeTabIcon } from './src/NativeTabIcon';
 import { allocatePinSlots } from './src/pin-routes';
 import { Sidebar } from './src/Sidebar';
-import { mobileContentReady, mobileUrl, trustedArtifact, VISIBLE_PIN_COUNT, type CanvasSummary, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot, type PreparedCanvas } from './src/protocol';
+import { mobileContentReady, mobileUrl, trustedArtifact, VISIBLE_PIN_COUNT, type CanvasSummary, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot, type PreparedArtifact, type PreparedCanvas } from './src/protocol';
 import { useTheme } from './src/theme';
 
 const APP_URL = process.env.EXPO_PUBLIC_RALLY_APP_URL || 'https://app.rallywith.ai';
@@ -79,9 +80,13 @@ const SessionContext = createContext<Session | null>(null);
 const CanvasRoutesContext = createContext<Record<string, string | null>>({});
 type StageFrame = { x: number; y: number; width: number; height: number };
 /** How a pinned tab tells the PinStage where its frame is and whether it is in front. */
-const PinStageContext = createContext<{ frame: (canvasId: string, frame: StageFrame) => void; front: (canvasId: string, focused: boolean) => void }>({
-  frame: () => undefined, front: () => undefined,
-});
+const PinStageContext = createContext<{
+  frame: (canvasId: string, frame: StageFrame) => void;
+  front: (canvasId: string, focused: boolean) => void;
+  /** Hand a pin to the browser renderer at an artifact the native view cannot show (a plain file). */
+  browser: (canvasId: string, resourceId: string) => void;
+  browserPins: Record<string, string>;
+}>({ frame: () => undefined, front: () => undefined, browser: () => undefined, browserPins: {} });
 function useSession() {
   const session = useContext(SessionContext);
   if (!session) throw new Error('Canvas session provider is missing');
@@ -204,13 +209,16 @@ function CanvasTabs() {
   const tabs = ['Home', ...pins];
   const [stageFrames, setStageFrames] = useState<Record<string, StageFrame>>({});
   const [frontPin, setFrontPin] = useState<string | null>(null);
+  const [browserPins, setBrowserPins] = useState<Record<string, string>>({});
   const stage = useMemo(() => ({
+    browserPins,
+    browser: (canvasId: string, resourceId: string) => setBrowserPins((pins) => ({ ...pins, [canvasId]: resourceId })),
     frame: (canvasId: string, frame: StageFrame) => setStageFrames((frames) => {
       const known = frames[canvasId];
       return known && known.x === frame.x && known.y === frame.y && known.width === frame.width && known.height === frame.height ? frames : { ...frames, [canvasId]: frame };
     }),
     front: (canvasId: string, focused: boolean) => setFrontPin((front) => focused ? canvasId : front === canvasId ? null : front),
-  }), []);
+  }), [browserPins]);
   return <PinStageContext value={stage}><View style={styles.fill}>
     {Object.values(prepared.canvases).map((canvas) => <PrepareArtifactSession key={`${scope}:${canvas.canvasId}:${canvas.resourceId}`} canvas={canvas} scope={scope} />)}
     {tabs.map((id) => <TabIconAsset key={id} id={id} canvas={directory?.canvases.find((canvas) => canvas.id === id)} save={saveImage} />)}
@@ -230,7 +238,7 @@ function CanvasTabs() {
       options={{ title: id ? directory?.canvases.find((canvas) => canvas.id === id)?.title || 'Canvas' : '', tabBarItemHidden: !id }}
     />)}
   </Tabs.Navigator></CanvasRoutesContext>
-    <PinStage canvases={prepared.canvases} frames={stageFrames} front={frontPin} />
+    <PinStage canvases={prepared.canvases} frames={stageFrames} front={frontPin} handedOff={browserPins} />
   </View></PinStageContext>;
 }
 
@@ -243,7 +251,7 @@ function CanvasTabs() {
  * and the rest stay attached at zero opacity with touches and accessibility
  * off. Hidden pins recover after the screen in front (`recovery-order.ts`).
  */
-function PinStage({ canvases, frames, front }: { canvases: Record<string, PreparedCanvas>; frames: Record<string, StageFrame>; front: string | null }) {
+function PinStage({ canvases, frames, front, handedOff }: { canvases: Record<string, PreparedCanvas>; frames: Record<string, StageFrame>; front: string | null; handedOff: Record<string, string> }) {
   const root = useRef<ComponentRef<typeof View>>(null);
   const [origin, setOrigin] = useState({ x: 0, y: 0 });
   // Start loading after the first frame, so the dashboard draws first.
@@ -254,7 +262,7 @@ function PinStage({ canvases, frames, front }: { canvases: Record<string, Prepar
   const fallback = Object.values(frames)[0] ?? { x: 0, y: 0, width, height };
   return <View ref={root} collapsable={false} pointerEvents="box-none" style={StyleSheet.absoluteFill}
     onLayout={() => root.current?.measureInWindow((x, y) => setOrigin((known) => known.x === x && known.y === y ? known : { x, y }))}>
-    {started && Object.values(canvases).map((canvas) => <StagedPin key={canvas.canvasId} canvas={canvas}
+    {started && Object.values(canvases).filter((canvas) => !handedOff[canvas.canvasId]).map((canvas) => <StagedPin key={canvas.canvasId} canvas={canvas}
       frame={frames[canvas.canvasId] ?? fallback} origin={origin} visible={front === canvas.canvasId} />)}
   </View>;
 }
@@ -263,7 +271,19 @@ function StagedPin({ canvas, frame, origin, visible }: { canvas: PreparedCanvas;
   const { prepared } = useSession();
   const { colors } = useTheme();
   const headerHeight = useHeaderHeight();
-  const { access, failed, attempt, retry } = usePreparedSiteAccess(canvas, prepared.sessions, prepared.open, ARTIFACT_DOMAIN);
+  const stage = useContext(PinStageContext);
+  // A canvas with several artifacts opens its preferred site, as the browser
+  // host would; its picker switches sites natively and hands a plain file,
+  // which needs the browser inspector, to the browser renderer.
+  const [selected, setSelected] = useState<string | null>(null);
+  const chosen = canvas.artifacts?.find((artifact) => artifact.resourceId === selected && artifact.kind === 'site');
+  const shown = useMemo(() => chosen ? { ...canvas, resourceId: chosen.resourceId, version: chosen.version } : canvas, [canvas, chosen]);
+  const picker = (canvas.artifacts?.length ?? 0) > 1;
+  const choose = useCallback((artifact: PreparedArtifact) => {
+    if (artifact.kind === 'site') setSelected(artifact.resourceId === canvas.resourceId ? null : artifact.resourceId);
+    else stage.browser(canvas.canvasId, artifact.resourceId);
+  }, [canvas.canvasId, canvas.resourceId, stage]);
+  const { access, failed, attempt, retry } = usePreparedSiteAccess(shown, prepared.sessions, prepared.open, ARTIFACT_DOMAIN);
   // A tap on a pin already drawn costs one frame; one still loading is timed
   // from the tap to its first presentation.
   const presented = useRef(false);
@@ -284,8 +304,11 @@ function StagedPin({ canvas, frame, origin, visible }: { canvas: PreparedCanvas;
   return <View collapsable={false} pointerEvents={visible ? 'auto' : 'none'}
     accessibilityElementsHidden={!visible} importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
     style={{ position: 'absolute', left: frame.x - origin.x, top: frame.y - origin.y, width: frame.width, height: frame.height, opacity: visible ? 1 : 0, backgroundColor: colors.background }}>
-    {access && <ArtifactView appUrl={APP_URL} key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={headerHeight + 12} focused={visible} onRetry={retry} onPresented={onPresented} />}
-    {(!access || failed) && visible && <Loading failed={failed} retry={retry} />}
+    <View style={[StyleSheet.absoluteFill, picker && { top: headerHeight + ARTIFACT_PICKER_HEIGHT }]}>
+      {access && <ArtifactView appUrl={APP_URL} key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={picker ? 0 : headerHeight + 12} focused={visible} onRetry={retry} onPresented={onPresented} />}
+      {(!access || failed) && visible && <Loading failed={failed} retry={retry} />}
+    </View>
+    {picker && <ArtifactPicker artifacts={canvas.artifacts!} selected={shown.resourceId} onSelect={choose} top={headerHeight} />}
   </View>;
 }
 
@@ -357,7 +380,7 @@ function useChatNavigation(navigation: NativeBottomTabScreenProps<ParamListBase>
   return { openChat, closeChat, chatReturn };
 }
 
-function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContentReady }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string; onContentReady?: () => void }) {
+function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactId, onContentReady }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string; artifactId?: string; onContentReady?: () => void }) {
   const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild, shownDirectory } = useSession();
   const { colors } = useTheme();
   const canvasId = assignedCanvasId ?? route.name;
@@ -380,7 +403,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
     if (home) return HOME_URL;
     if (!shownDirectory) return START_URL;
     const initial = new URL(mobileUrl(APP_URL, shownDirectory.workspacePath));
-    initial.hash = `/canvases/${encodeURIComponent(canvasId)}?tab=1`;
+    initial.hash = `/canvases/${encodeURIComponent(canvasId)}?tab=1${artifactId ? `&artifact=${encodeURIComponent(artifactId)}` : ''}`;
     return initial.href;
   });
   const [snapshot, setSnapshot] = useState<MobileSnapshot | null>(null);
@@ -576,7 +599,9 @@ function PinnedCanvasRoute(props: NativeBottomTabScreenProps<ParamListBase> & { 
   // artifact or conversation the person has already started using.
   const [browserShown, setBrowserShown] = useState(false);
   const keepBrowser = useCallback(() => setBrowserShown(true), []);
-  return !browserShown && canvas ? <PreparedSiteScreen {...props} canvas={canvas} /> : <CanvasScreen {...props} onContentReady={keepBrowser} />;
+  const handedOff = useContext(PinStageContext).browserPins[props.canvasId ?? props.route.name];
+  return !browserShown && !handedOff && canvas ? <PreparedSiteScreen {...props} canvas={canvas} />
+    : <CanvasScreen {...props} artifactId={handedOff} onContentReady={keepBrowser} />;
 }
 
 /** A hosted pin uses Home's existing API/socket session and opens its actual URL.

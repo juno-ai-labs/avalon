@@ -89,7 +89,15 @@ export function trustedArtifact(access: NativeArtifact, domain: string): boolean
   } catch { return false; }
 }
 
-export const PreparedCanvasSchema = z.object({ canvasId: z.string(), resourceId: z.string(), version: z.number().int().positive(), title: z.string() });
+export const PreparedArtifactSchema = z.object({ resourceId: z.string(), title: z.string(), version: z.number().int().positive(), kind: z.enum(['file', 'site', 'archive']) });
+export type PreparedArtifact = z.infer<typeof PreparedArtifactSchema>;
+/** A pin's preferred site. `artifacts`, every artifact of a canvas with more than
+ * one, is sent only to a shell that declares {@link ARTIFACT_PICKER_CAPABILITY}. */
+export const PreparedCanvasSchema = z.object({ canvasId: z.string(), resourceId: z.string(), version: z.number().int().positive(), title: z.string(), artifacts: z.array(PreparedArtifactSchema).optional() });
+/** The native shell draws a pin's artifact picker. An older shell, which would
+ * show only the preferred site, never declares it, so it is never sent the list. */
+export const ARTIFACT_PICKER_CAPABILITY = 'artifact-picker';
+export const MOBILE_CAPABILITIES_GLOBAL = '__RALLY_MOBILE_CAPABILITIES__';
 export type PreparedCanvas = z.infer<typeof PreparedCanvasSchema>;
 
 /** A web build is named by its entry script, whose hash changes with any chunk it loads. */
