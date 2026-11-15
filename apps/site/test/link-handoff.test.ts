@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The page's own markup, so the test reads what the built page shows.
 // Vitest runs the site's suite from `apps/site`; jsdom gives `import.meta.url` no file scheme.
@@ -9,10 +9,19 @@ const page = readFileSync(join(process.cwd(), 'app/open/index.html'), 'utf8');
 const body = /<body>([\s\S]*)<\/body>/u.exec(page)![1]!.replace(/<script[\s\S]*?<\/script>/gu, '');
 
 beforeEach(() => {
+  // On a Mac the page schedules the app's launch 120ms after it loads. Each test
+  // is done long before then, so on a real clock the timer outlived the file and,
+  // under a loaded full run, fired after jsdom was torn down. None of these tests
+  // is about the launch itself; the fake clock drops it with the test.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   vi.resetModules();
   // Telemetry and the name lookup are network; neither decides what is shown.
   vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })));
   document.body.innerHTML = body;
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 const visible = (selector: string): boolean => !document.querySelector<HTMLElement>(selector)!.hidden;
