@@ -1,6 +1,6 @@
 import { CanvasIcon } from './CanvasIcon';
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
-import { AccessibilityInfo, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { AccessibilityInfo, Animated, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { movePin, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from './protocol';
@@ -22,6 +22,8 @@ interface Bounds { x: number; y: number; width: number; height: number }
 
 const ROW_HEIGHT = 52;
 const AUTO_SCROLL_ROWS_PER_SECOND = 8;
+const OPEN_MS = 280;
+const CLOSE_MS = 220;
 export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -47,6 +49,31 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
       || (previous?.target?.section === 'pins' ? previous.target.index : null) !== (value?.target?.section === 'pins' ? value.target.index : null)) setDrag(value);
   };
   const dragging = drag !== null;
+  const drawerWidth = Math.min(width - insets.right - 44, 336 + insets.left);
+  // The Modal stays up while the drawer slides out, then goes. It presents
+  // with no animation of its own; the drawer and scrim animate inside it.
+  const [mounted, setMounted] = useState(visible);
+  const mountedRef = useRef(mounted);
+  mountedRef.current = mounted;
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const progress = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => subscription.remove();
+  }, []);
+  const animateOpen = () => Animated.timing(progress, { toValue: 1, duration: OPEN_MS, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  useEffect(() => {
+    // A first open waits for the Modal to present (onShow) before sliding in.
+    if (visible) { if (mountedRef.current) animateOpen(); else setMounted(true); return; }
+    if (!mountedRef.current) return;
+    Animated.timing(progress, { toValue: 0, duration: CLOSE_MS, easing: Easing.in(Easing.cubic), useNativeDriver: true })
+      .start(({ finished }) => { if (finished && !visibleRef.current) setMounted(false); });
+  }, [visible]);
+  // Reduce Motion fades the drawer in place instead of sliding it.
+  const drawerMotion = reduceMotion ? { opacity: progress } : { transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-drawerWidth, 0] }) }] };
   const pinKey = JSON.stringify(snapshot.pins);
   useEffect(() => { dragRef.current = null; setDrag(null); }, [visible, snapshot.userId, snapshot.workspaceId, pinKey]);
   const resetScroll = () => {
@@ -137,10 +164,12 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
     style={({ pressed }) => [styles.control, { opacity: disabled ? 0.35 : pressed ? 0.6 : 1 }]}>
     <Ionicons name={name} size={20} color={colors.muted} />
   </Pressable>;
-  return <Modal transparent visible={visible} animationType="fade" onRequestClose={close} onShow={() => { resetScroll(); measureViewport(); }}>
-    <View style={[styles.overlay, { backgroundColor: colors.scrim }]}>
-      <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close sidebar" accessibilityRole="button" onPress={close} />
-      <View accessibilityViewIsModal style={[styles.drawer, { width: Math.min(width - insets.right - 44, 336 + insets.left), paddingLeft: 14 + insets.left, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12, backgroundColor: colors.sidebar }]}>
+  return <Modal transparent visible={mounted} animationType="none" onRequestClose={close} onShow={() => { resetScroll(); measureViewport(); if (visibleRef.current) animateOpen(); }}>
+    <View style={styles.overlay}>
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: colors.scrim, opacity: progress }]}>
+        <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close sidebar" accessibilityRole="button" onPress={close} />
+      </Animated.View>
+      <Animated.View accessibilityViewIsModal style={[styles.drawer, drawerMotion, { width: drawerWidth, paddingLeft: 14 + insets.left, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12, backgroundColor: colors.sidebar }]}>
         <View style={styles.heading}><Text style={[styles.brand, { color: colors.text }]}>Rally</Text>{iconButton('menu-outline', 'Close sidebar', close)}</View>
         <View ref={viewport} style={{ flex: 1 }} onLayout={() => measureViewport()}>
         <ScrollView ref={scroll} scrollEnabled={!dragging} onScroll={({ nativeEvent }) => { scrollY.current = nativeEvent.contentOffset.y; }} scrollEventThrottle={16}
@@ -194,7 +223,7 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
           {diagnostics && iconButton('settings-outline', 'Settings and diagnostics', () => { close(); diagnostics(); })}
           {iconButton('log-out-outline', 'Sign out', () => action({ type: 'sign-out' }, true))}
         </View>
-      </View>
+      </Animated.View>
       {drag && <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.row, { position: 'absolute', left: viewportBounds.current.x, top: 0, transform: [{ translateY: dragY }], width: viewportBounds.current.width, paddingHorizontal: 12, gap: 12, backgroundColor: colors.surface, boxShadow: '0 5px 18px rgba(0, 0, 0, 0.18)' }]}>
         <CanvasIcon canvas={snapshot.canvases.find((canvas) => canvas.id === drag.id)} size={21} /><Text numberOfLines={1} style={[styles.title, { color: colors.text }]}>{titleFor(drag.id)}</Text>
       </Animated.View>}
