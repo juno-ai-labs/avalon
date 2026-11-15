@@ -126,8 +126,10 @@ same px on desktop and grows with the text under touch.
   value under every `data-theme`.
 - **Touch targets are 44pt.** On a touch screen every `.icon-button` and Send
   answer a `sys.size.touch.target` square centred on them; `::before` on an
-  icon button is reserved for that. Controls in a group keep
-  `sys.size.touch.gap` apart so no two squares overlap.
+  icon button is reserved for that. An icon button beside another grows only
+  vertically, since a later button's square would otherwise cover the earlier
+  one's visible face; a group that wants full squares keeps
+  `sys.size.touch.gap` between its controls, as the composer does.
 
 - **There is one design and exactly two resolved appearances.** Adding a named
   theme family would restore UI and state the product no longer supports.
