@@ -35,6 +35,13 @@ generates. Storage names did not change: a Canvas id is a `workstream` id
 `automation`, and the conversation Durable Object, renamed `AgentLoopDO`,
 keeps its `SUBSTREAM_AGENTS` binding and `workstream:…:substream:…` ids.
 
+A **Live artifact** became a **Reactive artifact**, and a **Live site** a
+**Reactive site**: Rally updates them from incoming events as they happen, not
+on a schedule, and "live" did not say that. Stable ids kept the old word: the
+`building-live-sites` skill name (saved Sidekick instructions load it by name),
+the site's `live-*` CSS classes and carousel files, shipped migration
+descriptions, and frozen PRDs.
+
 ## How we build
 
 **We design using a platform mindset**. We build simple & generic re-usable building blocks that are combined into complex and emergent behavior. For example: Lego Blocks are simple in that they have a set number of modular sizes but these simple shapes can be combined to build anything as they are modular.

@@ -6,7 +6,7 @@ import { useShellCapabilities } from './collaboration-session';
 import { desktopBridge } from './platform';
 
 /**
- * Everything the live-artifact detail needs, or `undefined`: one builder for
+ * Everything the reactive-artifact detail needs, or `undefined`: one builder for
  * every surface that opens an artifact panel, a thread's and a Channel's.
  *
  * Always on: a Canvas is built on these surfaces, so there is no flag that

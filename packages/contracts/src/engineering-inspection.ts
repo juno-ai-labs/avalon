@@ -201,7 +201,7 @@ export const EngineeringSidekickSchema = deferredZodSchema(() => z.strictObject(
 export type EngineeringSidekick = z.infer<typeof EngineeringSidekickSchema>;
 
 /**
- * One live web artifact as its workspace's registry holds it.
+ * One reactive web artifact as its workspace's registry holds it.
  *
  * `stateful` is the artifact's own shape, not this object's: a stateful
  * artifact keeps its data in a Durable Object facet with its own SQLite

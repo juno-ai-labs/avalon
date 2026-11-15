@@ -1,5 +1,5 @@
 /**
- * Allocate and materialize one live artifact's public hostname stub.
+ * Allocate and materialize one reactive artifact's public hostname stub.
  *
  * The dedicated platform D1 row is both collision authority and serving index.
  * It contains no product or user data, so the isolated serving Worker can read

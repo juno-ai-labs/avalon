@@ -335,7 +335,7 @@ levels; reduced motion turns that off.
   and detached artifact windows): the root offers Download for available files,
   Rename and Copy link as tiles, plus More when archiving is available.
   Secondary action rows sit above Versions.
-  Live sites also offer Open in browser as a top-row tile; their copy tile is
+  Reactive sites also offer Open in browser as a top-row tile; their copy tile is
   **Copy public link**, copying its stable public URL rather than its Rally
   navigation address. Both copy actions report success or failure after the
   menu closes. The main menu rows hold **Pinned in my sidebar**,
@@ -395,13 +395,13 @@ unfolded, centred layout rather than from where things sit, so folding or
 moving the pill never undoes the decision; read live, the distance would grow
 as soon as the row folded and the header would flip back.
 
-A detail's own actions (a live site's Stored data, New window, Copy link and
+A detail's own actions (a reactive site's Stored data, New window, Copy link and
 Open in browser) reach the header through `useDetailHeaderActions`, as data.
 The rail places opening and copy actions in the menu's main tiles or rows,
 including Stored data for a stateful site. Viewing controls such as Comment
 mode stay in the header beside Expand and Close.
 `TitlePillHeader` and `TitlePillClose` take a `tooltipSide` for every label in
-the header. The rail sets it to `left` over a live site, whose composited page
+the header. The rail sets it to `left` over a reactive site, whose composited page
 would cover a label hanging down; upward does not fit at the window's top.
 
 ### Web links
@@ -741,7 +741,7 @@ controls.
 ### 2026-10-19 — One artifact menu across panels and detached windows
 
 **What changed:** Artifacts show pinning and Open in a new window as rows
-in the main title menu, above Versions, and Archive inside More. Live sites offer Open in browser
+in the main title menu, above Versions, and Archive inside More. Reactive sites offer Open in browser
 as a main tile and Stored data as a pop-out level above Versions. Public-link copying moves into
 its root tile, replacing the internal-link tile; the header keeps viewing
 controls. The shared action, navigation, and switch row styles use one icon

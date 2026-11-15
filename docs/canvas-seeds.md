@@ -54,7 +54,7 @@ the creator's name, and the words stay in that Chat for good.
 Canvas's sandbox, and a person's publish is refused an `index.js`. A seed's
 files are Rally's own, so `publishSeedSite` hands them to
 `publishSiteVersion`, the function every site publish goes through
-([`live-web-artifacts.md`](live-web-artifacts.md#publishing)). Its identity is
+([`reactive-web-artifacts.md`](reactive-web-artifacts.md#publishing)). Its identity is
 `terminal:<canvasId>:<path>`, the one Rally's publish of that path from this
 Chat computes, so Rally's first revision is version 2 of this artifact. Its
 first version is authored as `system`, because an `agent` version must name
@@ -136,7 +136,7 @@ step depends on either except step 3's tick.
 This module owns what a seed is, the job that asks for one, and the order of
 the copy. It adds no table, migration, Durable Object method or route. A
 Canvas and its audience are [`canvases.md`](canvases.md)'s, the site writes
-and serving are [`live-web-artifacts.md`](live-web-artifacts.md)'s, and
+and serving are [`reactive-web-artifacts.md`](reactive-web-artifacts.md)'s, and
 creating an Organization is
 [`new-user-onboarding.md`](new-user-onboarding.md)'s.
 
@@ -177,7 +177,7 @@ joins later a Canvas of their own.
   Steps 2, 3 and 4 were run that way when the request was added; the record
   is in [#1556](https://github.com/juno-ai-labs/avalon/pull/1556).
 - Not runnable here: Rally staying quiet between two people, because the
-  local stack signs in one person; and a live site inside the artifact panel.
+  local stack signs in one person; and a reactive site inside the artifact panel.
 
 ## Open questions
 

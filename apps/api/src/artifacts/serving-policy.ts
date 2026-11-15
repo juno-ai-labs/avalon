@@ -8,7 +8,7 @@
  * fenced by CSP, the request is fenced by fetch metadata, and the module is
  * fenced by the loader's own capability model.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import {
   ARTIFACT_RESERVED_PREFIX,

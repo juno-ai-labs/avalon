@@ -19,7 +19,7 @@
  * deliberate exception, `single_file_directory`, and the reason is in
  * {@link resolveDirectoryPublish}.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import {
   ARTIFACT_SERVER_ENTRY,
@@ -200,7 +200,7 @@ export function bundleArchive(files: readonly { path: string; bytes: Uint8Array 
 }
 
 /**
- * A republish is never allowed to silently downgrade a live site to an archive.
+ * A republish is never allowed to silently downgrade a reactive site to an archive.
  *
  * Kind transitions across republishes of one path are asymmetric by rule:
  * archive→site upgrades freely, because a folder that grew an entry file is
@@ -216,7 +216,7 @@ export function assertKindTransitionAllowed(
   if (previous !== "site" || next === "site") return;
   throw new TerminalToolError(
     "site_entry_removed",
-    `This path serves a live site and the republish has no ${ARTIFACT_SERVER_ENTRY} or ${ARTIFACT_STATIC_ENTRY} at its root. Restore an entry file, or publish the files under a different path.`,
+    `This path serves a reactive site and the republish has no ${ARTIFACT_SERVER_ENTRY} or ${ARTIFACT_STATIC_ENTRY} at its root. Restore an entry file, or publish the files under a different path.`,
     { field: "filePath", reason: "Restore the site entry file, or publish under a different path." },
   );
 }
