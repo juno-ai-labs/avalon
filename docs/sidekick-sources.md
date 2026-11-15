@@ -39,6 +39,7 @@ notice are.
 | `apps/api/src/services/semantic-trigger-admission.ts` | The delivery: asks, judges the source's condition and the trigger's, admits with both verdicts. |
 | `apps/api/src/services/sidekick-source-service.ts`, `apps/api/src/routes/automations.ts` | The routes a signed-in person and an agent use. |
 | `apps/api/src/services/sidekick-source-tools.ts`, `apps/api/src/services/integrations.ts` (`asksForSources`, `builtInSkillsFor`) | The agent's tools (list, ask, and try a filter), which turns are offered them, and which turns list the skill. |
+| `apps/api/src/services/wizard-canvas-cards.ts` | `wizardTurnCanvasId` and `postWizardCard`: the card a wizard turn a Canvas's Chat started posts into that Chat. |
 | `packages/agent-harness/src/platform-skills/filtered-trigger-skill.ts` | `setting-up-a-filtered-trigger`, the wizard's procedure. |
 | `apps/api/src/services/sidekick-event-content.ts`, `packages/connectors/src/types.ts` (`readActivityContent`) | The host's read of what an admitted event is about, and the run's opening with it. |
 
@@ -188,7 +189,27 @@ A request names the conversation it was asked from (`place`), and its card is
 drawn there for everyone who can open that conversation: they see who was
 asked, for what, and where it stands. Only the person asked can act on it.
 An agent's ask takes its place from the loop, never from a tool argument: a
-Canvas's Chat or a Sidekick's shared conversation.
+Canvas's Chat or a Sidekick's shared conversation. A wizard turn that a
+Canvas's Chat started by messaging the wizard (`wizardTurnCanvasId`) asks
+from that Chat: the place is the Canvas, and besides its own block in the
+wizard's conversation the tool posts a Sidekick message into the Chat whose
+`automation_activation` carries `sourceRequests: { requestIds }`
+(`postWizardCard`, keyed `sidekick-source-card:<receipt>`). The client draws
+the same card under that post. Test, in
+`apps/api/test-workers/conversation-tools.test.ts`: "is drawn in the Chat
+whose message started the wizard's turn, once per receipt".
+
+The same turn's questions are drawn there too: `request_elicitation` posts
+`question: { elicitationId }` (keyed `sidekick-question-card:<id>`), and the
+client reads and answers the question at `/sidekicks/:id/questions/:elicitationId`,
+which reach the Sidekick's shared conversation. There any manager may read and
+answer the wizard's questions without being able to open the Sidekick
+(`wizardQuestionAuthority`). A post is best-effort: the request or question
+already exists, so a refused or failed post is logged as
+`wizard_card_post_failed` with its code and never fails the tool. The question records the Canvas
+(`askedFromCanvasId` on its stored turn), and the turn its answer starts reads
+it back (`wizardCanvasId`), so a source request or a second question after the
+answer is drawn in the same Chat.
 
 ### Which connections a rule is registered on
 
@@ -348,24 +369,23 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
 | `sidekick_request_source` | Asks people for a source. It never waits: it returns each request as it stands, and the client draws its output as the card. |
 | `sidekick_test_source_condition` | Judges the acting person's own ten most recent events of one type against a draft filter, with the production judge. It reads nobody else's events. It answers `judged: false` with a reason, and no events, when the classifier is not configured or when that person's account has no recent events of that type: nothing to judge is not a filter that refuses everything. |
 
-- **Offered only to a turn a person is driving** (`asksForSources`): a
-  person's message in a Canvas's Chat or in the Sidekick's wizard. These
-  turns are not offered them:
+- **Offered to every loop except a Sidekick run** (`asksForSources`). Two
+  loops are refused, and only these two:
   - a Sidekick run (`automationRun`);
-  - a background agent (`backgroundAgent`);
-  - a run's delegation worker (`automationDelegation`);
-  - a wizard or Chat turn that another agent's message started
-    (`agentExchange`);
-  - the wizard's turn that Rally's review notice started
-    (`reason === "sidekick_review"`).
+  - a run's delegation worker (`automationDelegation`), which is part of the
+    run and reads the same event.
 
-  A wake-up in a Canvas's Chat or the wizard is offered them
-  ([`agent-loop-types.md`](agent-loop-types.md#the-loops) says why).
+  Everything else is offered them, whatever started its turn: a person's
+  message in a Canvas's Chat or the wizard, another agent's message (which
+  is how a Canvas's Chat hands the wizard a setup), Rally's review notice,
+  and a background agent of a Chat or of the wizard.
 
-  A run is handed the content of the event that started it, and a background
-  agent, another agent's message and a review notice are content in the same
-  way: nobody typed them. Asking in a delegate's name must not be something
-  content can bring about.
+  A run is refused because it is handed the content of the event that
+  started it, often a stranger's email, and that content must not be able to
+  ask in its delegate's name. The other loops can ask because an ask approves
+  nobody: every person asked, the requester included, still presses Approve
+  on words they can read. The worst an unwanted ask does is reach someone's
+  inbox.
 - **Asking never waits, and approves nobody.** `sidekick_request_source`
   returns each request `pending`, the acting person's own included: the
   model wrote the ask and its filter, and they have not read it until the
@@ -497,12 +517,12 @@ file is named.
   "signs each button for its own decision, so one cannot be edited into the
   other" and "refuses a link whose signature does not match any one of its
   fields, before reading anything".
-- **Only a turn a person is driving is offered the source tools and the
-  skill.** What a run, a background agent, another agent's message or a
-  review notice carries is content, and it must not be able to ask or
-  approve. Guard: `asksForSources` and `builtInSkillsFor`. Test, in
+- **A Sidekick run, and its delegation workers, are not offered the source
+  tools or the skill.** A run carries event content, and that content must
+  not be able to ask. Every other loop is offered both. Guard:
+  `asksForSources` and `builtInSkillsFor`. Test, in
   `apps/api/test/connector-tool-selection.test.ts`: "offers the source tools
-  to the wizard on a person's turn and to no run, agent's message or review".
+  to every loop but a Sidekick run and its workers".
   No test runs `builtInSkillsFor`; the skill's listing has no automated
   guard.
 - **Withdrawing needs no access.** A person ends their own source whatever
@@ -694,10 +714,10 @@ some Sidekicks stopped ([operations](#operations)).
   Organization's connections and the Canvases the Sidekick is attached to. It
   cannot use any person's connection and cannot write the Organization's
   memory ([`automation-lifecycle.md`](automation-lifecycle.md#who-a-run-acts-as)).
-- **The source tools and the skill go only to a turn a person is driving.** A
-  run, a background agent, a delegation worker, and a wizard or Chat turn
-  that another agent's message or Rally's review notice started cannot ask
-  for a source, so nothing they read can make them ask or approve.
+- **A Sidekick run cannot ask for a source, and neither can its delegation
+  workers.** Nothing a run reads can make it ask. Every other loop can ask,
+  including a wizard or Chat turn another agent's message started, a review
+  notice turn and a background agent; no loop can approve.
 - **A Sidekick run cannot change delegation, and neither can its background
   workers.** Each is offered `sidekick_delegates_list` and
   `sidekick_my_delegations_list` and not `sidekick_set_delegation`
@@ -784,6 +804,36 @@ one as it is resolved; the resolution becomes a changelog entry.
    Sidekick asked about from its own conversation.
 
 ## Changelog
+
+### 2026-11-14 — Only a Sidekick run is refused the source tools, and a Canvas's ask is drawn in it
+
+**What changed:** `asksForSources` refuses a Sidekick run and its delegation
+workers, and nothing else. Wizard and Chat turns another agent's message
+started, review-notice turns, and background agents now get the source tools
+and `setting-up-a-filtered-trigger`. When a Canvas's Chat started the wizard's
+turn, the request's place is that Canvas and its card is posted into the
+Chat, so the person who asked approves their own request where they asked;
+the wizard's questions on that turn are posted there too, and answered there.
+
+**Why:** The Canvas Chat prompt tells the Chat to hand a Sidekick's setup to
+the wizard and name the people and the filter. The wizard's turn was an
+agent-message turn, so it was refused the skill (`skill_not_available`) and
+the tools, and nobody was asked. In one Canvas a two-person email Sidekick
+was saved for its requester alone, with the second person's mailbox reported
+as impossible. On 2026-11-14 the owner reversed the 2026-11-11 rule: only
+runs are refused.
+
+**Considered and rejected:** Opening only the wizard's agent-message turns.
+The owner chose one rule: a run carries event content, and nothing else needs
+a guard, since an ask approves nobody. Leaving the card in the Sidekick's own
+conversation, where the requester is not reading and which a Canvas member
+who manages the Sidekick may not be able to open.
+
+**What a future change has to respect:** No loop approves. Each source is
+still one person's own press on the request (`decideSourceRequest`). A run
+reaches its wizard through `request_sidekick_change`, so content a run read
+can now lead the wizard to ask; the cost is an unwanted request, not a
+shared mailbox. A run's delegation worker counts as the run.
 
 ### 2026-11-10 — A source is its own record, apart from delegation
 

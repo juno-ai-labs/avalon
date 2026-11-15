@@ -28,7 +28,7 @@ holds. Archiving is not deleting. See
 [What Rally keeps](../11-privacy-and-security/03-what-rally-keeps.md#archiving-is-not-deleting).
 
 **Artifact.** A file Rally made for you in a Canvas: a document, a
-spreadsheet, a picture, a PDF, a voice recording, a zip archive or a live site.
+spreadsheet, a picture, a PDF, a voice recording, a zip archive or a reactive site.
 It shows in the panel on the right of the Canvas and keeps every version. See
 [Artifacts](../06-things-rally-makes/01-artifacts.md).
 
@@ -132,9 +132,7 @@ background agents. See
 
 ## L
 
-**Live site.** A web page or small app Rally builds and publishes at its own
-public address. Its card in the conversation is labelled **Site**. See
-[Live sites](../06-things-rally-makes/03-live-sites.md).
+**Live site.** The old name for a [Reactive site](#r).
 
 **Lockdown mode.** A setting on the Mac that protects your saved sign-in with
 your Mac's own keychain. See
@@ -205,9 +203,9 @@ plugin never gives Rally more permission than it already had. See
 
 **Project.** An old name for what later became a Channel. See [Canvas](#c).
 
-**Public link.** The web address of a live site. Anyone who has it can view
+**Public link.** The web address of a reactive site. Anyone who has it can view
 the latest version, so share it with care. See
-[Live sites](../06-things-rally-makes/03-live-sites.md).
+[Reactive sites](../06-things-rally-makes/03-reactive-sites.md).
 
 ## R
 
@@ -219,6 +217,10 @@ the latest version, so share it with care. See
 **Rally.** The app, and also the name of the AI agent that works inside it.
 "Open Rally" means the app; "ask Rally" means the agent. See
 [How Rally works](../04-working-with-rally/01-how-rally-works.md).
+
+**Reactive site.** A web page or small app Rally builds and publishes at its own
+public address. Its card in the conversation is labelled **Site**. See
+[Reactive sites](../06-things-rally-makes/03-reactive-sites.md).
 
 **Receipt.** The record Rally keeps of every action that changes something in
 another tool, so that a retried run never does the same thing twice. See

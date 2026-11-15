@@ -505,6 +505,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("answer_elicitation"),
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema,
     slackOrigin: SlackOriginContextSchema.optional() }),
+  productOperation({ operation: z.literal("read_wizard_question"), elicitationId: IdSchema }),
 ]);
 /**
  * The flow a product operation belongs to. An operation outside the three
@@ -1176,6 +1177,20 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * private helper it touches — which is what left a retired agent unreachable
    * after its first eviction.
    */
+  /**
+   * The Canvas a wizard question was asked from, for the turn its answer
+   * starts: an answer's input is keyed `elicitation-response:<id>`, and the
+   * question's own turn (`elicitation:<id>`) records `askedFromCanvasId` when a
+   * Canvas's Chat drew it. Nothing for any other input.
+   */
+  private answeredQuestionCanvas(clientMessageId: string | null): { wizardCanvasId?: string } {
+    const prefix = "elicitation-response:";
+    if (!clientMessageId?.startsWith(prefix)) return {};
+    const question = this.messages.messageByClientId({ clientMessageId: `elicitation:${clientMessageId.slice(prefix.length)}` });
+    const asked = z.object({ askedFromCanvasId: IdSchema }).safeParse(JSON.parse(question?.structured_content_json ?? "null"));
+    return asked.success ? { wizardCanvasId: asked.data.askedFromCanvasId } : {};
+  }
+
   private runtimeRecoveryAttempt(): Promise<void> {
     return this.storageReady.then(() => inDurableObjectPhase(
       this.env,
@@ -3328,6 +3343,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     // incremented revision before it can install its result.
     this.invalidatePreparedSocketSnapshots();
     try {
+      if (request.operation === "read_wizard_question") {
+        return jsonResponse({ elicitation: await this.product.readWizardQuestion(current, request.elicitationId) });
+      }
       if (request.operation === "search_links") {
         const root = await this.product.authorize(current);
         const links = request.links.map(({ turnId, linkId }) => ({ linkId,
@@ -4008,6 +4026,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
         ...(delegation ? { automationDelegation: delegation } : {}),
         ...(sharedSidekickConversation ? { sidekickWizard: true } : {}),
+        ...(sharedSidekickConversation ? this.answeredQuestionCanvas(pending.client_message_id) : {}),
         backgroundAgent: Boolean(background),
         ...(authorization.telemetryOperationId
           ? {

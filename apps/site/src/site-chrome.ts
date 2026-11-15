@@ -128,7 +128,7 @@ export function renderLlmsTxt(): string {
 ## Product
 
 - [Rally home](${ORIGIN}/): what Rally is, Canvases, Sidekicks, pricing, and technology
-- [Canvases](${ORIGIN}/canvases/): live artifacts, documents, spreadsheets, dashboards and sites that Rally keeps current from your connected tools and that a team works from together
+- [Canvases](${ORIGIN}/canvases/): reactive artifacts, documents, spreadsheets, dashboards and sites that Rally keeps current from your connected tools and that a team works from together
 - [Sidekicks](${ORIGIN}/sidekicks/): shared AI agents that run on a schedule or when something happens
 - [Help Center](${ORIGIN}/help/): the Rally manual, from installing Rally to running an Organization. Its own index of every page, each published as Markdown: ${ORIGIN}/help/llms.txt
 

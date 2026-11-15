@@ -9,6 +9,7 @@ import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueRe
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
 import {
+  ElicitationSchema,
   SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourcesResultSchema,
   type SidekickSourceRequestInput, type SidekickSourceRequestResult, type SidekickSourceRequestView, type SidekickSourcesResult,
 } from '@rally/contracts';
@@ -1268,6 +1269,27 @@ export class RallyApi {
     return result.requests;
   }
 
+  /**
+   * One of a Sidekick wizard's questions as it stands, for someone who manages
+   * the Sidekick: what its card in a Canvas's Chat reads.
+   */
+  async readSidekickQuestion(sidekickId: string, elicitationId: string, signal?: AbortSignal): Promise<ElicitationData> {
+    const result = await this.request(`/sidekicks/${encodeURIComponent(sidekickId)}/questions/${encodeURIComponent(elicitationId)}`, {
+      schema: z.object({ elicitation: ElicitationSchema }), signal,
+    });
+    return mapElicitation(result.elicitation);
+  }
+
+  /** Answer a Sidekick wizard's question from its card in a Canvas's Chat; `null` skips it. */
+  async answerSidekickQuestion(sidekickId: string, elicitationId: string, answer: string | string[] | null,
+    customResponse?: string): Promise<void> {
+    await this.request(`/sidekicks/${encodeURIComponent(sidekickId)}/questions/${encodeURIComponent(elicitationId)}/answer`, {
+      method: 'POST',
+      body: answer === null ? { skipped: true } : { answer, ...(customResponse ? { customResponse } : {}) },
+      schema: z.object({ elicitation: ElicitationSchema.nullable() }),
+    });
+  }
+
   async acceptAutomation(id: string): Promise<AutomationDetail> {
     const raw = await this.request(`/sidekicks/${encodeURIComponent(id)}/accept`, {
       method: 'POST',
@@ -1711,7 +1733,7 @@ export class RallyApi {
   }
 
   /**
-   * Mint this person's access to a live artifact.
+   * Mint this person's access to a reactive artifact.
    *
    * A POST because it creates a single-use code, and a GET would be
    * prefetchable and cacheable — both wrong for a credential. The `openUrl` it

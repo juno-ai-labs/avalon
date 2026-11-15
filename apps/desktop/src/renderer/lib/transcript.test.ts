@@ -429,6 +429,13 @@ describe('transcript messages', () => {
       state: 'needs_input', stepCount: 4, reply: 'Which status page gets the update?',
     });
 
+    // The wizard's post in a Canvas's Chat after it asked for sources names the requests its card draws.
+    expect(orderedTranscriptMessages(activationSnapshot({
+      ...parsed, sourceRequests: { requestIds: ['00000000-0000-7000-8000-0000000000cc'] },
+    }), 'workstream-one')[0]?.automationActivation?.sourceRequests).toEqual({
+      requestIds: ['00000000-0000-7000-8000-0000000000cc'],
+    });
+
     // Who asked for the run and its number ride beside the strict row, on the block.
     expect(orderedTranscriptMessages(activationSnapshot({
       ...parsed, run: { state: 'running', stepCount: 0, reply: null },

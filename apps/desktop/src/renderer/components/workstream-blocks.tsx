@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { Children, Fragment, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ButtonHTMLAttributes, type PropsWithChildren } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   citationFootnotes,
   citationScheme,
@@ -66,6 +67,8 @@ import {
 } from './connector-mentions';
 import { isUnrecognizedConnectorConnectionCard } from '../lib/connector-connection-card';
 import { sidekickSourceRequestCardFromToolEvent } from '../lib/sidekick-source-request-card';
+import { useCollaborationSession } from '../lib/collaboration-session';
+import { ApiError } from '../lib/api';
 import { SidekickSourceRequestCard } from './sidekick-sources';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
@@ -2514,6 +2517,50 @@ function WorkAccordionBlock({ disclosure, message }: {
   );
 }
 
+/**
+ * A Sidekick wizard's question, drawn in the Canvas's Chat whose message
+ * started the wizard's turn. The question lives in the Sidekick's shared
+ * conversation; this reads it from there and answers it there, so the same
+ * question is answered once wherever it is drawn. Anyone who manages the
+ * Sidekick may read and answer it (`docs/sidekick-sources.md`).
+ */
+function SidekickQuestionCard({ sidekickId, elicitationId, text }: { sidekickId: string; elicitationId: string; text: string }): React.JSX.Element {
+  const { api } = useCollaborationSession();
+  const queryClient = useQueryClient();
+  const queryKey = ['sidekick-question', sidekickId, elicitationId];
+  const query = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => api!.readSidekickQuestion(sidekickId, elicitationId, signal),
+    enabled: Boolean(api),
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
+  });
+  // Someone in the Canvas who does not manage the Sidekick reads the post's text, not a failure.
+  if (query.error instanceof ApiError && query.error.status === 403) return <AssistantMessageContent showCopy={false} text={text} />;
+  if (query.error) {
+    return <>
+      <AssistantMessageContent showCopy={false} text="This question could not be loaded. Try again in a moment, or answer it in the Sidekick's own conversation." />
+      <ErrorNotice automatic={false} detailsLabel="Details" occurrence={query.error} title="The question could not be loaded" />
+    </>;
+  }
+  // Until the question is read, the post's own text stands in for it, so the row is never empty.
+  if (!query.data) return <AssistantMessageContent showCopy={false} text={text} />;
+  // Once answered, the panel draws only the answer: keep the question above it, so the Chat still says what was asked.
+  return <>
+    {query.data.status !== 'open' && <AssistantMessageContent showCopy={false} text={query.data.prompt} />}
+    <ElicitationPanel
+    elicitation={query.data}
+    onAnswer={async (answer, customResponse) => {
+      try {
+        await api!.answerSidekickQuestion(sidekickId, elicitationId, answer, customResponse);
+      } finally {
+        await queryClient.invalidateQueries({ queryKey });
+      }
+    }}
+    />
+  </>;
+}
+
 export function ElicitationPanel({
   disclosure,
   elicitation,
@@ -3118,7 +3165,8 @@ export function MessageBlock({
         </div>
       ) : (
         <>
-          <AssistantMessageContent
+          {/* A question's post says what the panel below it already says: the text is for the Chat's agent. */}
+          {!message.automationActivation?.question && <AssistantMessageContent
             afterText={message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
               <MessageAttachments attachments={message.attachments} loadContent={loadAttachmentContent} onOpen={onOpenAttachment} />
             ) : null}
@@ -3128,8 +3176,17 @@ export function MessageBlock({
             streaming={message.streaming}
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
-          />
-
+          />}
+          {/* The wizard asked for sources on a turn this Chat started: the same card its own conversation draws. */}
+          {message.automationActivation?.sourceRequests && (
+            <SidekickSourceRequestCard card={{ sidekickId: message.automationActivation.automationId,
+              requestIds: message.automationActivation.sourceRequests.requestIds, asked: null }} />
+          )}
+          {/* The wizard asked a question on a turn this Chat started: answered here, it answers the wizard. */}
+          {message.automationActivation?.question && (
+            <SidekickQuestionCard elicitationId={message.automationActivation.question.elicitationId}
+              sidekickId={message.automationActivation.automationId} text={message.text ?? ''} />
+          )}
         </>
       )}
     </article>

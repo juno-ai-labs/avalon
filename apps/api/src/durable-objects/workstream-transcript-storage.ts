@@ -5078,6 +5078,7 @@ export class WorkstreamTranscriptStorage {
     // that is still the admission-time identity from one explicitly revoked or
     // re-added while the input waited for a safe boundary.
     const participantUserIds = admittedParticipantUserIds.filter((userId) => {
+      if (userId === authorUserId && !prepared.authorization.seatsAuthor) return false;
       const expectedEpoch = prepared.authorization.participantEpochs[userId];
       const currentEpoch = previous.get(userId)?.participant_epoch ?? null;
       return currentEpoch === expectedEpoch;
@@ -5562,6 +5563,11 @@ interface ParsedPendingInputMaterial {
     confirmedParticipantUserIds: string[];
     participantEpochs: Record<string, number | null>;
     elicitationId: string | null;
+    /**
+     * False for an answer to a Sidekick wizard's question from a manager who
+     * cannot open the Sidekick: answering is not reading, so it seats nobody.
+     */
+    seatsAuthor: boolean;
   };
   attachments: PendingInputAttachmentDescriptor[];
   mentions: PendingInputMentionDescriptor[];
@@ -5724,6 +5730,7 @@ function parsePendingInputMaterial(pending: PendingLoopInputRow): ParsedPendingI
       participantEpochs: Object.fromEntries(Object.entries(participantEpochs)
         .map(([userId, epoch]) => [userId, epoch === null ? null : Number(epoch)])),
       elicitationId,
+      seatsAuthor: authorization.seatsAuthor !== false,
     },
     attachments,
     mentions,

@@ -24,6 +24,61 @@ const BUILDING_LIVE_SITES_BODY = `Build a directory of files that Rally serves a
 for file editing, \`import_resource\` and \`publish_resource\`; loading this
 skill does not activate those tools.
 
+## Keep data from connected accounts live
+
+A site that shows records from connected accounts (mail, Slack, meeting notes,
+a spreadsheet, pull requests, a CRM) is out of date as soon as those accounts
+change. Build it to stay current, not as a snapshot:
+
+1. **Store the records in the site, not in a file.** Make it a stateful site
+   (**Stateful sites** below): the records are rows in its tables, and the
+   page reads them through its own API with the polling loop in item 8 of
+   that section. A row a Sidekick writes later then reaches every open page
+   at its next poll, with no republish.
+   **Seed the rows once, after publishing,** with \`write_artifact_data\`
+   from the Chat itself, since a background agent cannot write rows: one
+   upsert per call, a few rows per statement. Never seed in the
+   storage class or from a bundled data file: the class runs its setup on
+   every start, so a seed there would undo newer writes or bring back
+   deleted rows.
+2. **Keep source facts apart from people's edits.** Give each record a stable
+   key from its source: a message id, an email address, a document id.
+   Declare that key \`PRIMARY KEY\` or \`UNIQUE\` when you build the site: an
+   upsert needs it, and a Sidekick run cannot add a constraint later.
+   Columns the source fills (name, company, last contact, source link) are the
+   ones a refresh rewrites. Columns people edit on the page (status, notes,
+   next step) a refresh never touches. Write each refresh as an upsert on the
+   key that sets only the source columns, so it never undoes someone's edit.
+   Runs can finish out of order, so never let an older one win: keep dates
+   such as last contact with \`MAX(last_contact, excluded.last_contact)\`, and
+   give each row a \`source_updated_at\` column the upsert's \`WHERE\` compares,
+   so a row only changes when the incoming source is newer.
+3. **Offer a Sidekick to keep it current.** After publishing, offer once, in
+   one question, to create a Sidekick that updates the site. Name what would
+   start each run, chosen from the sources you read: each new email in a named
+   account, each new meeting note, each new message in a channel, or a daily
+   schedule for a source with no events. If the request already asks for the
+   site to stay up to date, skip the question and create it.
+4. **On yes, create the Sidekick from this Canvas.** Give its wizard what
+   **Configure a Sidekick to refresh an existing site** lists for a site that
+   stores its own data, plus the newer-source rule from step 2, the columns
+   runs must never write, the sources
+   and accounts to watch, and what makes a record belong (for example, "a
+   two-way conversation about piloting Rally"). Wait for the wizard's
+   confirmation before saying the Sidekick is set up.
+5. **Name the accounts you cannot reach.** A trigger on another person's
+   account needs that person: they connect the account if they have not, and
+   approve it as a source themselves. The wizard cannot send that request
+   from your handoff: only a turn a person is driving can ask for a source.
+   So tell the person to open the Sidekick and ask its wizard to request
+   each missing account, and say those accounts are not covered until the
+   request is sent and approved. Never present the site as covering an
+   account you could not read.
+
+A snapshot fits only data fixed at one time: a report as of today, a finished
+event's results, or a site the person asked to be a snapshot. In a Sidekick
+run no one can answer the offer: build the stateful site and skip step 3.
+
 ## Give an app semantic functionality
 
 When an app needs semantic work on a submission, build it as an active site and
@@ -94,8 +149,9 @@ Prefer attaching the site with the setup message using \`attachmentIds\` in
 it. Use \`sidekick_attach_resource({ sidekickId, resourceId })\` to add context
 without a message. Confirm that the wizard can import it.
 
-Load \`tracking-seen-or-done-items\` and save its shared-output claim procedure,
-keyed by site resource ID. Each refresh must hold that claim through import,
+For a site whose content is its files, load \`tracking-seen-or-done-items\` and
+save its shared-output claim procedure, keyed by site resource ID. A stateful
+site's row writes need no claim. Each file refresh must hold that claim through import,
 editing, verification and publication; release it when the run finishes.
 
 Save this sequence for each activation:
@@ -135,8 +191,9 @@ Report these outcomes separately:
 
 - **Site published:** The publication tool returned success.
 - **Sidekick activated:** You checked that the saved Sidekick is active.
-- **Refresh succeeded:** A Sidekick run read the source, updated and checked
-  the files, and confirmed publication. Setup alone does not establish this.
+- **Refresh succeeded:** A Sidekick run read the source and either updated
+  and checked the files and confirmed publication, or, for a stateful site,
+  had its row writes succeed. Setup alone does not establish this.
 
 ## Build and verify the site
 
@@ -155,7 +212,9 @@ have not. Ask its entry-privacy question only when that skill requires it.
      page calls? Also write **\`index.js\`** at the directory root. This
      makes the site **active**.
    - The request needs the site to **remember something between
-     visits** — a poll, sign-ups, anything visitors add to? Export a
+     visits** — a poll, sign-ups, anything visitors add to, or records
+     from connected accounts that keep changing (**Keep data from
+     connected accounts live** above)? Export a
      **storage class** from \`index.js\` instead of a default handler —
      the **Stateful sites** section below is the whole shape. Never
      add storage speculatively: a page that only computes gets no
@@ -306,10 +365,12 @@ have not. Ask its entry-privacy question only when that skill requires it.
    you expect to survive, no timers that outlive the response. Compute
    the response from the request and the published files, return it,
    and be done. If two viewers should see the same thing, it must come
-   from the published files — which is another way of saying: data the
-   page presents is a file in the directory.
+   from the published files or, on a stateful site, its database.
 
-5. **Ship data as files, read it through the asset binding.** Put the
+5. **Ship fixed data as files, read it through the asset binding.** Data
+   that will change after publishing belongs in a stateful site's rows
+   instead (**Keep data from connected accounts live** above); a file is
+   for data that stays as published. Put the
    dataset beside the page — \`signups.json\`, \`metrics.csv\` — and in an
    active site read it server-side:
 
@@ -324,8 +385,9 @@ have not. Ask its entry-privacy question only when that skill requires it.
    \`fetch()\` to anywhere outside the site throws; there is no way to
    call an external API or load a remote resource server-side. Do not
    write code paths that try. A request that genuinely needs outside
-   data means you fetch it *yourself, now, in the workspace* and
-   publish the result as a data file with the site. (An identified Rally
+   data means you fetch it *yourself, now, in the workspace*: publish it
+   as a data file when it will not change, or seed it as rows a Sidekick
+   keeps current when it will. (An identified Rally
    viewer arrives as trusted headers — see **Stateful sites** item 7;
    a stateless site may read them too.)
 
@@ -386,7 +448,7 @@ have not. Ask its entry-privacy question only when that skill requires it.
 
 ## Recreating a person's view
 
-A comment on a live site arrives as an annotation whose \`<location>\` holds
+A comment on a reactive site arrives as an annotation whose \`<location>\` holds
 the element's CSS path, the page path, and, when the person commented from a
 browser, a \`viewport\`: the window they were looking at, as CSS-pixel
 \`width\` and \`height\`, the page's \`scrollX\` and \`scrollY\`, the
@@ -453,6 +515,11 @@ HTML the annotation quotes and say the view could not be rebuilt.
 
 ## Anti-patterns
 
+- **A snapshot of data that keeps changing.** A CRM of who the team has
+  emailed, built from today's mail as a JSON file, is wrong by tomorrow
+  and nothing on the page says so. Do instead: store the records as rows,
+  poll for them, and offer a Sidekick that writes new ones (**Keep data
+  from connected accounts live**).
 - **State smuggled into module scope** (\`let hits = 0\` above the
   handler). It resets whenever the runtime feels like it and differs
   between instances. Do instead: derive everything from the request and
@@ -461,7 +528,8 @@ HTML the annotation quotes and say the view could not be rebuilt.
   place.
 - **\`localStorage\` as shared state.** It is per-viewer, per-browser —
   fine for one person's UI preference, never for anything two viewers
-  should both see. Do instead: shared content is a published file.
+  should both see. Do instead: shared content that stays fixed is a
+  published file; shared content that changes is a stateful site's rows.
 - **A misnamed entry.** \`app.js\` or \`main.html\` at the root publishes
   your directory as a downloadable archive, not a site. The publish
   result tells you what it made — read it; if it says archive where you
@@ -814,9 +882,9 @@ no module-level state, real statuses, nothing external.
 export const BUILDING_LIVE_SITES_SKILL: HarnessSkill = {
   name: "building-live-sites",
   description:
-    "How to build a live web page or small app governed by its Canvas artifact audience: choose static, active, or stateful, write its handler or storage class against injected bindings, and revise it in place.",
+    "How to build a reactive web page or small app governed by its Canvas artifact audience: choose static, active, or stateful, keep data from connected accounts current with a Sidekick, write its handler or storage class, and revise it in place.",
   whenToUse:
-    "When building or updating a page, dashboard, calculator, or small app someone will open, or configuring a Sidekick to refresh an existing site.",
+    "When building or updating a page, dashboard, tracker, calculator, or small app someone will open, or configuring a Sidekick to refresh an existing site.",
   body: BUILDING_LIVE_SITES_BODY,
   ownerPlugin: "rally:terminal",
   resources: [{ path: "reference/worked-examples.md", body: WORKED_EXAMPLES }],

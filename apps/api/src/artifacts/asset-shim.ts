@@ -18,7 +18,7 @@
  * pathname and resolves it against the published file list, so nothing here can
  * name a file the supervisor did not put in the stub's props.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import { artifactIsolateId } from "@rally/contracts";
 

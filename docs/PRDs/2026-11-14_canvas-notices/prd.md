@@ -270,10 +270,10 @@ None yet.
    rows behind `ATTACHED CANVASES` and the Sidekick's card, counted before
    the access filter `ATTACHED CANVASES` applies for a person's loop.
 10. **Registration is open to loops content can start.** A Sidekick source
-    request is offered only to turns a person drives, because it asks in a
-    delegate's name. Registration asks nothing of anyone and reaches only
-    people the Canvas already lists, who can mute it, so the owner allowed
-    background agents too. Runs still cannot register: a run is handed an
+    request is refused only to a run and its delegation workers, because an
+    ask approves nobody. Registration has no approval step, but it reaches
+    only people the Canvas already lists, who can mute it, so the owner
+    allowed background agents too. Runs still cannot register: a run is handed an
     event's content, and turning notices on changes the Canvas for everyone.
 11. **A background agent records what started its root.** A self-review's
     agents and a person's wizard turn's agents have the same root

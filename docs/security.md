@@ -427,12 +427,12 @@ Three more rules keep a source the person's own act
 ([`sidekick-sources.md`](sidekick-sources.md#security-and-trust-model)):
 
 - **Who may ask through an agent.** The three source tools and the
-  `setting-up-a-filtered-trigger` skill are offered only to a turn a person
-  is driving (`asksForSources`, `builtInSkillsFor` in `integrations.ts`). A
-  Sidekick run, a background agent, a run's delegation worker, and a wizard
-  or Chat turn that another agent's message or Rally's review notice started
-  are not offered them. Each of those works from content nobody typed, a
-  stranger's email among it, so none of them may ask in a person's name. No
+  `setting-up-a-filtered-trigger` skill are offered to every loop except a
+  Sidekick run and its delegation workers (`asksForSources`,
+  `builtInSkillsFor` in `integrations.ts`). A run works from the event that
+  started it, a stranger's email among it, so it may not ask in a person's
+  name. Every other loop may, including a wizard or Chat turn another
+  agent's message started, a review-notice turn and a background agent. No
   tool answers a request at all, and asking approves nobody: an ask for the
   asker's own account waits for their press like any other. A Sidekick run
   and its background workers are not offered `sidekick_set_delegation`
@@ -1101,7 +1101,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   how a lost update becomes a credential deletion on the next launch.
 
 - **Model-authored web content is never same-origin with the application, the
-  API, or another artifact.** A live artifact serves from a per-artifact
+  API, or another artifact.** A reactive artifact serves from a per-artifact
   subdomain of a registrable domain that is not `rallywith.ai`, so it is never
   cookie-adjacent to the product apex and one artifact cannot read another's
   storage, cookies, or DOM.
@@ -1116,7 +1116,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   `GET` navigation) decides whether a request may carry one, and every other
   request, any method, reaches the handler anonymously with its cookie ignored
   and its viewer headers stripped. The site's own code decides what an
-  anonymous request may do. See `docs/live-web-artifacts.md`.
+  anonymous request may do. See `docs/reactive-web-artifacts.md`.
 
 - **A new ticket audience never issues a ticket in a URL.** Cloudflare records
   whole URLs into the invocation log, Logpush, and traces, and no redaction here
@@ -1225,7 +1225,7 @@ does not own the subsystems on either side of them:
 | The windowless menu bar surface | [`menu-bar.md`](menu-bar.md) |
 | Telemetry contracts, opt-out, identities, crash lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Public-site anonymous identity, event surface, and handoff negative space | [`public-site-telemetry.md`](public-site-telemetry.md) |
-| The artifact runtime's fences, the facet data plane, and what a published directory becomes | [`live-web-artifacts.md`](live-web-artifacts.md) |
+| The artifact runtime's fences, the facet data plane, and what a published directory becomes | [`reactive-web-artifacts.md`](reactive-web-artifacts.md) |
 | Rotating a key or responding to an incident | [`runbook.md`](runbook.md) |
 | Access Managed OAuth and destructive operator SQLite inspection | [`engineering-mcp.md`](engineering-mcp.md) |
 
@@ -1347,7 +1347,7 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 
 ### Artifact annotation pickers
 
-One annotation script runs in every HTML surface, and on a live artifact it
+One annotation script runs in every HTML surface, and on a reactive artifact it
 shares the page's origin on both hosts: the serving Worker prepends it to the
 HTML a Rally viewer gets (a valid viewer session, or the browser client's
 frame), the desktop calls its `rallyAnnotations` API through

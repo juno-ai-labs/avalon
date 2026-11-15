@@ -1,11 +1,11 @@
 ---
-title: Live sites
+title: Reactive sites
 description: Ask for a web page or small app and Rally builds it, hosts it and gives it its own address.
 ---
 
 Some requests are not for documents at all. A landing page, a dashboard, a tip calculator, a habit tracker, a poll, a sign-up sheet for the team offsite: what you want there is a page people can open and click. For those, Rally builds a small website, puts it on the internet, and gives it its own web address. It does not paste a screenful of code into the chat and wish you luck.
 
-These are **live sites**, and they are artifacts like any other. They sit in their Canvas like any other artifact, they keep their versions, and you change them by asking.
+These are **reactive sites**, and they are artifacts like any other. They sit in their Canvas like any other artifact, they keep their versions, and you change them by asking.
 
 ## Asking for a site
 

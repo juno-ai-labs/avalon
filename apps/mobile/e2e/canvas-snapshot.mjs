@@ -145,7 +145,7 @@ async function main() {
     await page.emulateMedia({ colorScheme: 'light' });
     await grocery.locator('#new-item').fill('2 avocados');
     await grocery.getByRole('button', { name: 'Add', exact: true }).click();
-    await grocery.getByText('2 avocados', { exact: true }).waitFor(); report.checks.push('captured live artifact renders and accepts isolated edits');
+    await grocery.getByText('2 avocados', { exact: true }).waitFor(); report.checks.push('captured reactive artifact renders and accepts isolated edits');
     await page.getByRole('tab', { name: 'Home', exact: true }).click();
     await page.getByRole('tab', { name: fixture.groceryTitle, exact: true }).click();
     await grocery.getByText('2 avocados', { exact: true }).waitFor(); report.checks.push('artifact state retained across tab changes');
