@@ -1,6 +1,8 @@
 import { usePreparedSiteAccess } from './src/prepared-site-access';
 import { useAppResume } from './src/use-app-resume';
 import { usePreparedCanvases } from './src/prepared-canvases';
+import { directoryKey } from './src/directory';
+import { loadSavedDirectory, saveDirectory } from './src/saved-directory';
 import { HOME_RENDERER, recovery } from './src/recovery-order';
 import { useCrashReporting } from './src/crashes';
 import { RecoveryBoundary } from './src/RecoveryBoundary';
@@ -8,10 +10,10 @@ import { DiagnosticsScreen } from './src/DiagnosticsScreen';
 import { registerBackgroundSync } from './src/background';
 import { useNotifications } from './src/notifications';
 import { notificationTarget } from './src/notification-target';
-import { shareDiagnostics } from './src/diagnostics';
+import { recordTiming, shareDiagnostics } from './src/diagnostics';
 import * as Notifications from 'expo-notifications';
 import { useNetworkState } from 'expo-network';
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, BackHandler, Linking, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, type KeyboardEvent, type ImageSourcePropType } from 'react-native';
 import { NavigationContainer, StackActions, createNavigationContainerRef, DefaultTheme, DarkTheme, useIsFocused, type ParamListBase } from '@react-navigation/native';
 import { createNativeBottomTabNavigator, type NativeBottomTabScreenProps } from '@bottom-tabs/react-navigation';
@@ -33,6 +35,12 @@ import { useTheme } from './src/theme';
 const APP_URL = process.env.EXPO_PUBLIC_RALLY_APP_URL || 'https://app.rallywith.ai';
 const ARTIFACT_DOMAIN = process.env.EXPO_PUBLIC_RALLY_ARTIFACT_DOMAIN || 'rallyusercontent.com';
 const START_URL = mobileUrl(APP_URL);
+// Opening Home at the last organization skips the session and organization-list
+// reads before it can draw. `HOME_FALLBACK` recovers if that access is gone.
+const SAVED_DIRECTORY = loadSavedDirectory();
+const JS_STARTED = performance.now();
+let dashboardTimed = false;
+const HOME_URL = SAVED_DIRECTORY ? mobileUrl(APP_URL, SAVED_DIRECTORY.workspacePath) : START_URL;
 const Tabs = createNativeBottomTabNavigator();
 type RootRoutes = { Canvases: { screen: 'Home' } | undefined; Diagnostics: undefined; Conversation: { id: string; workspacePath: string; title: string } };
 const Stack = createNativeStackNavigator<RootRoutes>();
@@ -66,7 +74,15 @@ export default function App() { return <RecoveryBoundary><AppContent /></Recover
 
 function AppContent() {
   const { colors, isDark } = useTheme();
-  const [directory, updateDirectory] = useState<MobileSnapshot | null>(null);
+  const [directory, setDirectory] = useState<MobileSnapshot | null>(null);
+  const shownDirectory = useRef('');
+  const updateDirectory = useCallback((next: MobileSnapshot | null) => {
+    const key = directoryKey(next);
+    if (key === shownDirectory.current) return;
+    shownDirectory.current = key;
+    setDirectory(next);
+    saveDirectory(next);
+  }, []);
   const controls = useRef(new Map<string, CanvasWebViewHandle>());
   const directoryOwner = useRef('Home');
   const [chatReturn, setChatReturn] = useState<ChatReturn | null>(null);
@@ -93,6 +109,8 @@ function AppContent() {
   const notifications = useNotifications(directory, sendHome, openNotification);
   const receiveCrashEvent = useCrashReporting(directory, sendHome);
   useEffect(() => { void registerBackgroundSync(); }, []);
+  // Home feeds every tab, so it refreshes on resume whichever screen is in front.
+  useAppResume(() => sendHome({ type: 'refresh' }));
   useEffect(() => {
     if (!pendingNotification || !directory || !rootNavigation.isReady()) return;
     setChatReturn(null);
@@ -115,10 +133,12 @@ function AppContent() {
     setChatReturn(null); updateDirectory(null);
     controls.current.get('Home')?.reload();
   }, []);
+  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent }),
+    [chatReturn, prepared, directory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent]);
   const theme = isDark ? DarkTheme : DefaultTheme;
   return <SafeAreaProvider>
     <StatusBar style={isDark ? 'light' : 'dark'} />
-    <SessionContext value={{ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent }}>
+    <SessionContext value={session}>
       <NavigationContainer ref={rootNavigation} theme={{ ...theme, colors: { ...theme.colors, background: colors.background, card: colors.surface, text: colors.text, primary: colors.accent, border: colors.line } }}>
         <Stack.Navigator initialRouteName="Canvases">
           <Stack.Screen name="Diagnostics" options={{ title: 'Settings and diagnostics' }}>{() => <DiagnosticsScreen notifications={notifications} signedIn={Boolean(directory)} />}</Stack.Screen>
@@ -257,8 +277,9 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
   const bottomTabInset = Platform.OS === 'ios' && !Platform.isPad && !Platform.isTV
     && verticalBarEdge === null && directory && !chatReturn ? tabBarHeight : 0;
   const web = useRef<CanvasWebViewHandle>(null);
-  const [url] = useState(() => {
-    if (home || !directory) return START_URL;
+  const [url, setUrl] = useState(() => {
+    if (home) return HOME_URL;
+    if (!directory) return START_URL;
     const initial = new URL(mobileUrl(APP_URL, directory.workspacePath));
     initial.hash = `/canvases/${encodeURIComponent(canvasId)}?tab=1`;
     return initial.href;
@@ -271,6 +292,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
   const [sidebar, setSidebar] = useState(false);
   const keyboardVisible = useKeyboardVisible();
   const scope = useRef<string | null>(null);
+  const snapshotSeen = useRef(false);
   const open = useCallback((id: string) => {
     if (chatReturn) closeChat();
     if (directory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(id)) {
@@ -300,12 +322,18 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
     notifications.receive(event);
     if (home) receiveCrashEvent(event);
     if (event.type === 'sign-in') {
+      // Opened at a saved organization the account may no longer reach: the
+      // page reads that as signed out. Retry once from the plain start first.
+      if (home && url !== START_URL && !snapshotSeen.current) { saveDirectory(null); setUrl(START_URL); return; }
       if (home) void signIn(web.current);
       else { tabs?.navigate('Home'); signOut(); }
       return;
     }
     setReady(true); setFailed(false);
-    if (mobileContentReady(event)) setContentReady(true);
+    if (mobileContentReady(event)) {
+      setContentReady(true);
+      if (home && !dashboardTimed) { dashboardTimed = true; recordTiming('launch_to_dashboard', performance.now() - JS_STARTED); }
+    }
     if (event.type === 'open-canvas') {
       if (event.id === canvasId) web.current?.send({ type: 'open', id: event.id, pinned: true });
       else open(event.id);
@@ -319,6 +347,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
       const next = { ...current }; delete next[event.canvasId]; return next;
     });
     if (event.type === 'snapshot') {
+      snapshotSeen.current = true;
       const nextScope = `${event.snapshot.userId}:${event.snapshot.workspaceId}`;
       if (scope.current !== nextScope) { scope.current = nextScope; setArtifacts({}); }
       setSnapshot(event.snapshot);
@@ -331,7 +360,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
       setArtifacts({}); setSnapshot(null); setSidebar(false);
       if (home) updateDirectory(null); else signOut();
     }
-  }, [directoryOwner, home, tabs, open, canvasId, signIn, signOut, updateDirectory, notifications.receive, notificationOpened, receiveCrashEvent, prepared.receive, onContentReady]);
+  }, [directoryOwner, home, url, tabs, open, canvasId, signIn, signOut, updateDirectory, notifications.receive, notificationOpened, receiveCrashEvent, prepared.receive, onContentReady]);
   useEffect(() => {
     const registry = controls.current;
     const handle = web.current;
@@ -349,20 +378,26 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
     const back = BackHandler.addEventListener('hardwareBackPress', () => { closeChat(); return true; });
     return () => back.remove();
   }, [home, focused, chatReturn, closeChat]);
-  useAppResume(() => { if (focused && ready) web.current?.send({ type: 'refresh' }); });
+  // Home is refreshed once for the whole app on resume; other shells refresh themselves.
+  useAppResume(() => { if (!home && focused && ready) web.current?.send({ type: 'refresh' }); });
+  // Header items are native views: rebuild them only when what they show changes.
+  const view = snapshot?.view;
+  const viewCanvas = snapshot?.canvasId;
+  const viewTitle = snapshot?.title ?? '';
+  const signedIn = Boolean(directory);
   useEffect(() => {
     if (!focused) return;
-    const chat = snapshot?.view === 'artifact' && snapshot.canvasId ? () => openChat(snapshot.canvasId!, snapshot.title) : undefined;
+    const chat = view === 'artifact' && viewCanvas ? () => openChat(viewCanvas, viewTitle) : undefined;
     const close = home && chatReturn ? closeChat : undefined;
     const menu = () => setSidebar(true);
-    const create = snapshot?.view === 'home' ? () => web.current?.send({ type: 'create' }) : undefined;
+    const create = view === 'home' ? () => web.current?.send({ type: 'create' }) : undefined;
     navigation.getParent()?.setOptions({
-      headerLeft: directory ? () => <HeaderButton kind="menu" label="Open sidebar" onPress={menu} /> : undefined,
+      headerLeft: signedIn ? () => <HeaderButton kind="menu" label="Open sidebar" onPress={menu} /> : undefined,
       headerRight: close ? () => <HeaderButton kind="close" label="Close conversation" onPress={close} /> : create ? () => <HeaderButton kind="create" label="Create a canvas" onPress={create} /> : chat ? () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} /> : undefined,
-      unstable_headerLeftItems: () => directory ? [{ type: 'button', label: 'Open sidebar', icon: { type: 'sfSymbol', name: 'sidebar.left' }, onPress: menu }] : [],
+      unstable_headerLeftItems: () => signedIn ? [{ type: 'button', label: 'Open sidebar', icon: { type: 'sfSymbol', name: 'sidebar.left' }, onPress: menu }] : [],
       unstable_headerRightItems: () => close ? [{ type: 'button', label: 'Close conversation', icon: { type: 'sfSymbol', name: 'xmark' }, onPress: close }] : create ? [{ type: 'button', label: 'Create a canvas', icon: { type: 'sfSymbol', name: 'plus' }, onPress: create }] : chat ? [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }] : [],
     });
-  }, [directory, focused, navigation, snapshot, home, chatReturn, closeChat, openChat]);
+  }, [signedIn, focused, navigation, view, viewCanvas, viewTitle, home, chatReturn, closeChat, openChat]);
   const hosted = snapshot?.view === 'artifact' && artifacts[snapshot.canvasId ?? '']?.resourceId === snapshot.artifactId;
   // Native safe areas follow the system rail (including its side in Split View).
   // Content extends behind the transparent header; the initial inset scrolls away.
@@ -416,6 +451,14 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
   const bottomTabInset = Platform.OS === 'ios' && !Platform.isPad && !Platform.isTV && verticalBarEdge === null ? tabBarHeight : 0;
   const [sidebar, setSidebar] = useState(false);
   const { access, failed, attempt, retry } = usePreparedSiteAccess(canvas, prepared.sessions, prepared.open, ARTIFACT_DOMAIN);
+  // The tab mounts on its first tap, so first render approximates the tap.
+  // A return to an already drawn tab is a native view switch and is not timed.
+  const openedAt = useRef<number | null>(performance.now());
+  const onPresented = useCallback(() => {
+    if (openedAt.current === null) return;
+    recordTiming('pin_tap_to_artifact', performance.now() - openedAt.current);
+    openedAt.current = null;
+  }, []);
   const send = (command: MobileCommand) => {
     if (command.type === 'open') {
       if (directory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(command.id)) {
@@ -436,7 +479,6 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
     previousConnection.current = network.isConnected;
     if (focused && reconnected) controls.current.get('Home')?.send({ type: 'refresh' });
   }, [focused, network.isConnected, controls]);
-  useAppResume(() => { if (focused) controls.current.get('Home')?.send({ type: 'refresh' }); });
   useEffect(() => {
     if (!focused || !directory) return;
     const chat = () => openChat(canvas.canvasId, canvas.title);
@@ -450,7 +492,7 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
   }, [focused, directory, canvas.canvasId, canvas.title, navigation, openChat]);
   return <SafeAreaView edges={{ left: true, right: true, bottom: bottomTabInset === 0 }} style={{ backgroundColor: colors.background }}>
     <KeyboardAvoidingView enabled={keyboardVisible} style={[styles.fill, { marginBottom: bottomTabInset }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      {access && <ArtifactView appUrl={APP_URL} key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={headerHeight + 12} focused={focused} onRetry={retry} />}
+      {access && <ArtifactView appUrl={APP_URL} key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={headerHeight + 12} focused={focused} onRetry={retry} onPresented={onPresented} />}
       {(!access || failed) && <Loading failed={failed} retry={retry} />}
     </KeyboardAvoidingView>
     {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, canvasId: canvas.canvasId, tabId: canvas.canvasId, view: 'artifact', artifactId: canvas.resourceId, title: canvas.title, artifactPicker: false }} close={() => setSidebar(false)} send={send} diagnostics={() => rootNavigation.navigate('Diagnostics')} />}

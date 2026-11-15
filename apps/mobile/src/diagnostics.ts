@@ -6,9 +6,14 @@ import { Platform, Share } from 'react-native';
 
 const failureCodes = ['crash_reporting_failed', 'shell_render_failed', 'webview_load_failed', 'webview_process_terminated', 'artifact_load_failed', 'artifact_process_terminated', 'update_check_failed', 'background_registration_failed', 'notification_registration_failed'] as const;
 export type FailureCode = typeof failureCodes[number];
+const timingMetrics = ['launch_to_dashboard', 'pin_tap_to_artifact', 'artifact_recovery'] as const;
+/** Latency the person feels, against the 500 ms target. `launch_to_dashboard`
+ * starts when JavaScript starts, so native process start is not included. */
+export type TimingMetric = typeof timingMetrics[number];
 export type RuntimeStatus = {
   lastFailure?: { code: FailureCode; at: string };
   lastBackgroundSync?: string;
+  timings?: Partial<Record<TimingMetric, { ms: number; at: string }>>;
   update: 'idle' | 'checking' | 'ready' | 'current' | 'failed' | 'development';
 };
 let status: RuntimeStatus = { update: !__DEV__ && Updates.isEnabled ? 'idle' : 'development' };
@@ -24,6 +29,9 @@ export function setRuntimeStatus(change: Partial<RuntimeStatus>): void {
 export function recordFailure(code: FailureCode): void {
   setRuntimeStatus({ lastFailure: { code, at: new Date().toISOString() } });
 }
+export function recordTiming(metric: TimingMetric, ms: number): void {
+  setRuntimeStatus({ timings: { ...status.timings, [metric]: { ms: Math.round(ms), at: new Date().toISOString() } } });
+}
 export function restoreDiagnostics(): void {
   try {
     const saved: unknown = JSON.parse(file().textSync());
@@ -36,6 +44,15 @@ export function restoreDiagnostics(): void {
         const code = failureCodes.find((value) => value === failure.code);
         if (code) status = { ...status, lastFailure: { code, at: failure.at } };
       }
+    }
+    if (saved && typeof saved === 'object' && 'timings' in saved && saved.timings && typeof saved.timings === 'object') {
+      const savedTimings: object = saved.timings;
+      const timings: RuntimeStatus['timings'] = {};
+      for (const metric of timingMetrics) {
+        const value: unknown = Reflect.get(savedTimings, metric);
+        if (value && typeof value === 'object' && 'ms' in value && typeof value.ms === 'number' && 'at' in value && typeof value.at === 'string') timings[metric] = { ms: value.ms, at: value.at };
+      }
+      status = { ...status, timings };
     }
   } catch { /* First launch or an unreadable diagnostic file. */ }
 }
