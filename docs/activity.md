@@ -93,6 +93,13 @@ now: the request's id and state (`pending`, `approved`, `declined`,
 and the asked person's name once they have answered (`person_name`). None
 collapses.
 
+A Canvas notice ([`push-notifications.md`](push-notifications.md#canvas-notices))
+writes one `canvas_notice` row per recipient, with the intent, through
+`recordParentNotice`. Its parent is the Canvas, its actor the Sidekick that
+sent it or Rally, and its preview the notice's title. None collapses: each
+notice is its own outcome. A socket below client contract 16 is sent its page
+and count without them (`canvasNoticeKind`).
+
 A row names its parent (`canvas` or `automation`) and its id, the
 conversation it happened in (`"0"`, or a run's id), the mentioning message or
 the run, who acted (a person for a mention or an add, the Sidekick for a run
@@ -168,7 +175,8 @@ on a read of the Canvas as an add does. A request for a Sidekick source
 longer `pending`, by the person's answer or by a newer ask replacing it; its
 answer (`source_approved`, `source_declined`) clears on a read of the Sidekick
 as an add does. A pinned
-Canvas's new version clears on any read of the Chat accepted after it
+Canvas's new version, and a Canvas notice, clear on any read of the Chat
+accepted after it
 (`updated_at >= created_at`), the rule `canvasSidebarRows` takes for the
 Canvas row's artifact news.
 
@@ -492,13 +500,27 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 | Table | Key | Columns |
 | --- | --- | --- |
-| `workspace_activity_items` | `item_id` (the intent's id; a collapsed row keeps its first intent's) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`, `new_message`, `artifact_updated`, `access_request`, `access_granted`, `access_denied`, and, from migration 146's rebuild, `source_request`, `source_approved`, `source_declined`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms; a collapsed row's moves to its newest event), `subject_id` (what it is about beyond the parent: an artifact's resource id, an access request's id, a Sidekick source request's id). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
+| `workspace_activity_items` | `item_id` (the intent's id; a collapsed row keeps its first intent's) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`, `new_message`, `artifact_updated`, `access_request`, `access_granted`, `access_denied`, and, from migration 146's rebuild, `source_request`, `source_approved`, `source_declined`, and from migration 150's, `canvas_notice`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms; a collapsed row's moves to its newest event), `subject_id` (what it is about beyond the parent: an artifact's resource id, an access request's id, a Sidekick source request's id). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
 | `workspace_activity_seen` | `user_id` | `seen_through` (ms): Mark all seen. |
 | `canvas_access_requests` | `request_id` | Read for an `access_request` row's seen and its `accessRequest` ([`canvas-access-requests.md`](canvas-access-requests.md)). |
 | `sidekick_source_requests` | `request_id` | Read for a `source_request` row's seen and every source row's `sourceRequest` ([`sidekick-sources.md`](sidekick-sources.md)). `person_name` is the asked person's name, taken when they answer. |
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
 
 ## Changelog
+
+### 2026-11-15 — Canvas notices join the feed
+
+**What changed:** Activity records `canvas_notice`, one row per recipient,
+cleared by a read of the Canvas's Chat as a pinned version is. A socket below
+client contract 16 does not see them.
+
+**Why:** A notice reaches a person by push or email; the row is where it
+waits for someone who saw neither, and it opens the Canvas the notice is
+about.
+
+**Consequences:** `ActivityKindSchema` is still a closed enum in a strict
+sync event, so the next kind needs its own gate or a raise of
+`MINIMUM_SERVED_CLIENT_CONTRACT`.
 
 ### 2026-11-10 — Sidekick source requests join the feed; their rows list for a person who cannot open the Sidekick, and open nothing until they can
 
