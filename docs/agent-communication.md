@@ -59,7 +59,10 @@ and delivery replay. Start reserves an ordinary child under the same conversatio
 parent, bootstraps the existing harness, and provisions its name, description and
 inherited model override. It grants no private-child viewer memberships. The
 child retains its inherited execution principal; admission resolves it locally,
-and messages do not replace it with a teammate's credentials. A worker's
+and messages do not replace it with a teammate's credentials. It also acts with
+its root's authority and is offered its root's tools, apart from a run's
+\`report_outcome\`
+([`agent-loop-types.md`](agent-loop-types.md#a-background-agent-acts-with-its-roots-authority)). A worker's
 Terminal is its owner's: it uses the sandbox and checkout of the conversation
 or Sidekick it works for, through further delegation, under a mutation lease
 held per tool call, so a worker's write waits with `sandbox_busy` only while a

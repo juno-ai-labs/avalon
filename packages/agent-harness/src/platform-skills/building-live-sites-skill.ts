@@ -35,9 +35,8 @@ change. Build it to stay current, not as a snapshot:
    page reads them through its own API with the polling loop in item 8 of
    that section. A row a Sidekick writes later then reaches every open page
    at its next poll, with no republish.
-   **Seed the rows once, after publishing,** with \`write_artifact_data\`
-   from the Chat itself, since a background agent cannot write rows: one
-   upsert per call, a few rows per statement. Never seed in the
+   **Seed the rows once, after publishing,** with \`write_artifact_data\`:
+   one upsert per call, a few rows per statement. Never seed in the
    storage class or from a bundled data file: the class runs its setup on
    every start, so a seed there would undo newer writes or bring back
    deleted rows.
