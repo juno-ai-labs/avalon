@@ -85,6 +85,8 @@ type Session = {
   rememberSite: (access: NativeArtifact) => void;
   claimStatusBar: (owner: string, style: 'light' | 'dark') => void;
   releaseStatusBar: (owner: string) => void;
+  /** The status bar style an artifact in front claimed, for controls drawn over it. */
+  artifactTone: 'light' | 'dark' | undefined;
 };
 const SessionContext = createContext<Session | null>(null);
 const CanvasRoutesContext = createContext<Record<string, string | null>>({});
@@ -211,8 +213,8 @@ function AppContent() {
       return { ...sites, [access.canvasId]: { scope: shownScope, resourceId: access.resourceId, version: access.version, canonicalUrl: access.canonicalUrl } };
     });
   }, [shownScope]);
-  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, shownDirectory: directory ?? savedDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar }),
-    [chatReturn, prepared, directory, savedDirectory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar]);
+  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, shownDirectory: directory ?? savedDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar, artifactTone: artifactStatusBar?.style }),
+    [chatReturn, prepared, directory, savedDirectory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar, artifactStatusBar]);
   const theme = isDark ? DarkTheme : DefaultTheme;
   return <SafeAreaProvider>
     <StatusBar style={artifactStatusBar?.style ?? (isDark ? 'light' : 'dark')} />
@@ -230,7 +232,7 @@ function AppContent() {
 
 function CanvasTabs() {
   // Tabs draw from the saved directory until Home answers, so pins show at launch.
-  const { shownDirectory: directory, controls, prepared, chatReturn } = useSession();
+  const { shownDirectory: directory, controls, prepared, chatReturn, artifactTone } = useSession();
   const [images, setImages] = useState<Record<string, ImageSourcePropType>>({});
   const saveImage = useCallback((id: string, image: ImageSourcePropType) => setImages((current) => ({ ...current, [id]: image })), []);
   const { colors } = useTheme();
@@ -285,7 +287,7 @@ function CanvasTabs() {
     />)}
   </Tabs.Navigator></CanvasRoutesContext>
     <PinStage canvases={prepared.canvases} frames={stageFrames} front={frontPin} handedOff={browserPins} />
-    {floating && !chatReturn && <FloatingHeader actions={floating.actions} />}
+    {floating && !chatReturn && <FloatingHeader actions={floating.actions} tone={artifactTone} />}
   </View></PinStageContext></FloatingHeaderContext>;
 }
 
