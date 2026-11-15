@@ -359,9 +359,8 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
   - the wizard's turn that Rally's review notice started
     (`reason === "sidekick_review"`).
 
-  A wake-up in a Canvas's Chat or the wizard is offered them, whichever turn
-  scheduled it (`drivenByPerson`, [`agent-loop-types.md`](agent-loop-types.md)):
-  a request still waits for the person asked.
+  A wake-up in a Canvas's Chat or the wizard is offered them
+  ([`agent-loop-types.md`](agent-loop-types.md#the-loops) says why).
 
   A run is handed the content of the event that started it, and a background
   agent, another agent's message and a review notice are content in the same

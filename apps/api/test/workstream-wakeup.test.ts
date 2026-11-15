@@ -981,7 +981,7 @@ describe("firing a due wake-up", () => {
     };
 
     /** The Organization object's half: whether the Sidekick lets this run go on. */
-    function withSidekick(env: Env, answer: unknown, manages = true): { env: Env; asked: unknown[] } {
+    function withSidekick(env: Env, answer: unknown): { env: Env; asked: unknown[] } {
       const asked: unknown[] = [];
       const workspaces = createCloudflareTestBinding<DurableObjectNamespace>({
         idFromName: (name: string) => createTestDurableObjectId(name),
@@ -990,7 +990,6 @@ describe("firing a due wake-up", () => {
             asked.push(request);
             return answer;
           },
-          sidekickAllowsManager: async () => manages,
         }),
       });
       const withWorkspaces = new Proxy(env, {
