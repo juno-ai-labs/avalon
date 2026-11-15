@@ -27,7 +27,7 @@
  * into the artifact's own isolate beside the model's `index.js`, which it
  * imports. It is written in plain JavaScript for that reason.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 
 import { ARTIFACT_COMPATIBILITY_DATE, ASSET_SHIM_SOURCE, rallyCodeRevision } from "./asset-shim";

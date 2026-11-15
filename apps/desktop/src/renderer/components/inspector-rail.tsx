@@ -59,7 +59,7 @@ interface InspectorRailProps {
   /** Original file bytes for downloads, independent of readable derivatives. */
   loadOriginalResourceContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   /**
-   * Everything the live-artifact detail needs, or absent.
+   * Everything the reactive-artifact detail needs, or absent.
    *
    * Absent only when the surface cannot host one: with no API session there is
    * no access to mint, and with no desktop or browser bridge there is nowhere
@@ -630,7 +630,7 @@ function InspectorDetail({
   const current = resource ? versions?.find((version) => version.version === resource.currentVersion) ?? versions?.[0] : undefined;
 
   if (resource) {
-    // A live artifact is a page people open, not a record to describe. Behind
+    // A reactive artifact is a page people open, not a record to describe. Behind
     // the flag, because this is presentation: with it off a site falls back to
     // the ordinary resource card, which still lists it, versions it, and lets
     // it be removed. Nothing that protects the artifact is scoped by this.
@@ -840,7 +840,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     }
   };
 
-  // The actions the open detail declares for this header (a live artifact's).
+  // The actions the open detail declares for this header (a reactive artifact's).
   //
   // Declared above the early return with the other unconditional hooks: a rail
   // that closes renders fewer hooks than the render before it, and React throws
@@ -854,7 +854,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const headerTitle = resource?.title ?? (inspector ? 'Details' : railTitle[railVariant]);
 
   const refreshable = Boolean(resource && resource.direction === 'source' && resource.refreshSupported && props.onRefreshResource);
-  const liveSite = Boolean(resource && isSiteResource(resource) && (props.siteArtifacts || props.panel?.detached));
+  const reactiveSite = Boolean(resource && isSiteResource(resource) && (props.siteArtifacts || props.panel?.detached));
   const copyLink = resourceCopy;
   const panelHeader = props.panel && (
     <TitlePillHeader
@@ -870,10 +870,10 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           {...(resource.contentAvailable && props.loadOriginalResourceContent && !isSiteResource(resource)
             ? { onDownload: () => void downloadResource() } : {})}
           {...(props.onDetachResource ? { onArchive: () => { setArchiveFailed(false); setArchiveTarget(resource); } } : {})}
-          {...(resource.canonicalUrl && !liveSite ? { onOpenSource: () => void openLink(resource.canonicalUrl!) } : {})}
+          {...(resource.canonicalUrl && !reactiveSite ? { onOpenSource: () => void openLink(resource.canonicalUrl!) } : {})}
           {...(resource.direction === 'artifact' && props.onRenameResource
             ? { onRename: () => { setRenameFailed(false); setRenameTitle(resource.title); setRenameTarget(resource); } } : {})}
-          {...(!liveSite && copyLink ? { onCopyLink: () => void copyResourceLink(), copyLinkLabel: copyStateLabel(copyLinkState, 'Copy link') } : {})}
+          {...(!reactiveSite && copyLink ? { onCopyLink: () => void copyResourceLink(), copyLinkLabel: copyStateLabel(copyLinkState, 'Copy link') } : {})}
           pinned={props.resourcePin?.(resource)}
           {...(resource.direction === 'artifact' && !isSiteResource(resource) && !props.panel?.detached ? { onPopOut: () => void popOutGeneratedArtifact() } : {})}
           {...(refreshable ? { onRefresh: () => props.onRefreshResource?.(resource) } : {})}
@@ -889,17 +889,17 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           }}
         /> } : {}),
       }}
-      // The detail's own actions, such as a live artifact's, join Expand in
-      // the header's group. Comment mode and Expand stay directly accessible. A live site expands
+      // The detail's own actions, such as a reactive artifact's, join Expand in
+      // the header's group. Comment mode and Expand stay directly accessible. A reactive site expands
       // like any other artifact: the panel takes the pane, not a lightbox.
       actions={[...detailActions.filter((action) => !['comment-mode', 'copy-link', 'new-window', 'open-browser', 'stored-data'].includes(action.key)), ...detailActions.filter((action) => action.key === 'comment-mode').map((action) => ({...action,alwaysVisible:true,...(props.panel?.commentDisabledReason ? {disabledReason:props.panel.commentDisabledReason} : {})})), ...(props.panel.expandAction ?? []).map((action) => ({...action,alwaysVisible:true}))]}
       ancestors={props.panel.ancestors ? [...props.panel.ancestors] : []}
-      // A live site composites a native view under this header that paints
+      // A reactive site composites a native view under this header that paints
       // above all renderer DOM, so a label hanging down lands behind the page.
       // Upward does not fit: the header sits at the window's top and Radix
       // flips it back down. Beside the button stays inside the header.
-      tooltipSide={liveSite ? 'left' : undefined}
-      trailing={<TitlePillClose label="Close panel" onClose={closeRail} tooltipSide={liveSite ? 'left' : undefined} />}
+      tooltipSide={reactiveSite ? 'left' : undefined}
+      trailing={<TitlePillClose label="Close panel" onClose={closeRail} tooltipSide={reactiveSite ? 'left' : undefined} />}
     />
   );
 
@@ -923,7 +923,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
               The detail's own actions, ahead of the rail's: what this resource
               can do belongs beside the resource, and Close stays at the edge.
   
-              Every control in this header opens its tooltip upward. A live
+              Every control in this header opens its tooltip upward. A reactive
               artifact composites a native view directly under this strip, and
               that view paints above all renderer DOM, so a label hanging
               downward is behind the page with no `z-index` able to reach it.

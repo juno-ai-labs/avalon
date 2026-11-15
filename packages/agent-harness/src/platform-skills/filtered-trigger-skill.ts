@@ -123,8 +123,8 @@ and an event that should not have been shared cannot be taken back.
    step 1 let every one of their own events of that type in, unfiltered. When
    theirs should be filtered too, include them in the ask with the filter.
    Theirs waits for them like anybody's: tell them to press Approve on the
-   request in this conversation, and that their events stay unfiltered until
-   they do. When theirs should not start the Sidekick at all, tell them, and
+   request, which is shown where they asked (a Canvas's Chat that messaged
+   you shows it too), and that their events stay unfiltered until they do. When theirs should not start the Sidekick at all, tell them, and
    tell them they can stop their own under Sources on the Sidekick's page.
 4. Tell the person what happens next, plainly: who was asked, that each of
    them decides in Rally, or from the email when they get one, and that a

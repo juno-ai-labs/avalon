@@ -132,8 +132,8 @@ it:
 
 | Surface | How the script gets in | How the host calls it |
 | --- | --- | --- |
-| Live site, desktop rail and pop-out | The serving Worker prepends it to every HTML response for a request carrying a valid viewer session | `executeJavaScript` from the main process, parsed on return |
-| Live site, browser client | The same injection, also for any framed request when `BROWSER_APP_ORIGIN` is configured, since Safari views the frame without the partitioned cookie | `postMessage` to the frame at the artifact origin; replies accepted only from that frame's window at that origin |
+| Reactive site, desktop rail and pop-out | The serving Worker prepends it to every HTML response for a request carrying a valid viewer session | `executeJavaScript` from the main process, parsed on return |
+| Reactive site, browser client | The same injection, also for any framed request when `BROWSER_APP_ORIGIN` is configured, since Safari views the frame without the partitioned cookie | `postMessage` to the frame at the artifact origin; replies accepted only from that frame's window at that origin |
 | HTML file, rail or lightbox, and a saved site spot | `/annotation-frame.js?key=<nonce>` from the app origin, under a fresh nonce, in an opaque `srcdoc` frame | `postMessage` to the frame; replies accepted only from that frame's window and carrying the document's key |
 
 The bridge is the same three host messages (`rally-annotation-picking`,
@@ -183,7 +183,7 @@ still of the page, so nothing scrolls under it there.
 
 ### HTML trust boundaries
 
-A live artifact's page is written by the workspace's own agent through
+A reactive artifact's page is written by the workspace's own agent through
 `publish_resource`; nobody edits it by hand and guests cannot publish. So the
 script shares the page's origin on every host, and the page's own scripts can
 see it, replace it, and post the same messages. That is accepted on purpose: a
@@ -237,7 +237,7 @@ texts (bounded to the shared context budget); positional selectors alone are ins
 only when image bytes are unchanged. Whole-file comments retain resource identity.
 No model or approximate similarity threshold chooses a replacement target.
 HTML matching reads frozen static HTML; content created or changed by page scripts
-may require manual reattachment in the live site.
+may require manual reattachment in the reactive site.
 
 Unresolved comments show their saved quote, explanation, Reattach and Retry.
 Reattach opens the current artifact and copies the existing comment into a new
@@ -279,7 +279,7 @@ This module owns pointing and user-message content. Resource access remains
 owned by [authorization](authorization.md), uploaded bytes and model image
 hydration by [agent attachments](agent-attachments.md), ordinary draft
 persistence by [composer drafts](composer-drafts.md), and site publication by
-[live web artifacts](live-web-artifacts.md). It adds no editing tool, approvals,
+[reactive web artifacts](reactive-web-artifacts.md). It adds no editing tool, approvals,
 or artifact comment records.
 
 ## Failure modes and limits

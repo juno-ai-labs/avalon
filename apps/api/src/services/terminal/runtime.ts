@@ -700,7 +700,7 @@ export function createDaytonaTerminalRuntime(
     entries: readonly DirectoryEntry[],
   ): Promise<TerminalPublishOutput> {
     const resolved = resolveDirectoryPublish(entries);
-    // Before any bytes move: a republish that would turn a live site back into
+    // Before any bytes move: a republish that would turn a reactive site back into
     // an archive fails loudly rather than quietly killing a URL participants
     // hold. The other direction — an archive that grew an entry file — is the
     // archive fallback's own recovery and upgrades freely.

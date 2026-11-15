@@ -557,7 +557,7 @@ The standing prompt names the product as it is: an Organization holds Canvases a
 
 A document-shaped request is written as a Markdown file in the conversation's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the run has no Terminal plugin or the workspace cannot be reached, which outranks a request for a document. A Sidekick run a non-delegate asked for gets no Terminal (`terminal-workspaces.md`), so the standing prompt's calculation rule and the Sites section carry the same no-Terminal alternative beside the rule each excepts. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every conversation run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal conversation rule steers into.
 
-The same module's **Sites** section is the site-shaped equivalent: a request whose natural output is a page or a small app becomes a *directory* of files, published as a live artifact people open. It carries only the trigger and the two rules a model gets wrong without it — publish the directory rather than a file inside it, and a request for a new thing is a new site at a new path — plus the pointer to the skill. The build craft is hundreds of lines and would be charged to every request, so it ships as the loadable `building-live-sites` skill and is read at the moment it matters. Like the document half it is standing rather than gated, and falls back the same way when the sandbox cannot be reached. [`live-web-artifacts.md`](live-web-artifacts.md) owns what a published directory becomes and how it is served.
+The same module's **Sites** section is the site-shaped equivalent: a request whose natural output is a page or a small app becomes a *directory* of files, published as a reactive artifact people open. It carries only the trigger and the two rules a model gets wrong without it — publish the directory rather than a file inside it, and a request for a new thing is a new site at a new path — plus the pointer to the skill. The build craft is hundreds of lines and would be charged to every request, so it ships as the loadable `building-live-sites` skill and is read at the moment it matters. Like the document half it is standing rather than gated, and falls back the same way when the sandbox cannot be reached. [`reactive-web-artifacts.md`](reactive-web-artifacts.md) owns what a published directory becomes and how it is served.
 
 An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. The *announcement* rule — the embed form for a document the run just published — lives in `DOCUMENT_GENERATION_POLICY` so there is one rule for that act. Rendered for every conversation run, interactive and automation alike, since they share one system prompt. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`slack-integration.md`](slack-integration.md) owns the reduction Slack delivery applies; the email renderer's is `markdownToEmailText` in `email-markdown.ts`.
 
@@ -823,11 +823,10 @@ It is written to give the model latitude: it states what one event carries,
 how a filter is judged and that the person reads and approves the same text,
 gives a way to try a draft on real events, and leaves the wording to the
 model. It names its owner plugin's three source tools, as an owned skill may.
-Those tools are offered only to a turn a person is driving
-(`asksForSources` in `apps/api/src/services/integrations.ts`). A Sidekick
-run, a background agent, a run's delegation worker, and a wizard or Chat turn
-that another agent's message (`agentExchange`) or Rally's review notice
-(`reason === "sidekick_review"`) started never see them. The skill tells the
+Those tools are offered to every loop except a Sidekick run and its
+delegation workers (`asksForSources` in
+`apps/api/src/services/integrations.ts`): a run carries the content of the
+event that started it, and that content may not ask in anyone's name. The skill tells the
 model to call `sidekick_request_source`, so the host lists it only where a
 plugin in scope holds that tool (`builtInSkillsFor`): owning the plugin is
 not enough, because a run carries the Sidekicks plugin without the source
@@ -894,7 +893,7 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 The canonical `request_elicitation` tool belongs to `rally:core`, which carries no wire prefix, so the model reads it as `request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer (`answer: null` with `skipped: true` when they skipped, `cancelled: true` when a newer message cancelled the question; the tool's description tells the model not to ask a skipped question again) and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a conversation, the conversation becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `AgentLoopDO` loop. When drafting an automation, the agent first saves its best partial state with `automation_submit_draft` (a revision that is not `ready`), then calls the same core elicitation tool; the next turn resumes from the saved draft and the answered conversation.
 
-A Sidekick run asks for a missing connection the same way. Its `show_connector_connection` is `AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION` (the same name and input as the card a Canvas shows, a write with a provider key, and a description that says the run pauses and what to do on each answer), and its executor opens an elicitation owned by that tool call through the executor `request_elicitation` uses (`openToolQuestion`), with Continue and Decline options and the card's selection as `Elicitation.connection`. The answer is that call's tool result. Where answers route to an agent, neither question tool is offered. The activation prompt's permission rule tells the model to ask for a connection this way and for a grant with `request_elicitation`, and to report what is blocked only once declined or when it cannot ask; [`automation-lifecycle.md`](automation-lifecycle.md#a-run-a-missing-connection-or-grant-blocks) owns the run's side.
+A Sidekick run asks for a missing connection the same way. Its `show_connector_connection` is `AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION` (the same name and input as the card a Canvas shows, a write with a provider key, and a description that says the run pauses and what to do on each answer), and its executor opens an elicitation owned by that tool call through the executor `request_elicitation` uses (`openToolQuestion`), with Continue and Decline options and the card's selection as `Elicitation.connection`. The answer is that call's tool result. Where answers route to an agent, neither question tool is offered, except on a wizard turn a Canvas's Chat started, which asks the person and draws the question in that Chat ([`agent-communication.md`](agent-communication.md#in-a-canvass-chat)). The activation prompt's permission rule tells the model to ask for a connection this way and for a grant with `request_elicitation`, and to report what is blocked only once declined or when it cannot ask; [`automation-lifecycle.md`](automation-lifecycle.md#a-run-a-missing-connection-or-grant-blocks) owns the run's side.
 
 ### Durable receipts and terminal state
 
@@ -1919,13 +1918,35 @@ set the rule: a wake-up continues the loop as it was.
 claim path derives everything itself. It is the cleaner end state, but it
 moves the claim, the transcript note and the run receipt into a new path;
 this keeps them and mirrors the two derivations. Recording whether a
-person's turn scheduled each wake-up, so one an agent's message or the
-self-review scheduled would not get the source tools: the owner judged it
-unneeded, since a source request still waits for the person asked to
-approve it.
+person's turn scheduled each wake-up, to withhold the source tools from one
+an agent's message or the self-review scheduled: unneeded, since those tools
+no longer depend on who drove a turn ([`sidekick-sources.md`](sidekick-sources.md)).
 
 **Consequences:** A new derivation in `claimPersistentLoopExecution` belongs in
 `fireWorkstreamWakeup` too, until the two paths are one.
+
+### 2026-11-15 — A port that runs several checks names the one that failed
+
+**What changed:** The harness exports `HarnessPortStepError(label, cause)`.
+`requiredPort` keeps the port's failure code and reports that label and cause
+in place of the port's own. The API's `before_model` liveness port wraps its
+usage allowance read and its run authority check in it, so they report "Usage
+allowance read failed" and "Run authority check failed". Lease renewal keeps
+"Run liveness renewal failed".
+
+**Why:** On 2026-11-12 every run in one Organization failed for half an hour
+as "Run liveness renewal failed" when the real reason was a used-up weekly
+allowance (Growth, $50 a week). The 2026-11-12 entries below gave the
+allowance its own limit code and logged `failure_cause_code`, but the
+authority check and the lease still shared one label. An operator reading the
+log would start from the wrong check.
+
+**Considered and rejected:** Splitting `onLiveness` into three harness ports.
+That widens every host's interface for a distinction only the host knows.
+
+**What a future change has to respect:** A step label is a fixed string; it
+reaches logs and crosses RPC. A `HarnessLimitError` is never wrapped as a
+step: it ends the run under its own code.
 
 ### 2026-11-13 — A replay keeps its admitted input, an attempt records the clamp it got, and an unknown model is named
 

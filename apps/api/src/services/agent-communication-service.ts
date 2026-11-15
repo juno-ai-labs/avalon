@@ -351,9 +351,9 @@ export class AgentCommunicationService {
   async sidekicks() {
     if (this.input.executionPrincipal.type !== "user") return { sidekicks: [] };
     if (this.canvasChatId() !== null) {
-      const sidekicks = await this.canvasMadeSidekicks();
+      const sidekicks = await this.canvasManagedSidekicks();
       return { sidekicks, ...(sidekicks.length ? {} : {
-        next: "This Canvas has made no Sidekick. Create one with create_sidekick, then send setup instructions to its authoring agent." }) };
+        next: "This Canvas has no Sidekick attached. Create one with create_sidekick, then send setup instructions to its authoring agent." }) };
     }
     const sidekicks = (await this.editableSidekicks()).filter((sidekick) => sidekick.isCurrentSidekick);
     return { sidekicks, ...(sidekicks.length ? {} : { next: this.input.automationRun
@@ -392,13 +392,17 @@ export class AgentCommunicationService {
     return isCanvasChat(this.input) ? this.input.parentId : null;
   }
 
-  /** The Sidekicks this Canvas's Chat made, as `sidekicks_list` names them. */
-  private async canvasMadeSidekicks() {
+  /**
+   * The Sidekicks this Canvas manages, as `sidekicks_list` names them: every
+   * one attached here, made here or later, except the Sidekick whose run made
+   * this Canvas (`sidekickCanvasAdmits`).
+   */
+  private async canvasManagedSidekicks() {
     const canvasId = this.canvasChatId();
     if (canvasId === null) return [];
     const context = await (await this.workspace()).canvasContext({ workspaceId: this.input.workspaceId, canvasId });
-    return (context?.sidekicks ?? []).filter((sidekick) => sidekick.madeHere).map((sidekick) => ({
-      sidekickId: sidekick.id, name: sidekick.name, status: sidekick.status, canEdit: true,
+    return (context?.sidekicks ?? []).filter((sidekick) => sidekick.id !== context?.writerSidekickId).map((sidekick) => ({
+      sidekickId: sidekick.id, name: sidekick.name, status: sidekick.status, canEdit: true, madeHere: sidekick.madeHere,
       agentId: agentIdForAddress({ parentKind: "automation", parentId: sidekick.id, substreamId: asSubstreamId("0") }),
     }));
   }
@@ -516,7 +520,7 @@ class AgentCommunicationError extends Error {
       sidekick_contact_forbidden: "Choose a Sidekick you can access. This Sidekick is unavailable to this execution.",
       sidekick_contact_user_unavailable: "Ask your coordinator to contact the Sidekick. This execution has no user identity for Sidekick access.",
       sidekick_edit_requires_manager: "Tell the person that only the people who manage this Sidekick can change it. Its wizard was not messaged.",
-      sidekick_archive_not_made_here: "No Sidekick this Canvas made has that id or exact name. Use sidekicks_list to see the ones it made; a Sidekick made elsewhere is archived from its own page.",
+      sidekick_archive_not_made_here: "No Sidekick this Canvas made has that id or exact name. Use sidekicks_list to see the ones it made (madeHere); a Sidekick made elsewhere is archived from its own page.",
       sidekick_archive_ambiguous: "Several Sidekicks this Canvas made have that name. Pass the sidekickId from sidekicks_list instead.",
       sidekick_change_outside_run: "Use sidekicks_list and message the Sidekick's authoring agentId. Only a Sidekick run can request a change to its own Sidekick this way.",
       sidekick_author_unavailable: "Ask your coordinator to create the Sidekick. This execution has no user identity for creation.",

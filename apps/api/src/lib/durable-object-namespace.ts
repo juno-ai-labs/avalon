@@ -260,7 +260,7 @@ export function durableObjectStubForRegionalSingleton<
 }
 
 /**
- * Resolve a live web artifact's supervisor, which is region-scoped but not
+ * Resolve a reactive web artifact's supervisor, which is region-scoped but not
  * workspace-addressed.
  *
  * The third supported resolver, and it exists because the artifact host is the

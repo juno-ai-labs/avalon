@@ -381,7 +381,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal,
   }));
 
   server.registerTool("list_artifacts", {
-    description: "List every live web artifact in the authoritative WorkspaceDO registry for a workspace ID.",
+    description: "List every reactive web artifact in the authoritative WorkspaceDO registry for a workspace ID.",
     inputSchema: z.object({ workspaceId: WorkspaceIdSchema }),
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workspaceId }) => tool(principal, "list_artifacts", { workspace_id: workspaceId }, async () => {

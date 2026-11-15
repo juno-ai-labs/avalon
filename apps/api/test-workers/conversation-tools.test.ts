@@ -60,6 +60,7 @@ import { createWorkstreamArtifactDataTools } from "../src/services/workstream-ar
 import { resolveSiteForViewer } from "../src/services/artifact-site-resolution";
 import { artifactHostDOName } from "../src/durable-objects/names";
 import { createAutomation } from "../src/services/automation-service";
+import { sidekickSourceTools } from "../src/services/sidekick-source-tools";
 import {
   bootstrapConversationChildRuntime,
 } from "../src/services/workstream-runtime-database";
@@ -1018,5 +1019,37 @@ describe("a Sidekick's Canvases through the conversation tools", () => {
       conversationId: string; messages: Array<{ text: string }> };
     expect(read.conversationId).toBe(WRITTEN());
     expect(read.messages.map((message) => message.text)).toEqual(["The agenda is ready."]);
+  });
+});
+
+describe("a Sidekick's source request asked from a Canvas's Chat", () => {
+  it("is drawn in the Chat whose message started the wizard's turn, once per receipt", async () => {
+    await seedSidekick("0");
+    // This suite's D1 starts with no schema: a request's view reads each person's presentation.
+    await TEST_ENV.DB.exec("ALTER TABLE users ADD COLUMN presentation_json TEXT");
+    const chatAgent = agentIdForAddress({ parentKind: "canvas", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
+    // The wizard's turn the Chat's message started, acting for the person the Chat acts for.
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID, parentKind: "automation",
+      parentId: AUTOMATION_ID, substreamId: "0", loopId: substreamLoopId(AUTOMATION_ID), harnessRunId: crypto.randomUUID(),
+      triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test",
+      sidekickWizard: true, agentExchange: { teamId: chatAgent, senderAgentId: chatAgent, messageId: crypto.randomUUID() } });
+    const tool = sidekickSourceTools(TEST_ENV, input, AUTHOR_ID, false).find((candidate) => candidate.definition.name === "request_source")!;
+    const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: input.harnessRunId,
+      effectIntentId: crypto.randomUUID(), toolCallId: "ask-colleague", executionPrincipal: input.executionPrincipal,
+      signal: new AbortController().signal };
+    const asking = () => tool.execute({ sidekickId: AUTOMATION_ID, userIds: [COLLEAGUE_ID], connectorType: "google",
+      eventTypes: ["email.received"] }, context);
+    const requestId = ((await asking()).output as { requests: { requestId: string }[] }).requests[0]!.requestId;
+    // A retried call is the same receipt: one request, one post.
+    await asking();
+
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ kind: string; id: string }>(
+      "SELECT place_parent_kind AS kind, place_parent_id AS id FROM sidekick_source_requests WHERE sidekick_id = ?", AUTOMATION_ID,
+    ).toArray())).toEqual([{ kind: "canvas", id: ROOM_ID }]);
+    const posts = await runInDurableObject(conversation(ROOM_ID), (_instance, state) => state.storage.sql.exec<{ json: string }>(
+      "SELECT structured_content_json AS json FROM canonical_conversation_turn_details WHERE message_type = 'automation_activation'",
+    ).toArray().map((row) => JSON.parse(row.json) as { automationId: string; sourceRequests?: unknown }));
+    expect(posts.map((post) => ({ automationId: post.automationId, sourceRequests: post.sourceRequests })))
+      .toEqual([{ automationId: AUTOMATION_ID, sourceRequests: { requestIds: [requestId] } }]);
   });
 });
