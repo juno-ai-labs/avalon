@@ -4,8 +4,10 @@ import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { useTheme } from './theme';
 
 /** Keep glass in the native controls; reading surfaces stay opaque. */
-export function Glass({ children, style }: PropsWithChildren<{ style?: StyleProp<ViewStyle> }>) {
-  const { colors, isDark } = useTheme();
+export function Glass({ children, style, scheme }: PropsWithChildren<{ style?: StyleProp<ViewStyle>; scheme?: 'light' | 'dark' }>) {
+  const theme = useTheme();
+  const isDark = scheme ? scheme === 'dark' : theme.isDark;
+  const { colors } = theme;
   const [reduceTransparency, setReduceTransparency] = useState(true);
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
