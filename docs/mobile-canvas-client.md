@@ -21,6 +21,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/dashboard-visibility.ts` | When the native dashboard covers Home's page. |
 | `apps/mobile/src/directory.ts` | Compares Home snapshots on the fields the shell shows, so `updatedAt` ticks and Home's own navigation do not re-render every tab. |
 | `apps/mobile/src/artifact-access.ts` | The one data request the native shell makes itself: fresh access to a pinned artifact on the shared session cookie, so renewal never waits for Home. |
+| `apps/mobile/src/EdgePull.tsx`, `edge-swipe.ts` | iOS pull from the leading edge that drags the focused screen's sidebar open. |
 | `apps/mobile/src/FloatingHeader.tsx` | The sidebar and chat buttons drawn over a native artifact in place of the native header, in the artifact's tone. |
 | `apps/mobile/src/ArtifactPicker.tsx` | A pin's native artifact picker, for a canvas with several artifacts. |
 | `apps/mobile/src/remembered-sites.ts`, `canonical-first.ts` | The site each canvas last showed, by canonical URL, so a dashboard tap reopens it on its cookie; and whether Home's later fresh access replaces that view. |
@@ -130,7 +131,7 @@ lets the surrounding KeyboardAvoidingView own keyboard avoidance, preventing a
 second keyboard inset from lifting the composer into the transcript. The same
 WebView behavior applies to the shared conversation view, legacy conversation sheets and hosted artifacts.
 
-The OS places the native tab bar and rail, including Duo’s outer screen, inner orientation changes and either side of Split View. No hinge angle or fixed width threshold chooses native navigation. Native safe-area handling reserves the system rail/bar; content extends behind the transparent header with a measured initial inset that scrolls away. The inset updates when geometry changes without accumulating padding. Header actions are native bar items on iOS, so the system can relocate or overflow them. Android uses its native navigation header with accessible actions. Home has sidebar and create-canvas (+) actions; artifact screens have sidebar/chat actions. Headers have no title or extra Home action. The Muse-inspired sidebar remains shared and custom, including pin/unpin, drag ordering and accessibility move actions. Ordinary swipes scroll; closing the drawer or a changed account, organization or pin list cancels a drag.
+The OS places the native tab bar and rail, including Duo’s outer screen, inner orientation changes and either side of Split View. No hinge angle or fixed width threshold chooses native navigation. Native safe-area handling reserves the system rail/bar; content extends behind the transparent header with a measured initial inset that scrolls away. The inset updates when geometry changes without accumulating padding. Header actions are native bar items on iOS, so the system can relocate or overflow them. Android uses its native navigation header with accessible actions. Home has sidebar and create-canvas (+) actions; artifact screens have sidebar/chat actions. Headers have no title or extra Home action. The Muse-inspired sidebar remains shared and custom, including pin/unpin, drag ordering and accessibility move actions. Ordinary swipes scroll; closing the drawer or a changed account, organization or pin list cancels a drag. The drawer slides in over a fading scrim and slides back out; Reduce Motion fades it instead. On iOS, pulling in from the leading edge drags the drawer out under the finger wherever its header button opens it, and taps or scrolls that start at the edge still reach the content. The pan wraps the whole tab shell rather than each screen, because pinned sites draw in the PinStage above every screen. Android leaves that edge to system Back.
 
 Android native tab images use cached PNG file URLs because its native image loader does not render PNG data URIs. Native tab images use the same Lucide catalog and Electron bare-mark colors (themed ink for pastel colors, the hue itself for legacy colors), rasterized from SVG for platform tab items with original-color rendering. On iOS the tab image is rasterized at 27pt (22pt glyph), the size react-native-bottom-tabs redraws tab images to, and its source carries the screen `scale`, so neither the image loader nor the tab bar resamples it. Tab glyphs are bare, matching Home; canvas tint tiles remain in the sidebar. Selection uses the platform indicator, and the browser preview follows the same bare-icon treatment. The SVG wrapper positions each complete glyph; Lucide receives `size` rather than `x`/`y` or explicit dimensions, which it would also forward to its child shapes and distort their geometry. Missing icons use PanelsTopLeft. The native theme reads Electron’s base and appearance tokens. iOS supplies Liquid Glass and its accessibility fallbacks; Android supplies native tab behavior and system Back. Predictive Back is disabled through Expo's
 `android.predictiveBackGestureEnabled` setting, following [React Navigation's
@@ -596,6 +597,30 @@ retention remain unmeasured. The full method, before/after table and limitations
 are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
+
+### 2026-11-15 — Pull the iOS sidebar in from the left edge, and slide it in and out
+
+**What changed:** On iOS, an edge pull drags the sidebar out under the finger
+and settles it on release, and the drawer slides rather than fades. This adds
+`react-native-gesture-handler`, a native module, so it needs a new native
+build; the fingerprint runtime keeps OTA updates off older binaries.
+
+**Why:** iOS convention is an edge pull that tracks the finger, and the
+sidebar was reachable only from a button at the top of the screen. A first
+version used a plain view over the edge, which took every touch that started
+on it, taps included, and could only open the sidebar once a threshold was
+crossed. Gesture handler's pan is a native recognizer: it leaves a touch to the
+content until it activates, cancels the content's touch when it does, and
+feeds `Animated.event` so the drawer follows on the native side. The pan wraps
+the whole tab shell because pinned sites draw in the PinStage above every
+screen; a recognizer inside a screen would never see touches over them.
+
+**What to respect:** The pull relies on a touch continuing to reach the pan
+after the sidebar's `Modal` presents over it, which UIKit does for a touch
+already in progress. The `Modal` presents with no animation and stays up until
+the slide out ends; a button open starts sliding on `onShow`, once the views
+it animates exist. Android has no pull: gesture navigation owns that edge for
+Back.
 
 ### 2026-11-15 — Recover renderers in place, visible screen first, and cut launch and update churn
 
