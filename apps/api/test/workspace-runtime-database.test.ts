@@ -206,6 +206,10 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "canvas_artifacts",
   // Requests to open a Canvas (migration 137), behind the same facade.
   "canvas_access_requests",
+  // A Canvas's notices and each person's choice for them (migration 150),
+  // behind the same facade.
+  "canvas_notice_registrations",
+  "canvas_notification_choices",
   // Artifact audience source state is read only by typed policy/delivery RPCs.
   "canvas_artifact_users",
   "canvas_artifact_access_state",
