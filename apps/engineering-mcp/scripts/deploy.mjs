@@ -143,7 +143,14 @@ const source = await readFile(join(appDirectory, "wrangler.jsonc"), "utf8");
 const config = parseWranglerConfig(source);
 const auditLakehouse = await engineeringAuditLakehouseBinding();
 if (auditLakehouse) config.pipelines = [auditLakehouse];
-else console.warn("ENGINEERING_AUDIT_LAKEHOUSE has no stream ID in this checkout; every tool call will refuse as engineering_audit_unconfigured. Run scripts/ensure-cloudflare-inference-lakehouse.mjs --deploy-bindings first, as the API deploy does");
+else {
+  console.warn([
+    "ENGINEERING_AUDIT_LAKEHOUSE has no stream ID in config/engineering-mcp-audit-lakehouse.json, so this deploy binds no audit Pipeline",
+    "and every tool call will refuse as engineering_audit_unconfigured.",
+    "To fix it, run `node scripts/ensure-cloudflare-inference-lakehouse.mjs --deploy-bindings` with this deploy's CLOUDFLARE_API_TOKEN",
+    "and CLOUDFLARE_ACCOUNT_ID, then deploy again from the same checkout. The API deploy workflow runs that step before this one.",
+  ].join(" "));
+}
 config.vars.ACCESS_APPLICATION_AUD = audience;
 config.vars.CLOUDFLARE_ACCOUNT_ID = accountId;
 await writeFile(generatedConfig, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });

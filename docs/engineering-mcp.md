@@ -173,8 +173,12 @@ count distinct `event_id`, since a retried send is a second row.
 fails as `engineering_audit_unavailable`, with the platform's code when it
 gave one (`pipeline_message_too_large` for a row over the binding's 1 MB
 limit), or as `engineering_audit_unconfigured` when the Worker has no
-binding. The finished and task rows follow an effect that already happened,
-so a failed send there is only logged as `engineering_mcp_audit_write_failed`.
+binding. Each refusal's text names its fix: redeploy through the API deploy
+(or run `--deploy-bindings` before a manual deploy) for a missing binding,
+split the call for an oversized row, and retry, then check the stream, for a
+refused send (`auditRefusalText`). The finished and task rows follow an effect
+that already happened, so a failed send there is only logged as
+`engineering_mcp_audit_write_failed`.
 
 Recorded: the arguments as the SDK validated them, which include SQL text and
 bindings, Basin queries and message bodies sent with `send_message`. Not
