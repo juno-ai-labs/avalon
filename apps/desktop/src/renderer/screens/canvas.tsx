@@ -178,6 +178,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const sidekicks = row?.sidekicks ?? canvas.data?.sidekicks ?? [];
   const [choosingAppearance, setChoosingAppearance] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
+  const [noticeError, setNoticeError] = useState<Error | null>(null);
   const [linkError, setLinkError] = useState<Error | null>(null);
   const [audienceError, setAudienceError] = useState<Error | null>(null);
   const [renaming, setRenaming] = useState(() => canvasRenameRequested(location.state));
@@ -390,7 +391,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       }}
       sidekicks={sidekicks}
     />
-    <CanvasNoticesMenuSection canvas={canvas.data} />
+    <CanvasNoticesMenuSection canvas={canvas.data} disabled={!api} onError={setNoticeError} />
     {canvas.data?.canManage && <>
       <TitleMenuSeparator />
       <TitleMenuItem danger disabled={!api || archiving} icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
@@ -439,6 +440,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const madeSidekicksCopy = madeSidekicksArchiveCopy(sidekicks);
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
+    {noticeError && <ErrorNotice occurrence={noticeError}>This Canvas's notifications could not be changed. Try again.</ErrorNotice>}
     {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
     {audienceError && <ErrorNotice occurrence={audienceError} title="Artifact access was not changed">{audienceError instanceof ApiError && audienceError.code === 'canvas_sharing_changed'
       ? 'Someone else changed this Canvas’s sharing first. Their change is shown now; choose again if you still want yours.'
