@@ -442,10 +442,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
     }
     if (home && event.type === 'ready') reportHomeBuild(event.build);
     setReady(true); setFailed(false);
-    if (mobileContentReady(event)) {
-      setContentReady(true);
-      if (home && !dashboardTimed) { dashboardTimed = true; recordTiming('launch_to_dashboard', performance.now() - JS_STARTED); }
-    }
+    if (mobileContentReady(event)) setContentReady(true);
     if (event.type === 'open-canvas') {
       if (event.id === canvasId) web.current?.send({ type: 'open', id: event.id, pinned: true });
       else open(event.id);
@@ -504,6 +501,16 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
   // mounted behind it for the socket, chat, create and canvases it opens.
   const showDashboard = dashboardVisible({ home, chatOpen: Boolean(chatReturn), opening: opening !== null, snapshot, hasDirectory: Boolean(shownDirectory) });
   useEffect(() => home ? navigation.addListener('tabPress', () => setOpening(null)) : undefined, [home, navigation]);
+  // The dashboard is native, so launch is timed to its first draw with canvases.
+  useEffect(() => {
+    if (!showDashboard || !shownDirectory || dashboardTimed) return;
+    const frame = requestAnimationFrame(() => {
+      if (dashboardTimed) return;
+      dashboardTimed = true;
+      recordTiming('launch_to_dashboard', performance.now() - JS_STARTED);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [showDashboard, shownDirectory]);
   // A stale Home reloads only where nobody sees its page: off screen, or under
   // the native dashboard, which keeps drawing from the directory meanwhile. An
   // open inline chat, create flow or canvas lives in the page and is never cut.
