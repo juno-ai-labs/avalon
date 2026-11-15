@@ -262,6 +262,10 @@ describe("a Sidekick a Canvas's Chat made", () => {
     await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: asWorkstreamId(crypto.randomUUID()), title: "Digest",
       createdByUserId: CREATOR, authorityGeneration: 1, writer: { sidekickId: MADE_ELSEWHERE, runId: crypto.randomUUID() } });
     expect(await manages(OUTSIDER)).toBe(false);
+    // Managing is the whole of it, archive included.
+    await workspace().sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE,
+      actor: { ...member(PARTICIPANT), participantOfOwningWorkstream: false } });
+    expect(await lifecycle(MADE_ELSEWHERE)).toBe("deleted");
   });
 
   it("stops being managed by someone the Canvas no longer admits", async () => {

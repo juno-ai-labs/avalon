@@ -314,20 +314,10 @@ A non-manager is refused `sidekick_contact_forbidden` when they cannot open it
 and `sidekick_edit_requires_manager` when they can, as before.
 `sidekick_attach_resource` still requires opening it.
 
-**A wizard turn the Chat's message started asks the person directly.** Such a
-turn (`wizardTurnCanvasId`: `sidekickWizard` with an `agentExchange` whose
-sender is a Canvas's Chat) keeps `request_elicitation`, which every other
-agent-message turn loses (`routesAnswersToAgent`), and is offered the source
-tools. What it asks of a person is drawn in that Chat as well as in its own
-conversation: `postWizardCard` (`wizard-canvas-cards.ts`) appends a
-`conversation_post` of the Sidekick's whose `automation_activation` carries
-`question: { elicitationId }` or `sourceRequests: { requestIds }`, keyed on the
-question or the tool receipt so a replay posts once. The client reads the
-question from `GET /sidekicks/:id/questions/:elicitationId` and answers it at
-`POST …/answer`; both reach the Sidekick's shared conversation, where a manager
-reads and answers the wizard's questions whether or not they can open it
-(`wizardQuestionAuthority`). The source card reads its requests as it does
-anywhere else ([`sidekick-sources.md`](sidekick-sources.md#where-the-card-is-drawn)).
+**A wizard turn the Chat's message started asks the person directly.** It
+keeps `request_elicitation` (`routesAnswersToAgent` is false for it), and what
+it asks is also drawn in the Chat that messaged it
+([`sidekick-sources.md`](sidekick-sources.md#where-the-card-is-drawn)).
 
 ### A run asking its wizard for a change
 
@@ -460,34 +450,6 @@ owned Sidekick contact, the refusal of an inaccessible personal Sidekick, and a
 guest's grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
-
-### 2026-11-14 — A wizard reached from a Canvas asks the person in that Canvas
-
-**What changed:** A wizard turn a Canvas's Chat started keeps
-`request_elicitation`, and its question and its source requests are drawn in
-that Chat as Sidekick posts that carry the question's or the requests' ids.
-Answering from the Chat goes to the Sidekick's shared conversation through
-`/sidekicks/:id/questions/:elicitationId`, and any manager may answer there
-without being able to open the Sidekick. The Chat's `sidekicks_list` lists
-every attached Sidekick.
-
-**Why:** In one Canvas the Chat handed a two-person email Sidekick to the
-wizard, which could neither ask which of two people named Alex was meant nor
-ask Alex for his mail, and the Chat reported the second mailbox as
-impossible. The owner asked on 2026-11-14 for the wizard to ask directly and
-for its cards to be drawn in the Canvas.
-
-**Considered and rejected:** Leaving the questions with the Chat's agent,
-which is what `routesAnswersToAgent` did: the agent relayed a refusal instead
-of asking. Hosting the question in the Canvas's own conversation: the
-wizard's loop pauses on a question it owns, and moving the pause would split
-one question across two objects. Copying the question's state into the post:
-the card reads it live, so it can never disagree with the wizard's own.
-
-**Consequences:** Only a wizard turn whose sender is a Canvas's Chat draws
-cards there; a run's change request to its wizard still routes answers to the
-run. The read and answer routes rely on the shared conversation's manager
-check; a route that skips it would let any member answer a wizard's question.
 
 ### 2026-11-10 — A Canvas's Chat makes and archives its own Sidekicks, and contact is decided by managing
 

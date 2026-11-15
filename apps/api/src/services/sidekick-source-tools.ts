@@ -118,10 +118,10 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
       // receipt, so a retried call posts once.
       if (askedFromCanvasId !== null) {
         const requestIds = asked.requests.map((request) => request.requestId);
-        await postWizardCard(env, input, askedFromCanvasId, `sidekick-source-card:${operationId}`, (name) => ({
-          text: `${name} asked ${requestIds.length === 1 ? "one person" : `${requestIds.length} people`} to let their events start it. Each person approves or declines their own request.`,
+        await postWizardCard(env, input, askedFromCanvasId, `sidekick-source-card:${operationId}`, {
+          text: `Asked ${requestIds.length === 1 ? "one person" : `${requestIds.length} people`} to let their events start this Sidekick. Each person approves or declines their own request.`,
           card: { sourceRequests: { requestIds } },
-        }));
+        });
       }
       // The whole result is the card's input: the client reads each request's
       // id from it and draws its live state.

@@ -1177,6 +1177,20 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * private helper it touches — which is what left a retired agent unreachable
    * after its first eviction.
    */
+  /**
+   * The Canvas a wizard question was asked from, for the turn its answer
+   * starts: an answer's input is keyed `elicitation-response:<id>`, and the
+   * question's own turn (`elicitation:<id>`) records `askedFromCanvasId` when a
+   * Canvas's Chat drew it. Nothing for any other input.
+   */
+  private answeredQuestionCanvas(clientMessageId: string | null): { wizardCanvasId?: string } {
+    const prefix = "elicitation-response:";
+    if (!clientMessageId?.startsWith(prefix)) return {};
+    const question = this.messages.messageByClientId({ clientMessageId: `elicitation:${clientMessageId.slice(prefix.length)}` });
+    const asked = z.object({ askedFromCanvasId: IdSchema }).safeParse(JSON.parse(question?.structured_content_json ?? "null"));
+    return asked.success ? { wizardCanvasId: asked.data.askedFromCanvasId } : {};
+  }
+
   private runtimeRecoveryAttempt(): Promise<void> {
     return this.storageReady.then(() => inDurableObjectPhase(
       this.env,
@@ -4012,6 +4026,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
         ...(delegation ? { automationDelegation: delegation } : {}),
         ...(sharedSidekickConversation ? { sidekickWizard: true } : {}),
+        ...(sharedSidekickConversation ? this.answeredQuestionCanvas(pending.client_message_id) : {}),
         backgroundAgent: Boolean(background),
         ...(authorization.telemetryOperationId
           ? {
