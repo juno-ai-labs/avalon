@@ -750,6 +750,29 @@ describe("connector tools selected for harness runs", () => {
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));
   });
 
+  it("offers the notice tools per the Canvas notices matrix: both to a Chat, a wizard and their agents, send to a run and its worker, none to the self-review", async () => {
+    const runtimeEnv = env(new ToolSelectionDatabase([]));
+    const noticeTools = async (input: WorkstreamWorkflowInput) => {
+      const plugin = (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
+        .find((candidate) => candidate.canonicalId === "rally:notifications");
+      return plugin ? { preload: plugin.preload, tools: plugin.tools.map((tool) => tool.definition.name) } : null;
+    };
+    const both = { preload: true, tools: ["register", "send"] };
+    expect(await noticeTools(workflowInput())).toEqual(both);
+    expect(await noticeTools({ ...automationConversationInput(), sidekickWizard: true })).toEqual(both);
+    expect(await noticeTools(childWorkflowInput())).toEqual(both);
+    expect(await noticeTools(childWorkflowInput(automationConversationInput()))).toEqual(both);
+    // A wake-up is the loop it runs in.
+    expect(await noticeTools({ ...workflowInput(), reason: "scheduled_wakeup", scheduledWakeupId: "00000000-0000-7000-8000-00000000e003" }))
+      .toEqual(both);
+    const sendOnly = { preload: true, tools: ["send"] };
+    expect(await noticeTools(automationRunInput())).toEqual(sendOnly);
+    expect(await noticeTools({ ...childWorkflowInput(automationConversationInput()),
+      automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toEqual(sendOnly);
+    expect(await noticeTools({ ...automationConversationInput(), reason: "sidekick_review" })).toBeNull();
+    expect(await noticeTools({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" })).toBeNull();
+  });
+
   it("offers the source tools to every loop but a Sidekick run and its workers, and neither a run nor its worker the tool that changes delegation", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const sourceTools = async (input: WorkstreamWorkflowInput) =>
