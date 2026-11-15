@@ -436,6 +436,13 @@ describe('transcript messages', () => {
       requestIds: ['00000000-0000-7000-8000-0000000000cc'],
     });
 
+    // A question's post carries its revision, which moves when the question is settled where it lives.
+    expect(orderedTranscriptMessages(activationSnapshot({
+      ...parsed, question: { elicitationId: '00000000-0000-7000-8000-0000000000dd' },
+    }), 'workstream-one')[0]?.automationActivation?.question).toEqual({
+      elicitationId: '00000000-0000-7000-8000-0000000000dd', revision: 1,
+    });
+
     // Who asked for the run and its number ride beside the strict row, on the block.
     expect(orderedTranscriptMessages(activationSnapshot({
       ...parsed, run: { state: 'running', stepCount: 0, reply: null },
