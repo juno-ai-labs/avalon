@@ -10,7 +10,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Plus, Search, Sparkles } from 'lucide-react';
 import type { CanvasSidebarRow } from '@rally/contracts';
-import { MOBILE_COMMAND_EVENT, MobileCommandSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
+import { ARTIFACT_PICKER_CAPABILITY, MOBILE_COMMAND_EVENT, MobileCommandSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
 import { LocalCacheScopeProvider } from '../../desktop/src/renderer/lib/local-cache-scope';
@@ -19,7 +19,7 @@ import { WorkspaceSocketProvider, useWorkspaceSocket } from '../../desktop/src/r
 import { CANVASES_ROUTE, canvasRoute, openCanvasId, useCanvasList } from '../../desktop/src/renderer/lib/canvases';
 import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/speech-playback';
 import { canvasMark } from '../../desktop/src/renderer/components/canvas-mark';
-import { mobileScreenReady, postMobileEvent } from './mobile-bridge';
+import { mobileCapability, mobileScreenReady, postMobileEvent } from './mobile-bridge';
 import './mobile.css';
 import { useMobileCanvasDetail, useMobileCanvasUpdates } from './mobile-canvas-detail';
 // Chat/composition and file previews are paid for only when those screens open.
@@ -261,13 +261,25 @@ function PrepareCanvas({ id }: { id: string }) {
   const { session } = useAppSession();
   const query = useMobileCanvasDetail(id);
   const heads = useResourceHeads();
-  const resource = query.data?.artifacts.length === 1 && query.data.artifacts[0]?.kind === 'site' ? query.data.artifacts[0] : null;
-  const version = resource ? Math.max(resource.version, heads[resource.resourceId]?.version ?? 0) : 0;
+  const artifacts = query.data?.artifacts ?? [];
+  // A shell with a native picker takes any canvas with a site, opening the one
+  // this page would (its first site); an older shell only a single-site canvas.
+  const picker = mobileCapability(ARTIFACT_PICKER_CAPABILITY);
+  const resource = picker
+    ? artifacts.find((item) => item.kind === 'site') ?? null
+    : artifacts.length === 1 && artifacts[0]?.kind === 'site' ? artifacts[0] : null;
+  const current = (item: { resourceId: string; version: number }) => Math.max(item.version, heads[item.resourceId]?.version ?? 0);
+  const version = resource ? current(resource) : 0;
+  const listed = picker && artifacts.length > 1
+    ? artifacts.map((item) => ({ resourceId: item.resourceId, title: item.title, version: current(item), kind: item.kind }))
+    : undefined;
+  const listKey = JSON.stringify(listed ?? null);
   useEffect(() => {
     if (!session?.workspace || (!query.data && !query.isError)) return;
     postMobileEvent({ type: 'prepared-canvas', userId: session.user.id, workspaceId: session.workspace.id, canvasId: id,
-      canvas: resource ? { canvasId: id, resourceId: resource.resourceId, version, title: query.data!.title } : null });
-  }, [session, id, resource, version, query.data, query.isError]);
+      canvas: resource ? { canvasId: id, resourceId: resource.resourceId, version, title: query.data!.title, ...(listed ? { artifacts: listed } : {}) } : null });
+  // `listed` is rebuilt each render; `listKey` is its content.
+  }, [session, id, resource, version, query.data, query.isError, listKey]);
   return null;
 }
 
