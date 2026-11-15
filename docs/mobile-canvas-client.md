@@ -131,7 +131,7 @@ lets the surrounding KeyboardAvoidingView own keyboard avoidance, preventing a
 second keyboard inset from lifting the composer into the transcript. The same
 WebView behavior applies to the shared conversation view, legacy conversation sheets and hosted artifacts.
 
-The OS places the native tab bar and rail, including Duo’s outer screen, inner orientation changes and either side of Split View. No hinge angle or fixed width threshold chooses native navigation. Native safe-area handling reserves the system rail/bar; content extends behind the transparent header with a measured initial inset that scrolls away. The inset updates when geometry changes without accumulating padding. Header actions are native bar items on iOS, so the system can relocate or overflow them. Android uses its native navigation header with accessible actions. Home has sidebar and create-canvas (+) actions; artifact screens have sidebar/chat actions. Headers have no title or extra Home action. The Muse-inspired sidebar remains shared and custom, including pin/unpin, drag ordering and accessibility move actions. Ordinary swipes scroll; closing the drawer or a changed account, organization or pin list cancels a drag. On iOS, swiping in from the leading edge also opens the sidebar wherever its header button does. A 20pt strip (plus the left safe area) in `CanvasTabs`, above the PinStage and below the floating header, takes touches that start there and calls the focused screen's opener once the pull travels 40pt inward, or 12pt on a quick flick. Content margins are wider than the strip, so it covers no controls. Android leaves that edge to system Back.
+The OS places the native tab bar and rail, including Duo’s outer screen, inner orientation changes and either side of Split View. No hinge angle or fixed width threshold chooses native navigation. Native safe-area handling reserves the system rail/bar; content extends behind the transparent header with a measured initial inset that scrolls away. The inset updates when geometry changes without accumulating padding. Header actions are native bar items on iOS, so the system can relocate or overflow them. Android uses its native navigation header with accessible actions. Home has sidebar and create-canvas (+) actions; artifact screens have sidebar/chat actions. Headers have no title or extra Home action. The Muse-inspired sidebar remains shared and custom, including pin/unpin, drag ordering and accessibility move actions. Ordinary swipes scroll; closing the drawer or a changed account, organization or pin list cancels a drag. The drawer slides in over a fading scrim and slides back out on close; its `Modal` stays presented until the slide out ends. Reduce Motion fades the drawer in place instead. On iOS, swiping in from the leading edge also opens the sidebar wherever its header button does. A 20pt strip (plus the left safe area) in `CanvasTabs`, above the PinStage and below the floating header, takes touches that start there and calls the focused screen's opener once the pull travels 40pt inward, or 12pt on a quick flick. Content margins are wider than the strip, so it covers no controls. Android leaves that edge to system Back.
 
 Android native tab images use cached PNG file URLs because its native image loader does not render PNG data URIs. Native tab images use the same Lucide catalog and Electron bare-mark colors (themed ink for pastel colors, the hue itself for legacy colors), rasterized from SVG for platform tab items with original-color rendering. On iOS the tab image is rasterized at 27pt (22pt glyph), the size react-native-bottom-tabs redraws tab images to, and its source carries the screen `scale`, so neither the image loader nor the tab bar resamples it. Tab glyphs are bare, matching Home; canvas tint tiles remain in the sidebar. Selection uses the platform indicator, and the browser preview follows the same bare-icon treatment. The SVG wrapper positions each complete glyph; Lucide receives `size` rather than `x`/`y` or explicit dimensions, which it would also forward to its child shapes and distort their geometry. Missing icons use PanelsTopLeft. The native theme reads Electron’s base and appearance tokens. iOS supplies Liquid Glass and its accessibility fallbacks; Android supplies native tab behavior and system Back. Predictive Back is disabled through Expo's
 `android.predictiveBackGestureEnabled` setting, following [React Navigation's
@@ -598,7 +598,7 @@ are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
 
-### 2026-11-15 — Swipe in from the left edge to open the sidebar on iOS
+### 2026-11-15 — Swipe in from the left edge to open the sidebar on iOS, and slide it in and out
 
 **What changed:** On iOS, a pan that starts at the leading edge and moves
 inward opens the sidebar on Home, browser-rendered canvases and pinned sites.
@@ -610,9 +610,14 @@ of the screen, and iOS users expect the edge swipe. The strip lives beside the
 tabs, like the floating header, because pinned sites draw in the PinStage
 above every screen; a strip inside a screen would sit under them.
 
+The drawer now slides in and out rather than fading with its `Modal`, so a
+swipe and a button tap both read as the drawer arriving from that edge. The
+`Modal` presents with no animation and stays up until the slide out finishes;
+a first open starts sliding on `onShow`, once the views it animates exist.
+
 **What to respect:** It opens once the threshold is crossed rather than
-dragging the drawer with the finger, because the sidebar is a `Modal` with a
-fade. A tracked pull would need the drawer to leave `Modal`. Android has no
+dragging the drawer with the finger. A tracked pull would need the drawer to
+leave `Modal`, since the touch starts in a view the `Modal` covers. Android has no
 strip: gesture navigation owns that edge for Back.
 
 ### 2026-11-15 — Recover renderers in place, visible screen first, and cut launch and update churn
