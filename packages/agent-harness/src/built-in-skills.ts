@@ -5,6 +5,7 @@ import { PUBLISHING_A_FEED_SKILL } from "./platform-skills/publishing-a-feed-ski
 import { TRACKING_SEEN_OR_DONE_ITEMS_SKILL } from "./platform-skills/tracking-seen-or-done-items-skill";
 import { USING_THE_LOCAL_INAPP_BROWSER_SKILL } from "./platform-skills/using-the-local-inapp-browser-skill";
 import {
+  CREATING_A_PODCAST_EPISODE_SKILL,
   DEEP_RESEARCH_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
   TASK_SKILLS,
@@ -15,6 +16,7 @@ import type { HarnessSkill } from "./index";
 
 export {
   BUILDING_LIVE_SITES_SKILL,
+  CREATING_A_PODCAST_EPISODE_SKILL,
   DEEP_RESEARCH_SKILL,
   POLLING_FOR_EVENTS_SKILL,
   PUBLISHING_A_FEED_SKILL,
@@ -61,6 +63,9 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   BUILDING_LIVE_SITES_SKILL,
   // Terminal's too: a feed is a site route and its episodes are published files.
   PUBLISHING_A_FEED_SKILL,
+  // Terminal's as well: an episode is joined, encoded and its art resized with
+  // ffmpeg in a sandbox. A task skill, so it lives in `@rally/skills`.
+  CREATING_A_PODCAST_EPISODE_SKILL,
   // Request-routing task skills compose the procedures above for a report or app.
   ...TASK_SKILLS,
 ];
