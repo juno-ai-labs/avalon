@@ -626,6 +626,10 @@ const manifestPaths = {
  * account's stream IDs, writes them and the account marker into this
  * checkout's manifests, then materializes. Nothing is committed; the next
  * deploy of a fork reconciles again, which is idempotent.
+ *
+ * A mismatch while the pinned streams exist in this account means the marker
+ * is stale (the account id changed, or the marker was never updated), not a
+ * fork. Adopting there would silently re-point production, so it fails.
  */
 export async function deployLakehouseBindings(options = {}) {
   const environment = options.environment ?? process.env;
@@ -639,6 +643,28 @@ export async function deployLakehouseBindings(options = {}) {
   if (manifests.every((manifest) => manifest.pinnedAccount === fingerprint)) {
     log('Lakehouse stream IDs are pinned for this account; materializing without a control-plane read');
     return materializePinnedLakehouseWranglerConfigs({ ...options, manifests });
+  }
+  const client = {
+    accountId: required('CLOUDFLARE_ACCOUNT_ID', environment),
+    token: required('CLOUDFLARE_API_TOKEN', environment),
+    fetchImpl: options.fetchImpl ?? globalThis.fetch,
+    log,
+    randomImpl: options.randomImpl,
+    waitImpl: options.waitImpl,
+  };
+  for (const manifest of manifests) {
+    for (const regionName of LAKEHOUSE_REGIONS) {
+      const { stream, streamId } = manifest.regions[regionName];
+      if (!streamId) continue;
+      try {
+        await apiRequest(client, `/pipelines/v1/streams/${encodeURIComponent(streamId)}`);
+      } catch (error) {
+        if (isMissing(error)) continue;
+        throw error;
+      }
+      throw new Error(`${manifest.binding} pins ${stream} to ${streamId}, which exists in this account, but its pinnedAccount is for another account. `
+        + `Set pinnedAccount to ${fingerprint} in the manifest rather than adopting new stream IDs.`);
+    }
   }
   log('Lakehouse stream IDs are pinned for another account; reconciling this account and adopting its stream IDs');
   const { provisioned } = await ensureCloudflareLakehouses({ ...options, manifests, create: true, adoptStreamIds: true });

@@ -20,7 +20,7 @@ import { DiagnosticsScreen } from './src/DiagnosticsScreen';
 import { registerBackgroundSync } from './src/background';
 import { useNotifications } from './src/notifications';
 import { notificationTarget } from './src/notification-target';
-import { recordTiming, shareDiagnostics } from './src/diagnostics';
+import { recordFailure, recordTiming, shareDiagnostics } from './src/diagnostics';
 import * as Notifications from 'expo-notifications';
 import { useNetworkState } from 'expo-network';
 import { type ComponentRef, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -50,7 +50,7 @@ const START_URL = mobileUrl(APP_URL);
 const SAVED_DIRECTORY = loadSavedDirectory();
 const PREPARED_PINS = {
   store: { initial: loadSavedPins(), save: savePins },
-  direct: (directory: MobileSnapshot, canvas: PreparedCanvas) => requestArtifactAccess(APP_URL, directory, canvas),
+  direct: (directory: MobileSnapshot, canvas: PreparedCanvas) => requestArtifactAccess(APP_URL, directory, canvas, { report: (reason) => recordFailure('artifact_access_failed', reason) }),
 };
 const JS_STARTED = performance.now();
 const REMEMBERED_SITES = loadRememberedSites();
@@ -597,7 +597,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   // Home's dashboard is native: shown from the saved directory before the page
   // answers, and whenever the page is on its own dashboard. The page stays
   // mounted behind it for the socket, chat, create and canvases it opens.
-  const showDashboard = dashboardVisible({ home, chatOpen: Boolean(chatReturn), opening: opening !== null, snapshot, hasDirectory: Boolean(shownDirectory) });
+  const showDashboard = dashboardVisible({ home, chatOpen: Boolean(chatReturn), opening: opening !== null || optimistic !== null, snapshot, hasDirectory: Boolean(shownDirectory) });
   useEffect(() => home ? navigation.addListener('tabPress', () => { setOpening(null); setOptimistic(null); }) : undefined, [home, navigation]);
   // The dashboard is native, so launch is timed to its first draw with canvases.
   useEffect(() => {
@@ -639,6 +639,8 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
     if (hosted && !close && frontArtifact) {
       const front = frontArtifact;
       navigation.getParent()?.setOptions({ headerShown: false });
+      // The buttons need the live directory (see PreparedSiteScreen).
+      if (!signedIn) { floatingHeader.hide(canvasId); return; }
       floatingHeader.show(canvasId, { menu, chat: () => openChat(front.canvasId, viewTitle) });
       return () => floatingHeader.hide(canvasId);
     }
@@ -670,7 +672,11 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
           onLoading={() => {
             // Loading Home must not close other tabs and discard their drafts.
             // Authentication snapshots and signed-out events own the directory.
-            if (home) { prepared.reset(); setChatReturn(null); } setReady(false); setAnswering(false); setContentReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
+            if (home) { prepared.reset(); setChatReturn(null); }
+            // A native artifact in front outlives its page's reload (a crash
+            // recovery, a stale build): keep it there, not the dashboard.
+            if (frontArtifact) setOptimistic(frontArtifact.canvasId);
+            setReady(false); setAnswering(false); setContentReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
           }} onError={() => {
             // A tap waiting on this page will not be answered: drop it, so the
             // failure and its retry show instead of an endless spinner.
@@ -769,9 +775,12 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
   useEffect(() => {
     if (!focused) return;
     navigation.getParent()?.setOptions({ headerShown: false });
+    // Both buttons need the live directory: the sidebar mounts with it and the
+    // chat opens through it. A saved copy alone shows the site without them.
+    if (!directory) { floatingHeader.hide(canvas.canvasId); return; }
     floatingHeader.show(canvas.canvasId, { menu: () => setSidebar(true), chat: () => openChat(canvas.canvasId, canvas.title) });
     return () => floatingHeader.hide(canvas.canvasId);
-  }, [focused, canvas.canvasId, canvas.title, navigation, openChat, floatingHeader]);
+  }, [focused, canvas.canvasId, canvas.title, navigation, openChat, floatingHeader, directory]);
   return <SafeAreaView edges={{ left: true, right: true, bottom: bottomTabInset === 0 }} style={{ backgroundColor: colors.background }}>
     <KeyboardAvoidingView enabled={keyboardVisible} style={[styles.fill, { marginBottom: bottomTabInset }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View ref={frame} collapsable={false} style={styles.fill} onLayout={measure} />

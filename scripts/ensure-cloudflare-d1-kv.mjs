@@ -7,12 +7,14 @@
  * neither create nor look up: the committed id is the only link. That made a
  * fresh account (an open-source deployment included) a list of hand steps:
  * create each database, then edit its id into every file that binds it. Here
- * the resource's name is the source of truth instead. Each D1 database is found
- * by its `database_name`; each pinned KV namespace by a title equal to its
- * binding name. Whatever the account lacks is created, and every file's id is
- * rewritten to the account's. In the production account the committed ids
- * already match and nothing changes; in another account the checkout is edited
- * in place for the rest of the job and never committed.
+ * a committed id the account holds is kept, whatever the resource is named, so
+ * a deploy never re-points a binding at a different database. Only when the
+ * committed id is absent from the account (a fork) is the name used: each D1
+ * database is found by its `database_name`, each pinned KV namespace by a title
+ * equal to its binding name, and whatever the account lacks is created. Every
+ * file's id is then rewritten to the one chosen. In the production account the
+ * committed ids exist and nothing changes; in another account the checkout is
+ * edited in place for the rest of the job and never committed.
  *
  * KV bindings with no `id` are left to Wrangler, which provisions them on first
  * deploy. Test configs carry placeholder ids and are skipped.
@@ -85,6 +87,19 @@ export function pinStorageIds(source, { databases = {}, namespaces = {} }) {
     output = output.slice(0, start) + section + output.slice(end);
   }
   return output;
+}
+
+/**
+ * The id one declared resource should use: the committed id when the account
+ * holds it, else the account's resource of that name, else null (create it).
+ * `present` maps each resource name in the account to its id.
+ */
+export function resolveStorageId(name, uses, present) {
+  const committed = [...new Set(uses.map((use) => use.id).filter(Boolean))];
+  const held = new Set(present.values());
+  const kept = committed.filter((id) => held.has(id));
+  if (kept.length > 1) throw new Error(`${name} is pinned to different ids that both exist in the account (${kept.join(', ')}); make the files agree`);
+  return kept[0] ?? present.get(name) ?? null;
 }
 
 function describeFailure(response, body) {
@@ -177,7 +192,7 @@ export async function ensureD1AndKv(options = {}) {
     if (declared[kind].size === 0) continue;
     const present = await listAll(account, kind);
     for (const [name, uses] of declared[kind]) {
-      let id = present.get(name);
+      let id = resolveStorageId(name, uses, present);
       if (!id && !create) { problems.push(`missing ${kind === 'd1' ? 'D1 database' : 'KV namespace'} ${name}`); continue; }
       id ??= await ensureOne(account, kind, name, log);
       resolved[kind][name] = id;

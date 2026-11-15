@@ -136,7 +136,10 @@ use those pins, so `--deploy-bindings` reconciles that account instead: it
 creates whatever is missing, adopts the account's stream IDs in place of the
 pinned ones, writes them and the account marker into that checkout's manifests,
 and materializes from them. Nothing is committed, so each deploy of a fork
-reconciles again; reconciliation is idempotent.
+reconciles again; reconciliation is idempotent. Before adopting, it looks up
+each pinned stream ID in the account and fails if one exists: that means the
+marker is stale for this account, not that this is a fork, and adopting would
+re-point production's bindings.
 
 Infrastructure work uses an explicit mode. `--check` reads every resource and
 fails on absence or drift without mutation. `--reconcile` may create missing
@@ -352,7 +355,9 @@ name it.
 **Consequences:** A fork's deploys depend on the Pipelines control plane until
 it commits its own stream IDs and `pinnedAccount`. Adopting replaces the
 drift check only in a foreign account; `--reconcile` in the pinned account still
-refuses a stream ID that differs from the pin.
+refuses a stream ID that differs from the pin. Review found that a wrong marker
+alone would have made production adopt fresh streams, so the deploy first checks
+whether the pinned streams exist in the account and fails if they do.
 
 ### 2026-11-10 — Overflow at the Pipeline's 1 MB per-record limit, not the 5 MB request limit
 

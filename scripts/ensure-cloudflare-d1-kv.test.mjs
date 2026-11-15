@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { deployConfigPaths, pinStorageIds, storageFromWrangler } from './ensure-cloudflare-d1-kv.mjs';
+import { deployConfigPaths, pinStorageIds, resolveStorageId, storageFromWrangler } from './ensure-cloudflare-d1-kv.mjs';
 import { parseWranglerConfig } from './wrangler-config.mjs';
 
 const config = `{
@@ -70,4 +70,20 @@ test('finds every deploy and migration config, including the migration-only plat
   }
   const found = (await deployConfigPaths(root)).map((path) => path.slice(root.length + 1));
   assert.deepEqual(found, ['apps/api/platform.wrangler.jsonc', 'apps/api/wrangler.global.jsonc']);
+});
+
+test('keeps a committed id the account holds, even when another resource has the name', () => {
+  const present = new Map([['avalon-global', 'by-name'], ['renamed-global', 'committed']]);
+  assert.equal(resolveStorageId('avalon-global', [{ where: 'a', id: 'committed' }, { where: 'b', id: null }], present), 'committed');
+});
+
+test('falls back to the name only when the committed id is not in the account', () => {
+  const present = new Map([['avalon-global', 'fork-id']]);
+  assert.equal(resolveStorageId('avalon-global', [{ where: 'a', id: 'production-id' }], present), 'fork-id');
+  assert.equal(resolveStorageId('rally-platform', [{ where: 'a', id: null }], present), null);
+});
+
+test('refuses files that pin one name to two ids the account both holds', () => {
+  const present = new Map([['one', 'first'], ['two', 'second']]);
+  assert.throws(() => resolveStorageId('one', [{ where: 'a', id: 'first' }, { where: 'b', id: 'second' }], present), /different ids that both exist/u);
 });

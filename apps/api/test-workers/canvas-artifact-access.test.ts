@@ -367,22 +367,32 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect(poll.headers.get("set-cookie")).toBeNull();
     expect(await sessionExpiry()).toBe(soon);
 
-    const ctx = createExecutionContext();
-    const opened = await artifactWorker.fetch(
-      new Request("https://quiet-blue-river-garden-g.rallyusercontent.com/", {
-        headers: {
-          cookie: `__rally_artifact_session=${viewer!.session}`,
-          "sec-fetch-site": "none", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document",
+    const navigate = async (site: string) => {
+      const ctx = createExecutionContext();
+      const response = await artifactWorker.fetch(
+        new Request("https://quiet-blue-river-garden-g.rallyusercontent.com/", {
+          headers: {
+            cookie: `__rally_artifact_session=${viewer!.session}`,
+            "sec-fetch-site": site, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document",
+          },
+        }),
+        {
+          APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+          ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+          PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
         },
-      }),
-      {
-        APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
-        ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
-        PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
-      },
-      ctx,
-    );
-    await waitOnExecutionContext(ctx);
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+      return response;
+    };
+    // The page reloading itself is a navigation too, but not an open.
+    const reload = await navigate("same-origin");
+    expect(reload.status).toBe(200);
+    expect(reload.headers.get("set-cookie")).toBeNull();
+    expect(await sessionExpiry()).toBe(soon);
+
+    const opened = await navigate("none");
     expect(opened.status).toBe(200);
     const yearSeconds = 365 * 24 * 60 * 60;
     const maxAge = Number(/Max-Age=(\d+)/u.exec(opened.headers.get("set-cookie") ?? "")?.[1]);
@@ -390,6 +400,22 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect(maxAge).toBeLessThanOrEqual(yearSeconds);
     expect(opened.headers.get("set-cookie")).toContain(`__rally_artifact_session=${viewer!.session}`);
     expect(await sessionExpiry()).toBeGreaterThan(Date.now() + (yearSeconds - 60) * 1_000);
+  });
+
+  it("prunes an open code nobody redeemed once the code expires, not a year later", async () => {
+    await share("participants", [READER]);
+    await sync(SITE_HOST, SITE);
+    const viewer = { userId: READER, displayName: "Reader", appSessionId: "reader-session" };
+    await host(SITE_HOST).openForViewer(viewer);
+    const pending = () => runInDurableObject(host(SITE_HOST), async (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM viewer_sessions WHERE redeemed_at IS NULL").one().count);
+    expect(await pending()).toBe(1);
+    await runInDurableObject(host(SITE_HOST), async (_instance, state) => {
+      state.storage.sql.exec("UPDATE viewer_sessions SET code_expires_at=? WHERE redeemed_at IS NULL", Date.now() - 1);
+    });
+    // The next open prunes the dead code and leaves only its own.
+    await host(SITE_HOST).openForViewer(viewer);
+    expect(await pending()).toBe(1);
   });
 
   it("keeps source and administrative data editor-only for artifact users", async () => {
