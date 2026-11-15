@@ -2524,14 +2524,19 @@ function WorkAccordionBlock({ disclosure, message }: {
  * question is answered once wherever it is drawn. Anyone who manages the
  * Sidekick may read and answer it (`docs/sidekick-sources.md`).
  */
-function SidekickQuestionCard({ sidekickId, elicitationId, text }: { sidekickId: string; elicitationId: string; text: string }): React.JSX.Element {
+function SidekickQuestionCard({ sidekickId, elicitationId, revision, text }: {
+  sidekickId: string; elicitationId: string; revision: number | undefined; text: string;
+}): React.JSX.Element {
   const { api } = useCollaborationSession();
   const queryClient = useQueryClient();
-  const queryKey = ['sidekick-question', sidekickId, elicitationId];
+  // The post's revision moves when the question is answered or cancelled elsewhere, so a new key re-reads it.
+  const queryKey = ['sidekick-question', sidekickId, elicitationId, revision ?? 0];
   const query = useQuery({
     queryKey,
     queryFn: ({ signal }) => api!.readSidekickQuestion(sidekickId, elicitationId, signal),
     enabled: Boolean(api),
+    // A revision re-reads; the question as last read stays on screen meanwhile.
+    placeholderData: (previous) => previous,
     refetchOnReconnect: true,
     refetchOnWindowFocus: true,
   });
@@ -3185,6 +3190,7 @@ export function MessageBlock({
           {/* The wizard asked a question on a turn this Chat started: answered here, it answers the wizard. */}
           {message.automationActivation?.question && (
             <SidekickQuestionCard elicitationId={message.automationActivation.question.elicitationId}
+              revision={message.automationActivation.question.revision}
               sidekickId={message.automationActivation.automationId} text={message.text ?? ''} />
           )}
         </>

@@ -1191,6 +1191,27 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return asked.success ? { wizardCanvasId: asked.data.askedFromCanvasId } : {};
   }
 
+  /**
+   * Tell the Canvas a wizard question was drawn in that it was answered or
+   * cancelled here, so its card there re-reads it. Best-effort: the question
+   * is settled either way, and a card that misses this re-reads on focus.
+   */
+  private async settleMirroredQuestion(elicitationId: string): Promise<void> {
+    const identity = this.objectStore.identity();
+    if (identity?.parentKind !== "automation" || this.externalSubstreamId() !== "0") return;
+    const { wizardCanvasId } = this.answeredQuestionCanvas(`elicitation-response:${elicitationId}`);
+    if (!wizardCanvasId) return;
+    try {
+      await (await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, identity.workspaceId,
+        conversationObjectName(this.env.AVALON_REGION, identity.workspaceId, wizardCanvasId, asSubstreamId("0"))))
+        .reviseConversationPost({ workspaceId: identity.workspaceId, workstreamId: wizardCanvasId,
+          clientMessageId: `sidekick-question-card:${elicitationId}` });
+    } catch (error) {
+      logWarn(this.env, "wizard_card_revise_failed", { workspace_id: identity.workspaceId, automation_id: identity.parentId,
+        workstream_id: wizardCanvasId, elicitation_id: elicitationId, code: diagnosticErrorCode(error, "wizard_card_revise_failed") });
+    }
+  }
+
   private runtimeRecoveryAttempt(): Promise<void> {
     return this.storageReady.then(() => inDurableObjectPhase(
       this.env,
@@ -1945,6 +1966,26 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * admission and the Sidekick's attachments; this object decides only that
    * it is the addressed conversation and that it is not archived.
    */
+  /**
+   * Send a Sidekick's post here to the room again, so the cards drawn under it
+   * re-read what they show: the wizard's question it mirrors was answered or
+   * cancelled where it lives. The post itself does not change. Nothing for a
+   * post this conversation does not hold.
+   */
+  async reviseConversationPost(input: unknown): Promise<{ revised: boolean }> {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: z.string().min(1), workstreamId: z.string().min(1),
+      clientMessageId: z.string().min(1).max(300) }), input, "revise_conversation_post");
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.workstreamId
+      || this.externalSubstreamId() !== "0") return { revised: false };
+    const post = this.messages.messageByClientId({ clientMessageId: request.clientMessageId });
+    if (!post) return { revised: false };
+    await this.product.commitRuntimeMutation(() => this.transcript.reviseParticipantTurnInTransaction(post.id, Date.now()), true);
+    await this.flushSemanticRealtimeOutboxBestEffort();
+    return { revised: true };
+  }
+
   async appendConversationPost(input: unknown): Promise<{
     outcome: "appended" | "replayed" | "refused";
     code: string;
@@ -5768,6 +5809,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       case "elicitation_cancelled": {
         const elicitation = this.product.elicitationById(pending.reference.elicitationId);
         if (!elicitation) throw new Error("semantic_realtime_elicitation_missing");
+        await this.settleMirroredQuestion(elicitation.id);
         return ServerSocketEventSchema.parse({
           ...base,
           type: "elicitation_answered",
@@ -6804,6 +6846,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     event: Record<string, unknown>,
   ): Promise<"published" | "deferred"> {
     const parentId = "parentId" in attachment ? attachment.parentId : attachment.workstreamId;
+    // An answered wizard question drawn in a Canvas moves its card there too.
+    const answered = event["type"] === "elicitation_answered" ? (event["elicitation"] as { id?: unknown } | undefined)?.id : undefined;
+    if (typeof answered === "string") await this.settleMirroredQuestion(answered);
     const response = await this.acceptEvent(new Request(
       "https://room.internal/internal/events",
       {

@@ -583,7 +583,7 @@ export function orderedTranscriptMessages(
               : {}),
             ...(imported.success ? { importProvenance: imported.data } : {}),
             ...draftProposedFields(structured),
-            ...automationActivationFields(structured, block.sidekickRun),
+            ...automationActivationFields(structured, block.sidekickRun, turn.revision),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
           };
         }
@@ -2919,6 +2919,7 @@ function draftProposedFields(
 function automationActivationFields(
   structured: Record<string, unknown>,
   sidekickRun?: { requesterUserId: string | null; runNumber: number | null },
+  revision?: number,
 ): Pick<Message, 'automationActivation'> | Record<string, never> {
   if (structured['type'] !== 'automation_activation') return {};
   const parsed = AutomationActivationV1Schema.safeParse(structured);
@@ -2931,7 +2932,8 @@ function automationActivationFields(
       ...(parsed.data.trigger ? { trigger: parsed.data.trigger.kind } : {}),
       ...(parsed.data.run ? { run: parsed.data.run } : {}),
       ...(parsed.data.sourceRequests ? { sourceRequests: parsed.data.sourceRequests } : {}),
-      ...(parsed.data.question ? { question: parsed.data.question } : {}),
+      // The post is revised when its question is answered or cancelled where it lives, which re-reads the card.
+      ...(parsed.data.question ? { question: { ...parsed.data.question, ...(revision ? { revision } : {}) } } : {}),
       ...(sidekickRun ? { requesterUserId: sidekickRun.requesterUserId, runNumber: sidekickRun.runNumber } : {}),
     },
   };
