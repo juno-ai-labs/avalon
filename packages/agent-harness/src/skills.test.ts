@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BUILDING_LIVE_SITES_SKILL,
   PUBLISHING_A_FEED_SKILL,
+  CREATING_A_PODCAST_EPISODE_SKILL,
   BUILT_IN_SKILLS,
   DEEP_RESEARCH_SKILL,
   POLLING_FOR_EVENTS_SKILL,
@@ -686,9 +687,11 @@ describe("built-in skills", () => {
     expect(BUILDING_LIVE_SITES_SKILL.ownerPlugin).toBe("rally:terminal");
   });
 
-  it("scopes the feed skill to the plugin it publishes with", () => {
+  it("scopes the feed and episode skills to the plugin they publish with", () => {
     // A feed is a site route, and its episodes are files published from a sandbox.
     expect(PUBLISHING_A_FEED_SKILL.ownerPlugin).toBe("rally:terminal");
+    // An episode is joined, encoded and its art resized with ffmpeg in a sandbox.
+    expect(CREATING_A_PODCAST_EPISODE_SKILL.ownerPlugin).toBe("rally:terminal");
   });
 
   it("scopes the polling skill to the plugin that drafts the Sidekick", () => {

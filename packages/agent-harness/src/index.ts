@@ -124,6 +124,7 @@ export { renderCodeApi, renderType, type CodeApiPlugin, type CodeApiTool } from 
 export {
   BUILDING_LIVE_SITES_SKILL,
   BUILT_IN_SKILLS,
+  CREATING_A_PODCAST_EPISODE_SKILL,
   DEEP_RESEARCH_SKILL,
   POLLING_FOR_EVENTS_SKILL,
   PUBLISHING_A_FEED_SKILL,
