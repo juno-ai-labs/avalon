@@ -33,12 +33,14 @@ import {
   CanvasAccessRequestResultSchema,
   CanvasAccessSchema,
   CanvasDetailSchema,
+  CanvasNoticeChoicesSchema,
   CreatedCanvasSchema,
   type CanvasAccess,
   type CanvasAccessDecision,
   type CanvasAccessRequestResult,
   type CanvasAudienceUpdate,
   type CanvasDetail,
+  type CanvasNoticeChoices,
   type CreateCanvasRequest,
   type CreatedCanvas,
   AutomationDetailSchema as WireAutomationDetailSchema,
@@ -1391,6 +1393,11 @@ export class RallyApi {
   /** Change who can open a Canvas; its creator's, an administrator's, or its Sidekick's manager's. */
   setCanvasAudience(id: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
     return this.request(`/canvases/${encodeURIComponent(id)}/audience`, { method: 'POST', body: update, schema: CanvasDetailSchema });
+  }
+
+  /** The Canvases whose notices reach this person, with their choice for each, for Settings. */
+  canvasNoticeChoices(signal?: AbortSignal): Promise<CanvasNoticeChoices> {
+    return this.request('/canvases/notice-choices', { schema: CanvasNoticeChoicesSchema, ...(signal ? { signal } : {}) });
   }
 
   /** This person's channels for a Canvas's notices: a list (empty mutes it), or `null` to follow Settings. */

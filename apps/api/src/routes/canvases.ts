@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { IdSchema, UserIdSchema } from "@rally/contracts";
+import { CanvasNoticeChoicesSchema, IdSchema, UserIdSchema } from "@rally/contracts";
 import {
   CanvasAccessDecisionRequestSchema,
   CanvasAccessDecisionSchema,
@@ -61,6 +61,9 @@ canvasRoutes.put("/pinned-order", namedZValidator("canvas_pin_order", "Canvas pi
   await new CanvasService(c.env, getWorkspaceAuth(c)).reorderPins("canvas", c.req.valid("json").itemIds);
   return c.body(null, 204);
 });
+// Before `/:id`: the Canvases whose notices reach this person, for Settings.
+canvasRoutes.get("/notice-choices", async (c) =>
+  c.json(CanvasNoticeChoicesSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).noticeChoices())));
 canvasRoutes.get("/:id", canvasIdParam, async (c) => {
   c.header("Cache-Control", "no-store");
   return c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id)));

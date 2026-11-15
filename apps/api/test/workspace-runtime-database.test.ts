@@ -210,6 +210,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   // behind the same facade.
   "canvas_notice_registrations",
   "canvas_notification_choices",
+  "canvas_notice_operations",
   // Artifact audience source state is read only by typed policy/delivery RPCs.
   "canvas_artifact_users",
   "canvas_artifact_access_state",

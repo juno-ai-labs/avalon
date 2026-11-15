@@ -21,11 +21,13 @@ follow the member across devices. Two kinds today:
   to push alone but the last two, which default to push and email: a source
   request is answered from its email
   ([`sidekick-sources.md`](sidekick-sources.md)), and a Canvas notice with
-  both goes by push where one can be queued, else email
+  both goes by push where it reaches a device, else email
   ([`push-notifications.md`](push-notifications.md#canvas-notices)). A person
   may override **Canvas notices** for one Canvas, or mute it; that choice
   lives with the Canvas (`canvas_notification_choices`), not here, and
-  `notificationAllows` reads it when given the Canvas.
+  `notificationAllows` reads it when given the Canvas. Settings shows the
+  **Canvas notices** row as the default, with a row under it for each Canvas
+  whose notices reach the person, which follows the default until changed.
   In the client, each kind's picker offers **Push** (only where this
   deployment can push, though a stored `push` stays in a save) and **Email**,
   the same two for every kind (`NotificationChannelSettings`); a stored
@@ -140,9 +142,9 @@ and email. `NotificationAllowsRequest` takes an optional `parentId`, and for
 `canvas_notice` the Canvas's own choice for that person wins over this record.
 
 **Why:** The owner asked for choices per Canvas. Keeping them in the Canvas's
-table, not in `notify_json`, means discarding or archiving a Canvas takes its
-choices with it, and the one record stays the same size however many
-Canvases a person mutes.
+table, not in `notify_json`, means discarding a Canvas takes its choices with
+it, and the one record stays the same size however many Canvases a person
+mutes.
 
 **Consequences:** A caller that checks `canvas_notice` without the Canvas
 reads only Settings; the push consumer passes it.

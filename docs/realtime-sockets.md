@@ -661,7 +661,8 @@ namespace helper.
   ticket alone after stripping any inbound spelling. The object keeps it on
   the socket's attachment and leaves out what that build cannot parse: today
   the Activity rows of the Sidekick source kinds, below
-  `SOURCE_ACTIVITY_CLIENT_CONTRACT` (14;
+  `SOURCE_ACTIVITY_CLIENT_CONTRACT` (14), and of Canvas notices, below
+  `CANVAS_NOTICE_ACTIVITY_CLIENT_CONTRACT` (16;
   [`activity.md`](activity.md#failure-modes-and-limits)). A ticket that names
   no contract, and a socket attached before the field existed, read as older
   than every such payload.

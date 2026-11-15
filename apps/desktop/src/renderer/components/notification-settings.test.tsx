@@ -6,10 +6,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { NotificationChannelSettings } from './notification-settings';
 
 describe('the Notifications settings pane', () => {
-  it('offers each kind with its channels, reading nothing but the person\'s preferences', async () => {
+  it('offers each kind with its channels from the person\'s preferences', async () => {
     const api = {
       getMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
       updateMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
+      canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [] }),
+      setCanvasNoticeChoice: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}>
@@ -28,6 +30,8 @@ describe('the Notifications settings pane', () => {
     const api = {
       getMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
       updateMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
+      canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [] }),
+      setCanvasNoticeChoice: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}>
@@ -75,6 +79,8 @@ describe('the Notifications settings pane', () => {
     const api = {
       getMyPreferences: vi.fn().mockResolvedValue(stored),
       updateMyPreferences: vi.fn().mockResolvedValue(stored),
+      canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [] }),
+      setCanvasNoticeChoice: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}>
@@ -105,6 +111,8 @@ describe('the Notifications settings pane', () => {
     const api = {
       getMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
       updateMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
+      canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [] }),
+      setCanvasNoticeChoice: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}>
@@ -119,5 +127,29 @@ describe('the Notifications settings pane', () => {
     fireEvent.click(choices[0]!);
     await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalled());
     expect(api.updateMyPreferences.mock.calls[0]).toContainEqual({ notify: { newMessages: ['push', 'email'] } });
+  });
+
+  it('lists each Canvas that sends notices under the default, following it until changed there', async () => {
+    const canvasId = '00000000-0000-7000-8000-00000000c0c1';
+    const api = {
+      getMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
+      updateMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
+      canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [{ canvasId, title: 'Newsletter', purpose: 'New episodes.', channels: null }] }),
+      setCanvasNoticeChoice: vi.fn(),
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <NotificationChannelSettings api={api} email="you@example.test" pushAvailable workspaceId="org" />
+    </QueryClientProvider>);
+
+    expect(await screen.findByText('Newsletter')).toBeVisible();
+    expect(screen.getByText('Follows the default above. New episodes.')).toBeVisible();
+    // The row shows the default, push and email, and a change becomes this Canvas's own choice.
+    const picker = screen.getByLabelText('How Newsletter tells you');
+    fireEvent.pointerDown(picker, { button: 0, ctrlKey: false });
+    const choices = await screen.findAllByRole('menuitemcheckbox');
+    expect(choices.map((choice) => choice.getAttribute('aria-checked'))).toEqual(['true', 'true']);
+    fireEvent.click(choices[1]!);
+    await waitFor(() => expect(api.setCanvasNoticeChoice).toHaveBeenCalledWith(canvasId, ['push']));
   });
 });
