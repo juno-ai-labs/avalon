@@ -9,7 +9,7 @@ import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useStat
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Plus, Search, Sparkles } from 'lucide-react';
-import type { WorkstreamAppearance } from '@rally/contracts';
+import type { CanvasSidebarRow } from '@rally/contracts';
 import { MOBILE_COMMAND_EVENT, MobileCommandSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
@@ -232,7 +232,7 @@ function MobileContent(): React.JSX.Element {
 }
 
 function Dashboard({ rows, loading, failed, retry, hasMore, more, open, create }: {
-  rows: Array<{ id: string; title: string; updatedAt: string; appearance?: WorkstreamAppearance | null }>;
+  rows: CanvasSidebarRow[];
   loading: boolean; failed: boolean; retry: () => void; hasMore: boolean; more: () => void;
   open: (id: string) => void; create: () => void;
 }) {
@@ -243,14 +243,8 @@ function Dashboard({ rows, loading, failed, retry, hasMore, more, open, create }
     {failed ? <Recovery title="Your canvases couldn’t load" retry={retry} /> : loading ? <div role="status" className="mobile-skeleton">Loading your canvases…</div> : <>
       <div className="mobile-section-heading"><h2>{query ? 'Search results' : 'Pick up where you left off'}</h2><span>{filtered.length} canvases</span></div>
       <div className="mobile-grid">{filtered.map((row, index) => {
-        // The Canvas's own icon and colour, resolved the way the desktop Canvases home does.
-        const { icon: Icon, ink, tint, color } = canvasMark(row.id, row.appearance ?? undefined);
-        // The lead card keeps its muted gradient: a soft mix of the hue into its tint at
-        // the top, darkening to a deep shade of the hue where the title sits, in light ink.
-        const hue = `var(--av-sys-color-project-${color})`;
-        const style = index === 0
-          ? { background: `linear-gradient(145deg, color-mix(in oklab, ${hue} 55%, ${tint}), color-mix(in oklab, ${hue} 60%, black))`, color: 'var(--av-sys-color-palette-ink-light)' }
-          : { background: tint, color: ink };
+        const { icon: Icon, ink, tint, color } = canvasMark(row.id, row.appearance);
+        const style = { '--card-hue': `var(--av-sys-color-project-${color})`, '--card-tint': tint, '--card-ink': ink } as React.CSSProperties;
         return <button className="mobile-card" key={row.id} onClick={() => open(row.id)} style={style}><div className="mobile-card-art" aria-hidden="true"><Icon size={index === 0 ? 50 : 32} strokeWidth={1.5} /></div><h3>{row.title || 'Untitled canvas'}</h3><p>Open canvas <ArrowUpRight size={14} aria-hidden="true" /></p></button>;
       })}</div>
       {!filtered.length && <div className="mobile-empty"><Sparkles size={32} /><h2>{query ? 'No canvases found' : 'Make room for an idea.'}</h2><p>{query ? 'Try another name, or load more canvases.' : 'Create a plan, a little tool, or something just for you.'}</p>{!query && <button className="mobile-primary" onClick={create}><Plus size={18} /> Create a canvas</button>}</div>}
