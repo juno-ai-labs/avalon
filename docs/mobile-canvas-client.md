@@ -17,6 +17,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/Sidebar.tsx`, `SidebarDragRow.tsx`, `sidebar-drop.ts` | Long-press pin/unpin/reorder with edge scrolling, Edit controls and accessible move actions. |
 | `apps/mobile/App.web.tsx`, `src/PreviewTabBar.tsx`, `src/Glass.tsx` | Development-only browser preview; its custom controls do not model native geometry. |
 | `apps/mobile/src/CanvasWebView.tsx` | Application WebView and isolated first-party reactive artifact WebViews. |
+| `apps/mobile/src/prepared-requests.ts` | Holds fresh-access requests while Home reloads and re-sends ones its old page never answered. |
 | `apps/mobile/src/prepared-site-access.ts` | Reuses prepared cookies and clears consumed access while a retry requests its replacement. |
 | `apps/mobile/src/artifact-presentation.ts` | Applies the artifact inset at document readiness and signals presentation without waiting for images. |
 | `apps/mobile/src/CanvasWebView.web.tsx` | Development-only iframe preview of the native shell. |
@@ -61,7 +62,7 @@ behavior continue to run without replacing the visible screen.
 
 The native sidebar keeps Home fixed above Pinned and the remaining Canvases. Hold a canvas row and drag it into Pinned, between pins, or back into Canvases to pin, reorder, or unpin. A floating row and insertion marker show the destination; edge scrolling reaches off-screen rows. Dropping outside either section cancels. Edit still exposes plus/minus controls and drag handles, including accessible move actions. The Canvas directory supplies each pin’s name, appearance, and `pinnedPosition`. Native tabs are icon-only. Their full canvas names remain available to VoiceOver/TalkBack and in the sidebar. Sidebar directory failures offer retry. Pin writes use the canonical Canvas pin APIs, with one pin command in flight and server acknowledgments driving the UI. A new pin can carry an optional `beforeId` in the existing bridge command: the browser saves membership, then its position with the existing reorder endpoint. If positioning fails, the pin remains appended and the notice distinguishes a saved pin from its failed placement. Home is fixed. The first four pins appear beside Home; existing desktop pins beyond those remain in the sidebar and can be reordered into view. This is a presentation capacity, not a new backend limit.
 
-Home prepares descriptors for the first four pinned canvases through its existing authenticated API and workspace socket. A pin with one hosted site opens that site's actual URL in a native WebView, without starting another browser shell. The shell prepares each visible hosted pin's session through Home's bridge and an attached, invisible native WebView. It loads only Rally's authentication bootstrap and cancels the redirect before the generated document, so no artifact code runs in the background. The platform stores the HttpOnly cookie; only the canonical URL is reused when opening a tab. A tab then loads that URL with shared cookies. If preparation is unavailable, opening requests fresh access; an expired or revoked cookie gets one fresh-access attempt before showing recovery. This includes the serving Worker’s redirect to the trusted site-opening route, not only HTTP 401/403; native cancels that handoff and clears the old access before requesting a new single-use URL. No single-use URL is saved for later replay. Native request IDs match replies, organization/account scope fences descriptors and pending requests, and reloading Home fails pending opens so they can be retried. Resource-head and Canvas publication changes update descriptors. Removing a pin drops its prepared descriptor and unmounts any in-flight preparation. A resource version change reloads the visible hosted document, while tab switching preserves an already loaded view.
+Home prepares descriptors for the first four pinned canvases through its existing authenticated API and workspace socket. A pin with one hosted site opens that site's actual URL in a native WebView, without starting another browser shell. The shell prepares each visible hosted pin's session through Home's bridge and an attached, invisible native WebView. It loads only Rally's authentication bootstrap and cancels the redirect before the generated document, so no artifact code runs in the background. The platform stores the HttpOnly cookie; only the canonical URL is reused when opening a tab. A tab then loads that URL with shared cookies. If preparation is unavailable, opening requests fresh access; an expired or revoked cookie gets one fresh-access attempt before showing recovery. This includes the serving Worker’s redirect to the trusted site-opening route, not only HTTP 401/403; native cancels that handoff and clears the old access before requesting a new single-use URL. No single-use URL is saved for later replay. Native request IDs match replies, organization/account scope fences descriptors and pending requests, and reloading Home holds pending opens and re-sends them once Home can answer; a failed Home load or sign-out fails them so they can be retried. Resource-head and Canvas publication changes update descriptors. Removing a pin drops its prepared descriptor and unmounts any in-flight preparation. A resource version change reloads the visible hosted document, while tab switching preserves an already loaded view.
 
 Files, multi-artifact canvases, and pins opened before their descriptor is ready use the browser renderer. A prepared descriptor arriving during bootstrap can replace the spinner with the direct hosted path. Once the browser has shown an artifact or conversation, the route keeps that renderer when a new artifact publishes, preserving in-progress work. This also keeps older browser deployments compatible with the new native client. Native tabs retain their existing lazy behavior: eager React mounting alone does not create an iOS WKWebView before SwiftUI attaches its tab to a window. Initial bridge readiness no longer sends a redundant refresh over bootstrap reads; reconnect and foreground refreshes remain. Focusing a retained browser tab does not itself invalidate Canvas queries. Direct hosted tabs keep Home’s live socket and avoid invalidating every prepared Canvas on each tab tap; reconnect and foregrounding refresh the shared host. Hosted sites use the Canvas descriptor and resource-head version directly, avoiding an extra resource-metadata request; file artifacts still need that metadata for InspectorRail.
 
@@ -315,8 +316,9 @@ in the system browser. See [push-notifications.md](push-notifications.md) for
 provider credentials and deployment requirements.
 
 The React recovery boundary offers reopen and share-diagnostics actions.
-WebView failures retain explicit retry; artifact process termination requests a
-fresh access URL. Diagnostics store fixed failure codes and timestamps locally,
+WebView failures retain explicit retry; artifact process termination reloads the
+canonical URL on its existing cookie, and requests fresh access only if that
+cookie is gone. Diagnostics store fixed failure codes and timestamps locally,
 plus report native version/build, runtime/update ID, channel, emergency-launch
 state and connection/background availability. Sharing is an explicit system
 share-sheet action. It includes no conversation, title, URL, cookie or push token.
@@ -428,7 +430,7 @@ The browser imports the framework-independent protocol from `apps/mobile/src/pro
 
 Network and HTTP failures show retry views. Pin failure messages stay in the sidebar; failed writes do not manufacture a successful local order. New pins beyond the four visible mobile slots ask the user to unpin another; existing overflow remains accessible. Directory search filters the socket’s Canvas list. A removed or inaccessible canvas reports its read failure.
 
-Renderer termination reloads the relevant WebView. An artifact retry requests a fresh access URL, rather than replaying an expired open ticket; an access or active metadata failure removes the stale native surface and exposes web recovery. The native handler also recognizes a failed `/redeem` bootstrap. Returning from inline chat republishes the active artifact descriptor. Sign-out and account/organization changes discard native artifact views; a full application-page reload can rebuild the tab directory. Foregrounding refreshes the directory and resource metadata. Unsaved in-artifact state survives tab switching, but a full page/app reload, closing that tab or process termination can discard it. Native navigation and Liquid Glass require device validation; a browser preview cannot validate WKWebView cookies, Android Back dispatch, keyboard resizing, native gestures, or system accessibility.
+Renderer termination reloads the relevant WebView. A terminated artifact renderer reopens its canonical URL in a new WebView on the cookie the platform still holds, never replaying the spent open ticket; a missing or expired cookie falls through to the fresh-access renewal. an access or active metadata failure removes the stale native surface and exposes web recovery. The native handler also recognizes a failed `/redeem` bootstrap. Returning from inline chat republishes the active artifact descriptor. Sign-out and account/organization changes discard native artifact views; a full application-page reload can rebuild the tab directory. Foregrounding refreshes the directory and resource metadata. Unsaved in-artifact state survives tab switching, but a full page/app reload, closing that tab or process termination can discard it. Native navigation and Liquid Glass require device validation; a browser preview cannot validate WKWebView cookies, Android Back dispatch, keyboard resizing, native gestures, or system accessibility.
 
 Sign-in uses the system browser and returns to `rally-mobile://auth/complete`. Cancelling leaves the app signed out, and retry creates a new attempt and verifier. External HTTP(S) links open in the system browser on both platforms; Android reports every navigation as `other`, so the handler uses the platform and destination origin instead of requiring iOS’s `click` signal. Offline canvas copies are intentionally out of scope. Provider credentials and app-store signing remain release setup.
 
@@ -556,6 +558,31 @@ retention remain unmeasured. The full method, before/after table and limitations
 are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
+
+### 2026-11-15 — Recover a terminated artifact renderer in place
+
+**What changed:** When iOS or Android kills an artifact's web content process,
+`ArtifactView` now remounts its WebView on the canonical URL instead of asking
+Home for fresh access. Fresh-access requests (`prepared-requests.ts`) now wait
+while Home reloads and are re-sent once Home can answer, rather than failing.
+
+**Why:** A field report showed a pinned tab stuck on "Rally couldn't load" after
+`artifact_process_terminated`, and Try again took far longer than the 500 ms
+target. iOS usually kills Home's content process in the same pass, so the retry
+waited on a full Home reload, socket sync and access round trip; worse, Home's
+reload resolved the pending request with null and nothing retried once Home was
+back. The redeemed artifact cookie is persistent and lives in the platform cookie
+store, not the dead process, so the canonical URL alone is enough.
+
+**Considered and rejected:** `reload()` on the same WebView: if the crash came
+before redemption finished, the last URL is the spent open ticket. Waiting on a
+timer for Home before retrying: it guesses a number and still pays for Home.
+
+**Consequences:** Recovery costs one artifact document load when the cookie is
+valid. A lost cookie still takes the renewal path through Home, which now waits
+for Home rather than failing. An artifact that crashes its renderer on every
+load reloads each time, as the earlier retry did; no cap was added. In-artifact
+unsaved state is still lost on termination. Not yet measured on a device.
 
 ### 2026-11-14 — Reduce mobile launch and pinned-canvas startup work
 
