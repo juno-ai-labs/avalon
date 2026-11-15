@@ -384,9 +384,14 @@ holds the tables and the reads):
   receipt so a retry lands it once. The renderer draws it as a card
   (`CanvasNoticesRecordCard`) with the viewer's controls and the device line
   from [`useDevicePushReadiness()`](#whether-this-device-can-show-them),
-  hidden where push cannot work at all (`unavailable`, `unconfigured`). The
-  same sentence again changes nothing; a new one replaces it and lands a new
-  record, and only the record matching the current sentence has controls.
+  hidden where push cannot work at all (`unavailable`, `unconfigured`). A
+  participant picks this Canvas's channels there (`ChannelPicker`, starting
+  from their Settings), goes back to Settings, or mutes it. The same sentence
+  again changes nothing; a new one replaces it and lands a new record, and
+  only the record matching the current sentence has controls. The record
+  carries when it was written (`recordedAt`) and the view when notices last
+  changed (`updatedAt`); a client holding a newer record than its view reads
+  the Canvas again, so the controls appear without reopening it.
 - **Send** records one `canvas_notice` intent and Activity row per recipient
   through `recordParentNotice`, never collapsed, and enqueues. Recipients are
   the Canvas's creator and listed participants, less anyone who muted it. A
@@ -403,8 +408,11 @@ reads the override when the kind is `canvas_notice` and the message carries
 the Canvas. When both channels are chosen, the producer asks `enqueueNotice`
 for `pushElseEmail`: the email goes only when no push could be queued for a
 live device of theirs. A person who picked one channel gets that one. Pushes
-collapse per Canvas (`notices:<canvasId>`). The Activity row is gated behind
-client contract 16, as the source kinds were.
+collapse per Canvas (`notices:<canvasId>`). The APNs payload sends
+`canvas_notice` as `mention`, as it does `new_message`: an installed Mac or
+iPhone app built before the kind refuses an unknown one before opening its
+link, and every app routes by the link alone. The Activity row is gated
+behind client contract 16, as the source kinds were.
 
 ## Sinks
 
