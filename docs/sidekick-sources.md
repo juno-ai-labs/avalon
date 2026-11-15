@@ -375,15 +375,20 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
   (`fromPersonTurn`, set by the sender from `derivedFromOf`), or the turn an
   answer to one of its questions started (`wizardTurnCanvasId`). A Chat turn
   another agent's message started cannot pass an ask on through the wizard. Every other loop with
-  the Sidekicks plugin is offered the same three, with a `request_source`
-  that asks nobody and refuses by name with the route to a turn that may ask
-  (`sidekickSourceRefusalTool`; [`agent-tools.md`](agent-tools.md) rule 14):
+  the Sidekicks plugin is offered the same three: `sources_list` reads as
+  ever, and `request_source` and `test_source_condition` (which reads the
+  acting person's own events) refuse by name with the route to a turn that
+  may ask (`sidekickSourceRefusalTool`; [`agent-tools.md`](agent-tools.md)
+  rule 14):
   - a Sidekick run (`automationRun`) and its delegation workers
     (`automationDelegation`): `sidekick_source_request_from_run`, which says
     to name the ask in the run's result for a person who manages it;
   - a background agent (`backgroundAgent`):
     `sidekick_source_request_from_background_agent`, which says to send the
     ask to the agent it works for with `send_message`;
+  - the wizard's scheduled self-review (`reason: "sidekick_review"`), which
+    reads runs: `sidekick_source_request_from_review`, which says to name the
+    ask in the review;
   - any other turn another agent's message started, a run's
     `request_sidekick_change` to its wizard among them:
     `sidekick_source_request_from_agent_message`, which says to reply to that
