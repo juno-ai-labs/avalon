@@ -40,7 +40,7 @@ export function Dashboard({ canvases, loading, failed, topInset, bottomInset, op
         autoCorrect={false} returnKeyType="search" style={[styles.searchInput, { color: colors.text }]} />
     </View>
     {failed && <View style={[styles.notice, { backgroundColor: colors.tonal }]}>
-      <Text style={{ color: colors.muted, flex: 1 }}>Rally couldn’t refresh. Showing your saved canvases.</Text>
+      <Text style={{ color: colors.muted, flex: 1 }}>{canvases.length > 0 ? 'Rally couldn’t refresh. Showing your saved canvases.' : 'Your canvases couldn’t load.'}</Text>
       <Pressable accessibilityRole="button" onPress={retry} hitSlop={8}><Text style={{ color: colors.text, fontWeight: '600' }}>Try again</Text></Pressable>
     </View>}
     {loading ? <View style={[styles.skeleton, { backgroundColor: colors.tonal }]}><Text style={{ color: colors.muted }}>Loading your canvases…</Text></View>
