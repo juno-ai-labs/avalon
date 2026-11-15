@@ -473,7 +473,7 @@ corepack pnpm --filter @rally/mobile build
 
 ### Native verification (2026-11-15)
 
-An iPhone 17 Pro simulator (iOS 26.5) on a fresh development build, signed in to
+An iPhone simulator (iOS 26.5, 402×874 points) on a fresh development build, signed in to
 the production Juno Labs organization, checked the native dashboard and the pin
 layer. Four canvases were pinned for the run and unpinned afterwards; the
 session was signed out and stopped. Three single-site pins showed a fully drawn
