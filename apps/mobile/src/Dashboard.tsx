@@ -33,7 +33,6 @@ export function Dashboard({ canvases, loading, failed, topInset, bottomInset, op
   // A two-column list stretches a lone last card across the row; pad it as the web grid does.
   const cells: (CanvasSummary | null)[] = rest.length % 2 === 1 ? [...rest, null] : rest;
   const header = <View>
-    <Text style={[styles.eyebrow, { color: colors.muted }]}>A LITTLE SPACE FOR EVERYTHING</Text>
     <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>Your canvases</Text>
     <View style={[styles.search, { backgroundColor: colors.tonal }]}>
       <Search size={19} color={colors.muted} />
@@ -102,7 +101,6 @@ function CanvasCard({ canvas, hero = false, open }: { canvas: CanvasSummary; her
 }
 
 const styles = StyleSheet.create({
-  eyebrow: { fontSize: 10, letterSpacing: 1.7, marginBottom: 12 },
   title: { fontSize: 34, fontWeight: '600', letterSpacing: -1.4, marginBottom: 23 },
   search: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 15, paddingHorizontal: 15, paddingVertical: 11, marginBottom: 28 },
   searchInput: { flex: 1, fontSize: 15, paddingVertical: 2 },
