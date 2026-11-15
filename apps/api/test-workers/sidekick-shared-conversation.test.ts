@@ -501,6 +501,9 @@ describe("a Sidekick's shared conversation", () => {
     expect(answered.status, await answered.clone().text()).toBe(200);
     expect(await (await product({ operation: "read_wizard_question" })).json())
       .toMatchObject({ elicitation: { status: "answered", answer: "work", answeredByUserId: MEMBER_ID } });
+    // Answering does not make them a reader of the Sidekick's conversation.
+    expect(await runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ status: string }>(
+      "SELECT status FROM participants WHERE user_id = ?", MEMBER_ID).toArray())).toEqual([]);
   });
 
   it("runs a non-delegate member's message under their own access, and keeps them as the run's principal", async () => {

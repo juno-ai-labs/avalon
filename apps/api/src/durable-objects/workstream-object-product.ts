@@ -4833,6 +4833,8 @@ export class WorkstreamObjectProductService {
           actorRole: auth.role,
           confirmedParticipantUserIds: [],
           participantEpochs: this.pendingParticipantEpochs([auth.userId]),
+          // A manager answering the wizard need not be able to open the Sidekick, and answering does not open it.
+          ...(wizardQuestion && !this.canRead(auth.userId) ? { seatsAuthor: false } : {}),
           reason: "elicitation_answer",
           elicitationId,
           parentHarnessRunId: row.run_id,
