@@ -284,7 +284,12 @@ row, attaches it to the conversation, and uses the existing cleanup outbox. The
 published bytes do not enter model context. The resource inventory and existing
 attachment tools become the durable participant/model surface, and the desktop
 rail renders supported text and Markdown publications through the resource
-preview route.
+preview route. A file that lands in a Canvas also returns its `url`: the publish
+reserves the file's host from the resource id, the same idempotent reservation
+the artifact access queue makes when it delivers the file, so the agent can link
+it (a feed's episode audio) without asking a person to copy it from the Share
+screen. It serves under the Canvas's artifact audience once that delivery lands,
+normally within seconds.
 
 A published file's identity is the document's own coordinates — the conversation
 and the normalized published path, as `terminal:<workstream-id>:<path>` — so
@@ -1444,6 +1449,25 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-15 — A file published into a Canvas returns its URL
+
+**What changed:** `publish_resource` returns `url` for a file or archive that
+lands in a Canvas, as it already did for a site, by reserving the file's host
+at publish rather than waiting for the access queue to reserve it.
+
+**Why:** A podcast feed names each episode's audio by URL, and no agent tool
+returned one: the only place a file's link appeared was the Share screen, so a
+Sidekick run could publish an episode and never put it in the feed. The
+reservation is keyed by the resource id and idempotent, so the queue later
+registers the host this publish reserved.
+
+**Considered and rejected:** A separate tool to look up a file's link, which
+is a second call after every publish for a value the publish already decides.
+
+**Consequences:** A Canvas file publish now writes the platform hostname route,
+so a test that publishes into a Canvas on real workerd declares
+`artifact_hostname_routes`. A file kept in its conversation still has no URL.
 
 ### 2026-11-09 — Creation reconciliation uses ordinary sandbox recovery
 
