@@ -296,6 +296,7 @@ import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { setsDelegation, sidekickDelegationTools } from "./sidekick-delegation-tools";
 import { sidekickSourceRequestCard, sidekickSourceTools } from "./sidekick-source-tools";
+import { isRefusingTool, refusingTool, toolRefusal, type ToolRefusal } from "./tool-refusal";
 import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
@@ -2264,7 +2265,7 @@ function createAvalonAutomationsPlugin(
     })), ...createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
       .flatMap((tool) => expandPages(tool, "sidekick", null)),
       ...(delegationUser ? [...sidekickDelegationTools(env, input, delegationUser, false),
-        ...(asksForSources(input) ? sidekickSourceTools(env, input, delegationUser, false) : [])] : [])],
+        ...sidekickSourceTools(env, input, delegationUser, false, asksForSources(input))] : [])],
     onActivate: async () => prepare(),
   };
 }
@@ -5283,25 +5284,66 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  */
 /**
  * Whether a loop may ask people for a source (`sidekick_request_source` and
- * its two companions): every loop but a Sidekick run and the delegation
- * workers rooted in one. A run is handed the content of the event that
- * started it, a stranger's email among it, and its workers read the same;
- * asking in its delegate's name is not something what it read may bring
- * about. Every other loop may ask, whoever or whatever started its turn,
- * because an ask approves nobody: each person asked still presses Approve.
+ * its two companions): a turn a person started, and a wizard turn a Canvas's
+ * Chat started for them (`wizardTurnCanvasId`). An ask goes out in a person's
+ * name with a filter the model wrote, and the people asked receive it by
+ * email, so nothing a loop read may bring one about: not a run or its
+ * workers, which are handed event content such as a stranger's email; not a
+ * background agent, which reads runs and other content; and not a turn
+ * another agent's message started, which includes a run asking its wizard
+ * for a change, nor a scheduled self-review. A wake-up in a Chat or a wizard
+ * continues its person's turn and may ask (`docs/agent-loop-types.md`).
  */
-function asksForSources(input: Pick<WorkstreamWorkflowInput, "automationRun" | "automationDelegation">): boolean {
-  return !input.automationRun && !input.automationDelegation;
+function asksForSources(input: Pick<WorkstreamWorkflowInput,
+  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "sidekickWizard" | "wizardCanvasId" | "reason">): boolean {
+  return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true
+    && input.reason !== "sidekick_review"
+    && (!input.agentExchange || wizardTurnCanvasId(input) !== null);
+}
+
+/**
+ * Why a loop whose answers go to an agent may not ask a person a question,
+ * and where to send it instead: no person is reading this conversation, so a
+ * question here would wait on nobody.
+ */
+function questionRefusal(input: Pick<WorkstreamWorkflowInput, "backgroundAgent">): ToolRefusal {
+  return toolRefusal(input.backgroundAgent ? "question_from_background_agent" : "question_from_agent_message");
+}
+
+/**
+ * The Sidekicks plugin for a turn that acts for the Organization rather than
+ * a person: a Sidekick run that acts as itself, or a turn with no person
+ * behind it. Its tools read and change Sidekicks in a person's name, so each
+ * one refuses, by name and with the route to a person who can, rather than
+ * being withheld (`docs/agent-tools.md`, rule 14). The tools are built as a
+ * person's turn would have them, for their names and arguments only: the
+ * person they are built for is never used, since no call reaches them.
+ */
+function organizationSidekicksPlugin(env: Env, input: WorkstreamWorkflowInput, readsRuns: boolean,
+  paged: (tool: HarnessTool) => HarnessTool[]): HarnessPlugin {
+  const nobody = asUserId("00000000-0000-0000-0000-000000000000");
+  const refusal = toolRefusal("sidekick_tools_need_a_person");
+  return {
+    canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
+    displayName: "Sidekick delegation",
+    description: "Sidekick delegation and sources. This turn acts for the Organization, so each tool says who can use it instead.",
+    preload: false, explicit: false,
+    tools: [...(readsRuns ? createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref)).flatMap(paged) : []),
+      ...sidekickDelegationTools(env, input, nobody, false),
+      ...sidekickSourceTools(env, input, nobody, false)].map((tool) => refusingTool(tool, refusal)),
+  };
 }
 
 /**
  * The built-in skills a loop is offered. A skill that names tools is listed
  * only where a plugin in scope holds them: `setting-up-a-filtered-trigger`
- * tells the model to call `sidekick_request_source`, which a Sidekick run and
- * a background agent do not have (`asksForSources`).
+ * tells the model to call `sidekick_request_source`, which only a loop with
+ * the Sidekicks plugin holds, refusing where it may not ask (`asksForSources`).
  */
 function builtInSkillsFor(plugins: readonly HarnessPlugin[]): HarnessSkill[] {
-  const asks = plugins.some((plugin) => plugin.tools.some((tool) => tool.definition.capability === "rally.sidekick.sources.request"));
+  // A loop refused the ask holds its refusing tool, which says where to ask instead; the skill is listed there too.
+  const asks = plugins.some((plugin) => plugin.tools.some((tool) =>
+    tool.definition.capability === "rally.sidekick.sources.request" || tool.definition.capability === "rally.sidekick.sources.request_elsewhere"));
   return asks ? [...BUILT_IN_SKILLS] : BUILT_IN_SKILLS.filter((skill) => skill.name !== SETTING_UP_A_FILTERED_TRIGGER_SKILL.name);
 }
 
@@ -5946,11 +5988,13 @@ async function loadHarnessTools(
   }).flatMap((tool) => {
     const tableTool = tool.definition.capability.startsWith("table.");
     return expandPages(tool, tableTool ? "table" : "workstream", null, tableTool ? "table" : "");
-  }).filter((tool) =>
+  }).map((tool) =>
     // Both pause on a question a person answers; where answers go to an agent
-    // instead, neither may ask one.
-    !routesAnswersToAgent || (tool.definition.name !== AVALON_REQUEST_ELICITATION_TOOL_DEFINITION.name
-      && tool.definition !== AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION));
+    // instead, neither may ask one, and each says where to send the question
+    // (`docs/agent-tools.md`, rule 14).
+    routesAnswersToAgent && (tool.definition.name === AVALON_REQUEST_ELICITATION_TOOL_DEFINITION.name
+      || tool.definition === AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION)
+      ? refusingTool(tool, questionRefusal(input)) : tool);
   const corePlugins = createWorkstreamCorePlugins(coreTools);
   const workstreamPlugin = createAvalonWorkstreamPlugin(coreTools);
   const webPlugin = createAvalonWebPlugin(coreTools);
@@ -6001,8 +6045,8 @@ async function loadHarnessTools(
       tools: [...(readsRuns ? createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
         .flatMap((tool) => expandPages(tool, "sidekick", null)) : []),
       ...sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
-      ...(asksForSources(input) ? sidekickSourceTools(env, input, input.executionPrincipal.userId, false) : [])],
-    } : null;
+      ...sidekickSourceTools(env, input, input.executionPrincipal.userId, false, asksForSources(input))],
+    } : organizationSidekicksPlugin(env, input, readsRuns, (tool) => expandPages(tool, "sidekick", null));
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
   // Sidekick's configuration conversation and runs reach its own
@@ -7882,7 +7926,8 @@ export async function reenterInterruptedWriteForRecovery(
         shortWireName: "sidekick", description: "Sidekick delegation recovery", preload: false,
         // Every tool, whatever the loop: a run's change recorded before runs lost the tool still has to reconcile.
         tools: [...sidekickDelegationTools(env, input, userId, false, true),
-          ...(asksForSources(input) ? sidekickSourceTools(env, input, userId, false) : [])] };
+          // Reconciling a write that may have happened is not a new ask.
+          ...sidekickSourceTools(env, input, userId, false, true)] };
     }
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };
@@ -8248,7 +8293,8 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
     || tool.definition.name === "get_connector_connection_state"
     || tool.definition.name === "show_connector_connection"
     || tool.definition.name === CHECK_RESOURCE_ACCESS_TOOL_NAME);
-  const holds = (name: string) => coreTools.some((tool) => tool.definition.name === name);
+  // A refusing tool is offered but cannot do the work, so the prompt does not tell the model to use it.
+  const holds = (name: string) => coreTools.some((tool) => tool.definition.name === name && !isRefusingTool(tool));
   const memoryTools = tools.filter((tool) => tool.definition.capability.startsWith("memory."));
   const tableTools = tools.filter((tool) => tool.definition.capability.startsWith("table."));
   return [

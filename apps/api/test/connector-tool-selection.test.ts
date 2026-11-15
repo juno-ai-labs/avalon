@@ -8,13 +8,14 @@ import type {
 import { customToolIdentityHash, runHarness, type HarnessEvent } from "@rally/agent-harness";
 import { notionTools, granolaTools } from "@rally/connectors";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ToolDefinition } from "@rally/contracts";
+import type { AgentId, ToolDefinition } from "@rally/contracts";
 import historicalGoogleTools from "./fixtures/google-tools-before-workflows.json";
 import historicalSlackTools from "./fixtures/slack-tools-before-markdown-send.json";
 import combinedGoogleReceipts from "./fixtures/google-combined-receipts.json";
 import preTextPageReceipts from "./fixtures/google-receipts-before-text-pages.json";
 
 import type { Env } from "../src/env";
+import { isRefusingTool } from "../src/services/tool-refusal";
 import { __integrationTesting } from "../src/services/integrations";
 import { createMemoryTableTools } from "../src/services/memory-table-service";
 import {
@@ -695,11 +696,37 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
 }
 
 describe("connector tools selected for harness runs", () => {
-  it("withholds Sidekick management from workspace-principal runs", async () => {
+  it("offers the question tool where answers go to an agent, refusing with where to send the question", async () => {
+    const runtimeEnv = env(new ToolSelectionDatabase([]));
+    const question = async (input: WorkstreamWorkflowInput) => {
+      const tool = (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).tools
+        .find((candidate) => candidate.definition.name === "request_elicitation")!;
+      return tool.execute({}, {} as never).then(() => "asked", (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }));
+    };
+    const sender = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("00000000-0000-7000-8000-00000000d001") });
+    expect(await question(childWorkflowInput())).toMatchObject({ code: "question_from_background_agent",
+      routes: expect.stringContaining("with send_message") });
+    // The prompt does not tell the model to use a question tool that refuses here, and does where it asks.
+    const tellsToAsk = async (input: WorkstreamWorkflowInput) => (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).corePlugins
+      .some((plugin) => plugin.systemMessage?.includes("Use request_elicitation") ?? false);
+    expect(await tellsToAsk(childWorkflowInput())).toBe(false);
+    expect(await tellsToAsk(workflowInput())).toBe(true);
+    expect(await question({ ...automationConversationInput(), agentExchange: { teamId: sender, senderAgentId: sender,
+      messageId: "00000000-0000-7000-8000-00000000e001" } })).toMatchObject({ code: "question_from_agent_message",
+      routes: expect.stringContaining("Reply to that agent") });
+  });
+
+  it("offers Sidekick management to a turn acting for the Organization, every tool refusing with who can act instead", async () => {
     const selected = await __integrationTesting.loadHarnessTools(env(new ToolSelectionDatabase([])), {
       ...workflowInput(), executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
     });
-    expect(selected.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
+    const sidekicks = selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")!;
+    expect(sidekicks.tools.map((tool) => tool.definition.name)).toEqual(["my_delegations_list", "delegates_list", "set_delegation",
+      "sources_list", "request_source", "test_source_condition"]);
+    const refusals = await Promise.all(sidekicks.tools.map((tool) => tool.execute({}, {} as never)
+      .then(() => null, (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }))));
+    expect(refusals).toEqual(sidekicks.tools.map(() => ({ code: "sidekick_tools_need_a_person",
+      routes: expect.stringContaining("a person who manages the Sidekick can do it") })));
   });
   it("gives background substreams normal writes, independent discovery and recursive agent tools", async () => {
     const database = new ToolSelectionDatabase([
@@ -718,7 +745,7 @@ describe("connector tools selected for harness runs", () => {
         "start_agent", "list_agents", "send_message", "reply_to_message", "stop_agent",
       ]));
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
-      // A background agent asks people for a source like the conversation it works for: an ask approves nobody.
+      // A background agent works from content: it holds the source tools, and its ask refuses with where to ask instead.
       ?.tools.map((tool) => tool.definition.name)).toEqual(["my_delegations_list", "delegates_list", "set_delegation",
         "sources_list", "request_source", "test_source_condition"]);
     expect(selected.tools.some((tool) => tool.definition.name === "run_subagent")).toBe(false);
@@ -737,14 +764,14 @@ describe("connector tools selected for harness runs", () => {
         "my_delegations_list", "delegates_list", "set_delegation",
         "sources_list", "request_source", "test_source_condition"]);
     // The wizard's background agent reads runs for it; a run's delegation worker does not.
-    // The background agent asks people for a source; the run's worker, which reads the run's event, does not.
+    // Both hold the source tools; neither may ask, since both read content, runs among it.
     const sidekicks = child.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     expect(sidekicks?.tools.map((tool) => tool.definition.name))
       .toEqual(["runs_list", "runs_list_next", "runs_read", "runs_read_next", "my_delegations_list", "delegates_list", "set_delegation",
         "sources_list", "request_source", "test_source_condition"]);
     expect(sidekicks?.preload).toBe(true);
     expect(worker.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")?.tools.map((tool) => tool.definition.name))
-      .toEqual(["my_delegations_list", "delegates_list"]);
+      .toEqual(["my_delegations_list", "delegates_list", "sources_list", "request_source", "test_source_condition"]);
     expect(authoring.plugins.map((plugin) => plugin.canonicalId)).toContain("rally:sidekicks");
     expect(room.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));
@@ -773,28 +800,55 @@ describe("connector tools selected for harness runs", () => {
     expect(await noticeTools({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" })).toBeNull();
   });
 
-  it("offers the source tools to every loop but a Sidekick run and its workers, and neither a run nor its worker the tool that changes delegation", async () => {
+  it("lets a person's turn and a wizard turn a Canvas's Chat started ask for a source, refuses every loop that read content by name, and gives neither a run nor its worker the tool that changes delegation", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
-    const sourceTools = async (input: WorkstreamWorkflowInput) =>
-      (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins
-        .filter((plugin) => plugin.canonicalId === "rally:sidekicks")
-        .flatMap((plugin) => plugin.tools.map((tool) => tool.definition.name))
-        .filter((name) => ["sources_list", "request_source", "test_source_condition"].includes(name));
+    const sourcePlugin = async (input: WorkstreamWorkflowInput) =>
+      (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
+    // Each loop is offered all three; `request_source` either asks or refuses.
+    const sourceTools = async (input: WorkstreamWorkflowInput) => ((await sourcePlugin(input))?.tools ?? [])
+      .filter((tool) => ["sources_list", "request_source", "test_source_condition"].includes(tool.definition.name))
+      .map((tool) => isRefusingTool(tool) ? `${tool.definition.name}: refused` : tool.definition.name);
+    const refusal = async (input: WorkstreamWorkflowInput) => {
+      const tool = (await sourcePlugin(input))!.tools.find((candidate) => candidate.definition.name === "request_source")!;
+      return tool.execute({}, {} as never).then(() => null, (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }));
+    };
     const wizard = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
-    const agentMessage = { teamId: wizard, senderAgentId: wizard, messageId: "00000000-0000-7000-8000-00000000e001" };
+    const message = (sender: AgentId, fromPersonTurn = false) => ({ teamId: sender, senderAgentId: sender,
+      messageId: "00000000-0000-7000-8000-00000000e001", ...(fromPersonTurn ? { fromPersonTurn: true as const } : {}) });
+    const canvasChat = agentIdForAddress({ parentKind: "canvas", parentId: "00000000-0000-7000-8000-00000000c001", substreamId: asSubstreamId("0") });
+    const run = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("00000000-0000-7000-8000-00000000d001") });
     const all = ["sources_list", "request_source", "test_source_condition"];
+    const refused = ["sources_list", "request_source: refused", "test_source_condition: refused"];
 
-    // A run reads the event that started it, and its worker reads the same, so nothing either reads may ask.
-    expect(await sourceTools(automationRunInput())).toEqual([]);
-    expect(await sourceTools({ ...childWorkflowInput(automationConversationInput()),
-      automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toEqual([]);
-    // Every other loop asks, whatever started its turn: an ask approves nobody.
+    // A person's own turn, and the wizard's turn a Canvas's Chat started for them, ask.
     expect(await sourceTools(automationConversationInput())).toEqual(all);
-    expect(await sourceTools({ ...automationConversationInput(), agentExchange: agentMessage })).toEqual(all);
-    expect(await sourceTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual(all);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat, true) })).toEqual(all);
+    // A Chat turn another agent's message started passes on what that agent read, so its wizard turn may not ask.
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toEqual(refused);
+    expect(await sourceTools({ ...automationConversationInput(), wizardCanvasId: "00000000-0000-7000-8000-00000000c001" })).toEqual(all);
+
     expect(await sourceTools(workflowInput())).toEqual(all);
-    expect(await sourceTools({ ...workflowInput(), agentExchange: agentMessage })).toEqual(all);
-    expect(await sourceTools(childWorkflowInput())).toEqual(all);
+    // Nothing a loop read may ask: a run and its worker, a background agent, and a turn another agent's message started,
+    // a run's change request to its wizard among them.
+    expect(await sourceTools(automationRunInput())).toEqual(refused);
+    expect(await sourceTools({ ...childWorkflowInput(automationConversationInput()),
+      automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toEqual(refused);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(run) })).toEqual(refused);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(wizard) })).toEqual(refused);
+    expect(await sourceTools({ ...workflowInput(), agentExchange: message(wizard) })).toEqual(refused);
+    expect(await sourceTools(childWorkflowInput())).toEqual(refused);
+    // A scheduled self-review reads runs and no person started it.
+    expect(await sourceTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual(refused);
+    expect(await refusal({ ...automationConversationInput(), reason: "sidekick_review" })).toMatchObject({
+      code: "sidekick_source_request_from_review", routes: expect.stringContaining("Name in your review") });
+    // Each refusal says who can ask, and how to reach them.
+    expect(await refusal(childWorkflowInput())).toMatchObject({ code: "sidekick_source_request_from_background_agent",
+      routes: expect.stringContaining("with send_message") });
+    expect(await refusal({ ...automationConversationInput(), agentExchange: message(run) })).toMatchObject({
+      code: "sidekick_source_request_from_agent_message", routes: expect.stringContaining("Reply to that agent") });
+    expect(await refusal({ ...childWorkflowInput(automationConversationInput()),
+      automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toMatchObject({
+      code: "sidekick_source_request_from_run", routes: expect.stringContaining("Say in your result") });
     // A wake-up continues its conversation, and keeps the tools in the Chat and the wizard.
     const wakeup = { reason: "scheduled_wakeup", scheduledWakeupId: "00000000-0000-7000-8000-00000000e002" };
     expect(await sourceTools({ ...workflowInput(), ...wakeup })).toEqual(all);
@@ -819,9 +873,10 @@ describe("connector tools selected for harness runs", () => {
     const listsTheSkill = async (input: WorkstreamWorkflowInput) =>
       __integrationTesting.builtInSkillsFor((await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins)
         .some((skill) => skill.name === "setting-up-a-filtered-trigger");
-    expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: agentMessage })).toBe(true);
+    expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(canvasChat, true) })).toBe(true);
+    expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(run) })).toBe(true);
     expect(await listsTheSkill({ ...automationConversationInput(), reason: "sidekick_review" })).toBe(true);
-    expect(await listsTheSkill(automationRunInput())).toBe(false);
+    expect(await listsTheSkill(automationRunInput())).toBe(true);
   });
 
   it("skips a connection whose connector this deployment does not configure, rather than failing the run", async () => {

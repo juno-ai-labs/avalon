@@ -16,6 +16,9 @@ import type { AttachmentPreview } from '../../desktop/src/renderer/components/at
 import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
 import { ConversationVisibilityContext } from '../../desktop/src/renderer/lib/conversation-visibility';
 
+/** The shared "Ask Rally or the people here…" overflows a 375pt phone's composer at 17pt. */
+const MOBILE_COMPOSER_PLACEHOLDER = 'Ask Rally or the team…';
+
 export function MobileConversation({ id, active, describe }: { id: string; active: boolean; describe: (id: string, descriptor: Descriptor) => void }) {
   const detail = useMobileCanvasDetail(id, active);
   const location = useLocation();
@@ -24,7 +27,7 @@ export function MobileConversation({ id, active, describe }: { id: string; activ
   useEffect(() => {
     if (active && detail.data) describe(id, { title: detail.data.title, view: 'conversation', artifactId: resource?.resourceId ?? null, artifactPicker: false });
   }, [active, describe, id, detail.data, resource]);
-  return <ConversationVisibilityContext value={active}><div className="mobile-conversation-stack">{resource && <button className="mobile-view-canvas" onClick={() => postMobileEvent({ type: 'open-canvas', id })}>View canvas <ArrowUpRight size={15} aria-hidden="true" /></button>}<ConversationSurface parentKind="canvas" parentId={id} substreamId="0" embedded scrollToTurn={active ? scrollToTurn : null} /></div></ConversationVisibilityContext>;
+  return <ConversationVisibilityContext value={active}><div className="mobile-conversation-stack">{resource && <button className="mobile-view-canvas" onClick={() => postMobileEvent({ type: 'open-canvas', id })}>View canvas <ArrowUpRight size={15} aria-hidden="true" /></button>}<ConversationSurface parentKind="canvas" parentId={id} substreamId="0" embedded composerPlaceholder={MOBILE_COMPOSER_PLACEHOLDER} scrollToTurn={active ? scrollToTurn : null} /></div></ConversationVisibilityContext>;
 }
 
 export function CreateCanvas({ created }: { created: (id: string) => void }) {

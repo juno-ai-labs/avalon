@@ -115,7 +115,7 @@ describe('token references', () => {
   const RULE_LOCAL = ['--wheel-travel', '--attachment-file-card-height', '--attachment-media-size', '--rail-slot',
     // Runtime layout geometry, not theme-selectable design tokens.
     '--rail-max-slot',
-    '--composer-line-height', '--composer-text-padding', '--system-message-lines',
+    '--composer-line-height', '--composer-submit-gap', '--composer-text-padding', '--system-message-lines',
     '--av-cmp-sidebar-width',
     // Deliberately outside the `--av-` namespace, unlike its neighbour above:
     // `--av-cmp-sidebar-width` is a registry token a theme may set and is here

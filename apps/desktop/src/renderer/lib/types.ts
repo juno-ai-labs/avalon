@@ -639,7 +639,7 @@ export interface Message {
     /** On the wizard's post in a Canvas's Chat after it asked for sources: the requests the row's card draws. */
     sourceRequests?: { requestIds: string[] };
     /** On the wizard's post in a Canvas's Chat when it asked a question there: the question the row's card answers. */
-    question?: { elicitationId: string };
+    question?: { elicitationId: string; revision?: number };
   };
   /**
    * Durable Object events and D1 transcript rows have independent sequence
