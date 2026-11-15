@@ -32,6 +32,7 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  asWorkstreamId,
   WorkstreamWorkflowInputSchema,
   type AutomationDraft,
   type WorkstreamWorkflowInput,
@@ -604,7 +605,7 @@ describe("Sidekick run continuation", () => {
         wakeupId, JSON.stringify(worker.input.executionPrincipal), prompt, now - 1_000, `wakeup-${wakeupId}`, now, now,
       );
     });
-    await stub.refreshTimerAlarm({ workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, substreamId: asSubstreamId(worker.workerId) });
+    await stub.refreshTimerAlarm({ workspaceId: WORKSPACE_ID, workstreamId: asWorkstreamId(AUTOMATION_ID), substreamId: asSubstreamId(worker.workerId) });
     await runDurableObjectAlarm(stub);
     return wakeupId;
   }
