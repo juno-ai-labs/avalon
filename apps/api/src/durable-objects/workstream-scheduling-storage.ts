@@ -44,8 +44,6 @@ export interface WakeupRow extends Record<string, SqlStorageValue> {
   idempotency_key: string;
   version: number;
   created_at: number;
-  /** 1 when a person's turn scheduled it; see `drivenByPerson`. */
-  scheduled_by_person: number;
 }
 
 export interface ElicitationRow extends Record<string, SqlStorageValue> {
@@ -167,7 +165,7 @@ export class WorkstreamSchedulingStorage {
   pendingWakeups(input: { limit: number }): WakeupRow[] {
     return this.sql.exec<WakeupRow>(
       `SELECT wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at,
-              status, idempotency_key, version, created_at, scheduled_by_person
+              status, idempotency_key, version, created_at
          FROM workstream_wakeups
         WHERE status = 'pending'
         ORDER BY due_at ASC, wakeup_id ASC
@@ -180,7 +178,7 @@ export class WorkstreamSchedulingStorage {
   wakeup(input: { wakeupId: string }): WakeupRow | undefined {
     return first(this.sql.exec<WakeupRow>(
       `SELECT wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at,
-              status, idempotency_key, version, created_at, scheduled_by_person
+              status, idempotency_key, version, created_at
          FROM workstream_wakeups WHERE wakeup_id = ?`,
       input.wakeupId,
     ));
@@ -190,7 +188,7 @@ export class WorkstreamSchedulingStorage {
   wakeupByIdempotencyKey(input: { idempotencyKey: string }): WakeupRow | undefined {
     return first(this.sql.exec<WakeupRow>(
       `SELECT wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at,
-              status, idempotency_key, version, created_at, scheduled_by_person
+              status, idempotency_key, version, created_at
          FROM workstream_wakeups WHERE idempotency_key = ?`,
       input.idempotencyKey,
     ));
@@ -213,12 +211,6 @@ export class WorkstreamSchedulingStorage {
     prompt: string;
     dueAt: number;
     idempotencyKey: string;
-    /**
-     * Whether a person's turn scheduled it. Optional so a Worker from before
-     * the column still schedules; absent reads as a person's, as every row
-     * before the column does.
-     */
-    scheduledByPerson?: boolean;
     now: number;
   }): { outcome: "scheduled" | "replayed" | "workstream_archived"; wakeupId: string } {
     return this.storage.transactionSync(() => {
@@ -232,9 +224,8 @@ export class WorkstreamSchedulingStorage {
       this.sql.exec(
         `INSERT INTO workstream_wakeups
            (wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at,
-            status, idempotency_key, fired_at, cancelled_at, version, created_at, updated_at,
-            scheduled_by_person)
-         VALUES (?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, 1, ?, ?, ?)`,
+            status, idempotency_key, fired_at, cancelled_at, version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, 1, ?, ?)`,
         input.wakeupId,
         input.createdByRunId,
         input.executionPrincipalJson,
@@ -243,7 +234,6 @@ export class WorkstreamSchedulingStorage {
         input.idempotencyKey,
         input.now,
         input.now,
-        input.scheduledByPerson === false ? 0 : 1,
       );
       return { outcome: "scheduled" as const, wakeupId: input.wakeupId };
     });
