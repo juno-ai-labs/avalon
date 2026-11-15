@@ -719,8 +719,8 @@ describe("connector tools selected for harness runs", () => {
       "sources_list", "request_source", "test_source_condition"]);
     const refusals = await Promise.all(sidekicks.tools.map((tool) => tool.execute({}, {} as never)
       .then(() => null, (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }))));
-    expect(refusals.every((refusal) => refusal?.code === "sidekick_tools_need_a_person"
-      && refusal.routes.includes("a person who manages the Sidekick can do it"))).toBe(true);
+    expect(refusals).toEqual(sidekicks.tools.map(() => ({ code: "sidekick_tools_need_a_person",
+      routes: expect.stringContaining("a person who manages the Sidekick can do it") })));
   });
   it("gives background substreams normal writes, independent discovery and recursive agent tools", async () => {
     const database = new ToolSelectionDatabase([
@@ -784,7 +784,8 @@ describe("connector tools selected for harness runs", () => {
       return tool.execute({}, {} as never).then(() => null, (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }));
     };
     const wizard = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
-    const message = (sender: AgentId) => ({ teamId: sender, senderAgentId: sender, messageId: "00000000-0000-7000-8000-00000000e001" });
+    const message = (sender: AgentId, fromPersonTurn = false) => ({ teamId: sender, senderAgentId: sender,
+      messageId: "00000000-0000-7000-8000-00000000e001", ...(fromPersonTurn ? { fromPersonTurn: true as const } : {}) });
     const canvasChat = agentIdForAddress({ parentKind: "canvas", parentId: "00000000-0000-7000-8000-00000000c001", substreamId: asSubstreamId("0") });
     const run = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("00000000-0000-7000-8000-00000000d001") });
     const all = ["sources_list", "request_source", "test_source_condition"];
@@ -792,7 +793,9 @@ describe("connector tools selected for harness runs", () => {
 
     // A person's own turn, and the wizard's turn a Canvas's Chat started for them, ask.
     expect(await sourceTools(automationConversationInput())).toEqual(all);
-    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toEqual(all);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat, true) })).toEqual(all);
+    // A Chat turn another agent's message started passes on what that agent read, so its wizard turn may not ask.
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toEqual(refused);
     expect(await sourceTools({ ...automationConversationInput(), wizardCanvasId: "00000000-0000-7000-8000-00000000c001" })).toEqual(all);
     expect(await sourceTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual(all);
     expect(await sourceTools(workflowInput())).toEqual(all);
@@ -837,7 +840,7 @@ describe("connector tools selected for harness runs", () => {
     const listsTheSkill = async (input: WorkstreamWorkflowInput) =>
       __integrationTesting.builtInSkillsFor((await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins)
         .some((skill) => skill.name === "setting-up-a-filtered-trigger");
-    expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toBe(true);
+    expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(canvasChat, true) })).toBe(true);
     expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(run) })).toBe(true);
     expect(await listsTheSkill({ ...automationConversationInput(), reason: "sidekick_review" })).toBe(true);
     expect(await listsTheSkill(automationRunInput())).toBe(true);

@@ -816,7 +816,8 @@ result for the person who manages it. The refusal asks nobody and changes
 nothing, so it is `read` and safe to retry.
 
 `refusingTool` (`apps/api/src/services/tool-refusal.ts`) builds one from the
-tool itself: the same name and arguments, and a call that refuses. Two uses:
+tool itself: the same name and arguments, and a call that refuses. Every
+refusal's text is in one table there (`TOOL_REFUSALS`). Three uses:
 `sidekick_request_source` where a turn may not ask
 (`sidekickSourceRefusalTool`), every Sidekicks tool on a turn that acts for
 the Organization rather than a person (`organizationSidekicksPlugin`), and

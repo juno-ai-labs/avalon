@@ -518,6 +518,10 @@ describe("a room Sidekick's run and the room's agents", () => {
       return id!;
     };
     const first = await pendingQuestion();
+    // The Chat's turn was a person's, and the message says so: that is what lets the wizard ask.
+    expect(await runInDurableObject(wizard, (_instance, state) => state.storage.sql.exec<{ json: string }>(
+      `SELECT structured_content_json AS json FROM canonical_conversation_turn_details WHERE structured_content_json LIKE '%"agent_message"%'`,
+    ).toArray().map((row) => (JSON.parse(row.json) as { fromPersonTurn?: boolean }).fromPersonTurn))).toEqual([true]);
     // Answered from the Canvas, as its card does.
     const answered = await post(wizard, "/internal/product", { operation: "answer_elicitation", parentKind: "automation", auth: AUTH,
       elicitationId: first, input: { answer: "yes" } });
