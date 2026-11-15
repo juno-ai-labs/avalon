@@ -143,7 +143,7 @@ const source = await readFile(join(appDirectory, "wrangler.jsonc"), "utf8");
 const config = parseWranglerConfig(source);
 const auditLakehouse = await engineeringAuditLakehouseBinding();
 if (auditLakehouse) config.pipelines = [auditLakehouse];
-else console.warn("ENGINEERING_AUDIT_LAKEHOUSE has no pinned stream; every tool call will refuse as engineering_audit_unconfigured until pnpm cloudflare:lakehouses:ensure pins it");
+else console.warn("ENGINEERING_AUDIT_LAKEHOUSE has no stream ID in this checkout; every tool call will refuse as engineering_audit_unconfigured. Run scripts/ensure-cloudflare-inference-lakehouse.mjs --deploy-bindings first, as the API deploy does");
 config.vars.ACCESS_APPLICATION_AUD = audience;
 config.vars.CLOUDFLARE_ACCOUNT_ID = accountId;
 await writeFile(generatedConfig, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });

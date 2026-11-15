@@ -196,14 +196,27 @@ tool or arguments that fail the input schema), since those execute nothing.
 cancellation appears as a `cancelled` `task_finished` row. Querying the audit
 table through `query_data_lake` is itself a recorded call.
 
-**Provisioning.** The manifest lands with the all-zero stream ID. Until
-`pnpm cloudflare:lakehouses:ensure` creates the stream, bucket, catalog, sink
-and pipeline and the reported stream ID is pinned in the manifest,
-`apps/engineering-mcp/scripts/deploy.mjs` deploys without the binding, warns,
-and every tool refuses as `engineering_audit_unconfigured`. The API Worker's
-`--materialize-bindings` step leaves this manifest out, since the binding is
-not the API Worker's. `BASIN_SQL_API_TOKEN` must also be widened to the new
-bucket before `query_data_lake` can read the table.
+**A row over 1 MB is refused before it is sent.** The Pipeline binding
+refuses any single record above 1 MB (`CF_PIPELINE_MESSAGE_TOO_LARGE`), so a
+call whose arguments make its started row larger than that fails as
+`engineering_audit_row_too_large`, and the log names `row_bytes`. The figure is
+Cloudflare's, not ours. A call that size is a multi-megabyte SQL batch or
+message body; split it, or run it outside this MCP.
+
+**Provisioning.** The manifest lands with the all-zero stream ID and no
+`pinnedAccount`. The API deploy's `--deploy-bindings` step treats that as a new
+lakehouse: it creates the stream, bucket, catalog, sink and pipeline in the
+deploy account and writes the adopted stream ID into the checkout's manifest,
+without touching the pinned lakehouses
+([`inference-lakehouse.md`](inference-lakehouse.md#deployment-bindings-and-explicit-reconciliation)).
+It leaves this manifest out of the API Worker's regional configs, since the
+binding is not the API Worker's. The engineering MCP deploys later in the same
+job, so `apps/engineering-mcp/scripts/deploy.mjs` reads the adopted ID and
+binds it. Commit that ID and the account marker to take the step off the
+Pipelines control plane. A deploy run outside that job, with the manifest
+still unprovisioned, binds nothing, warns, and every tool refuses as
+`engineering_audit_unconfigured`. `BASIN_SQL_API_TOKEN` must also be widened to
+the new bucket before `query_data_lake` can read the table.
 
 The table has no retention or compaction policy of its own, so rows are kept
 until someone deletes them. Retention is the team's to set
@@ -845,9 +858,12 @@ task-creating call returns before `tool` runs and a future tool may not use the
 helper. The started send is awaited and fails the call closed, at the cost of
 one Pipeline ingest of latency per call; this holds because `send()` resolves
 only after the stream confirms ingestion. The finished send uses `waitUntil`
-so it adds none. The binding is the MCP Worker's own, so the API Worker's
-binding materializer leaves the manifest out. Retention is left open for the
-team to set.
+so it adds none. A row over the Pipeline's 1 MB record limit is refused by
+name rather than spilled to R2 the way the inference lakehouse does, because a
+call that large is rare and an audit row that omits its arguments would
+defeat the log. The binding is the MCP Worker's own, so the API deploy
+provisions it with `--deploy-bindings` but leaves it out of the API Worker's
+configs. Retention is left open for the team to set.
 
 ### 2026-11-12 — Use the MCP SDK object-schema interface
 
