@@ -93,6 +93,7 @@ import {
   type HarnessSkill,
   HarnessToolEffectUnresolvedError,
   HarnessLimitError,
+  HarnessPortStepError,
   type HarnessToolContext,
   type HarnessToolResult,
   type HarnessToolReplayRefusal,
@@ -4425,15 +4426,19 @@ export async function runWorkstreamHarness(
       // work is independently authorized by beforeToolCall above. Treating
       // archive as a renewal failure masks Bind's durable stop transition.
       if (stage === "before_model") {
-        await requireRunUsageAllowance(env, input.workspaceId);
-        const authorityStartedAt = Date.now();
-        await Promise.all([
-          liveness.pulse(stage, true).then(() => {
+        let authorityStartedAt = Date.now();
+        await runBeforeModelChecks({
+          usageAllowance: async () => {
+            await requireRunUsageAllowance(env, input.workspaceId);
+            authorityStartedAt = Date.now();
+          },
+          renewLease: async () => {
+            await liveness.pulse(stage, true);
             if (!firstInferenceBreakdownLogged) {
               startupDurations.before_model_heartbeat_ms = Date.now() - authorityStartedAt;
             }
-          }),
-          (async () => {
+          },
+          runAuthority: async () => {
             const runAuthorityStartedAt = Date.now();
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot, (name, durationMs) => {
               if (!firstInferenceBreakdownLogged) startupDurations[`before_model_${name}_ms`] = durationMs;
@@ -4441,8 +4446,8 @@ export async function runWorkstreamHarness(
             if (!firstInferenceBreakdownLogged) {
               startupDurations.before_model_run_authority_ms = Date.now() - runAuthorityStartedAt;
             }
-          })(),
-        ]);
+          },
+        });
         if (!firstInferenceBreakdownLogged) {
           startupDurations.before_model_authority_ms = Date.now() - authorityStartedAt;
         }
@@ -9625,6 +9630,32 @@ export async function requireRunUsageAllowance(
   } catch (error) {
     if (!isUsageAllowanceExhausted(error)) throw error;
     throw new HarnessLimitError("usage_allowance_exhausted", "The organization's included weekly usage is used up");
+  }
+}
+
+/**
+ * The checks a run passes before each model call, each named when it fails.
+ * They share one harness port, so without a name every failure read as the
+ * lease ("Run liveness renewal failed"), which is how a used-up allowance hid
+ * on 2026-11-12. The usage read runs first, so a used-up allowance ends the
+ * run before any other work; the lease and authority checks then run
+ * together. A `HarnessLimitError` passes through under its own code, and a
+ * lease failure keeps the port's own label.
+ */
+export async function runBeforeModelChecks(checks: {
+  usageAllowance: () => Promise<void>;
+  renewLease: () => Promise<void>;
+  runAuthority: () => Promise<void>;
+}): Promise<void> {
+  await namedPortStep("Usage allowance read failed", checks.usageAllowance);
+  await Promise.all([checks.renewLease(), namedPortStep("Run authority check failed", checks.runAuthority)]);
+}
+
+async function namedPortStep(label: string, check: () => Promise<void>): Promise<void> {
+  try {
+    await check();
+  } catch (error) {
+    throw error instanceof HarnessLimitError ? error : new HarnessPortStepError(label, error);
   }
 }
 
