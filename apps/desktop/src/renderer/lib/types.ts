@@ -633,6 +633,8 @@ export interface Message {
      */
     requesterUserId?: string | null;
     runNumber?: number | null;
+    /** On the wizard's post in a Canvas's Chat after it asked for sources: the requests the row's card draws. */
+    sourceRequests?: { requestIds: string[] };
   };
   /**
    * Durable Object events and D1 transcript rows have independent sequence

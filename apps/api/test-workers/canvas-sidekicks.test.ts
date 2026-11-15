@@ -212,7 +212,7 @@ describe("a Sidekick a Canvas's Chat made", () => {
       workspaceId: WORKSPACE_ID, automationId: sidekickId, actor: { ...member(userId), participantOfOwningWorkstream: false } });
     expect(await manages(MADE_HERE, PARTICIPANT)).toBe(true);
     expect(await manages(MADE_HERE, OUTSIDER)).toBe(false);
-    // One made elsewhere is its author's alone, whoever is in the Canvas.
+    // One made elsewhere is its author's alone until it is attached to a Canvas.
     expect(await manages(MADE_ELSEWHERE, PARTICIPANT)).toBe(false);
     // Managing is not opening: its conversation and runs stay with the people it is shared with.
     expect(await refusal((instance) => instance.sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: MADE_HERE,
@@ -250,6 +250,20 @@ describe("a Sidekick a Canvas's Chat made", () => {
     expect(await manages(MADE_HERE, PARTICIPANT)).toBe(true);
   });
 
+  it("is managed by everyone in a Canvas it is attached to later, but not through a Canvas its own run made", async () => {
+    const manages = (userId: string) => workspace().sidekickAllowsManager({
+      workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE, actor: { ...member(userId), participantOfOwningWorkstream: false } });
+    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE,
+      userId: CREATOR, reference: CANVAS_ID });
+    expect(await manages(PARTICIPANT)).toBe(true);
+    expect(await manages(OUTSIDER)).toBe(false);
+    // A Canvas its run made admits whoever reads the Sidekick, so it would make every reader a manager.
+    await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "workspace" } });
+    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: asWorkstreamId(crypto.randomUUID()), title: "Digest",
+      createdByUserId: CREATOR, authorityGeneration: 1, writer: { sidekickId: MADE_ELSEWHERE, runId: crypto.randomUUID() } });
+    expect(await manages(OUTSIDER)).toBe(false);
+  });
+
   it("stops being managed by someone the Canvas no longer admits", async () => {
     await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
       update: { visibility: "creator", userIds: [] } });
@@ -267,8 +281,6 @@ describe("a Sidekick a Canvas's Chat made", () => {
     await workspace().sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: third,
       actor: { ...member(PARTICIPANT), participantOfOwningWorkstream: false } });
     expect(await lifecycle(third)).toBe("deleted");
-    expect(await refusal((instance) => instance.sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: MADE_ELSEWHERE,
-      actor: { ...member(PARTICIPANT), participantOfOwningWorkstream: false } }))).toBe("sidekick_forbidden");
 
     await workspace().canvasArchive({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) });
     expect(await lifecycle(MADE_HERE)).toBe("deleted");

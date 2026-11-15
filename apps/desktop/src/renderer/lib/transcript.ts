@@ -2930,6 +2930,7 @@ function automationActivationFields(
       runId: parsed.data.runId,
       ...(parsed.data.trigger ? { trigger: parsed.data.trigger.kind } : {}),
       ...(parsed.data.run ? { run: parsed.data.run } : {}),
+      ...(parsed.data.sourceRequests ? { sourceRequests: parsed.data.sourceRequests } : {}),
       ...(sidekickRun ? { requesterUserId: sidekickRun.requesterUserId, runNumber: sidekickRun.runNumber } : {}),
     },
   };
