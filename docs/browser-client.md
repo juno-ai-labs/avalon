@@ -594,8 +594,9 @@ Before deploying, the workflow uploads the built `/assets/` files to the
 deploys those same files without rebuilding. Static assets hold only the current
 deploy's files; when one lacks a requested `/assets/` file, the Worker serves it
 from the bucket, so a page left open across deploys still loads a lazy chunk it
-had not fetched. The bucket is created once by hand, and the deploy token needs
-R2 write access. Nothing removes old files; a retention rule is the team's to set.
+had not fetched. `scripts/ensure-cloudflare-r2-buckets.mjs` runs first and
+creates the bucket if the account lacks it, so the deploy token needs Workers R2
+Storage Edit. Nothing removes old files; a retention rule is the team's to set.
 
 The API deploy workflow independently applies its checked-in browser origin and
 email policy. The team selected six-digit OTPs, ten-minute expiry and five failed
@@ -727,7 +728,9 @@ workspace, role or access-class changes replace the client and re-admit it.
 **What changed:** `/assets/` responses carry `public, max-age=31536000,
 immutable`. The shell HTML stays `no-store`. Each deploy's `/assets/` files are
 uploaded to R2 first, and the Worker serves a file from there when the current
-deploy lacks it.
+deploy lacks it. Both deploy workflows now create any R2 bucket a Wrangler file
+declares and the account lacks (`ensure-cloudflare-r2-buckets.mjs`, which
+replaces the read-only `check-cloudflare-r2-buckets.mjs`).
 
 **Why:** With Workers' default headers, a cold start revalidated every chunk:
 one round trip per file before the mobile dashboard could draw. Caching the HTML
@@ -735,7 +738,11 @@ too was rejected: it still needs a round trip to see a deploy, and a stale copy
 would name chunks a new deploy removed. The web host ships 20 to 30 times a day,
 and the mobile shell keeps its Home page open for days, so a lazy chunk fetched
 after a deploy routinely 404'd and left a Reload button. Keeping old files in
-static assets is not possible, since a deploy replaces the whole set.
+static assets is not possible, since a deploy replaces the whole set. Rally is
+to be open-sourced, so a fresh account must be set up by its first release;
+buckets made by hand, as the API's were, would be a step nobody else can follow.
+Release-retention buckets stay explicit: their storage class and location are
+not in the Wrangler file.
 
 ### 2026-11-14 — Restore mobile organizations without reloading the page
 
