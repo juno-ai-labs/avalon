@@ -271,10 +271,21 @@ None yet.
     people the Canvas already lists, who can mute it, so the owner allowed
     background agents too. Runs still cannot register: a run is handed an
     event's content, and turning notices on changes the Canvas for everyone.
+11. **A background agent records what started its root.** A self-review's
+    agents and a person's wizard turn's agents have the same root
+    conversation, `"0"`, so `root_substream_id` cannot tell them apart, and
+    the notice tools, unlike a source request, have no approval step behind
+    them. `start_agent` writes `root_reason` on every agent's row: the
+    starting turn's `reason`, or the starter's own `root_reason` for an agent
+    another agent started, as `root_substream_id` is copied. The loop input
+    carries it beside `backgroundAgent`, and the notice gate denies both
+    tools when it is `sidekick_review`. Rejected: writing it only for the
+    self-review's agents, which is the same column with a special case; and
+    accepting the gap with muting as the remedy, the owner's call against.
 
 ## Data model
 
-All in the Organization's `WorkspaceDO`. Implementers and reviewers read
+In the Organization's `WorkspaceDO` unless marked. Implementers and reviewers read
 [`durable-object-sqlite.md`](../../durable-object-sqlite.md) first.
 
 - **`canvas_notice_registrations`**: `canvas_id` (primary key), `purpose`,
@@ -284,6 +295,12 @@ All in the Organization's `WorkspaceDO`. Implementers and reviewers read
   (an empty list is muted), `updated_at`; primary key `(canvas_id, user_id)`.
   Rows exist only for people who changed the default.
 - **`canvas_participants.source`** gains `self` in its CHECK.
+- **`background_agent.root_reason`** (`AgentLoopDO`, each conversation's own
+  object): the `reason` of the turn that started this agent's root, nullable.
+  Agents started before the column read as NULL, which the gate treats as not
+  a self-review, as they are treated today. `WorkstreamWorkflowInput` gains
+  `backgroundAgentRootReason` beside `backgroundAgent`, set by the claim
+  path from the row.
 - **`workstream_notification_intents.notification_kind`** gains
   `canvas_notice` in its CHECK, as migration 138 did for run notices. The
   intent's `source_message_id` is the send's receipt id.
@@ -293,7 +310,7 @@ All in the Organization's `WorkspaceDO`. Implementers and reviewers read
 
 ## Regional impact
 
-None. Every row is in the Organization's `WorkspaceDO`. The default-channel
+None. Every row is in the Organization's `WorkspaceDO` or a conversation's `AgentLoopDO`, both regional. The default-channel
 decision reads the regional D1 device registry the push consumer already
 reads.
 
@@ -351,7 +368,8 @@ reads.
   which it already records as its root: rooted in a Canvas's Chat or a
   person's wizard turn it gets both tools, rooted in a run only send, rooted
   in a self-review neither. Its reach is held to the person its loop acts as,
-  as for every background agent today.
+  as for every background agent today. A self-review's agent is known by its
+  root's `reason`, which this change records (decision 11).
 
   The self-review gets neither. Rally's own notice starts it, so nobody asked
   for notices, and what it produces is about the Sidekick's procedure, which
@@ -450,10 +468,12 @@ publish, not sending progress notices, and a run stopping on
 
 Ships to everyone on merge, with no flag. Order:
 
-1. `canvasJoin`, the change-based audience save, and `useDevicePushReadiness()`.
+1. `canvasJoin`, the change-based audience save, `useDevicePushReadiness()`,
+   and `background_agent.root_reason`.
 2. The plugin, the record, the menu item, the Settings row and delivery.
 
-The migrations add two tables and widen two CHECKs; none rewrites rows.
+The migrations add two tables and a column and widen two CHECKs; none
+rewrites rows.
 
 ## Acceptance
 
@@ -473,6 +493,8 @@ The migrations add two tables and widen two CHECKs; none rewrites rows.
    `notifications_sidekick_has_several_canvases` naming both, and nobody is
    notified. A Sidekick attached to none gets
    `notifications_sidekick_has_no_canvas`.
+8. A self-review starts a background agent. That agent is offered neither
+   notice tool; an agent a manager's wizard turn started is offered both.
 
 ## Open questions
 
@@ -489,9 +511,3 @@ The migrations add two tables and widen two CHECKs; none rewrites rows.
    the agent its root run's reach, as Terminal does for the sandbox, would fix
    it, but widens what every background agent reaches, not only notices.
    Until decided, the agent cannot send.
-3. **How does the host know a background agent's root was a self-review?**
-   The matrix gives a self-review's background agents neither tool, but the
-   input marks them only as wizard-rooted, the same as a person's wizard
-   turn's ([`agent-loop-types.md`](../../agent-loop-types.md#open-questions)).
-   Recording the root turn's `reason` beside `root_substream_id` would let the
-   gate tell them apart. Without it, those agents get both tools.
