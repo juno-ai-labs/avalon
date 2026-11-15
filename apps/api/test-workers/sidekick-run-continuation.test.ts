@@ -32,8 +32,10 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  asWorkstreamId,
   WorkstreamWorkflowInputSchema,
   type AutomationDraft,
+  type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import {
   ConversationEffectEnvelopeSchema,
@@ -587,6 +589,49 @@ describe("Sidekick run continuation", () => {
       attachmentIds: [],
     }, { ...worker.context, effectIntentId: crypto.randomUUID() });
     expect((await settledExecutionFor(worker.workerId, resumed.messageId)).status).toBe("completed");
+  });
+
+  /** A wake-up due now in a worker's own object, armed the way `schedule_wakeup` arms it, then fired by its alarm. */
+  async function fireWorkerWakeup(worker: Awaited<ReturnType<typeof delegatedRunWorker>>, prompt: string): Promise<string> {
+    const wakeupId = crypto.randomUUID();
+    const stub = childStub(worker.workerId);
+    await runInDurableObject(stub, (_instance, state) => {
+      const now = Date.now();
+      state.storage.sql.exec(
+        `INSERT INTO workstream_wakeups
+           (wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at, status,
+            idempotency_key, fired_at, cancelled_at, version, created_at, updated_at)
+         VALUES (?, NULL, ?, ?, ?, 'pending', ?, NULL, NULL, 1, ?, ?)`,
+        wakeupId, JSON.stringify(worker.input.executionPrincipal), prompt, now - 1_000, `wakeup-${wakeupId}`, now, now,
+      );
+    });
+    await stub.refreshTimerAlarm({ workspaceId: WORKSPACE_ID, workstreamId: asWorkstreamId(AUTOMATION_ID), substreamId: asSubstreamId(worker.workerId) });
+    await runDurableObjectAlarm(stub);
+    return wakeupId;
+  }
+
+  async function wakeupReceipts(workerId: string): Promise<WorkstreamWorkflowInput[]> {
+    return (await receipts(workerId))
+      .map((row) => WorkstreamWorkflowInputSchema.parse(JSON.parse(row.execution_context_json)))
+      .filter((input) => input.reason === "scheduled_wakeup");
+  }
+
+  it("wakes a run-rooted worker under its root run's authority, and not at all while the Sidekick is paused", async () => {
+    await activeSidekick();
+    const worker = await delegatedRunWorker();
+
+    await fireWorkerWakeup(worker, "Check the delegated count again.");
+    await expect.poll(async () => (await wakeupReceipts(worker.workerId)).length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+    const [woken] = await wakeupReceipts(worker.workerId);
+    expect(woken).toMatchObject({ backgroundAgent: true, automationDelegation: { runId: worker.runId } });
+    expect(woken).not.toHaveProperty("automationRun");
+
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    const refused = await fireWorkerWakeup(worker, "Do not run this while paused.");
+    await expect.poll(() => runInDurableObject(childStub(worker.workerId), (_instance, state) => state.storage.sql.exec<{ status: string }>(
+      "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", refused).toArray()[0]?.status)).toBe("fired");
+    expect(await wakeupReceipts(worker.workerId)).toHaveLength(1);
+    expect(callThatSaw("Do not run this while paused.")).toBeUndefined();
   });
 
   it.each(["pause", "pause_resume", "run_not_found"] as const)(
