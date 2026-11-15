@@ -2,12 +2,12 @@ import { requireUsageAllowance } from "./usage-admission";
 import { z } from "zod";
 import { judgeSemanticTriggerCondition, type HarnessTool } from "@rally/agent-harness";
 import {
-  IdSchema, UserIdSchema, asWorkspaceId, type UserId, type WorkstreamWorkflowInput,
+  IdSchema, UserIdSchema, agentAddressForId, asAutomationId, asSubstreamId, asWorkspaceId, type UserId, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import type { Env } from "../env";
 import { runtimeDeferral } from "../lib/defer";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { workspaceDOName } from "../durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import { SidekickSourceService } from "./sidekick-source-service";
 
@@ -57,6 +57,38 @@ export function sidekickSourceRequestCard(event: { pluginId?: string | undefined
     : null;
 }
 
+/**
+ * The Canvas whose Chat started this wizard turn, or null for any other loop:
+ * an agent's message from a Canvas's Chat to the Sidekick's wizard.
+ */
+export function wizardTurnCanvasId(input: Pick<WorkstreamWorkflowInput, "sidekickWizard" | "agentExchange">): string | null {
+  if (input.sidekickWizard !== true || !input.agentExchange) return null;
+  const sender = agentAddressForId(input.agentExchange.senderAgentId);
+  return sender.parentKind === "canvas" && sender.substreamId === "0" ? sender.parentId : null;
+}
+
+/**
+ * Post the Sidekick's source-request card into a Canvas's Chat, as the
+ * Sidekick: the post's text is what the Chat's agent reads, and its
+ * `sourceRequests` is what the client draws.
+ */
+async function postSourceRequestCard(env: Env, input: WorkstreamWorkflowInput, canvasId: string, sidekickId: string,
+  requestIds: string[], clientMessageId: string): Promise<void> {
+  const workspaceId = asWorkspaceId(input.workspaceId);
+  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
+  const canvas = await workspace.canvasContext({ workspaceId, canvasId });
+  const name = canvas?.sidekicks.find((sidekick) => sidekick.id === sidekickId)?.name || "Sidekick";
+  const chat = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, workspaceId,
+    conversationObjectName(env.AVALON_REGION, workspaceId, canvasId, asSubstreamId("0")));
+  const appended = await chat.appendConversationPost({
+    schemaVersion: 1, workspaceId, parentKind: "canvas", workstreamId: canvasId, substreamId: "0", clientMessageId,
+    text: `${name} asked ${requestIds.length === 1 ? "one person" : `${requestIds.length} people`} to let their events start it. Each person approves or declines their own request.`,
+    post: { type: "automation_activation", schemaVersion: 1, automationId: asAutomationId(sidekickId), automationName: name,
+      runId: input.harnessRunId, deliveryId: clientMessageId, occurredAt: Date.now(), sourceRequests: { requestIds } },
+  });
+  if (appended.outcome === "refused") throw new Error(`sidekick_source_card_refused:${appended.code}`);
+}
+
 /** How many of the person's own recent events one test judges. A product choice: one screenful to read. */
 const TEST_SAMPLE_EVENTS = 10;
 
@@ -64,8 +96,12 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   const service = new SidekickSourceService(env, input.workspaceId, userId);
   const name = (local: string) => room ? `sidekick_${local}` : local;
   // The request's card is drawn in the conversation it was asked from: a
-  // Canvas's Chat or a Sidekick's shared conversation, never a run.
+  // Canvas's Chat or a Sidekick's shared conversation, never a run. A wizard
+  // turn a Canvas's Chat started was asked from that Chat, so its card is
+  // drawn there too (`askedFromCanvasId`).
+  const askedFromCanvasId = wizardTurnCanvasId(input);
   const place = (input.substreamId ?? "0") !== "0" ? null
+    : askedFromCanvasId !== null ? { parentKind: "canvas" as const, parentId: askedFromCanvasId }
     : input.parentKind === "canvas" ? { parentKind: "canvas" as const, parentId: input.parentId }
     : input.parentKind === "automation" ? { parentKind: "automation" as const, parentId: input.parentId } : null;
   return [{
@@ -103,10 +139,18 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
     validateInput: (raw) => RequestSourceInputSchema.safeParse(raw).error ?? null,
     execute: async (raw, context) => {
       const args = RequestSourceInputSchema.parse(raw);
+      const operationId = IdSchema.parse(context.effectIntentId);
       const asked = await service.ask(args.sidekickId, {
         userIds: args.userIds, connectorType: args.connectorType, eventTypes: args.eventTypes,
-        condition: args.condition ?? null, place, operationId: IdSchema.parse(context.effectIntentId),
+        condition: args.condition ?? null, place, operationId,
       });
+      // The wizard's own block draws the card here; the Chat that asked gets
+      // a post of the Sidekick's that draws the same requests. Keyed on the
+      // receipt, so a retried call posts once.
+      if (askedFromCanvasId !== null) {
+        await postSourceRequestCard(env, input, askedFromCanvasId, asked.sidekickId, asked.requests.map((request) => request.requestId),
+          `sidekick-source-card:${operationId}`);
+      }
       // The whole result is the card's input: the client reads each request's
       // id from it and draws its live state.
       return { output: asked, summary: `Asked ${asked.requests.length === 1 ? "one person" : `${asked.requests.length} people`} for a source` };

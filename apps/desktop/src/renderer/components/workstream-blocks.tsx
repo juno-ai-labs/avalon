@@ -3129,7 +3129,11 @@ export function MessageBlock({
             text={message.text ?? ''}
             telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
           />
-
+          {/* The wizard asked for sources on a turn this Chat started: the same card its own conversation draws. */}
+          {message.automationActivation?.sourceRequests && (
+            <SidekickSourceRequestCard card={{ sidekickId: message.automationActivation.automationId,
+              requestIds: message.automationActivation.sourceRequests.requestIds, asked: null }} />
+          )}
         </>
       )}
     </article>

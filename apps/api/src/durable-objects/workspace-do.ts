@@ -5555,7 +5555,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
     const row = canvas?.row();
     if (!canvas || !row || row.archived_at !== null || row.workspace_id !== input.workspaceId) return null;
-    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.agentArtifacts(), sidekicks: canvas.sidekicks() };
+    return { canvasId: row.canvas_id, title: row.title, writerSidekickId: row.writer_sidekick_id,
+      artifacts: canvas.agentArtifacts(), sidekicks: canvas.sidekicks() };
   }
 
   /**
