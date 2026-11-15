@@ -199,6 +199,18 @@ the same card under that post. Test, in
 `apps/api/test-workers/conversation-tools.test.ts`: "is drawn in the Chat
 whose message started the wizard's turn, once per receipt".
 
+The same turn's questions are drawn there too: `request_elicitation` posts
+`question: { elicitationId }` (keyed `sidekick-question-card:<id>`), and the
+client reads and answers the question at `/sidekicks/:id/questions/:elicitationId`,
+which reach the Sidekick's shared conversation. There any manager may read and
+answer the wizard's questions without being able to open the Sidekick
+(`wizardQuestionAuthority`). A post is best-effort: the request or question
+already exists, so a refused or failed post is logged as
+`wizard_card_post_failed` with its code and never fails the tool. The question records the Canvas
+(`askedFromCanvasId` on its stored turn), and the turn its answer starts reads
+it back (`wizardCanvasId`), so a source request or a second question after the
+answer is drawn in the same Chat.
+
 ### Which connections a rule is registered on
 
 A Sidekick's triggers and their evaluator rules stay in its definition, each
@@ -800,7 +812,8 @@ workers, and nothing else. Wizard and Chat turns another agent's message
 started, review-notice turns, and background agents now get the source tools
 and `setting-up-a-filtered-trigger`. When a Canvas's Chat started the wizard's
 turn, the request's place is that Canvas and its card is posted into the
-Chat, so the person who asked approves their own request where they asked.
+Chat, so the person who asked approves their own request where they asked;
+the wizard's questions on that turn are posted there too, and answered there.
 
 **Why:** The Canvas Chat prompt tells the Chat to hand a Sidekick's setup to
 the wizard and name the people and the filter. The wizard's turn was an

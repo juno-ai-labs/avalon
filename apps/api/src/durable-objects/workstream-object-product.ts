@@ -1312,7 +1312,7 @@ export class WorkstreamObjectProductService {
     if (!await this.wizardQuestionAuthority(auth)) {
       throw new ApiError(404, "elicitation_not_found", "This question does not exist");
     }
-    this.wizardQuestionRoot(auth);
+    this.wizardQuestionRoot(auth); // for its refusal: a closed or foreign conversation answers 404
     const elicitation = this.elicitationsIncludingResolved(elicitationId).find((entry) => entry.id === elicitationId);
     if (!elicitation) throw new ApiError(404, "elicitation_not_found", "This question does not exist");
     return elicitation;
@@ -4585,12 +4585,7 @@ export class WorkstreamObjectProductService {
       authorUserId: auth.userId,
       input,
     });
-    // In a Sidekick's shared conversation every question is the wizard's,
-    // and so is its answer, which only a manager may give, and which every
-    // manager may give whether or not they can open the Sidekick: everyone in
-    // a Canvas it is attached to manages it, and answers a question it asked
-    // there (`wizardQuestionRoot`). Refused before anything is reserved for
-    // the answer, so a manager can still give it.
+    // Refused before anything is reserved, so a manager can still answer.
     const wizardQuestion = await this.wizardQuestionAuthority(auth);
     const authorizedRoot = () => wizardQuestion ? Promise.resolve(this.wizardQuestionRoot(auth))
       : reauthorizeWorkspaceMembership

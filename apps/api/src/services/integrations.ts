@@ -8870,6 +8870,10 @@ async function openToolQuestion(
     ? `Asked for the ${question.connection.connectorId} ${question.connection.scope} connection`
     : "Requested human input";
   const halted = { output: { elicitationId: id }, summary, providerOperationId: id, halt: "needs_input" as const };
+  // A wizard turn a Canvas's Chat started draws its question in that Chat as
+  // well, after the question is announced, keyed on it so a replay posts once.
+  // The question records the Canvas, so the turn its answer starts asks there too.
+  const askingCanvasId = toolName === "request_elicitation" ? wizardTurnCanvasId(input) : null;
   // The replay check used to be a read of its own in front of the batch,
   // because the batch could not both ask and act. It is the operation's
   // first statement now, so a retried receipt is answered by the write
@@ -8888,18 +8892,16 @@ async function openToolQuestion(
       maximumSelections: question.maximumSelections,
       targetUserId: null,
       messageId: id,
-      structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation }),
+      structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation,
+        ...(askingCanvasId !== null ? { askedFromCanvasId: askingCanvasId } : {}) }),
       now: Date.parse(at),
     });
-  // A wizard turn a Canvas's Chat started draws its question in that Chat as
-  // well, keyed on the question, so a replay posts it once.
-  const askingCanvasId = toolName === "request_elicitation" ? wizardTurnCanvasId(input) : null;
-  if (askingCanvasId !== null) {
-    await postWizardCard(env, input, askingCanvasId, `sidekick-question-card:${id}`, (name) => ({
-      text: `${name} asks: ${question.prompt}`, card: { question: { elicitationId: id } },
-    }));
-  }
-  if (opened.outcome === "exists") return halted;
+  const mirrored = async () => {
+    if (askingCanvasId !== null) await postWizardCard(env, input, askingCanvasId, `sidekick-question-card:${id}`,
+      { text: question.prompt, card: { question: { elicitationId: id } } });
+    return halted;
+  };
+  if (opened.outcome === "exists") return mirrored();
   // Announced in the room of the conversation that asked, not Main's.
   await publishWorkstreamEvent(
     env,
@@ -8919,7 +8921,7 @@ async function openToolQuestion(
     responseType: question.responseType,
     optionCount: question.options.length,
   }));
-  return halted;
+  return mirrored();
 }
 
 const WEB_RECENCY_TO_TBS = {
