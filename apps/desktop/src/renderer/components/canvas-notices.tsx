@@ -90,9 +90,13 @@ export function CanvasNoticesRecordCard({ record }: { record: CanvasNoticesRecor
           ? <Button disabled={actions.choose.isPending} onClick={() => actions.choose.mutate(null)}>Turn on</Button>
           : <Button disabled={actions.choose.isPending} onClick={() => actions.choose.mutate([])}>Mute this Canvas</Button>}
       </div>
+      // Only an Organization-wide Canvas can be joined; anyone else not listed is added by a manager.
       : <div className="canvas-notices-record-controls">
-        <span>You are not a participant, so these do not reach you.</span>
-        <Button disabled={actions.join.isPending} onClick={() => actions.join.mutate()}>Get notifications</Button>
+        <span>{detail.data?.visibility === 'workspace'
+          ? 'You are not a participant, so these do not reach you.'
+          : 'These reach the people this Canvas is shared with.'}</span>
+        {detail.data?.visibility === 'workspace'
+          && <Button disabled={actions.join.isPending} onClick={() => actions.join.mutate()}>Get notifications</Button>}
       </div>)}
     {pushing && <DevicePushLine />}
     {actions.error && <ErrorNotice occurrence={actions.error}>{actions.error.message}</ErrorNotice>}
@@ -106,6 +110,8 @@ export function CanvasNoticesMenuSection({ canvas }: { canvas: CanvasDetail | un
   const notices = canvas?.notices;
   if (!canvas || !notices) return null;
   const muted = notices.channels?.length === 0;
+  // Only an Organization-wide Canvas can be joined.
+  if (!notices.participant && canvas.visibility !== 'workspace') return null;
   return <>
     <TitleMenuSeparator />
     <DropdownMenu.Group aria-labelledby={labelId} className="canvas-notices-menu">
