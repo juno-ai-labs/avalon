@@ -6,20 +6,20 @@ import type { HarnessSkill } from "../../types";
  * building one.
  *
  * A task skill: it interprets the request and routes to `building-live-sites`,
- * which owns the craft. Rally builds live web sites, not native apps, so a
+ * which owns the craft. Rally builds reactive web sites, not native apps, so a
  * native request is turned toward a site before any work starts.
  *
  * No `ownerPlugin`, so a run without Terminal can still route the request and
  * say what it needs, instead of the skill silently disappearing from the
  * catalog.
  */
-const CREATING_AN_APP_BODY = `In Rally, an "app" is a **live web site**: a page or small app Rally serves at a
+const CREATING_AN_APP_BODY = `In Rally, an "app" is a **reactive web site**: a page or small app Rally serves at a
 stable link. Settle what kind of app and who it is for, then build it with
 \`building-live-sites\`.
 
 ## 1. Decide what kind of app this is
 
-- **Default to a live web site.** Treat "make an app", "build me a tool", "a
+- **Default to a reactive web site.** Treat "make an app", "build me a tool", "a
   tracker", "a dashboard" and similar as a web site.
 - **Not an app here.** A script, a command-line tool, a spreadsheet formula or
   code for the person's own repository is not a site. Do that task directly.
@@ -136,7 +136,7 @@ updated.
 export const CREATING_AN_APP_SKILL: HarnessSkill = {
   name: "creating-an-app",
   description:
-    "What \"create an app\" means in Rally: a live web site, never a native iOS or Android app; when it needs protection, sign-in, or shared, private or anonymous entries.",
+    "What \"create an app\" means in Rally: a reactive web site, never a native iOS or Android app; when it needs protection, sign-in, or shared, private or anonymous entries.",
   whenToUse:
     "When someone asks to create, make or build an app or tool that people will open and use in a browser or on a phone. Load it before building-live-sites.",
   body: CREATING_AN_APP_BODY,
