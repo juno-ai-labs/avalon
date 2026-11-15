@@ -695,6 +695,21 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
 }
 
 describe("connector tools selected for harness runs", () => {
+  it("offers the question tool where answers go to an agent, refusing with where to send the question", async () => {
+    const runtimeEnv = env(new ToolSelectionDatabase([]));
+    const question = async (input: WorkstreamWorkflowInput) => {
+      const tool = (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).tools
+        .find((candidate) => candidate.definition.name === "request_elicitation")!;
+      return tool.execute({}, {} as never).then(() => "asked", (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }));
+    };
+    const sender = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("00000000-0000-7000-8000-00000000d001") });
+    expect(await question(childWorkflowInput())).toMatchObject({ code: "question_from_background_agent",
+      routes: expect.stringContaining("with send_message") });
+    expect(await question({ ...automationConversationInput(), agentExchange: { teamId: sender, senderAgentId: sender,
+      messageId: "00000000-0000-7000-8000-00000000e001" } })).toMatchObject({ code: "question_from_agent_message",
+      routes: expect.stringContaining("Reply to that agent") });
+  });
+
   it("offers Sidekick management to a turn acting for the Organization, every tool refusing with who can act instead", async () => {
     const selected = await __integrationTesting.loadHarnessTools(env(new ToolSelectionDatabase([])), {
       ...workflowInput(), executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
