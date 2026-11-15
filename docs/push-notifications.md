@@ -362,9 +362,10 @@ Canvas or a recipient. The Canvas is the host's: a Canvas's Chat and its
 agents use their own; a Sidekick's loops use the Sidekick's one attached
 Canvas, counted before any access filter, and refuse
 `notifications_sidekick_has_no_canvas` or
-`notifications_sidekick_has_several_canvases` otherwise; that refusal names
-only the Canvases the loop's reach may open (`available`) and counts the rest
-(`unnamed`). Either way the loop's person, or a run's reach, must still open
+`notifications_sidekick_has_several_canvases` otherwise, naming them in
+`available`. That refusal names every attached Canvas, ones the loop's person
+cannot open among them: the owner judged a title leak to the Sidekick's own
+users a smaller cost than another access path in the refusal. Either way the loop's person, or a run's reach, must still open
 the Canvas, or the call is refused `canvas_access_denied`: a Chat's background
 agent can outlive its person's access. A Sidekick sends as itself; a Chat
 sends as Rally. Recovery re-enters an interrupted call like any
@@ -388,7 +389,9 @@ holds the tables and the reads):
   structured content is `canvas_notices_record`, keyed on the tool call's
   receipt so a retry lands it once. A registration is written only if no
   newer record holds it (message ids sort by time), so a retried or delayed
-  call never undoes a later one. The renderer draws it as a card
+  call never undoes a later one. The record reaches open screens only after
+  the registration commits (`appendHostRecord` writes, `publishPending`
+  sends), so a screen that reads the Canvas back on seeing it finds it on. The renderer draws it as a card
   (`CanvasNoticesRecordCard`) with the viewer's controls and the device line
   from [`useDevicePushReadiness()`](#whether-this-device-can-show-them),
   hidden where push cannot work at all (`unavailable`, `unconfigured`). A

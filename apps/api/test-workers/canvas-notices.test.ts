@@ -220,16 +220,7 @@ describe("a Canvas's notices", () => {
     await attach(OTHER_CANVAS);
     expect(await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop, action: { ...send, sourceId: "second" } })).toEqual({
       outcome: "refused", code: "notifications_sidekick_has_several_canvases",
-      available: [{ canvasId: CANVAS, title: "Reading list" }, { canvasId: OTHER_CANVAS, title: "Other" }], unnamed: 0,
-    });
-    // A person who cannot open one of them is not told its title, only that it exists.
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'creator' WHERE canvas_id = ?`, OTHER_CANVAS);
-    });
-    expect(await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: { ...loop, actingUserId: PARTICIPANT },
-      action: { ...send, sourceId: "third" } })).toEqual({
-      outcome: "refused", code: "notifications_sidekick_has_several_canvases",
-      available: [{ canvasId: CANVAS, title: "Reading list" }], unnamed: 1,
+      available: [{ canvasId: CANVAS, title: "Reading list" }, { canvasId: OTHER_CANVAS, title: "Other" }],
     });
   });
 
@@ -265,6 +256,24 @@ describe("a Canvas's notices", () => {
     expect(await reenterInterruptedWriteForRecovery(env, input, { ...interrupted, startedAt: interrupted.startedAt ?? 0 }, replacement.lease, runs))
       .toMatchObject({ outcome: "completed", result: { output: { canvasId: CANVAS, recipients: 3 } } });
     expect((await intents()).map((intent) => intent.recipient_user_id)).toEqual([CREATOR, PARTICIPANT, MUTED].sort());
+  });
+
+  it("send the record to open screens only once the registration it shows is saved", async () => {
+    const unsent = () => runInDurableObject(chat(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      `SELECT count(*) AS count FROM durable_outbox WHERE state IN ('pending', 'inflight') AND channel = 'semantic_realtime_v1'`).one().count);
+    const appended = await chat().appendHostRecord({ schemaVersion: 1, workspaceId: WORKSPACE_ID, parentKind: "canvas",
+      workstreamId: CANVAS, clientMessageId: "canvas-notices-record:direct", text: "This Canvas sends notices: Drafts.",
+      structuredContent: { kind: "canvas_notices_record", canvasId: CANVAS, purpose: "Drafts.",
+        registeredBy: { kind: "rally", name: "Rally" }, recordedAt: Date.now() }, occurredAt: Date.now() });
+    expect(appended.outcome).toBe("appended");
+    // Written, but held back until its caller has committed what it records.
+    expect(await unsent()).toBeGreaterThan(0);
+    await chat().publishPending({ workspaceId: WORKSPACE_ID, workstreamId: CANVAS });
+    expect(await unsent()).toBe(0);
+
+    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
+      action: { kind: "register", purpose: "New episodes.", operationId: "op-1" } });
+    expect(await unsent()).toBe(0);
   });
 
   it("keep a newer registration when an older one is retried", async () => {
