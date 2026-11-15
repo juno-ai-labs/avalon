@@ -1,4 +1,5 @@
 import type { HarnessSkill } from "../types";
+import { CREATING_A_PODCAST_EPISODE_SKILL } from "./creating-a-podcast-episode/skill";
 import { CREATING_AN_APP_SKILL } from "./creating-an-app/skill";
 import { DEEP_RESEARCH_SKILL } from "./deep-research/skill";
 import { READING_GOOGLE_MEETING_NOTES_SKILL } from "./reading-google-meeting-notes/skill";
@@ -8,6 +9,7 @@ import { USING_EXTERNAL_STRUCTURED_DATA_SKILL } from "./using-external-structure
 import { WRITING_AN_EMAIL_SKILL } from "./writing-an-email/skill";
 
 export {
+  CREATING_A_PODCAST_EPISODE_SKILL,
   CREATING_AN_APP_SKILL,
   DEEP_RESEARCH_SKILL,
   READING_GOOGLE_MEETING_NOTES_SKILL,
