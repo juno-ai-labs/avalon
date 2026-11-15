@@ -823,11 +823,10 @@ It is written to give the model latitude: it states what one event carries,
 how a filter is judged and that the person reads and approves the same text,
 gives a way to try a draft on real events, and leaves the wording to the
 model. It names its owner plugin's three source tools, as an owned skill may.
-Those tools are offered only to a turn a person is driving
-(`asksForSources` in `apps/api/src/services/integrations.ts`). A Sidekick
-run, a background agent, a run's delegation worker, and a wizard or Chat turn
-that another agent's message (`agentExchange`) or Rally's review notice
-(`reason === "sidekick_review"`) started never see them. The skill tells the
+Those tools are offered to every loop except a Sidekick run and its
+delegation workers (`asksForSources` in
+`apps/api/src/services/integrations.ts`): a run carries the content of the
+event that started it, and that content may not ask in anyone's name. The skill tells the
 model to call `sidekick_request_source`, so the host lists it only where a
 plugin in scope holds that tool (`builtInSkillsFor`): owning the plugin is
 not enough, because a run carries the Sidekicks plugin without the source
@@ -894,7 +893,7 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 The canonical `request_elicitation` tool belongs to `rally:core`, which carries no wire prefix, so the model reads it as `request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer (`answer: null` with `skipped: true` when they skipped, `cancelled: true` when a newer message cancelled the question; the tool's description tells the model not to ask a skipped question again) and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a conversation, the conversation becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `AgentLoopDO` loop. When drafting an automation, the agent first saves its best partial state with `automation_submit_draft` (a revision that is not `ready`), then calls the same core elicitation tool; the next turn resumes from the saved draft and the answered conversation.
 
-A Sidekick run asks for a missing connection the same way. Its `show_connector_connection` is `AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION` (the same name and input as the card a Canvas shows, a write with a provider key, and a description that says the run pauses and what to do on each answer), and its executor opens an elicitation owned by that tool call through the executor `request_elicitation` uses (`openToolQuestion`), with Continue and Decline options and the card's selection as `Elicitation.connection`. The answer is that call's tool result. Where answers route to an agent, neither question tool is offered. The activation prompt's permission rule tells the model to ask for a connection this way and for a grant with `request_elicitation`, and to report what is blocked only once declined or when it cannot ask; [`automation-lifecycle.md`](automation-lifecycle.md#a-run-a-missing-connection-or-grant-blocks) owns the run's side.
+A Sidekick run asks for a missing connection the same way. Its `show_connector_connection` is `AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION` (the same name and input as the card a Canvas shows, a write with a provider key, and a description that says the run pauses and what to do on each answer), and its executor opens an elicitation owned by that tool call through the executor `request_elicitation` uses (`openToolQuestion`), with Continue and Decline options and the card's selection as `Elicitation.connection`. The answer is that call's tool result. Where answers route to an agent, neither question tool is offered, except on a wizard turn a Canvas's Chat started, which asks the person and draws the question in that Chat ([`agent-communication.md`](agent-communication.md#in-a-canvass-chat)). The activation prompt's permission rule tells the model to ask for a connection this way and for a grant with `request_elicitation`, and to report what is blocked only once declined or when it cannot ask; [`automation-lifecycle.md`](automation-lifecycle.md#a-run-a-missing-connection-or-grant-blocks) owns the run's side.
 
 ### Durable receipts and terminal state
 

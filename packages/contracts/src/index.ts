@@ -3005,6 +3005,12 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * the authoring tools; `docs/automation-lifecycle.md` owns the routing.
    */
   sidekickWizard: z.literal(true).optional(),
+  /**
+   * On a wizard turn an answer started: the Canvas whose Chat the answered
+   * question was asked from, read from the question by the host. The turn
+   * goes on asking in that Chat (`wizardTurnCanvasId`).
+   */
+  wizardCanvasId: IdSchema.optional(),
   /** Host-derived conversation kind; not a model-selectable execution option. */
   backgroundAgent: z.boolean().optional(),
   activityId: IdSchema.nullable(),

@@ -114,7 +114,7 @@ describe("the agents plugin", () => {
     expect(chat.systemMessage).toContain("A Sidekick you create here is attached to this Canvas");
     expect(chat.systemMessage).toContain("Runs can overlap, so have them write rows");
     expect(named("create_sidekick").definition.description).toContain("It is attached to this Canvas");
-    expect(named("sidekicks_list").definition.description).toContain("List the Sidekicks this Canvas made");
+    expect(named("sidekicks_list").definition.description).toContain("List the Sidekicks attached to this Canvas");
     // The tool takes only which Sidekick: no argument names a Canvas.
     expect(named("archive_sidekick").definition.inputSchema).toMatchObject({ required: ["sidekick"], additionalProperties: false });
     await expect(named("archive_sidekick").execute({ sidekick: "Monitor" }, context))

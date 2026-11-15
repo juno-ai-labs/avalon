@@ -10,6 +10,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import { SidekickSourceService } from "./sidekick-source-service";
+import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 
 /**
  * The agent's side of a Sidekick's sources: see who lets events in, ask
@@ -64,8 +65,12 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   const service = new SidekickSourceService(env, input.workspaceId, userId);
   const name = (local: string) => room ? `sidekick_${local}` : local;
   // The request's card is drawn in the conversation it was asked from: a
-  // Canvas's Chat or a Sidekick's shared conversation, never a run.
+  // Canvas's Chat or a Sidekick's shared conversation, never a run. A wizard
+  // turn a Canvas's Chat started was asked from that Chat, so its card is
+  // drawn there too (`askedFromCanvasId`).
+  const askedFromCanvasId = wizardTurnCanvasId(input);
   const place = (input.substreamId ?? "0") !== "0" ? null
+    : askedFromCanvasId !== null ? { parentKind: "canvas" as const, parentId: askedFromCanvasId }
     : input.parentKind === "canvas" ? { parentKind: "canvas" as const, parentId: input.parentId }
     : input.parentKind === "automation" ? { parentKind: "automation" as const, parentId: input.parentId } : null;
   return [{
@@ -103,10 +108,21 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
     validateInput: (raw) => RequestSourceInputSchema.safeParse(raw).error ?? null,
     execute: async (raw, context) => {
       const args = RequestSourceInputSchema.parse(raw);
+      const operationId = IdSchema.parse(context.effectIntentId);
       const asked = await service.ask(args.sidekickId, {
         userIds: args.userIds, connectorType: args.connectorType, eventTypes: args.eventTypes,
-        condition: args.condition ?? null, place, operationId: IdSchema.parse(context.effectIntentId),
+        condition: args.condition ?? null, place, operationId,
       });
+      // The wizard's own block draws the card here; the Chat that asked gets
+      // a post of the Sidekick's that draws the same requests. Keyed on the
+      // receipt, so a retried call posts once.
+      if (askedFromCanvasId !== null) {
+        const requestIds = asked.requests.map((request) => request.requestId);
+        await postWizardCard(env, input, askedFromCanvasId, `sidekick-source-card:${operationId}`, {
+          text: `Asked ${requestIds.length === 1 ? "one person" : `${requestIds.length} people`} to let their events start this Sidekick. Each person approves or declines their own request.`,
+          card: { sourceRequests: { requestIds } }, sidekickId: asked.sidekickId,
+        });
+      }
       // The whole result is the card's input: the client reads each request's
       // id from it and draws its live state.
       return { output: asked, summary: `Asked ${asked.requests.length === 1 ? "one person" : `${asked.requests.length} people`} for a source` };

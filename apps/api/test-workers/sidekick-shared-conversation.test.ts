@@ -37,6 +37,7 @@ import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
+import { createCanvas } from "../src/services/canvas-service";
 import { ConversationService } from "../src/services/conversation-service";
 import { deliverChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
@@ -462,6 +463,47 @@ describe("a Sidekick's shared conversation", () => {
       { timeout: waitBudget() }).toBe(2);
     expect((await wizardExecutions()).every((execution) => execution.wizard)).toBe(true);
     expect(await sidekickRuns()).toEqual([]);
+  });
+
+  it("lets someone who manages it through a Canvas, and cannot open it, read and answer the wizard's question", async () => {
+    await activeSidekick("personal");
+    // The member manages it through a Canvas it is attached to, and it is not shared with them.
+    const canvasId = crypto.randomUUID();
+    await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId, title: "Pilot CRM" });
+    await workspaceStub().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: AUTHOR_ID, actorRole: "member" },
+      update: { visibility: "participants", userIds: [MEMBER_ID] } });
+    await workspaceStub().attachSidekickConversation({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
+      userId: AUTHOR_ID, reference: canvasId });
+    script = [{
+      callTool: {
+        name: "request_elicitation",
+        arguments: {
+          prompt: "Which Alex?", responseType: "radio",
+          options: [{ value: "work", label: "Work", description: null }, { value: "personal", label: "Personal", description: null }],
+          minimumSelections: 1, maximumSelections: 1,
+        },
+      },
+    }];
+    const turnId = await say(AUTHOR_ID, "Ask me which Alex.", "author-asks-alex", true);
+    await wizardAnswered(turnId);
+    const elicitationId = await runInDurableObject(conversationStub(), (_instance, state) =>
+      state.storage.sql.exec<{ elicitation_id: string }>(
+        `SELECT elicitation_id FROM elicitation_requests WHERE status = 'pending'`,
+      ).one().elicitation_id);
+    const product = (body: Record<string, unknown>) => conversationStub().fetch("https://object.test/internal/product", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parentKind: "automation", auth: auth(MEMBER_ID), elicitationId, ...body }),
+    });
+    const read = await product({ operation: "read_wizard_question" });
+    expect(read.status, await read.clone().text()).toBe(200);
+    expect(await read.json()).toMatchObject({ elicitation: { id: elicitationId, prompt: "Which Alex?", status: "open" } });
+    const answered = await product({ operation: "answer_elicitation", input: { answer: "work" } });
+    expect(answered.status, await answered.clone().text()).toBe(200);
+    expect(await (await product({ operation: "read_wizard_question" })).json())
+      .toMatchObject({ elicitation: { status: "answered", answer: "work", answeredByUserId: MEMBER_ID } });
+    // Answering does not make them a reader of the Sidekick's conversation.
+    expect(await runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ status: string }>(
+      "SELECT status FROM participants WHERE user_id = ?", MEMBER_ID).toArray())).toEqual([]);
   });
 
   it("runs a non-delegate member's message under their own access, and keeps them as the run's principal", async () => {
