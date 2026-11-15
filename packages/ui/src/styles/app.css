@@ -8133,6 +8133,11 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
     transform: translate(-50%, -50%);
     width: max(var(--av-sys-size-touch-target), 100%);
   }
+  /* Neighbouring icon buttons usually sit closer than the target, and a later
+     button's square paints over the earlier one's visible face and takes its
+     taps. A button beside another grows only vertically; a group that wants
+     the full square spaces itself, as the composer's do below. */
+  :is(.icon-button:has(+ .icon-button), .icon-button + .icon-button)::before { width: 100%; }
   /* Each turn is a transformed row of its own, so the next turn paints over
      this one's area whatever it sets inside. The row whose actions show rises
      above its neighbours while they do. */
