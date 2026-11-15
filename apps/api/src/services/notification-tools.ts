@@ -4,6 +4,8 @@ import { NOTIFICATIONS_SYSTEM_MESSAGE } from "@rally/prompts/api/notifications-p
 import { z } from "zod";
 
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
+import { ApiError } from "../lib/api-error";
+import { refusingTool, toolRefusal, TOOL_REFUSALS } from "./tool-refusal";
 
 export const NOTIFICATIONS_PLUGIN_ID = "rally:notifications";
 export const NOTIFICATIONS_WIRE_PREFIX = "notifications";
@@ -17,14 +19,16 @@ export class NotificationToolError extends Error {
 }
 
 /**
- * Which of the two tools this loop is offered, from its host-derived fields
+ * Which of the two tools this loop may use, from its host-derived fields
  * (docs/agent-loop-types.md, docs/PRDs/2026-11-14_canvas-notices): the
- * self-review, and a background agent it started, get neither; a run and a
- * run's delegation worker may send but not turn notices on, since a run is
+ * self-review, and a background agent it started, may use neither; a run and
+ * a run's delegation worker may send but not turn notices on, since a run is
  * handed an event's content and turning them on changes the Canvas for
- * everyone; every other loop gets both. A wake-up is the loop it runs in.
+ * everyone; every other loop may use both. A wake-up is the loop it runs in.
+ * Every loop is offered both: one it may not use refuses with a route
+ * (docs/agent-tools.md, rule 14).
  */
-export function notificationToolsOffered(input: Pick<WorkstreamWorkflowInput,
+export function notificationToolsAllowed(input: Pick<WorkstreamWorkflowInput,
   "automationRun" | "automationDelegation" | "backgroundAgentRootReason" | "reason">): { register: boolean; send: boolean } {
   if (input.reason === "sidekick_review" || input.backgroundAgentRootReason === "sidekick_review") return { register: false, send: false };
   const run = input.automationRun !== undefined || input.automationDelegation !== undefined;
@@ -63,8 +67,6 @@ function refusal(code: string, available: { canvasId: string; title: string }[] 
         { available: (available ?? []).map((canvas) => canvas.title) });
     case "notifications_sidekick_has_no_canvas":
       return new NotificationToolError(code, "This Sidekick is not attached to a Canvas, so it has nowhere to send notices from. No notice was sent.");
-    case "notifications_not_for_self_review":
-      return new NotificationToolError(code, "A Sidekick's self-review does not send notices. Continue without sending one.");
     default:
       return new NotificationToolError(code, "The notice could not be sent. Continue without sending one.");
   }
@@ -78,12 +80,11 @@ function effectKey(context: HarnessToolContext): string {
 /**
  * `rally:notifications`: turn on a Canvas's notices and send one. The Canvas
  * is always the host's: the loop's own Canvas for a Canvas's Chat, the
- * Sidekick's one attached Canvas for a Sidekick's loops. `null` for a loop
- * offered neither tool.
+ * Sidekick's one attached Canvas for a Sidekick's loops. Every loop is
+ * offered both tools; one this loop may not use refuses by name.
  */
-export function createNotificationsPlugin(input: WorkstreamWorkflowInput, ports: NotificationToolPorts): HarnessPlugin | null {
-  const offered = notificationToolsOffered(input);
-  if (!offered.register && !offered.send) return null;
+export function createNotificationsPlugin(input: WorkstreamWorkflowInput, ports: NotificationToolPorts): HarnessPlugin {
+  const allowed = notificationToolsAllowed(input);
   const run = input.automationRun !== undefined || input.automationDelegation !== undefined;
   const loop = {
     parentKind: input.parentKind === "canvas" ? "canvas" as const : "automation" as const,
@@ -92,11 +93,12 @@ export function createNotificationsPlugin(input: WorkstreamWorkflowInput, ports:
     actingUserId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
   };
   const guard = async () => {
-    if (await ports.turnIsSelfReview()) throw refusal("notifications_not_for_self_review", undefined, run);
+    // A wizard turn the self-review claims is known only once the turn runs.
+    if (await ports.turnIsSelfReview()) {
+      throw new ApiError(403, "notifications_not_for_self_review", TOOL_REFUSALS.notifications_not_for_self_review);
+    }
   };
-  const tools: HarnessTool[] = [];
-  if (offered.register) {
-    tools.push({
+  const register: HarnessTool = {
       definition: {
         name: "register", capability: "rally.notifications.register",
         description: "Turn on notices for this Canvas, so agents can tell its participants when something happens. Say in one sentence what it will notify about; that sentence is shown to everyone in the Canvas. Calling again replaces the sentence.",
@@ -116,10 +118,8 @@ export function createNotificationsPlugin(input: WorkstreamWorkflowInput, ports:
         const output = { canvasId: result.canvasId, purpose: result.purpose, changed: result.changed, recordMessageId: result.recordMessageId };
         return { output, summary: result.changed ? "Turned on notices for this Canvas" : "Notices were already on" };
       },
-    });
-  }
-  if (offered.send) {
-    tools.push({
+  };
+  const send: HarnessTool = {
       definition: {
         name: "send", capability: "rally.notifications.send",
         description: "Tell everyone in this Canvas that something happened. They get it on their devices or by email, and it opens the Canvas. Notices must be on (notifications_register).",
@@ -138,8 +138,12 @@ export function createNotificationsPlugin(input: WorkstreamWorkflowInput, ports:
         if (result.outcome !== "sent") throw new Error("notification_send_unexpected_outcome");
         return { output: { canvasId: result.canvasId, recipients: result.recipients }, summary: `Sent a notice to ${result.recipients} people` };
       },
-    });
-  }
+  };
+  const review = toolRefusal("notifications_not_for_self_review");
+  const tools = [
+    allowed.register ? register : refusingTool(register, allowed.send ? toolRefusal("notifications_register_from_run") : review),
+    allowed.send ? send : refusingTool(send, review),
+  ];
   return {
     canonicalId: NOTIFICATIONS_PLUGIN_ID, modelId: "rally_notifications", shortWireName: NOTIFICATIONS_WIRE_PREFIX,
     displayName: "Notifications", description: "Tell the people in this Canvas when something happens.",
