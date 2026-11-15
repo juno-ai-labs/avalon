@@ -741,17 +741,23 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
 
   /**
    * Add the reader to the Canvas's participant list, so its notices reach
-   * them (docs/PRDs/2026-11-14_canvas-notices). Only someone the Canvas
-   * already admits may, so it never widens who can open it: a member it
-   * admits by Organization visibility, a writer Sidekick's audience, or an
-   * owner or administrator. A join is an `added` row whose adder is the
-   * person themselves. Joining again, or as its creator, changes nothing.
+   * them (docs/PRDs/2026-11-14_canvas-notices). Only a member the Canvas
+   * admits by Organization visibility may: a participant row admits whatever
+   * the visibility, so a join through any admission that can later be
+   * withdrawn (a writer Sidekick's audience, an owner's or administrator's
+   * role) would outlast it. A join is an `added` row whose adder is the
+   * person themselves. Joining again, or as its creator or a participant
+   * already, changes nothing.
    */
   join(input: CanvasActorRequest): CanvasDetail {
     const request = parseRpcInput(CanvasActorRequestSchema, input, "canvas_join");
     const row = this.assertCanvas(request.workspaceId, request.canvasId);
     if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
-    if (request.actor.userId !== row.created_by_user_id) {
+    const listed = request.actor.userId === row.created_by_user_id || this.participantUserIds().includes(request.actor.userId);
+    if (!listed && (row.visibility !== "workspace" || request.actor.actorRole === null)) {
+      throw new ApiError(403, "canvas_join_requires_organization_visibility", "Only a Canvas open to the whole Organization can be joined");
+    }
+    if (!listed) {
       this.host.storage.transactionSync(() => {
         const joined = this.sql.exec(
           `INSERT INTO canvas_participants (canvas_id, user_id, source, added_by_user_id, added_at)
@@ -884,8 +890,10 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       const kept = new Set<string>(userIds);
       // An Organization-wide Canvas's sharing names only its guests, since
       // every member is admitted already; a member who joined it themselves
-      // is not in that list and is kept, or each save would drop them.
-      if (request.update.visibility === "workspace") {
+      // is not in that list, so a save from it keeps them, a narrowing one
+      // included, or each save would drop them. Only a member can join
+      // (`join`), so this keeps no guest.
+      if (currentRow.visibility === "workspace") {
         for (const joined of this.sql.exec<{ user_id: string }>(
           `SELECT user_id FROM canvas_participants WHERE canvas_id = ? AND added_by_user_id = user_id`, this.canvasId,
         ).toArray()) kept.add(joined.user_id);

@@ -431,7 +431,9 @@ is the one answer to whether the device Rally is running on can show its
 notifications, and what to offer when it cannot: `ready`, `off` (Rally can
 turn them on from a click), `denied` (macOS refused them; Open System
 Settings), `blocked` (the browser refused them for the site), `home-screen`
-(iPhone and iPad Safari), `unavailable`, or `unknown`. On the Mac it reads
+(iPhone and iPad Safari), `unavailable` (this build or browser cannot),
+`unconfigured` (this deployment has no Web Push key, so no browser can), or
+`unknown`. On the Mac it reads
 the main process's permission and the device switch; in a browser, the Web
 Push state Settings reads under the same query key. `devicePushNotice` holds
 the words, so Settings and a Canvas's notices record say the same thing about

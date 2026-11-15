@@ -236,6 +236,21 @@ decision 3 worried about, and it already shows.
 **Changes:** Decision 3, Rollout step 1 and Acceptance 6 (the joined person
 stays listed because the stale save is refused, not merged).
 
+### 2026-11-15 — Only Organization visibility admits a join
+
+**Decided:** `canvasJoin` lists only a member an Organization-wide Canvas
+admits. A save from an Organization-wide Canvas keeps self-joined members,
+whether it keeps the visibility or narrows it.
+
+**Why:** Review of phase 1 found that a participant row admits whatever the
+visibility, so a join through a writer Sidekick's audience or an
+administrator's role outlasted the admission it relied on, and a guest who
+joined could not be removed. Organization visibility is the case notices
+need: everyone else a Canvas admits is already listed or decides who is.
+
+**Changes:** Narrows decision 2 and the record's "Get notifications" row to
+members of an Organization-wide Canvas.
+
 ### 2026-11-15 — An Organization-wide save keeps the people who joined
 
 **Decided:** `setAudience` with visibility `workspace` keeps every
