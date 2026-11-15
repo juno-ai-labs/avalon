@@ -505,6 +505,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("answer_elicitation"),
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema,
     slackOrigin: SlackOriginContextSchema.optional() }),
+  productOperation({ operation: z.literal("read_wizard_question"), elicitationId: IdSchema }),
 ]);
 /**
  * The flow a product operation belongs to. An operation outside the three
@@ -3328,6 +3329,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     // incremented revision before it can install its result.
     this.invalidatePreparedSocketSnapshots();
     try {
+      if (request.operation === "read_wizard_question") {
+        return jsonResponse({ elicitation: await this.product.readWizardQuestion(current, request.elicitationId) });
+      }
       if (request.operation === "search_links") {
         const root = await this.product.authorize(current);
         const links = request.links.map(({ turnId, linkId }) => ({ linkId,

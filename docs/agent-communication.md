@@ -286,9 +286,9 @@ for no other.
 | Tool | In a Canvas's Chat |
 | --- | --- |
 | `create_sidekick({ scope })` | Makes the Sidekick attached to this Canvas (`createAutomation` with `madeInCanvasId`) and returns `{ sidekickId, agentId, attachedToCanvasId }`. Always attached; there is no unattached create here. |
-| `sidekicks_list({})` | Returns the Sidekicks this Canvas made: `{ sidekickId, name, status, canEdit, agentId }`, read from `canvasContext`. A Sidekick only attached here is in `CANVAS CONTEXT` and not in this list. |
+| `sidekicks_list({})` | Returns the Sidekicks attached to this Canvas, made here or attached later: `{ sidekickId, name, status, canEdit, madeHere, agentId }`, read from `canvasContext`. The Sidekick whose run made this Canvas is left out: the Canvas does not manage it. |
 | `archive_sidekick({ sidekick })` | Only here. `sidekick` is a `sidekickId` from `sidekicks_list` or an exact name, matched among the Sidekicks this Canvas made. Returns `{ sidekickId, name, archived: true }`. `write`. |
-| `send_message` to a wizard | Unchanged in shape. Whoever is talking may message the wizard of a Sidekick this Canvas made, because everyone in the Canvas manages it. |
+| `send_message` to a wizard | Unchanged in shape. Whoever is talking may message the wizard of a Sidekick attached to this Canvas, because everyone in the Canvas manages it. |
 
 The plugin's message gains `CANVAS_SIDEKICK_GUIDANCE` there: a Sidekick made
 here is attached to this Canvas, what its runs may do, and that recurring
@@ -308,11 +308,26 @@ Refusals `archive_sidekick` adds, each with the names this Canvas made in
 **Who may message a wizard is who manages the Sidekick**
 (`authorizeWizardContact`, `personManagesSidekick`). Such a person is not asked to
 also be someone the Sidekick is shared with: everyone in a Canvas manages a
-Sidekick that Canvas made without being able to open it
+Sidekick attached to it without being able to open it
 ([`automation-lifecycle.md`](automation-lifecycle.md#a-sidekick-made-in-a-canvas)).
 A non-manager is refused `sidekick_contact_forbidden` when they cannot open it
 and `sidekick_edit_requires_manager` when they can, as before.
 `sidekick_attach_resource` still requires opening it.
+
+**A wizard turn the Chat's message started asks the person directly.** Such a
+turn (`wizardTurnCanvasId`: `sidekickWizard` with an `agentExchange` whose
+sender is a Canvas's Chat) keeps `request_elicitation`, which every other
+agent-message turn loses (`routesAnswersToAgent`), and is offered the source
+tools. What it asks of a person is drawn in that Chat as well as in its own
+conversation: `postWizardCard` (`wizard-canvas-cards.ts`) appends a
+`conversation_post` of the Sidekick's whose `automation_activation` carries
+`question: { elicitationId }` or `sourceRequests: { requestIds }`, keyed on the
+question or the tool receipt so a replay posts once. The client reads the
+question from `GET /sidekicks/:id/questions/:elicitationId` and answers it at
+`POST …/answer`; both reach the Sidekick's shared conversation, where a manager
+reads and answers the wizard's questions whether or not they can open it
+(`wizardQuestionAuthority`). The source card reads its requests as it does
+anywhere else ([`sidekick-sources.md`](sidekick-sources.md#where-the-card-is-drawn)).
 
 ### A run asking its wizard for a change
 
@@ -445,6 +460,34 @@ owned Sidekick contact, the refusal of an inaccessible personal Sidekick, and a
 guest's grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-11-14 — A wizard reached from a Canvas asks the person in that Canvas
+
+**What changed:** A wizard turn a Canvas's Chat started keeps
+`request_elicitation`, and its question and its source requests are drawn in
+that Chat as Sidekick posts that carry the question's or the requests' ids.
+Answering from the Chat goes to the Sidekick's shared conversation through
+`/sidekicks/:id/questions/:elicitationId`, and any manager may answer there
+without being able to open the Sidekick. The Chat's `sidekicks_list` lists
+every attached Sidekick.
+
+**Why:** In one Canvas the Chat handed a two-person email Sidekick to the
+wizard, which could neither ask which of two people named Alex was meant nor
+ask Alex for his mail, and the Chat reported the second mailbox as
+impossible. The owner asked on 2026-11-14 for the wizard to ask directly and
+for its cards to be drawn in the Canvas.
+
+**Considered and rejected:** Leaving the questions with the Chat's agent,
+which is what `routesAnswersToAgent` did: the agent relayed a refusal instead
+of asking. Hosting the question in the Canvas's own conversation: the
+wizard's loop pauses on a question it owns, and moving the pause would split
+one question across two objects. Copying the question's state into the post:
+the card reads it live, so it can never disagree with the wizard's own.
+
+**Consequences:** Only a wizard turn whose sender is a Canvas's Chat draws
+cards there; a run's change request to its wizard still routes answers to the
+run. The read and answer routes rely on the shared conversation's manager
+check; a route that skips it would let any member answer a wizard's question.
 
 ### 2026-11-10 — A Canvas's Chat makes and archives its own Sidekicks, and contact is decided by managing
 

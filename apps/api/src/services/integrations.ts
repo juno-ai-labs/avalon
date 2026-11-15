@@ -294,6 +294,7 @@ import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { setsDelegation, sidekickDelegationTools } from "./sidekick-delegation-tools";
 import { sidekickSourceRequestCard, sidekickSourceTools } from "./sidekick-source-tools";
+import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
@@ -5873,8 +5874,10 @@ async function loadHarnessTools(
     for (const row of rows.results) attached.add(row.connection_id);
   }
   const registry = connectorRegistryForEnv(env);
+  // A wizard turn a Canvas's Chat started asks its person directly: its
+  // question is drawn in that Chat too (`wizard-canvas-cards.ts`).
   const routesAnswersToAgent = input.backgroundAgent
-    || (input.parentKind === "automation" && !!input.agentExchange);
+    || (input.parentKind === "automation" && !!input.agentExchange && wizardTurnCanvasId(input) === null);
   const pageReceipts = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
   const paginationSources = new WeakMap<HarnessTool, HarnessTool>();
   const priorPaginationTools = (tools: readonly HarnessTool[]) => prePaginationTools(
@@ -8888,6 +8891,14 @@ async function openToolQuestion(
       structuredContentJson: JSON.stringify({ kind: "elicitation", elicitation }),
       now: Date.parse(at),
     });
+  // A wizard turn a Canvas's Chat started draws its question in that Chat as
+  // well, keyed on the question, so a replay posts it once.
+  const askingCanvasId = toolName === "request_elicitation" ? wizardTurnCanvasId(input) : null;
+  if (askingCanvasId !== null) {
+    await postWizardCard(env, input, askingCanvasId, `sidekick-question-card:${id}`, (name) => ({
+      text: `${name} asks: ${question.prompt}`, card: { question: { elicitationId: id } },
+    }));
+  }
   if (opened.outcome === "exists") return halted;
   // Announced in the room of the conversation that asked, not Main's.
   await publishWorkstreamEvent(
