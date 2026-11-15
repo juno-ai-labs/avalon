@@ -166,21 +166,23 @@ export const ARTIFACT_HOST_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrat
 ]}];
 
 /**
- * How long a viewer session lives, fixed from mint and never sliding.
+ * How long a viewer session lives from its last open.
  *
  * **The shape, not just the number, is the artifact platform's sleep
  * guarantee.** Nothing about an artifact executes without a viewer request, so
- * compute per open is bounded by the request-rate ceiling times this lifetime
- * — a product that only exists because the lifetime does not renew on use.
- * Sliding renewal reads as viewer convenience and quietly deletes the ceiling,
- * because an abandoned-but-visible page would then poll forever.
+ * compute per open is bounded by the request-rate ceiling times this lifetime.
+ * The lifetime therefore renews only when a person opens the page (a top-level
+ * navigation they or their app started, see the serving Worker), never on the
+ * page's own requests or navigations: renewal on use would let an abandoned-but-visible page
+ * poll forever.
  *
- * Twenty-four hours is a team-set value, not an author's guess: one re-open per
- * day at most for a person actually working, and an abandoned page burns at
- * most a day of modest polling. The accepted casualty is a wall dashboard left
- * up past expiry.
+ * One year is a team-set value, not an author's guess. It replaced a fixed
+ * twenty-four hours (2026-11-15) because the mobile app keeps pinned artifacts
+ * loaded and every expiry forced a visible re-open through the app's API. The
+ * accepted cost: an abandoned page may poll for up to a year after it was last
+ * opened, where it used to stop after a day.
  */
-export const VIEWER_SESSION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
+export const VIEWER_SESSION_LIFETIME_MS = 365 * 24 * 60 * 60 * 1_000;
 
 /**
  * How long an unredeemed open code stays redeemable.
@@ -320,7 +322,9 @@ export type ArtifactPageResult =
   | { ok: false; reason: "no_artifact_data" }
   | { ok: false; reason: "table_refused"; detail: string };
 
-type ArtifactAdmissionIdentity = {viewerId:string|null;viewerName:string|null;editor:boolean;revision:number};
+type ArtifactAdmissionIdentity = {viewerId:string|null;viewerName:string|null;editor:boolean;revision:number;
+  /** Set when this request was an open that renewed the viewer's session; the cookie must follow. */
+  sessionExpiresAt?:number};
 export type ArtifactRequestAdmission = {allowed:false;status:401|403|404|503}
   | ({allowed:true;kind:'site';workspaceId:string;version:number;mode:'static'|'active';stateful:boolean;manifest:ArtifactManifest} & ArtifactAdmissionIdentity)
   | ({allowed:true;kind:'file';file:PublishedArtifactFile} & ArtifactAdmissionIdentity);
@@ -762,20 +766,23 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   /** The serving door. All authorization reads are from this object's own SQLite. */
   async admitRequest(input: {
     session: string | null;
+    /** A person opened the page: a top-level navigation they or their app started, not one the page scripted. */
+    opened?: boolean;
   }): Promise<ArtifactRequestAdmission> {
     await this.initialized;
     const request = parseRpcInput(
-      z.strictObject({ session: z.string().nullable() }),
+      z.strictObject({ session: z.string().nullable(), opened: z.boolean().optional() }),
       input,
       "artifact_request_admission",
     );
+    let digest: string | null = null;
     let viewer: {
       user_id: string;
       display_name: string;
       membership_incarnation: string | null;
     } | null = null;
     if (request.session) {
-      const digest = await sha256Hex(new TextEncoder().encode(request.session));
+      digest = await sha256Hex(new TextEncoder().encode(request.session));
       viewer =
         this.state.storage.sql
           .exec<{
@@ -803,11 +810,23 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
         : null;
     if (!person && !access.public)
       return { allowed: false, status: viewer ? 403 : 401 };
+    // Only an admitted person's open renews the session, and only an open: the
+    // page's own requests never do, which keeps the sleep guarantee above.
+    let sessionExpiresAt: number | undefined;
+    if (person && digest && request.opened) {
+      sessionExpiresAt = Date.now() + VIEWER_SESSION_LIFETIME_MS;
+      this.state.storage.sql.exec(
+        "UPDATE viewer_sessions SET expires_at=? WHERE session_sha256=?",
+        sessionExpiresAt,
+        digest,
+      );
+    }
     const identity = {
       viewerId: person ? viewer!.user_id : null,
       viewerName: person ? viewer!.display_name : null,
       editor: person?.editor ?? false,
       revision: access.revision,
+      ...(sessionExpiresAt === undefined ? {} : { sessionExpiresAt }),
     };
     const file = this.state.storage.sql
       .exec<{
@@ -1291,8 +1310,12 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
   }
 
   private pruneExpired(now: number): void {
+    // An open code is dead a minute after it is minted, but its row carries the
+    // session's year-long expiry; redemption clears `code_expires_at`, so a row
+    // that still has one past its time was never redeemed.
     this.state.storage.sql.exec(
-      `DELETE FROM viewer_sessions WHERE expires_at <= ?`,
+      `DELETE FROM viewer_sessions WHERE expires_at <= ? OR code_expires_at <= ?`,
+      now,
       now,
     );
   }
