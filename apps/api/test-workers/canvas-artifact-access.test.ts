@@ -386,11 +386,14 @@ describe("Canvas artifact access propagated to local serving", () => {
       await waitOnExecutionContext(ctx);
       return response;
     };
-    // The page reloading itself is a navigation too, but not an open.
-    const reload = await navigate("same-origin");
-    expect(reload.status).toBe(200);
-    expect(reload.headers.get("set-cookie")).toBeNull();
-    expect(await sessionExpiry()).toBe(soon);
+    // The page reloading itself, or bouncing itself back through an outside
+    // redirect with no click, is a navigation too, but not an open.
+    for (const site of ["same-origin", "cross-site"]) {
+      const scripted = await navigate(site);
+      expect(scripted.status).toBe(200);
+      expect(scripted.headers.get("set-cookie")).toBeNull();
+      expect(await sessionExpiry()).toBe(soon);
+    }
 
     const opened = await navigate("none");
     expect(opened.status).toBe(200);
