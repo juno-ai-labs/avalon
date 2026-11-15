@@ -16,7 +16,7 @@ import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import type { ArtifactAudienceControl } from '../components/artifact-card-tools';
 import { editorUserIds } from '../lib/canvas-sharing';
 import { CanvasTemplateStarters } from '../components/canvas-template-picker';
-import { CanvasNoticesJoinToast, CanvasNoticesMenuSection } from '../components/canvas-notices';
+import { CanvasNoticesJoinBanner, CanvasNoticesMenuSection } from '../components/canvas-notices';
 import { CanvasSidekicksSection, madeSidekicksArchiveCopy } from '../components/canvas-sidekicks-menu';
 import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasCreation, useCanvasList, useCanvasNameSources, type CanvasCreation } from '../lib/canvases';
@@ -425,7 +425,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       const member = membersById.get(userId);
       return member ? [member] : [];
     });
-    return <TitlePillHeader
+    return <><TitlePillHeader
       current={level(panelOpen, openPanel)}
       trailing={<span className="canvas-header-trailing">
         {present.length > 0 && <span aria-label={`${present.length} ${present.length === 1 ? 'person' : 'people'} here`} className="canvas-header-present" role="group">
@@ -433,11 +433,11 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
         </span>}
         <Button className="canvas-share-button" disabled={!canvas.data} onClick={() => setSharing(true)}>Share</Button>
       </span>}
-    />;
+    />
+    <CanvasNoticesJoinBanner canvas={canvas.data} /></>;
   };
   const madeSidekicksCopy = madeSidekicksArchiveCopy(sidekicks);
   return <>
-    <CanvasNoticesJoinToast canvas={canvas.data} />
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
     {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
     {audienceError && <ErrorNotice occurrence={audienceError} title="Artifact access was not changed">{audienceError instanceof ApiError && audienceError.code === 'canvas_sharing_changed'
