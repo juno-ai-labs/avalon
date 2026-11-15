@@ -124,8 +124,13 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
 8. **Set the audience right after publishing, as every site does.** An app never
    signs in, so the feed works only when the Canvas's artifacts are **public:
    anyone with the link**. Set the Canvas's artifact audience to public as
-   your default choice, not as a change the person asked for. Do not stop
-   the build to ask first.
+   your default choice, not as a change the person asked for, before you
+   check the feed (step 9): until then every app is refused. Do not stop the
+   build to ask first. This holds when the entries come from a connected
+   account too (an inbox newsletter, a team calendar), where
+   \`building-live-sites\` would choose the Organization: a feed that is not
+   public reaches no app, so it goes public and the closing question (step
+   10) names what it exposes.
    - If the result says someone already chose the audience and it is not
      public, leave it. Tell the person the feed cannot reach apps until it
      is, and ask whether to make it public.
