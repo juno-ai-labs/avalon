@@ -9,7 +9,7 @@ import { ANNOTATION_CONTEXT_CHARACTERS } from './annotation-context';
  * the context budget. The message schemas live in `artifact-picker.ts`.
  *
  * It is a string rather than a module because it runs inside documents Rally
- * does not bundle: a live artifact's page (served by the artifact Worker), the
+ * does not bundle: a reactive artifact's page (served by the artifact Worker), the
  * opaque `srcdoc` frame for an HTML file, and the desktop's artifact view. Each
  * host gets it there its own way and then calls `globalThis.rallyAnnotations`
  * directly (the desktop, through `executeJavaScript`) or through the
@@ -418,7 +418,7 @@ function artifactAnnotationBridgeSource(parentOrigin: string | null): string {
 
 /**
  * The whole script for one host. `parentOrigin` is the only origin whose
- * `postMessage` the bridge accepts: the browser client's, for a live artifact
+ * `postMessage` the bridge accepts: the browser client's, for a reactive artifact
  * the artifact Worker serves; `null` for the opaque file frame.
  */
 export function artifactAnnotationScript(parentOrigin: string | null): string {

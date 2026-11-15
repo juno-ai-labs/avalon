@@ -25,7 +25,7 @@
  * `write_artifact_data` is admitted the same way by `admitDataWriteStatement`:
  * one statement that changes rows, never one that changes the schema.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import { ARTIFACT_VIEWER_COLUMN } from "@rally/contracts";
 

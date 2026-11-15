@@ -18,7 +18,7 @@
  * decide *which* files an artifact may read — the supervisor decided that when
  * it minted the stub.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import { WorkerEntrypoint } from "cloudflare:workers";
 

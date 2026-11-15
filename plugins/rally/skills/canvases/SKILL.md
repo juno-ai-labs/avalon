@@ -7,7 +7,7 @@ description: Work with Rally Canvases through the Rally MCP server. Use when the
 
 A **Canvas** in Rally is a shared conversation with Rally (its **Chat**) and
 the artifacts that conversation generates: documents, spreadsheets, images,
-PDFs and live sites. Everyone the Canvas is shared with can read the Chat and
+PDFs and reactive sites. Everyone the Canvas is shared with can read the Chat and
 take part. The Rally tools act in one Organization as the person who connected
 Rally, with exactly their permissions.
 

@@ -866,7 +866,7 @@ prefix-aware, and a `sidekick`-prefixed run gets the same sentence with **no**
 `suggestedCall` — Sidekick runs hold no Terminal, so naming that tool would
 trade one dead end for a worse one.
 
-Three further `rally:workstream` tools read a **live artifact's stored data**, and a
+Three further `rally:workstream` tools read a **reactive artifact's stored data**, and a
 fourth, `write_artifact_data`, changes its rows. They are on
 this plugin rather than Terminal's deliberately: reading a poll's tally must not
 require a sandbox, and the run answering a data question is usually not the run
@@ -885,7 +885,7 @@ with a `private_to_viewer` column, and `describe_artifact_data` and
 member's `query_artifact_data` fails with `private_rows`, pointing at
 `read_artifact_table`, because free SQL cannot be limited to one person's
 rows. The site's author and unattended Sidekick runs read and query every
-row; `docs/live-web-artifacts.md` owns the rule.
+row; `docs/reactive-web-artifacts.md` owns the rule.
 
 `write_artifact_data` is `mode: "write"`, `idempotency: "record_before_execute"`,
 with no reconciler: the site's database dedupes on nothing Rally supplies, so
@@ -895,7 +895,7 @@ the site's database is `sql_error` too, in SQLite's words. A Sidekick run
 whose Sidekick does not have the site's Canvas attached gets
 `artifact_canvas_not_attached`, an archived Canvas `canvas_archived`, and a
 member barred by private rows `private_rows`. Who is offered the tool, and the
-gate, are in [`live-web-artifacts.md`](live-web-artifacts.md#writing-rows-from-a-run).
+gate, are in [`reactive-web-artifacts.md`](reactive-web-artifacts.md#writing-rows-from-a-run).
 
 The three reads are `mode: "read"`, `idempotency: "safe"`. **Read-only is enforced on the
 statement, not by the transaction** — an always-rollback transaction is not an
@@ -1054,7 +1054,7 @@ branch: a one-file zip is almost never deliberate and is near-exactly the shape
 of a document publish that grabbed the folder by mistake, so it is refused with
 the instruction to publish that file's own path. A one-file directory whose file
 *is* an entry never trips it. `site_entry_removed` refuses a republish that would
-turn a live site back into an archive — a URL participants hold is never killed
+turn a reactive site back into an archive — a URL participants hold is never killed
 by an accident of file layout, while archive→site upgrades freely because that is
 the archive fallback's own recovery. No publish-time code validation is promised:
 `index.js` runs at serve time and nowhere else.

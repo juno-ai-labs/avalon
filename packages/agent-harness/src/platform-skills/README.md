@@ -1,7 +1,7 @@
 # Platform skills
 
 Platform skills explain **how to use Rally itself**: configuring Sidekicks,
-tracking work in Tables, publishing live sites, and using the in-app browser.
+tracking work in Tables, publishing reactive sites, and using the in-app browser.
 Keep each skill in its own TypeScript file here.
 
 Skills for **doing requested work** belong in [`packages/skills/task-skills/`](../../../skills/task-skills/):

@@ -115,7 +115,7 @@ the lightbox, what Rally made in the panel on the right, comments, and the
 people in the Canvas. Everything in [Canvases](../02-canvases/index.md)
 applies, with a few exceptions:
 
-- Live sites do not preview inside the page. You see **Preview unavailable
+- Reactive sites do not preview inside the page. You see **Preview unavailable
   here** and a way to open the site in your browser instead.
 - **Open in a new window** opens an ordinary browser tab or window, and
   artifacts open in a new tab.

@@ -94,7 +94,7 @@ What the window shows:
 
 - Images, audio and video play.
 - Everything else shows as read-only text.
-- Live sites show the live page. Sites have their own **Open in a new window** button, covered in [Live sites](03-live-sites.md).
+- Reactive sites show the page itself. Sites have their own **Open in a new window** button, covered in [Reactive sites](03-reactive-sites.md).
 
 The window stays up to date. If Rally publishes a newer version while the window is open, the window switches to it.
 
@@ -121,4 +121,4 @@ Some things to watch for:
 - Files you have attached but not sent yet have no download button. They are already on your Mac.
 - If a download fails, Rally says **Download failed. Please try again.**
 
-Next: when the thing Rally makes is a whole website, in [Live sites](03-live-sites.md).
+Next: when the thing Rally makes is a whole website, in [Reactive sites](03-reactive-sites.md).

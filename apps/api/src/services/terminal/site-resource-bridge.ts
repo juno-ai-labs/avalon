@@ -1,6 +1,6 @@
 import type { Region } from "@rally/contracts/regions";
 /**
- * Turning a published directory into a **live artifact**: a resource Rally also
+ * Turning a published directory into a **reactive artifact**: a resource Rally also
  * serves.
  *
  * The document path publishes bytes and stops. A site publishes a *version*:
@@ -17,7 +17,7 @@ import type { Region } from "@rally/contracts/regions";
  * that might never land, and moving the resource before hostname reservation
  * would make an equal-content retry return the previous registry version.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import {
   ARTIFACT_MAX_ASSET_COUNT,

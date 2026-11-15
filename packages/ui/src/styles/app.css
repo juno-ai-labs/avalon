@@ -5011,7 +5011,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 .inspector-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 
-/* A live artifact's detail: the one rail body that is not something the
+/* A reactive artifact's detail: the one rail body that is not something the
    renderer drew. The preview pane is a *fixed region* the main process
    composites an Electron view over, so it needs a real height whether or not
    anything is in it — a content-sized box would hand the main process a
@@ -6095,7 +6095,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    conversation's scrollbar border, so the transcript's scrollbar stays
    draggable. The divider line stays on the panel's edge. */
 .rail-resizer { bottom: 0; justify-content: flex-start; padding-left: 2px; right: calc(var(--rail-slot) - var(--resize-hit-size) + 2px); top: 0; width: var(--resize-hit-size); }
-/* Except over a live site or a browser page: Electron composites a native
+/* Except over a reactive site or a browser page: Electron composites a native
    view over the panel's body that takes the pointer from anything drawn
    under it, so a target inside the edge is grabbable only along the header.
    There the target reaches over the conversation instead, and covers its
@@ -7867,7 +7867,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   height: 32px;
   width: 32px;
 }
-/* A round toggle (a live site's Stored data) keeps the pressed wash over that fill. */
+/* A round toggle (a reactive site's Stored data) keeps the pressed wash over that fill. */
 .title-pill-action.icon-button-toggle[aria-pressed='true'] {
   background: var(--av-cmp-row-background-selected);
 }

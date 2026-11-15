@@ -11,7 +11,7 @@ import { AuthorizationService } from "./authorization-service";
  * uses, and reaching the supervisor through the one supported resolver — is
  * here.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/reactive-web-artifacts.md`.
  */
 import { asArtifactId, asWorkspaceId, IdSchema, type ExecutionPrincipal } from "@rally/contracts";
 
