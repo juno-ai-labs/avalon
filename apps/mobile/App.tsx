@@ -5,6 +5,8 @@ import { directoryKey } from './src/directory';
 import { loadSavedDirectory, saveDirectory } from './src/saved-directory';
 import { loadSavedPins, savePins } from './src/saved-pins';
 import { requestArtifactAccess } from './src/artifact-access';
+import { loadRememberedSites, saveRememberedSites } from './src/remembered-sites';
+import { acceptFreshAccess } from './src/canonical-first';
 import { deployedWebBuild } from './src/web-build';
 import { Dashboard } from './src/Dashboard';
 import { ArtifactPicker, ARTIFACT_PICKER_HEIGHT } from './src/ArtifactPicker';
@@ -49,6 +51,7 @@ const PREPARED_PINS = {
   direct: (directory: MobileSnapshot, canvas: PreparedCanvas) => requestArtifactAccess(APP_URL, directory, canvas),
 };
 const JS_STARTED = performance.now();
+const REMEMBERED_SITES = loadRememberedSites();
 let dashboardTimed = false;
 const HOME_URL = SAVED_DIRECTORY ? mobileUrl(APP_URL, SAVED_DIRECTORY.workspacePath) : START_URL;
 const Tabs = createNativeBottomTabNavigator();
@@ -75,6 +78,9 @@ type Session = {
   reportHomeBuild: (build: string | undefined) => void;
   /** The live directory, or the saved copy until Home delivers it. For display only. */
   shownDirectory: MobileSnapshot | null;
+  /** The site a canvas last showed, on its cookie, for this account. */
+  rememberedSite: (canvasId: string) => NativeArtifact | null;
+  rememberSite: (access: NativeArtifact) => void;
 };
 const SessionContext = createContext<Session | null>(null);
 const CanvasRoutesContext = createContext<Record<string, string | null>>({});
@@ -102,8 +108,10 @@ function AppContent() {
   // Display only: the dashboard draws from the saved copy until Home delivers
   // the live directory. Hooks that act on the account wait for the live one.
   const [savedDirectory, setSavedDirectory] = useState(SAVED_DIRECTORY);
+  const [rememberedSites, setRememberedSites] = useState(REMEMBERED_SITES);
+  useEffect(() => { saveRememberedSites(rememberedSites); }, [rememberedSites]);
   const updateDirectory = useCallback((next: MobileSnapshot | null) => {
-    if (!next) setSavedDirectory(null);
+    if (!next) { setSavedDirectory(null); setRememberedSites({}); }
     const key = directoryKey(next);
     if (key === directoryKeyRef.current) return;
     directoryKeyRef.current = key;
@@ -170,8 +178,21 @@ function AppContent() {
     setChatReturn(null); updateDirectory(null);
     controls.current.get('Home')?.reload();
   }, []);
-  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, shownDirectory: directory ?? savedDirectory }),
-    [chatReturn, prepared, directory, savedDirectory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild]);
+  const shownScope = (directory ?? savedDirectory) ? `${(directory ?? savedDirectory)!.userId}:${(directory ?? savedDirectory)!.workspaceId}` : null;
+  const rememberedSite = useCallback((canvasId: string): NativeArtifact | null => {
+    const site = rememberedSites[canvasId];
+    return site && site.scope === shownScope ? { canvasId, resourceId: site.resourceId, version: site.version, openUrl: site.canonicalUrl, canonicalUrl: site.canonicalUrl } : null;
+  }, [rememberedSites, shownScope]);
+  const rememberSite = useCallback((access: NativeArtifact) => {
+    if (!shownScope) return;
+    setRememberedSites((sites) => {
+      const known = sites[access.canvasId];
+      if (known && known.scope === shownScope && known.resourceId === access.resourceId && known.version === access.version && known.canonicalUrl === access.canonicalUrl) return sites;
+      return { ...sites, [access.canvasId]: { scope: shownScope, resourceId: access.resourceId, version: access.version, canonicalUrl: access.canonicalUrl } };
+    });
+  }, [shownScope]);
+  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, shownDirectory: directory ?? savedDirectory, rememberedSite, rememberSite }),
+    [chatReturn, prepared, directory, savedDirectory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, rememberedSite, rememberSite]);
   const theme = isDark ? DarkTheme : DefaultTheme;
   return <SafeAreaProvider>
     <StatusBar style={isDark ? 'light' : 'dark'} />
@@ -381,7 +402,7 @@ function useChatNavigation(navigation: NativeBottomTabScreenProps<ParamListBase>
 }
 
 function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactId, onContentReady }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string; artifactId?: string; onContentReady?: () => void }) {
-  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild, shownDirectory } = useSession();
+  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild, shownDirectory, rememberedSite, rememberSite } = useSession();
   const { colors } = useTheme();
   const canvasId = assignedCanvasId ?? route.name;
   const routeCanvases = useContext(CanvasRoutesContext);
@@ -408,6 +429,10 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   });
   const [snapshot, setSnapshot] = useState<MobileSnapshot | null>(null);
   const [artifacts, setArtifacts] = useState<Record<string, NativeArtifact>>({});
+  // A canvas opened from the dashboard on a remembered cookie, shown before Home
+  // has navigated to it; Home's own view takes over once it reports one.
+  const [optimistic, setOptimistic] = useState<string | null>(null);
+  const renewing = useRef(new Set<string>());
   const [ready, setReady] = useState(false);
   const [contentReady, setContentReady] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -472,7 +497,9 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
     }
     if (event.type === 'artifact') {
       if (!trustedArtifact(event.artifact, ARTIFACT_DOMAIN)) { setFailed(true); return; }
-      setArtifacts((current) => ({ ...current, [event.artifact.canvasId]: event.artifact }));
+      const fresh = event.artifact;
+      const renewal = renewing.current.delete(fresh.canvasId);
+      setArtifacts((current) => ({ ...current, [fresh.canvasId]: acceptFreshAccess(current[fresh.canvasId], fresh, renewal) }));
     }
     if (event.type === 'artifact-unavailable') setArtifacts((current) => {
       if (current[event.canvasId]?.resourceId !== event.resourceId) return current;
@@ -480,9 +507,9 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
     });
     if (event.type === 'snapshot') {
       snapshotSeen.current = true;
-      if (event.snapshot.view !== 'home') setOpening(null);
+      if (event.snapshot.view !== 'home') { setOpening(null); setOptimistic(null); }
       const nextScope = `${event.snapshot.userId}:${event.snapshot.workspaceId}`;
-      if (scope.current !== nextScope) { scope.current = nextScope; setArtifacts({}); }
+      if (scope.current !== nextScope) { scope.current = nextScope; setArtifacts({}); setOptimistic(null); }
       setSnapshot(event.snapshot);
       if (!event.snapshot.loading && (event.snapshot.view === 'conversation' || event.snapshot.artifactId)) onContentReady?.();
       // A newly visited tab has no directory until its socket's first sync.
@@ -523,7 +550,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   // answers, and whenever the page is on its own dashboard. The page stays
   // mounted behind it for the socket, chat, create and canvases it opens.
   const showDashboard = dashboardVisible({ home, chatOpen: Boolean(chatReturn), opening: opening !== null, snapshot, hasDirectory: Boolean(shownDirectory) });
-  useEffect(() => home ? navigation.addListener('tabPress', () => setOpening(null)) : undefined, [home, navigation]);
+  useEffect(() => home ? navigation.addListener('tabPress', () => { setOpening(null); setOptimistic(null); }) : undefined, [home, navigation]);
   // The dashboard is native, so launch is timed to its first draw with canvases.
   useEffect(() => {
     if (!showDashboard || !shownDirectory || dashboardTimed) return;
@@ -542,7 +569,14 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
     if (directory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(id)) { open(id); return; }
     setOpening(id);
     sendHome({ type: 'open', id, pinned: false });
-  }, [directory?.pins, open, sendHome]);
+    // Canonical-first: a canvas whose site this account has opened before shows
+    // at once on its cookie, without waiting for Home to mint and redeem access.
+    const known = rememberedSite(id);
+    if (known && trustedArtifact(known, ARTIFACT_DOMAIN)) {
+      setArtifacts((current) => ({ ...current, [id]: current[id]?.resourceId === known.resourceId ? current[id]! : known }));
+      setOptimistic(id);
+    }
+  }, [directory?.pins, open, sendHome, rememberedSite]);
   const createFromDashboard = useCallback(() => { setOpening('create'); sendHome({ type: 'create' }); }, [sendHome]);
   useEffect(() => {
     if (!focused) return;
@@ -562,7 +596,9 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
       unstable_headerRightItems: () => close ? [{ type: 'button', label: 'Close conversation', icon: { type: 'sfSymbol', name: 'xmark' }, onPress: close }] : create ? [{ type: 'button', label: 'Create a canvas', icon: { type: 'sfSymbol', name: 'plus' }, onPress: create }] : chat ? [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }] : [],
     });
   }, [signedIn, focused, navigation, view, viewCanvas, viewTitle, home, chatReturn, closeChat, openChat, showDashboard, createFromDashboard]);
-  const hosted = snapshot?.view === 'artifact' && artifacts[snapshot.canvasId ?? '']?.resourceId === snapshot.artifactId;
+  const shownArtifact = (access: NativeArtifact) => optimistic === access.canvasId
+    || (snapshot?.view === 'artifact' && snapshot.canvasId === access.canvasId && snapshot.artifactId === access.resourceId);
+  const hosted = Object.values(artifacts).some(shownArtifact);
   // Native safe areas follow the system rail (including its side in Split View).
   // Content extends behind the transparent header; the initial inset scrolls away.
   return <SafeAreaView edges={{ left: true, right: true, bottom: bottomTabInset === 0 }} style={{ backgroundColor: colors.background }}>
@@ -577,16 +613,18 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
           }} onError={() => { if (home) prepared.fail(); setFailed(true); }} />
       </View>
       {Object.values(artifacts).map((access) => {
-        const visible = snapshot?.view === 'artifact' && snapshot.canvasId === access.canvasId && snapshot.artifactId === access.resourceId;
+        const visible = shownArtifact(access);
         return <View key={access.canvasId} collapsable={false} accessibilityElementsHidden={!visible || !focused} importantForAccessibility={visible && focused ? 'auto' : 'no-hide-descendants'} pointerEvents={visible ? 'auto' : 'none'} style={[StyleSheet.absoluteFill, { top: snapshot?.artifactPicker ? headerHeight + 60 : 0, opacity: visible ? 1 : 0 }]}>
-          <ArtifactView appUrl={APP_URL} topInset={snapshot?.artifactPicker ? 0 : headerHeight + 12} access={access} background={colors.background} focused={focused && visible} onRetry={() => web.current?.send({ type: 'reopen-artifact', canvasId: access.canvasId, resourceId: access.resourceId })} />
+          <ArtifactView key={access.version} appUrl={APP_URL} topInset={snapshot?.artifactPicker ? 0 : headerHeight + 12} access={access} background={colors.background} focused={focused && visible}
+            onPresented={() => rememberSite(access)}
+            onRetry={() => { renewing.current.add(access.canvasId); web.current?.send({ type: 'reopen-artifact', canvasId: access.canvasId, resourceId: access.resourceId }); }} />
         </View>;
       })}
       {showDashboard && <View style={StyleSheet.absoluteFill}>
         <Dashboard canvases={shownDirectory?.canvases ?? []} loading={!shownDirectory} failed={failed} topInset={headerHeight + 12} bottomInset={0}
           open={openFromDashboard} create={createFromDashboard} retry={() => { setFailed(false); web.current?.reload(); }} />
       </View>}
-      {!showDashboard && (opening !== null || !contentReady || failed) && <Loading failed={failed && opening === null} retry={() => { setFailed(false); web.current?.reload(); }} />}
+      {!showDashboard && !optimistic && (opening !== null || !contentReady || failed) && <Loading failed={failed && opening === null} retry={() => { setFailed(false); web.current?.reload(); }} />}
     </KeyboardAvoidingView>
     {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, ...snapshot, ...{ canvases: directory.canvases, pins: directory.pins, pinBusy: directory.pinBusy, pinError: directory.pinError }, tabId: home ? null : canvasId }} close={() => setSidebar(false)} send={send} diagnostics={() => rootNavigation.navigate('Diagnostics')} />}
   </SafeAreaView>;
