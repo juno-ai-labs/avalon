@@ -1,17 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { edgeSwipeCompletes } from './edge-swipe';
+import { edgePullOpens } from './edge-swipe';
 
-describe('edge swipe', () => {
-  it('opens once a pull has travelled inward far enough', () => {
-    expect(edgeSwipeCompletes(39, 0, 0)).toBe(false);
-    expect(edgeSwipeCompletes(40, 0, 0)).toBe(true);
+describe('edge pull release', () => {
+  it('settles on the nearer side when let go slowly', () => {
+    expect(edgePullOpens(0.49, 0)).toBe(false);
+    expect(edgePullOpens(0.5, 0)).toBe(true);
   });
-  it('opens sooner on a quick flick', () => {
-    expect(edgeSwipeCompletes(12, 2, 0.5)).toBe(true);
-    expect(edgeSwipeCompletes(12, 2, 0.2)).toBe(false);
-  });
-  it('ignores a mostly vertical drag and a pull back outward', () => {
-    expect(edgeSwipeCompletes(50, 60, 1)).toBe(false);
-    expect(edgeSwipeCompletes(-50, 0, -1)).toBe(false);
+  it('follows a fling, however far the drawer came', () => {
+    expect(edgePullOpens(0.1, 600)).toBe(true);
+    expect(edgePullOpens(0.9, -600)).toBe(false);
   });
 });
