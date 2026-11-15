@@ -491,7 +491,7 @@ async function serveCurrent(
     const rewritten = annotationScriptPath !== null
       ? injectAnnotationScriptResponse(withPreview, annotationScriptPath)
       : withPreview;
-    return withSecurityHeaders(rewritten);
+    return withSecurityHeaders(rewritten === response ? response : withoutStoredBodyHeaders(rewritten));
   } catch (error) {
     // The viewer never sees a stack trace. For an identified participant it
     // lands in the rail, where it can be pasted back into chat for the model.
@@ -509,6 +509,17 @@ async function serveCurrent(
     }
     return html(plainErrorPage("This artifact hit an error. Ask Rally in the thread to fix it."), 500);
   }
+}
+
+/**
+ * A rewritten page is a new body: the stored object's length, `ETag` and range
+ * support describe bytes it no longer has, so a client trusting them would
+ * truncate the page or splice it with another response.
+ */
+function withoutStoredBodyHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const name of ["content-length", "etag", "accept-ranges", "content-range"]) headers.delete(name);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 async function servePriorVersion(

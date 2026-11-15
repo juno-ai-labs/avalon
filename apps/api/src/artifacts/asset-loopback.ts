@@ -45,8 +45,10 @@ export class ArtifactAssetLoopback extends WorkerEntrypoint<Env, ArtifactAssetLo
     if (!asset) return new Response("Not found", { status: 404 });
     // The site's code passes its visitor's request on, so a player's range
     // reaches the stored file through it as it does through a static site.
+    // HTML comes back whole: the serving Worker may inject into it afterwards,
+    // and nothing seeks within a page.
     const served = await storedObjectResponse(this.env.PAYLOADS, artifactAssetKey(artifactId, version, resolved), request,
-      { "content-type": asset.contentType });
+      { "content-type": asset.contentType }, { ranges: !asset.contentType.toLowerCase().startsWith("text/html") });
     return served.found ? served.response : new Response("Temporarily unavailable", { status: 503 });
   }
 }
