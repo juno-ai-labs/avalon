@@ -217,6 +217,9 @@ beforeEach(async () => {
 // makes new Canvases private rather than taking the Organization-wide default.
 beforeEach(async () => {
   await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } });
+  // A file published into a Canvas reserves its host, as production's PLATFORM_DB migration declares it.
+  await env.PLATFORM_DB.prepare(`CREATE TABLE IF NOT EXISTS artifact_hostname_routes(hostname_stub TEXT NOT NULL PRIMARY KEY,
+    region TEXT NOT NULL, artifact_id TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(region, artifact_id))`).run();
 });
 
 describe("a Canvas's Chat", () => {
