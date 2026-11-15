@@ -235,7 +235,7 @@ This does not release the app on the App Store. Android submission is deferred.
 ### Public TestFlight setup
 
 The [App Store Connect record](https://appstoreconnect.apple.com/apps/6834593399/testflight/ios)
-is **Rally AI - Multi-Human Reactive Artifacts**, Apple ID `6834593399`, bundle
+is **Rally AI - Live Artifacts**, Apple ID `6834593399`, bundle
 `ai.rallywith.mobile`, English (US), SKU `rally-mobile-ios`.
 `submit.production.ios.ascAppId` in `apps/mobile/eas.json` links EAS to that
 record; the bundle, team and Expo project IDs are not substitutes. EAS holds the
