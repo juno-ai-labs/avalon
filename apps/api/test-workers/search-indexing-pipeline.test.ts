@@ -31,6 +31,7 @@ let tokenizerReads = 0;
 let responseModel = 'Qwen/Qwen3-Embedding-8B';
 const trackPublishedBatches = () => vi.spyOn(env.ACTIVITY_QUEUE, 'sendBatch');
 let publish: ReturnType<typeof trackPublishedBatches>;
+let realSendBatch: Queue['sendBatch'];
 const indexed = new Map<string, Record<string, unknown>>();
 // Model only the external provider's filters; canonical stores and Queue are real.
 function matchesFilter(row: Record<string, unknown>, filter: unknown): boolean {
@@ -59,6 +60,7 @@ beforeEach(() => {
   resourceId = crypto.randomUUID();
   writes.length = 0;
   indexed.clear();
+  realSendBatch = env.ACTIVITY_QUEUE.sendBatch.bind(env.ACTIVITY_QUEUE);
   publish = trackPublishedBatches();
   embeddingInputs.length = 0;
   embeddingBatches.length = 0;
@@ -438,12 +440,13 @@ describe('shared Queue indexing pipeline', () => {
     const workspace = await seedResource();
     // The resource moves to a new body while its embedding jobs fan out, so the
     // post-publication freshness check finds the source changed underneath it.
-    publish.mockImplementation(async () => {
+    publish.mockImplementation(async (messages, options) => {
+      const sent = await realSendBatch(messages, options);
       await env.PAYLOADS.put('pipeline/body-2', 'changed during indexing');
       await runInDurableObject(workspace, (_instance, state) => {
         state.storage.sql.exec("UPDATE resources SET content_ref = 'pipeline/body-2' WHERE id = ?", resourceId);
       });
-      return { metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } } };
+      return sent;
     });
     // The test pool's queue result records which messages retried, not their
     // delay, so each delivery here is a message whose retry options are observed.
