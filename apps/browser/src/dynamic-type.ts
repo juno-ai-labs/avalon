@@ -11,7 +11,8 @@
  *
  * iOS does not grow every style by the same factor, so a role with its own
  * keyword is measured directly; one without (callout, the large titles) moves
- * with body. Outside WebKit the keywords are unsupported and nothing is set.
+ * with body. Outside iOS nothing is set: other engines lack the keywords, and
+ * macOS WebKit resolves them to the Mac's sizes rather than Dynamic Type.
  */
 
 /** The type roles, smallest first. The sizes live in the design tokens. */
@@ -93,7 +94,11 @@ function apply(root: HTMLElement): void {
  * happened. Returns the cleanup.
  */
 export function installDynamicType(root: HTMLElement = document.documentElement): () => void {
-  if (typeof CSS === 'undefined' || !CSS.supports('font', KEYWORDS.body!)) return () => undefined;
+  // macOS WebKit resolves the same keywords to the Mac's own ~13px body, so a
+  // desktop preview of the phone host would shrink. Only iOS, including an
+  // iPad that reports itself as a touch Mac, means Dynamic Type by them.
+  const ios = /iP(?:hone|ad|od)/u.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (!ios || typeof CSS === 'undefined' || !CSS.supports('font', KEYWORDS.body!)) return () => undefined;
   apply(root);
   const onVisibility = (): void => { if (document.visibilityState === 'visible') apply(root); };
   document.addEventListener('visibilitychange', onVisibility);
