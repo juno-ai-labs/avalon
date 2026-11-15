@@ -31,7 +31,8 @@ ffmpeg and \`publish_resource\`; loading this skill activates neither. Where
 the episode is published is \`publishing-a-feed\`'s, not this skill's.
 
 Before recording, check that the sandbox has ffmpeg: run
-\`ffmpeg -version && ffprobe -version\`. If either is missing, install it with
+\`ffmpeg -version && ffprobe -version\`. Rally's sandbox ships both, but one
+created before they were added may not. If either is missing, install it with
 \`sudo -n apt-get install -y --no-install-recommends ffmpeg\`; if that fails
 too, stop and say the sandbox has no ffmpeg, before spending any speech
 calls.
