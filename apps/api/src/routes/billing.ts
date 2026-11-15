@@ -110,21 +110,11 @@ function webhookPayload<T>(schema: z.ZodType<T>, value: unknown): T {
   return parsed.data;
 }
 
-/** Fields `synchronizeStripeProfile` writes on the customer; none decides readiness. */
-const OWN_PROFILE_FIELDS = new Set(["metadata", "name"]);
-
 /**
- * A `customer.updated` whose `previous_attributes` names only fields Rally
- * itself writes. An event without them, or naming anything else, is refreshed.
+ * The customer fields `synchronizeStripeProfile` writes. None of them decides
+ * readiness; a field that does must never join this list.
  */
-function isOwnProfileEcho(payload: unknown): boolean {
-  const parsed = z
-    .object({ data: z.object({ previous_attributes: z.record(z.string(), z.unknown()) }) })
-    .safeParse(payload);
-  if (!parsed.success) return false;
-  const changed = Object.keys(parsed.data.data.previous_attributes);
-  return changed.length > 0 && changed.every((key) => OWN_PROFILE_FIELDS.has(key));
-}
+const OWN_PROFILE_FIELDS = ["metadata", "name"];
 
 export const stripeWebhookRoutes = new Hono<HonoAppEnv>();
 stripeWebhookRoutes.post("/", async (c) => {
@@ -159,7 +149,7 @@ stripeWebhookRoutes.post("/", async (c) => {
     );
   }
   const event = webhookPayload(
-    z.object({ type: z.string(), data: z.object({ object: z.unknown() }) }),
+    z.object({ type: z.string(), data: z.object({ object: z.unknown(), previous_attributes: z.record(z.string(), z.unknown()).optional() }) }),
     payload,
   );
   if (event.type.startsWith("customer.subscription.")) {
@@ -170,12 +160,9 @@ stripeWebhookRoutes.post("/", async (c) => {
     await syncSubscription(c.env, subscription.customer, subscription.id);
   } else if (event.type === "customer.updated") {
     const customer = webhookPayload(z.object({ id: z.string() }), event.data.object);
-    // The scheduled settle rewrites the customer's metadata (and name) whenever
-    // its usage-delivery counters move, and Stripe echoes each write back here
-    // while that settle still holds the billing actor. Readiness lives in
-    // payment method, address and tax, never in those two, so a change confined
-    // to them has nothing to refresh — and refreshing it collided as a 409.
-    if (isOwnProfileEcho(payload)) return c.json({ received: true });
+    // Rally's own profile write echoes back during settle; nothing readiness-related changed.
+    const changed = Object.keys(event.data.previous_attributes ?? {});
+    if (changed.length > 0 && changed.every((key) => OWN_PROFILE_FIELDS.includes(key))) return c.json({ received: true });
     const account = await c.env.DB.prepare("SELECT workspace_id FROM billing_accounts WHERE customer_id = ?")
       .bind(customer.id).first<{ workspace_id: string }>();
     if (account) await refreshOrganizationBilling(c.env, account.workspace_id);

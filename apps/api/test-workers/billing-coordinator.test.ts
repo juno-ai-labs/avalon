@@ -189,16 +189,18 @@ it('acknowledges a customer webhook echoing only Rally-written metadata while se
     throw new Error(`Unexpected provider call: ${url}`);
   });
   const settling = Promise.resolve(stub().refresh(ORG));
-  await expect.poll(() => calls.length).toBe(1);
-  const send = async (previous: Record<string, unknown>) => {
-    const body = JSON.stringify({ type: 'customer.updated', data: { object: { id: 'cus_1' }, previous_attributes: previous } });
-    return app.request('/webhook', { method: 'POST', body, headers: { 'stripe-signature': await signature(body) } }, testEnv());
-  };
-  expect((await send({ metadata: { usage_pending_hours: '3' } })).status).toBe(200);
-  expect((await send({ invoice_settings: { default_payment_method: null } })).status).toBe(409);
-  expect(calls).toHaveLength(1);
-  release();
-  await settling;
+  try {
+    await expect.poll(() => calls.length).toBe(1);
+    const send = async (previous: Record<string, unknown>) => {
+      const body = JSON.stringify({ type: 'customer.updated', data: { object: { id: 'cus_1' }, previous_attributes: previous } });
+      return app.request('/webhook', { method: 'POST', body, headers: { 'stripe-signature': await signature(body) } }, testEnv());
+    };
+    expect((await send({ metadata: { usage_pending_hours: '3' }, name: 'Old name' })).status).toBe(200);
+    expect((await send({ metadata: { usage_pending_hours: '3' }, invoice_settings: { default_payment_method: null } })).status).toBe(409);
+  } finally {
+    release();
+    await settling;
+  }
 });
 
 

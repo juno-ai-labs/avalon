@@ -39,7 +39,8 @@ Administrators use **Add billing details** in Settings → Organization → Bill
 Signed `customer.updated` webhooks, Settings refresh and the scheduled sweep detect
 readiness. A `customer.updated` whose `previous_attributes` names only `metadata`
 or `name` is acknowledged without a refresh: those are the fields the profile
-sync writes, and none of them decides readiness. Explicit earlier cancellations are preserved. Without
+sync writes, and none of them decides readiness. Explicit earlier cancellations
+are preserved. Without
 billing details, Stripe cancels and Rally returns the Organization to Start.
 The trial consumes first-paid eligibility, including after cancellation; checkout
 cannot add the legacy pilot coupon or another trial. MCP extra-month grants extend
@@ -544,7 +545,8 @@ stop the next Organization.
 
 Billing writes run to completion inside one `BillingCoordinatorDO` per Organization.
 Concurrent calls receive `billing_busy` and can retry once the current operation
-finishes; a webhook answered that way is redelivered by Stripe. Its actor-local busy flag is released even on failure. Runtime restart
+finishes; a webhook answered that way is redelivered by Stripe. Its actor-local
+busy flag is released even on failure. Runtime restart
 destroys both the executing code and that flag,
 so no D1 lock survives a crash and no guessed lease can overlap a live writer.
 Interactive calls use RPC because the administrator needs the URL or closure result;
@@ -775,27 +777,20 @@ landing-page prose must be kept aligned separately.
 
 ### 2026-11-15 — Stop refreshing on the customer webhook Rally's own settle causes
 
-Production answered almost half of all Stripe webhook deliveries with
-`409 billing_busy`: 221 of 487 between 14 and 15 November, steadily, every 5–10
-minutes. `synchronizeStripeProfile` rewrites the customer's metadata on every
-scheduled settle whose `usage_pending_hours`/`usage_failed_hours` moved. Stripe
-echoes that write as `customer.updated`, and the webhook's refresh reaches the
-`BillingCoordinatorDO` while the same settle still holds it, often for several
-seconds while usage delivery runs afterwards. Each echo failed, was redelivered,
-and counted toward the endpoint's failure rate, which Stripe uses to decide
-whether to disable an endpoint. Losing the endpoint would also stop the
-subscription webhooks.
+Production answered nearly half of Stripe webhook deliveries with `409
+billing_busy`. Every scheduled settle whose usage-delivery counters moved
+rewrote the customer's metadata; Stripe echoed it as `customer.updated`, and the
+webhook's refresh reached the `BillingCoordinatorDO` while that settle still
+held it. Each echo failed and counted toward Stripe disabling the endpoint,
+which would also stop subscription webhooks.
 
 The webhook now acknowledges a `customer.updated` whose `previous_attributes`
-holds only `metadata` and/or `name`. Readiness comes from payment method,
-address and tax, so these events had nothing to refresh. Two alternatives were
-rejected. Queueing callers behind the busy flag instead of rejecting them would
-change how interactive checkout and portal requests behave. Dropping the counters
-from the customer metadata would remove what operators read in Stripe. An event
-without `previous_attributes`, or naming any other field, still refreshes. A real
-readiness change that lands during a settle can still get a 409; Stripe
-redelivers it, so that case stays as it was. Any field added to the profile write
-that does decide readiness must not be added to `OWN_PROFILE_FIELDS`.
+holds only `metadata` and/or `name`; readiness comes from payment method,
+address and tax. Queueing callers behind the busy flag was rejected because it
+changes interactive checkout and portal behaviour; dropping the counters from
+the metadata was rejected because operators read them in Stripe. A real
+readiness change landing during a settle can still get a 409, and Stripe
+redelivers it as before.
 
 ### 2026-11-12 — Keep Billing visible across permissions and loading states
 
