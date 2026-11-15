@@ -2215,9 +2215,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const identity = this.identityRows.identity();
     if (!identity) return null;
     const background = this.state.storage.sql.exec<{
-      execution_principal_json: string; stopped_at: number | null; root_substream_id: string | null;
+      execution_principal_json: string; stopped_at: number | null; root_substream_id: string | null; root_reason: string | null;
     }>(
-      "SELECT execution_principal_json, stopped_at, root_substream_id FROM background_agent WHERE id = 1",
+      "SELECT execution_principal_json, stopped_at, root_substream_id, root_reason FROM background_agent WHERE id = 1",
     ).toArray()[0];
     return {
       name: identity.title, description: identity.description,
@@ -2226,6 +2226,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       background: !!background,
       executionPrincipal: background ? ExecutionPrincipalSchema.parse(JSON.parse(background.execution_principal_json)) : null,
       rootSubstreamId: background?.root_substream_id ?? null,
+      rootReason: background?.root_reason ?? null,
     };
   }
 
@@ -2235,6 +2236,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     provision: WorkstreamProvisionInput;
     executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"];
     rootSubstreamId: SubstreamId;
+    /** The `reason` of the turn that started this agent's root; see `backgroundAgentRootReason`. */
+    rootReason?: string | null;
   }): Promise<DurableObjectRpcResult> {
     const boot = await this.bootstrapRuntime(input.bootstrap);
     if (boot.status !== 200) return boot;
@@ -2242,7 +2245,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     // first directory projection and the parent classifies it by the
     // `backgroundAgent` flag that projection carries; marked after, the first
     // projection would describe it as an ordinary child conversation.
-    await this.initializeBackgroundAgent({ executionPrincipal: input.executionPrincipal, rootSubstreamId: input.rootSubstreamId });
+    await this.initializeBackgroundAgent({
+      executionPrincipal: input.executionPrincipal, rootSubstreamId: input.rootSubstreamId, rootReason: input.rootReason ?? null,
+    });
     return this.executeIdentityOperation({
       workspaceId: input.bootstrap.workspaceId, workstreamId: input.bootstrap.parentId,
       substreamId: input.bootstrap.substreamId ?? "0", operation: "provision", args: [input.provision],
@@ -2252,12 +2257,13 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   async initializeBackgroundAgent(input: {
     executionPrincipal: WorkstreamWorkflowInput["executionPrincipal"];
     rootSubstreamId: SubstreamId;
+    rootReason?: string | null;
   }) {
     await this.initialized;
     const principal = ExecutionPrincipalSchema.parse(input.executionPrincipal);
     this.state.storage.sql.exec(
-      "INSERT OR IGNORE INTO background_agent (id, execution_principal_json, root_substream_id) VALUES (1, ?, ?)",
-      JSON.stringify(principal), input.rootSubstreamId,
+      "INSERT OR IGNORE INTO background_agent (id, execution_principal_json, root_substream_id, root_reason) VALUES (1, ?, ?, ?)",
+      JSON.stringify(principal), input.rootSubstreamId, input.rootReason ?? null,
     );
   }
 
@@ -3854,8 +3860,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       `SELECT archived_at FROM workstream WHERE id = 1`,
     ).toArray()[0];
     if (authority && authority.archived_at !== null) return null;
-    const background = this.state.storage.sql.exec<{ stopped_at: number | null; root_substream_id: string | null }>(
-      "SELECT stopped_at, root_substream_id FROM background_agent WHERE id = 1",
+    const background = this.state.storage.sql.exec<{ stopped_at: number | null; root_substream_id: string | null; root_reason: string | null }>(
+      "SELECT stopped_at, root_substream_id, root_reason FROM background_agent WHERE id = 1",
     ).toArray()[0];
     const backgroundStopped = background?.stopped_at != null;
     let loop = this.ensurePersistentLoop();
@@ -4069,6 +4075,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         ...(sharedSidekickConversation ? { sidekickWizard: true } : {}),
         ...(sharedSidekickConversation ? this.answeredQuestionCanvas(pending.client_message_id) : {}),
         backgroundAgent: Boolean(background),
+        ...(background?.root_reason ? { backgroundAgentRootReason: background.root_reason } : {}),
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
@@ -7268,14 +7275,15 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       if (this.agentTimerStillPending(alarm.key)) throw new Error("agent_timer_wakeup_unreachable");
       return;
     }
-    const background = this.state.storage.sql.exec<{ stopped_at: number | null; root_substream_id: string | null }>(
-      "SELECT stopped_at, root_substream_id FROM background_agent WHERE id = 1",
+    const background = this.state.storage.sql.exec<{ stopped_at: number | null; root_substream_id: string | null; root_reason: string | null }>(
+      "SELECT stopped_at, root_substream_id, root_reason FROM background_agent WHERE id = 1",
     ).toArray()[0];
     const { fired } = await fireWorkstreamWakeup(executionEnv, wakeup, scheduling, {
       parentKind: identity.parentKind,
       substreamId,
       backgroundAgent: background ? (background.stopped_at !== null ? "stopped" : true) : false,
       ...(background ? { rootSubstreamId: (background.root_substream_id ?? "0") as SubstreamId | "0" } : {}),
+      ...(background?.root_reason ? { rootReason: background.root_reason } : {}),
     });
     // Not firing is a decision that consumes the row. One still pending lost
     // its claim to a writer that has not settled it.

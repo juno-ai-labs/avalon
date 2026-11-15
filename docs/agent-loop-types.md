@@ -44,6 +44,7 @@ the host and none chosen by the model:
 | `automationRun` | A Sidekick run. |
 | `automationContinuation` | Input that continued a waiting run, beside `automationRun`. |
 | `backgroundAgent` | A background agent's own conversation. |
+| `backgroundAgentRootReason` | Beside `backgroundAgent`: the `reason` of the turn that started the agent's root, `sidekick_review` for one the self-review started (or a turn `reviewOwnsThisTurn` claims for it). Absent for an agent started before it was recorded. |
 | `automationDelegation` | A background agent whose root is a run: it carries the run's authority, not its instructions. |
 | `agentExchange` | Another agent's message started this turn. |
 | `scheduledWakeupId` | A due wake-up started this turn. |
@@ -106,8 +107,10 @@ the input, so a gate tells the roots apart this way:
 | A Sidekick's wizard | `parentKind` `automation`, no `automationDelegation` |
 | A Sidekick run (a delegation worker) | `automationDelegation` present, with the run's principal |
 
-Nothing on the input tells a wizard-rooted agent started by a self-review
-from one started by a person's wizard turn.
+A wizard-rooted agent started by the self-review is told from one a person's
+wizard turn started by `backgroundAgentRootReason`, from
+`background_agent.root_reason`, which `start_agent` writes and a worker
+started by a worker inherits.
 
 **A wake-up is not a loop of its own either.** It continues the loop that
 scheduled it: the same conversation, the same flags the claim would derive
@@ -224,11 +227,6 @@ the host would never combine.
 1. **A retried run under the Organization principal** keeps `automationRun`
    but runs as the person retrying. Whether that is intended is not
    recorded.
-2. **A self-review's background agents** are indistinguishable from a
-   person's wizard turn's. A rule that treats them differently needs the
-   root turn's `reason` recorded beside `root_substream_id`; the
-   [Canvas notices PRD](PRDs/2026-11-14_canvas-notices/prd.md) adds it as
-   `background_agent.root_reason` (its decision 11).
 
 ## Changelog
 

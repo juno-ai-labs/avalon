@@ -2270,6 +2270,19 @@ function createAvalonAutomationsPlugin(
 }
 
 /**
+ * Whether this turn is the Sidekick self-review's: its own reason says so,
+ * or it is a wizard turn `reviewOwnsThisTurn` claims for the review. Only a
+ * wizard turn is asked, because that reads the wizard's transcript, which a
+ * run or a background agent of the same Sidekick is not part of.
+ */
+async function turnIsSelfReview(env: Env, input: WorkstreamWorkflowInput): Promise<boolean> {
+  if (input.reason === "sidekick_review") return true;
+  const wizardTurn = input.parentKind === "automation" && (input.substreamId ?? "0") === "0"
+    && input.automationRun === undefined && input.backgroundAgent !== true;
+  return wizardTurn && reviewOwnsThisTurn(env, input, await hostedParentStub(env, input.workspaceId));
+}
+
+/**
  * A submission belongs to the review when its turn is the review's, or when the
  * review's notice is the last word in the authoring conversation that is not
  * the wizard's own or its own background agents': the wizard ends its turn
@@ -6046,7 +6059,8 @@ async function loadHarnessTools(
   const tools: HarnessTool[] = [...coreTools];
   const builtinPlugins = [
     createSidekickTaskOutcomePlugin(input),
-    createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input),
+    createAgentCommunicationPlugin(new AgentCommunicationService(env, input, () => turnIsSelfReview(env, input)),
+      agentCoordinationRoleGuidance(input),
       { sidekickRun: input.automationRun !== undefined,
         canvasChat: isCanvasChat(input) && input.executionPrincipal.type === "user" }),
     workstreamPlugin,
@@ -9607,6 +9621,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  turnIsSelfReview,
   builtInSkillsFor,
   principalSystemSectionFor,
   executeAuthorizedConnectorTool,

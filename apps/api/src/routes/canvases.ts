@@ -117,6 +117,9 @@ canvasRoutes.post("/:id/pin", canvasIdParam, zValidator("json", SidebarPinReques
   await new CanvasService(c.env, getWorkspaceAuth(c)).pin("canvas", c.req.valid("param").id, c.req.valid("json").pinned);
   return c.body(null, 204);
 });
+// Join the participant list of a Canvas the person may already open.
+canvasRoutes.post("/:id/join", canvasIdParam, async (c) =>
+  c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).join(c.req.valid("param").id))));
 canvasRoutes.post("/:id/archive", canvasIdParam, async (c) => {
   await new CanvasService(c.env, getWorkspaceAuth(c)).archive(c.req.valid("param").id);
   return c.body(null, 204);
