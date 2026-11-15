@@ -286,9 +286,9 @@ for no other.
 | Tool | In a Canvas's Chat |
 | --- | --- |
 | `create_sidekick({ scope })` | Makes the Sidekick attached to this Canvas (`createAutomation` with `madeInCanvasId`) and returns `{ sidekickId, agentId, attachedToCanvasId }`. Always attached; there is no unattached create here. |
-| `sidekicks_list({})` | Returns the Sidekicks this Canvas made: `{ sidekickId, name, status, canEdit, agentId }`, read from `canvasContext`. A Sidekick only attached here is in `CANVAS CONTEXT` and not in this list. |
+| `sidekicks_list({})` | Returns the Sidekicks attached to this Canvas, made here or attached later: `{ sidekickId, name, status, canEdit, madeHere, agentId }`, read from `canvasContext`. The Sidekick whose run made this Canvas is left out: the Canvas does not manage it. |
 | `archive_sidekick({ sidekick })` | Only here. `sidekick` is a `sidekickId` from `sidekicks_list` or an exact name, matched among the Sidekicks this Canvas made. Returns `{ sidekickId, name, archived: true }`. `write`. |
-| `send_message` to a wizard | Unchanged in shape. Whoever is talking may message the wizard of a Sidekick this Canvas made, because everyone in the Canvas manages it. |
+| `send_message` to a wizard | Unchanged in shape. Whoever is talking may message the wizard of a Sidekick attached to this Canvas, because everyone in the Canvas manages it. |
 
 The plugin's message gains `CANVAS_SIDEKICK_GUIDANCE` there: a Sidekick made
 here is attached to this Canvas, what its runs may do, and that recurring
@@ -308,11 +308,16 @@ Refusals `archive_sidekick` adds, each with the names this Canvas made in
 **Who may message a wizard is who manages the Sidekick**
 (`authorizeWizardContact`, `personManagesSidekick`). Such a person is not asked to
 also be someone the Sidekick is shared with: everyone in a Canvas manages a
-Sidekick that Canvas made without being able to open it
+Sidekick attached to it without being able to open it
 ([`automation-lifecycle.md`](automation-lifecycle.md#a-sidekick-made-in-a-canvas)).
 A non-manager is refused `sidekick_contact_forbidden` when they cannot open it
 and `sidekick_edit_requires_manager` when they can, as before.
 `sidekick_attach_resource` still requires opening it.
+
+**A wizard turn the Chat's message started asks the person directly.** It
+keeps `request_elicitation` (`routesAnswersToAgent` is false for it), and what
+it asks is also drawn in the Chat that messaged it
+([`sidekick-sources.md`](sidekick-sources.md#where-the-card-is-drawn)).
 
 ### A run asking its wizard for a change
 
