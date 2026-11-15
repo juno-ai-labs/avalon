@@ -5277,7 +5277,8 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  * workers, which are handed event content such as a stranger's email; not a
  * background agent, which reads runs and other content; and not a turn
  * another agent's message started, which includes a run asking its wizard
- * for a change.
+ * for a change, nor a scheduled self-review. A wake-up in a Chat or a wizard
+ * continues its person's turn and may ask (`docs/agent-loop-types.md`).
  */
 function asksForSources(input: Pick<WorkstreamWorkflowInput,
   "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "sidekickWizard" | "wizardCanvasId" | "reason">): boolean {
