@@ -13,8 +13,11 @@ html[data-mobile-host],html[data-mobile-host] body,html[data-mobile-host] #root 
 .mobile-section-heading span{font-size:11px;color:var(--mobile-muted)}
 .mobile-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}
 .mobile-card{border:0;border-radius:20px;padding:18px;text-align:left;overflow:hidden;min-height:176px;background:var(--card-tint);color:var(--card-ink)}
-/* The lead card keeps a muted gradient in its Canvas's hue, under light ink. */
-.mobile-card:first-child{grid-column:1/-1;min-height:220px;background:linear-gradient(145deg,color-mix(in oklab,var(--card-hue) 55%,var(--card-tint)),color-mix(in oklab,var(--card-hue) 60%,black));color:var(--av-sys-color-palette-ink-light)}
+/* The lead card keeps a gradient in its Canvas's hue under light ink. Both stops shade
+   the hue toward black, never toward the light theme's near-white tint, so the ink clears
+   4.5:1 where the text sits on every storable hue; the hues are the same in both themes. */
+.mobile-card:first-child{grid-column:1/-1;min-height:220px;background:linear-gradient(145deg,color-mix(in oklab,var(--card-hue) 75%,black),color-mix(in oklab,var(--card-hue) 50%,black));color:var(--av-sys-color-palette-ink-light)}
+.mobile-card:first-child p{opacity:1}
 .mobile-card-art{height:76px;display:flex;align-items:center;justify-content:center}
 .mobile-card:first-child .mobile-card-art{height:107px}
 .mobile-card h3{font-size:16px;font-weight:550;line-height:1.35;overflow-wrap:anywhere;margin:12px 0 8px}
