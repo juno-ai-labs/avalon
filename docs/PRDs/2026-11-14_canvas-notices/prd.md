@@ -266,6 +266,20 @@ has a device that can receive it.
 **Changes:** Supersedes decision 4's send-time resolution and its `default`
 queue marker. A person who wants both push and email for every notice gets
 the device-dependent one instead; nobody has asked for that.
+### 2026-11-15 — Only Organization visibility admits a join
+
+**Decided:** `canvasJoin` lists only a member an Organization-wide Canvas
+admits. A save from an Organization-wide Canvas keeps self-joined members,
+whether it keeps the visibility or narrows it.
+
+**Why:** Review of phase 1 found that a participant row admits whatever the
+visibility, so a join through a writer Sidekick's audience or an
+administrator's role outlasted the admission it relied on, and a guest who
+joined could not be removed. Organization visibility is the case notices
+need: everyone else a Canvas admits is already listed or decides who is.
+
+**Changes:** Narrows decision 2 and the record's "Get notifications" row to
+members of an Organization-wide Canvas.
 
 ### 2026-11-15 — An Organization-wide save keeps the people who joined
 

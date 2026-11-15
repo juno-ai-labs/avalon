@@ -34,7 +34,7 @@ describe('the device push states', () => {
   it('reads a browser from its Web Push subscription', () => {
     expect([undefined, 'on', 'off', 'denied', 'home-screen', 'unsupported', 'unavailable'].map((state) =>
       browserPushState(state as Parameters<typeof browserPushState>[0])))
-      .toEqual(['unknown', 'ready', 'off', 'blocked', 'home-screen', 'unavailable', 'unavailable']);
+      .toEqual(['unknown', 'ready', 'off', 'blocked', 'home-screen', 'unavailable', 'unconfigured']);
   });
 
   it('says nothing for a ready or unknown device, and offers the fix for the rest', () => {
@@ -45,6 +45,9 @@ describe('the device push states', () => {
     expect(devicePushNotice('mac', 'denied')?.action).toEqual({ label: 'Open System Settings', kind: 'open-settings' });
     expect(devicePushNotice('browser', 'blocked')).toMatchObject({ title: 'Blocked for this site' });
     expect(devicePushNotice('browser', 'blocked')?.action).toBeUndefined();
+    // A deployment with no Web Push key is not the browser's fault.
+    expect(devicePushNotice('browser', 'unconfigured')).toEqual({ title: 'Browser notifications are not available yet' });
+    expect(devicePushNotice('browser', 'unavailable')?.title).toBe('Not available in this browser');
   });
 });
 
