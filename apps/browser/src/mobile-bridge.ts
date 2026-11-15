@@ -43,7 +43,9 @@ export function postMobileEvent(event: MobileEvent): void {
 export function installMobileBridge(): void {
   if (!isMobileHost()) return;
   document.documentElement.dataset.mobileHost = 'true';
-  const ready = () => { postMobileEvent({ type: 'ready', waitForContent: true }); if (screenReady) postMobileEvent({ type: 'screen-ready' }); if (latest) postMobileEvent(latest); if (latestArtifact) postMobileEvent(latestArtifact); for (const prepared of preparedCanvases.values()) postMobileEvent(prepared); };
+  // Native compares this with the deployed entry on resume, to reload a stale Home while it is hidden.
+  const build = document.querySelector('script[type="module"][src^="/assets/"]')?.getAttribute('src') ?? undefined;
+  const ready = () => { postMobileEvent({ type: 'ready', waitForContent: true, build }); if (screenReady) postMobileEvent({ type: 'screen-ready' }); if (latest) postMobileEvent(latest); if (latestArtifact) postMobileEvent(latestArtifact); for (const prepared of preparedCanvases.values()) postMobileEvent(prepared); };
   window.addEventListener('rally:mobile-ready', ready);
   window.addEventListener('message', (event: MessageEvent) => {
     // Only the preview's direct parent may attach. Native uses a token injected

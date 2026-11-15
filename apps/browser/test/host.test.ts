@@ -1,5 +1,5 @@
 import "../../../tests/isolated-region";
-import { exports } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { expect, it } from "vitest";
 
 it("serves the private SPA shell with built assets and no setup", async () => {
@@ -18,6 +18,18 @@ it("serves the private SPA shell with built assets and no setup", async () => {
   expect(script.headers.get("content-type")).toContain("javascript");
   // Built files are named by content hash: a cold start must not revalidate each one.
   expect(script.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+});
+
+it("serves a chunk an earlier deploy built, for a page still open from that deploy", async () => {
+  await env.PAST_ASSETS.put("assets/Chat-Old1234.js", "export const chat = 1;", { httpMetadata: { contentType: "text/javascript" } });
+  const chunk = await exports.default.fetch("https://browser.example.test/assets/Chat-Old1234.js");
+  expect(chunk.status).toBe(200);
+  expect(chunk.headers.get("content-type")).toBe("text/javascript");
+  expect(chunk.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+  expect(await chunk.text()).toBe("export const chat = 1;");
+  const missing = await exports.default.fetch("https://browser.example.test/assets/Never-Built0.js");
+  expect(missing.status).toBe(404);
+  await missing.arrayBuffer();
 });
 
 it("serves the push service worker from the root and lets the shell register it", async () => {

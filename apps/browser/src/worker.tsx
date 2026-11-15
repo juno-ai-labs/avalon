@@ -24,6 +24,23 @@ function deploymentCookies(header: string | null, region: string): string | null
 /** The favicon, install manifest and icons, which a browser reads from the root. */
 const INSTALL_FILES = new Set(["/favicon.svg", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"]);
 
+/**
+ * A built file an earlier deploy served. Static assets hold only the current
+ * deploy's files, and the web host ships many times a day, so a page loaded
+ * before a deploy would 404 on a lazy chunk it has not fetched yet. Each
+ * deploy's files are uploaded to this bucket first and never change after.
+ */
+async function pastAsset(env: Cloudflare.Env, pathname: string): Promise<Response> {
+  const object = await env.PAST_ASSETS.get(pathname.slice(1));
+  if (!object) return unavailable();
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("ETag", object.httpEtag);
+  headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(object.body, { headers });
+}
+
 const unavailable = () => new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
 
 export default {
@@ -69,6 +86,7 @@ export default {
       // the dashboard can draw. The shell HTML stays `no-store`, so a deploy
       // is still picked up on the next load.
       const asset = await env.ASSETS.fetch(request);
+      if (asset.status === 404) return pastAsset(env, url.pathname);
       if (!asset.ok) return asset;
       const response = new Response(asset.body, asset);
       response.headers.set("Cache-Control", "public, max-age=31536000, immutable");
