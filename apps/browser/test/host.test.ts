@@ -16,6 +16,8 @@ it("serves the private SPA shell with built assets and no setup", async () => {
   const script = await exports.default.fetch(`https://browser.example.test${source}`);
   expect(script.status).toBe(200);
   expect(script.headers.get("content-type")).toContain("javascript");
+  // Built files are named by content hash: a cold start must not revalidate each one.
+  expect(script.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
 });
 
 it("serves the push service worker from the root and lets the shell register it", async () => {

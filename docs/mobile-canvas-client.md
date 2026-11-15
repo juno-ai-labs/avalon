@@ -17,6 +17,8 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/Sidebar.tsx`, `SidebarDragRow.tsx`, `sidebar-drop.ts` | Long-press pin/unpin/reorder with edge scrolling, Edit controls and accessible move actions. |
 | `apps/mobile/App.web.tsx`, `src/PreviewTabBar.tsx`, `src/Glass.tsx` | Development-only browser preview; its custom controls do not model native geometry. |
 | `apps/mobile/src/CanvasWebView.tsx` | Application WebView and isolated first-party reactive artifact WebViews. |
+| `apps/mobile/src/directory.ts` | Compares Home snapshots on the fields the shell shows, so `updatedAt` ticks and Home's own navigation do not re-render every tab. |
+| `apps/mobile/src/saved-directory.ts` | The last directory, saved on the device per account and removed on sign-out; launch opens Home at its organization. |
 | `apps/mobile/src/recovery-order.ts` | Orders WebView recovery after a renderer crash: the visible screen first, hidden ones (Home included) once it has presented, shown or needed. |
 | `apps/mobile/src/prepared-requests.ts` | Holds fresh-access requests while Home reloads and re-sends ones its old page never answered. |
 | `apps/mobile/src/prepared-site-access.ts` | Reuses prepared cookies and clears consumed access while a retry requests its replacement. |
@@ -302,7 +304,7 @@ cold launch, or after the user chooses Restart in diagnostics.
 compatible updates. WorkManager/BGTaskScheduler choose execution using their
 default cadence; delivery is opportunistic, and iOS Simulator cannot run this
 task. Resume and reconnection refresh the existing browser/socket data. There is
-no offline canvas cache, queued editing system, or background content polling.
+no offline canvas content, queued editing system, or background content polling. The last canvas directory (titles, icons, pins) is saved on the device for one account and removed on sign-out; launch opens Home directly at that organization, and falls back to the plain start once if the page asks for sign-in before its first snapshot. Diagnostics records the latest launch-to-dashboard, first pin tap-to-artifact and visible crash-recovery times.
 
 Settings and diagnostics is available from the sidebar's settings button.
 Notification permission is requested only through Enable notifications. The
@@ -560,14 +562,18 @@ are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
 
-### 2026-11-15 — Recover a terminated renderer in place, visible screen first
+### 2026-11-15 — Recover renderers in place, visible screen first, and cut launch and update churn
 
 **What changed:** When iOS or Android kills an artifact's web content process,
 `ArtifactView` now remounts its WebView on the canonical URL instead of asking
 Home for fresh access. Fresh-access requests (`prepared-requests.ts`) now wait
 while Home reloads and are re-sent once Home can answer, rather than failing. `recovery-order.ts` makes the screen in front recover
 first: hidden WebViews, Home included, reload only after it has presented, or
-sooner when shown or when a queued access request needs Home.
+sooner when shown or when a queued access request needs Home. Home snapshots
+that change nothing the shell shows are dropped, and the shared session value is
+memoized. The directory is saved on the device and Home opens at its
+organization. Native refreshes Home on every resume, and Diagnostics records
+three timings.
 
 **Why:** A field report showed a pinned tab stuck on "Rally couldn't load" after
 `artifact_process_terminated`, and Try again took far longer than the 500 ms
@@ -577,7 +583,12 @@ reload resolved the pending request with null and nothing retried once Home was
 back. The redeemed artifact cookie is persistent and lives in the platform cookie
 store, not the dead process, so the canonical URL alone is enough. Reloading
 every killed WebView at once made Home's full application boot compete with the
-one document the person was waiting for.
+one document the person was waiting for. Home posts a snapshot on every canvas
+change, including `updatedAt` ticks while agents write, and each one rebuilt the
+session value and re-rendered every tab and header. Opening Home at `/` cost a
+session read and an organization-list read in series before the dashboard. The
+founder accepted saving titles and pins on the device for speed, reversing the
+earlier no-cache position. Without timings, "laggy" had no number to test.
 
 **Considered and rejected:** `reload()` on the same WebView: if the crash came
 before redemption finished, the last URL is the spent open ticket. Waiting on a
@@ -593,7 +604,9 @@ for Home rather than failing. An artifact that crashes its renderer on every
 load reloads each time, as the earlier retry did; no cap was added. In-artifact
 unsaved state is still lost on termination. While Home waits, its socket is
 down, so pins and notifications catch up once it reloads. Anything that needs
-Home sooner must `wake` it, as fresh access does. Not yet measured on a device.
+Home sooner must `wake` it, as fresh access does. A new snapshot field the shell
+shows must be added to `directoryKey`, or its changes are dropped. Not yet
+measured on a device.
 
 ### 2026-11-14 — Reduce mobile launch and pinned-canvas startup work
 

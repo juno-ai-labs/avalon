@@ -544,6 +544,9 @@ the shared confirmation modal.
 ## Invariants
 
 - HTML is private and no-store; shared cached HTML must never acquire user data.
+- Built files under `/assets/` are `public, max-age=31536000, immutable`: Vite
+  names each by its content hash, so a name never changes meaning. Anything
+  served there must keep a content-hashed name.
 - Email proofs are never in server query strings, bootstrap JSON or persistent
   JavaScript storage. Server GET requests do not consume them.
 - The browser receives metadata only. Cookies remain HttpOnly; API bearer and
@@ -709,6 +712,16 @@ must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
+
+### 2026-11-15 — Cache hashed build files for a year
+
+**What changed:** `/assets/` responses carry `public, max-age=31536000,
+immutable`. The shell HTML stays `no-store`.
+
+**Why:** With Workers' default headers, a cold start revalidated every chunk:
+one round trip per file before the mobile dashboard could draw. Caching the HTML
+too was rejected: it still needs a round trip to see a deploy, and a stale copy
+would name chunks a new deploy removed.
 
 ### 2026-11-14 — Restore mobile organizations without reloading the page
 

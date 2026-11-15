@@ -140,7 +140,9 @@ function MobileContent(): React.JSX.Element {
       case 'create': create(); break;
       case 'open': open(message.id, message.pinned); break;
       case 'load-more': break; // The current Canvas directory is pushed as one list.
-      case 'refresh': socket.retry(); void queryClient.invalidateQueries({ queryKey: ['canvas'] }); break;
+      // Native sends this on resume and on reconnection. A socket that slept
+      // can still read OPEN with its connection gone, so replace it outright.
+      case 'refresh': socket.replace(); void queryClient.invalidateQueries({ queryKey: ['canvas'] }); break;
       case 'sign-out':
         // Session revocation also disables every device bound only to that session.
         void signOut(); break;
