@@ -244,8 +244,14 @@ function Dashboard({ rows, loading, failed, retry, hasMore, more, open, create }
       <div className="mobile-section-heading"><h2>{query ? 'Search results' : 'Pick up where you left off'}</h2><span>{filtered.length} canvases</span></div>
       <div className="mobile-grid">{filtered.map((row, index) => {
         // The Canvas's own icon and colour, resolved the way the desktop Canvases home does.
-        const { icon: Icon, ink, tint } = canvasMark(row.id, row.appearance ?? undefined);
-        return <button className="mobile-card" key={row.id} onClick={() => open(row.id)} style={{ background: tint, color: ink }}><div className="mobile-card-art" aria-hidden="true"><Icon size={index === 0 ? 50 : 32} strokeWidth={1.5} /></div><h3>{row.title || 'Untitled canvas'}</h3><p>Open canvas <ArrowUpRight size={14} aria-hidden="true" /></p></button>;
+        const { icon: Icon, ink, tint, color } = canvasMark(row.id, row.appearance ?? undefined);
+        // The lead card keeps its muted gradient: a soft mix of the hue into its tint at
+        // the top, darkening to a deep shade of the hue where the title sits, in light ink.
+        const hue = `var(--av-sys-color-project-${color})`;
+        const style = index === 0
+          ? { background: `linear-gradient(145deg, color-mix(in oklab, ${hue} 55%, ${tint}), color-mix(in oklab, ${hue} 60%, black))`, color: 'var(--av-sys-color-palette-ink-light)' }
+          : { background: tint, color: ink };
+        return <button className="mobile-card" key={row.id} onClick={() => open(row.id)} style={style}><div className="mobile-card-art" aria-hidden="true"><Icon size={index === 0 ? 50 : 32} strokeWidth={1.5} /></div><h3>{row.title || 'Untitled canvas'}</h3><p>Open canvas <ArrowUpRight size={14} aria-hidden="true" /></p></button>;
       })}</div>
       {!filtered.length && <div className="mobile-empty"><Sparkles size={32} /><h2>{query ? 'No canvases found' : 'Make room for an idea.'}</h2><p>{query ? 'Try another name, or load more canvases.' : 'Create a plan, a little tool, or something just for you.'}</p>{!query && <button className="mobile-primary" onClick={create}><Plus size={18} /> Create a canvas</button>}</div>}
       {hasMore && <button className="mobile-load" onClick={more}>Load more canvases</button>}
