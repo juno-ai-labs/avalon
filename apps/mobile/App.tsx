@@ -11,6 +11,7 @@ import { deployedWebBuild } from './src/web-build';
 import { Dashboard } from './src/Dashboard';
 import { ArtifactPicker, ARTIFACT_PICKER_HEIGHT } from './src/ArtifactPicker';
 import { FloatingHeader, type FloatingHeaderActions } from './src/FloatingHeader';
+import { EdgeSwipe } from './src/EdgeSwipe';
 import { statusBarStyleFor } from './src/artifact-presentation';
 import { dashboardVisible } from './src/dashboard-visibility';
 import { HOME_RENDERER, recovery } from './src/recovery-order';
@@ -93,6 +94,10 @@ const CanvasRoutesContext = createContext<Record<string, string | null>>({});
 type StageFrame = { x: number; y: number; width: number; height: number };
 /** A screen with a native artifact in front hides the native header and shows these instead. */
 const FloatingHeaderContext = createContext<{ show: (owner: string, actions: FloatingHeaderActions) => void; hide: (owner: string) => void }>({ show: () => undefined, hide: () => undefined });
+/** The focused screen's sidebar, for the iOS swipe in from the leading edge. It
+ * lives beside the tabs, as the floating header does, so it sits above the
+ * PinStage's sites as well as each screen's own content. */
+const SidebarEdgeContext = createContext<{ show: (owner: string, open: () => void) => void; hide: (owner: string) => void }>({ show: () => undefined, hide: () => undefined });
 let knownHeaderHeight = 0;
 /** The header's height, kept while the header is hidden over an artifact, so the
  * artifact's inset does not jump when the native header gives way to the floating one. */
@@ -261,6 +266,11 @@ function CanvasTabs() {
     show: (owner: string, actions: FloatingHeaderActions) => setFloating({ owner, actions }),
     hide: (owner: string) => setFloating((current) => current?.owner === owner ? null : current),
   }), []);
+  const [edge, setEdge] = useState<{ owner: string; open: () => void } | null>(null);
+  const sidebarEdge = useMemo(() => ({
+    show: (owner: string, open: () => void) => setEdge({ owner, open }),
+    hide: (owner: string) => setEdge((current) => current?.owner === owner ? null : current),
+  }), []);
   const stage = useMemo(() => ({
     browserPins,
     browser: (canvasId: string, resourceId: string) => setBrowserPins((pins) => ({ ...pins, [canvasId]: resourceId })),
@@ -270,7 +280,7 @@ function CanvasTabs() {
     }),
     front: (canvasId: string, focused: boolean) => setFrontPin((front) => focused ? canvasId : front === canvasId ? null : front),
   }), [browserPins]);
-  return <FloatingHeaderContext value={floatingHeader}><PinStageContext value={stage}><View style={styles.fill}>
+  return <FloatingHeaderContext value={floatingHeader}><SidebarEdgeContext value={sidebarEdge}><PinStageContext value={stage}><View style={styles.fill}>
     {Object.values(prepared.canvases).map((canvas) => <PrepareArtifactSession key={`${scope}:${canvas.canvasId}:${canvas.resourceId}`} canvas={canvas} scope={scope} />)}
     {tabs.map((id) => <TabIconAsset key={id} id={id} canvas={directory?.canvases.find((canvas) => canvas.id === id)} save={saveImage} />)}
     <CanvasRoutesContext value={routeCanvases}><Tabs.Navigator backBehavior="firstRoute" labeled={false} tabBarHidden={!directory || Boolean(chatReturn)}
@@ -290,8 +300,10 @@ function CanvasTabs() {
     />)}
   </Tabs.Navigator></CanvasRoutesContext>
     <PinStage canvases={prepared.canvases} frames={stageFrames} front={frontPin} handedOff={browserPins} />
+    {/* Android leaves the leading edge to its system Back gesture. */}
+    {Platform.OS === 'ios' && edge && <EdgeSwipe onSwipe={edge.open} />}
     {floating && !chatReturn && <FloatingHeader actions={floating.actions} tone={artifactTone} />}
-  </View></PinStageContext></FloatingHeaderContext>;
+  </View></PinStageContext></SidebarEdgeContext></FloatingHeaderContext>;
 }
 
 /**
@@ -441,6 +453,7 @@ function useChatNavigation(navigation: NativeBottomTabScreenProps<ParamListBase>
 
 function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactId, onContentReady }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string; artifactId?: string; onContentReady?: () => void }) {
   const floatingHeader = useContext(FloatingHeaderContext);
+  const sidebarEdge = useContext(SidebarEdgeContext);
   const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild, shownDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar } = useSession();
   const { colors } = useTheme();
   const canvasId = assignedCanvasId ?? route.name;
@@ -626,6 +639,12 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
     }
   }, [shownDirectory?.pins, open, sendHome, rememberedSite]);
   const createFromDashboard = useCallback(() => { setOpening('create'); sendHome({ type: 'create' }); }, [sendHome]);
+  // The edge swipe opens the sidebar wherever its header button does.
+  useEffect(() => {
+    if (!focused || !signedIn) return;
+    sidebarEdge.show(canvasId, () => setSidebar(true));
+    return () => sidebarEdge.hide(canvasId);
+  }, [focused, signedIn, sidebarEdge, canvasId]);
   useEffect(() => {
     if (!focused) return;
     const chat = view === 'artifact' && viewCanvas ? () => openChat(viewCanvas, viewTitle) : undefined;
@@ -772,6 +791,12 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
   // A pinned site is always an artifact: the native header gives way to the
   // floating one, so iOS draws no fade over the site's own pixels.
   const floatingHeader = useContext(FloatingHeaderContext);
+  const sidebarEdge = useContext(SidebarEdgeContext);
+  useEffect(() => {
+    if (!focused || !directory) return;
+    sidebarEdge.show(canvas.canvasId, () => setSidebar(true));
+    return () => sidebarEdge.hide(canvas.canvasId);
+  }, [focused, directory, sidebarEdge, canvas.canvasId]);
   useEffect(() => {
     if (!focused) return;
     navigation.getParent()?.setOptions({ headerShown: false });
