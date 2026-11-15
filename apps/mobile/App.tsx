@@ -371,7 +371,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
             // Loading Home must not close other tabs and discard their drafts.
             // Authentication snapshots and signed-out events own the directory.
             if (home) { prepared.reset(); setChatReturn(null); } setReady(false); setContentReady(false); setFailed(false); setSnapshot(null); setSidebar(false);
-          }} onError={() => { if (home) prepared.reset(); setFailed(true); }} />
+          }} onError={() => { if (home) prepared.fail(); setFailed(true); }} />
       </View>
       {Object.values(artifacts).map((access) => {
         const visible = snapshot?.view === 'artifact' && snapshot.canvasId === access.canvasId && snapshot.artifactId === access.resourceId;
