@@ -1,6 +1,7 @@
 import { usePreparedSiteAccess } from './src/prepared-site-access';
 import { useAppResume } from './src/use-app-resume';
 import { usePreparedCanvases } from './src/prepared-canvases';
+import { HOME_RENDERER, recovery } from './src/recovery-order';
 import { useCrashReporting } from './src/crashes';
 import { RecoveryBoundary } from './src/RecoveryBoundary';
 import { DiagnosticsScreen } from './src/DiagnosticsScreen';
@@ -75,7 +76,9 @@ function AppContent() {
   const pendingNotificationRef = useRef(pendingNotification);
   pendingNotificationRef.current = pendingNotification;
   const sendHome = useCallback((command: MobileCommand) => controls.current.get('Home')?.send(command), []);
-  const prepared = usePreparedCanvases(directory, sendHome);
+  // A queued access request needs Home now, even while it waits behind the screen in front.
+  const wakeHome = useCallback(() => recovery.wake(HOME_RENDERER), []);
+  const prepared = usePreparedCanvases(directory, sendHome, wakeHome);
   const openNotification = useCallback((data: unknown) => {
     const target = notificationTarget(data, APP_URL);
     if (!target) { void Notifications.clearLastNotificationResponseAsync().catch(() => undefined); return; }
@@ -367,6 +370,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
     <KeyboardAvoidingView enabled={keyboardVisible} style={[styles.fill, { marginBottom: bottomTabInset }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View collapsable={false} style={styles.fill} accessibilityElementsHidden={hosted || !focused} importantForAccessibility={hosted || !focused ? 'no-hide-descendants' : 'auto'}>
         <CanvasWebView ref={web} url={url} appUrl={APP_URL} background={colors.background} topInset={headerHeight + 12} onEvent={receive}
+          focused={focused && !hosted} recoveryId={`web:${canvasId}`}
           onLoading={() => {
             // Loading Home must not close other tabs and discard their drafts.
             // Authentication snapshots and signed-out events own the directory.
@@ -376,7 +380,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, onContent
       {Object.values(artifacts).map((access) => {
         const visible = snapshot?.view === 'artifact' && snapshot.canvasId === access.canvasId && snapshot.artifactId === access.resourceId;
         return <View key={access.canvasId} collapsable={false} accessibilityElementsHidden={!visible || !focused} importantForAccessibility={visible && focused ? 'auto' : 'no-hide-descendants'} pointerEvents={visible ? 'auto' : 'none'} style={[StyleSheet.absoluteFill, { top: snapshot?.artifactPicker ? headerHeight + 60 : 0, opacity: visible ? 1 : 0 }]}>
-          <ArtifactView appUrl={APP_URL} topInset={snapshot?.artifactPicker ? 0 : headerHeight + 12} access={access} background={colors.background} onRetry={() => web.current?.send({ type: 'reopen-artifact', canvasId: access.canvasId, resourceId: access.resourceId })} />
+          <ArtifactView appUrl={APP_URL} topInset={snapshot?.artifactPicker ? 0 : headerHeight + 12} access={access} background={colors.background} focused={focused && visible} onRetry={() => web.current?.send({ type: 'reopen-artifact', canvasId: access.canvasId, resourceId: access.resourceId })} />
         </View>;
       })}
       {(!contentReady || failed) && <Loading failed={failed} retry={() => { setFailed(false); web.current?.reload(); }} />}
@@ -446,7 +450,7 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
   }, [focused, directory, canvas.canvasId, canvas.title, navigation, openChat]);
   return <SafeAreaView edges={{ left: true, right: true, bottom: bottomTabInset === 0 }} style={{ backgroundColor: colors.background }}>
     <KeyboardAvoidingView enabled={keyboardVisible} style={[styles.fill, { marginBottom: bottomTabInset }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      {access && <ArtifactView appUrl={APP_URL} key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={headerHeight + 12} onRetry={retry} />}
+      {access && <ArtifactView appUrl={APP_URL} key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={headerHeight + 12} focused={focused} onRetry={retry} />}
       {(!access || failed) && <Loading failed={failed} retry={retry} />}
     </KeyboardAvoidingView>
     {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, canvasId: canvas.canvasId, tabId: canvas.canvasId, view: 'artifact', artifactId: canvas.resourceId, title: canvas.title, artifactPicker: false }} close={() => setSidebar(false)} send={send} diagnostics={() => rootNavigation.navigate('Diagnostics')} />}

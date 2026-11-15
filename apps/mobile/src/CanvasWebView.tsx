@@ -2,7 +2,8 @@ import { recordFailure } from './diagnostics';
 import { artifactInsetScript } from './layout';
 import { artifactPresented, artifactPresentationScript } from './artifact-presentation';
 import { useTheme } from './theme';
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
+import { recovery } from './recovery-order';
 import { Linking, Platform, StyleSheet, View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { randomUUID } from 'expo-crypto';
@@ -14,6 +15,10 @@ export interface CanvasWebViewProps {
   appUrl: string;
   background: string;
   topInset?: number;
+  /** Shown to the person now. Defaults to true; hidden views recover last. */
+  focused?: boolean;
+  /** Recovery identity, so other code can `wake` this renderer. */
+  recoveryId?: string;
   onEvent: (event: MobileEvent) => void;
   onLoading: () => void;
   onError: () => void;
@@ -23,6 +28,20 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
   const web = useRef<WebView<unknown>>(null);
   const token = useRef(randomUUID());
   const lastNavigation = useRef(props.url);
+  const generatedId = useId();
+  const recoveryId = props.recoveryId ?? generatedId;
+  const focused = props.focused ?? true;
+  const shown = useRef(focused);
+  shown.current = focused;
+  useEffect(() => { if (focused) recovery.wake(recoveryId); else recovery.settled(recoveryId); }, [focused, recoveryId]);
+  useEffect(() => () => recovery.forget(recoveryId), [recoveryId]);
+  const terminated = () => {
+    recordFailure('webview_process_terminated');
+    const reload = () => web.current?.reload();
+    if (!shown.current) { recovery.defer(recoveryId, reload); return; }
+    recovery.recovering(recoveryId);
+    reload();
+  };
   useEffect(() => { web.current?.injectJavaScript(`document.documentElement.style.setProperty("--mobile-top-inset", "${props.topInset ?? 0}px"); true;`); }, [props.topInset]);
   useImperativeHandle(ref, () => ({
     send: (command) => web.current?.injectJavaScript(commandScript(command, props.appUrl)),
@@ -50,11 +69,11 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
       const sameDocument = previous.origin === next.origin && previous.pathname === next.pathname && previous.search === next.search && previous.hash !== next.hash;
       if (!sameDocument) props.onLoading();
     }}
-    onLoadEnd={() => web.current?.injectJavaScript(`window.__RALLY_MOBILE_BRIDGE_TOKEN__=${JSON.stringify(token.current)}; document.documentElement.style.setProperty("--mobile-top-inset", "${props.topInset ?? 0}px"); window.dispatchEvent(new Event("rally:mobile-ready")); true;`)}
-    onError={() => { recordFailure('webview_load_failed'); props.onError(); }}
+    onLoadEnd={() => { recovery.settled(recoveryId); web.current?.injectJavaScript(`window.__RALLY_MOBILE_BRIDGE_TOKEN__=${JSON.stringify(token.current)}; document.documentElement.style.setProperty("--mobile-top-inset", "${props.topInset ?? 0}px"); window.dispatchEvent(new Event("rally:mobile-ready")); true;`); }}
+    onError={() => { recovery.settled(recoveryId); recordFailure('webview_load_failed'); props.onError(); }}
     onHttpError={(event) => { if (event.nativeEvent.statusCode >= 400 && isAppUrl(event.nativeEvent.url, props.appUrl)) { recordFailure('webview_load_failed'); props.onError(); } }}
-    onContentProcessDidTerminate={() => { recordFailure('webview_process_terminated'); web.current?.reload(); }}
-    onRenderProcessGone={() => { recordFailure('webview_process_terminated'); web.current?.reload(); }}
+    onContentProcessDidTerminate={terminated}
+    onRenderProcessGone={terminated}
     onMessage={(event) => {
       const message = parseMobileEvent(event.nativeEvent.data, event.nativeEvent.url, props.appUrl, token.current);
       if (message) props.onEvent(message);
@@ -106,7 +125,7 @@ export function ArtifactSessionPreparation({ access, onReady }: { access: Native
  * A terminated renderer recovers in place: the redeemed cookie lives in the
  * platform cookie store, not the dead process, so a new WebView on the canonical
  * URL needs no fresh access from Home. A lost cookie still reaches `renew`. */
-export function ArtifactView({ access, appUrl, background, topInset, onRetry }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; onRetry: () => void }) {
+export function ArtifactView({ access, appUrl, background, topInset, focused = true, onRetry }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; focused?: boolean; onRetry: () => void }) {
   const { colors } = useTheme();
   const web = useRef<WebView<unknown>>(null);
   const [loading, setLoading] = useState(true);
@@ -115,12 +134,28 @@ export function ArtifactView({ access, appUrl, background, topInset, onRetry }: 
   const renew = () => { if (!renewing.current) { renewing.current = true; onRetry(); } };
   // After a crash this access's one-time open URL is spent; only the cookie
   // path remains. Fresh access from the parent starts from its own open URL.
-  const [recovery, setRecovery] = useState({ count: 0, openUrl: '' });
-  const uri = recovery.openUrl === access.openUrl ? access.canonicalUrl : access.openUrl;
-  const terminated = () => { recordFailure('artifact_process_terminated'); setFailed(false); setLoading(true); setRecovery(({ count }) => ({ count: count + 1, openUrl: access.openUrl })); };
+  const [restart, setRestart] = useState({ count: 0, openUrl: '' });
+  const uri = restart.openUrl === access.openUrl ? access.canonicalUrl : access.openUrl;
+  const recoveryId = useId();
+  const shown = useRef(focused);
+  shown.current = focused;
+  const terminated = () => {
+    recordFailure('artifact_process_terminated');
+    setFailed(false); setLoading(true);
+    const openUrl = access.openUrl;
+    // Changing the source alone would load into the hidden view at once, so
+    // the remount sets the spent open URL and the new key together.
+    const remount = () => setRestart(({ count }) => ({ count: count + 1, openUrl }));
+    if (!shown.current) { recovery.defer(recoveryId, remount); return; }
+    recovery.recovering(recoveryId);
+    remount();
+  };
+  useEffect(() => { if (focused) recovery.wake(recoveryId); else recovery.settled(recoveryId); }, [focused, recoveryId]);
+  useEffect(() => { if (!loading || failed) recovery.settled(recoveryId); }, [loading, failed, recoveryId]);
+  useEffect(() => () => recovery.forget(recoveryId), [recoveryId]);
   useEffect(() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); }, [topInset]);
   return <View style={{ flex: 1, backgroundColor: background }}>
-    <WebView<unknown> key={recovery.count} ref={web} source={{ uri }} style={styles.web}
+    <WebView<unknown> key={restart.count} ref={web} source={{ uri }} style={styles.web}
       sharedCookiesEnabled thirdPartyCookiesEnabled={false} javaScriptCanOpenWindowsAutomatically={false} setSupportMultipleWindows
       contentInsetAdjustmentBehavior="never" automaticallyAdjustContentInsets={false}
       removeIosKeyboardObserver

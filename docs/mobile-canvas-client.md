@@ -17,6 +17,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/Sidebar.tsx`, `SidebarDragRow.tsx`, `sidebar-drop.ts` | Long-press pin/unpin/reorder with edge scrolling, Edit controls and accessible move actions. |
 | `apps/mobile/App.web.tsx`, `src/PreviewTabBar.tsx`, `src/Glass.tsx` | Development-only browser preview; its custom controls do not model native geometry. |
 | `apps/mobile/src/CanvasWebView.tsx` | Application WebView and isolated first-party reactive artifact WebViews. |
+| `apps/mobile/src/recovery-order.ts` | Orders WebView recovery after a renderer crash: the visible screen first, hidden ones (Home included) once it has presented, shown or needed. |
 | `apps/mobile/src/prepared-requests.ts` | Holds fresh-access requests while Home reloads and re-sends ones its old page never answered. |
 | `apps/mobile/src/prepared-site-access.ts` | Reuses prepared cookies and clears consumed access while a retry requests its replacement. |
 | `apps/mobile/src/artifact-presentation.ts` | Applies the artifact inset at document readiness and signals presentation without waiting for images. |
@@ -430,7 +431,7 @@ The browser imports the framework-independent protocol from `apps/mobile/src/pro
 
 Network and HTTP failures show retry views. Pin failure messages stay in the sidebar; failed writes do not manufacture a successful local order. New pins beyond the four visible mobile slots ask the user to unpin another; existing overflow remains accessible. Directory search filters the socket’s Canvas list. A removed or inaccessible canvas reports its read failure.
 
-Renderer termination reloads the relevant WebView. A terminated artifact renderer reopens its canonical URL in a new WebView on the cookie the platform still holds, never replaying the spent open ticket; a missing or expired cookie falls through to the fresh-access renewal. an access or active metadata failure removes the stale native surface and exposes web recovery. The native handler also recognizes a failed `/redeem` bootstrap. Returning from inline chat republishes the active artifact descriptor. Sign-out and account/organization changes discard native artifact views; a full application-page reload can rebuild the tab directory. Foregrounding refreshes the directory and resource metadata. Unsaved in-artifact state survives tab switching, but a full page/app reload, closing that tab or process termination can discard it. Native navigation and Liquid Glass require device validation; a browser preview cannot validate WKWebView cookies, Android Back dispatch, keyboard resizing, native gestures, or system accessibility.
+Renderer termination reloads the visible WebView at once; hidden WebViews, Home included, wait until it has presented, are shown, or are needed for fresh access. A terminated artifact renderer reopens its canonical URL in a new WebView on the cookie the platform still holds, never replaying the spent open ticket; a missing or expired cookie falls through to the fresh-access renewal. an access or active metadata failure removes the stale native surface and exposes web recovery. The native handler also recognizes a failed `/redeem` bootstrap. Returning from inline chat republishes the active artifact descriptor. Sign-out and account/organization changes discard native artifact views; a full application-page reload can rebuild the tab directory. Foregrounding refreshes the directory and resource metadata. Unsaved in-artifact state survives tab switching, but a full page/app reload, closing that tab or process termination can discard it. Native navigation and Liquid Glass require device validation; a browser preview cannot validate WKWebView cookies, Android Back dispatch, keyboard resizing, native gestures, or system accessibility.
 
 Sign-in uses the system browser and returns to `rally-mobile://auth/complete`. Cancelling leaves the app signed out, and retry creates a new attempt and verifier. External HTTP(S) links open in the system browser on both platforms; Android reports every navigation as `other`, so the handler uses the platform and destination origin instead of requiring iOS’s `click` signal. Offline canvas copies are intentionally out of scope. Provider credentials and app-store signing remain release setup.
 
@@ -559,12 +560,14 @@ are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
 
-### 2026-11-15 — Recover a terminated artifact renderer in place
+### 2026-11-15 — Recover a terminated renderer in place, visible screen first
 
 **What changed:** When iOS or Android kills an artifact's web content process,
 `ArtifactView` now remounts its WebView on the canonical URL instead of asking
 Home for fresh access. Fresh-access requests (`prepared-requests.ts`) now wait
-while Home reloads and are re-sent once Home can answer, rather than failing.
+while Home reloads and are re-sent once Home can answer, rather than failing. `recovery-order.ts` makes the screen in front recover
+first: hidden WebViews, Home included, reload only after it has presented, or
+sooner when shown or when a queued access request needs Home.
 
 **Why:** A field report showed a pinned tab stuck on "Rally couldn't load" after
 `artifact_process_terminated`, and Try again took far longer than the 500 ms
@@ -572,17 +575,25 @@ target. iOS usually kills Home's content process in the same pass, so the retry
 waited on a full Home reload, socket sync and access round trip; worse, Home's
 reload resolved the pending request with null and nothing retried once Home was
 back. The redeemed artifact cookie is persistent and lives in the platform cookie
-store, not the dead process, so the canonical URL alone is enough.
+store, not the dead process, so the canonical URL alone is enough. Reloading
+every killed WebView at once made Home's full application boot compete with the
+one document the person was waiting for.
 
 **Considered and rejected:** `reload()` on the same WebView: if the crash came
 before redemption finished, the last URL is the spent open ticket. Waiting on a
 timer for Home before retrying: it guesses a number and still pays for Home.
+A fixed delay before hidden reloads: a guessed number, where the visible
+screen's own presentation is the signal that matters. Recovery order yields one
+JavaScript turn so a visible renderer reported after a hidden one in the same
+pass still goes first.
 
 **Consequences:** Recovery costs one artifact document load when the cookie is
 valid. A lost cookie still takes the renewal path through Home, which now waits
 for Home rather than failing. An artifact that crashes its renderer on every
 load reloads each time, as the earlier retry did; no cap was added. In-artifact
-unsaved state is still lost on termination. Not yet measured on a device.
+unsaved state is still lost on termination. While Home waits, its socket is
+down, so pins and notifications catch up once it reloads. Anything that needs
+Home sooner must `wake` it, as fresh access does. Not yet measured on a device.
 
 ### 2026-11-14 — Reduce mobile launch and pinned-canvas startup work
 
