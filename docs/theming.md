@@ -250,24 +250,28 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
 
-### 2026-11-15 — `sys.font.scale.reading` enlarges a conversation on a phone
+### 2026-11-15 — `sys.font.scale.reading` sets a phone's conversation at Body size
 
 **What changed:** A new number token, `sys.font.scale.reading`, is `1` in both
 appearances. The stylesheet multiplies every reading size by it: the feed's
 message text and line height (a literal `14px / 20px` that overrides the prose
 token), the tool summary line, `.markdown-body` prose and headings, the feed
-byline, and the composer field with its line height, floor and the touch
-rule's 16px. `apps/browser/src/mobile.css` sets it to `1.15` on
-`.mobile-conversation`.
+byline, and the composer field with its line height and floor. On a touch
+screen the composer is `max(16px, 14px × scale)`, so it keeps the 16px floor
+that stops iOS zooming into it and otherwise matches the messages.
+`apps/browser/src/mobile.css` sets the token to `calc(17 / 14)` on
+`.mobile-conversation`, which puts message and composer text at 17pt, Apple's
+Body size, and the byline at about 14.6pt.
 
-**Why:** On a phone the conversation and composer read small, and nearly every
-size in the shared UI is a `px` literal, so neither a root `rem` change nor
-page zoom could target them. A multiplier lets one number move them together.
-It is applied where a size is read, not baked into the size tokens, for two
-reasons. First, a custom property's `var()` resolves where it is declared, and
-the tokens are declared on the root, so a scale inside the token could only be
-set page-wide. Applied at the use site, a host can scope it to a subtree, which
-is how the artifact view on the same phone keeps its own sizes. Second,
+**Why:** On a phone the conversation read at 14pt, under the Body size Apple's
+own apps use for conversation text. Nearly every size in the shared UI is a
+`px` literal, so neither a root `rem` change nor page zoom could reach them. A
+multiplier lets one number move them together. It is applied where a size is
+read, not baked into the size tokens, for two reasons. First, a custom
+property's `var()` resolves where it is declared, and the tokens are declared
+on the root, so a scale inside the token could only be set page-wide. Applied
+at the use site, a host can scope it to a subtree, which is how the artifact
+view on the same phone keeps its own sizes. Second,
 `markdown-mermaid-theme.ts` reads `--av-sys-font-size-prose` as a value, and a
 `calc()` there would hand Mermaid an expression instead of a length.
 
@@ -276,7 +280,8 @@ the token, or it stays put while its neighbours grow. The composer's textarea
 and highlight layer must take the same multiplier, or highlighted mentions
 drift off the typed text. Whole-page zoom (viewport width or CSS `zoom`) was
 rejected because it also enlarges chrome and the artifact view, which nobody
-asked for.
+asked for. The scale is fixed, not tied to the person's Dynamic Type setting;
+WebKit's `-apple-system-body` font could supply that, untested here.
 
 ### 2026-11-12 — Use the source palette in Expo navigation
 
