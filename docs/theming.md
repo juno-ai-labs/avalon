@@ -79,22 +79,8 @@ Text sizes are twelve roles, `sys.type.*`, named after Apple's text styles.
 A rule names a role (`font-size: var(--av-sys-type-callout)`), never a size.
 The older named sizes (`sys.font.size.base`, `sys.label.font-size`,
 `cmp.control.font-size`, `cmp.feed.byline.font-size` and the rest) are aliases
-of roles. `base.json` holds the desktop sizes:
-
-| Role | Desktop | Touch |
-| --- | --- | --- |
-| `caption-2` | 9.5 | 11 |
-| `caption-1` | 10.5 | 12 |
-| `footnote` | 11 | 13 |
-| `subheadline` | 12 | 15 |
-| `callout` | 13 | 16 |
-| `body` | 14 | 17 |
-| `headline` | 15 | 17 |
-| `title-3` | 16 | 20 |
-| `title-2` | 18 | 22 |
-| `title-1` | 22 | 28 |
-| `large-title` | 28 | 34 |
-| `display` | 34 | 38 |
+of roles. `base.json` holds the desktop sizes and `densities/touch.json` the
+touch ones.
 
 A **density** is a second dimension beside the appearance: a file under
 `densities/` sets base tokens, and the generator emits it as
@@ -107,7 +93,8 @@ another density. The touch values are iOS's defaults for each style, and each
 reads `--av-dynamic-type-<role>` first, which the mobile host sets from the
 person's Dynamic Type setting.
 
-The mobile host marks its whole app `touch` and its artifact content `default`,
+The mobile host marks `<html>` `touch` while its app is mounted, so portaled
+dialogs follow, and its artifact content `default`,
 so its chrome and conversation read at phone sizes and artifacts at their
 document sizes. A line height that has to hold a fixed rhythm is written
 against its role, `calc(var(--av-sys-type-callout) * 18 / 13)`, so it is the
