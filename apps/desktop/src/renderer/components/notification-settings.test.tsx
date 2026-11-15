@@ -44,6 +44,7 @@ describe('the Notifications settings pane', () => {
       'How to tell you about pinned Canvas updates',
       'How to tell you about access requests',
       'How to tell you about source requests',
+      'How to tell you about Canvas notices',
     ]);
     // The kinds still accepted when stored are never offered.
     expect(screen.queryByText(/thread|breakout|merge/iu)).toBeNull();
@@ -82,7 +83,7 @@ describe('the Notifications settings pane', () => {
     await waitFor(() => expect(api.getMyPreferences).toHaveBeenCalled());
 
     const pickers = await screen.findAllByLabelText(/^How to tell you about /u);
-    expect(pickers).toHaveLength(7);
+    expect(pickers).toHaveLength(8);
     for (const picker of pickers.slice(1)) {
       fireEvent.pointerDown(picker, { button: 0, ctrlKey: false });
       const choices = await screen.findAllByRole('menuitemcheckbox');
