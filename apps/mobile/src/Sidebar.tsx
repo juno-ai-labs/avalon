@@ -79,7 +79,9 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics, pull, ref
     Animated.timing(progress, { toValue, duration: (toValue ? OPEN_MS : CLOSE_MS) * remaining, easing: toValue ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic), useNativeDriver: true })
       .start(({ finished }) => { if (finished) after?.(); });
   };
-  const animateOpen = () => settle(1);
+  // Both the visible effect and onShow may ask to open; a second request must
+  // not restart the slide with no distance left, which would snap it open.
+  const animateOpen = () => { if (settled.current !== 1) settle(1); };
   const unmountUnlessShown = () => { if (!visibleRef.current) setMounted(false); };
   useEffect(() => {
     // A first open waits for the Modal to present (onShow) before sliding in.
@@ -100,10 +102,10 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics, pull, ref
       setMounted(true);
     },
     end: (translationX, velocityX, canceled) => {
+      pull?.x.setValue(0);
       if (!pulling.current || !pull) return;
       pulling.current = false;
       const fraction = Math.max(0, Math.min(1, translationX / drawerWidth));
-      pull.x.setValue(0);
       progress.setValue(fraction);
       settled.current = fraction;
       if (!canceled && edgePullOpens(fraction, velocityX)) pull.open();
