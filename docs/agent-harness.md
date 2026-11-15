@@ -1904,28 +1904,10 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ### 2026-11-15 — `publishing-a-feed` and `creating-a-podcast-episode` join the built-in skills
 
-**What changed:** A Terminal-owned skill for any feed an app subscribes to: a
-site that holds the feed and a page with a copyable link, one site row per
-entry with a stable id from its source, the feed route answered before any
-viewer check, media published as files of its own, and fetching the feed as an
-app would before reporting it works. The audience follows the site skill's
-standing procedure: public by default, set after publishing, then said back to
-the person with a closing question; the build never waits on it. Each format's
-elements (RSS, podcast, iCalendar) and the long-audio recipe are reference
-resources, read once the format is known. The feed is data powered: one
-renderer turns a show row and entry rows into the document on every request, a
-new entry is a row write, and nothing is hand-written XML. A podcast follows
-Apple Podcasts' rules (namespaces, channel and episode tags, its category list,
-3000-pixel artwork without transparency) in its own reference, and the cover
-is made with the image generator. `creating-a-podcast-episode` covers only the
-episode: a script rewritten for the speech model (formatting removed, lists
-and tables as sentences, numbers as spoken, URLs to the show notes), one voice
-and reading style per show, pieces recorded with a ledger and joined with
-ffmpeg at -16 LUFS, a length check against the script, chapters timed from
-the measured pieces and written into the MP3's ID3 frames, and generated
-episode art with no text. The same chapters become rows the feed serves as a
-Podcasting 2.0 chapters file, which Apple Podcasts reads from the feed on iOS
-26.2 and later; supplying both covers players that read either.
+**What changed:** Two Terminal-owned skills: `publishing-a-feed` for any feed
+an app subscribes to, rendered from the site's own rows, and
+`creating-a-podcast-episode` for one episode, split so a run that only records
+audio does not load the feed's rules.
 
 **Why:** A Canvas asked for a podcast feed of its newsletter recordings
 reported a hosting blocker. The real blockers were its own reader's viewer

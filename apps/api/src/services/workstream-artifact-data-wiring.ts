@@ -17,7 +17,7 @@ import { asArtifactId, asWorkspaceId, IdSchema, type ExecutionPrincipal } from "
 
 import { artifactHostDOName, workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
-import { loopAuthority, type LoopAuthorityInput } from "../lib/loop-authority";
+import { loopAuthority, type LoopAuthority, type LoopAuthorityInput } from "../lib/loop-authority";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
 import {
@@ -68,17 +68,10 @@ export function artifactDataReader(input: {
  * a run, and any other parent kind. The answer is host-derived from the loop
  * input; no model argument reaches it.
  */
-export type ArtifactDataWriteAccess =
-  | { kind: "canvas_chat" }
-  | { kind: "sidekick_run"; sidekickId: string; runId: string }
-  | { kind: "sidekick_wizard"; sidekickId: string };
+export type ArtifactDataWriteAccess = LoopAuthority;
 
 export function artifactDataWriteAccess(input: LoopAuthorityInput): ArtifactDataWriteAccess | null {
-  const authority = loopAuthority(input);
-  if (!authority) return null;
-  if (authority.kind === "canvas_chat") return { kind: "canvas_chat" };
-  if (authority.kind === "sidekick_wizard") return { kind: "sidekick_wizard", sidekickId: authority.sidekickId };
-  return { kind: "sidekick_run", sidekickId: authority.sidekickId, runId: authority.runId };
+  return loopAuthority(input);
 }
 
 export interface ArtifactDataWiringInput {

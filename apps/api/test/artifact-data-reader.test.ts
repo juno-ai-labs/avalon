@@ -34,9 +34,9 @@ describe("who a run reads a site's data as", () => {
 
 describe("which runs are offered write_artifact_data", () => {
   it("offers it to a Canvas's Chat run by a person", () => {
-    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", parentId: "c" })).toEqual({ kind: "canvas_chat" });
+    expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", parentId: "c" })).toEqual({ kind: "canvas_chat", canvasId: "c" });
     expect(artifactDataWriteAccess({ executionPrincipal: member, parentKind: "canvas", parentId: "c", substreamId: "0" }))
-      .toEqual({ kind: "canvas_chat" });
+      .toEqual({ kind: "canvas_chat", canvasId: "c" });
   });
 
   it("offers it to a Sidekick run, naming the Sidekick from the run and not from the parent", () => {
@@ -60,7 +60,7 @@ describe("which runs are offered write_artifact_data", () => {
   it("offers a background agent its root's access: the Chat's, the wizard's, or its run's", () => {
     expect(artifactDataWriteAccess({
       executionPrincipal: member, parentKind: "canvas", parentId: "c", substreamId: "helper", backgroundAgent: true,
-    })).toEqual({ kind: "canvas_chat" });
+    })).toEqual({ kind: "canvas_chat", canvasId: "c" });
     expect(artifactDataWriteAccess({
       executionPrincipal: member, parentKind: "automation", parentId: "s", substreamId: "helper", backgroundAgent: true,
     })).toEqual({ kind: "sidekick_wizard", sidekickId: "s" });

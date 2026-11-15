@@ -645,7 +645,7 @@ export class SiteData extends DurableObject {
       resourceId: linked.resourceId, attachedByUserId: AUTHOR_ID });
     const write = writeTool({
       workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, principal: { type: "user", userId: AUTHOR_ID }, reader: AUTHOR_ID,
-      write: { kind: "canvas_chat" },
+      write: { kind: "canvas_chat", canvasId: ROOM_ID },
     });
     await expect(write(linked.resourceId, "m1")).resolves.toMatchObject({ output: { resource: linked.resourceId } });
     expect(await linked.page()).toEqual([{ message_id: "m1", subject: "Subject m1" }]);

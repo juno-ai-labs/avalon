@@ -129,6 +129,12 @@ tools, and they refuse because no person reads its conversation, naming the
 root as where to ask (rule 14 of [`agent-tools.md`](agent-tools.md)). A tool
 added to that list is a decision and needs a reason here.
 
+The root's admission rule comes with its tools. A wizard turn runs only for a
+principal who manages the Sidekick, so a wizard-rooted agent's turn is checked
+the same way before it runs (`agent-loop-do.ts`, `wizardRootedAgent`) and is
+refused with `sidekick_edit_requires_manager` otherwise. A run's worker already
+re-asks its run's authority on every turn.
+
 **A wake-up is not a loop of its own either.** It continues the loop that
 scheduled it: the same conversation, the same flags the claim would derive
 for an input there (a run's continuation, a worker's root authority, the
@@ -280,7 +286,10 @@ the per-gate checks and adding background agents one gate at a time, which
 is how the gates drifted apart.
 
 **Consequences:** A new gate about what a loop may do calls
-`loopAuthority`; the tool-parity test fails a gate that does not. A tool
+`loopAuthority`; the tool-parity test fails a gate that does not. A root's
+admission rule moves with its tools: review found a wizard-rooted agent held
+the authoring tools without the wizard's manager check, which its turn now
+meets. A tool
 that stays with the root is named in
 [the rule](#a-background-agent-acts-with-its-roots-authority) with its
 reason.
