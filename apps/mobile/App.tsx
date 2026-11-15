@@ -18,8 +18,8 @@ import { notificationTarget } from './src/notification-target';
 import { recordTiming, shareDiagnostics } from './src/diagnostics';
 import * as Notifications from 'expo-notifications';
 import { useNetworkState } from 'expo-network';
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Linking, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, type KeyboardEvent, type ImageSourcePropType } from 'react-native';
+import { type ComponentRef, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, BackHandler, Linking, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions, type KeyboardEvent, type ImageSourcePropType } from 'react-native';
 import { NavigationContainer, StackActions, createNavigationContainerRef, DefaultTheme, DarkTheme, useIsFocused, type ParamListBase } from '@react-navigation/native';
 import { createNativeBottomTabNavigator, type NativeBottomTabScreenProps } from '@bottom-tabs/react-navigation';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -77,6 +77,11 @@ type Session = {
 };
 const SessionContext = createContext<Session | null>(null);
 const CanvasRoutesContext = createContext<Record<string, string | null>>({});
+type StageFrame = { x: number; y: number; width: number; height: number };
+/** How a pinned tab tells the PinStage where its frame is and whether it is in front. */
+const PinStageContext = createContext<{ frame: (canvasId: string, frame: StageFrame) => void; front: (canvasId: string, focused: boolean) => void }>({
+  frame: () => undefined, front: () => undefined,
+});
 function useSession() {
   const session = useContext(SessionContext);
   if (!session) throw new Error('Canvas session provider is missing');
@@ -197,7 +202,16 @@ function CanvasTabs() {
     : pins.map((id) => ({ name: id, id }));
   const routeCanvases = Object.fromEntries([['Home', 'Home'], ...routes.map(({ name, id }) => [name, id])]);
   const tabs = ['Home', ...pins];
-  return <View style={styles.fill}>
+  const [stageFrames, setStageFrames] = useState<Record<string, StageFrame>>({});
+  const [frontPin, setFrontPin] = useState<string | null>(null);
+  const stage = useMemo(() => ({
+    frame: (canvasId: string, frame: StageFrame) => setStageFrames((frames) => {
+      const known = frames[canvasId];
+      return known && known.x === frame.x && known.y === frame.y && known.width === frame.width && known.height === frame.height ? frames : { ...frames, [canvasId]: frame };
+    }),
+    front: (canvasId: string, focused: boolean) => setFrontPin((front) => focused ? canvasId : front === canvasId ? null : front),
+  }), []);
+  return <PinStageContext value={stage}><View style={styles.fill}>
     {Object.values(prepared.canvases).map((canvas) => <PrepareArtifactSession key={`${scope}:${canvas.canvasId}:${canvas.resourceId}`} canvas={canvas} scope={scope} />)}
     {tabs.map((id) => <TabIconAsset key={id} id={id} canvas={directory?.canvases.find((canvas) => canvas.id === id)} save={saveImage} />)}
     <CanvasRoutesContext value={routeCanvases}><Tabs.Navigator backBehavior="firstRoute" labeled={false} tabBarHidden={!directory || Boolean(chatReturn)}
@@ -215,7 +229,64 @@ function CanvasTabs() {
       component={Platform.OS === 'android' ? AndroidCanvasRoute : PinnedCanvasRoute}
       options={{ title: id ? directory?.canvases.find((canvas) => canvas.id === id)?.title || 'Canvas' : '', tabBarItemHidden: !id }}
     />)}
-  </Tabs.Navigator></CanvasRoutesContext></View>;
+  </Tabs.Navigator></CanvasRoutesContext>
+    <PinStage canvases={prepared.canvases} frames={stageFrames} front={frontPin} />
+  </View></PinStageContext>;
+}
+
+/**
+ * Every hosted tab-bar pin's artifact, loaded from launch so a tab tap shows a
+ * page already drawn. iOS creates a WKWebView only once its view is in a
+ * window, and a native tab's content is not until the tab is first shown, so
+ * the views live here, beside the tabs, instead of inside them. Each tab is an
+ * empty frame that reports its rectangle; the pin in front is placed over it,
+ * and the rest stay attached at zero opacity with touches and accessibility
+ * off. Hidden pins recover after the screen in front (`recovery-order.ts`).
+ */
+function PinStage({ canvases, frames, front }: { canvases: Record<string, PreparedCanvas>; frames: Record<string, StageFrame>; front: string | null }) {
+  const root = useRef<ComponentRef<typeof View>>(null);
+  const [origin, setOrigin] = useState({ x: 0, y: 0 });
+  // Start loading after the first frame, so the dashboard draws first.
+  const [started, setStarted] = useState(false);
+  useEffect(() => { const frame = requestAnimationFrame(() => setStarted(true)); return () => cancelAnimationFrame(frame); }, []);
+  // Every pinned tab shares one geometry; until one has reported, use the screen.
+  const { width, height } = useWindowDimensions();
+  const fallback = Object.values(frames)[0] ?? { x: 0, y: 0, width, height };
+  return <View ref={root} collapsable={false} pointerEvents="box-none" style={StyleSheet.absoluteFill}
+    onLayout={() => root.current?.measureInWindow((x, y) => setOrigin((known) => known.x === x && known.y === y ? known : { x, y }))}>
+    {started && Object.values(canvases).map((canvas) => <StagedPin key={canvas.canvasId} canvas={canvas}
+      frame={frames[canvas.canvasId] ?? fallback} origin={origin} visible={front === canvas.canvasId} />)}
+  </View>;
+}
+
+function StagedPin({ canvas, frame, origin, visible }: { canvas: PreparedCanvas; frame: StageFrame; origin: { x: number; y: number }; visible: boolean }) {
+  const { prepared } = useSession();
+  const { colors } = useTheme();
+  const headerHeight = useHeaderHeight();
+  const { access, failed, attempt, retry } = usePreparedSiteAccess(canvas, prepared.sessions, prepared.open, ARTIFACT_DOMAIN);
+  // A tap on a pin already drawn costs one frame; one still loading is timed
+  // from the tap to its first presentation.
+  const presented = useRef(false);
+  const tappedAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const start = performance.now();
+    if (!presented.current) { tappedAt.current = start; return; }
+    const next = requestAnimationFrame(() => recordTiming('pin_tap_to_artifact', performance.now() - start));
+    return () => cancelAnimationFrame(next);
+  }, [visible]);
+  const onPresented = useCallback(() => {
+    presented.current = true;
+    if (tappedAt.current === null) return;
+    recordTiming('pin_tap_to_artifact', performance.now() - tappedAt.current);
+    tappedAt.current = null;
+  }, []);
+  return <View collapsable={false} pointerEvents={visible ? 'auto' : 'none'}
+    accessibilityElementsHidden={!visible} importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
+    style={{ position: 'absolute', left: frame.x - origin.x, top: frame.y - origin.y, width: frame.width, height: frame.height, opacity: visible ? 1 : 0, backgroundColor: colors.background }}>
+    {access && <ArtifactView appUrl={APP_URL} key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={headerHeight + 12} focused={visible} onRetry={retry} onPresented={onPresented} />}
+    {(!access || failed) && visible && <Loading failed={failed} retry={retry} />}
+  </View>;
 }
 
 function PrepareArtifactSession({ canvas, scope }: { canvas: PreparedCanvas; scope: string }) {
@@ -499,7 +570,7 @@ function PinnedCanvasRoute(props: NativeBottomTabScreenProps<ParamListBase> & { 
 /** A hosted pin uses Home's existing API/socket session and opens its actual URL.
  * Other artifact types retain the shared browser renderer. */
 function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreenProps<ParamListBase> & { canvas: PreparedCanvas }) {
-  const { directory, controls, prepared, receiveCrashEvent, directoryOwner } = useSession();
+  const { directory, controls, receiveCrashEvent, directoryOwner } = useSession();
   const { colors } = useTheme();
   const { openChat } = useChatNavigation(navigation, route.name);
   const focused = useIsFocused();
@@ -507,20 +578,20 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
   const routeCanvases = useContext(CanvasRoutesContext);
   const network = useNetworkState();
   const keyboardVisible = useKeyboardVisible();
-  const headerHeight = useHeaderHeight();
   const tabBarHeight = useBottomTabBarHeight();
   const verticalBarEdge = useVerticalBarEdgeIOS();
   const bottomTabInset = Platform.OS === 'ios' && !Platform.isPad && !Platform.isTV && verticalBarEdge === null ? tabBarHeight : 0;
   const [sidebar, setSidebar] = useState(false);
-  const { access, failed, attempt, retry } = usePreparedSiteAccess(canvas, prepared.sessions, prepared.open, ARTIFACT_DOMAIN);
-  // The tab mounts on its first tap, so first render approximates the tap.
-  // A return to an already drawn tab is a native view switch and is not timed.
-  const openedAt = useRef<number | null>(performance.now());
-  const onPresented = useCallback(() => {
-    if (openedAt.current === null) return;
-    recordTiming('pin_tap_to_artifact', performance.now() - openedAt.current);
-    openedAt.current = null;
-  }, []);
+  // The artifact lives in the PinStage layer, loaded since launch; this screen
+  // is only the frame it is shown in. Report where that frame is, and whether
+  // this tab is the one in front.
+  const stage = useContext(PinStageContext);
+  const frame = useRef<ComponentRef<typeof View>>(null);
+  const measure = useCallback(() => frame.current?.measureInWindow((x, y, width, height) => {
+    if (width > 0 && height > 0) stage.frame(canvas.canvasId, { x, y, width, height });
+  }), [stage, canvas.canvasId]);
+  useEffect(() => { stage.front(canvas.canvasId, focused); if (focused) measure(); }, [stage, canvas.canvasId, focused, measure]);
+  useEffect(() => () => stage.front(canvas.canvasId, false), [stage, canvas.canvasId]);
   const send = (command: MobileCommand) => {
     if (command.type === 'open') {
       if (directory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(command.id)) {
@@ -554,8 +625,7 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
   }, [focused, directory, canvas.canvasId, canvas.title, navigation, openChat]);
   return <SafeAreaView edges={{ left: true, right: true, bottom: bottomTabInset === 0 }} style={{ backgroundColor: colors.background }}>
     <KeyboardAvoidingView enabled={keyboardVisible} style={[styles.fill, { marginBottom: bottomTabInset }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      {access && <ArtifactView appUrl={APP_URL} key={`${access.resourceId}:${access.version}:${attempt}`} access={access} background={colors.background} topInset={headerHeight + 12} focused={focused} onRetry={retry} onPresented={onPresented} />}
-      {(!access || failed) && <Loading failed={failed} retry={retry} />}
+      <View ref={frame} collapsable={false} style={styles.fill} onLayout={measure} />
     </KeyboardAvoidingView>
     {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, canvasId: canvas.canvasId, tabId: canvas.canvasId, view: 'artifact', artifactId: canvas.resourceId, title: canvas.title, artifactPicker: false }} close={() => setSidebar(false)} send={send} diagnostics={() => rootNavigation.navigate('Diagnostics')} />}
   </SafeAreaView>;
