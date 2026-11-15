@@ -101,7 +101,11 @@ export function ArtifactSessionPreparation({ access, onReady }: { access: Native
 }
 
 /** A first-party artifact WebView avoids Safari's cross-site cookie restriction.
- * Only a presentation inset is injected; generated code has no native capability. */
+ * Only a presentation inset is injected; generated code has no native capability.
+ *
+ * A terminated renderer recovers in place: the redeemed cookie lives in the
+ * platform cookie store, not the dead process, so a new WebView on the canonical
+ * URL needs no fresh access from Home. A lost cookie still reaches `renew`. */
 export function ArtifactView({ access, appUrl, background, topInset, onRetry }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; onRetry: () => void }) {
   const { colors } = useTheme();
   const web = useRef<WebView<unknown>>(null);
@@ -109,9 +113,14 @@ export function ArtifactView({ access, appUrl, background, topInset, onRetry }: 
   const [failed, setFailed] = useState(false);
   const renewing = useRef(false);
   const renew = () => { if (!renewing.current) { renewing.current = true; onRetry(); } };
+  // After a crash this access's one-time open URL is spent; only the cookie
+  // path remains. Fresh access from the parent starts from its own open URL.
+  const [recovery, setRecovery] = useState({ count: 0, openUrl: '' });
+  const uri = recovery.openUrl === access.openUrl ? access.canonicalUrl : access.openUrl;
+  const terminated = () => { recordFailure('artifact_process_terminated'); setFailed(false); setLoading(true); setRecovery(({ count }) => ({ count: count + 1, openUrl: access.openUrl })); };
   useEffect(() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); }, [topInset]);
   return <View style={{ flex: 1, backgroundColor: background }}>
-    <WebView<unknown> ref={web} source={{ uri: access.openUrl }} style={styles.web}
+    <WebView<unknown> key={recovery.count} ref={web} source={{ uri }} style={styles.web}
       sharedCookiesEnabled thirdPartyCookiesEnabled={false} javaScriptCanOpenWindowsAutomatically={false} setSupportMultipleWindows
       contentInsetAdjustmentBehavior="never" automaticallyAdjustContentInsets={false}
       removeIosKeyboardObserver
@@ -121,12 +130,12 @@ export function ArtifactView({ access, appUrl, background, topInset, onRetry }: 
       onLoadStart={() => { setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); setLoading(false); }}
       onError={() => { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }}
       onHttpError={(event) => {
-        const action = artifactLoadFailure(access, event.nativeEvent.url, event.nativeEvent.statusCode);
+        const action = artifactLoadFailure({ openUrl: uri, canonicalUrl: access.canonicalUrl }, event.nativeEvent.url, event.nativeEvent.statusCode);
         if (action === 'ignore') return;
         if (action === 'renew') { renew(); return; }
         recordFailure('artifact_load_failed'); setFailed(true);
       }}
-      onContentProcessDidTerminate={() => { recordFailure('artifact_process_terminated'); setFailed(true); setLoading(false); onRetry(); }} onRenderProcessGone={() => { recordFailure('artifact_process_terminated'); setFailed(true); setLoading(false); onRetry(); }}
+      onContentProcessDidTerminate={terminated} onRenderProcessGone={terminated}
       onOpenWindow={(event) => {
         try {
           const url = new URL(event.nativeEvent.targetUrl);
@@ -136,7 +145,7 @@ export function ArtifactView({ access, appUrl, background, topInset, onRetry }: 
       onShouldStartLoadWithRequest={(request) => {
         if (request.url === 'about:blank' || request.isTopFrame === false) return true;
         if (artifactAuthHandoff(access.canonicalUrl, request.url, appUrl)) {
-          if (access.openUrl === access.canonicalUrl) renew();
+          if (uri === access.canonicalUrl) renew();
           else { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }
           return false;
         }
