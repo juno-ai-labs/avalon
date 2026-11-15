@@ -417,7 +417,12 @@ export async function fireWorkstreamWakeup(
         // The run scheduled this wake-up itself; nobody sent it.
         sender: { kind: "system" },
       });
-      if (decided.outcome === "refused") return { fired: false };
+      if (decided.outcome === "refused") {
+        logStructuredEvent(env, "info", "workstream_wakeup_refused", {
+          workspace_id: row.workspace_id, workstream_id: row.workstream_id, wakeup_id: row.id, code: decided.code,
+        });
+        return { fired: false };
+      }
       continuation = decided;
     }
     // The Sidekick's shared conversation is its wizard's, and a wizard turn
@@ -427,6 +432,10 @@ export async function fireWorkstreamWakeup(
     if (wizard && !(principal.type === "user" && await personManagesSidekick(env, {
       workspaceId: row.workspace_id, automationId: row.workstream_id, userId: principal.userId,
     }))) {
+      logStructuredEvent(env, "info", "workstream_wakeup_refused", {
+        workspace_id: row.workspace_id, workstream_id: row.workstream_id, wakeup_id: row.id,
+        code: "sidekick_edit_requires_manager",
+      });
       return { fired: false };
     }
 

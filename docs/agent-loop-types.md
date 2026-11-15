@@ -23,7 +23,6 @@ This document owns only the catalogue and the matrix.
 | `apps/api/src/lib/canvas-chat.ts` | `isCanvasChat`, the one answer to "is this a Canvas's Chat itself". It does not check the principal. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | `claimPersistentLoopExecution`, which builds most turns from a pending input and sets `sidekickWizard`, `backgroundAgent`, `automationRun`, `automationContinuation`, `automationDelegation` and `agentExchange`. |
 | `apps/api/src/services/workstream-service.ts` | `fireWorkstreamWakeup` and `launchWorkstreamHarness`, the wake-up path, which derives the woken turn's loop kind as the claim does for any input. |
-| `apps/api/src/lib/driven-by-person.ts` | `drivenByPerson`, the one answer to whether a person drove a turn. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | A run's first activation; `reason` is its trigger kind. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Admission (`reason` is the admission's `origin`) and Retry. |
 | `apps/api/src/services/agent-model-flags.ts` | `conversationModelRole`: `canvas`, `sidekick_wizard` or `sidekick_run`. |
@@ -61,7 +60,7 @@ principal. It acts as the person and belongs to its own Canvas.
 | --- | --- | --- |
 | Person | `human_message`, `elicitation_answer`, `resource_authorization`, `manual_retry` | Yes |
 | Agent exchange | `agent_message` with `agentExchange` | No |
-| Wake-up | `scheduled_wakeup` with `scheduledWakeupId` | Counted as yes (`drivenByPerson`) |
+| Wake-up | `scheduled_wakeup` with `scheduledWakeupId` | Counted as yes |
 
 **2. A Sidekick's wizard.** `parentKind` `automation`, substream `"0"`, no
 `automationRun`, `sidekickWizard: true`. A person's message there is the
@@ -74,7 +73,7 @@ Sidekick's attached Canvases.
 | Person | A manager's edit, `elicitation_answer`, `resource_authorization`, `manual_retry` | That person | Yes |
 | Agent exchange | `agent_message`, only when the principal manages the Sidekick | The principal | No |
 | Self-review | `sidekick_review`: Rally's review notice after enough runs | An eligible coordinator delegate | No |
-| Wake-up | `scheduled_wakeup`, only while the principal manages the Sidekick | The principal | Counted as yes (`drivenByPerson`) |
+| Wake-up | `scheduled_wakeup`, only while the principal manages the Sidekick | The principal | Counted as yes |
 
 `reviewOwnsThisTurn` also claims the later turns that the review's own
 workers wake, so the review can record its submission.
@@ -164,7 +163,7 @@ this loop acts as" fails there.
 
 | Gate | Where | Offered to |
 | --- | --- | --- |
-| Source tools (`asksForSources`, `drivenByPerson`) | `integrations.ts` | A person's Chat or wizard turn, and any wake-up there. Not runs, delegation workers, background agents, agent exchange, or self-review. |
+| Source tools (`asksForSources`) | `integrations.ts` | A person's Chat or wizard turn, and any wake-up there. Not runs, delegation workers, background agents, agent exchange, or self-review. |
 | Elicitation and connection cards | `integrations.ts` (`routesAnswersToAgent`) | Not background agents, nor a Sidekick turn with `agentExchange`. |
 | Authoring tools | `integrations.ts` | Wizard turns (`sidekickWizard`). |
 | Conversation tools | `conversation-tools.ts` | Wizard (with `attach`) and runs (without). Not a Canvas's Chat. |
@@ -186,11 +185,9 @@ this loop acts as" fails there.
 - **A turn nobody typed does not act in a person's name.** Agent exchange,
   self-review, runs and background agents are content-driven or
   host-driven. Behavior that speaks for a person (asking in their name,
-  answering as them) is limited to a person's turn, which `drivenByPerson`
-  decides; `asksForSources` is the model to copy. A wake-up in a Chat or a
-  wizard counts as a person's turn by the owner's choice, because what it may
-  ask in a person's name still waits for a person to approve. Guard: `connector-tool-selection.test.ts`
-  and `driven-by-person.test.ts`.
+  answering as them) is limited to a person's turn; `asksForSources` is the
+  model to copy. A wake-up in a Chat or a wizard counts as a person's turn
+  (see [The loops](#the-loops)). Guard: `connector-tool-selection.test.ts`.
 - **A wake-up continues the loop that scheduled it.** A derivation the claim
   path makes for an input belongs in `fireWorkstreamWakeup` too, or the woken
   turn is a different loop from the one that asked for it. Guard: the firing
