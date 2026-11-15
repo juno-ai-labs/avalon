@@ -90,13 +90,12 @@ order for each. The goal is to automate this list away; remove an item here in
 the change that automates it.
 
 The deploy workflows already create these, so they are not on the list: R2
-buckets a Wrangler file declares, Queues and their dead-letter queues, D1
+buckets a Worker binds (Wrangler creates them on deploy), Queues and their dead-letter queues, D1
 databases and KV namespaces (found by name and their ids pinned into the
 Wrangler files during the deploy), D1 migrations, Worker custom domains on
 existing zones, the engineering MCP's Worker secrets and Access settings, the lakehouse
 pipelines (reconciled, with the account's own stream IDs adopted, on a deploy to
-any account other than the pinned one), the desktop release buckets with their
-location and storage class, and the release-retention Worker.
+any account other than the pinned one).
 
 ### Cloudflare account and zones
 
@@ -113,8 +112,11 @@ location and storage class, and the release-retention Worker.
   `includeSubDomains` and `nosniff`.
 - Turn on Email Sending and verify `rallywith.ai`, keeping its MX, SPF and DKIM
   records.
-- Attach `downloads.rallywith.ai` as an R2 custom domain on
+- Create the desktop release archive bucket with its location and storage
+  class, and attach `downloads.rallywith.ai` as an R2 custom domain on
   `avalon-desktop-releases`.
+- Deploy the release-retention Worker with `pnpm deploy:release-retention`, and
+  again after each change to it. No workflow deploys it.
 - Set up a Zero Trust team and identity provider, and create the Access
   application and policy for `mcp.internal.rallywith.ai` before its first deploy.
 - Make sure Workers Paid, Containers, Browser Run, Images, Workers AI and

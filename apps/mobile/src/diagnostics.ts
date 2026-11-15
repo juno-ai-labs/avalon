@@ -4,14 +4,15 @@ import * as Updates from 'expo-updates';
 import { File, Paths } from 'expo-file-system';
 import { Platform, Share } from 'react-native';
 
-const failureCodes = ['crash_reporting_failed', 'shell_render_failed', 'webview_load_failed', 'webview_process_terminated', 'artifact_load_failed', 'artifact_process_terminated', 'update_check_failed', 'background_registration_failed', 'notification_registration_failed'] as const;
+const failureCodes = ['crash_reporting_failed', 'shell_render_failed', 'webview_load_failed', 'webview_process_terminated', 'artifact_load_failed', 'artifact_process_terminated', 'artifact_access_failed', 'update_check_failed', 'background_registration_failed', 'notification_registration_failed'] as const;
 export type FailureCode = typeof failureCodes[number];
 const timingMetrics = ['launch_to_dashboard', 'pin_tap_to_artifact', 'artifact_recovery'] as const;
 /** Latency the person feels, against the 500 ms target. `launch_to_dashboard`
  * starts when JavaScript starts, so native process start is not included. */
 export type TimingMetric = typeof timingMetrics[number];
 export type RuntimeStatus = {
-  lastFailure?: { code: FailureCode; at: string };
+  /** `reason` is a fixed code shape (a status, a schema field name), never content. */
+  lastFailure?: { code: FailureCode; at: string; reason?: string };
   lastBackgroundSync?: string;
   timings?: Partial<Record<TimingMetric, { ms: number; at: string }>>;
   update: 'idle' | 'checking' | 'ready' | 'current' | 'failed' | 'development';
@@ -26,8 +27,8 @@ export function setRuntimeStatus(change: Partial<RuntimeStatus>): void {
   // Only fixed status codes and timestamps are stored, never customer content.
   try { file().write(JSON.stringify(status)); } catch { /* Diagnostics cannot block the app. */ }
 }
-export function recordFailure(code: FailureCode): void {
-  setRuntimeStatus({ lastFailure: { code, at: new Date().toISOString() } });
+export function recordFailure(code: FailureCode, reason?: string): void {
+  setRuntimeStatus({ lastFailure: { code, at: new Date().toISOString(), ...(reason ? { reason } : {}) } });
 }
 export function recordTiming(metric: TimingMetric, ms: number): void {
   setRuntimeStatus({ timings: { ...status.timings, [metric]: { ms: Math.round(ms), at: new Date().toISOString() } } });
@@ -42,7 +43,8 @@ export function restoreDiagnostics(): void {
       const failure = saved.lastFailure;
       if ('code' in failure && 'at' in failure && typeof failure.at === 'string') {
         const code = failureCodes.find((value) => value === failure.code);
-        if (code) status = { ...status, lastFailure: { code, at: failure.at } };
+        const reason = 'reason' in failure && typeof failure.reason === 'string' ? { reason: failure.reason } : {};
+        if (code) status = { ...status, lastFailure: { code, at: failure.at, ...reason } };
       }
     }
     if (saved && typeof saved === 'object' && 'timings' in saved && saved.timings && typeof saved.timings === 'object') {

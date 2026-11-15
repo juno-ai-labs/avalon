@@ -31,7 +31,9 @@ const INSTALL_FILES = new Set(["/favicon.svg", "/manifest.webmanifest", "/icon-1
  * deploy's files are uploaded to this bucket first and never change after.
  */
 async function pastAsset(env: Cloudflare.Env, pathname: string): Promise<Response> {
-  const object = await env.PAST_ASSETS.get(pathname.slice(1));
+  // The archive only extends what static assets serve: if it cannot be read,
+  // answer as static assets would have, with a 404, not a 500.
+  const object = await env.PAST_ASSETS.get(pathname.slice(1)).catch(() => null);
   if (!object) return unavailable();
   const headers = new Headers();
   object.writeHttpMetadata(headers);

@@ -966,7 +966,11 @@ still ends a session at once through membership incarnations, but a
 resource-scope change that publishes no artifact-session revocation (see the
 2026-09-21 entry below) no longer lapses within a day: it
 holds for as long as the person keeps opening the page. Any such change that
-must cut access has to publish a revocation.
+must cut access has to publish a revocation. Reverting this change does not
+shorten sessions minted while it was live: their rows keep an `expires_at` up
+to a year out, so a rollback also needs a one-off clamp of `expires_at` in
+every artifact host. Each mint also prunes open codes nobody redeemed once the
+code itself expires, since their rows now carry the year-long expiry.
 
 ### 2026-11-14 — Sites of connected data stay live and offer a Sidekick
 
