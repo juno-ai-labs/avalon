@@ -731,6 +731,14 @@ describe("connector tools selected for harness runs", () => {
         ["rally:sidekick-outcome report_outcome"]],
     ];
     expect((await toolNames(automationRunInput())).some((name) => name.includes("day_math"))).toBe(true);
+    // The gated tools are there to compare: a gate that dropped one from both
+    // sides would otherwise pass as parity.
+    expect(await toolNames(workflowInput())).toEqual(expect.arrayContaining(["write_artifact_data", "set_artifact_audience",
+      "avalon:agents archive_sidekick"]));
+    expect(await toolNames(automationConversationInput())).toEqual(expect.arrayContaining(["write_artifact_data",
+      "rally:sidekicks submit_draft", "rally:conversations attach"]));
+    expect(await toolNames(automationRunInput())).toEqual(expect.arrayContaining(["write_artifact_data",
+      "avalon:agents request_sidekick_change", "rally:conversations post"]));
     for (const [root, agent, rootOnly] of roots) {
       const rootTools = await toolNames(root);
       expect(rootTools).toEqual(expect.arrayContaining(rootOnly));
