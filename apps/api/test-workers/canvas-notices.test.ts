@@ -11,7 +11,7 @@
 
 import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 
@@ -22,6 +22,7 @@ import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { AuthContext } from "../src/env";
 import { splitSqlStatements } from "../src/lib/sql-statements";
 import { deliverPush } from "../src/queues/push-delivery-consumer";
+import { enqueueNotice } from "../src/services/push-delivery-service";
 import { registerPushDevice } from "../src/services/push-device-service";
 import type { ApnsOutcome } from "../src/services/push/apns-transport";
 import type { PushPayloads } from "../src/services/push/push-payload";
@@ -120,6 +121,22 @@ function chat() {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, CANVAS, asSubstreamId("0"))));
 }
 
+// A spy on the shared Queue prototype must not outlive the test that set it.
+afterEach(() => vi.restoreAllMocks());
+
+/**
+ * Every notice handed to the delivery queue, captured instead of sent. The
+ * spy sits on a prototype every Queue binding shares, and the setup's sharing
+ * save sends its own message on another queue a moment later, so only a
+ * message that points at a notice (`intentId`) counts.
+ */
+function captureQueue(): unknown[] {
+  const queued: unknown[] = [];
+  vi.spyOn(Object.getPrototypeOf(env.PUSH_DELIVERY_QUEUE) as { send: (body: unknown) => Promise<void> }, "send")
+    .mockImplementation(async (body) => { if (typeof body === "object" && body !== null && "intentId" in body) queued.push(body); });
+  return queued;
+}
+
 describe("a Canvas's notices", () => {
   it("are refused until turned on, which lands the record in the Chat", async () => {
     expect(await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
@@ -185,9 +202,7 @@ describe("a Canvas's notices", () => {
       action: { kind: "register", purpose: "New episodes.", operationId: "op-1" } });
     await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
       action: { kind: "send", title: "New episode", body: "Out now.", sourceId: "fallback" } });
-    const queue = Object.getPrototypeOf(env.PUSH_DELIVERY_QUEUE) as { send: (body: unknown) => Promise<void> };
-    const queued: unknown[] = [];
-    vi.spyOn(queue, "send").mockImplementation(async (body) => { queued.push(body); });
+    const queued = captureQueue();
     const message = { region: "global" as const, workspaceId: WORKSPACE_ID, recipientUserId: PARTICIPANT,
       intentId: `fallback:${PARTICIPANT}`, emailFallback: true as const };
 
@@ -202,6 +217,62 @@ describe("a Canvas's notices", () => {
     });
     expect(await deliverPush(pushEnv(), message, async (): Promise<ApnsOutcome> => ({ outcome: "sent" }))).toBe(true);
     expect(queued).toEqual([]);
+  });
+
+  it("queue one push that falls back to email, not two messages, for a person with both channels and a device", async () => {
+    const queued = captureQueue();
+    const address = { workspaceId: WORKSPACE_ID, recipientUserId: PARTICIPANT, intentId: "pair" };
+    await enqueueNotice(pushEnv(), address, ["push", "email"], { pushElseEmail: true });
+    expect(queued).toEqual([{ region: "global", ...address, emailFallback: true }]);
+    // Another kind with both chosen still gets both.
+    queued.length = 0;
+    await enqueueNotice(pushEnv(), address, ["push", "email"]);
+    expect(queued).toEqual([{ region: "global", ...address }, { region: "global", ...address, channel: "email" }]);
+  });
+
+  it("hold a person to this Canvas's choice at delivery, over Settings and after a mute", async () => {
+    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
+      action: { kind: "register", purpose: "New episodes.", operationId: "op-1" } });
+    await workspace().saveMemberPreferences({ workspaceId: WORKSPACE_ID, userId: PARTICIPANT, preferences: { notify: { canvasNotices: [] } } });
+    const actor = { userId: PARTICIPANT, actorRole: "member" as const };
+    await workspace().canvasSetNoticeChoice({ workspaceId: WORKSPACE_ID, canvasId: CANVAS, actor, channels: ["push"] });
+    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
+      action: { kind: "send", title: "New episode", body: "Out now.", sourceId: "chosen" } });
+    const apns = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    const message = { region: "global" as const, workspaceId: WORKSPACE_ID, recipientUserId: PARTICIPANT, intentId: `chosen:${PARTICIPANT}` };
+    // Settings has Canvas notices off, but this Canvas's choice is push.
+    expect(await deliverPush(pushEnv(), message, apns)).toBe(true);
+    expect(apns).toHaveBeenCalledTimes(1);
+
+    // Muted after the notice was queued: nothing is pushed.
+    await workspace().canvasSetNoticeChoice({ workspaceId: WORKSPACE_ID, canvasId: CANVAS, actor, channels: [] });
+    apns.mockClear();
+    expect(await deliverPush(pushEnv(), message, apns)).toBe(true);
+    expect(apns).not.toHaveBeenCalled();
+  });
+
+  it("refuse a choice from someone the Canvas does not admit, and keep none for them", async () => {
+    const outsider = asUserId("00000000-0000-7000-8000-0000000ec009");
+    const refused = await workspace().canvasSetNoticeChoice({ workspaceId: WORKSPACE_ID, canvasId: CANVAS,
+      actor: { userId: outsider, actorRole: "member" }, channels: [] }).then(() => null, (error: { code?: string }) => error.code);
+    expect(refused).toBe("canvas_not_found");
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      `SELECT count(*) AS count FROM canvas_notification_choices WHERE user_id = ?`, outsider).one().count)).toBe(0);
+  });
+
+  it("name the Sidekick and its Canvas in the alert when a Sidekick sends", async () => {
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO sidekick_conversation_attachments (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at)
+        VALUES (?, 'canvas', ?, '0', ?, ?)`, SIDEKICK, CANVAS, CREATOR, Date.now());
+    });
+    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP, action: { kind: "register", purpose: "Runs.", operationId: "op-1" } });
+    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: { parentKind: "automation", parentId: SIDEKICK, actingUserId: CREATOR },
+      action: { kind: "send", title: "Done", body: "It finished.", sourceId: "from-sidekick" } });
+    const apns = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    await deliverPush(pushEnv(), { region: "global", workspaceId: WORKSPACE_ID, recipientUserId: PARTICIPANT,
+      intentId: `from-sidekick:${PARTICIPANT}` }, apns);
+    const payload = JSON.parse(((apns.mock.calls[0] as unknown[])[2] as PushPayloads).apns) as { aps: { alert: { title: string } } };
+    expect(payload.aps.alert.title).toBe("A Sidekick in Reading list: Done");
   });
 
   it("refuse a Sidekick attached to two Canvases, naming both, and send from its one Canvas", async () => {
@@ -258,22 +329,25 @@ describe("a Canvas's notices", () => {
     expect((await intents()).map((intent) => intent.recipient_user_id)).toEqual([CREATOR, PARTICIPANT, MUTED].sort());
   });
 
-  it("send the record to open screens only once the registration it shows is saved", async () => {
-    const unsent = () => runInDurableObject(chat(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
-      `SELECT count(*) AS count FROM durable_outbox WHERE state IN ('pending', 'inflight') AND channel = 'semantic_realtime_v1'`).one().count);
-    const appended = await chat().appendHostRecord({ schemaVersion: 1, workspaceId: WORKSPACE_ID, parentKind: "canvas",
-      workstreamId: CANVAS, clientMessageId: "canvas-notices-record:direct", text: "This Canvas sends notices: Drafts.",
-      structuredContent: { kind: "canvas_notices_record", canvasId: CANVAS, purpose: "Drafts.",
-        registeredBy: { kind: "rally", name: "Rally" }, recordedAt: Date.now() }, occurredAt: Date.now() });
-    expect(appended.outcome).toBe("appended");
-    // Written, but held back until its caller has committed what it records.
-    expect(await unsent()).toBeGreaterThan(0);
-    await chat().publishPending({ workspaceId: WORKSPACE_ID, workstreamId: CANVAS });
-    expect(await unsent()).toBe(0);
-
-    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
-      action: { kind: "register", purpose: "New episodes.", operationId: "op-1" } });
-    expect(await unsent()).toBe(0);
+  it("save the registration before the record reaches the Chat, and land the record when the call is retried", async () => {
+    const records = () => runInDurableObject(chat(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      `SELECT count(*) AS count FROM canonical_conversation_turn_details WHERE message_type = 'system'`).one().count);
+    const setChatArchived = (archivedAt: number | null) => runInDurableObject(chat(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE workstream SET archived_at = ? WHERE id = 1`, archivedAt);
+    });
+    const register = () => workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
+      action: { kind: "register", purpose: "New episodes.", operationId: "op-ordered" } });
+    // The Chat refuses the record; the registration is already saved, so no screen can see a record without it.
+    await setChatArchived(Date.now());
+    expect(await register()).toEqual({ outcome: "refused", code: "canvas_archived" });
+    expect(await records()).toBe(0);
+    expect((await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS,
+      actor: { userId: PARTICIPANT, actorRole: "member" } })).notices).toMatchObject({ purpose: "New episodes." });
+    // The harness retries the same call, and its record lands once.
+    await setChatArchived(null);
+    expect(await register()).toEqual({ outcome: "registered", canvasId: CANVAS, purpose: "New episodes.", changed: true });
+    expect(await register()).toEqual({ outcome: "registered", canvasId: CANVAS, purpose: "New episodes.", changed: true });
+    expect(await records()).toBe(1);
   });
 
   it("keep a newer registration when an older one is retried", async () => {
