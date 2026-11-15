@@ -60,7 +60,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 87;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 88;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3873,6 +3873,15 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `CREATE INDEX participant_transcript_message_recency_idx ON participant_transcript_turns(created_at DESC)
          WHERE entry_kind = 'conversation' AND message_type <> 'tool'`,
     ],
+  },
+  {
+    version: 88,
+    description: "record what started a background agent's root",
+    // The `reason` of the turn that started the agent's root conversation, so
+    // a gate can tell a self-review's agents from a person's wizard agents,
+    // whose root substream is the same `"0"` (docs/agent-loop-types.md). NULL
+    // is an agent started before this version; nothing is backfilled.
+    statements: [`ALTER TABLE background_agent ADD COLUMN root_reason TEXT`],
   },
 ];
 

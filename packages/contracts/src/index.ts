@@ -3013,6 +3013,13 @@ export const WorkstreamWorkflowInputSchema = z.object({
   wizardCanvasId: IdSchema.optional(),
   /** Host-derived conversation kind; not a model-selectable execution option. */
   backgroundAgent: z.boolean().optional(),
+  /**
+   * Beside `backgroundAgent`: the `reason` of the turn that started this
+   * agent's root, `sidekick_review` for one the self-review started. Absent
+   * for an agent started before it was recorded. `docs/agent-loop-types.md`
+   * owns it.
+   */
+  backgroundAgentRootReason: z.string().min(1).max(500).optional(),
   activityId: IdSchema.nullable(),
   /**
    * Set when the workspace scheduler started this run from a due wake-up. The
