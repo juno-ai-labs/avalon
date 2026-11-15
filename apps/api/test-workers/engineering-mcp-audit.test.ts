@@ -96,6 +96,7 @@ describe("engineering MCP tool-call audit log", () => {
     const result = await rpc(query, { auditLakehouse: refusing });
 
     expect(result).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringMatching(/^engineering_audit_unavailable/) }] });
+    expect(result).toMatchObject({ content: [{ text: expect.stringContaining("Retry the call. If it keeps failing, check that the stream still exists") }] });
     expect(provider).not.toHaveBeenCalled();
   });
 
@@ -105,6 +106,10 @@ describe("engineering MCP tool-call audit log", () => {
     const result = await rpc(query, { auditLakehouse: null });
 
     expect(result).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringMatching(/^engineering_audit_unconfigured:/) }] });
+    // The operator who hits this is rarely who deployed, so the refusal names the fix.
+    expect(result).toMatchObject({ content: [{ text: expect.stringContaining(
+      "`node scripts/ensure-cloudflare-inference-lakehouse.mjs --deploy-bindings` and then `pnpm --filter @rally/engineering-mcp run deploy`",
+    ) }] });
     expect(provider).not.toHaveBeenCalled();
   });
 
