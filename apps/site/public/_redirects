@@ -85,6 +85,7 @@
 /help/sidekicks/the-sidekicks-window/  /help/sidekicks/the-sidekicks-section/  301
 /help/sidekicks/sidekicks-in-channels/  /help/sidekicks/where-results-go/  301
 /help/things-rally-makes/live-sites/  /help/things-rally-makes/reactive-sites/  301
+/help/things-rally-makes/live-sites.md  /help/things-rally-makes/reactive-sites.md  301
 
 # Wildcard rules come last. Cloudflare counts every rule after the first
 # wildcard as dynamic, and allows 100 dynamic rules but 2,000 static ones, so
