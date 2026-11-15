@@ -372,12 +372,20 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
 - **Offered to a turn a person started, and to a wizard turn a Canvas's
   Chat started for them** (`asksForSources`). The latter is a wizard turn
   whose `agentExchange` sender is a Canvas's Chat, or the turn an answer to
-  one of its questions started (`wizardTurnCanvasId`). Refused:
+  one of its questions started (`wizardTurnCanvasId`). Every other loop with
+  the Sidekicks plugin is offered the same three, with a `request_source`
+  that asks nobody and refuses by name with the route to a turn that may ask
+  (`sidekickSourceRefusalTool`; [`agent-tools.md`](agent-tools.md) rule 14):
   - a Sidekick run (`automationRun`) and its delegation workers
-    (`automationDelegation`);
-  - a background agent (`backgroundAgent`);
+    (`automationDelegation`): `sidekick_source_request_from_run`, which says
+    to name the ask in the run's result for a person who manages it;
+  - a background agent (`backgroundAgent`):
+    `sidekick_source_request_from_background_agent`, which says to send the
+    ask to the agent it works for with `send_message`;
   - any other turn another agent's message started, a run's
-    `request_sidekick_change` to its wizard among them.
+    `request_sidekick_change` to its wizard among them:
+    `sidekick_source_request_from_agent_message`, which says to reply to that
+    agent.
 
   An ask goes out in a person's name with a filter the model wrote, and the
   people asked get it by email, so nothing a loop read may bring one about.
@@ -808,7 +816,9 @@ one as it is resolved; the resolution becomes a changelog entry.
 
 **What changed:** `asksForSources` refuses background agents and every turn
 another agent's message started, except a wizard turn a Canvas's Chat
-started (`wizardTurnCanvasId`). A wizard question drawn in a Canvas is sent
+started (`wizardTurnCanvasId`). A refused loop is no longer left without the
+source tools: it holds all three, and its `request_source` refuses by name
+with the route to a turn that may ask. A wizard question drawn in a Canvas is sent
 to that Canvas's room again when it is answered or cancelled
 (`reviseConversationPost`), and its card there re-reads it.
 

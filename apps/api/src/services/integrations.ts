@@ -2263,7 +2263,7 @@ function createAvalonAutomationsPlugin(
     })), ...createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
       .flatMap((tool) => expandPages(tool, "sidekick", null)),
       ...(delegationUser ? [...sidekickDelegationTools(env, input, delegationUser, false),
-        ...(asksForSources(input) ? sidekickSourceTools(env, input, delegationUser, false) : [])] : [])],
+        ...sidekickSourceTools(env, input, delegationUser, false, asksForSources(input))] : [])],
     onActivate: async () => prepare(),
   };
 }
@@ -5287,11 +5287,13 @@ function asksForSources(input: Pick<WorkstreamWorkflowInput,
 /**
  * The built-in skills a loop is offered. A skill that names tools is listed
  * only where a plugin in scope holds them: `setting-up-a-filtered-trigger`
- * tells the model to call `sidekick_request_source`, which a Sidekick run and
- * a background agent do not have (`asksForSources`).
+ * tells the model to call `sidekick_request_source`, which only a loop with
+ * the Sidekicks plugin holds, refusing where it may not ask (`asksForSources`).
  */
 function builtInSkillsFor(plugins: readonly HarnessPlugin[]): HarnessSkill[] {
-  const asks = plugins.some((plugin) => plugin.tools.some((tool) => tool.definition.capability === "rally.sidekick.sources.request"));
+  // A loop refused the ask holds its refusing tool, which says where to ask instead; the skill is listed there too.
+  const asks = plugins.some((plugin) => plugin.tools.some((tool) =>
+    tool.definition.capability === "rally.sidekick.sources.request" || tool.definition.capability === "rally.sidekick.sources.request_elsewhere"));
   return asks ? [...BUILT_IN_SKILLS] : BUILT_IN_SKILLS.filter((skill) => skill.name !== SETTING_UP_A_FILTERED_TRIGGER_SKILL.name);
 }
 
@@ -5991,7 +5993,7 @@ async function loadHarnessTools(
       tools: [...(readsRuns ? createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
         .flatMap((tool) => expandPages(tool, "sidekick", null)) : []),
       ...sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
-      ...(asksForSources(input) ? sidekickSourceTools(env, input, input.executionPrincipal.userId, false) : [])],
+      ...sidekickSourceTools(env, input, input.executionPrincipal.userId, false, asksForSources(input))],
     } : null;
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
@@ -7867,7 +7869,7 @@ export async function reenterInterruptedWriteForRecovery(
         shortWireName: "sidekick", description: "Sidekick delegation recovery", preload: false,
         // Every tool, whatever the loop: a run's change recorded before runs lost the tool still has to reconcile.
         tools: [...sidekickDelegationTools(env, input, userId, false, true),
-          ...(asksForSources(input) ? sidekickSourceTools(env, input, userId, false) : [])] };
+          ...sidekickSourceTools(env, input, userId, false, asksForSources(input))] };
     }
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };
