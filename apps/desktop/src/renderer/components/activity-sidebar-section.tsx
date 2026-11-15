@@ -199,7 +199,9 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
         || 'Someone';
     }
     if (item.actor.kind === 'sidekick') {
-      return item.parentTitle ?? (item.actor.id ? sidekicksById.get(item.actor.id)?.name : undefined) ?? 'A Sidekick';
+      const named = item.actor.id ? sidekicksById.get(item.actor.id)?.name : undefined;
+      // A Sidekick's own row is parented by the Sidekick; a Canvas notice's by the Canvas, whose title is not the sender's.
+      return (item.parentKind === 'canvas' ? named : item.parentTitle ?? named) ?? 'A Sidekick';
     }
     return (item.actor.id ? membersById.get(item.actor.id)?.name : undefined) || 'Someone';
   };

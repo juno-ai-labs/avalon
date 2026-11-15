@@ -81,12 +81,25 @@ export async function deliverPush(
     });
     return true;
   }
-  return await sendPushNotice(env, workspace, notice, send, faults);
+  const pushed = await sendPushNotice(env, workspace, notice, send, faults);
+  // Push else email: a push that settled without reaching any device (none
+  // left live, or every token refused) sends the email in its place. The
+  // email message reads the person's choice again when it is consumed.
+  if (pushed.complete && !pushed.reached && message.emailFallback && env.PUSH_DELIVERY_QUEUE) {
+    await env.PUSH_DELIVERY_QUEUE.send({ region: message.region, workspaceId: message.workspaceId,
+      recipientUserId: message.recipientUserId, intentId: message.intentId, channel: "email" });
+    logInfo(env, "push_delivery_fell_back_to_email", { intent_id: pointer });
+  }
+  return pushed.complete;
 }
 
-/** The push sink: the notice as each device's transport renders it, once per device. */
+/**
+ * The push sink: the notice as each device's transport renders it, once per
+ * device. `complete` is whether the message is done; `reached` whether any
+ * device holds a receipt for it, from this attempt or an earlier one.
+ */
 async function sendPushNotice(env: Env, workspace: DurableObjectStub<WorkspaceDO>, notice: Notice, send: PushSend,
-  faults: ProviderFaults): Promise<boolean> {
+  faults: ProviderFaults): Promise<{ complete: boolean; reached: boolean }> {
   const id = asWorkspaceId(notice.workspaceId);
   // The badge counts what this person's sidebar lists, and a guest's lists less.
   const member = await workspaceRegionalDatabase(env).prepare(`SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
@@ -115,15 +128,17 @@ async function sendPushNotice(env: Env, workspace: DurableObjectStub<WorkspaceDO
   const devices = await livePushDevices(env, row.recipientUserId);
   if (!devices.length) logInfo(env, "push_delivery_skipped", { intent_id: row.intentId, reason: "no_live_devices" });
   let complete = true;
+  let reached = false;
   for (const device of devices) {
     const receipt = await db.prepare(`SELECT 1 FROM push_delivery_receipts WHERE workspace_id = ? AND intent_id = ? AND device_id = ?`)
       .bind(row.workspaceId, row.intentId, device.id).first();
-    if (receipt) continue;
+    if (receipt) { reached = true; continue; }
     // A refused credential fails every device on that transport alike.
     if (faults.has(device.transport)) { complete = false; continue; }
     const result = await send(env, device, payload, collapseId);
     const at = new Date().toISOString();
     if (result.outcome === "sent") {
+      reached = true;
       await db.batch([
         db.prepare(`INSERT OR IGNORE INTO push_delivery_receipts VALUES (?, ?, ?, ?)`).bind(row.workspaceId, row.intentId, device.id, at),
         db.prepare(`UPDATE user_push_devices SET last_delivery_at = ?, last_failure_code = NULL WHERE id = ?`).bind(at, device.id),
@@ -143,7 +158,7 @@ async function sendPushNotice(env: Env, workspace: DurableObjectStub<WorkspaceDO
     }
     logInfo(env, "push_delivery_terminal", { intent_id: row.intentId, device_id: device.id, ...result });
   }
-  return complete;
+  return { complete, reached };
 }
 /**
  * Once a transport's credential is refused, the rest of the batch skips that

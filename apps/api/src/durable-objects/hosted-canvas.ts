@@ -785,10 +785,17 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       throw new ApiError(409, appended.code === "workstream_archived" ? "canvas_archived" : appended.code, "The Canvas's Chat did not take the record");
     }
     const recordMessageId = appended.messageId;
-    this.storage.transactionSync(() => {
+    // Another registration may have landed while the record was appended, or
+    // this is a retry of one a newer registration has since replaced. Message
+    // ids sort by time, so the newer record wins and this one stays history.
+    const newer = this.storage.transactionSync(() => {
+      const current = canvasNoticeRegistration(this.sql, this.canvasId);
+      if (current && current.record_message_id > recordMessageId) return current;
       writeCanvasNoticeRegistration(this.sql, { canvasId: this.canvasId, purpose, agent: input.agent, recordMessageId, now: Date.now() });
       this.host.noteCanvasDirectoryChanged(this.canvasId);
+      return null;
     });
+    if (newer) return { canvasId: this.canvasId, purpose: newer.purpose, changed: false, recordMessageId: newer.record_message_id };
     return { canvasId: this.canvasId, purpose, changed: true, recordMessageId };
   }
 

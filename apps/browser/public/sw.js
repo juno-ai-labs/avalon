@@ -64,8 +64,10 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(message.title, {
       body: typeof message.body === "string" ? message.body : "",
       tag: typeof message.tag === "string" ? message.tag : undefined,
-      // Reply tags are reused after the server's batching/cooldown checks.
-      renotify: message.rally?.kind === "new_message" && typeof message.tag === "string" && message.tag.length > 0,
+      // Reply tags are reused after the server's batching/cooldown checks, and
+      // a Canvas's notices share one tag; each such push is news, so it alerts.
+      renotify: (message.rally?.kind === "new_message" || message.rally?.kind === "canvas_notice")
+        && typeof message.tag === "string" && message.tag.length > 0,
       data: { url: localUrl(message.rally && message.rally.url), workspacePath: workspacePath(message.rally) },
     }),
     setBadge(message.badge),

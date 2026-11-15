@@ -17,22 +17,31 @@ import { Button, ErrorNotice } from './primitives';
 /**
  * A Canvas's notices on the client (docs/PRDs/2026-11-14_canvas-notices):
  * the record its Chat shows when an agent turns them on, the title menu's
- * Notifications section, and the banner under its title that offers a member of an
- * Organization-wide Canvas to join it (a banner under its title). All three read the viewer's
+ * Notifications section, and the banner under its title that offers a member
+ * of an Organization-wide Canvas to join it. All three read the viewer's
  * `notices` on the Canvas detail and change it through the same two calls.
  */
 
-/** Join the Canvas, or choose this viewer's channels for it; each answers the Canvas detail. */
+/**
+ * Join the Canvas, or choose this viewer's channels for it; each answers the
+ * Canvas detail. `settingsChannels` is what Settings says for Canvas notices,
+ * which a Canvas with no choice of its own follows.
+ */
 function useCanvasNoticeActions(canvasId: string) {
-  const { api } = useCollaborationSession();
+  const { api, session } = useCollaborationSession();
   const queryClient = useQueryClient();
+  // A guest is refused the members' preference routes and keeps the defaults.
+  const settingsChannels = useMemberPreferences(session?.workspace?.accessClass === 'guest' ? null : api,
+    session?.workspace?.id ?? 'unbound').data.notify.canvasNotices ?? DEFAULT_NOTIFICATION_CHANNELS.canvasNotices;
   const settle = (detail: CanvasDetail) => queryClient.setQueryData(canvasDetailQueryKey(canvasId), detail);
   const join = useMutation({ mutationFn: () => api!.joinCanvas(canvasId), onSuccess: settle });
   const choose = useMutation({
     mutationFn: (channels: NotificationChannel[] | null) => api!.setCanvasNoticeChoice(canvasId, channels),
     onSuccess: settle,
   });
-  return { join, choose, error: join.error ?? choose.error };
+  // Back to Settings, unless Settings has these off too: then both channels, so turning on turns them on.
+  const turnOn = () => choose.mutate(settingsChannels.length > 0 ? null : [...DEFAULT_NOTIFICATION_CHANNELS.canvasNotices]);
+  return { join, choose, turnOn, settingsChannels, error: join.error ?? choose.error };
 }
 
 /** How this viewer gets the Canvas's notices, in words. */
@@ -73,7 +82,7 @@ const CHANNEL_OPTIONS: ChannelOption[] = [
  * them by push.
  */
 export function CanvasNoticesRecordCard({ record }: { record: CanvasNoticesRecord }): React.JSX.Element {
-  const { api, session } = useCollaborationSession();
+  const { api } = useCollaborationSession();
   const detail = useQuery({
     queryKey: canvasDetailQueryKey(record.canvasId),
     queryFn: ({ signal }) => api!.getCanvas(record.canvasId, signal),
@@ -93,14 +102,12 @@ export function CanvasNoticesRecordCard({ record }: { record: CanvasNoticesRecor
   }, [stale, queryClient, record.canvasId]);
   // Only the record that says what notices are about now carries controls; an older one is history.
   const current = notices?.purpose === record.purpose ? notices : null;
-  // A guest is refused the members' preference routes and keeps the defaults.
-  const settingsChannels = useMemberPreferences(session?.workspace?.accessClass === 'guest' ? null : api,
-    session?.workspace?.id ?? 'unbound').data.notify.canvasNotices ?? DEFAULT_NOTIFICATION_CHANNELS.canvasNotices;
   const muted = current?.channels?.length === 0;
-  const chosen = current?.channels ?? settingsChannels;
+  const chosen = current?.channels ?? actions.settingsChannels;
+  // `null` follows Settings, so the device line shows only where these go by push.
+  const pushing = current?.participant && !muted && chosen.includes('push');
   const toggle = (channel: NotificationChannel) =>
     actions.choose.mutate(chosen.includes(channel) ? chosen.filter((candidate) => candidate !== channel) : [...chosen, channel]);
-  const pushing = current?.participant && !muted && (current.channels === null || current.channels.includes('push'));
   return <section aria-label="Canvas notices" className="canvas-notices-record">
     <div className="canvas-notices-record-heading">
       <IconBell aria-hidden="true" size={16} stroke={1.8} />
@@ -112,7 +119,7 @@ export function CanvasNoticesRecordCard({ record }: { record: CanvasNoticesRecor
       ? <div className="canvas-notices-record-controls">
         <span>{channelsWords(current.channels)}</span>
         {muted
-          ? <Button disabled={actions.choose.isPending} onClick={() => actions.choose.mutate(null)}>Turn on</Button>
+          ? <Button disabled={actions.choose.isPending} onClick={actions.turnOn}>Turn on</Button>
           : <>
             <ChannelPicker disabled={actions.choose.isPending} label="How this Canvas tells you" none="Muted"
               onToggle={(channel) => toggle(channel as NotificationChannel)} options={CHANNEL_OPTIONS} selected={chosen} />
@@ -153,7 +160,7 @@ export function CanvasNoticesMenuSection({ canvas }: { canvas: CanvasDetail | un
           <span className="title-menu-item-copy">Get notifications</span>
         </MenuActionItem>
         : muted
-          ? <MenuActionItem className="menu-item title-menu-item title-menu-action" onSelect={() => actions.choose.mutate(null)}>
+          ? <MenuActionItem className="menu-item title-menu-item title-menu-action" onSelect={actions.turnOn}>
             <IconBell aria-hidden="true" size={16} stroke={1.8} />
             <span className="title-menu-item-copy">Turn on notifications</span>
           </MenuActionItem>

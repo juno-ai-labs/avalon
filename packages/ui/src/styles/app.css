@@ -8839,7 +8839,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   .billing-skeleton > .skeleton-bar { animation: none; }
 }
 
-/* A Canvas's notices: the record in its Chat, its device line, and the join toast (components/canvas-notices.tsx). */
+/* A Canvas's notices: the record in its Chat, its device line, and the join banner (components/canvas-notices.tsx). */
 .canvas-notices-record { border:1px solid var(--av-sys-color-border-default); border-radius:12px; padding:12px 14px; display:flex; flex-direction:column; gap:6px; margin:8px 0; background:var(--av-sys-color-surface-elevated); }
 .canvas-notices-record-heading { display:flex; align-items:center; gap:8px; font-size:13px; }
 .canvas-notices-record-purpose { margin:0; font-size:14px; line-height:20px; overflow-wrap:anywhere; }

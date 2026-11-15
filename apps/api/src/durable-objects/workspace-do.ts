@@ -5655,15 +5655,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }): Promise<
     | { outcome: "registered"; canvasId: string; purpose: string; changed: boolean; recordMessageId: string }
     | { outcome: "sent"; canvasId: string; recipients: number }
-    | { outcome: "refused"; code: string; available?: { canvasId: string; title: string }[] }
+    | { outcome: "refused"; code: string; available?: { canvasId: string; title: string }[]; unnamed?: number }
   > {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);
     const sql = this.state.storage.sql;
+    // Whether a person may still open a Canvas: an active relationship and
+    // the Canvas's own admission, as opening it checks.
+    const opens = async (canvas: string, userId: string): Promise<boolean> => {
+      const row = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, canvas).toArray()[0];
+      const relationship = await this.readRelationship(input.workspaceId, userId);
+      const actorRole = relationship?.accessClass === "member" ? relationship.role ?? "member" : null;
+      return row !== undefined && relationship?.status === "active" && canvasReaderAllows(row, { userId, actorRole }, sql);
+    };
     let canvasId: string;
     let agent: { kind: "rally" | "sidekick"; id: string | null; name: string };
     if (input.loop.parentKind === "canvas") {
       canvasId = input.loop.parentId;
+      // A Chat's background agent can outlive its person's access.
+      if (input.loop.actingUserId !== null && !await opens(canvasId, input.loop.actingUserId)) {
+        return { outcome: "refused", code: "canvas_access_denied" };
+      }
       agent = { kind: "rally", id: null, name: "Rally" };
     } else {
       const sidekickId = input.loop.parentId;
@@ -5676,22 +5688,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           ORDER BY attachment.attached_at, attachment.parent_id`,
         sidekickId, input.workspaceId,
       ).toArray();
+      const reach = this.sidekickReach(sidekickId, input.loop.reachRunId, input.loop.actingUserId);
+      const reaches = async (canvas: string) => reach.itself || (reach.userId !== null && await opens(canvas, reach.userId));
       if (attached.length === 0) return { outcome: "refused", code: "notifications_sidekick_has_no_canvas" };
       if (attached.length > 1) {
-        return { outcome: "refused", code: "notifications_sidekick_has_several_canvases",
-          available: attached.map((row) => ({ canvasId: row.canvas_id, title: row.title })) };
+        // Counted before any access filter, so the refusal holds for everyone;
+        // named only where this reach may open the Canvas, as its context does.
+        const named: { canvasId: string; title: string }[] = [];
+        for (const row of attached) if (await reaches(row.canvas_id)) named.push({ canvasId: row.canvas_id, title: row.title });
+        return { outcome: "refused", code: "notifications_sidekick_has_several_canvases", available: named,
+          unnamed: attached.length - named.length };
       }
       canvasId = attached[0]!.canvas_id;
-      const reach = this.sidekickReach(sidekickId, input.loop.reachRunId, input.loop.actingUserId);
-      if (!reach.itself) {
-        const row = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, canvasId).toArray()[0]!;
-        const relationship = reach.userId === null ? null : await this.readRelationship(input.workspaceId, reach.userId);
-        const actorRole = relationship?.accessClass === "member" ? relationship.role ?? "member" : null;
-        if (reach.userId === null || relationship?.status !== "active"
-          || !canvasReaderAllows(row, { userId: reach.userId, actorRole }, sql)) {
-          return { outcome: "refused", code: "canvas_access_denied" };
-        }
-      }
+      if (!await reaches(canvasId)) return { outcome: "refused", code: "canvas_access_denied" };
       const name = sql.exec<{ title: string }>(`SELECT title FROM automation_directory WHERE automation_id = ?`, sidekickId).toArray()[0]?.title;
       agent = { kind: "sidekick", id: sidekickId, name: name || "A Sidekick" };
     }
