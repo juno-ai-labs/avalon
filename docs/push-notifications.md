@@ -362,8 +362,13 @@ Canvas or a recipient. The Canvas is the host's: a Canvas's Chat and its
 agents use their own; a Sidekick's loops use the Sidekick's one attached
 Canvas, counted before any access filter, and refuse
 `notifications_sidekick_has_no_canvas` or
-`notifications_sidekick_has_several_canvases` (naming them in `available`)
-otherwise. A Sidekick sends as itself; a Chat sends as Rally.
+`notifications_sidekick_has_several_canvases` otherwise; that refusal names
+only the Canvases the loop's reach may open (`available`) and counts the rest
+(`unnamed`). Either way the loop's person, or a run's reach, must still open
+the Canvas, or the call is refused `canvas_access_denied`: a Chat's background
+agent can outlive its person's access. A Sidekick sends as itself; a Chat
+sends as Rally. Recovery re-enters an interrupted call like any
+`record_before_execute` write (`reenterInterruptedWriteForRecovery`).
 
 Which loops may use which tool (`notificationToolsAllowed`): every loop is
 offered both. A run and its delegation workers refuse `register`
@@ -381,7 +386,9 @@ holds the tables and the reads):
 - **Register** writes `canvas_notice_registrations` and lands a record in the
   Canvas's Chat through `AgentLoopDO.appendHostRecord`: a system message whose
   structured content is `canvas_notices_record`, keyed on the tool call's
-  receipt so a retry lands it once. The renderer draws it as a card
+  receipt so a retry lands it once. A registration is written only if no
+  newer record holds it (message ids sort by time), so a retried or delayed
+  call never undoes a later one. The renderer draws it as a card
   (`CanvasNoticesRecordCard`) with the viewer's controls and the device line
   from [`useDevicePushReadiness()`](#whether-this-device-can-show-them),
   hidden where push cannot work at all (`unavailable`, `unconfigured`). A
@@ -406,9 +413,14 @@ email by default, and may override it per Canvas
 channels, `[]` to mute, or no row to follow Settings. `notificationAllows`
 reads the override when the kind is `canvas_notice` and the message carries
 the Canvas. When both channels are chosen, the producer asks `enqueueNotice`
-for `pushElseEmail`: the email goes only when no push could be queued for a
-live device of theirs. A person who picked one channel gets that one. Pushes
-collapse per Canvas (`notices:<canvasId>`). The APNs payload sends
+for `pushElseEmail`: the email is queued only when no push could be, and a
+push queued instead carries `emailFallback`, so the consumer queues the email
+when the push then reaches no device (none left live, or every token
+refused). A person who picked one channel gets that one. The alert and the
+email subject name the Canvas, and the Sidekick when one sent it ("Podcaster
+in Reading list: New episode"). Pushes
+collapse per Canvas (`notices:<canvasId>`), and the service worker alerts
+again for each, as it does for a reply (`renotify`). The APNs payload sends
 `canvas_notice` as `mention`, as it does `new_message`: an installed Mac or
 iPhone app built before the kind refuses an unknown one before opening its
 link, and every app routes by the link alone. The Activity row is gated
@@ -737,14 +749,10 @@ with the template's literal text.
 `test/workspace-notification-intent-kinds-migration.test.ts` covers migration
 138 over populated rows. `test/conversation-effect-service.test.ts` covers the
 mention processor queueing one message per chosen sink, the email one named,
-and keeping the payload for them. `test-workers/canvas-notices.test.ts` covers a Canvas notice end to end:
-register lands the record in the Chat once, a run sends, each unmuted
-participant gets an intent and an Activity row while a muted one gets
-nothing, and a Sidekick on two Canvases is refused naming both.
-`push-delivery-enqueue.test.ts` covers push else email, and
-`canvas-notices-migration.test.ts` migration 150 over populated rows.
-`connector-tool-selection.test.ts` covers which loops refuse which tool. The
-provider itself and macOS alert presentation require a signed installed
+and keeping the payload for them. Canvas notices: `test-workers/canvas-notices.test.ts`,
+`push-delivery-enqueue.test.ts`, `canvas-notices-migration.test.ts`,
+`connector-tool-selection.test.ts` and the renderer's
+`canvas-notices.test.tsx`. The provider itself and macOS alert presentation require a signed installed
 build.
 
 Local acceptance on 2026-09-14: lint/typecheck, scoped API and desktop tests,
@@ -769,13 +777,17 @@ that a Canvas, not a tool call, decides who hears it, so the model cannot
 pick recipients from content.
 
 **Considered and rejected:** A `channel: "default"` queue message the push
-consumer resolves, as the plan had it. Deciding at enqueue, where the
-producer already knows whether a push was queued, needed no new message
-shape. A toast on an Organization-wide Canvas: it covered the title pill, and
-a banner under it did not. A cooldown: the owner asked for none.
+consumer resolves before sending, as the plan had it. The producer already
+knows whether a push could be queued, so it decides there; the push carries
+`emailFallback` only for the case it cannot know, a device that turns out
+dead (found in review). A toast on an Organization-wide Canvas: it covered
+the title pill, and a banner under it did not. A cooldown: the owner asked
+for none.
 
 **Consequences:** This is the one kind where two chosen channels mean one
 send. A Sidekick attached to several Canvases cannot send until it has one.
+A new kind a shipped Mac or iPhone app would refuse rides its APNs payload
+as `mention` until those apps are gone.
 
 ### 2026-11-15 — One answer to whether this device can show notifications
 

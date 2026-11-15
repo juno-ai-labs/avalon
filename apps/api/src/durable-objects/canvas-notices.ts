@@ -233,11 +233,13 @@ export async function tellCanvasParticipants(host: CanvasNoticeHost, input: {
   const listed = new Set<string>([input.createdByUserId, ...sql.exec<{ user_id: string }>(
     `SELECT user_id FROM canvas_participants WHERE canvas_id = ?`, input.canvasId,
   ).toArray().map((row) => row.user_id)]);
-  const recipients = [...listed].filter((userId) => canvasNoticeOverride(sql, input.canvasId, userId)?.length !== 0);
+  // Each person's own choice for this Canvas, read once: a mute leaves them out.
+  const overrides = new Map([...listed].map((userId) => [userId, canvasNoticeOverride(sql, input.canvasId, userId)]));
+  const recipients = [...listed].filter((userId) => overrides.get(userId)?.length !== 0);
   if (recipients.length === 0) return 0;
   const notice: ParentNotice = {
     kind: "canvas_notice", parentId: input.canvasId, parentTitle: input.canvasTitle,
-    senderName: input.sender.name, title: input.title, body: input.body,
+    senderKind: input.sender.kind, senderName: input.sender.name, title: input.title, body: input.body,
   };
   const payloadJson = JSON.stringify(notice);
   const payloadHash = await sha256(payloadJson);
@@ -256,8 +258,7 @@ export async function tellCanvasParticipants(host: CanvasNoticeHost, input: {
   })));
   for (const intent of recorded) {
     if (!intent.push) continue;
-    const channels = canvasNoticeOverride(sql, input.canvasId, intent.recipientUserId)
-      ?? chosenChannels(sql, intent.recipientUserId, "canvas_notice");
+    const channels = overrides.get(intent.recipientUserId) ?? chosenChannels(sql, intent.recipientUserId, "canvas_notice");
     await enqueueNotice(host.env, { workspaceId: input.workspaceId, recipientUserId: intent.recipientUserId, intentId: intent.intentId },
       channels, { pushElseEmail: true });
   }
