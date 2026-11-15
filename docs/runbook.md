@@ -362,7 +362,11 @@ Use a custom token restricted to the Rally Cloudflare account and the `rallywith
 
 - Account: Account Settings Read
 - Account: Workers Scripts Write (shown as Edit in older dashboards)
-- Account: D1 Write/Edit
+- Account: D1 Write/Edit: also lets the API deployment create a missing D1
+  database and pin its id (`scripts/ensure-cloudflare-d1-kv.mjs`;
+  `pnpm cloudflare:d1-kv:ensure` runs it locally).
+- Account: Workers KV Storage Write/Edit: the same script lists and creates
+  pinned KV namespaces, and Wrangler provisions the unpinned ones on deploy.
 - Account: Workers R2 Storage Write/Edit: also lets the API and browser
   deployments create any R2 bucket a Wrangler file declares
   (`pnpm cloudflare:r2:ensure` runs the same step locally). The
