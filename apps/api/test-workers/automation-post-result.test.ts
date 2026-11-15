@@ -524,6 +524,11 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(answered.status, JSON.stringify(answered.body)).toBe(200);
     await runDurableObjectAlarm(wizard);
     const second = await pendingQuestion(first);
+    // The answered question's post was sent to the room again, so its card there re-reads it.
+    expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ revision: number }>(
+      `SELECT turn.revision FROM participant_transcript_turns turn
+         JOIN canonical_conversation_turn_details part ON part.id = turn.turn_id
+        WHERE part.client_message_id = ?`, `sidekick-question-card:${first}`).one().revision)).toBeGreaterThan(1);
     const posts = await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ text: string; json: string }>(
       `SELECT content AS text, structured_content_json AS json FROM canonical_conversation_turn_details
         WHERE message_type = 'automation_activation' ORDER BY sequence_number`).toArray());
