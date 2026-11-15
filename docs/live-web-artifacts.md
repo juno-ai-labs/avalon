@@ -140,6 +140,12 @@ refreshes. That shared skill owns source reads, transfer, transformation and
 field validation; see [its procedure](../packages/skills/task-skills/using-external-structured-data/skill.ts).
 The site skill retains the destination's data format, recovery and publication.
 
+A site built from records in connected accounts is stateful by default, not a
+snapshot file: the records are rows, the page polls for them, and the agent
+offers a Sidekick whose runs upsert new records with `write_artifact_data`.
+Source-filled columns and the columns people edit are kept apart, so a refresh
+never overwrites an edit. A snapshot is for data fixed at one time.
+
 ### Revising
 
 The `building-live-sites` skill directs both interactive agents and Sidekicks
@@ -934,6 +940,31 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-14 — Sites of connected data stay live and offer a Sidekick
+
+**What changed:** `building-live-sites` gained "Keep data from connected
+accounts live": records from mail, Slack, meeting notes and similar sources
+become rows in a stateful site, keyed on a source id, with source columns kept
+apart from the columns people edit. After publishing, the agent offers a
+Sidekick that upserts new records, triggered by events where the source has
+them, and names any account it could not reach. The "ship data as files" and
+"no network" steps now limit a data file to data that will not change.
+`creating-an-app` points app requests built from connected data at that
+section, and `reporting-on-data` builds a live site for anything the person
+will keep using as the data changes, not only when they ask for a refresh.
+
+**Why:** A request for "a micro-CRM of who Alex and I have talked to about
+piloting Rally" was built with its contacts baked into a seed file and no
+Sidekick. The skills never suggested one: `reporting-on-data` allowed a live
+site only when asked, and `building-live-sites` taught that outside data is
+fetched once and published as a file. The person expected a CRM that updates
+itself from both accounts.
+
+**Consequences:** The offer is a question, not a default action, unless the
+request already asks for updates; a Sidekick run skips it. A trigger on another
+person's account still needs that person to connect it and approve it as a
+source, so the agent must say which accounts are not covered.
 
 ### 2026-11-12 — Public sites accept anonymous writes by default
 
