@@ -45,9 +45,6 @@ validation renews.
 - **The footer's help@ link keeps `data-site-action="support-contact-footer"`.**
   The tracking test renders the landing page through `renderSiteChrome` before
   it looks for ids. Guard: `tags every tracked landing link`.
-- **Old `/compare/` addresses redirect home.** `_redirects` sends `/compare`
-  and `/compare/*` to `/`, so links already shared in Slack, on X or in AI
-  search answers land somewhere rather than on a 404.
 
 ## Boundary
 
@@ -71,8 +68,8 @@ build, serve `dist` with `vite preview`, and screenshot the footer at 1440px and
 **What changed:** The five `/compare/<slug>/` pages, their Markdown in
 `content/compare/`, their social cards, `/compare/sitemap.xml`, the "Compared
 to" footer column, the header's Compare link, the landing page's "Compared to"
-section, and the "Compared to" block of `/llms.txt` are gone. `/compare` and
-`/compare/*` redirect to `/`. `comparison-pages.ts`, `social-cards.ts`,
+section, and the "Compared to" block of `/llms.txt` are gone, and so are the
+redirects that sent removed rival pages to the footer. `comparison-pages.ts`, `social-cards.ts`,
 `section-nav.ts`, the hero image and the `@fontsource/barlow` packages that only
 the comparison cards used are deleted; `escapeHtml` and `longDate` move to
 `html.ts` and `renderBlogCard` to `blog-pages.ts`. This document is renamed
