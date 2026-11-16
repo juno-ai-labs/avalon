@@ -209,7 +209,13 @@ async function bindConnectorTelemetry(
  * `?handoff=mobile` to its auth session; a desktop build sends its deep-link
  * version.
  */
-function desktopHandoffVersion(c: Context<HonoAppEnv>): ConnectorHandoff {
+function desktopHandoffVersion(c: Context<HonoAppEnv>, loopback = false): ConnectorHandoff {
+  // A client that cannot claim would send the person through the provider's
+  // consent and then fail; refuse it here, before the redirect. The desktop's
+  // Canva loopback completes in its own signed-in request and needs no claim.
+  if (!loopback && c.req.query('claim') !== '1') {
+    throw new ApiError(400, "connector_client_update_required", "Update Rally to connect this account.");
+  }
   if (c.req.query('handoff') === 'browser') return 'browser';
   if (c.req.query('handoff') === 'mobile') return 'mobile';
   return c.req.query('desktopHandoffVersion') === '2' ? 2 : 1;
@@ -274,7 +280,8 @@ connectionRoutes.post("/canva/start", zValidator("json", z.strictObject({
 })), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(c, service,
-    await service.beginProvider("canva", { ...c.req.valid("json"), desktopHandoffVersion: desktopHandoffVersion(c) }))));
+    await service.beginProvider("canva", { ...c.req.valid("json"),
+      desktopHandoffVersion: desktopHandoffVersion(c, c.req.valid("json").loopbackRedirectUri !== undefined) }))));
 });
 connectionRoutes.post("/canva/complete", zValidator("json", z.strictObject({
   code: z.string().min(1).optional(), error: z.literal("access_denied").optional(), state: z.string().min(1),
@@ -486,6 +493,9 @@ async function connectorCallback(
       : await service.holdCallback(provider, query.state, { code: query.code! });
     return c.redirect(desktopHandoffUrl(c.env, target), 302);
   } catch (error) {
+    if (error instanceof ApiError && error.code === "connector_oauth_already_held") {
+      return c.text("Rally is already finishing this connection. You can close this tab.", 409);
+    }
     const failure = classifyConnectorOAuthCallbackFailure(error);
     logEvent(c, failure.level, "connector_oauth_callback_failed", {
       provider,

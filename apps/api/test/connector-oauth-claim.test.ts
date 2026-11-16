@@ -195,6 +195,34 @@ describe("claiming a connector authorization", () => {
     expect(await new ConnectionService(env, owner).getOAuthAttempt(attemptId)).toMatchObject({ status: "pending" });
   });
 
+  it("answers a repeated callback without settling the attempt it holds for", async () => {
+    const { env, owner } = fixture();
+    stubApollo();
+    const started = await new ConnectionService(env, owner).beginProvider("apollo", {
+      scope: "personal", capabilities: ["apollo.personal.mcp"], desktopHandoffVersion: 2,
+    });
+    const callback = `https://api.rallywith.ai/connections/apollo/callback?code=owner-code&state=${encodeURIComponent(new URL(started.url).searchParams.get("state")!)}`;
+    expect((await createApp().request(callback, undefined, env)).status).toBe(302);
+    expect((await createApp().request(callback, undefined, env)).status).toBe(409);
+    expect(await new ConnectionService(env, owner).getOAuthAttempt(started.attemptId)).toMatchObject({ status: "pending" });
+  });
+
+  it("refuses to start for a client that cannot claim, before any provider redirect", async () => {
+    const { env, owner } = fixture();
+    const exchanged = stubApollo();
+    const start = (query: string) => createApp().request(`https://api.rallywith.ai/connections/apollo/start?${query}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-rally-dev-user-id": owner.userId, "x-rally-dev-workspace-id": owner.workspaceId! },
+      body: JSON.stringify({ scope: "personal", capabilities: ["apollo.personal.mcp"] }),
+    }, { ...env, APP_ENV: "development", RALLY_DEV_AUTH: "true" });
+
+    const old = await start("telemetryVersion=2&desktopHandoffVersion=2");
+    expect(old.status).toBe(400);
+    expect(await old.json()).toMatchObject({ error: { code: "connector_client_update_required" } });
+    expect((await start("telemetryVersion=2&desktopHandoffVersion=2&claim=1")).status).toBe(200);
+    expect(exchanged).toEqual([]);
+  });
+
   it("holds a state's callback once", async () => {
     const { env, owner } = fixture();
     stubApollo();
@@ -204,6 +232,6 @@ describe("claiming a connector authorization", () => {
     const state = new URL(started.url).searchParams.get("state")!;
     await new ConnectionService(env).holdCallback("apollo", state, { code: "first" });
     await expect(new ConnectionService(env).holdCallback("apollo", state, { code: "second" }))
-      .rejects.toMatchObject({ status: 401, code: "invalid_oauth_state" });
+      .rejects.toMatchObject({ status: 409, code: "connector_oauth_already_held" });
   });
 });

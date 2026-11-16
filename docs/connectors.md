@@ -84,7 +84,11 @@ session that returns to `rally-mobile://connections/complete` (`handoff=mobile`,
 the `connector-auth-session` capability), because Safari holds no Rally session;
 the shell hands the link to its web view, which claims it. A build that predates
 this cannot claim and has to update: offering the old one-request path to it
-would offer it to anyone.
+would offer it to anyone. So a start must carry `claim=1`, and one without it
+is refused with `connector_client_update_required` before the provider's
+consent, rather than failing after it. The desktop's Canva loopback is exempt:
+it already completes in its own signed-in request. A repeated hit on a callback
+that already holds its state answers 409 and leaves the attempt to the claim.
 
 Connector start advertises `desktopHandoffVersion=2` as an additive query
 capability. The regional service persists the matching return URI with the OAuth
