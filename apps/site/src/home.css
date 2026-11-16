@@ -206,47 +206,6 @@ h2 {
   color: var(--ink); background: #eeeee6;
 }
 
-.window-dots {
-  display: flex; gap: 5px;
-}
-
-.window-dots i {
-  display: block; width: 7px; height: 7px; border: 1px solid #b2b6a7; border-radius: 100%;
-}
-
-.example-breadcrumb {
-  font-size: 10px; color: var(--muted);
-}
-
-.example-breadcrumb > span:first-child {
-  margin-inline: 9px; color: #b1b3a7;
-}
-
-.example-breadcrumb > span:last-child {
-  color: var(--ink);
-}
-
-.example-people {
-  display: flex; margin-left: auto; padding-left: 8px;
-}
-
-.example-people > span {
-  border-radius: 50%; width: 24px; height: 24px; display: grid; place-items: center; background: #e8d0bb;
-  border: 2px solid var(--white); font-size: 9px; margin-left: -6px; line-height: 1;
-}
-
-.example-people > span:nth-child(2) {
-  background: #d6cadd;
-}
-
-.example-people > span.rally-avatar {
-  background: #d8dfc7;
-}
-
-.share-label {
-  font-size: 10px; color: var(--muted); margin-left: -10px;
-}
-
 .example-body {
   display: grid; grid-template-columns: 330px 1fr; min-height: 470px;
 }
@@ -310,15 +269,6 @@ h2 {
 .demo-composer > span {
   border-radius: 4px; background: var(--sage); width: 19px; height: 19px; display: grid;
   place-items: center; font-size: 13px; color: var(--green);
-}
-
-.document-toolbar {
-  height: 39px; border-bottom: 1px solid #e9e9e0; padding: 0 19px; display: flex; align-items: center;
-  justify-content: space-between; font-size: 9px; color: var(--muted); gap: 10px;
-}
-
-.document-toolbar > span:first-child {
-  color: #4e5546;
 }
 
 .example-bottom {
@@ -612,11 +562,6 @@ h2 {
 .canvas-example {
   border: 1px solid #bfc2b5; background: var(--white); overflow: hidden; min-width: 0;
   border-color: #d4d9c8; border-radius: 12px; box-shadow: 0 12px 44px -28px #5762482b;
-}
-
-.example-topbar {
-  height: 48px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 19px;
-  padding: 0 21px; background: #f3f4eb;
 }
 
 .canvas-footnotes {
@@ -1404,10 +1349,6 @@ h2 {
     min-width: 100%; font-size: 10px;
   }
 
-  .example-topbar {
-    padding-inline: 16px; background: #f3f4eb;
-  }
-
   .canvas-footnotes {
     gap: 20px; grid-template-columns: 1fr 1fr; padding-top: 24px;
   }
@@ -1558,34 +1499,6 @@ h2 {
     font-size: 15px;
   }
 
-  .example-breadcrumb {
-    font-size: 8px;
-  }
-
-  .example-breadcrumb > span:first-child {
-    margin-inline: 4px;
-  }
-
-  .example-people > span {
-    width: 21px; height: 21px; font-size: 8px;
-  }
-
-  .example-people .rally-avatar img {
-    width: 14px;
-  }
-
-  .share-label {
-    display: none;
-  }
-
-  .window-dots {
-    gap: 3px;
-  }
-
-  .window-dots i {
-    width: 5px; height: 5px;
-  }
-
   .example-body {
     display: flex; flex-direction: column; min-height: 0;
   }
@@ -1624,10 +1537,6 @@ h2 {
 
   .demo-composer {
     display: none;
-  }
-
-  .document-toolbar {
-    height: 34px; font-size: 8px; padding-inline: 16px;
   }
 
   .example-bottom {
@@ -1724,10 +1633,6 @@ h2 {
 
   .example-picker button {
     font-size: 9px; gap: 5px; padding: 7px 8px; white-space: nowrap; border-radius: 6px;
-  }
-
-  .example-topbar {
-    height: 44px; gap: 12px; padding-inline: 12px; background: #f3f4eb;
   }
 
   .canvas-footnotes {

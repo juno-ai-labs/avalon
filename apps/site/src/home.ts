@@ -1,7 +1,6 @@
 /** The homepage's illustrative Canvas. No live product data or actions. */
 type ExampleId = "gtm" | "requests" | "podcast";
 type Example = {
-  name: string;
   artifact: string;
   kind: string;
   prompt: string;
@@ -11,7 +10,6 @@ type Example = {
 };
 const examples: Record<ExampleId, Example> = {
   gtm: {
-    name: "Pipeline, all inboxes",
     artifact: "Q4 pipeline",
     kind: "Dashboard",
     prompt:
@@ -23,7 +21,6 @@ const examples: Record<ExampleId, Example> = {
       "Example run: Northwind emailed Priya → new deal, push notification sent, version 2.",
   },
   requests: {
-    name: "Listening to users",
     artifact: "Feature requests",
     kind: "Micro-app",
     prompt:
@@ -35,7 +32,6 @@ const examples: Record<ExampleId, Example> = {
       "Example run: new Granola interview → one new request, one more mention, version 2.",
   },
   podcast: {
-    name: "The Friday Brief",
     artifact: "The Friday Brief",
     kind: "Podcast feed",
     prompt:
@@ -73,7 +69,6 @@ function setText(field: string, value: string): void {
 }
 function setVersion(version: 1 | 2): void {
   panel?.setAttribute("data-version", String(version));
-  setText("version", `Version ${version}`);
   for (const { element, v1, v2 } of changing)
     element.textContent = version === 2 ? v2 : v1;
 }
@@ -81,7 +76,6 @@ function selectExample(id: ExampleId): void {
   selected = id;
   const example = examples[id];
   for (const key of [
-    "name",
     "artifact",
     "kind",
     "prompt",
