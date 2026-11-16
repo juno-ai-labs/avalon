@@ -8985,7 +8985,7 @@ async function openToolQuestion(
       now: Date.parse(at),
     });
   const mirrored = async () => {
-    if (askingCanvasId !== null) await postWizardCard(env, input, askingCanvasId, `sidekick-question-card:${id}`,
+    if (askingCanvasId !== null) await postWizardCard(env, input, { parentKind: "canvas", id: askingCanvasId }, `sidekick-question-card:${id}`,
       { text: question.prompt, card: { question: { elicitationId: id } } });
     return halted;
   };
