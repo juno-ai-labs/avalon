@@ -19,6 +19,7 @@ import { HOME_RENDERER, recovery } from './src/recovery-order';
 import { useCrashReporting } from './src/crashes';
 import { RecoveryBoundary } from './src/RecoveryBoundary';
 import { DiagnosticsScreen } from './src/DiagnosticsScreen';
+import { SettingsScreen } from './src/SettingsScreen';
 import { registerBackgroundSync } from './src/background';
 import { useNotifications } from './src/notifications';
 import { notificationTarget } from './src/notification-target';
@@ -41,7 +42,7 @@ import { CanvasWebView, ArtifactView, ArtifactSessionPreparation, type CanvasWeb
 import { NativeTabIcon } from './src/NativeTabIcon';
 import { allocatePinSlots } from './src/pin-routes';
 import { Sidebar } from './src/Sidebar';
-import { mobileContentReady, mobileUrl, trustedArtifact, VISIBLE_PIN_COUNT, type CanvasSummary, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot, type PreparedArtifact, type PreparedCanvas, type SharedElsewhereSummary } from './src/protocol';
+import { mobileContentReady, mobileUrl, trustedArtifact, VISIBLE_PIN_COUNT, type CanvasSummary, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSettingsSection, type MobileSnapshot, type PreparedArtifact, type PreparedCanvas, type SharedElsewhereSummary } from './src/protocol';
 import { useTheme } from './src/theme';
 
 const APP_URL = process.env.EXPO_PUBLIC_RALLY_APP_URL || 'https://app.rallywith.ai';
@@ -59,7 +60,7 @@ const REMEMBERED_SITES = loadRememberedSites();
 let dashboardTimed = false;
 const HOME_URL = SAVED_DIRECTORY ? mobileUrl(APP_URL, SAVED_DIRECTORY.workspacePath) : START_URL;
 const Tabs = createNativeBottomTabNavigator();
-type RootRoutes = { Canvases: { screen: 'Home' } | undefined; Diagnostics: undefined; Conversation: { id: string; workspacePath: string; title: string } };
+type RootRoutes = { Canvases: { screen: 'Home' } | undefined; Settings: undefined; Diagnostics: undefined; Conversation: { id: string; workspacePath: string; title: string } };
 const Stack = createNativeStackNavigator<RootRoutes>();
 const rootNavigation = createNavigationContainerRef<RootRoutes>();
 
@@ -71,6 +72,8 @@ type Session = {
   directory: MobileSnapshot | null;
   updateDirectory: (snapshot: MobileSnapshot | null) => void;
   controls: React.RefObject<Map<string, CanvasWebViewHandle>>;
+  /** Home's own sender, which holds a command until Home's page answers. */
+  homeSender: React.RefObject<((command: MobileCommand) => void) | null>;
   directoryOwner: React.RefObject<string>;
   signIn: (web: CanvasWebViewHandle | null) => Promise<void>;
   signOut: () => void;
@@ -160,6 +163,7 @@ function AppContent() {
     saveDirectory(next);
   }, []);
   const controls = useRef(new Map<string, CanvasWebViewHandle>());
+  const homeSender = useRef<((command: MobileCommand) => void) | null>(null);
   const directoryOwner = useRef('Home');
   const [chatReturn, setChatReturn] = useState<ChatReturn | null>(null);
   const accountScope = directory ? `${directory.userId}:${directory.workspaceId}` : '';
@@ -219,6 +223,21 @@ function AppContent() {
     setChatReturn(null); updateDirectory(null);
     controls.current.get('Home')?.reload();
   }, []);
+  // Settings sits over the tabs; what it opens happens in Home, so it returns
+  // there first. A Settings page is Home's page, like the create flow.
+  const showHome = useCallback(() => {
+    setChatReturn(null);
+    rootNavigation.dispatch(StackActions.popTo('Canvases', { screen: 'Home' }));
+  }, []);
+  // Opening Settings hides Home, which is when a stale Home reloads, so these
+  // go through Home's queue rather than into a page that may be loading.
+  const sendHomeWhenReady = useCallback((command: MobileCommand) => (homeSender.current ?? sendHome)(command), [sendHome]);
+  const openSettingsSection = useCallback((section: MobileSettingsSection) => { showHome(); sendHomeWhenReady({ type: 'settings', section }); }, [showHome, sendHomeWhenReady]);
+  const accountCommand = useCallback((type: 'sign-out' | 'switch-workspace') => {
+    receiveCrashEvent({ type: 'signed-out' });
+    showHome();
+    sendHomeWhenReady({ type });
+  }, [showHome, sendHomeWhenReady, receiveCrashEvent]);
   const shownScope = (directory ?? savedDirectory) ? `${(directory ?? savedDirectory)!.userId}:${(directory ?? savedDirectory)!.workspaceId}` : null;
   const rememberedSite = useCallback((canvasId: string): NativeArtifact | null => {
     const site = rememberedSites[canvasId];
@@ -232,7 +251,7 @@ function AppContent() {
       return { ...sites, [access.canvasId]: { scope: shownScope, resourceId: access.resourceId, version: access.version, canonicalUrl: access.canonicalUrl } };
     });
   }, [shownScope]);
-  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, shownDirectory: directory ?? savedDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar, artifactTone: artifactStatusBar?.style }),
+  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, homeSender, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, shownDirectory: directory ?? savedDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar, artifactTone: artifactStatusBar?.style }),
     [chatReturn, prepared, directory, savedDirectory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar, artifactStatusBar]);
   const theme = isDark ? DarkTheme : DefaultTheme;
   return <GestureHandlerRootView style={styles.fill}><SafeAreaProvider>
@@ -240,7 +259,11 @@ function AppContent() {
     <SessionContext value={session}>
       <NavigationContainer ref={rootNavigation} theme={{ ...theme, colors: { ...theme.colors, background: colors.background, card: colors.surface, text: colors.text, primary: colors.accent, border: colors.line } }}>
         <Stack.Navigator initialRouteName="Canvases">
-          <Stack.Screen name="Diagnostics" options={{ title: 'Settings and diagnostics' }}>{() => <DiagnosticsScreen notifications={notifications} signedIn={Boolean(directory)} />}</Stack.Screen>
+          <Stack.Screen name="Settings" options={{ title: 'Settings', headerLargeTitle: true, headerLargeTitleShadowVisible: false, headerShadowVisible: false, headerStyle: { backgroundColor: colors.background }, headerTintColor: colors.text }}>{({ navigation }) => <SettingsScreen
+            directory={directory} notifications={notifications} openSection={openSettingsSection}
+            switchOrganization={() => accountCommand('switch-workspace')} signOut={() => accountCommand('sign-out')}
+            openDiagnostics={() => navigation.navigate('Diagnostics')} />}</Stack.Screen>
+          <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} options={{ title: 'Diagnostics', headerShadowVisible: false, headerStyle: { backgroundColor: colors.background }, headerTintColor: colors.text, headerBackTitle: 'Settings' }} />
           <Stack.Screen name="Canvases" component={CanvasTabs} options={{ headerTitle: '', headerTransparent: true, headerShadowVisible: false, headerTintColor: colors.text }} />
           <Stack.Screen name="Conversation" component={Conversation} options={{ presentation: Platform.OS === 'ios' ? 'formSheet' : 'card', title: 'Conversation', sheetGrabberVisible: true }} />
         </Stack.Navigator>
@@ -464,7 +487,7 @@ function useChatNavigation(navigation: NativeBottomTabScreenProps<ParamListBase>
 
 function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactId, onContentReady }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string; artifactId?: string; onContentReady?: () => void }) {
   const floatingHeader = useContext(FloatingHeaderContext);
-  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild, shownDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar } = useSession();
+  const { directory, updateDirectory, controls, homeSender, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild, shownDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar } = useSession();
   const { colors } = useTheme();
   const canvasId = assignedCanvasId ?? route.name;
   const routeCanvases = useContext(CanvasRoutesContext);
@@ -507,11 +530,19 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   // terminated page answers nothing until it reloads.
   const queued = useRef<MobileCommand[]>([]);
   const [answering, setAnswering] = useState(false);
+  // Read at send time: a reload clears it before the page reports loading.
+  const answeringNow = useRef(answering);
+  answeringNow.current = answering;
   const [opening, setOpening] = useState<string | null>(null);
   const sendHome = useCallback((command: MobileCommand) => {
-    if (answering) web.current?.send(command);
+    if (answeringNow.current) web.current?.send(command);
     else queued.current.push(command);
-  }, [answering]);
+  }, []);
+  useEffect(() => {
+    if (!home) return;
+    homeSender.current = sendHome;
+    return () => { homeSender.current = null; };
+  }, [home, sendHome, homeSender]);
   useEffect(() => {
     if (!answering || queued.current.length === 0) return;
     for (const command of queued.current.splice(0)) web.current?.send(command);
@@ -616,6 +647,11 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   const view = snapshot?.view;
   const viewCanvas = snapshot?.canvasId;
   const viewTitle = snapshot?.title ?? '';
+  useEffect(() => {
+    if (!home || !focused || chatReturn || view !== 'settings') return;
+    const back = BackHandler.addEventListener('hardwareBackPress', () => { sendHome({ type: 'home' }); rootNavigation.navigate('Settings'); return true; });
+    return () => back.remove();
+  }, [home, focused, chatReturn, view, sendHome]);
   const signedIn = Boolean(directory);
   // Home's dashboard is native: shown from the saved directory before the page
   // answers, and whenever the page is on its own dashboard. The page stays
@@ -635,7 +671,11 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   // A stale Home reloads only where nobody sees its page: off screen, or under
   // the native dashboard, which keeps drawing from the directory meanwhile. An
   // open inline chat, create flow or canvas lives in the page and is never cut.
-  useEffect(() => { if (home && homeStale && (!focused || showDashboard)) web.current?.reload(); }, [home, homeStale, focused, showDashboard]);
+  useEffect(() => {
+    if (!home || !homeStale || (focused && !showDashboard)) return;
+    answeringNow.current = false; setAnswering(false);
+    web.current?.reload();
+  }, [home, homeStale, focused, showDashboard]);
   const openFromDashboard = useCallback((id: string) => {
     if (shownDirectory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(id)) { open(id); return; }
     setOpening(id);
@@ -661,7 +701,11 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   useEffect(() => {
     if (!focused) return;
     const chat = view === 'artifact' && viewCanvas ? () => openChat(viewCanvas, viewTitle) : undefined;
-    const close = home && chatReturn ? closeChat : undefined;
+    // A Settings page Home shows closes back to the native Settings list.
+    const settingsPage = home && view === 'settings';
+    const closeSettings = () => { sendHome({ type: 'home' }); rootNavigation.navigate('Settings'); };
+    const close = home && chatReturn ? closeChat : settingsPage ? closeSettings : undefined;
+    const closeLabel = settingsPage && !chatReturn ? 'Back to settings' : 'Close conversation';
     const menu = () => setSidebar(true);
     const create = showDashboard ? createFromDashboard : undefined;
     // A native artifact in front owns its pixels: the native header gives way to
@@ -679,12 +723,13 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
     floatingHeader.hide(canvasId);
     navigation.getParent()?.setOptions({
       headerShown: true,
+      headerTitle: settingsPage ? viewTitle : '',
       headerLeft: signedIn ? () => <HeaderButton kind="menu" label="Open sidebar" onPress={menu} /> : undefined,
-      headerRight: close ? () => <HeaderButton kind="close" label="Close conversation" onPress={close} /> : create ? () => <HeaderButton kind="create" label="Create a canvas" onPress={create} /> : chat ? () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} /> : undefined,
+      headerRight: close ? () => <HeaderButton kind="close" label={closeLabel} onPress={close} /> : create ? () => <HeaderButton kind="create" label="Create a canvas" onPress={create} /> : chat ? () => <HeaderButton kind="chat" label="Open conversation" onPress={chat} /> : undefined,
       unstable_headerLeftItems: () => signedIn ? [{ type: 'button', label: 'Open sidebar', icon: { type: 'sfSymbol', name: 'sidebar.left' }, onPress: menu }] : [],
-      unstable_headerRightItems: () => close ? [{ type: 'button', label: 'Close conversation', icon: { type: 'sfSymbol', name: 'xmark' }, onPress: close }] : create ? [{ type: 'button', label: 'Create a canvas', icon: { type: 'sfSymbol', name: 'plus' }, onPress: create }] : chat ? [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }] : [],
+      unstable_headerRightItems: () => close ? [{ type: 'button', label: closeLabel, icon: { type: 'sfSymbol', name: 'xmark' }, onPress: close }] : create ? [{ type: 'button', label: 'Create a canvas', icon: { type: 'sfSymbol', name: 'plus' }, onPress: create }] : chat ? [{ type: 'button', label: 'Open conversation', icon: { type: 'sfSymbol', name: 'bubble.left' }, onPress: chat }] : [],
     });
-  }, [signedIn, focused, navigation, view, viewCanvas, viewTitle, home, chatReturn, closeChat, openChat, showDashboard, createFromDashboard, hosted, frontArtifact, floatingHeader, canvasId]);
+  }, [signedIn, focused, navigation, view, viewCanvas, viewTitle, home, chatReturn, closeChat, openChat, showDashboard, createFromDashboard, hosted, frontArtifact, floatingHeader, canvasId, sendHome]);
   // The status bar reads over the artifact in front, as the floating header does.
   const statusOwner = `screen:${canvasId}`;
   const frontBackground = frontArtifact ? pageBackgrounds[frontArtifact.canvasId] : undefined;
@@ -740,7 +785,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
       </View>}
       {!showDashboard && !optimistic && (opening !== null || !contentReady || failed) && <Loading failed={failed && opening === null} retry={() => { setFailed(false); web.current?.reload(); }} />}
     </KeyboardAvoidingView>
-    {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, ...snapshot, ...{ canvases: directory.canvases, pins: directory.pins, pinBusy: directory.pinBusy, pinError: directory.pinError }, tabId: home ? null : canvasId }} close={() => setSidebar(false)} send={send} diagnostics={() => rootNavigation.navigate('Diagnostics')} ref={edgePull.ref} pull={edgePull.pull} />}
+    {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, ...snapshot, ...{ canvases: directory.canvases, pins: directory.pins, pinBusy: directory.pinBusy, pinError: directory.pinError }, tabId: home ? null : canvasId }} close={() => setSidebar(false)} send={send} openSettings={() => rootNavigation.navigate('Settings')} ref={edgePull.ref} pull={edgePull.pull} />}
   </SafeAreaView>;
 }
 
@@ -819,7 +864,7 @@ function PreparedSiteScreen({ canvas, navigation, route }: NativeBottomTabScreen
     <KeyboardAvoidingView enabled={keyboardVisible} style={[styles.fill, { marginBottom: bottomTabInset }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View ref={frame} collapsable={false} style={styles.fill} onLayout={measure} />
     </KeyboardAvoidingView>
-    {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, canvasId: canvas.canvasId, tabId: canvas.canvasId, view: 'artifact', artifactId: canvas.resourceId, title: canvas.title, artifactPicker: false }} close={() => setSidebar(false)} send={send} diagnostics={() => rootNavigation.navigate('Diagnostics')} ref={edgePull.ref} pull={edgePull.pull} />}
+    {directory && <Sidebar visible={sidebar} snapshot={{ ...directory, canvasId: canvas.canvasId, tabId: canvas.canvasId, view: 'artifact', artifactId: canvas.resourceId, title: canvas.title, artifactPicker: false }} close={() => setSidebar(false)} send={send} openSettings={() => rootNavigation.navigate('Settings')} ref={edgePull.ref} pull={edgePull.pull} />}
   </SafeAreaView>;
 }
 

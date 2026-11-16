@@ -7,7 +7,7 @@ import { recovery } from './recovery-order';
 import { Linking, Platform, StyleSheet, View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { randomUUID } from 'expo-crypto';
-import { ARTIFACT_PICKER_CAPABILITY, MOBILE_CAPABILITIES_GLOBAL, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, parseMobileEvent, type MobileCommand, type MobileEvent, type NativeArtifact } from './protocol';
+import { MOBILE_CAPABILITIES, MOBILE_CAPABILITIES_GLOBAL, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, parseMobileEvent, type MobileCommand, type MobileEvent, type NativeArtifact } from './protocol';
 
 export interface CanvasWebViewHandle { send: (command: MobileCommand) => void; reload: () => void }
 export interface CanvasWebViewProps {
@@ -63,7 +63,7 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
     contentInsetAdjustmentBehavior="never"
     automaticallyAdjustContentInsets={false}
     removeIosKeyboardObserver
-    injectedJavaScriptBeforeContentLoaded={`window.__RALLY_MOBILE_BRIDGE_TOKEN__=${JSON.stringify(token.current)}; window.${MOBILE_CAPABILITIES_GLOBAL}=${JSON.stringify([ARTIFACT_PICKER_CAPABILITY])}; true;`}
+    injectedJavaScriptBeforeContentLoaded={`window.__RALLY_MOBILE_BRIDGE_TOKEN__=${JSON.stringify(token.current)}; window.${MOBILE_CAPABILITIES_GLOBAL}=${JSON.stringify(MOBILE_CAPABILITIES)}; true;`}
     injectedJavaScriptBeforeContentLoadedForMainFrameOnly
     onLoadStart={(event) => {
       const previous = new URL(lastNavigation.current);
@@ -79,6 +79,7 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
     onRenderProcessGone={terminated}
     onMessage={(event) => {
       const message = parseMobileEvent(event.nativeEvent.data, event.nativeEvent.url, props.appUrl, token.current);
+      if (message?.type === 'open-external') { void Linking.openURL(message.url); return; }
       if (message) props.onEvent(message);
     }}
     onShouldStartLoadWithRequest={(request) => {

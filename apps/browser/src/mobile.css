@@ -80,3 +80,13 @@ html[data-mobile-host],html[data-mobile-host] body,html[data-mobile-host] #root 
 /* Artifacts read at their own document sizes; only the phone's chrome takes the touch density. */
 .mobile-artifact-content{display:contents}
 .mobile-hosted-artifact{display:block;flex:1;width:100%;min-height:0;border:0}
+
+/* A shared Settings page. The native shell lists the sections and draws the
+   header with its title and close, so the page keeps only its content. */
+.mobile-settings .workspace-settings-screen{height:100%;background:var(--mobile-bg)}
+.mobile-settings .settings-window{background:var(--mobile-bg);grid-template-columns:minmax(0,1fr)}
+.mobile-settings .settings-sidebar,.mobile-settings .settings-content-header{display:none}
+.mobile-settings .settings-content-scroll{padding:calc(var(--mobile-top-inset) + 8px) 16px 36px;scrollbar-gutter:auto}
+.mobile-settings .settings-native-back{margin:0 auto 14px;max-width:860px}
+.mobile-settings .settings-native-back button{display:inline-flex;align-items:center;gap:2px;min-height:44px;margin-left:-6px;border:0;background:none;color:var(--mobile-ink);font-size:var(--av-sys-type-body)}
+.mobile-settings .settings-native-back h2{margin:4px 0 0;font-size:var(--av-sys-type-title-3);font-weight:600;overflow-wrap:anywhere}

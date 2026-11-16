@@ -9,6 +9,7 @@ import { EXPANDED_LAYOUT_WIDTH, FLOATING_HEADER_INSET } from './src/layout';
 import { Glass } from './src/Glass';
 import { TabBar, TAB_BAR_SPACE, TAB_RAIL_SPACE } from './src/PreviewTabBar';
 import { Sidebar } from './src/Sidebar';
+import { SettingsScreen, type NotificationsControl } from './src/SettingsScreen';
 import { mobileUrl, trustedArtifact, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot } from './src/protocol';
 import { useTheme } from './src/theme';
 
@@ -36,6 +37,7 @@ function CanvasApp() {
   const [failed, setFailed] = useState(false);
   const [sidebar, setSidebar] = useState(false);
   const [conversation, setConversation] = useState<string | null>(null);
+  const [settings, setSettings] = useState(false);
   const send = useCallback((command: MobileCommand) => root.current?.send(command), []);
   const closeConversation = useCallback(() => { setConversation(null); send({ type: 'refresh' }); }, [send]);
   const signingIn = useRef(false);
@@ -110,14 +112,28 @@ function CanvasApp() {
     </View>
     {showChrome && <View pointerEvents="box-none" style={[styles.toolbar, { left: insets.left + 24, right: insets.right + 24, top: insets.top + 8 }]}>
       <Glass style={styles.toolbarButton}>{action('menu-outline', 'Open sidebar', () => setSidebar(true))}</Glass>
+      {snapshot.view === 'settings' && <Glass style={styles.toolbarButton}>{action('close', 'Back to settings', () => { send({ type: 'home' }); setSettings(true); })}</Glass>}
       {snapshot.view === 'home' && <Glass style={styles.toolbarButton}>{action('add', 'Create a canvas', () => send({ type: 'create' }))}</Glass>}
       {snapshot.view === 'artifact' && snapshot.canvasId && <Glass style={styles.toolbarButton}>{action('chatbubble-outline', 'Open conversation', () => setConversation(snapshot.canvasId))}</Glass>}
     </View>}
     {showChrome && !keyboardVisible && <TabBar snapshot={snapshot} bottomInset={insets.bottom} send={send} />}
-    {snapshot && <Sidebar visible={sidebar} snapshot={snapshot} close={() => setSidebar(false)} send={send} />}
+    {snapshot && <Sidebar visible={sidebar} snapshot={snapshot} close={() => setSidebar(false)} send={send} openSettings={() => setSettings(true)} />}
+    {/* The preview has no device notifications; the list is the native one. */}
+    {snapshot && <Modal visible={settings} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSettings(false)}>
+      <SafeAreaProvider><View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
+        <View style={styles.sheetHeader}><Text style={[styles.errorTitle, { flex: 1, color: colors.text, fontSize: 30 }]}>Settings</Text>{action('close', 'Close settings', () => setSettings(false))}</View>
+        <SettingsScreen directory={snapshot} notifications={PREVIEW_NOTIFICATIONS}
+          openSection={(section) => { setSettings(false); send({ type: 'settings', section }); }}
+          switchOrganization={() => { setSettings(false); send({ type: 'switch-workspace' }); }}
+          signOut={() => { setSettings(false); send({ type: 'sign-out' }); }}
+          openDiagnostics={() => undefined} />
+      </View></SafeAreaProvider>
+    </Modal>}
     {snapshot && <Conversation visible={conversation !== null} url={conversation ? mobileUrl(APP_URL, snapshot.workspacePath, conversation) : START_URL} title={snapshot.title} onSignedOut={() => { closeConversation(); setArtifacts({}); setSnapshot(null); setReady(false); root.current?.reload(); }} onClose={closeConversation} onOpen={(id) => { closeConversation(); send({ type: 'open', id, pinned: snapshot.pins.includes(id) }); }} />}
   </KeyboardAvoidingView>;
 }
+
+const PREVIEW_NOTIFICATIONS: NotificationsControl = { permission: 'unavailable', registration: 'unavailable', enable: async () => undefined, retry: async () => undefined };
 
 interface ConversationProps { visible: boolean; url: string; title: string; onClose: () => void; onOpen: (id: string) => void; onSignedOut: () => void }
 function Conversation(props: ConversationProps) {
