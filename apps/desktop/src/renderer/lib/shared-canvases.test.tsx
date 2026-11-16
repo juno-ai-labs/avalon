@@ -1,4 +1,4 @@
-import type { CanvasSidebarRow } from '@rally/contracts';
+import { CanvasSidebarRowSchema, type CanvasSidebarRow } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
@@ -26,11 +26,11 @@ vi.mock('./collaboration-session', () => ({
 vi.mock('./use-client-feature-flags', () => ({ useClientFeatureFlags: () => ({ data: flags }) }));
 
 function row(id: string, title: string, updatedAt: string): CanvasSidebarRow {
-  return {
+  return CanvasSidebarRowSchema.parse({
     id, title, createdByUserId: '00000000-0000-7000-8000-0000000000a2', createdAt: updatedAt, updatedAt,
     lastEditor: null, writerSidekickId: null, visibility: 'participants', artifactKind: null, unread: false,
     presentUserIds: [], pinnedPosition: null, sharedWithMe: true,
-  } as unknown as CanvasSidebarRow;
+  });
 }
 
 function wrapper({ children }: PropsWithChildren): React.JSX.Element {
