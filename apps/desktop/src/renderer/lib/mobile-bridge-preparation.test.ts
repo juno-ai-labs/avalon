@@ -4,7 +4,7 @@ import type { MobileEvent, MobileSnapshot } from '../../../../mobile/src/protoco
 
 it('replays prepared pins after bridge attachment and drops them on organization change', () => {
   const events: MobileEvent[] = [];
-  const snapshot: MobileSnapshot = { userId: 'alice', userName: 'Alice', workspaceId: 'work', workspaceName: 'Work', workspacePath: '/app/workspaces/global/work', canvases: [], pins: ['shopping'], hasMore: false, loading: false, pinBusy: false, pinError: null, directoryError: false, canvasId: null, tabId: null, view: 'home', title: 'Your canvases', artifactId: null, artifactPicker: false };
+  const snapshot: MobileSnapshot = { userId: 'alice', userName: 'Alice', workspaceId: 'work', workspaceName: 'Work', workspacePath: '/app/workspaces/global/work', canvases: [], sharedElsewhere: [], pins: ['shopping'], hasMore: false, loading: false, pinBusy: false, pinError: null, directoryError: false, canvasId: null, tabId: null, view: 'home', title: 'Your canvases', artifactId: null, artifactPicker: false };
   history.replaceState(null, '', '/?mobile=1');
   vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw).event) });
   try {

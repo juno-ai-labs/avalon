@@ -41,7 +41,7 @@ import { CanvasWebView, ArtifactView, ArtifactSessionPreparation, type CanvasWeb
 import { NativeTabIcon } from './src/NativeTabIcon';
 import { allocatePinSlots } from './src/pin-routes';
 import { Sidebar } from './src/Sidebar';
-import { mobileContentReady, mobileUrl, trustedArtifact, VISIBLE_PIN_COUNT, type CanvasSummary, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot, type PreparedArtifact, type PreparedCanvas } from './src/protocol';
+import { mobileContentReady, mobileUrl, trustedArtifact, VISIBLE_PIN_COUNT, type CanvasSummary, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot, type PreparedArtifact, type PreparedCanvas, type SharedElsewhereSummary } from './src/protocol';
 import { useTheme } from './src/theme';
 
 const APP_URL = process.env.EXPO_PUBLIC_RALLY_APP_URL || 'https://app.rallywith.ai';
@@ -649,6 +649,11 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
     }
   }, [shownDirectory?.pins, open, sendHome, rememberedSite]);
   const createFromDashboard = useCallback(() => { setOpening('create'); sendHome({ type: 'create' }); }, [sendHome]);
+  // Home switches Organization and opens it there, as for a notification's link.
+  const openElsewhereFromDashboard = useCallback((canvas: SharedElsewhereSummary) => {
+    setOpening(canvas.id);
+    sendHome({ type: 'open-elsewhere', region: canvas.organization.region, workspaceId: canvas.organization.id, canvasId: canvas.id });
+  }, [sendHome]);
   // The edge pull opens the sidebar wherever its header button does.
   const openSidebar = useCallback(() => setSidebar(true), []);
   const edgePull = useSidebarEdge(canvasId, focused && signedIn, openSidebar);
@@ -729,8 +734,8 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
         {/* The page reports a directory it could not load (a socket refusal or an
             update it needs) as directoryError; the dashboard covers the page's
             own recovery, so it offers that retry itself. */}
-        <Dashboard canvases={shownDirectory?.canvases ?? []} loading={!shownDirectory} failed={failed || Boolean(snapshot?.directoryError)} topInset={headerHeight + 12} bottomInset={0}
-          open={openFromDashboard} create={createFromDashboard} retry={() => { if (failed) { setFailed(false); web.current?.reload(); } else sendHome({ type: 'refresh' }); }} />
+        <Dashboard canvases={shownDirectory?.canvases ?? []} sharedElsewhere={shownDirectory?.sharedElsewhere ?? []} loading={!shownDirectory} failed={failed || Boolean(snapshot?.directoryError)} topInset={headerHeight + 12} bottomInset={0}
+          open={openFromDashboard} openElsewhere={openElsewhereFromDashboard} create={createFromDashboard} retry={() => { if (failed) { setFailed(false); web.current?.reload(); } else sendHome({ type: 'refresh' }); }} />
       </View>}
       {!showDashboard && !optimistic && (opening !== null || !contentReady || failed) && <Loading failed={failed && opening === null} retry={() => { setFailed(false); web.current?.reload(); }} />}
     </KeyboardAvoidingView>
