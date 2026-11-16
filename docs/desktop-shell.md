@@ -64,11 +64,11 @@ sheet's bar carries the title and New Canvas, the header still shows the
 Marketplace button, and the Marketplace's own title and way back.
 The filters' rules live in `@rally/contracts/canvas-filters`, shared with the
 mobile dashboard ([`mobile-canvas-client.md`](mobile-canvas-client.md)).
-`apps/desktop/canvas-template-catalog.ts` lists and orders the catalog and parses it; the app's builds read it as the `virtual:rally-canvas-templates` module, and the public site's `/marketplace/` page renders from the same loader. Each
+`packages/skills/marketplace-skills/catalog.ts` lists and orders the catalog and parses it; the app's builds read it as the `virtual:rally-canvas-templates` module, and the public site's `/marketplace/` page renders from the same loader. Each
 Markdown file in `packages/skills/marketplace-skills/` supplies its card's `name`,
 `description`, `icon` and `color` (its card's mark, from the Canvas appearance
 catalog; it never becomes the started Canvas's mark), and category `tags`. The builds check tags against
-`canvas-template-categories.ts`. Each starter is tagged with its own directory.
+`marketplace-skills/categories.ts`. Each starter is tagged with its own directory.
 Selecting a template creates and opens a Canvas with the Markdown body sent
 as the creator's first Chat message through the **Start from a prompt** flow.
 An empty Canvas offers the same templates under its composer
