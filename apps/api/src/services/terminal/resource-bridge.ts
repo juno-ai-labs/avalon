@@ -1086,7 +1086,7 @@ export function createTerminalResourceBridge(
       const stored = await env.PAYLOADS.get(artifactManifestKey(served.artifactId, served.version));
       if (!stored) return null;
       // Nothing to carry is always safe: every file is then read again.
-      let parsed: unknown = null;
+      let parsed: unknown;
       try { parsed = JSON.parse(await stored.text()); } catch { return null; }
       const manifest = ArtifactManifestSchema.safeParse(parsed);
       if (!manifest.success) return null;
