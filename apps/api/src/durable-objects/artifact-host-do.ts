@@ -1282,19 +1282,9 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
 /**
  * The Worker Loader's code callback for a stateful artifact's facet.
  *
- * **Everything the callback returns is read inside it, on every run.** The
- * loader documents that this callback "could run any number of times": it runs
- * again whenever the runtime starts a fresh isolate for the same id, even
- * behind a stub it already handed out. An R2 body is a stream that reads once,
- * so a body fetched outside the callback and read inside it served the first
- * run and threw `Body has already been used` on every later one. In
- * production that was every request reaching a re-created isolate, a few
- * seconds into any idle gap: an `<audio>` element's range probe, a page's
- * poll, a podcast app's first fetch of a feed.
- *
- * A function of its own, not a closure inside `facetFor`, so the test suite can
- * run it twice against real R2, the one property the loader's contract asks of
- * it.
+ * The loader may run this callback any number of times (once for each fresh
+ * isolate behind the same stub), so everything it returns, the R2 body
+ * included, is fetched and read inside it. Exported so a test can run it twice.
  */
 export function facetWorkerCode(
   env: Pick<Env, "PAYLOADS">,

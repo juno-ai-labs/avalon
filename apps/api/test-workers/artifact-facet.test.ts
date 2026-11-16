@@ -338,12 +338,7 @@ describe("a stateful artifact's facet", () => {
   });
 
   it("hands the loader the site's code every time its callback runs, not only the first", async () => {
-    // The loader may run this callback again whenever it starts a fresh
-    // isolate for the same id. An R2 body read once outside it served the
-    // first isolate and threw "Body has already been used" for every later
-    // one, so a site broke a few seconds into any idle gap. When the runtime
-    // re-runs the callback cannot be steered from a test, so the test runs it
-    // twice itself.
+    // The runtime decides when it re-runs the callback, so the test runs it twice.
     await publish(VOTING_MODULE);
     const sources = await runInDurableObject(hostStub(), async (_instance: ArtifactHostDO, state) => {
       const row = state.storage.sql.exec<{
