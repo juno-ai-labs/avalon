@@ -3,8 +3,7 @@
 The pencil homepage, blog, Trust Center and Help Center share the fonts in
 `src/site-theme.css`: Instrument Serif headlines, Geist body text, and Geist
 Mono for code. Earlier marketing pages use the same families through
-`src/landing.css`; older auxiliary pages and comparison social cards retain
-Barlow (see `docs/site-design-system.md`). The site's Content-Security-Policy allows fonts from `'self'` only, so
+`src/landing.css` (see `docs/site-design-system.md`). The site's Content-Security-Policy allows fonts from `'self'` only, so
 the faces ship here and Vite fingerprints them into `/assets/`, which
 `public/_headers` caches as immutable.
 
