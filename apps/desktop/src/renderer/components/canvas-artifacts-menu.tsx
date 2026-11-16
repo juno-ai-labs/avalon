@@ -6,11 +6,7 @@ import { useId } from 'react';
 
 import { formatRelative } from '../lib/format';
 
-/**
- * The resource shape `resourceGlyph` reads, from a Canvas artifact's kind: a
- * site under the wire's site type, so it draws the page mark whatever MIME it
- * carries; a file or an archive by its MIME and title, as a rail row is.
- */
+/** A site draws the page mark; a file or archive is classified by MIME and title. */
 function artifactResource(artifact: CanvasArtifact): { resourceType: string; mimeType: string | null; title: string } {
   return {
     resourceType: artifact.kind === 'site' ? 'generated_site' : 'generated_file',
@@ -25,9 +21,8 @@ function artifactResource(artifact: CanvasArtifact): { resourceType: string; mim
  * when it last changed. A row opens that artifact in the right rail. Draws
  * nothing for a Canvas with no artifacts.
  */
-export function CanvasArtifactsSection({ artifacts, disabled = false, onOpen }: {
+export function CanvasArtifactsSection({ artifacts, onOpen }: {
   artifacts: readonly CanvasArtifact[];
-  disabled?: boolean;
   onOpen: (artifact: CanvasArtifact) => void;
 }): React.JSX.Element | null {
   const labelId = useId();
@@ -40,7 +35,6 @@ export function CanvasArtifactsSection({ artifacts, disabled = false, onOpen }: 
         const Glyph = resourceGlyph(artifactResource(artifact));
         return <TitleMenuItem
             key={artifact.resourceId}
-            disabled={disabled}
             icon={<Glyph aria-hidden="true" size={16} strokeWidth={1.8} />}
             onSelect={() => onOpen(artifact)}
           >
