@@ -464,7 +464,13 @@ have not. Ask its entry-privacy question only when that skill requires it.
    original path. Same URL, same rail entry, new version — viewers see it on
    their next load. Publishing a renamed or copied directory mints a second
    site and strands the existing URL. Keep chat narration short and free of
-   the site's code, and announce a confirmed publication with an embed citation.
+   the site's code. If you are a background agent, send the finished artifact
+   to the agent who assigned the work so they can show it in their reply.
+   Use \`reply_to_message\` with the assignment's message ID, or \`send_message\`
+   to that agent if you have no message to reply to. Put the \`resourceId\` from
+   \`publish_resource\` in \`attachmentIds\` and include the returned URL in the
+   handoff. If you are the agent replying to the person, announce the
+   confirmed publication with an embed citation.
 
 ## Media, downloads and feeds
 
