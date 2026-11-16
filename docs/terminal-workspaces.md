@@ -1470,22 +1470,35 @@ update lag before changing the default.
 
 ## Changelog
 
-### 2026-11-16 — Publishes refused for their size are logged
+### 2026-11-16 — Directory listings reuse their digests; size refusals are logged
 
-**What changed:** `TerminalResourceBridge.noteOversizedPublish` logs
-`terminal_publish_over_size_limit` before each size refusal: the runtime's
-check on a file or a directory, and the bridge's own check on the bytes.
+**What changed:** A directory publish's listing (`directoryListingCommands`,
+`site-publish.ts`) keeps a digest cache per directory under
+`/workspace/.rally/publish-digests/`, one line per file keyed by inode, change
+time, size and path, and hashes only files it has no line for. A digest is
+appended as it is computed, and a finished listing replaces the cache with its
+own files. Separately, `TerminalResourceBridge.noteOversizedPublish` logs
+`terminal_publish_over_size_limit` before each size refusal.
 
-**Why:** The team kept the 25 MB limit for now and asked to see how often
-episodes and other media reach it. A refusal reached only the model, so there
-was no record of it to count.
+**Why:** A site now holds a feed's episodes, and every publish hashed every
+file to add one, so a large feed's publish grew with the whole site and could
+run past the listing's time limit, where a retry repeats it. The team also
+kept the 25 MB limit and asked to see how often media reaches it; a refusal
+reached only the model.
 
-**Considered and rejected:** Logging the path, which is the participant's own
-naming; the extension says what kind of file it was without saying what it was
-about. Raising the limit, which the team declined until these rows show a need.
+**Considered and rejected:** Keying on the modified time, which `touch -r`
+restores after an edit; the change time moves on any write and no user tool
+sets it. Writing the cache only at the end, which loses a timed-out listing's
+work every time, so a site too large to hash in one listing never could be.
+Keeping the cache on Rally's side, which cannot see a file change in the
+sandbox. Logging the refused path, which is the participant's own naming.
 
-**Consequences:** A new size check on a publish path calls
-`noteOversizedPublish` before it throws, or its refusals go uncounted.
+**Consequences:** The cache is trusted as the listing already was: it decides
+which files are already stored, and R2 still checks every streamed file. A
+damaged or unwritable cache only costs rehashing. On a real Daytona sandbox
+(2026-11-16) hashing ran at about 1.4 GB/s, so the cache matters for feeds of
+many gigabytes rather than for ordinary sites. A new size check on a publish
+path calls `noteOversizedPublish` before it throws.
 
 ### 2026-11-15 — Canvas files return their URL, and the snapshot ships ffmpeg
 
