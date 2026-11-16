@@ -80,7 +80,7 @@ em { font-family: var(--display-font); }
 
 /* The same quiet footer as the illustrated homepage. */
 .rally-footer { max-width: 1240px; width: calc(100% - 112px); margin: 0 auto; padding-top: 65px; }
-.footer-grid { display: grid; grid-template-columns: 1.45fr .7fr 1fr .85fr 1.1fr 1.1fr; gap: 24px; }
+.footer-grid { display: grid; grid-template-columns: 1.45fr .7fr .85fr 1.1fr 1.1fr; gap: 24px; }
 .footer-brand .wordmark { font-size: 33px; }
 .footer-brand .rally-symbol { width: 28px; height: 28px; }
 .footer-tagline { max-width: 145px; margin-top: 18px; color: var(--muted); font-size: 11px; line-height: 1.8; }
