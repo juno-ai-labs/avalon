@@ -39,7 +39,7 @@ export function OrganizationCardBadge({ id, organization }: {
 }): React.JSX.Element {
   const label = sharedFromLabel(organization);
   return <Tip disableHoverableContent label={label}>
-    <span className="canvas-card-badge canvas-card-organization">
+    <span className="canvas-card-organization">
       <span aria-hidden="true" className="organization-badge-initial">{organizationInitial(organization.name)}</span>
       <span className="sr-only" id={id}>{label}</span>
     </span>
