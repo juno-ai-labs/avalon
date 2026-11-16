@@ -34,7 +34,7 @@ import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "
 import {
   SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourcesResultSchema,
   type SidekickSource, type SidekickSourceRequest, type SidekickSourceRequestResult,
-  type SidekickSourceRequestView, type SidekickSourcesResult,
+  type SidekickSourceConnectionState, type SidekickSourceRequestView, type SidekickSourcesResult,
 } from "@rally/contracts";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -1029,6 +1029,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       requestId: request.requestId, sidekickId: this.sidekickId, sidekickName: row.title || "Sidekick",
       person, connectorType: request.connectorType, eventTypes: request.eventTypes, condition: request.condition,
       state: request.state, requestedByName: request.requestedByName, yours: request.userId === viewerUserId,
+      connection: this.sourceConnectionState(row.workspace_id, request.userId, request.connectorType, request.eventTypes),
       createdAt: request.createdAt, decidedAt: request.decidedAt,
     });
   }
@@ -1171,17 +1172,40 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   /**
-   * The connections of one connector a person's source covers: their own,
+   * The connections a person's source for these events covers: their own,
    * and the Organization's, where a source lets in the events limited to an
-   * audience they are in. What approving a request lets in.
+   * audience they are in. Each with the asked event types it announces, so a
+   * Gmail request never lands on the same person's Drive connection, which is
+   * the same connector type and carries none of the mail. What approving a
+   * request lets in.
    */
-  private sourceConnections(workspaceId: string, userId: string, connectorType: string): { id: string }[] {
-    return this.sql.exec<{ id: string }>(
-      `SELECT id FROM connector_connections
+  private sourceConnections(workspaceId: string, userId: string, connectorType: string, eventTypes: readonly string[]):
+    { id: string; status: string; eventTypes: string[] }[] {
+    const adapter = connectorRegistryForEnv(this.env).get(connectorType);
+    return this.sql.exec<{ id: string; status: string; scope: string; granted_scopes_json: string; config_json: string | null }>(
+      `SELECT id, status, scope, granted_scopes_json, config_json FROM connector_connections
         WHERE workspace_id = ?1 AND connector_type = ?3 AND status <> 'disabled'
           AND ((scope = 'personal' AND owner_user_id = ?2) OR scope = 'workspace')
         ORDER BY id`, workspaceId, userId, connectorType,
-    ).toArray();
+    ).toArray().flatMap((connection) => {
+      const announced = new Set(connectorActivityTriggerDescriptors(adapter, connection.config_json,
+        storedConnectionScope(connection.scope), JSON.parse(connection.granted_scopes_json) as string[])
+        .map((descriptor) => descriptor.eventType));
+      const carried = eventTypes.filter((eventType) => announced.has(eventType));
+      return carried.length > 0 ? [{ id: connection.id, status: connection.status, eventTypes: carried }] : [];
+    });
+  }
+
+  /**
+   * Whether the person asked can let these events in now: a connection that
+   * carries them and works, only ones whose sign-in lapsed, or none. A
+   * connection in `error` counts as working: reconnecting is not its fix.
+   */
+  private sourceConnectionState(workspaceId: string, userId: string, connectorType: string, eventTypes: readonly string[]):
+    SidekickSourceConnectionState {
+    const connections = this.sourceConnections(workspaceId, userId, connectorType, eventTypes);
+    if (connections.some((connection) => connection.status !== "needs_reconnect")) return "connected";
+    return connections.length > 0 ? "reconnect_required" : "not_connected";
   }
 
   /** The event types a connector's connections in this Organization announce, a webhook's configured ones among them. */
@@ -1283,10 +1307,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
           continue;
         }
         const own = userId === request.actor.userId;
-        // The asker is here to be told now that they have nothing to approve; anybody else finds out when they answer.
-        if (own && this.sourceConnections(row.workspace_id, userId, request.ask.connectorType).length === 0) {
-          throw sidekickSourceError("sidekick_source_connection_missing");
-        }
+        // A person with no such account yet is asked all the same, the asker included:
+        // the request's card connects it before Approve, so connecting is part of answering.
         const { request: created, replaced } = this.sources().ask({
           requestId: requestIds[index]!, sidekickId: this.sidekickId, userId, connectorType: request.ask.connectorType,
           eventTypes, condition, requestedByUserId: request.actor.userId, requestedByName: request.actorName,
@@ -1344,10 +1366,16 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       if (state === "approved") {
         if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
         if (relationship?.status !== "active") throw sidekickSourceError("sidekick_source_membership_unavailable");
-        const connections = this.sourceConnections(row.workspace_id, current.userId, current.connectorType);
+        const connections = this.sourceConnections(row.workspace_id, current.userId, current.connectorType, current.eventTypes);
         if (connections.length === 0) throw sidekickSourceError("sidekick_source_connection_missing");
+        // An approval nothing could arrive through is refused, so it is noticed now rather
+        // than read later as a Sidekick with nothing to do. A lapsed connection beside a working
+        // one still gets its rows: they let events in again once it is reconnected.
+        if (connections.every((connection) => connection.status === "needs_reconnect")) {
+          throw sidekickSourceError("sidekick_source_connection_reconnect");
+        }
         for (const connection of connections) {
-          for (const eventType of current.eventTypes) {
+          for (const eventType of connection.eventTypes) {
             this.sources().put({ sidekickId: this.sidekickId, userId: current.userId, connectionId: connection.id,
               connectorType: current.connectorType, eventType, condition: current.condition,
               membershipIncarnation: relationship.incarnation, requestId: current.requestId }, now);

@@ -10,6 +10,7 @@ import {
   ConnectorConnectionStateResultSchema,
   bestConnectorConnectionState,
   connectorAuthorizationStatus,
+  sourceConnectionCardId,
   connectorConnectionCardSummary,
   connectorConnectionStateSummary,
   connectorConnectionCardInputFromToolEvent,
@@ -172,5 +173,19 @@ describe("shared connector authorization status", () => {
     ["needs_reconnect", "reconnect_required"], ["disabled", "disabled"],
   ])("maps stored %s to %s for model and UI", (stored, expected) => {
     expect(connectorAuthorizationStatus(stored)).toBe(expected);
+  });
+});
+
+describe("the card that connects the account a source's events come from", () => {
+  it.each([
+    ["google", ["email.received"], "google-mail-calendar"],
+    ["google", ["calendar.event_created", "email.received"], "google-mail-calendar"],
+    ["google", ["drive.file_changed"], "google-drive"],
+    // Mail and Drive are two connections: no one card connects both.
+    ["google", ["email.received", "drive.file_changed"], null],
+    ["granola", ["meeting.completed"], "granola"],
+    ["generic_webhook", ["webhook.received"], null],
+  ] as const)("names %s %j as %s", (connectorType, eventTypes, expected) => {
+    expect(sourceConnectionCardId(connectorType, eventTypes)).toBe(expected);
   });
 });

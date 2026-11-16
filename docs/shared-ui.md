@@ -120,8 +120,18 @@ now stands, written into every open read that holds it
 what an approval added. Both writes use `networkMode: 'always'`, so a press
 while offline fails at once instead of being held and sent on reconnect. A
 refusal is an acknowledged popup in the contract's own words
-(`SIDEKICK_SOURCE_ERRORS`); an approval with nothing connected names the
-account to connect. A card's failed read is not a popup: it is a stored row,
+(`SIDEKICK_SOURCE_ERRORS`); an approval with nothing connected, or with a
+lapsed sign-in, names the account to connect or reconnect.
+
+A request whose person still has to connect (`connection` is not
+`connected`) takes a `connectStep` from the host: the card view and the
+Sources list draw it above that person's own pair, `SourceDecisionButtons`
+holds Approve with `approveBlocked` (its reason on hover) while Decline stays
+live, and every other reader's row says "Needs to connect" or "Needs to
+reconnect". The desktop's step is `ConnectorConnectionCard` under its own read
+of `['connections']`, the key the conversation uses; its `onConnected`
+re-reads the Sidekick's sources. The Activity row reads the request under the
+card's key to learn the same. A card's failed read is not a popup: it is a stored row,
 so it offers Details.
 
 The connector and events are worded by the host and handed in (`SourceWords`):

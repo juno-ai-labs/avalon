@@ -1,14 +1,16 @@
-import type { SidekickSourceRequestView, SidekickSourcesResult } from '@rally/contracts';
+import { sourceConnectionCardId, type SidekickSourceRequestView, type SidekickSourcesResult } from '@rally/contracts';
 import {
   SidekickSourceRequestCardView,
   SidekickSourcesList,
   SourceDecisionButtons,
   type SourceAsk,
+  type SourceConnectStep,
   type SourceDecision,
 } from '@rally/ui/components/sidekick-sources';
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 
+import { ConnectorConnectionCard, ConnectorConnectionsProvider } from './connector-mentions';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import {
   applyDecidedSourceRequest,
@@ -58,6 +60,40 @@ function useSourceDecision(): Decide {
   });
 }
 
+/**
+ * The asked person's own connect or reconnect, above their Approve: the same
+ * card a conversation draws when an agent asks for a connection, so a person
+ * who never connected the account, or whose sign-in lapsed, settles the
+ * request in one place. It reads the viewer's own connections under the key
+ * the conversation already uses, and once the account works it re-reads the
+ * Sidekick's sources, which unlocks Approve. A connector no card connects
+ * (a webhook, a custom server) is pointed at Settings.
+ */
+function SourceConnectionStep({ request }: { request: SidekickSourceRequestView }): React.JSX.Element {
+  const { api } = useCollaborationSession();
+  const queryClient = useQueryClient();
+  const connections = useQuery({
+    queryKey: ['connections'],
+    queryFn: ({ signal }) => api!.getConnections(signal),
+    enabled: Boolean(api),
+    staleTime: 60_000,
+  });
+  const connected = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: sidekickSourcesQueryKey(request.sidekickId) });
+  }, [queryClient, request.sidekickId]);
+  const connectorId = sourceConnectionCardId(request.connectorType, request.eventTypes);
+  if (!connectorId) {
+    return <p className="source-request-connect-settings">
+      {request.connection === 'reconnect_required' ? 'Reconnect' : 'Connect'} your {sourceWords(request).connector} account in Settings, then approve here.
+    </p>;
+  }
+  return <ConnectorConnectionsProvider connections={connections.data}>
+    <ConnectorConnectionCard onConnected={connected} request={{ connectorId, scope: 'personal' }} />
+  </ConnectorConnectionsProvider>;
+}
+
+const connectStep: SourceConnectStep = (request) => <SourceConnectionStep request={request} />;
+
 function decidingOf(decide: Decide): { requestId: string; decision: SourceDecision } | null {
   return decide.isPending ? { requestId: decide.variables.request.requestId, decision: decide.variables.decision } : null;
 }
@@ -99,6 +135,7 @@ export function SidekickSourceRequestCard({ card }: { card: SidekickSourceReques
   const decide = useSourceDecision();
   return <>
     <SidekickSourceRequestCardView
+      connectStep={connectStep}
       deciding={decidingOf(decide)}
       // A stored row's read failure waits to be asked for; it never interrupts a scroll.
       details={query.error && <ErrorNotice automatic={false} detailsLabel="Details" occurrence={query.error} title="The request could not be loaded">
@@ -126,10 +163,22 @@ export function SourceRequestActions({ request, sidekickName }: {
   /** For the buttons' names, so two Sidekicks' requests differ; absent while the row has no title. */
   sidekickName: string | undefined;
 }): React.JSX.Element {
+  const { api } = useCollaborationSession();
   const decide = useSourceDecision();
   const answered = decide.data?.state;
+  // The row carries no account state, so it reads the request as its card does, under the
+  // card's key: one read serves both, and connecting re-reads it.
+  const live = useQuery({
+    queryKey: sidekickSourceRequestsQueryKey(request.sidekickId, [request.requestId]),
+    queryFn: ({ signal }) => api!.readSidekickSourceRequests([request.requestId], signal),
+    enabled: Boolean(api),
+    refetchOnWindowFocus: true,
+  }).data?.[0];
+  const toMake = live?.state === 'pending' && live.connection !== undefined && live.connection !== 'connected' ? live.connection : null;
   return <>
+    {toMake && live && <SourceConnectionStep request={live} />}
     <SourceDecisionButtons
+      approveBlocked={toMake ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${sourceWords(request).connector} first` : undefined}
       deciding={decide.isPending ? decide.variables.decision : null}
       onDecide={(decision) => decide.mutate({ request, decision })}
       state={answered === 'approved' || answered === 'declined' ? answered : 'pending'}
@@ -171,6 +220,7 @@ export function SidekickSources({ id }: { id: string }): React.JSX.Element {
   });
   return <>
     <SidekickSourcesList
+      connectStep={connectStep}
       data={query.data}
       deciding={decidingOf(decide)}
       loading={query.isPending}

@@ -74,7 +74,7 @@ Three things write a source:
 | Writer | When | What it writes | `request_id` |
 | --- | --- | --- | --- |
 | `apply`, through `putOwnSources` | A manager saves a definition that adds a rule (a connection and an event type) the accepted revision before did not have, on their own connection or on an Organization connection. A save that changes anything else (the instructions, a schedule) adds nothing. | One row for that connection and event type, with no condition, and only when the saver does not already let that event type in from that connection. A row that exists is left exactly as it is: its condition and its `request_id` stay. | null |
-| `decideSourceRequest` | The person asked approves, the asker included when they asked for their own account. | One row for each event type asked, on each connection of that connector they own then and on each Organization connection of it. A row that exists for the same connection and event type takes the request's condition and id. Rows for other event types are not touched. | the request |
+| `decideSourceRequest` | The person asked approves, the asker included when they asked for their own account. | One row for each event type asked, on each connection of that connector they own then and on each Organization connection of it, wherever that connection announces that event type: a Gmail request lands on the person's Mail connection, never on their Drive one, which is the same connector type. A row that exists for the same connection and event type takes the request's condition and id. Rows for other event types are not touched. | the request |
 | Migration 146 | Once, at deploy, for each person who held an allowed delegation grant. | One row per event type for each of their own connections a rule was configured or registered on, and for each Organization connection a rule was configured on, with no condition. | null |
 
 `request_id` matters later. A row that came from a saved rule or from the
@@ -95,9 +95,10 @@ condition. `requestSources` reads the asker's stored relationship for their
 role and does not trust a role the caller passes: the route knows the role and
 an agent's tool does not, and both ask here. Each person gets one
 `sidekick_source_requests` row, and every one starts `pending`: asking
-approves nobody, the asker included. An ask for one's own connection is
-refused whole (`sidekick_source_connection_missing`) when they have none
-connected, since they are there to be told. Everyone else gets an Activity
+approves nobody, the asker included. Nobody is refused for having no such
+account connected, the asker included: connecting is part of answering
+([connecting is part of answering](#connecting-is-part-of-answering)).
+Everyone else gets an Activity
 row that is its actions, a push and an email; the asker gets none of those
 for their own request, whose card is in the conversation they asked from and
 whose row is under Sources.
@@ -220,6 +221,39 @@ already exists, so a refused or failed post is logged as
 (`askedFromCanvasId` on its stored turn), and the turn its answer starts reads
 it back (`wizardCanvasId`), so a source request or a second question after the
 answer is drawn in the same Chat.
+
+### Connecting is part of answering
+
+Every request view carries `connection`: whether the person asked has an
+account that carries the asked events. `sourceConnectionState` reads it when
+the view is built, from the connections `sourceConnections` returns: their own
+and the Organization's of that connector, not `disabled`, that announce at
+least one asked event type (`connectorActivityTriggerDescriptors`, which for
+Google is the grant: `gmail.read` for mail). One that is not
+`needs_reconnect` makes it `connected`; only lapsed ones make it
+`reconnect_required` (a changed password revokes Google's refresh token);
+none makes it `not_connected`. An `error` connection counts as connected,
+because reconnecting is not its fix.
+
+Every reader of the request sees it, the asker included, so the asker and the
+agent that asked know whose step is left. The card, the Activity row and the
+Sources panel draw, for the person asked and only while their request waits,
+the conversation's own connection card (`ConnectorConnectionCard`, chosen by
+`sourceConnectionCardId`) above the pair, and hold Approve until the account
+works. Decline is never held. Once the card sees the connection healthy it
+re-reads the Sidekick's sources, which unlocks Approve. Everyone else reads
+"Needs to connect Gmail" or "Needs to reconnect Gmail" in that person's row. A
+connector no card connects (a webhook, X, a custom server) points at Settings
+instead.
+
+`decideSourceRequest` refuses an approval with no such connection
+(`sidekick_source_connection_missing`), and one where every such connection
+needs reconnecting (`sidekick_source_connection_reconnect`): such an
+approval would let nothing in, and would read later as a Sidekick with
+nothing to do. A lapsed connection beside a working one still gets its rows,
+which let events in again once it is reconnected. The emailed link that meets
+either refusal sends the person to their Activity row, where the connect step
+is.
 
 ### Which connections a rule is registered on
 
@@ -415,6 +449,12 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
   and gets the answer that receipt already got
   ([asking](#asking)).
 - **No tool answers.** There is no approve or decline tool, by design.
+- **Each request says whose step is left.** `request_source` and
+  `sources_list` return each request's `connection`. The tool's description
+  tells the model to ask whether or not the person has connected, and to tell
+  the person it works for who still has to connect or reconnect; the
+  `setting-up-a-filtered-trigger` skill says the same, and names holding back
+  an ask until someone connects as an anti-pattern.
 - **Refusals** carry a code and a sentence:
   - `sidekick_source_request_requires_manager`: the acting person does not
     manage the Sidekick;
@@ -422,8 +462,6 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
     member;
   - `sidekick_source_connector_unknown`, and `sidekick_source_event_unknown`,
     which names the event type;
-  - `sidekick_source_connection_missing`: the acting person asks for their
-    own account and has none connected;
   - `sidekick_source_place_denied`: the ask names a Canvas the asker cannot
     open. A tool call cannot cause it by argument, because the host takes the
     place from the loop.
@@ -583,7 +621,8 @@ source's condition.
 | Somebody who is not the person asked answers | Refused `sidekick_source_request_not_yours` (403). The request keeps waiting. |
 | The person answers a request that was already settled the other way, or that a newer ask cancelled | Refused `sidekick_source_request_settled` (409) on the session route. The same answer given twice reads back as it stands. |
 | The person's membership is not active when their approval is recorded | Refused `sidekick_source_membership_unavailable` (409); the request keeps waiting. |
-| The person approves with no connection of that connector | Refused `sidekick_source_connection_missing` (409); the request keeps waiting. |
+| The person approves with no connection that carries the asked events | Refused `sidekick_source_connection_missing` (409); the request keeps waiting, and its card offers the connection. |
+| The person approves and every such connection needs reconnecting | Refused `sidekick_source_connection_reconnect` (409); the request keeps waiting, and its card offers the reconnect. |
 | A link's token does not match its fields | Refused `sidekick_source_link_invalid` (401), before anything is read. |
 | A link is opened for a request that is gone with its Sidekick, or by a person who has left the Organization | `sidekick_source_request_not_found` (404). Nothing is decided. |
 | A link is opened after the request was answered the other way, or replaced by a newer ask | Nothing changes. The page says how the request stands. |
@@ -628,7 +667,7 @@ source's condition.
 | Suite | Covers |
 | --- | --- |
 | `apps/api/test-workers/sidekick-sources.test.ts` | Real workerd. A person's mail starts a Sidekick through their source whether or not they are a delegate, and stops when the source is taken back while they stay a delegate; an event matched before a withdrawal is refused at admission; only the person asked answers and only a manager asks, by their stored role; a filtered source refuses without a verdict, with a refusing one and with one for another filter, and an unfiltered one needs none; saving a definition keeps a person's own filter and adds nothing when it adds no rule; a whole-account rule reaches another account only through a requested source; a request about one event type leaves another event type's source alone; a rule on another person's account is refused until they approve a request for it; a repeated ask answers with what it already asked; trying a draft filter reads the acting person's own recent events and nobody else's, and says it judged nothing with no classifier or no such events; an ask for one's own account stays pending until they approve it; a non-delegate's mail starts a run that acts as the Sidekick itself and a delegate's a run that acts as them; a run with no delegate starts as the Sidekick itself and only a manager continues it; an agent acting for nobody cannot continue a run a delegate is behind; a Sidekick that had already stopped stays stopped until it is resumed, whatever other warning is written meanwhile and whoever asks it something in its conversation under their own access, and its managers are told about the run that waits; a run whose requester has left asks for input and stops nothing; the host reads the one message for a run on real workerd with only Gmail stood in, fences it with the run's id, starts the run on its event alone with the connector's own code when the read fails, and reads nothing from a disabled connection; content is withheld once the source is gone. |
-| `apps/api/test-workers/sidekick-source-routes.test.ts` | Real workerd, through the HTTP routes: 401 with no session, an ask and its answer by the person asked and by nobody else, a body that smuggles a field refused 400, a request read by its asker, the person asked and a member who can open the Canvas it was asked in, and by no uninvolved member, withdrawing, each ask refusal by its status and code (an unknown connector or event, a person outside the Organization, the asker's own account with none connected, a Canvas the asker cannot open), an approval with no account connected, and the emailed link's malformed bodies and a person who has left. |
+| `apps/api/test-workers/sidekick-source-routes.test.ts` | Real workerd, through the HTTP routes: 401 with no session, an ask and its answer by the person asked and by nobody else, a body that smuggles a field refused 400, a request read by its asker, the person asked and a member who can open the Canvas it was asked in, and by no uninvolved member, withdrawing, each ask refusal by its status and code (an unknown connector or event, a person outside the Organization, a Canvas the asker cannot open), an ask for the asker's own account with none connected made all the same, an approval with no account that carries the events (a Drive connection does not stand in for Gmail), an approval refused while the only such account needs reconnecting and accepted once it is reconnected, the `connection` each reader is shown, and the emailed link's malformed bodies and a person who has left. |
 | `apps/api/test-workers/canvas-sidekicks.test.ts`, `apps/api/test-workers/conversation-tools.test.ts` | Real workerd. A run nobody is behind lists, reads and is told about every attached Canvas that is not archived, and writes a site's rows there, with no person at all; a run somebody asked for is held to what that person can open; an id with no run row is never the Sidekick itself. |
 | `apps/api/test/semantic-trigger-admission.test.ts` | The delivery, with the object and the classifier stood in: the person's filter is judged first, the trigger's question is not asked of an event that filter kept out, both verdicts are sent, and neither is judged without a classifier credential. |
 | `apps/api/test/connector-tool-selection.test.ts` | Which turns are offered the three source tools: the wizard, a Canvas's Chat and their background agents, on a person's turn or a stamped agent's message, and no run, delegation worker, review, review agent or unstamped message; the filtered-trigger skill is listed on the same turns and no others; a run and its background worker are offered the delegation lists and not `set_delegation`, which a person's turn and a conversation's own background agent keep. |
@@ -824,6 +863,39 @@ one as it is resolved; the resolution becomes a changelog entry.
    Sidekick asked about from its own conversation.
 
 ## Changelog
+
+### 2026-11-16 — Connecting is part of answering a request
+
+**What changed:** A request view carries the asked person's `connection`
+(`connected`, `reconnect_required`, `not_connected`), and the card, Activity
+row and Sources panel draw the conversation's connection card above the
+person's own Approve, which waits until the account works. An ask for the
+asker's own account with nothing connected is no longer refused. Approval
+counts, and writes rows on, only the connections that announce the asked
+event types, and is refused `sidekick_source_connection_reconnect` when every
+such connection's sign-in has lapsed. `request_source`'s description and the
+`setting-up-a-filtered-trigger` skill tell the model to ask regardless and to
+say who still has to connect.
+
+**Why:** A person asked a Canvas for a CRM of the mail they and a colleague
+had exchanged. The colleague's two Gmail connections had lapsed after a
+password change; the agent never asked, and told the person the colleague
+would have to authorize access some other way. The request was already the
+place to fix that, but nothing on it said the account was broken. Approving
+would also have passed, because the colleague's working Drive connection is
+the same connector type, writing mail sources onto Drive and onto the two
+lapsed connections, letting in nothing. The owner asked that a colleague who
+never connected be served the same way: one visit, a few presses.
+
+**Considered and rejected:** A separate "reconnect your account" notice
+beside the request: two things to answer for one decision. Letting an
+approval through on a lapsed connection and fixing it later: the person
+would believe they had shared and nothing would arrive.
+
+**What a future change has to respect:** Which connection carries an event
+is the connection's own announcement, not its connector type. The connect
+step is the conversation's connection card, so a change to how an account
+connects changes it here too.
 
 ### 2026-11-16 — A Chat's and a wizard's turns ask for a source, whatever started them
 
