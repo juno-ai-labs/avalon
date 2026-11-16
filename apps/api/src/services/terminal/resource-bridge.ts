@@ -1,5 +1,6 @@
 import { AuthorizationService } from "../authorization-service";
 import { asWorkspaceId, DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
+import { publishedFilePath } from "@rally/contracts/artifact-access";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import {
   AttachmentKindSchema,
@@ -581,14 +582,17 @@ export function createTerminalResourceBridge(
    * say) without asking a person to copy its link. Only a file the Canvas
    * noted gets one: any other would be a link that never serves.
    */
-  const withFileUrl = async <T extends { resourceId: string }>(workspaceId: string, published: T, inCanvas: boolean): Promise<T> => {
+  const withFileUrl = async <T extends { resourceId: string; title: string }>(workspaceId: string, published: T, inCanvas: boolean): Promise<T> => {
     if (!inCanvas) return published;
     // The file has landed, so a reservation that cannot run must not turn the
     // publish into a failure the model would retry; it is logged by name and
     // the result goes back without a link, as a file outside a Canvas would.
     try {
       const hostnameStub = await ensureArtifactHostname(env, { workspaceId, artifactId: published.resourceId });
-      return { ...published, url: artifactOrigin(hostnameStub, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN) };
+      // The URL ends in the file's own name where it has one, as podcast apps
+      // and download managers read a file's type from it.
+      const origin = artifactOrigin(hostnameStub, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN);
+      return { ...published, url: `${origin}${publishedFilePath(published.title) ?? ""}` };
     } catch (error) {
       logWarn(env, "canvas_file_hostname_failed", {
         workspace_id: workspaceId, resource_id: published.resourceId,

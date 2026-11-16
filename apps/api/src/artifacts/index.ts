@@ -85,6 +85,7 @@ import {
 } from "./annotation-script";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
 import { storedObjectResponse } from "./stored-object-response";
+import { publishedFilePath } from "@rally/contracts/artifact-access";
 import {
   injectSocialPreviewIntoHtml,
   injectSocialPreviewResponse,
@@ -120,6 +121,7 @@ export interface ArtifactServingEnv {
 
 type ArtifactSecurityHeaderOptions = Readonly<{
   referrerPolicy?: "same-origin";
+  revalidate?: boolean;
 }>;
 
 function withSecurityHeaders(
@@ -131,6 +133,12 @@ function withSecurityHeaders(
   if (options.referrerPolicy === "same-origin") {
     headers.set("referrer-policy", options.referrerPolicy);
   }
+  // Stored bytes carry an `ETag`, so the browser may keep its copy and ask
+  // again on every use: each revalidation is admitted like any other request,
+  // so a Canvas that goes private stops answering at once, and an unchanged
+  // file costs a `304` instead of its whole body. Everything else, including
+  // whatever an active site's own code returns, stays `no-store`.
+  if (options.revalidate && response.headers.has("etag")) headers.set("cache-control", "private, no-cache");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
@@ -308,7 +316,7 @@ async function serveAdmitted(
     if(admission.kind==='file') {
       if(request.method!=='GET' && request.method!=='HEAD') return html(neutralPage(),405);
       const mount=splitVersionMount(url.pathname);
-      if(mount.path!=='/' && mount.path!=='/index.html') return html(neutralPage(),404);
+      if(mount.path!=='/' && mount.path!=='/index.html' && mount.path!==publishedFilePath(admission.file.title)) return html(neutralPage(),404);
       const latest=Math.max(...admission.file.versions.map(version=>version.version));
       if(mount.version!==null && mount.version!==latest && !admission.editor) return html(neutralPage(),403);
       const version=admission.file.versions.find(version=>version.version===(mount.version??latest));
@@ -316,7 +324,7 @@ async function serveAdmitted(
       const served=await storedObjectResponse(env.PAYLOADS,version.contentRef,request,
         {'content-type':version.mimeType,'content-disposition':contentDisposition('inline',admission.file.title)});
       if(!served) return html(neutralPage(),503);
-      return withSecurityHeaders(served);
+      return withSecurityHeaders(served,{revalidate:true});
     }
     const admitted: Admitted = admission;
 
@@ -451,7 +459,7 @@ async function serveAsset(
   }
   const served = await storedObjectResponse(env.PAYLOADS, key, request, { "content-type": asset.contentType });
   if (!served) return html(plainErrorPage("This page is temporarily unavailable."), 503);
-  return withSecurityHeaders(served);
+  return withSecurityHeaders(served, { revalidate: true });
 }
 
 async function serveCurrent(
