@@ -6,6 +6,7 @@ import {
   AttachmentKindSchema,
   type ArtifactManifest,
   ArtifactManifestSchema,
+  artifactManifestKey,
   type ArtifactHostnameStub,
   SITE_MANIFEST_MIME_TYPE,
   artifactOrigin,
@@ -42,9 +43,10 @@ import type { TerminalResourceBridge } from "./runtime";
 import {
   importTreeFailure,
   materializeTreeCommand,
-  readArtifactVersionFiles,
+  readArtifactVersionFile,
+  storedArtifactVersionPaths,
 } from "./site-import";
-import { existingArtifactForResource, publishSiteVersion } from "./site-resource-bridge";
+import { existingArtifactForResource, publishSiteVersion, siteFileSize } from "./site-resource-bridge";
 import {
   requireTerminalEffectIntent,
   TerminalToolError,
@@ -435,8 +437,8 @@ export function createTerminalResourceBridge(
     }
     // Throws `resource_not_importable` for a version whose bytes are gone,
     // rather than materializing part of a tree.
-    const files = await readArtifactVersionFiles(env, manifest);
-    const totalBytes = files.reduce((total, file) => total + file.bytes.byteLength, 0);
+    const files = await storedArtifactVersionPaths(env, manifest);
+    const totalBytes = files.reduce((total, file) => total + file.sizeBytes, 0);
     const absolute = `/workspace/${destination}`;
     const staging = `/workspace/.rally/tmp/${newId()}`;
     const cleanupStaging = async (): Promise<void> => {
@@ -502,11 +504,12 @@ export function createTerminalResourceBridge(
         now: plannedAt,
       });
     try {
+      // One file in memory at a time: a site can hold a feed's episodes.
       for (const file of files) {
         await provider.writeFile(
           providerSandboxId,
           `${staging}/${file.path}`,
-          file.bytes,
+          await readArtifactVersionFile(env, manifest, file.path),
           context.signal,
         );
       }
@@ -1073,6 +1076,27 @@ export function createTerminalResourceBridge(
       };
     },
 
+    async liveSiteFiles(context, filePath, input = {}) {
+      const target = await publicationAddress(context, input);
+      const providerResourceId = await publishedResourceIdentity(target.parentId, filePath, target.substreamId);
+      const row = await existingPublication(context, target, filePath, providerResourceId);
+      if (!row || row.resource_type !== "generated_site") return null;
+      const served = await existingArtifactForResource(workspace, context.workspaceId, row.id);
+      if (!served) return null;
+      const stored = await env.PAYLOADS.get(artifactManifestKey(served.artifactId, served.version));
+      if (!stored) return null;
+      // Nothing to carry is always safe: every file is then read again.
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(await stored.text()); } catch { return null; }
+      const manifest = ArtifactManifestSchema.safeParse(parsed);
+      if (!manifest.success) return null;
+      return {
+        artifactId: served.artifactId,
+        version: served.version,
+        files: manifest.data.assets.map(({ path, sha256, sizeBytes }) => ({ path, sha256, sizeBytes })),
+      };
+    },
+
     noteOversizedPublish(context, refused) {
       // The extension and the sizes only: a path is the participant's own
       // naming and may say what the file is about.
@@ -1163,7 +1187,7 @@ export function createTerminalResourceBridge(
           mode: previous.mode,
           stateful: site.stateful,
           fileCount: site.files.length,
-          totalBytes: site.files.reduce((total, file) => total + file.bytes.byteLength, 0),
+          totalBytes: site.files.reduce((total, file) => total + siteFileSize(file), 0),
           manifestSha256: settled.content_sha256 ?? "",
           hostnameStub,
           slug: settled.slug,

@@ -42,10 +42,31 @@ import { assetContentType } from "./site-publish";
 import { prepareSocialPreview } from "./site-social-preview";
 import { TerminalToolError } from "./tools";
 
-export interface SitePublishFile {
+/** A file whose bytes this publish read and will store. */
+export interface ReadSiteFile {
   path: string;
   bytes: Uint8Array;
   sha256: string;
+}
+
+/**
+ * A file the live version already stores at the same path with the same
+ * digest, copied from that version's key inside the bucket rather than read
+ * from the sandbox again. It is what lets a site hold a feed's episodes: each
+ * republish moves only what changed, so the per-publish byte limit and the
+ * Worker's memory see one new episode, not every episode so far.
+ */
+export interface CarriedSiteFile {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+  carriedFrom: { artifactId: string; version: number };
+}
+
+export type SitePublishFile = ReadSiteFile | CarriedSiteFile;
+
+export function siteFileSize(file: SitePublishFile): number {
+  return "bytes" in file ? file.bytes.byteLength : file.sizeBytes;
 }
 
 export interface SitePublishInput {
@@ -89,7 +110,10 @@ export async function writeArtifactVersion(
 ): Promise<SitePublishResult> {
   const artifactId = input.artifactId ?? newId();
   const serverEntry = input.mode === "active" ? "index.js" : null;
-  const preparedPreview = await prepareSocialPreview(input.files, input.fallbackTitle);
+  // The preview reads `index.html` and the image it names, which the runtime
+  // never carries (`socialPreviewSourcePaths`).
+  const preparedPreview = await prepareSocialPreview(
+    input.files.filter((file): file is ReadSiteFile => "bytes" in file), input.fallbackTitle);
   const storedFiles = preparedPreview.generatedFile
     ? [...input.files, preparedPreview.generatedFile]
     : [...input.files];
@@ -98,7 +122,7 @@ export async function writeArtifactVersion(
     .map((file) => ({
       path: file.path,
       contentType: assetContentType(file.path),
-      sizeBytes: file.bytes.byteLength,
+      sizeBytes: siteFileSize(file),
       sha256: file.sha256,
     }));
   if (assets.length > ARTIFACT_MAX_ASSET_COUNT) {
@@ -117,7 +141,7 @@ export async function writeArtifactVersion(
     serverModuleSha256: input.serverModuleSha256,
     assets,
     socialPreview: preparedPreview.socialPreview,
-    totalBytes: storedFiles.reduce((total, file) => total + file.bytes.byteLength, 0),
+    totalBytes: storedFiles.reduce((total, file) => total + siteFileSize(file), 0),
     publishedAt: nowIso(),
   };
 
@@ -139,7 +163,7 @@ export async function writeArtifactVersion(
         try {
           await env.PAYLOADS.put(
             artifactAssetKey(artifactId, input.version, file.path),
-            file.bytes,
+            "bytes" in file ? file.bytes : await carriedBody(env, file),
             {
               httpMetadata: { contentType: assetContentType(file.path) },
               customMetadata: { source: "artifact", artifactId, version: String(input.version) },
@@ -186,6 +210,19 @@ export async function writeArtifactVersion(
     manifestSha256: await sha256Hex(manifestBytes),
     manifestRef,
   };
+}
+
+/**
+ * A carried file's stored bytes as a stream of known length, so R2 copies it
+ * without the Worker holding it. A copy that is gone fails the publish, which
+ * leaves the site serving its previous version.
+ */
+async function carriedBody(env: Pick<Env, "PAYLOADS">, file: CarriedSiteFile): Promise<ReadableStream> {
+  const source = await env.PAYLOADS.get(artifactAssetKey(file.carriedFrom.artifactId, file.carriedFrom.version, file.path));
+  if (!source) throw new Error("carried_site_file_missing");
+  const { readable, writable } = new FixedLengthStream(source.size);
+  void source.body.pipeTo(writable).catch(() => undefined);
+  return readable;
 }
 
 /**

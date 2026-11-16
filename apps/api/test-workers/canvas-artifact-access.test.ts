@@ -18,8 +18,10 @@ import {
   asWorkspaceId,
   asAutomationId,
   asSubstreamId,
+  artifactAssetKey,
   type ArtifactManifest,
 } from "@rally/contracts";
+import { sha256Hex } from "../src/lib/crypto";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
 import { createArtifactAudienceTool } from "../src/services/canvas-artifact-audience-tool";
@@ -340,6 +342,52 @@ describe("Canvas artifact access propagated to local serving", () => {
     // The bare host still serves it; any other name does not.
     expect(await (await visit(stub)).text()).toBe("episode one audio");
     expect((await visit(stub, "/episode-2.mp3")).status).toBe(404);
+  });
+
+  it("carries a site's unchanged files into its next version from storage", async () => {
+    await runInDurableObject(
+      env.SUBSTREAM_AGENTS.getByName(conversationObjectName(env.AVALON_REGION, workspaceId, CANVAS, "0")),
+      (_instance, state) => seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: CANVAS, parentKind: "canvas" }),
+    );
+    const bridge = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(env, workspaceId),
+      createTerminalPortFactory(env, undefined, "0"), undefined, null, null, null, "0",
+      canvasArtifactNoter(env, { workspaceId, parentKind: "canvas", parentId: CANVAS, substreamId: asSubstreamId("0") }));
+    const call = () => ({
+      workspaceId, workstreamId: CANVAS, harnessRunId: crypto.randomUUID(), toolCallId: crypto.randomUUID(),
+      effectIntentId: crypto.randomUUID(), executionPrincipal: { type: "user" as const, userId: OWNER },
+      signal: new AbortController().signal,
+    });
+    const file = async (path: string, text: string) => {
+      const bytes = new TextEncoder().encode(text);
+      return { path, bytes, sha256: await sha256Hex(bytes) };
+    };
+    const episodeOne = await file("episodes/one.mp3", "episode one audio");
+    const first = await bridge.publishSiteResource(call(), { filePath: "feed" }, {
+      mode: "static", stateful: false, serverModuleSha256: null,
+      files: [await file("index.html", "<h1>Show</h1>"), episodeOne],
+    });
+    expect(await bridge.liveSiteFiles(call(), "feed")).toEqual({
+      artifactId: first.artifactId, version: 1,
+      files: expect.arrayContaining([{ path: "episodes/one.mp3", sha256: episodeOne.sha256, sizeBytes: 17 }]),
+    });
+
+    // The second episode's publish reads only the new episode and the page.
+    const second = await bridge.publishSiteResource(call(), { filePath: "feed" }, {
+      mode: "static", stateful: false, serverModuleSha256: null,
+      files: [
+        await file("index.html", "<h1>Show, two episodes</h1>"),
+        { path: "episodes/one.mp3", sha256: episodeOne.sha256, sizeBytes: 17,
+          carriedFrom: { artifactId: first.artifactId, version: 1 } },
+        await file("episodes/two.mp3", "episode two audio"),
+      ],
+    });
+    expect(second.version).toBe(2);
+    const stored = await env.PAYLOADS.get(artifactAssetKey(first.artifactId, 2, "episodes/one.mp3"));
+    expect(await stored?.text()).toBe("episode one audio");
+    expect(await bridge.liveSiteFiles(call(), "feed")).toMatchObject({ version: 2, files: expect.arrayContaining([
+      { path: "episodes/one.mp3", sha256: episodeOne.sha256, sizeBytes: 17 },
+      { path: "episodes/two.mp3", sha256: expect.any(String), sizeBytes: 17 },
+    ]) });
   });
 
   it("serves a byte range of a public file and a site's asset, as a player seeking asks for one", async () => {
