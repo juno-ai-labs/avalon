@@ -4,13 +4,13 @@ import {
   SidekickSourcesList,
   SourceDecisionButtons,
   type SourceAsk,
-  type SourceConnectStep,
   type SourceDecision,
 } from '@rally/ui/components/sidekick-sources';
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
-import { ConnectorConnectionCard, ConnectorConnectionsProvider } from './connector-mentions';
+import { MAC_APP_CONNECT_NOTE } from '../lib/browser-connectors';
+import { ConnectorConnectionsProvider, useConnectorConnectionAction } from './connector-mentions';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import {
   applyDecidedSourceRequest,
@@ -61,39 +61,79 @@ function useSourceDecision(): Decide {
 }
 
 /**
- * The asked person's own connect or reconnect, above their Approve, in the
- * card in the conversation the request was asked from, and nowhere else: the
- * same card a conversation draws when an agent asks for a connection, so a
- * person who never connected the account, or whose sign-in lapsed, settles the
- * request in one place. It reads the viewer's own connections under the key
- * the conversation already uses, and once the account works it re-reads the
- * Sidekick's sources, which unlocks Approve. A connector no card connects
- * (a webhook, a custom server) is pointed at Settings.
+ * "Connect Gmail and approve", in Approve's place on the asked person's own
+ * request while its account still has to be connected or reconnected, on the
+ * card in the conversation the request was asked from and nowhere else. One
+ * press is the person's consent to both: it starts the same connect or
+ * reconnect the conversation's connection card does
+ * (`useConnectorConnectionAction`), and once that account works, while this
+ * card is open, it sends the approval. A sign-in that finishes after the card
+ * closed sends nothing: the card then reads the account as connected and
+ * offers the ordinary Approve. A connector no card connects points at Settings.
  */
-function SourceConnectionStep({ request }: { request: SidekickSourceRequestView }): React.JSX.Element {
+function SourceConnectAndApprove({ request, onApprove, approving }: {
+  request: SidekickSourceRequestView;
+  onApprove: () => void;
+  approving: boolean;
+}): React.JSX.Element {
   const { api } = useCollaborationSession();
-  const queryClient = useQueryClient();
   const connections = useQuery({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
     enabled: Boolean(api),
     staleTime: 60_000,
   });
-  const connected = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: sidekickSourcesQueryKey(request.sidekickId) });
-  }, [queryClient, request.sidekickId]);
   const connectorId = sourceConnectionCardId(request.connectorType, request.eventTypes);
-  if (!connectorId) {
-    return <p className="source-request-connect-settings">
-      {request.connection === 'reconnect_required' ? 'Reconnect' : 'Connect'} your {sourceWords(request).connector} account in Settings, then approve here.
-    </p>;
-  }
+  const verb = request.connection === 'reconnect_required' ? 'Reconnect' : 'Connect';
+  const { connector } = sourceWords(request);
+  if (!connectorId) return <span className="source-request-connect-settings">{verb} {connector} in Settings, then approve here</span>;
   return <ConnectorConnectionsProvider connections={connections.data}>
-    <ConnectorConnectionCard onConnected={connected} request={{ connectorId, scope: 'personal' }} />
+    <ConnectAndApproveButton approving={approving} connector={connector} connectorId={connectorId} onApprove={onApprove} request={request} verb={verb} />
   </ConnectorConnectionsProvider>;
 }
 
-const connectStep: SourceConnectStep = (request) => <SourceConnectionStep request={request} />;
+function ConnectAndApproveButton({ request, connectorId, connector, verb, onApprove, approving }: {
+  request: SidekickSourceRequestView;
+  connectorId: NonNullable<ReturnType<typeof sourceConnectionCardId>>;
+  connector: string;
+  verb: string;
+  onApprove: () => void;
+  approving: boolean;
+}): React.JSX.Element {
+  const queryClient = useQueryClient();
+  const pressed = useRef(false);
+  const connected = useCallback(() => {
+    // The press was consent to both steps; a connection made some other way only re-reads.
+    if (pressed.current) {
+      pressed.current = false;
+      onApprove();
+    }
+    void queryClient.invalidateQueries({ queryKey: sidekickSourcesQueryKey(request.sidekickId) });
+  }, [onApprove, queryClient, request.sidekickId]);
+  const action = useConnectorConnectionAction({ connectorId, scope: 'personal' }, { onNewlyConnected: connected });
+  if (!action) return <span className="source-request-connect-settings">{verb} {connector} in Settings, then approve here</span>;
+  if (action.macAppOnly) return <span className="source-request-connect-settings">{MAC_APP_CONNECT_NOTE}</span>;
+  const label = approving ? 'Approving…' : action.pending ? `Waiting for ${connector}…` : `${verb} ${connector} and approve`;
+  return <span className="source-connect-and-approve">
+    {action.accountOptions && <select
+      aria-label={`${connector} account to reconnect`}
+      disabled={action.pending || approving}
+      onChange={(event) => action.selectAccount(event.currentTarget.value)}
+      value={action.selectedAccountId}
+    >
+      <option value="">Choose an account</option>
+      {action.accountOptions.map((connection) => <option key={connection.id} value={connection.id}>{connection.displayName}</option>)}
+    </select>}
+    <Button
+      aria-busy={action.pending || approving || undefined}
+      aria-label={`${verb} ${connector} and approve your ${connector} for ${request.sidekickName}`}
+      className="source-decision-button is-approve source-connect-and-approve-button"
+      disabled={action.pending || approving || action.unavailable || action.accountRequired}
+      onClick={() => { pressed.current = true; action.start(); }}
+    >{label}</Button>
+    {action.error && <ErrorNotice title={`${connector} could not be connected`}>{action.error}</ErrorNotice>}
+  </span>;
+}
 
 function decidingOf(decide: Decide): { requestId: string; decision: SourceDecision } | null {
   return decide.isPending ? { requestId: decide.variables.request.requestId, decision: decide.variables.decision } : null;
@@ -136,7 +176,11 @@ export function SidekickSourceRequestCard({ card }: { card: SidekickSourceReques
   const decide = useSourceDecision();
   return <>
     <SidekickSourceRequestCardView
-      connectStep={connectStep}
+      connectStep={(request) => <SourceConnectAndApprove
+        approving={decide.isPending && decide.variables.request.requestId === request.requestId}
+        onApprove={() => decide.mutate({ request, decision: 'approve' })}
+        request={request}
+      />}
       deciding={decidingOf(decide)}
       // A stored row's read failure waits to be asked for; it never interrupts a scroll.
       details={query.error && <ErrorNotice automatic={false} detailsLabel="Details" occurrence={query.error} title="The request could not be loaded">
