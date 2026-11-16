@@ -186,16 +186,18 @@ describe("Canvas share federation", () => {
     await drain();
     const frame = (title: string) => JSON.stringify({ type: "workspace_shared_canvases", occurredAt: NOW, enabled: true,
       items: [{ organization: { id: ORIGIN, name: "Acme", region: "global" }, canvas: { id: CANVAS, title, updatedAt: NOW } }] });
-    const ticket = () => object(HOME).relayTicket({ workspaceId: HOME, userId: GUEST, channel: "shared_canvases" });
-    const relay = (ticket: number, title: string) => object(HOME).relayToPerson({
-      workspaceId: HOME, userId: GUEST, channel: "shared_canvases", ticket, frame: frame(title), supportSessions: false });
+    const ticket = () => object(HOME).relayTicket({ workspaceId: HOME, userId: GUEST });
+    const relay = (ticket: number, title: string) => object(HOME).relayToPerson({ workspaceId: HOME, userId: GUEST, ticket, frame: frame(title) });
     // Two builds that start together are still ordered.
     const older = await ticket();
     const newer = await ticket();
     expect(newer).toBeGreaterThan(older);
-    expect(await relay(newer, "Newer")).toBe(1);
-    expect(await relay(older, "Older")).toBe(0);
-    await vi.waitFor(() => expect(titles(home.frames)).toEqual(["Acme: Newer"]));
+    const before = home.frames.length;
+    await relay(newer, "Newer");
+    await relay(older, "Older");
+    // A later build marks the end: everything relayed before it has arrived.
+    await relay(await ticket(), "Last");
+    await vi.waitFor(() => expect(home.frames.slice(before).map((frame) => frame.items[0]?.canvas.title)).toEqual(["Newer", "Last"]));
     home.close();
   });
 });

@@ -166,7 +166,7 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.use("/workspace/me/connected-apps", requireWorkspaceAuth, refuseSupportSession);
   identityApi.use("/workspace/me/connected-apps/*", requireWorkspaceAuth, refuseSupportSession);
   identityApi.route("/workspace/me/connected-apps", connectedAppRoutes);
-  // The person's inbox spans their Organizations, as connected apps do.
+  // The switch spans the person's Organizations, as connected apps do.
   identityApi.use("/workspace/me/shared-canvases", requireWorkspaceAuth, refuseSupportSession);
   identityApi.route("/workspace/me/shared-canvases", sharedCanvasesRoutes);
   identityApi.route("/conversations", conversationRoutes);

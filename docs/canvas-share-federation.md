@@ -11,10 +11,9 @@ only because it is open to the whole Organization or to a writer Sidekick's
 audience is never federated. A guest reaches a Canvas only from its participant
 list, so for a guest "explicitly shared" and "on the list" are the same thing.
 
-The shape is **invalidate, don't replicate**, as Google Drive's "Shared with
-me" and Slack Connect hold a reference rather than a copy: the Canvas's own
-Organization answers, every time a list is built, which of its Canvases are
-shared with that guest. A change there only tells the guest's other
+The shape is **invalidate, don't replicate**: the Canvas's own Organization
+answers, every time a list is built, which of its Canvases are shared with
+that guest. A change there only tells the guest's other
 Organizations to rebuild. Nothing about a Canvas (its title, look, activity) is
 stored outside its Organization, and an Organization's object neither reads
 another Organization nor builds a list: the Worker builds it and the object
@@ -30,7 +29,7 @@ for the person in the regional D1, so it covers every Organization and device.
 | --- | --- |
 | `packages/contracts/src/canvas-share-federation.ts` | The refresh message, the origin's answer, the shared row, the `workspace_shared_canvases` socket event and the setting. |
 | `apps/api/src/durable-objects/canvas-share-federation.ts` | The origin half: WorkspaceDO migration 151 (triggers only) and the query behind `guestSharedCanvases`. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Hooks only: the alarm that queues a refresh, the subscribe that queues one, `guestSharedCanvases`, and `relayToPerson`, a generic relay of a frame to one person's sockets. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Hooks only: the alarm that queues a refresh, the subscribe that queues one, `guestSharedCanvases`, and `relayTicket` and `relayToPerson`, which send a built frame to one person's sockets in order. |
 | `apps/api/src/services/shared-canvases.ts` | The Worker builder: which Organizations the person is in and a guest of, asking each origin, building each target's list and relaying it; the switch. |
 | `apps/api/src/services/interactive-queue.ts`, `queues/interactive-consumer.ts` | The `shared_canvases_refresh` kind and its handler ([`interactive-queue.md`](interactive-queue.md)). |
 | `packages/db/migrations/0135_shared_canvases_settings.sql` | The switch. |
@@ -65,11 +64,11 @@ for the person in the regional D1, so it covers every Organization and device.
    with each Organization's name from D1, or an empty list while the switch is
    off.
 5. **The relay.** The target Organization's `relayToPerson` sends the frame to
-   the person's subscribed sockets, leaving out support sessions. Before
-   reading anything, the build takes a ticket from each target
-   (`relayTicket`), strictly increasing per (person, channel); the relay drops
-   a frame whose ticket is not newer than the last one sent, so a slow build
-   cannot land after a newer one, even one started in the same millisecond.
+   the person's subscribed sockets, never a support session's. Before reading
+   anything, the build takes a ticket from each target (`relayTicket`),
+   strictly increasing per person; the relay drops a frame whose ticket is not
+   newer than the last one sent, so a slow build cannot land after a newer
+   one, even one started in the same millisecond.
 6. **The switch.** `PUT` saves it and, after answering, rebuilds every
    Organization the person is in.
 7. **The clients** apply the event to one query and merge it into the home
@@ -85,7 +84,7 @@ for the person in the regional D1, so it covers every Organization and device.
 - **The origin decides every time,** for one person, and only for an active
   guest of its own on the Canvas's list.
 - **An Organization's object only relays.** It neither reads another
-  Organization nor builds a list; `relayToPerson` knows nothing of Canvases.
+  Organization nor builds a list.
 - **A support session never receives this list.** Its grant covers one
   Organization; the list spans others.
 - **A newer build always wins** in what a socket last received.
@@ -111,18 +110,12 @@ guest relationship and switching Organization are
 
 ## Testing
 
-- `apps/api/test-workers/canvas-share-federation.test.ts` — on real
-  WorkspaceDOs and sockets: a guest's Canvas shows in their own Organization
-  and follows its rename and unshare; a member explicitly added is not
-  federated; a guest promoted to member loses it; a support session receives
-  nothing; an older frame is dropped. Each was proven by removing what it
-  covers: the origin's guest check, the support-session skip, the ordering
-  check and the relationship trigger.
-- `apps/api/test/shared-canvases.test.ts` — the D1 reads against the
-  checked-in migrations: active Organizations and guest status, the switch.
-  Proven by dropping the active-membership filter.
-- `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, the Canvas home and
-  sidebar tests, and `apps/mobile/src/protocol.test.ts` cover the clients.
+`apps/api/test-workers/canvas-share-federation.test.ts` covers the flow on real
+Organization objects and sockets: the guest rule, rename and unshare, promotion
+to member, the support-session exclusion and relay ordering.
+`apps/api/test/shared-canvases.test.ts` covers the D1 reads against the
+checked-in migrations. The client half is in the workspace-socket, Canvas home
+and sidebar tests and `apps/mobile/src/protocol.test.ts`.
 
 ## Performance and cost
 
@@ -151,18 +144,15 @@ what was shared with them. Only guests: Canvases inside one Organization stay
 in it for its members, which is what the Organization boundary is for.
 
 **Considered and rejected:** Each client fetching every other Organization's
-list, built first on this branch: three clients doing the same work and lists
-only as fresh as the last window focus. A per-person inbox copying each
-Canvas's title, look and date: it put a Canvas's contents outside its
-Organization and showed an unshared Canvas until its delivery landed. A
-pointer-only inbox with revisions: a design review found it a cache the reads
-already refused to trust, with a lost-push window after a partial failure and
-pointers that could outlive their Canvas. Building lists inside the target
-Organization's object, which put cross-Organization reads and D1 into every
-subscribe there.
+list: every client doing the same work, with lists only as fresh as the last
+window focus. A per-person inbox holding a copy of each Canvas: it puts a
+Canvas's contents outside its Organization, and keeps showing an unshared one
+until its delivery lands. An inbox of pointers only: a cache the reads would
+not trust, which can lose a push after a partial failure and outlive its
+Canvas. Building lists inside the target Organization's object, which would
+put cross-Organization reads into every subscribe there.
 
 **Consequences:** A Canvas reached only through Organization-wide visibility
 or a writer Sidekick's audience is never federated. Anything that adds a way to
 share a Canvas with a guest must write `canvas_participants`, or a trigger of
-its own. `relayToPerson` is generic: a later per-person push can use it with
-its own channel.
+its own.

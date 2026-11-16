@@ -5354,10 +5354,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private readonly writerSidekickReaders = new Map<string, string>();
   /**
-   * Per (person, channel), the last relay ticket issued and the ticket of the
-   * last frame sent (`relayTicket`, `relayToPerson`). In memory: a ticket is
-   * floored at the clock, so one issued after an eviction is newer than any
-   * before it, and a frame from before the eviction is no longer compared.
+   * Per person, the last relay ticket issued and the ticket of the last frame
+   * sent (`relayTicket`, `relayToPerson`). In memory: a ticket is floored at
+   * the clock, so one issued after an eviction is newer than any before it,
+   * and a frame from before the eviction is no longer compared.
    */
   private readonly relayTicketsIssued = new Map<string, number>();
   private readonly relayTicketsSent = new Map<string, number>();
@@ -5581,42 +5581,34 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * A ticket for a frame about to be built for one person here, taken before
-   * the build reads anything. Tickets are strictly increasing per (person,
-   * channel), so two builds are always ordered, even ones started in the same
-   * millisecond.
+   * the build reads anything. Tickets are strictly increasing per person, so
+   * two builds are always ordered, even ones started in the same millisecond.
    */
-  async relayTicket(input: { workspaceId: string; userId: string; channel: string }): Promise<number> {
+  async relayTicket(input: { workspaceId: string; userId: string }): Promise<number> {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);
-    const key = `${input.userId}:${input.channel}`;
-    const ticket = Math.max(Date.now(), (this.relayTicketsIssued.get(key) ?? 0) + 1);
-    this.relayTicketsIssued.set(key, ticket);
+    const ticket = Math.max(Date.now(), (this.relayTicketsIssued.get(input.userId) ?? 0) + 1);
+    this.relayTicketsIssued.set(input.userId, ticket);
     return ticket;
   }
 
   /**
-   * Send a frame somebody else built to one person's subscribed sockets here,
-   * keeping nothing but ordering: per (person, channel), a frame whose ticket
-   * (`relayTicket`) is not newer than the last one sent is dropped, so a slow
-   * build cannot land after a newer one. A support session's sockets are left
-   * out unless asked for: what is relayed may span Organizations its grant
-   * does not cover. Returns how many sockets it reached.
+   * Send a person's shared-Canvas frame, built by the Worker, to their
+   * subscribed sockets here, keeping nothing but ordering: a frame whose
+   * ticket (`relayTicket`) is not newer than the last one sent is dropped, so
+   * a slow build cannot land after a newer one. A support session's sockets
+   * never get it: the frame spans Organizations its grant does not cover.
    */
-  async relayToPerson(input: { workspaceId: string; userId: string; channel: string; ticket: number; frame: string; supportSessions: boolean }): Promise<number> {
+  async relayToPerson(input: { workspaceId: string; userId: string; ticket: number; frame: string }): Promise<void> {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);
-    const key = `${input.userId}:${input.channel}`;
-    if ((this.relayTicketsSent.get(key) ?? -1) >= input.ticket) return 0;
-    this.relayTicketsSent.set(key, input.ticket);
-    let reached = 0;
+    if ((this.relayTicketsSent.get(input.userId) ?? -1) >= input.ticket) return;
+    this.relayTicketsSent.set(input.userId, input.ticket);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
-      if (attachment?.subscribed !== true || attachment.userId !== input.userId) continue;
-      if (attachment.impersonatorUserId && !input.supportSessions) continue;
+      if (attachment?.subscribed !== true || attachment.userId !== input.userId || attachment.impersonatorUserId) continue;
       sendSidebarListFrame(socket, input.frame);
-      reached += 1;
     }
-    return reached;
   }
 
   /** The Canvases a Sidekick writes that this viewer may open; see `canvasesWrittenBy`. */

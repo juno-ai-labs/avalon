@@ -752,7 +752,7 @@ export function WorkspaceSocketProvider({
           }
           const sharedCanvases = safeParseSocketEvent(WorkspaceSharedCanvasesEventSchema, decoded);
           if (sharedCanvases.success) {
-            // The person's inbox, read by this Organization each time; it replaces the last one whole.
+            // Built by the server from each Canvas's own Organization; it replaces the last one whole.
             queryClient.setQueryData(SHARED_CANVASES_QUERY_KEY, sharedCanvases.data);
             return;
           }
