@@ -120,10 +120,9 @@ export async function writeArtifactVersion(
   input: SitePublishInput,
 ): Promise<SitePublishResult> {
   const artifactId = input.artifactId ?? newId();
-  // Blob writes wait for a deploy whose readers all understand them: the
-  // serving Worker is promoted after the API, and the release before this one
-  // cannot parse a manifest with `assetStore`. Until `ARTIFACT_BLOB_STORE` is
-  // `on`, a version is written as before, every file under its own prefix.
+  // `ARTIFACT_BLOB_STORE` is an off switch for blob writes: unset, a version is
+  // written as before, every file under its own prefix. Readers follow each
+  // manifest's `assetStore`, so blob versions already written keep serving.
   const blobs = env.ARTIFACT_BLOB_STORE === "on";
   const serverEntry = input.mode === "active" ? "index.js" : null;
   // The preview reads `index.html` and the image it names, which the runtime
