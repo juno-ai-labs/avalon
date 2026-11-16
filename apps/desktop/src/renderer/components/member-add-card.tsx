@@ -41,7 +41,9 @@ export function MemberAddCard({ member, onAdded }: { member: MemberCardInput; on
       <span aria-hidden="true" className="provider-icon"><UserPlus size={22} /></span>
       <div className="connector-connection-card-body">
         <strong>Add {who} to the Organization</strong>
-        <p>{member.name ? `${member.email} becomes` : 'They become'} a member right away, with nothing to accept, and get an email to sign in.</p>
+        <p>{member.name
+          ? `${member.email} becomes a member right away, with nothing to accept, and gets an email to sign in.`
+          : 'They become a member right away, with nothing to accept, and get an email to sign in.'}</p>
         {!admin && <small>Only an Organization owner or administrator can add members.</small>}
       </div>
       <div className="connector-connection-card-controls">
