@@ -37,6 +37,11 @@ separate thing to ask for and usually not needed here.
 From the request, decide: the connector and event type (inspect the
 connector's declared events; new mail is the Google connector's
 \`email.received\`), the people, and whether each person's events are filtered.
+A source covers the person's whole account: \`email.received\` with no resource
+is all new mail in their mailbox, which is the usual ask. An event's resource
+relationship (a \`gmail_thread\`) only narrows a rule to one thread; it is not
+needed, and its presence does not mean the event cannot cover a mailbox. Do not
+fall back to polling a mailbox that a source can cover.
 People can have different filters: "all of mine, only the fundraising mail of
 hers" is two asks.
 

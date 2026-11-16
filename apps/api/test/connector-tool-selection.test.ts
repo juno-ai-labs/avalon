@@ -853,7 +853,7 @@ describe("connector tools selected for harness runs", () => {
     expect(await noticeTools({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" })).toEqual(neither);
   });
 
-  it("lets a person's turn and a wizard turn a Canvas's Chat started ask for a source, refuses every loop that read content by name, and gives neither a run nor its worker the tool that changes delegation", async () => {
+  it("lets a Canvas's Chat, a Sidekick's wizard and their background agents ask for a source whatever started the turn, refuses a run, its worker, a self-review and a message from one of those by name, and gives neither a run nor its worker the tool that changes delegation", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const sourcePlugin = async (input: WorkstreamWorkflowInput) =>
       (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
@@ -866,39 +866,44 @@ describe("connector tools selected for harness runs", () => {
       return tool.execute({}, {} as never).then(() => null, (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }));
     };
     const wizard = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
+    // The sender stamps `fromPersonTurn` when it acts for a person; a run, its worker and a self-review do not.
     const message = (sender: AgentId, fromPersonTurn = false) => ({ teamId: sender, senderAgentId: sender,
       messageId: "00000000-0000-7000-8000-00000000e001", ...(fromPersonTurn ? { fromPersonTurn: true as const } : {}) });
     const canvasChat = agentIdForAddress({ parentKind: "canvas", parentId: "00000000-0000-7000-8000-00000000c001", substreamId: asSubstreamId("0") });
+    const canvasAgent = agentIdForAddress({ parentKind: "canvas", parentId: "00000000-0000-7000-8000-00000000c001", substreamId: asSubstreamId(CHILD_HARNESS_RUN_ID) });
     const run = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("00000000-0000-7000-8000-00000000d001") });
     const all = ["sources_list", "request_source", "test_source_condition"];
     const refused = ["sources_list", "request_source: refused", "test_source_condition: refused"];
 
-    // A person's own turn, and the wizard's turn a Canvas's Chat started for them, ask.
+    // The Chat and the wizard ask, on a person's turn and on one a person-acting agent's message started.
+    expect(await sourceTools(workflowInput())).toEqual(all);
     expect(await sourceTools(automationConversationInput())).toEqual(all);
     expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat, true) })).toEqual(all);
-    // A Chat turn another agent's message started passes on what that agent read, so its wizard turn may not ask.
-    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toEqual(refused);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasAgent, true) })).toEqual(all);
+    expect(await sourceTools({ ...workflowInput(), agentExchange: message(canvasAgent, true) })).toEqual(all);
+    expect(await sourceTools({ ...workflowInput(), agentExchange: message(wizard, true) })).toEqual(all);
     expect(await sourceTools({ ...automationConversationInput(), wizardCanvasId: "00000000-0000-7000-8000-00000000c001" })).toEqual(all);
+    // So do their background agents.
+    expect(await sourceTools(childWorkflowInput())).toEqual(all);
+    expect(await sourceTools(childWorkflowInput(automationConversationInput()))).toEqual(all);
 
-    expect(await sourceTools(workflowInput())).toEqual(all);
-    // Nothing a loop read may ask: a run and its worker, a background agent, and a turn another agent's message started,
-    // a run's change request to its wizard among them.
+    // A run and its worker are handed event content, and a self-review and its agents read runs.
     expect(await sourceTools(automationRunInput())).toEqual(refused);
     expect(await sourceTools({ ...childWorkflowInput(automationConversationInput()),
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toEqual(refused);
-    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(run) })).toEqual(refused);
-    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(wizard) })).toEqual(refused);
-    expect(await sourceTools({ ...workflowInput(), agentExchange: message(wizard) })).toEqual(refused);
-    expect(await sourceTools(childWorkflowInput())).toEqual(refused);
-    // A scheduled self-review reads runs and no person started it.
     expect(await sourceTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual(refused);
+    expect(await sourceTools({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" })).toEqual(refused);
+    // A message from one of those, a run's change request to its wizard among them, or a host notice carries no stamp.
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(run) })).toEqual(refused);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toEqual(refused);
+    expect(await sourceTools({ ...workflowInput(), agentExchange: message(wizard) })).toEqual(refused);
+    // Each refusal says who can ask, and how to reach them.
     expect(await refusal({ ...automationConversationInput(), reason: "sidekick_review" })).toMatchObject({
       code: "sidekick_source_request_from_review", routes: expect.stringContaining("Name in your review") });
-    // Each refusal says who can ask, and how to reach them.
-    expect(await refusal(childWorkflowInput())).toMatchObject({ code: "sidekick_source_request_from_background_agent",
-      routes: expect.stringContaining("with send_message") });
+    expect(await refusal({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" }))
+      .toMatchObject({ code: "sidekick_source_request_from_review" });
     expect(await refusal({ ...automationConversationInput(), agentExchange: message(run) })).toMatchObject({
-      code: "sidekick_source_request_from_agent_message", routes: expect.stringContaining("Reply to that agent") });
+      code: "sidekick_source_request_from_agent_message", routes: expect.stringContaining("Say in your reply") });
     expect(await refusal({ ...childWorkflowInput(automationConversationInput()),
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toMatchObject({
       code: "sidekick_source_request_from_run", routes: expect.stringContaining("Say in your result") });
