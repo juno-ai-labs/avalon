@@ -216,8 +216,9 @@ These direct reads create no attachment and do not expand `list_resources`,
 inventory fingerprints, or the sidebar. Attachment forwarding remains the preferred handoff
 even when a resource is already readable: it makes the intended resource
 explicit and preserves shared context. Forwarding still requires an actual
-attachment in the sender's own or inherited scope; direct read permission does
-not widen that sharing gate. Terminal import and subsequent
+attachment in the sender's own or inherited scope, or, for a Canvas's Chat and
+its background agents, the Canvas's own artifact (`canvasContext`); direct read
+permission does not widen that sharing gate. Terminal import and subsequent
 revocation checks use the same resolution, and artifact data tools resolve a
 supplied ID or alias before applying it. A Canvas's agents keep their own
 attachment scope.
@@ -789,6 +790,34 @@ key namespace and reserves candidates in its own authority. Keep those inputs
 stable so a cleanup cannot rename existing URLs or branches.
 
 ## Changelog
+
+### 2026-11-16 — A Canvas's Chat can share its own artifact
+
+**What changed:** The forwarding gate (`validateAttachments` in
+`agent-communication-service.ts`, behind `send_message`, `start_agent` and
+`sidekick_attach_resource`) also accepts the Canvas's artifact when the sender
+is that Canvas's Chat or one of its background agents. It asks
+`canvasContext` only when a named id has no link, so a forward of linked
+resources costs nothing more.
+
+**Why:** A Chat delegated a newsletter site to a background agent. The agent's
+publish linked the site to the agent's own conversation and noted it as the
+Canvas's artifact, so the Chat's own links held nothing. When the Chat then
+tried to attach the site to the Sidekick it had made to keep it current,
+`sidekick_attach_resource` refused it as not visible, and `list_resources`
+showed no sites. The Chat is told of that artifact in its context; it is the
+Chat's own work.
+
+**Considered and rejected:** Linking every background agent's publish to the
+Chat as well, which copies the link into a second conversation and changes
+what the sidebar and `list_resources` show for every publish. Letting direct
+read permission pass the gate, which this document rules out: reading is not
+consent to share.
+
+**Consequences:** A Chat's `list_resources` still shows only its own links;
+the Canvas's artifact reaches it through `canvasContext`. A gate that should
+treat the Canvas's artifact as the Chat's own should reuse this check rather
+than add a link.
 
 ### 2026-11-06 — Out-of-scope resources no longer trip the grounding guard
 

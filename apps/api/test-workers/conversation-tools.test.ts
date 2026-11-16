@@ -335,6 +335,23 @@ describe("sidekick_attach_resource", () => {
     expect(await directLinks()).toEqual([]);
   });
 
+  it("attaches the Canvas's artifact that a background agent published", async () => {
+    await seedSidekick("0");
+    // A background agent's publish links the site to its own conversation and
+    // notes it as the Canvas's artifact; the Chat holds no link to it.
+    const resourceId = await source(false, false);
+    const agent = asSubstreamId(crypto.randomUUID());
+    await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "canvas", ROOM_ID, agent);
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      substreamId: agent, resourceId, attachedByUserId: AUTHOR_ID });
+    await workspace().canvasNoteArtifact({ workspaceId: WORKSPACE_ID, canvasId: ROOM_ID, resourceId,
+      editor: { kind: "rally", id: null } });
+    await expect(tool()(AUTOMATION_ID, resourceId)).resolves.toMatchObject({ output: {
+      sidekickId: AUTOMATION_ID, resourceId, alreadyAttached: false,
+    } });
+    expect(await directLinks()).toEqual([{ resource_id: resourceId }]);
+  });
+
   it("uses the normal sharing checks to refuse an unsent upload", async () => {
     await seedSidekick("0");
     await expect(tool()(AUTOMATION_ID, await source(true)))
