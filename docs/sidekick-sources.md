@@ -192,14 +192,20 @@ An agent's ask takes its place from the loop, never from a tool argument: a
 Canvas's Chat or a Sidekick's shared conversation. A wizard turn that a
 Canvas's Chat or one of its background agents started by messaging the
 wizard (`wizardTurnCanvasId`) asks from that Chat, and so does a Chat's
-background agent itself, whose own conversation the person does not read: the place is the Canvas, and besides its own block in the
+background agent itself, whose own conversation the person does not read. A
+wizard's background agent posts the same card into the Sidekick's shared
+conversation (`postWizardCard` with `parentKind: "automation"`): an ask for
+the asker's own account sends no email or Activity row, so a card left in
+the agent's own conversation would reach nobody. For a Chat's ask: the place is the Canvas, and besides its own block in the
 wizard's conversation the tool posts a Sidekick message into the Chat whose
 `automation_activation` carries `sourceRequests: { requestIds }`
 (`postWizardCard`, keyed `sidekick-source-card:<receipt>`). The client draws
 the same card under that post. Test, in
 `apps/api/test-workers/conversation-tools.test.ts`: "is drawn in the Chat
 whose message started the wizard's turn, once per receipt" and "is drawn in
-the Chat when one of the Chat's background agents asks".
+the Chat when one of the Chat's background agents asks" and "is drawn in the
+Sidekick's shared conversation when one of its wizard's background agents
+asks".
 
 The same turn's questions are drawn there too: `request_elicitation` posts
 `question: { elicitationId }` (keyed `sidekick-question-card:<id>`), and the
@@ -827,7 +833,8 @@ agents by `backgroundAgentRootReason`, and a wizard turn its agent's reply
 woke by `turnIsSelfReview` when the tool runs. `fromPersonTurn` is no longer written
 or read, and the schema still accepts it for stored messages. A Chat's
 background agent's ask, and a wizard turn any Chat message started, are
-drawn in the Chat.
+drawn in the Chat; a wizard's background agent's ask is posted into the
+Sidekick's shared conversation.
 
 **Why:** In a real setup a person asked a Chat for a CRM fed by two
 mailboxes. The Chat started background agents and ended its turn; their reply
