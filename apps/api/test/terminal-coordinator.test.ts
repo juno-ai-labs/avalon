@@ -1363,6 +1363,25 @@ describe("Terminal sandbox coordinator", () => {
     expect(slept).toEqual([250, 250]);
   });
 
+  it("counts the time each try takes against the five seconds", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const sibling = "00000000-0000-4000-8000-0000000000c6";
+    seedWorkstreamRun(objectStore, { id: sibling, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    const holder = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await holder.acquire(context());
+    // Every reading of the clock is a second later: slow object calls.
+    let elapsed = 0;
+    const slept: number[] = [];
+    const waiting = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, {
+      now: () => new Date(clock.now().getTime() + (elapsed += 1_000)),
+      sleep: async (ms) => { slept.push(ms); },
+    });
+    await expect(waiting.acquire({ ...context(), harnessRunId: sibling, toolCallId: "sibling-call" }))
+      .rejects.toMatchObject({ code: "sandbox_busy" });
+    expect(slept.length).toBeLessThan(5);
+  });
+
   it("answers cancelled, not sandbox_busy, when the call is cancelled while it waits", async () => {
     const { objectStore, env, provider, clock } = fixture();
     const sibling = "00000000-0000-4000-8000-0000000000c5";
