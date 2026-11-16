@@ -425,11 +425,10 @@ Each regional Worker owns its workspace sessions, membership lifecycle, product
 objects, and attention projection. Electron owns only encrypted credentials,
 cached profiles, drafts, the active selection, and recency for one device. It
 never turns aggregate attention into a content cache, and background workspaces
-never acquire a product WebSocket. The one content read across Organizations is
-the Canvases shared with the person, read per Organization the way attention
-is (on the Mac with its stored credential, in the browser through
-`GET /browser/workspaces/shared-canvases`) and held only in React Query;
-[`canvases.md`](canvases.md#shared-from-another-organization) owns it.
+never acquire a product WebSocket. Canvases shared with the person in their
+other Organizations reach the active one from the server, on its own socket
+([`canvas-share-federation.md`](canvas-share-federation.md)); no client reads
+another Organization for them.
 
 ## Failure modes and limits
 

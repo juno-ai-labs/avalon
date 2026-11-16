@@ -221,7 +221,6 @@ const bridge: RallyDesktopBridge = {
   getOrganizationNameSuggestion: () => ipcRenderer.invoke('onboarding:get-organization-suggestion') as Promise<OrganizationNameSuggestion>,
   getOnboardingState: () => ipcRenderer.invoke('onboarding:get-state') as Promise<DesktopWorkspaceOnboardingState>,
   getWorkspaceAttention: (input) => ipcRenderer.invoke('workspace:get-attention', input),
-  getWorkspaceSharedCanvases: (input) => ipcRenderer.invoke('workspace:get-shared-canvases', input),
   leaveWorkspace: (input) => ipcRenderer.invoke('workspace:leave', input),
   activateWorkspace: (input) => ipcRenderer.invoke('onboarding:activate-workspace', input) as Promise<DesktopSession>,
   listSupportWorkspaces: () => ipcRenderer.invoke('support:list-workspaces') as Promise<SupportWorkspace[] | null>,

@@ -1,4 +1,6 @@
 import { WorkspaceConversationViewEventSchema, type WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
+import { WorkspaceSharedCanvasesEventSchema } from '@rally/contracts/canvas-share-federation';
+import { SHARED_CANVASES_QUERY_KEY } from './shared-canvases';
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -748,6 +750,12 @@ export function WorkspaceSocketProvider({
             applyVersionedSidebarList(queryClient, 'canvases', canvasList.data.waterline, canvasList.data.items);
             return;
           }
+          const sharedCanvases = safeParseSocketEvent(WorkspaceSharedCanvasesEventSchema, decoded);
+          if (sharedCanvases.success) {
+            // The person's inbox, read by this Organization each time; it replaces the last one whole.
+            queryClient.setQueryData(SHARED_CANVASES_QUERY_KEY, sharedCanvases.data);
+            return;
+          }
           const activityList = safeParseSocketEvent(WorkspaceActivityListEventSchema, decoded);
           if (activityList.success) {
             const previousActivity = queryClient.getQueryData<ActivityList>(SIDEBAR_LIST_QUERY_KEYS.activity);
@@ -817,6 +825,7 @@ export function WorkspaceSocketProvider({
               ['workspace_presence', 'presence', presence],
               ['workspace_feature_flags', 'feature flags', featureFlags],
               ['workspace_canvas_list', 'canvas list', canvasList],
+              ['workspace_shared_canvases', 'shared canvases', sharedCanvases],
               ['workspace_activity_list', 'activity list', activityList],
               ['workspace_sidebar_list', 'sidebar list', sidebarList],
               ['workspace_resource_versions', 'resource versions', resourceVersions],

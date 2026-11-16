@@ -31,8 +31,6 @@ import {
   type SupportWorkspace,
   WorkspaceOnboardingStateSchema,
   WorkspaceAttentionSchema,
-  CanvasListSchema,
-  type CanvasSidebarRow,
   WorkspaceDepartureSchema,
   WorkspaceDepartureRequestSchema,
   type Session as WireSession,
@@ -2662,37 +2660,6 @@ async function getWorkspaceAttention(input: unknown): Promise<WorkspaceAttention
   return WorkspaceAttentionSchema.parse(await readJsonBody(response));
 }
 
-/**
- * Another stored Organization's Canvases that someone else shared with this
- * person: its own list (`GET /canvases`), read with its own credential as
- * attention is, keeping `sharedWithMe`. Guests are read too.
- */
-async function getWorkspaceSharedCanvases(input: unknown): Promise<CanvasSidebarRow[]> {
-  const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
-  const region = RegionSchema.safeParse(candidate['region']);
-  if (
-    !workspaceId.success
-    || !region.success
-    || Object.keys(candidate).some((key) => key !== 'workspaceId' && key !== 'region')
-  ) {
-    throw new Error('Invalid organization shared Canvases request');
-  }
-  const authSet = await loadStoredAuthSet();
-  const auth = authSet ? storedWorkspaceCredential(authSet, workspaceId.data, region.data) : null;
-  if (!auth) throw new Error('No credential is stored for this organization');
-  const ask = (credential: StoredAuth) => electronFetch(`${apiBaseForAuth(credential)}/canvases`, {
-    headers: { Accept: 'application/json', Authorization: `Bearer ${credential.accessToken}` },
-  });
-  let response = await ask(auth);
-  if (response.status === 401) {
-    const renewed = await refreshStoredCredential(auth);
-    response = await ask(storedAuthFromSession(renewed, regionForStoredSession(renewed)));
-  }
-  if (!response.ok) throw await responseError(response);
-  return CanvasListSchema.parse(await readJsonBody(response)).items.filter((row) => row.sharedWithMe);
-}
-
 async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
   const candidate = input && typeof input === 'object' ? input as Record<string, unknown> : {};
   const workspaceId = IdSchema.safeParse(candidate['workspaceId']);
@@ -4105,10 +4072,6 @@ function registerIpc(): void {
   ipcMain.handle('workspace:get-attention', (event, input: unknown) => {
     assertTrustedIpcSender(event);
     return getWorkspaceAttention(input);
-  });
-  ipcMain.handle('workspace:get-shared-canvases', (event, input: unknown) => {
-    assertTrustedIpcSender(event);
-    return getWorkspaceSharedCanvases(input);
   });
   ipcMain.handle('workspace:leave', (event, input: unknown) => {
     assertTrustedIpcSender(event);

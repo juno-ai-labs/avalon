@@ -16,8 +16,6 @@ export interface DevicePreferences {
    * having chosen `system` mode: only the latter survives a change of default.
    * A string here is the flat pre-family shape and is migrated on read. */
   theme?: ThemeChoice;
-  /** Absent means on: Canvases shared with this person show in every Organization's Canvas list. */
-  sharedCanvasesInAllOrganizations?: false;
 }
 
 function parsedPreferences(value: string | null): DevicePreferences | null {
@@ -45,7 +43,6 @@ function parsedPreferences(value: string | null): DevicePreferences | null {
       // document: a build that removes a theme must not also cost the person
       // their region and microphone.
       ...(theme ? { theme } : {}),
-      ...(candidate['sharedCanvasesInAllOrganizations'] === false ? { sharedCanvasesInAllOrganizations: false as const } : {}),
     };
   } catch {
     return null;
@@ -97,14 +94,6 @@ export function setDeviceTheme(theme: ThemeChoice): void {
 export function setDeviceMicrophoneId(microphoneDeviceId: string): void {
   const preferences = readDevicePreferences();
   preferences.microphoneDeviceId = microphoneDeviceId.trim() || 'default';
-  writeDevicePreferences(preferences);
-}
-
-/** Whether Canvases shared with this person show in every Organization; local to this device, like startup. */
-export function setDeviceSharedCanvasesInAllOrganizations(enabled: boolean): void {
-  const preferences = readDevicePreferences();
-  if (enabled) delete preferences.sharedCanvasesInAllOrganizations;
-  else preferences.sharedCanvasesInAllOrganizations = false;
   writeDevicePreferences(preferences);
 }
 

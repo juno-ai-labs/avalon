@@ -1,5 +1,5 @@
 import { readDevicePreferences, setDeviceStartupPage } from '../lib/device-preferences';
-import { useSharedCanvasesInAllOrganizations } from '../lib/shared-canvases';
+import { useSharedCanvasesSetting } from '../lib/shared-canvases';
 import { BrowserProductAnalyticsSetting } from '../components/browser-product-analytics-setting';
 import { startConnectorAuthorization } from '../lib/start-connector-authorization';
 import { useDocumentTitle } from '../lib/document-title';
@@ -267,13 +267,21 @@ function MemoryReviewSection({ emptyCopy, forget, heading, queryKey, read }: {
   </>;
 }
 
-/** Settings → Account → Preferences: whether other Organizations' shared Canvases join this one's list. */
-function SharedCanvasesSetting(): React.JSX.Element {
-  const [enabled, setEnabled] = useSharedCanvasesInAllOrganizations();
-  return <SettingToggle setting={settings.sharedCanvasesInAllOrganizations}
-    checked={enabled}
-    onChange={(event) => setEnabled(event.currentTarget.checked)}
-    role="switch" />;
+/**
+ * Settings → Account → Preferences: whether Canvases shared with this person
+ * in their other Organizations join every Organization's list. Stored on
+ * their inbox on the server, so it follows them to every device.
+ */
+function SharedCanvasesSetting({ api }: { api: RallyApi }): React.JSX.Element {
+  const { enabled, loading, save } = useSharedCanvasesSetting(api);
+  return <>
+    <SettingToggle setting={settings.sharedCanvasesInAllOrganizations}
+      checked={enabled ?? true}
+      disabled={loading || save.isPending}
+      onChange={(event) => save.mutate(event.currentTarget.checked)}
+      role="switch" />
+    {save.error && <ErrorNotice occurrence={save.error}>The setting couldn’t be saved. Try again.</ErrorNotice>}
+  </>;
 }
 
 /** Settings → Account → Preferences → Agent: whether this person's transcripts show the agent's work. */
@@ -1572,7 +1580,7 @@ export function WorkspaceSettingsScreen({
                       options={[{ label: 'Canvas Homepage', value: 'canvas-homepage' }, { label: 'Last Opened', value: 'last-opened' }]}
                       value={startupPage} variant="secondary" />
                   </div>
-                  <SharedCanvasesSetting />
+                  {api && <SharedCanvasesSetting api={api} />}
                 </div>
                 {!guest && api && <>
                   <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Agent</h2></div>

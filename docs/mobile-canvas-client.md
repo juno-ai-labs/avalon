@@ -57,7 +57,8 @@ Home uses `#/canvases`; opening a canvas uses `#/canvases/:id`, just like deskto
 The dashboard consumes the current socket-owned Canvas directory. Each dashboard card wears its Canvas's appearance through the desktop's `canvasMark`, drawing its icon in that colour's ink on its tint, so a card matches its sidebar row and desktop card. The lead card deepens that tint toward the hue in a gradient. Opening a Canvas reads `GET /canvases/:id` and its published artifacts, preferring a site, then the newest file. Multiple resources expose an artifact picker. One mobile owner refreshes details when the matching directory row changes publication timestamp, artifact kind, title or visibility, or disappears. The first directory reconciles a detail read before it arrived; reconnects reconcile missed updates. Shared resource-head state advances existing artifact versions directly. Detail queries remain fresh between those events, and mounting a second observer does not repeat the read. Unrelated resource-topic, presence and pin updates do not refetch Canvas details. An empty canvas routes to chat and stays there while the user writes; View canvas explicitly returns to the artifact. Fetch failures show recovery rather than being mistaken for an empty canvas.
 
 Canvases shared with the person in their other Organizations
-([`canvases.md`](canvases.md#shared-from-another-organization)) reach the shell
+([`canvas-share-federation.md`](canvas-share-federation.md)), which the server
+pushes on Home's workspace socket, reach the shell
 in the snapshot's own `sharedElsewhere` list, each with its Organization, never
 in `canvases`: that list feeds tabs, pins and the sidebar, which are this
 Organization's. The native dashboard places them among the Organization's own
@@ -68,7 +69,7 @@ Acme"), since a touch screen has no hover. A tap sends Home `open-elsewhere`
 `mobile=1` (and the preview's `mobilePreviewOrigin`), which opens it in its
 Organization, as a notification's link from another Organization does. A shell
 older than the field drops it and shows only its own Canvases. The browser
-preview's dashboard draws the same list and badge from the same hook.
+preview's dashboard draws the same list and badge from the same socket event.
 
 During startup, the browser bridge announces `ready` with `waitForContent: true`.
 The native shell keeps its existing loading surface until a non-loading directory

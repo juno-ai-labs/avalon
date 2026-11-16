@@ -1,15 +1,13 @@
-import clsx from 'clsx';
 import type { TileBadge } from '@rally/ui/components/identity-tile';
 import { Tip } from '@rally/ui/components/primitives';
 
+import { ConfiguredRegionSchema } from '@rally/contracts/regions';
+
 import { useOptionalAppSession } from '../lib/app-session';
-import { canvasNaming } from '../lib/canvases';
 import { formatSidebarActivityTime } from '../lib/format';
 import type { OtherOrganizationCanvas } from '../lib/shared-canvases';
 import { CanvasMark } from './canvas-mark';
-import { CanvasSharingStatus } from './canvas-sharing-status';
 import { RowLayout } from './navigation-rows';
-import { TitleSkeleton } from './primitives';
 import { RelativeTime } from './relative-time';
 
 /** What the Organization badge says on hover, and the row or card says to a screen reader. */
@@ -49,37 +47,36 @@ export function OrganizationCardBadge({ id, organization }: {
 /** Opens a Canvas in its own Organization, switching to it first. */
 export function useOpenOtherOrganizationCanvas(): (item: OtherOrganizationCanvas) => void {
   const app = useOptionalAppSession();
-  return (item) => app?.openWorkspaceCanvas({
-    region: item.organization.region,
-    workspaceId: item.organization.id,
-    canvasId: item.row.id,
-  });
+  return (item) => {
+    // The server names a configured region; one this build does not know cannot be opened from it.
+    const region = ConfiguredRegionSchema.safeParse(item.organization.region);
+    if (region.success) app?.openWorkspaceCanvas({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id });
+  };
 }
 
 /**
  * A sidebar row for a Canvas from another Organization: drawn as any Canvas
- * row is, with the Organization's mark on its tile's upper right. It has no
+ * row is, with the Organization's mark on its tile's upper right and its name
+ * on the second line. Its inbox copy carries no read state, so it is never
+ * drawn unread. It has no
  * menu and no drag, since pinning, renaming and sharing are its own
  * Organization's; choosing it opens it there.
  */
-export function OtherOrganizationCanvasRow({ currentUserId, item }: {
-  currentUserId: string | undefined;
-  item: OtherOrganizationCanvas;
-}): React.JSX.Element {
+export function OtherOrganizationCanvasRow({ item }: { item: OtherOrganizationCanvas }): React.JSX.Element {
   const open = useOpenOtherOrganizationCanvas();
-  const { row, organization } = item;
+  const { canvas, organization } = item;
   return <button
-    className={clsx('navigation-row navigation-canvas-row navigation-other-organization-row', row.unread && 'is-unread')}
-    data-motion-key={`canvas:${organization.region}:${organization.id}:${row.id}`}
+    className="navigation-row navigation-canvas-row navigation-other-organization-row"
+    data-motion-key={`canvas:${organization.region}:${organization.id}:${canvas.id}`}
     onClick={() => open(item)}
     type="button"
   >
     <RowLayout
-      detail={<><CanvasSharingStatus canvas={row} currentUserId={currentUserId} /><span className="sr-only">{`, ${sharedFromLabel(organization)}`}</span></>}
-      tile={<CanvasMark appearance={row.appearance} badges={[organizationTileBadge(organization)]} id={row.id} />}
-      time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={row.updatedAt} />}
-      title={canvasNaming(row) ? <TitleSkeleton /> : row.title}
-      unread={row.unread}
+      detail={sharedFromLabel(organization)}
+      tile={<CanvasMark appearance={canvas.appearance} badges={[organizationTileBadge(organization)]} id={canvas.id} />}
+      time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={canvas.updatedAt} />}
+      title={canvas.title || 'Untitled canvas'}
+      unread={false}
     />
   </button>;
 }

@@ -29,7 +29,7 @@ const api = vi.hoisted(() => ({
   decideCanvasAccess: vi.fn(),
   decideSidekickSourceRequest: vi.fn(),
 }));
-vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }), useOptionalAppSession: () => null, WORKSPACE_ACCOUNT_DIRECTORY_QUERY_KEY: ['workspace-account-directory'] }));
+vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }), useOptionalAppSession: () => null }));
 /** The workspace socket the sidebar sends Mark all seen on; only its command is used. */
 const socket = vi.hoisted(() => ({ markAllActivitySeen: vi.fn(), state: 'connected' as string }));
 vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => socket }));

@@ -36,12 +36,6 @@ export class RegionalIdentityBridge extends WorkerEntrypoint<Env> {
     ));
   }
 
-  sharedCanvases(identity: unknown) {
-    return serializeRegionalRpcResult(() => new RegionalOnboardingService(this.env).sharedCanvases(
-      parseRpcInput(platformIdentitySchema, identity, "sharedCanvases"),
-    ));
-  }
-
   activate(input: unknown): Promise<RegionalRpcResult<Session>> {
     return serializeRegionalRpcResult(() => new RegionalOnboardingService(this.env).activate(
       parseRpcInput(regionalActivateSchema, input, "activate"),
