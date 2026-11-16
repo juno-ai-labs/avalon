@@ -27,7 +27,7 @@ import { mobileCapability, mobileScreenReady, postMobileEvent, shellExternalLink
 import { setExternalLinkOpener } from '../../desktop/src/renderer/lib/platform';
 import { selectMobileConnectorHandoff } from '../../desktop/src/renderer/lib/mobile-connector-handoff';
 import { ConnectorOAuthClaimSchema, parseConnectorClaimLink } from '@rally/contracts/connector-oauth-claim';
-import { browserRequest } from './transport';
+import { BrowserApiError, browserRequest } from './transport';
 
 // Checkout and connector sign-in open a new tab; in the app, the shell opens them.
 setExternalLinkOpener(shellExternalLinkOpener);
@@ -233,7 +233,11 @@ function MobileContent(): React.JSX.Element {
         const refresh = () => { void queryClient.invalidateQueries({ queryKey: ['connections'] }); };
         if (!claim) { refresh(); break; }
         void browserRequest(claim.region, `/api/${claim.workspaceId}/connections/oauth/claim`, ConnectorOAuthClaimSchema, { ticket: claim.ticket })
-          .catch(() => undefined)
+          // The person just left a provider's consent; say why nothing was
+          // added rather than leave a card waiting. The WebView shows it natively.
+          .catch((error: unknown) => {
+            window.alert(error instanceof BrowserApiError ? error.message : 'Rally could not finish the connection. Check your connection and try again.');
+          })
           .finally(refresh);
         break;
       }

@@ -2184,7 +2184,16 @@ export class ConnectionService {
       this.env.AVALON_REGION,
       nowIso(),
     ).first<Record<string, unknown>>();
-    if (!row) throw new ApiError(401, "invalid_oauth_state", "The connector authorization is invalid or expired");
+    if (!row) {
+      // A repeat of the callback that already holds this state: the ticket
+      // went to the first request, and the attempt is still the starter's.
+      const held = await this.env.DB.prepare(
+        `SELECT 1 AS held FROM oauth_states WHERE id = ? AND provider = ? AND region = ?
+           AND claim_hash IS NOT NULL AND consumed_at IS NULL AND expires_at > ?`,
+      ).bind(state, provider, this.env.AVALON_REGION, nowIso()).first();
+      if (held) throw new ApiError(409, "connector_oauth_already_held", "Rally is already finishing this connection");
+      throw new ApiError(401, "invalid_oauth_state", "The connector authorization is invalid or expired");
+    }
     return this.connectorAttemptTarget({
       provider,
       status: "authorized",
