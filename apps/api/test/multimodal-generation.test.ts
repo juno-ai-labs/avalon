@@ -20,6 +20,7 @@ import {
   MULTIMODAL_GENERATION_TIMEOUT_MS,
 } from "../src/services/multimodal-generation/contract";
 import { createAvalonMultimodalGenerationPlugin } from "../src/services/multimodal-generation/plugin";
+import { joinMp3Pieces } from "../src/services/multimodal-generation/speech-pieces";
 import {
   createMultimodalGenerationResourceStore,
   type MultimodalGenerationResourceStore,
@@ -328,6 +329,51 @@ describe("multimodal generation runtime", () => {
     }));
   });
 
+  it("joins pieces by their audio frames whatever framing each carries", () => {
+    // MPEG-1 Layer III at 128 kbps, 44.1 kHz (417 bytes), and MPEG-2 at 64 kbps,
+    // 24 kHz (192 bytes), each filled with a byte naming its piece.
+    const mpeg1 = (fill: number, header?: string) => {
+      const bytes = new Uint8Array(417).fill(fill);
+      bytes.set([0xff, 0xfb, 0x90, 0x00]);
+      if (header) bytes.set(new TextEncoder().encode(header), 36);
+      return bytes;
+    };
+    const mpeg2 = (fill: number, header?: string) => {
+      const bytes = new Uint8Array(192).fill(fill);
+      bytes.set([0xff, 0xf3, 0x84, 0x00]);
+      if (header) bytes.set(new TextEncoder().encode(header), 21);
+      return bytes;
+    };
+    const id3v1 = new Uint8Array(128).fill(0x20);
+    id3v1.set(new TextEncoder().encode("TAG"));
+    const joined = joinMp3Pieces([
+      new Uint8Array([...mpeg1(1), ...mpeg1(1)]), // no length frame: kept whole
+      new Uint8Array([...mpeg2(2, "Xing"), ...mpeg2(2)]), // MPEG-2 length frame dropped
+      new Uint8Array([...mpeg1(3), ...id3v1]), // ID3v1 trailer dropped
+    ]);
+    expect(joined).toEqual(new Uint8Array([...mpeg1(1), ...mpeg1(1), ...mpeg2(2), ...mpeg1(3)]));
+  });
+
+  it("refuses a recording that passes the limit partway, naming the whole recording and how to split it", async () => {
+    // Each piece fits; together they pass a 60-byte limit at the second.
+    const generate = vi.fn<AzureAudioClient["generate"]>()
+      .mockResolvedValueOnce({ bytes: new Uint8Array(40) })
+      .mockResolvedValueOnce({ bytes: new Uint8Array(40) });
+    const plugin = createAvalonMultimodalGenerationPlugin({ ...runtimeEnv(), MAX_ATTACHMENT_BYTES: "60" }, workflowInput, undefined, {
+      audioResources: { findPublished: vi.fn(async () => null), publish: vi.fn() },
+      audioClient: { generate, streamPcm: vi.fn() },
+      loadAudioPricing: vi.fn(async () => { throw new Error("pricing record missing"); }),
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const tool = plugin!.tools.find((candidate) => candidate.definition.name === "generate_audio")!;
+    const text = `${"First part. ".repeat(250).trim()}\n\n${"Second part. ".repeat(250).trim()}`;
+    await expect(tool.execute({ text }, context)).rejects.toMatchObject({
+      code: "resource_limit_exceeded",
+      message: expect.stringContaining("at piece 2 of 2. Split the text into sections"),
+    });
+  });
+
   it("records long text in pieces with one voice and reading style, and joins them into one MP3", async () => {
     // One 417-byte MPEG-1 Layer III frame (128 kbps, 44.1 kHz), filled with a
     // byte that names the piece it came from.
@@ -365,8 +411,6 @@ describe("multimodal generation runtime", () => {
         { text: first, voice: "cedar", instructions: "Calm narrator." },
         { text: second, voice: "cedar", instructions: "Calm narrator." },
       ]);
-    // The second piece may use only what the first left of the limit.
-    expect(generate.mock.calls[1]![0].maximumBytes).toBe(25_000_000 - piece(1).byteLength);
     // Each piece's tag and length header are gone: four audio frames, in order.
     expect(publish.mock.calls[0]![1].bytes).toEqual(new Uint8Array([...frame(1), ...frame(1), ...frame(2), ...frame(2)]));
   });

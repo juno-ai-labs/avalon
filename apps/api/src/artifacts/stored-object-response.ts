@@ -130,10 +130,6 @@ function resolvedRange(range: R2Range, size: number): { offset: number; length: 
   return { offset, length: Math.min(range.length ?? size - offset, size - offset) };
 }
 
-/**
- * The one `ETag` an `If-None-Match` names, unquoted, or null for none, `*`, or
- * a list, which are answered in full: a browser sends the single tag it holds.
- */
 /** The opaque tags an `If-None-Match` lists, `"*"` for any, or null for none. */
 function heldEtags(header: string | null): string[] | "*" | null {
   if (header === null || header.trim() === "") return null;

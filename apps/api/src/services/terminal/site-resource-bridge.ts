@@ -44,6 +44,7 @@ import { assetContentType } from "./site-publish";
 import { prepareSocialPreview } from "./site-social-preview";
 import { TerminalToolError } from "./tools";
 import { diagnosticErrorCode, logWarn, type LogEnv } from "../../observability/logger";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
 /** A file whose bytes this publish holds. */
 export interface ReadSiteFile {
@@ -53,16 +54,16 @@ export interface ReadSiteFile {
 }
 
 /**
- * A file the live version already holds by digest: nothing is written when it
- * is already this artifact's blob, and otherwise (a version from before blobs,
- * or blobs not yet on) it streams from the sandbox through `open`.
+ * A file this artifact's live version already holds as a blob, so nothing is
+ * written for it. Only `liveSiteFiles` decides this, and only with blobs on
+ * and a blob-stored live version; nothing deletes a blob.
  */
 export interface StoredSiteFile {
   path: string;
   sha256: string;
   sizeBytes: number;
-  stored: true;
-  open(): Promise<ReadableStream<Uint8Array>>;
+  /** The artifact whose blobs hold it; nothing is written only when that is this one. */
+  storedIn: string;
 }
 
 /** A file streamed from the sandbox into its blob; R2 checks it against `sha256`. */
@@ -93,8 +94,6 @@ export interface SitePublishInput {
   /** Human-readable fallback when the page did not author a title. */
   fallbackTitle: string;
   serverModuleSha256: string | null;
-  /** The version serving now, where any file is `StoredSiteFile`. */
-  live?: ArtifactManifest | null;
 }
 
 export interface SitePublishResult {
@@ -172,12 +171,10 @@ export async function writeArtifactVersion(
     // https://developers.cloudflare.com/workers/platform/limits/#simultaneous-open-connections
     const simultaneousConnections = 6;
     // With blobs, one write per digest: two paths with the same bytes share one.
-    const files = (blobs ? [...new Map(storedFiles.map((file) => [file.sha256, file])).values()] : storedFiles).values();
-    // Bytes already in this artifact's blobs, which a stored file needs no write for.
-    const live = input.live;
-    const liveBlobs = blobs && live?.assetStore === "blobs" && live.artifactId === artifactId
-      ? new Set(live.assets.map((entry) => entry.sha256))
-      : new Set<string>();
+    // A file whose bytes are in hand wins over one that would stream them.
+    const files = (blobs
+      ? [...new Map([...storedFiles].sort((a, b) => Number("bytes" in a) - Number("bytes" in b)).map((file) => [file.sha256, file])).values()]
+      : storedFiles).values();
     let uploadFailed = false;
     const uploads = Array.from({ length: Math.min(storedFiles.length, simultaneousConnections) }, async () => {
       for (const file of files) {
@@ -185,13 +182,15 @@ export async function writeArtifactVersion(
         // by sibling workers but do not start another asset after a failure.
         if (uploadFailed) return;
         try {
-          if ("stored" in file && liveBlobs.has(file.sha256)) continue;
+          if ("storedIn" in file) {
+            if (file.storedIn === artifactId) continue;
+            throw new Error("site_file_stored_in_another_artifact");
+          }
           const key = blobs ? artifactBlobKey(artifactId, file.sha256) : artifactAssetKey(artifactId, input.version, file.path);
           const body = "bytes" in file ? file.bytes
             // An empty file has nothing to stream.
             : file.sizeBytes === 0 ? new Uint8Array()
-              // Any other file not already a blob here, stored or not, streams
-              // from the sandbox: one connection per upload lane.
+              // Anything else streams from the sandbox: one connection per lane.
               : lengthKnown(await file.open(), file.sizeBytes);
           await env.PAYLOADS.put(key, body, {
             // A blob is shared by paths and versions, so its stored type is
@@ -204,7 +203,7 @@ export async function writeArtifactVersion(
           uploadFailed = true;
           // R2 rejects with a failed source's own error, so a download that
           // breaks partway is named for itself, not as a changed file.
-          throw siteFileStoreFailure(env, error, file);
+          throw siteFileStoreFailure(env, error, file, artifactId);
         }
       }
     });
@@ -215,7 +214,7 @@ export async function writeArtifactVersion(
     if (failed?.status === "rejected") throw failed.reason;
   } catch (error) {
     if (error instanceof TerminalToolError) throw error;
-    throw siteFileStoreFailure(env, error, null);
+    throw siteFileStoreFailure(env, error, null, artifactId);
   }
 
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
@@ -259,15 +258,16 @@ function lengthKnown(body: ReadableStream<Uint8Array>, sizeBytes: number): Reada
  * R2's and `FixedLengthStream`'s own wording, so a runtime that rewords them
  * turns that case into `resource_publish_failed`; the workerd test catches it.
  */
-function siteFileStoreFailure(env: Partial<LogEnv>, error: unknown, file: SitePublishFile | null): TerminalToolError {
+function siteFileStoreFailure(env: Partial<LogEnv>, error: unknown, file: SitePublishFile | null, artifactId: string): TerminalToolError {
   const message = error instanceof Error ? error.message : "";
-  const changed = /checksum you specified did not match|FixedLengthStream did not see all expected bytes|too many bytes through a FixedLengthStream/u
+  // A file gone from the sandbox (`daytona_file_stream_http_404`) changed too.
+  const changed = /checksum you specified did not match|FixedLengthStream did not see all expected bytes|too many bytes through a FixedLengthStream|daytona_file_stream_http_404/u
     .test(message);
   const code = changed ? "site_file_changed_after_listing" : diagnosticErrorCode(error, "site_file_store_failed");
   const extension = file ? /\.([A-Za-z0-9]{1,10})$/u.exec(file.path)?.[1]?.toLowerCase() ?? null : null;
   logWarn(env as LogEnv, "site_file_store_failed", {
-    code, extension, size_bytes: file ? siteFileSize(file) : null,
-    source: file === null ? null : "bytes" in file ? "read" : "stored" in file ? "stored" : "streamed",
+    artifact_id: artifactId, code, extension, size_bytes: file ? siteFileSize(file) : null,
+    source: file === null ? null : "bytes" in file ? "read" : "storedIn" in file ? "stored" : "streamed",
   });
   return changed
     ? new TerminalToolError(
@@ -460,13 +460,24 @@ export async function existingArtifactForResource(
  * The manifest of the version a resource serves now, or null when it cannot
  * be read: a publish then streams every file it would have found stored.
  */
-export async function servedManifest(env: Pick<Env, "PAYLOADS">, served: { artifactId: string; version: number }): Promise<ArtifactManifest | null> {
+export async function servedManifest(
+  env: Pick<Env, "PAYLOADS"> & Partial<LogEnv>,
+  served: { artifactId: string; version: number },
+): Promise<ArtifactManifest | null> {
   const stored = await env.PAYLOADS.get(artifactManifestKey(served.artifactId, served.version));
   if (!stored) return null;
   let parsed: unknown;
-  try { parsed = JSON.parse(await stored.text()); } catch { return null; }
+  try { parsed = JSON.parse(await stored.text()); } catch { parsed = undefined; }
   const manifest = ArtifactManifestSchema.safeParse(parsed);
-  return manifest.success && manifest.data.artifactId === served.artifactId ? manifest.data : null;
+  if (manifest.success && manifest.data.artifactId === served.artifactId) return manifest.data;
+  // Unreadable or another artifact's: every file then streams, which is safe,
+  // but the cause is named rather than lost.
+  logWarn(env as LogEnv, "site_served_manifest_unreadable", {
+    artifact_id: served.artifactId,
+    version: served.version,
+    code: manifest.success ? "site_manifest_artifact_mismatch" : zodDiagnosticCode(manifest.error, "site_manifest") ?? "site_manifest_invalid",
+  });
+  return null;
 }
 
 /** The artifact a resource already serves, as {@link existingArtifactForResource} answers it. */
@@ -508,8 +519,6 @@ export async function publishSiteVersion(env: Env, workspace: D1Database, input:
   files: readonly SitePublishFile[];
   fallbackTitle: string;
   serverModuleSha256: string | null;
-  /** The served manifest the caller already read, reused when it is still `previous`. */
-  live?: ArtifactManifest;
   recordResource: (version: { written: SitePublishResult; version: number; hostnameStub: ArtifactHostnameStub }) => Promise<boolean>;
 }): Promise<{ landed: boolean; written: SitePublishResult; version: number; hostnameStub: ArtifactHostnameStub }> {
   // Reject an ownerless publication before claims, payload writes or resource mutation.
@@ -530,11 +539,6 @@ export async function publishSiteVersion(env: Env, workspace: D1Database, input:
     artifactId: previous?.artifactId ?? input.artifactId ?? null, resourceId: input.resourceId, version,
     mode: input.mode, stateful: input.stateful, files: input.files,
     fallbackTitle: input.fallbackTitle, serverModuleSha256: input.serverModuleSha256,
-    live: previous && input.files.some((file) => "stored" in file)
-      ? input.live?.artifactId === previous.artifactId && input.live.artifactVersion === previous.version
-        ? input.live
-        : await servedManifest(env, previous)
-      : null,
   });
   // The public origin before the row. If D1 is unavailable after the row
   // moves, a retry sees equal content, and would otherwise answer with the
