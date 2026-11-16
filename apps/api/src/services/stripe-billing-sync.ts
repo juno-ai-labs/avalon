@@ -337,14 +337,6 @@ export async function synchronizeStripeProfile(
       .bind(free.id, awardEnd, free.trial_end ?? awardEnd, account.workspace_id)
       .run();
   }
-  const delivery = await env.USAGE_DB.prepare(
-    `SELECT
-    COALESCE(SUM(CASE WHEN confirmed_revision <> revision OR meter_id IS NULL OR meter_id <> CASE organization_pays WHEN 1 THEN ? ELSE ? END THEN 1 ELSE 0 END), 0) AS pending,
-    COALESCE(SUM(CASE WHEN error_code IS NOT NULL THEN 1 ELSE 0 END), 0) AS failed
-    FROM billing_usage_hours WHERE workspace_id = ?`,
-  )
-    .bind(sync.organizationMeterId, sync.rallyMeterId, account.workspace_id)
-    .first<{ pending: number; failed: number }>();
   const metadata = {
     ...awards,
     billing_role: "organization",
@@ -359,13 +351,12 @@ export async function synchronizeStripeProfile(
     available_pilot_coupon_id: config.pilotCouponId ?? "",
     organization_meter_id: sync.organizationMeterId,
     rally_meter_id: sync.rallyMeterId,
-    usage_pending_hours: String(delivery!.pending),
-    usage_failed_hours: String(delivery!.failed),
   };
   const customer = await stripe(env, `customers/${customerId}`, CustomerSchema);
+  // Stripe unsets a metadata key when its submitted value is empty.
   if (
     Object.entries(metadata).some(
-      ([key, value]) => customer.metadata[key] !== value,
+      ([key, value]) => (customer.metadata[key] ?? "") !== value,
     )
   ) {
     await stripe(env, `customers/${customerId}`, StripeIdSchema, {

@@ -44,7 +44,12 @@ function stripeServer() {
     if (path === 'customers/search') return Response.json({ data: [...customers.values()] });
     if (path.startsWith('customers/')) {
       const customer = customers.get(path.slice('customers/'.length))!;
-      if (init?.method === 'POST') Object.assign(customer.metadata, metadata(body));
+      if (init?.method === 'POST') {
+        for (const [key, value] of Object.entries(metadata(body))) {
+          if (value === '') delete customer.metadata[key];
+          else customer.metadata[key] = value;
+        }
+      }
       return Response.json(customer);
     }
     if (path.startsWith('prices/')) return Response.json({ unit_amount: controls.freeAmount, billing_scheme: 'per_unit', recurring: { usage_type: 'licensed', interval: 'month', interval_count: 1 } });
@@ -196,6 +201,25 @@ it('records reconciliation as pending until Stripe aggregation catches up', asyn
   expect(usage.prepare('SELECT error_code FROM billing_usage_hours').get()).toEqual({ error_code: 'billing_usage_unreconciled' });
   server.controls.lag = false; await syncUsage();
   expect(usage.prepare('SELECT confirmed_revision, error_code FROM billing_usage_hours').get()).toEqual({ confirmed_revision: 1, error_code: null });
+});
+
+it('synchronizes usage without writing Stripe customer metadata when usage counters change', async () => {
+  const { env, usage, server, add } = fixture();
+  await settleBillingAccount(env, WORKSPACE);
+  const customer = server.customers.get('cus_1')!;
+  Object.assign(customer.metadata, { usage_pending_hours: '0', usage_failed_hours: '0' });
+  server.writes.length = 0;
+
+  await add('one');
+  server.controls.lag = true;
+  await settleBillingAccount(env, WORKSPACE);
+  expect(usage.prepare('SELECT error_code FROM billing_usage_hours').get()).toEqual({ error_code: 'billing_usage_unreconciled' });
+  server.controls.lag = false;
+  await settleBillingAccount(env, WORKSPACE);
+  expect(usage.prepare('SELECT confirmed_revision, error_code FROM billing_usage_hours').get()).toEqual({ confirmed_revision: 1, error_code: null });
+  await settleBillingAccount(env, WORKSPACE);
+
+  expect(server.writes.map(({ path }) => path)).toEqual(['billing/meter_events']);
 });
 
 it('continues overage settlement when background Stripe usage synchronization fails', async () => {
