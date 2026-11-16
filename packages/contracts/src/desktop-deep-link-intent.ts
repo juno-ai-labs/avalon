@@ -50,12 +50,7 @@ export type DesktopDeepLinkIntent =
       errorCode: string | null;
       callbackRegion: WorkspaceTargetRegion | null;
     } & Targeted)
-  /**
-   * A connector authorization the provider has answered and Rally is holding
-   * until this signed-in client claims `ticket` (`docs/connectors.md`,
-   * "Claiming a connector authorization"). The claim answers with the
-   * `connector-result` link the callback used to send.
-   */
+  /** A held connector authorization for this client to claim; the claim answers with a `connector-result` link. */
   | ({
       kind: "connector-claim";
       provider: ConnectorOAuthProvider;

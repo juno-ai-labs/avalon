@@ -66,9 +66,15 @@ the starter's Organization. So the callback attaches nothing.
    session whose user and Organization started the state, then runs the same
    completion the callback once ran (`completeClaimedCallback`). The answer is
    `{ target }`, the completion link the callback used to redirect to, which the
-   client reads as it always did. A claim from any other session burns the
-   state and fails the attempt with `connector_oauth_account_mismatch`, so the
-   provider's code is never exchanged.
+   client reads as it always did. A claim from another member of the starter's
+   Organization burns the state and fails the attempt with
+   `connector_oauth_account_mismatch`, so the provider's code is never
+   exchanged. A non-member's claim never reaches it: the Organization's API
+   refuses the session first, and the state expires unused.
+   If two claims of one ticket race, the loser's completion finds the state
+   consumed and answers `invalid_oauth_state` without touching the attempt; the
+   desktop then reads the attempt rather than reporting a failure, since the
+   site's handoff page can deliver one link twice.
 
 A denial still ends at the callback: it attaches nothing. The desktop receives
 `connector-claim` (`desktop-deep-link-intent.ts`) and claims through the
@@ -1707,8 +1713,7 @@ not claim was rejected too, since an attacker would simply start with it.
 claim's dispatch in `completeClaimedCallback` is where its completion goes.
 Builds from before this cannot finish a connection until they update. The
 regional Notion bridge keeps its `completeNotion` RPC name so a Global Worker
-deployed first still reaches it, and now holds there. Deploy order: migration,
-then the site, desktop, browser and mobile builds, then the API.
+deployed first still reaches it, and now holds there.
 
 ### 2026-11-12 — A Google search tool tells the model its query ceiling
 

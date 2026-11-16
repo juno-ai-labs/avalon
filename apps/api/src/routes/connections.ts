@@ -368,18 +368,16 @@ connectionRoutes.post("/slack/link/preview", zValidator("json", slackLink), asyn
 connectionRoutes.post("/slack/link", zValidator("json", slackLink), async (c) =>
   c.json(SlackLinkedSchema.parse(await new SlackAgentService(c.env).linkUser(getAuth(c), c.req.valid("json").token))),
 );
-/**
- * The second half of a connector authorization: the signed-in client that
- * started it presents the ticket its callback handed back. A failure after the
- * claim is admitted ends the attempt as the callback once did, and answers with
- * that failure's link rather than an error.
- */
+/** A failure after the claim is admitted ends the attempt as the callback once did, and answers with its link. */
 connectionRoutes.post("/oauth/claim", zValidator("json", ConnectorOAuthClaimRequestSchema), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   const claimed = await service.claimCallback(c.req.valid("json").ticket);
   try {
     return c.json(ConnectorOAuthClaimSchema.parse({ target: await service.completeClaimedCallback(claimed) }));
   } catch (error) {
+    // A concurrent claim of the same ticket consumed the state first and is
+    // finishing the attempt; failing it here would overwrite that outcome.
+    if (error instanceof ApiError && error.code === "invalid_oauth_state") throw error;
     const failure = classifyConnectorOAuthCallbackFailure(error);
     logEvent(c, failure.level, "connector_oauth_claim_failed", {
       provider: claimed.provider,
@@ -474,11 +472,7 @@ async function recoverConnectorCallback(
   }
 }
 
-/**
- * A provider's answer to an authorization. A denial attaches nothing and ends
- * here; a code is only held, for the client that started the authorization to
- * claim (`docs/connectors.md`, "Claiming a connector authorization").
- */
+/** A denial ends here; a code is only held, for the starting session to claim. */
 async function connectorCallback(
   c: CallbackContext,
   provider: ConnectorOAuthProvider,

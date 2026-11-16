@@ -140,10 +140,7 @@ export const SETTINGS_CAPABILITY = 'settings';
 /** The shell opens `open-external` links itself. Its WebView creates no child
  * window, so the browser's reserve-a-blank-tab pattern opens nothing there. */
 export const OPEN_EXTERNAL_CAPABILITY = 'open-external';
-/** The shell runs a connector authorization in an auth session and hands its
- * completion link back (`connector-complete`), so the page that started it can
- * claim it (`docs/connectors.md`, "Claiming a connector authorization"). Safari
- * holds no Rally session, so without this a mobile authorization cannot finish. */
+/** The shell runs connector sign-in in an auth session and hands its callback back as `connector-complete`. */
 export const CONNECTOR_AUTH_SESSION_CAPABILITY = 'connector-auth-session';
 /** What this shell declares to the browser host. */
 export const MOBILE_CAPABILITIES = [ARTIFACT_PICKER_CAPABILITY, SETTINGS_CAPABILITY, OPEN_EXTERNAL_CAPABILITY, CONNECTOR_AUTH_SESSION_CAPABILITY];
