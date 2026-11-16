@@ -5,10 +5,10 @@ import type { RallyApi } from './api';
 import { useSocketOwnedList } from './sidebar-list-store';
 
 /*
- * Canvases shared with this person in their other Organizations, as the
- * organization socket pushes them (`workspace_shared_canvases`,
- * `docs/canvas-share-federation.md`). The server reads them from the
- * person's inbox; the client only draws them.
+ * Canvases shared with this person as a guest in their other Organizations,
+ * as the organization socket pushes them (`workspace_shared_canvases`,
+ * `docs/canvas-share-federation.md`). The server builds them by asking each
+ * Canvas's own Organization; the client only draws them.
  */
 
 /** A Canvas from another Organization, and the Organization it belongs to. */
@@ -24,8 +24,8 @@ export function useOtherOrganizationCanvases(): OtherOrganizationCanvas[] {
 }
 
 /**
- * Settings › Account › Preferences' switch, stored on the person's inbox so it
- * covers every Organization. The switch moves at once; a failed save puts it
+ * Settings › Account › Preferences' switch, stored on the server for the
+ * person so it covers every Organization. The switch moves at once; a failed save puts it
  * back. The socket then pushes the list it now allows.
  */
 export function useSharedCanvasesSetting(api: Pick<RallyApi, 'getSharedCanvasesSetting' | 'setSharedCanvasesSetting'> | null) {

@@ -1056,23 +1056,6 @@ why the refresh lease shares the owning object's transaction.
 
 ## Changelog
 
-### 2026-11-16 — A guest's shared Canvases show in their other Organizations
-
-**What changed:** Triggers on `canvas_participants`, `canvas_directory` and
-`workspace_member_status` (WorkspaceDO migration 151) queue a refresh when a
-guest's view of a Canvas here may have changed, and `guestSharedCanvases`
-answers for a guest of this Organization; a guest's other Organizations list
-those Canvases ([`canvas-share-federation.md`](canvas-share-federation.md)).
-
-**Why:** A guest of a partner's Organization had to switch Organization to find
-what was shared with them.
-
-**Considered and rejected:** Federating every Canvas a person is on, members
-included: an Organization's Canvases stay inside it for its members.
-
-**Consequences:** Anything that adds a way to share a Canvas with a guest must
-write `canvas_participants`, or the share will not show elsewhere.
-
 ### 2026-11-15 — A person the Canvas admits can join its participant list
 
 **What changed:** `canvasJoin` lists a member an Organization-wide Canvas
