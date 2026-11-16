@@ -712,7 +712,16 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../contracts
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
+      zod:
+        specifier: 'catalog:'
+        version: 4.5.4
     devDependencies:
+      '@types/node':
+        specifier: 26.4.0
+        version: 26.4.0
       typescript:
         specifier: 'catalog:'
         version: 5.9.3

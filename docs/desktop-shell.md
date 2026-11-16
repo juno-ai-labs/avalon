@@ -22,7 +22,7 @@ routes the shell serves, or who owns the right panel.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/activity`, `/settings` (reached only in the browser; on the desktop Settings renders in its own window), `/opening`, and the redirects of the removed routes. |
+| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/marketplace/:slug` (starts a Canvas from that template, replacing the route; `screens/template-start.tsx`), `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/activity`, `/settings` (reached only in the browser; on the desktop Settings renders in its own window), `/opening`, and the redirects of the removed routes. |
 | `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: `/canvases` by default, or the restorable `last-route` with Last Opened selected, once onboarding is finished. `LANDING_ROUTE`, `restorableRoute`, `RESTORED_ROUTE`, `useRestoredRouteFallback`, `useOpenLanding`. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
@@ -64,11 +64,11 @@ sheet's bar carries the title and New Canvas, the header still shows the
 Marketplace button, and the Marketplace's own title and way back.
 The filters' rules live in `@rally/contracts/canvas-filters`, shared with the
 mobile dashboard ([`mobile-canvas-client.md`](mobile-canvas-client.md)).
-`apps/desktop/src/renderer/lib/canvas-templates.ts` orders the catalog. Each
+`packages/skills/marketplace-skills/catalog.ts` lists and orders the catalog and parses it; the app's builds read it as the `virtual:rally-canvas-templates` module, and the public site's `/marketplace/` page renders from the same loader. Each
 Markdown file in `packages/skills/marketplace-skills/` supplies its card's `name`,
 `description`, `icon` and `color` (its card's mark, from the Canvas appearance
 catalog; it never becomes the started Canvas's mark), and category `tags`. The builds check tags against
-`canvas-template-categories.ts`. Each starter is tagged with its own directory.
+`marketplace-skills/categories.ts`. Each starter is tagged with its own directory.
 Selecting a template creates and opens a Canvas with the Markdown body sent
 as the creator's first Chat message through the **Start from a prompt** flow.
 An empty Canvas offers the same templates under its composer

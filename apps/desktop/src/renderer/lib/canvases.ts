@@ -141,19 +141,23 @@ export function othersPresent(row: Pick<CanvasSidebarRow, 'presentUserIds'>, cur
  * `clientMessageId`, which the server answers as a replay
  * (`HostedCanvas.create`), so a request that landed but whose answer was lost
  * does not make a second Canvas. Success ends the series.
+ *
+ * `replace` opens the Canvas in place of the current route, for a route whose
+ * only job was to start one: Back must not land there and start another.
  */
-export function useCreateCanvas(): (prompt?: string) => void {
+export function useCreateCanvas(): (prompt?: string, options?: { replace?: boolean }) => void {
   const api = useOptionalCollaborationSession()?.api;
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
   const creationKey = useCanvasCreationKey();
   const series = useRef<{ scope: readonly unknown[]; text: string; canvasId: ReturnType<typeof asWorkstreamId>; clientMessageId: string; inFlight: Promise<void> | null } | null>(null);
-  return useCallback((prompt?: string) => {
+  return useCallback((prompt?: string, options?: { replace?: boolean }) => {
+    const replace = options?.replace ?? false;
     const text = prompt?.trim() ?? '';
     const current = series.current?.scope === creationKey ? series.current : null;
     if (current?.inFlight) {
-      if (location.pathname !== canvasRoute(current.canvasId)) void navigate(canvasRoute(current.canvasId));
+      if (location.pathname !== canvasRoute(current.canvasId)) void navigate(canvasRoute(current.canvasId), { replace });
       return;
     }
     const attempt = current?.text === text ? current
@@ -193,7 +197,7 @@ export function useCreateCanvas(): (prompt?: string) => void {
       }).finally(() => { attempt.inFlight = null; });
     };
     retry();
-    void navigate(canvasRoute(attempt.canvasId));
+    void navigate(canvasRoute(attempt.canvasId), { replace });
   }, [api, creationKey, location.pathname, navigate, queryClient]);
 }
 

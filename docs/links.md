@@ -80,6 +80,28 @@ every reader refused a canonical link carrying a query. A message is a query
 in its Chat, the form the renderer's `canvasTurnRoute` already used; it is
 the one query any reader takes.
 
+### Template links
+
+A Marketplace template's link is `/app/templates/<slug>` on the web app
+(`templateLinkPath`, read back by `parseTemplateLinkPath`), where the slug is
+the template file's name without `.md`. It names no Organization: whoever opens
+it starts the template in one of their own. The public site's `/marketplace/`
+cards link there.
+
+The web app keeps the path through sign-in and sign-up, as it keeps every
+`/app/` path (the email link and the Google and Apple returns all come back to
+it). Signed in, the entry carries the template into whichever Organization
+opens as the hash route `#/marketplace/<slug>` (`templateRoute`): the
+Organization list's links carry it, and so does entering one in place, which
+is what creating one, accepting an invitation, or having exactly one does
+(the entry skips the list then). The shell's `/marketplace/:slug` route starts
+the Canvas with the template's prompt, as picking its card does, and replaces
+itself with the Canvas so Back cannot start a second. A guest, or a slug the
+catalog does not hold, lands on the Canvases home.
+
+Nothing hands a template link to the Mac app; the site's handoff page treats
+`/app/templates/` as it treats any path it does not recognize.
+
 ### Links the server mints
 
 `conversationCanonicalUrl(env, { region, workspaceId, parentId, artifactId? })`
@@ -363,6 +385,22 @@ does not open the Mac app. Push clicks use the same adapter with notification
 attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-11-16 — Marketplace templates get a link
+
+**What changed:** Marketplace templates get a link, `/app/templates/<slug>`
+([Template links](#template-links)).
+
+**Why:** The public marketplace's "Start from this" opened the web app's front
+door, and the person then had to find the template again.
+
+**Considered and rejected:** A link under an Organization, like the Canvas
+form: the site does not know the visitor's Organization. A query on the web
+app's root: sign-in returns to a path only, so a query would be dropped.
+
+**Consequences:** A template's file name is its public address; renaming one
+breaks links already handed out, and two templates may not share a name
+(`loadCanvasTemplates` refuses it).
 
 ### 2026-11-09 — Canvases get a link form, and the Space, Channel, Breakout, Thread and iPhone forms go
 
