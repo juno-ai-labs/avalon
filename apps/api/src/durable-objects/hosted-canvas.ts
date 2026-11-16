@@ -120,6 +120,8 @@ export const CanvasNoteArtifactRequestSchema = z.strictObject({
   editor: CanvasEditorSchema,
   /** The Sidekick run that published, for a `sidekick` editor: the row's `lastWrittenBy`. */
   runId: IdSchema.nullable().optional(),
+  /** Make this resource the Canvas's one artifact in place of the one it holds; without it a different resource is refused. */
+  replace: z.boolean().optional(),
 }).refine((request) => !request.runId || request.editor.kind === "sidekick", {
   path: ["runId"], message: "only a Sidekick's publish names a run",
 });
@@ -610,7 +612,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     ).toArray().map((row) => row.user_id);
   }
 
-  /** The Canvas's artifacts at their current versions, the most recently changed first; none until its Chat publishes one. */
+  /** The Canvas's artifacts at their current versions, the most recently changed first: one, or none until its Chat publishes one. */
   artifacts(): CanvasArtifact[] {
     return this.sql.exec<{
       id: string; title: string; mime_type: string | null; resource_type: string; current_version: number; updated_at: string;
@@ -686,21 +688,37 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
 
   /**
    * A publish from the Canvas's Chat, or from a run of a Sidekick attached to it,
-   * attached this resource to the Canvas's conversation: record it among the
-   * Canvas's artifacts and move the row's recency, its last editor and the
+   * attached this resource to the Canvas's conversation: record it as the
+   * Canvas's artifact and move the row's recency, its last editor and the
    * run that wrote it (`lastWrittenBy`, cleared by any publish not a run's). The first
    * publish of a path is the artifact's version 1, a later one a new version
-   * of it, and a publish of another path another artifact; the resource
-   * versioning layer records each version, this records only which resources
-   * the Canvas holds. A new version tells everyone who pinned the Canvas
-   * (`tellCanvasPinners`). Answers `false` for an id that is no Canvas.
+   * of it; the resource versioning layer records each version, this records
+   * only which resource the Canvas holds. A Canvas holds one artifact: a
+   * different resource is refused (`canvas_artifact_held`) unless the
+   * publish asked to `replace` it, which drops the others from the Canvas.
+   * A replaced artifact keeps its publication parent, so it stays readable
+   * and served to the Canvas's readers at its own URL. A new version tells
+   * everyone who pinned the Canvas (`tellCanvasPinners`). Answers `false` for
+   * an id that is no Canvas.
    */
-  async noteArtifact(input: z.input<typeof CanvasNoteArtifactRequestSchema>): Promise<{ noted: boolean }> {
+  async noteArtifact(input: z.input<typeof CanvasNoteArtifactRequestSchema>): Promise<{ noted: boolean; refused?: "canvas_artifact_held" }> {
     const request = parseRpcInput(CanvasNoteArtifactRequestSchema, input, "canvas_note_artifact");
     const row = this.row();
     if (!row || row.workspace_id !== request.workspaceId || row.archived_at !== null) return { noted: false };
     const now = Date.now();
-    this.host.storage.transactionSync(() => {
+    const held = this.host.storage.transactionSync(() => {
+      // A Canvas converted from a Thread may hold several until one replaces them.
+      const holding = this.sql.exec<{ listed: number; others: number }>(
+        `SELECT EXISTS (SELECT 1 FROM canvas_artifacts WHERE canvas_id = ?1 AND resource_id = ?2) AS listed,
+                EXISTS (SELECT 1 FROM canvas_artifacts WHERE canvas_id = ?1 AND resource_id <> ?2) AS others`,
+        this.canvasId, request.resourceId,
+      ).one();
+      // The bridge refuses this before it writes anything; this is the same
+      // rule for two publishes that passed that check at once.
+      if (holding.listed === 0 && holding.others === 1 && !request.replace) return true;
+      if (request.replace) {
+        this.sql.exec(`DELETE FROM canvas_artifacts WHERE canvas_id = ? AND resource_id <> ?`, this.canvasId, request.resourceId);
+      }
       const publication = this.sql.exec<{ published_at: string | null }>(
         `SELECT COALESCE((SELECT version.captured_at FROM resource_versions version
                            WHERE version.resource_id = resource.id AND (version.version = 1 OR ${artifactNewsCauseSql("version")})
@@ -721,7 +739,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       );
       this.host.noteCanvasDirectoryChanged(this.canvasId);
       this.host.noteAttachedCanvasChanged(this.canvasId);
+      return false;
     });
+    if (held) return { noted: false, refused: "canvas_artifact_held" };
     await tellCanvasPinners({ env: this.env, storage: this.storage, noteActivityChanged: (userId) => this.host.noteActivityChanged(userId) }, {
       workspaceId: row.workspace_id, canvasId: this.canvasId, canvasTitle: row.title, generation: row.authority_generation,
       resourceId: request.resourceId, editor: request.editor,

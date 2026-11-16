@@ -250,7 +250,7 @@ export function createTerminalResourceBridge(
    * Canvas's Chat, the Canvas records the artifact and its last editor
    * (`WorkspaceDO.canvasNoteArtifact`). Null where no destination can be one.
    */
-  noteCanvasArtifact: ((target: { parentId: string; substreamId: string }, resourceId: string) => Promise<boolean>) | null = null,
+  noteCanvasArtifact: ((target: { parentId: string; substreamId: string }, resourceId: string, replace: boolean) => Promise<boolean>) | null = null,
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to AgentLoopDO. Keep every statement single-authority;
@@ -562,10 +562,10 @@ export function createTerminalResourceBridge(
    * the tool call; it is logged by name, and the next publish of the path
    * notes it again (the note is idempotent).
    */
-  const noteInCanvas = async (target: { parentId: string; substreamId: string }, resourceId: string): Promise<boolean> => {
+  const noteInCanvas = async (target: { parentId: string; substreamId: string }, resourceId: string, replace = false): Promise<boolean> => {
     if (!noteCanvasArtifact) return false;
     try {
-      return await noteCanvasArtifact(target, resourceId);
+      return await noteCanvasArtifact(target, resourceId, replace);
     } catch (error) {
       logWarn(env, "canvas_artifact_note_failed", {
         parent_id: target.parentId, resource_id: resourceId,
@@ -1310,22 +1310,56 @@ export function createTerminalResourceBridge(
     },
   };
   if (!noteCanvasArtifact) return bridge;
-  // A publish that landed in a Canvas's Chat is one of the Canvas's
-  // artifacts; the note is idempotent, so a replayed publish notes it again.
+  type CanvasPublishInput = {
+    filePath: string; canvas?: string | undefined; displayName?: string | undefined;
+    providerResourceId?: string | undefined; replaceCanvasArtifact?: boolean | undefined;
+  };
+  /**
+   * A Canvas holds one artifact. Refuse a publish of another path into a
+   * Canvas that holds one, before anything is written, so the refusal leaves
+   * no resource behind; `replaceCanvasArtifact` is the model's way through.
+   * The Canvas's own note applies the same rule to two publishes that pass
+   * here at once (`HostedCanvas.noteArtifact`).
+   */
+  const assertCanvasHoldsNoOther = async (context: HarnessToolContext, input: CanvasPublishInput) => {
+    if (input.providerResourceId !== undefined || input.replaceCanvasArtifact) return;
+    const target = await publicationAddress(context, input);
+    if (target.substreamId !== "0") return;
+    const identity = await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
+    const held = (await workspace.prepare(
+      `SELECT resource.id, resource.title, resource.provider_resource_id
+         FROM canvas_artifacts artifact JOIN resources resource ON resource.id = artifact.resource_id
+        WHERE artifact.canvas_id = ? AND resource.provider_resource_id IS NOT ?
+        ORDER BY artifact.added_at, resource.id LIMIT 1`,
+    ).bind(target.parentId, identity).first<{ id: string; title: string; provider_resource_id: string | null }>());
+    if (!held) return;
+    const prefix = `terminal:${target.parentId}:`;
+    const path = held.provider_resource_id?.startsWith(prefix) ? held.provider_resource_id.slice(prefix.length) : null;
+    const republish = path && !path.startsWith("sha256:") ? `republish filePath ${path} to change it` : "it cannot be republished from a path";
+    throw new TerminalToolError("canvas_artifact_held",
+      `This Canvas already has its one artifact, "${held.title}" (resourceId ${held.id}); ${republish}. `
+        + "Build what you meant to publish into that artifact, or publish again with replaceCanvasArtifact true to make this the Canvas's artifact in its place.",
+      { field: "replaceCanvasArtifact", heldResourceId: held.id });
+  };
+  // A publish that landed in a Canvas's Chat is the Canvas's artifact; the
+  // note is idempotent, so a replayed publish notes it again.
   const noted = async <T extends { resourceId: string }>(context: HarnessToolContext,
-    input: { canvas?: string | undefined; displayName?: string | undefined; providerResourceId?: string | undefined },
-    published: T): Promise<{ published: T; inCanvas: boolean }> => {
+    input: CanvasPublishInput, published: T): Promise<{ published: T; inCanvas: boolean }> => {
     if (input.providerResourceId !== undefined) return { published, inCanvas: false };
     const target = await publicationAddress(context, input);
-    return { published, inCanvas: await noteInCanvas(target, published.resourceId) };
+    return { published, inCanvas: await noteInCanvas(target, published.resourceId, input.replaceCanvasArtifact === true) };
   };
   return {
     ...bridge,
     publishResource: async (context, input, bytes) => {
+      await assertCanvasHoldsNoOther(context, input);
       const { published, inCanvas } = await noted(context, input, await bridge.publishResource(context, input, bytes));
       return withFileUrl(context.workspaceId, published, inCanvas);
     },
-    publishSiteResource: async (context, input, site) => (await noted(context, input, await bridge.publishSiteResource(context, input, site))).published,
+    publishSiteResource: async (context, input, site) => {
+      await assertCanvasHoldsNoOther(context, input);
+      return (await noted(context, input, await bridge.publishSiteResource(context, input, site))).published;
+    },
   };
 }
 

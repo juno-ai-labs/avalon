@@ -164,7 +164,9 @@ publish makes, with the person as the revision's author (`member`):
 
 1. The identity is `canvas:<canvasId>:<name>`, distinct from Rally's own
    `terminal:<conversation>:<path>`, so the same name published by Rally and
-   by a person makes two artifacts. The same name again finds the same row:
+   by a person are two resources. A Canvas holds one artifact, and a person's
+   publish becomes it, in place of whatever it held
+   ([`canvases.md`](canvases.md#one-artifact)). The same name again finds the same row:
    equal content is `unchanged`, new content is a swap and a new version, and
    a name already published as the other kind is refused
    (`canvas_artifact_kind_changed`).

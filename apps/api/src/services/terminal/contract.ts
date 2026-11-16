@@ -82,6 +82,8 @@ const publishResourceArguments = z.strictObject({
   description: z.string().max(2_000).optional(),
   /** A Sidekick run's choice of a Canvas attached to its Sidekick to publish into; see `resolveTerminalPublicationHome`. */
   canvas: z.string().uuid().optional(),
+  /** A Canvas holds one artifact: true makes this path its artifact in place of the one it holds; see `HostedCanvas.noteArtifact`. */
+  replaceCanvasArtifact: z.boolean().optional(),
 });
 const publishBranchAndPrArguments = z.strictObject({
   title: z.string().min(1).max(256),
@@ -281,7 +283,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   publish_resource: {
     name: "publish_resource",
-    description: "Publish one stable non-empty regular file, or a whole directory, beneath AVALON_RESOURCE_DIR as a generated work-stream resource. filePath is relative to that output directory (/workspace/.rally-output), not the workspace root that read_file and write_file use, so write or copy the finished file beneath AVALON_RESOURCE_DIR before publishing it. A directory with index.js at its root publishes as a reactive site Rally hosts and serves; one with index.html at its root publishes as a reactive static site; any other directory publishes as one downloadable archive. The result's publishKind says which of file, site, or archive it became. Publishing the same filePath again updates that resource in place — new content, and a new title when displayName differs from the one you last gave, so a person's rename survives a republish that repeats it — instead of creating a second one, so republish the same path to revise it and choose a different path for a different thing.",
+    description: "Publish one stable non-empty regular file, or a whole directory, beneath AVALON_RESOURCE_DIR as a generated work-stream resource. filePath is relative to that output directory (/workspace/.rally-output), not the workspace root that read_file and write_file use, so write or copy the finished file beneath AVALON_RESOURCE_DIR before publishing it. A directory with index.js at its root publishes as a reactive site Rally hosts and serves; one with index.html at its root publishes as a reactive static site; any other directory publishes as one downloadable archive. The result's publishKind says which of file, site, or archive it became. Publishing the same filePath again updates that resource in place — new content, and a new title when displayName differs from the one you last gave, so a person's rename survives a republish that repeats it — instead of creating a second one, so republish the same path to revise it. A Canvas holds one artifact, so build everything a Canvas shows into that one; see replaceCanvasArtifact.",
     capability: "terminal.resource.publish",
     mode: "write",
     idempotency: "provider_key",
@@ -291,6 +293,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       displayName: { type: "string", minLength: 1, maxLength: 300, description: "Optional participant-visible resource title." },
       description: { type: "string", maxLength: 2_000, description: "Optional participant-visible description." },
       canvas: { type: "string", format: "uuid", description: "Sidekick runs only: the id of a Canvas attached to this Sidekick (one in ATTACHED CANVASES, or one an earlier run made), to publish into it. Omit it to publish into the Canvas this run made, which the first publish creates." },
+      replaceCanvasArtifact: { type: "boolean", description: "A Canvas holds one artifact. Publishing a new filePath into a Canvas that already has one is refused unless this is true; true makes this publish the Canvas's artifact in place of the one it held, which stays at its URL but is no longer the Canvas's. Not needed to republish the artifact's own filePath." },
     }, ["filePath"]),
   },
   publish_branch_and_pr: {
