@@ -68,7 +68,6 @@ const MAXIMUM_PUBLISH_BYTES = DEFAULT_MAX_ATTACHMENT_BYTES;
  * so it can rise for media; 25 MB is the team's chosen number.
  */
 const MAXIMUM_STREAMED_PUBLISH_BYTES = DEFAULT_MAX_ATTACHMENT_BYTES;
-const BUFFERED_BYTES = "read whole (pages, the server module, the preview image, or an archive)";
 const FILE_NOT_FOUND_EXIT_CODE = 44;
 const FILE_NOT_REGULAR_EXIT_CODE = 45;
 /** An edit's target no longer holds the bytes the edit was computed from. */
@@ -163,8 +162,6 @@ export interface TerminalResourceBridge {
       stateful: boolean;
       files: readonly SitePublishFile[];
       serverModuleSha256: string | null;
-      /** The live manifest `liveSiteFiles` answered, so it is not read twice. */
-      live?: ArtifactManifest | null;
     },
   ): Promise<TerminalPublishedSiteOutput>;
   /**
@@ -405,15 +402,19 @@ export function createDaytonaTerminalRuntime(
     return instructions ? instructions.fragment({ touched }) : null;
   }
 
-  /**
-   * One sandbox file as a stream, cancelled with the tool call. The provider
-   * Worker is promoted before the API (`deploy-api.yml`), so it always has
-   * `openFile`; a provider without it (a test double) is read whole.
-   */
+  /** One sandbox file as a stream, cancelled with the tool call. */
   async function openSandboxFile(sandbox: AcquiredTerminalSandbox, path: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+    // Read whole when streaming cannot start (no `openFile` on a test double,
+    // a failed signing, an older provider Worker): a streamed file is within
+    // the streamed budget, so it fits, and a Daytona fault in the signed path
+    // does not stop every publish.
+    const whole = async () => new Response((await provider.readFile(sandbox.providerSandboxId, path)).slice().buffer).body!;
     const stream = provider.openFile
-      ? await provider.openFile(sandbox.providerSandboxId, path, signal)
-      : new Response((await provider.readFile(sandbox.providerSandboxId, path)).slice().buffer).body!;
+      ? await provider.openFile(sandbox.providerSandboxId, path, signal).catch((error: unknown) => {
+        if (signal.aborted) throw error;
+        return whole();
+      })
+      : await whole();
     // After the provider returns, cancelling the tool call cancels the stream,
     // which reaches the download across the RPC.
     return stream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>(), { signal });
@@ -764,12 +765,29 @@ export function createDaytonaTerminalRuntime(
       resolved.kind,
     );
     const totalBytes = entries.reduce((total, entry) => total + entry.sizeBytes, 0);
-    const refuseOverBudget = (sizeBytes: number, limitBytes: number, what: string): never => {
+    const refuseOverBudget = (sizeBytes: number, limitBytes: number, message: string): never => {
       resources.noteOversizedPublish(context, { shape: "directory", sizeBytes, limitBytes, filePath: input.filePath });
+      throw new TerminalToolError("resource_limit_exceeded", message, { field: "filePath", expected: `bytes at most ${limitBytes}` });
+    };
+    const refuseRead = (sizeBytes: number): never => refuseOverBudget(sizeBytes, MAXIMUM_PUBLISH_BYTES, resolved.kind === "site"
+      ? `The page (index.html), the server module and the preview image are read whole and hold ${sizeBytes} bytes; one publication allows at most ${MAXIMUM_PUBLISH_BYTES}. Make those files smaller; leaving out other files does not help.`
+      : `The directory holds ${sizeBytes} bytes; an archive allows at most ${MAXIMUM_PUBLISH_BYTES}. Reduce or split it before retrying.`);
+    // A file whose bytes disagree with its listed digest is not trusted again:
+    // the directory's digest cache is dropped, so the next listing rehashes.
+    const forgetDigests = async (): Promise<void> => {
+      await provider.runUtilityCommand(sandbox.providerSandboxId, {
+        operation: "file.temp_cleanup",
+        command: `rm -f -- ${shellQuote(`${DIGEST_CACHE_DIRECTORY}/${await sha256Hex(new TextEncoder().encode(path))}`)}`,
+        cwd: ROOT,
+        timeoutMs: 10_000,
+      }).catch(() => undefined);
+    };
+    const changedFile = async (): Promise<never> => {
+      await forgetDigests();
       throw new TerminalToolError(
-        "resource_limit_exceeded",
-        `The directory has ${sizeBytes} bytes ${what}; one publication allows at most ${limitBytes}. Publish fewer new files at a time.`,
-        { field: "filePath", expected: `bytes ${what} at most ${limitBytes}` },
+        "resource_not_ready",
+        "A file in the directory changed while Rally was reading it. Wait for its command to finish, then retry publish_resource with the final directory.",
+        { reason: "Wait for the producer to finish, then retry with the final stable directory." },
       );
     };
     const readEntry = async (entry: DirectoryEntry): Promise<ReadSiteFile> => {
@@ -784,65 +802,48 @@ export function createDaytonaTerminalRuntime(
         );
       }
       const observed = await sha256Hex(bytes);
-      if (observed !== entry.sha256 || bytes.byteLength !== entry.sizeBytes) {
-        throw new TerminalToolError(
-          "resource_not_ready",
-          "A file in the directory changed while Rally was reading it. Wait for its command to finish, then retry publish_resource with the final directory.",
-          { reason: "Wait for the producer to finish, then retry with the final stable directory." },
-        );
-      }
+      if (observed !== entry.sha256 || bytes.byteLength !== entry.sizeBytes) return changedFile();
       return { path: entry.path, bytes, sha256: observed };
     };
 
-    // Each file of a site is settled here, so the model only ever publishes a
-    // directory:
-    // - **stored**: the live version already holds these bytes (by digest, at
-    //   any path), so nothing moves and nothing counts against a budget; the
-    //   writer finds the live copy itself;
-    // - **read**: `index.html`, the server module and the preview image the
-    //   page names, whose bytes this publish itself needs;
-    // - **streamed**: everything else, from the sandbox into its blob, never
-    //   held by the Worker.
-    // The listing's digest decides "stored"; a wrong one can only put bytes
-    // this site already served at a path. A streamed file is checked by R2.
+    // Each file is settled once: **read** whole (`index.html`, the server
+    // module, the preview image the page names: the publish needs their bytes;
+    // every file of an archive), **stored** (`liveSiteFiles` found its bytes in
+    // this artifact's blobs, so nothing is written or counted), or **streamed**
+    // from the sandbox. The page is read first, after its own size is checked.
     const live = resolved.kind === "site" ? await resources.liveSiteFiles(context, input.filePath, input) : null;
     const index = resolved.kind === "site" ? entries.find((entry) => entry.path === "index.html") : undefined;
-    // The page is read before the other files are settled, so its own size is
-    // checked against the buffered budget before it is read.
-    if (index && index.sizeBytes > MAXIMUM_PUBLISH_BYTES) refuseOverBudget(index.sizeBytes, MAXIMUM_PUBLISH_BYTES, BUFFERED_BYTES);
+    if (index && index.sizeBytes > MAXIMUM_PUBLISH_BYTES) refuseRead(index.sizeBytes);
     const readIndex = index ? await readEntry(index) : null;
     const previewSources = new Set(readIndex
       ? socialPreviewSourcePaths(new TextDecoder("utf-8", { fatal: false }).decode(readIndex.bytes))
       : []);
     const liveDigests = new Set((live?.manifest.assets ?? []).map((file) => `${file.sha256}:${file.sizeBytes}`));
-    const needsBytes = (entry: DirectoryEntry): boolean => resolved.kind !== "site"
-      || entry.path === "index.html"
-      || previewSources.has(entry.path)
-      || (resolved.mode === "active" && entry.path === resolved.entryPath);
-    const open = (entry: DirectoryEntry) => () => openSandboxFile(sandbox, `${path}/${entry.path}`, context.signal);
-    const settle = (entry: DirectoryEntry): StoredSiteFile | StreamedSiteFile | null => {
-      if (needsBytes(entry)) return null;
-      const file = { path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes, open: open(entry) };
-      return liveDigests.has(`${entry.sha256}:${entry.sizeBytes}`) ? { ...file, stored: true } : file;
-    };
-    const settled = new Map(entries.flatMap((entry) => {
-      const file = settle(entry);
-      return file ? [[entry.path, file] as const] : [];
-    }));
+    const settled: (DirectoryEntry | StoredSiteFile | StreamedSiteFile)[] = [];
     let readBytes = 0;
     let streamedBytes = 0;
     for (const entry of entries) {
-      const file = settled.get(entry.path);
-      if (!file) readBytes += entry.sizeBytes;
-      else if (!("stored" in file)) streamedBytes += entry.sizeBytes;
+      const whole = resolved.kind !== "site" || entry.path === "index.html" || previewSources.has(entry.path)
+        || (resolved.mode === "active" && entry.path === resolved.entryPath);
+      const file = { path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes };
+      if (whole) {
+        readBytes += entry.sizeBytes;
+        settled.push(entry);
+      } else if (liveDigests.has(`${entry.sha256}:${entry.sizeBytes}`)) {
+        settled.push({ ...file, storedIn: live!.manifest.artifactId });
+      } else {
+        streamedBytes += entry.sizeBytes;
+        settled.push({ ...file, open: () => openSandboxFile(sandbox, `${path}/${entry.path}`, context.signal) });
+      }
     }
-    if (readBytes > MAXIMUM_PUBLISH_BYTES) refuseOverBudget(readBytes, MAXIMUM_PUBLISH_BYTES, BUFFERED_BYTES);
+    if (readBytes > MAXIMUM_PUBLISH_BYTES) refuseRead(readBytes);
     if (streamedBytes > MAXIMUM_STREAMED_PUBLISH_BYTES) {
-      refuseOverBudget(streamedBytes, MAXIMUM_STREAMED_PUBLISH_BYTES, "new or changed since the live version");
+      refuseOverBudget(streamedBytes, MAXIMUM_STREAMED_PUBLISH_BYTES,
+        `The directory has ${streamedBytes} bytes that are new or changed since the live version; one publication allows at most ${MAXIMUM_STREAMED_PUBLISH_BYTES}. If one new file is over this by itself, make it smaller (re-encode audio at a lower bitrate). Otherwise leave some new files out and add them in a later publish.`);
     }
     const siteFiles: SitePublishFile[] = [];
-    for (const entry of entries) {
-      siteFiles.push(settled.get(entry.path) ?? (entry === index && readIndex ? readIndex : await readEntry(entry)));
+    for (const file of settled) {
+      siteFiles.push("storedIn" in file || "open" in file ? file : file === index && readIndex ? readIndex : await readEntry(file));
     }
     const files = siteFiles.filter((file): file is ReadSiteFile => "bytes" in file);
 
@@ -877,7 +878,9 @@ export function createDaytonaTerminalRuntime(
         : false,
       files: siteFiles,
       serverModuleSha256: serverModule?.sha256 ?? null,
-      live: live?.manifest ?? null,
+    }).catch(async (error: unknown) => {
+      if (error instanceof TerminalToolError && error.details?.code === "site_file_changed_after_listing") await forgetDigests();
+      throw error;
     });
   }
 

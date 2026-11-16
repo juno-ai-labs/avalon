@@ -77,6 +77,20 @@ describe("the sandbox's cached directory listing", () => {
     expect(readFileSync(join(cache, cacheFile!), "utf8")).not.toContain("two.mp3");
   });
 
+  it("rehashes a file whose cached line is damaged, and never prints the damage", async () => {
+    writeFileSync(join(target, "index.html"), "<h1>Show</h1>");
+    list();
+    const [cacheFile] = readdirSync(cache);
+    const line = readFileSync(join(cache, cacheFile!), "utf8");
+    // A digest that is not 64 hex characters, with spaces that would shift the fields.
+    writeFileSync(join(cache, cacheFile!), line.replace(/^[0-9a-f]{64}/u, "bad digest 99 evil"));
+    const next = list();
+    expect(next.hashed).toEqual(["index.html"]);
+    expect(next.lines).toEqual([`13 ${digest("<h1>Show</h1>")} index.html`]);
+    // No temporary file is left beside the cache.
+    expect(readdirSync(cache)).toHaveLength(1);
+  });
+
   it("keeps the digests it computed when the listing is stopped before it finishes", async () => {
     writeFileSync(join(target, "index.html"), "<h1>Show</h1>");
     for (const name of ["a", "b", "c"]) writeFileSync(join(target, "episodes", `${name}.mp3`), `episode ${name}`);
