@@ -148,7 +148,8 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization, blanked-optional-argument stripping, and bounded model-visible argument errors. |
 | `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/prompts/harness/` | The harness's prompts, one per file, in the `@rally/prompts` package: the standing work prompt and its sections, JEV questions and their choice sets, compaction, catalogs, and the harness's own plugin messages. Imported from `@rally/prompts/harness/<file>`; the harness does not re-export them. Byte-stable and golden-hashed. [`writing-prompts.md`](writing-prompts.md#where-a-prompt-lives) is the first read. |
-| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts`, `platform-skills/`, `packages/skills/` | The skill registry, its three bounds, and the built-in skill catalog, including procedures scoped by `ownerPlugin` and the task skills. |
+| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the built-in skill catalog, assembled from `@rally/skills`. |
+| `packages/skills/` (`platform-skills/`, `task-skills/`) | Every skill's content, platform and task alike, and the shared `HarnessSkill` type. |
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
 | `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
@@ -766,16 +767,16 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships eleven skills in its default catalog (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Seven are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, `using-external-structured-data`, and the two request-routing task skills described below. The other four each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` and `setting-up-a-filtered-trigger` below, `tracking-seen-or-done-items` owned by `rally:tables`, and `building-live-sites` above. The three AI-chat readers that the browser plugin owned went with it in the dead-code pass. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships thirteen skills in its default catalog (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Seven are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, `using-external-structured-data`, and the two request-routing task skills described below. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` and `setting-up-a-filtered-trigger` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, the task skill `publishing-a-feed`, also owned by `rally:terminal`, which composes `building-live-sites` as `creating-an-app` does for any feed an app subscribes to without signing in (a podcast, a calendar, news or updates), rendered from the site's own show and entry rows, with generated cover art and a page that carries a copyable link, and keeps each format's elements and Apple Podcasts' rules in reference resources; and the task skill `creating-a-podcast-episode`, also owned by `rally:terminal`, which turns a text source into a script for the ear, an AI-voiced recording joined and levelled with ffmpeg, generated episode art, and the row the feed stores. The three AI-chat readers that the browser plugin owned went with it in the dead-code pass. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
-Platform skills live in `packages/agent-harness/src/platform-skills/`, one
+Platform skills live in `packages/skills/platform-skills/`, one
 `*-skill.ts` file per skill. Its
-[README](../packages/agent-harness/src/platform-skills/README.md) defines the
+[README](../packages/skills/platform-skills/README.md) defines the
 boundary with task skills. `built-in-skills.ts` collects and re-exports the
 built-in skills in a stable order; it contains no skill bodies.
 
 The `@rally/skills` workspace package owns the shared `HarnessSkill` type and
-task procedures. It depends on contracts, while the harness depends on it and
+every skill, platform and task. It depends on contracts, while the harness depends on it and
 re-exports its existing skill API, so the packages have no dependency cycle.
 
 **Task skills** live in `packages/skills/task-skills/`, one folder per skill holding its `skill.ts`. `TASK_SKILLS` preserves the original two request-routing entries, `reporting-on-data` and `creating-an-app`, and is spread into `BUILT_IN_SKILLS`. Other task procedures are registered individually in their established catalog positions; Google meeting notes is bound separately by the host. `reporting-on-data` finds every connected source that holds part of an answer, names the keys that join them, and slices the joined records the way the person asked, deferring row-level reading to `using-external-structured-data`; it reads a zero, an unmatched filter value or a late source as a finding to caveat rather than a failure, and only a source that did not answer as a failure of that one section; its body carries a section for a Sidekick wizard, which maps the shape of all accessible data and chooses a plan for combining and slicing it that fulfills the request, saves it as the run procedure using reversible defaults, and summarizes it afterward for adjustments. `creating-an-app` reads "an app" as a live web site, turns a clear iOS or Android request toward a site because Rally builds no native apps, and builds an open site without asking when the app saves nothing people add and uses public content (a character counter, a converter, a calculator). Private connected data instead uses the protected-site procedure; storing imported dashboard data does not trigger the question about visitors’ entries. An app that saves what people add needs Rally sign-in, by default so the site knows who added what (a visitor signs in from the site and comes back), so the one question it may ask, before the first file, is whether those entries are shared or private (`private_to_viewer`). An anonymous poll, survey or feedback box stores answers without who sent them; anyone on the internet can submit to any site, so a public poll just accepts requests without a viewer id. It then hands off to `building-live-sites`. Neither sets an `ownerPlugin`, so a run without Terminal can still route an app request and say what it needs instead of the skill vanishing from the catalog.
@@ -1901,6 +1902,39 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-15 — `publishing-a-feed` and `creating-a-podcast-episode` join the built-in skills
+
+**What changed:** Two Terminal-owned skills: `publishing-a-feed` for any feed
+an app subscribes to, rendered from the site's own rows, and
+`creating-a-podcast-episode` for one episode, split so a run that only records
+audio does not load the feed's rules. Both are task skills: each serves a
+request (a feed link, an episode) and composes the platform skills, as
+`creating-an-app` does. The platform skills also moved from the harness's
+`platform-skills/` into `@rally/skills`, so every skill now has one home.
+
+**Why:** A Canvas asked for a podcast feed of its newsletter recordings
+reported a hosting blocker. The real blockers were its own reader's viewer
+check in front of every route, and that no agent could learn a published file's
+URL (fixed in [`terminal-workspaces.md`](terminal-workspaces.md#changelog)).
+Nothing taught either, and the marketplace's repository-changes podcast
+starter asks for the same feed.
+
+**Considered and rejected:** A section in `building-live-sites`, which every
+site build would load for a case most never meet. One skill per format, which
+would repeat the audience and route rules that make every format work. Asking
+who may open the feed before building, which the owner ruled out: sites default
+to public and confirm afterwards. A feed with no page, which leaves the person
+nowhere to copy the link from. Hand-written XML per episode, which breaks on
+the first unescaped character. One skill for the feed and its episodes, which
+loads the feed's rules into every run that only records audio.
+
+**Consequences:** The skill states what Rally does not do yet (caching) so an
+agent does not promise it; that section changes when serving does. The owner
+asked for all skills in their dedicated package, which reverses the 2026-11-11
+split that kept Rally-specific procedures in the harness. A skill imports only
+from `@rally/skills` and `@rally/contracts`; the harness keeps its re-exports,
+so callers did not change.
 
 ### 2026-11-15 — A wake-up continues the loop that scheduled it
 

@@ -14,6 +14,8 @@ import {
   terminalPackageManagerAcceptanceCommand,
   terminalPlaywrightAcceptanceCommand,
   terminalPlaywrightImageBuildCommand,
+  terminalMediaToolsAcceptanceCommand,
+  terminalMediaToolsImageBuildCommand,
   terminalProbeRunnerCommand,
   terminalSnapshotImageBuildCommand,
   terminalSnapshotProbeCommand,
@@ -249,6 +251,31 @@ describe("Terminal snapshot manifest", () => {
     try {
       expect(run("\\x89PNG\\r\\n\\x1a\\n")).toBe(0);
       expect(run("not a png")).not.toBe(0);
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  it("bakes ffmpeg into one Dockerfile-safe line, installing only when it is missing", () => {
+    const command = terminalMediaToolsImageBuildCommand();
+    expect(command).not.toContain("\n");
+    const encoded = command.match(/^echo ([A-Za-z0-9+/=]+) \| base64 -d \| bash -l$/u);
+    expect(encoded).not.toBeNull();
+    expect(Buffer.from(encoded![1]!, "base64").toString("utf8").split("\n")).toEqual([
+      "set -euo pipefail",
+      "if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then sudo -n apt-get update -qq && sudo -n apt-get install -y --no-install-recommends ffmpeg >/dev/null; fi",
+    ]);
+  });
+
+  it("refuses a snapshot whose ffmpeg cannot make an episode's audio", () => {
+    // ffmpeg cannot be assumed here, so stand-ins on PATH fail the way a
+    // missing or codec-less build would; the gate must exit non-zero.
+    const bin = mkdtempSync(join(tmpdir(), "avalon-ffmpeg-"));
+    try {
+      for (const name of ["ffmpeg", "ffprobe"]) writeFileSync(join(bin, name), "#!/bin/bash\nexit 1\n", { mode: 0o755 });
+      expect(spawnSync("bash", ["-c", terminalMediaToolsAcceptanceCommand()], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      }).status).not.toBe(0);
     } finally {
       rmSync(bin, { recursive: true, force: true });
     }

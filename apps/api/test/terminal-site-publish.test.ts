@@ -107,6 +107,10 @@ describe("stored content types", () => {
     expect(assetContentType("css/app.css")).toBe("text/css; charset=utf-8");
     expect(assetContentType("data/signups.json")).toBe("application/json; charset=utf-8");
     expect(assetContentType("logo.svg")).toBe("image/svg+xml");
+    // Feeds an app subscribes to, served as their own types rather than downloads.
+    expect(assetContentType("feed.rss")).toBe("application/rss+xml; charset=utf-8");
+    expect(assetContentType("calendar.ics")).toBe("text/calendar; charset=utf-8");
+    expect(assetContentType("episode.m4a")).toBe("audio/mp4");
   });
 
   it("falls back to a downloading type rather than guessing a rendering one", () => {

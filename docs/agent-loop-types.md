@@ -20,7 +20,7 @@ This document owns only the catalogue and the matrix.
 | --- | --- |
 | `packages/contracts/src/index.ts` | `WorkstreamWorkflowInput`, the one input every turn carries. Its fields are what a gate reads. |
 | `packages/contracts/src/conversation-parent.ts` | `parentKind`: `canvas` or `automation` (a Sidekick). There is no third. |
-| `apps/api/src/lib/canvas-chat.ts` | `isCanvasChat`, the one answer to "is this a Canvas's Chat itself". It does not check the principal. |
+| `apps/api/src/lib/loop-authority.ts` | `loopAuthority`, the one answer to "whose authority does this loop act with": a Canvas's Chat, a Sidekick's wizard or a run, the root's for a background agent. `canvasChatAuthority` and `actsAsSidekickWizard` are its two common questions. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | `claimPersistentLoopExecution`, which builds most turns from a pending input and sets `sidekickWizard`, `backgroundAgent`, `automationRun`, `automationContinuation`, `automationDelegation` and `agentExchange`. |
 | `apps/api/src/services/workstream-service.ts` | `fireWorkstreamWakeup` and `launchWorkstreamHarness`, the wake-up path, which derives the woken turn's loop kind as the claim does for any input. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | A run's first activation; `reason` is its trigger kind. |
@@ -54,8 +54,8 @@ the host and none chosen by the model:
 
 ### The loops
 
-**1. A Canvas's Chat.** `isCanvasChat(input)`, normally with a user
-principal. It acts as the person and belongs to its own Canvas.
+**1. A Canvas's Chat.** `parentKind` `canvas`, conversation `"0"`, normally
+with a user principal. It acts as the person and belongs to its own Canvas.
 
 | Variant | Started by | A person is driving |
 | --- | --- | --- |
@@ -111,6 +111,29 @@ A wizard-rooted agent started by the self-review is told from one a person's
 wizard turn started by `backgroundAgentRootReason`, from
 `background_agent.root_reason`, which `start_agent` writes and a worker
 started by a worker inherits.
+
+#### A background agent acts with its root's authority
+
+**A background agent is offered every tool its root is offered,** and each
+of those tools admits it as it admits the root. It already runs as its root's
+principal and does its root's work; a gate that offers a tool to "the Chat
+itself" only makes the agent the Chat delegated to weaker than the Chat, so
+the Chat has to take the work back or tell the person it cannot be done. A
+gate about what a loop *may do* asks `loopAuthority(input)`, never
+`backgroundAgent` or `substreamId`.
+
+The one tool that stays with the root is `report_outcome`: it is a run's own
+report of how it ended, so a worker calling it would end its run. A question
+for a person is not an exception: a background agent is offered the question
+tools, and they refuse because no person reads its conversation, naming the
+root as where to ask (rule 14 of [`agent-tools.md`](agent-tools.md)). A tool
+added to that list is a decision and needs a reason here.
+
+The root's admission rule comes with its tools. A wizard turn runs only for a
+principal who manages the Sidekick, so a wizard-rooted agent's turn is checked
+the same way before it runs (`agent-loop-do.ts`, `wizardRootedAgent`) and is
+refused with `sidekick_edit_requires_manager` otherwise. A run's worker already
+re-asks its run's authority on every turn.
 
 **A wake-up is not a loop of its own either.** It continues the loop that
 scheduled it: the same conversation, the same flags the claim would derive
@@ -168,10 +191,13 @@ this loop acts as" fails there.
 | --- | --- | --- |
 | Source tools (`asksForSources`) | `integrations.ts` | Ask from a person's turn, a wake-up in a Chat or a wizard, and a wizard turn a person-started Canvas Chat turn messaged (`fromPersonTurn`). Every other loop holds them and refuses by name ([`sidekick-sources.md`](sidekick-sources.md)). |
 | Elicitation and connection cards | `integrations.ts` (`routesAnswersToAgent`) | Asked by every loop but background agents and a Sidekick turn with `agentExchange` (unless a person-started Canvas Chat turn sent it); those hold them and refuse with where to send the question. |
-| Authoring tools | `integrations.ts` | Wizard turns (`sidekickWizard`). |
-| Conversation tools | `conversation-tools.ts` | Wizard (with `attach`) and runs (without). Not a Canvas's Chat. |
-| `write_artifact_data` | `workstream-artifact-data-wiring.ts` | Canvas's Chat and wizard under a user principal; runs. Not background agents or delegation workers. |
-| `sidekick_report_outcome` | `sidekick-task-outcome.ts` | Runs. |
+| Authoring tools | `integrations.ts` (`actsAsSidekickWizard`) | Wizard turns (`sidekickWizard`) and their background agents. |
+| Conversation tools | `conversation-tools.ts` | Wizard (with `attach`) and runs (without), and each one's background agents. Not a Canvas's Chat. |
+| `write_artifact_data` | `workstream-artifact-data-wiring.ts` | Canvas's Chat and wizard under a user principal; runs; each one's background agents. |
+| `set_artifact_audience` | `integrations.ts` (`canvasChatAuthority`) | Canvas's Chat under a user principal, and its background agents. |
+| Canvas Sidekick tools (`archive_sidekick`, the Canvas's `sidekicks_list` and `create_sidekick`) | `agent-communication-service.ts` (`canvasChatAuthority`) | Canvas's Chat under a user principal, and its background agents. |
+| `request_sidekick_change` | `agent-communication-plugin.ts` | Runs and their delegation workers. |
+| `sidekick_report_outcome` | `sidekick-task-outcome.ts` | Runs only, not their workers ([the one exception](#a-background-agent-acts-with-its-roots-authority)). |
 | Run reading | `sidekick-run-tools.ts` | The wizard and its background agents. |
 | Model route | `agent-model-flags.ts` | `canvas`, `sidekick_wizard` (wizard and its background agents), `sidekick_run` (runs and delegation workers). |
 | Notifications (`rally:notifications`, proposed) | [Canvas notices PRD](PRDs/2026-11-14_canvas-notices/prd.md) | Its own matrix. |
@@ -197,6 +223,11 @@ this loop acts as" fails there.
   path makes for an input belongs in `fireWorkstreamWakeup` too, or the woken
   turn is a different loop from the one that asked for it. Guard: the firing
   tests in `workstream-wakeup.test.ts`.
+- **A background agent gets its root's tools.** The three background-agent
+  rows of [the matrix](#the-matrix) answer as their roots do, apart from
+  `report_outcome`. Guard: the tool-parity test in
+  `connector-tool-selection.test.ts`, which loads each root's tools and its
+  agent's, built as the host builds them, and fails on any difference.
 - **A new field or `reason` adds a row here** in the same change, with each
   existing gate's answer for it.
 
@@ -229,6 +260,39 @@ the host would never combine.
    recorded.
 
 ## Changelog
+
+### 2026-11-15 — A background agent acts with its root's authority
+
+**What changed:** One function, `loopAuthority`, decides whose authority a
+loop acts with, and a background agent gets its root's. Its agents now get
+`write_artifact_data` and `set_artifact_audience` (a Canvas's Chat), the
+authoring and conversation tools (a wizard), and the conversation tools and
+`request_sidekick_change` (a run). `isCanvasChat` is gone; every gate that
+used it was about authority.
+
+**Why:** A Canvas's Chat delegated a podcast feed to a background agent. The
+agent could neither read nor change who opens the Canvas's artifacts, and
+could not write the reader's rows, so it reported a hosting blocker that the
+Chat then passed to the person as one. The agent already ran as the Chat's
+person; the gates asked "is this the Chat itself?" when the question was
+"whose authority is this?". The owner set the rule: a background agent has
+the permissions of the agent that started it. Why background agents were
+excluded at first was not recorded.
+
+**Considered and rejected:** Setting the root's flags (`sidekickWizard`) on a
+background agent's input, which would also change prompts and the
+self-review's ownership test that read those flags for other reasons. Keeping
+the per-gate checks and adding background agents one gate at a time, which
+is how the gates drifted apart.
+
+**Consequences:** A new gate about what a loop may do calls
+`loopAuthority`; the tool-parity test fails a gate that does not. A root's
+admission rule moves with its tools: review found a wizard-rooted agent held
+the authoring tools without the wizard's manager check, which its turn now
+meets. A tool
+that stays with the root is named in
+[the rule](#a-background-agent-acts-with-its-roots-authority) with its
+reason.
 
 ### 2026-11-14 — Document created
 

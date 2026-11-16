@@ -1,21 +1,25 @@
-import { BUILDING_LIVE_SITES_SKILL } from "./platform-skills/building-live-sites-skill";
-import { SETTING_UP_A_FILTERED_TRIGGER_SKILL } from "./platform-skills/filtered-trigger-skill";
-import { POLLING_FOR_EVENTS_SKILL } from "./platform-skills/polling-for-events-skill";
-import { TRACKING_SEEN_OR_DONE_ITEMS_SKILL } from "./platform-skills/tracking-seen-or-done-items-skill";
-import { USING_THE_LOCAL_INAPP_BROWSER_SKILL } from "./platform-skills/using-the-local-inapp-browser-skill";
 import {
+  BUILDING_LIVE_SITES_SKILL,
+  CREATING_A_PODCAST_EPISODE_SKILL,
   DEEP_RESEARCH_SKILL,
+  POLLING_FOR_EVENTS_SKILL,
+  PUBLISHING_A_FEED_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
+  SETTING_UP_A_FILTERED_TRIGGER_SKILL,
   TASK_SKILLS,
+  TRACKING_SEEN_OR_DONE_ITEMS_SKILL,
   USING_EXTERNAL_STRUCTURED_DATA_SKILL,
+  USING_THE_LOCAL_INAPP_BROWSER_SKILL,
   WRITING_AN_EMAIL_SKILL,
 } from "@rally/skills";
 import type { HarnessSkill } from "./index";
 
 export {
   BUILDING_LIVE_SITES_SKILL,
+  CREATING_A_PODCAST_EPISODE_SKILL,
   DEEP_RESEARCH_SKILL,
   POLLING_FOR_EVENTS_SKILL,
+  PUBLISHING_A_FEED_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
   SETTING_UP_A_FILTERED_TRIGGER_SKILL,
   TRACKING_SEEN_OR_DONE_ITEMS_SKILL,
@@ -33,7 +37,8 @@ export {
  * its own authoring surface, and because a procedure this general — how to
  * research something properly — is the same in every workspace.
  *
- * Rally mechanics live in `platform-skills/`; task procedures in `@rally/skills`.
+ * Every skill lives in `@rally/skills`: Rally mechanics in its
+ * `platform-skills/`, task procedures in its `task-skills/`.
  * Authored as TypeScript rather than `SKILL.md` files because this package runs
  * in `workerd`, where there is no filesystem to read them from at startup.
  */
@@ -57,6 +62,11 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   // Offered only where the Terminal plugin is in scope, by its `ownerPlugin`:
   // the whole procedure ends in publishing a directory from a sandbox.
   BUILDING_LIVE_SITES_SKILL,
+  // Terminal's too: a feed is a site route and its episodes are published files.
+  PUBLISHING_A_FEED_SKILL,
+  // Terminal's as well: an episode is joined, encoded and its art resized with
+  // ffmpeg in a sandbox.
+  CREATING_A_PODCAST_EPISODE_SKILL,
   // Request-routing task skills compose the procedures above for a report or app.
   ...TASK_SKILLS,
 ];

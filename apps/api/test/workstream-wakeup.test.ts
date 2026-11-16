@@ -1085,25 +1085,6 @@ describe("firing a due wake-up", () => {
       expect(dispatches[0]).not.toHaveProperty("automationRun");
     });
 
-    it("runs a wizard's worker without asking the Sidekick about a run", async () => {
-      const { objectStores, env: fixtureEnv, dispatches } = fixture();
-      const { env: base, asked } = withSidekick(fixtureEnv, { outcome: "refused", code: "sidekick_paused" });
-      const worker = childConversation(base, objectStores, workerId, "Check the export again");
-
-      const outcome = await fireWorkstreamWakeup(
-        worker.env,
-        worker.row,
-        schedulingPort(worker.store),
-        { parentKind: "automation", substreamId: workerId, backgroundAgent: true, rootSubstreamId: "0", rootReason: "sidekick_review" },
-      );
-
-      expect(outcome.fired).toBe(true);
-      expect(asked).toEqual([]);
-      expect(dispatches[0]).toMatchObject({
-        parentKind: "automation", substreamId: workerId, backgroundAgent: true, backgroundAgentRootReason: "sidekick_review",
-      });
-      expect(dispatches[0]).not.toHaveProperty("automationDelegation");
-    });
   });
 
   describe("in a Sidekick's shared conversation", () => {
@@ -1153,6 +1134,52 @@ describe("firing a due wake-up", () => {
       expect(dispatches).toHaveLength(0);
       expect(objectGet(objectStore, "SELECT status FROM workstream_wakeups WHERE wakeup_id = ?", wakeupId))
         .toEqual({ status: "fired" });
+    });
+
+    // A worker the wizard started holds the wizard's tools, so its wake-up is
+    // asked the wizard's question, and never the Sidekick's about a run.
+    const workerId = asSubstreamId("00000000-0000-4000-8000-0000000000e2");
+    const wizardWorker = (manages: boolean) => {
+      const { database, objectStores, env: fixtureEnv, dispatches } = fixture();
+      withManager(database, fixtureEnv, manages);
+      // One Organization object answers both questions: whether the principal
+      // manages the Sidekick, and (never asked here) whether a run may go on.
+      const asked: unknown[] = [];
+      const workspaces = createCloudflareTestBinding<DurableObjectNamespace>({
+        idFromName: (name: string) => createTestDurableObjectId(name),
+        get: () => ({
+          sidekickAllowsManager: async () => manages,
+          sidekickContinueRun: async (request: unknown) => {
+            asked.push(request);
+            return { outcome: "refused", code: "sidekick_paused" };
+          },
+        }),
+      });
+      const base = new Proxy(fixtureEnv, {
+        get: (target, property, receiver) => property === "WORKSPACE_DOS" ? workspaces : Reflect.get(target, property, receiver) as unknown,
+      });
+      const worker = childConversation(base, objectStores, workerId, "Check the export again");
+      return { worker, asked, dispatches };
+    };
+    const WORKER: WakeupConversation = { parentKind: "automation", substreamId: workerId, backgroundAgent: true,
+      rootSubstreamId: "0", rootReason: "sidekick_review" };
+
+    it("runs a wizard's worker for a principal who manages the Sidekick, without asking about a run", async () => {
+      const { worker, asked, dispatches } = wizardWorker(true);
+      const outcome = await fireWorkstreamWakeup(worker.env, worker.row, schedulingPort(worker.store), WORKER);
+      expect(outcome.fired).toBe(true);
+      expect(asked).toEqual([]);
+      expect(dispatches[0]).toMatchObject({
+        parentKind: "automation", substreamId: workerId, backgroundAgent: true, backgroundAgentRootReason: "sidekick_review",
+      });
+      expect(dispatches[0]).not.toHaveProperty("automationDelegation");
+    });
+
+    it("consumes without running a wizard's worker whose principal no longer manages the Sidekick", async () => {
+      const { worker, dispatches } = wizardWorker(false);
+      const outcome = await fireWorkstreamWakeup(worker.env, worker.row, schedulingPort(worker.store), WORKER);
+      expect(outcome.fired).toBe(false);
+      expect(dispatches).toHaveLength(0);
     });
   });
 
