@@ -115,8 +115,12 @@ it('counts every span of a text exactly as the tokenizer counts its slice', () =
 it('plans the same chunks with span counts as with whole-span counts', async () => {
   const policy = searchChunkPolicy();
   const direct = { maxTokens: policy.maxTokens, overlapTokens: policy.overlapTokens, countTokens: policy.countTokens };
-  const json = JSON.stringify(Array.from({ length: 150 }, (_, id) => ({ id, name: `row ${id}`, tags: ['a', 'b'] })), null, 2);
-  for (const text of [mixedDocument(12_000), json, 'word '.repeat(3_000), 'unbroken'.repeat(2_000)]) {
+  // Each input plans 7 to 15 chunks, enough to cross every split and overlap.
+  // The whole-span counter is the slow path span counting replaced, so larger
+  // inputs only add CPU: at twice these sizes the test ran past its 15 s limit
+  // on a loaded CI shard.
+  const json = JSON.stringify(Array.from({ length: 60 }, (_, id) => ({ id, name: `row ${id}`, tags: ['a', 'b'] })), null, 2);
+  for (const text of [mixedDocument(6_000), json, 'word '.repeat(1_400), 'unbroken'.repeat(800)]) {
     expect(await semanticChunks(text, policy)).toEqual(await semanticChunks(text, direct));
   }
 });
