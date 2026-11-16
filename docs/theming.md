@@ -19,8 +19,12 @@ properties without knowing which appearance is active.
 | `config/design-tokens/themes/light.json` | What the light appearance sets: the tokens that differ from dark, and its font declarations. |
 | `config/design-tokens/themes/dark.json` | The same for dark. |
 | `config/design-tokens/theme.schema.json` | Validates an appearance file. |
+| `config/design-tokens/densities/touch.json` | The touch density: the sizes a subtree read on a phone uses instead of the base ones. |
+| `config/design-tokens/density.schema.json` | Validates a density file. |
+| `scripts/check-type-scale.mjs` | Refuses a literal font size in the client's stylesheets; `pnpm lint` runs it. |
+| `apps/browser/src/dynamic-type.ts` | Measures the person's iOS text size in the mobile host and hands it to the touch density. |
 | `scripts/build-theme-assets.mjs` | Generates the renderer stylesheet and remote-font manifest. |
-| `packages/ui/src/styles/themes.css` | Generated light and dark custom-property blocks. |
+| `packages/ui/src/styles/themes.css` | Generated light and dark custom-property blocks, and one block per density. |
 | `packages/ui/src/styles/app.css` | Component and layout rules expressed through semantic tokens. |
 | `apps/mobile/src/theme.ts` | React Native color adapter over the same base and appearance JSON; mobile navigation follows the system appearance. |
 | `packages/ui/src/themes.ts` | The shared appearance preference, resolver, and initial window backgrounds; desktop common imports re-export it. |
@@ -69,8 +73,64 @@ addressed directly. If an appearance declares a remote WOFF2 URL, main fetches
 it once, optionally verifies its integrity, stores it under `userData`, and
 serves it through `rally-font://`.
 
+### Type scale and densities
+
+Text sizes are twelve roles, `sys.type.*`, named after Apple's text styles.
+A rule in the client's stylesheets names a role
+(`font-size: var(--av-sys-type-callout)`), never a size. Component sizes such
+as `sys.label.font-size`, `cmp.control.font-size` and
+`cmp.feed.byline.font-size` are aliases of roles. `base.json` holds the desktop
+sizes and `densities/touch.json` the touch ones. Rendered prose and its
+headings (`sys.font.size.prose`, `sys.font.size.heading-*`) keep their own
+desktop sizes off the scale, which is the team's call to change; the touch
+density maps them onto body and the title roles.
+
+A **density** is a second dimension beside the appearance: a file under
+`densities/` sets base tokens, and the generator emits it as
+`[data-density='<id>']` after the theme blocks. `data-density` goes on any
+element, so a subtree can read at another density. The block re-declares every
+base token that reaches an overridden one through an alias, for the same reason
+every theme block declares every token: an alias declared on `:root` is
+substituted there. `[data-density='default']` restores the base values inside
+another density, and an element that carries `data-density` (other than
+`<html>`) takes body size and leading itself, so inherited text restarts at the
+density's body rather than its parent's. A nested `data-theme` re-declares
+every token, so it also resets a density above it. The touch values are iOS's
+defaults for each style.
+
+The mobile host's `installMobileBridge` marks `<html>` `touch` before the first
+render, so portaled dialogs follow, and its artifact content sits in a
+`display: contents` wrapper marked `default`, so chrome and conversation read
+at phone sizes and artifacts at their document sizes. On iOS,
+`apps/browser/src/dynamic-type.ts` then writes the person's Dynamic Type sizes
+over the touch roles inline on `<html>`, at launch and on return to the
+foreground. Callout moves with body, and large title and display with title 1,
+since they have no keyword of their own. A line height that has to hold a fixed rhythm is written
+against its role, `calc(var(--av-sys-type-callout) * 18 / 13)`, so it is the
+same px on desktop and grows with the text under touch.
+
 ## Invariants
 
+- **No literal font sizes.** Every `font-size` names a role or a token built on
+  one. `scripts/check-type-scale.mjs` enforces it in `pnpm lint`. A size that is
+  not reading text, such as a letter drawn inside a fixed avatar tile or the
+  16px floor that stops iOS zooming into a focused field, carries a
+  `/* type-scale: <reason> */` comment inside its declaration or right after
+  its `;`; the mark covers that declaration only. A rule that bypasses the
+  scale is a size the touch density silently leaves at its desktop value.
+- **A density sets only base tokens.** The generator refuses an appearance
+  token in a density file, since re-declaring one would pin one appearance's
+  value under every `data-theme`.
+- **Touch targets are 44pt.** On a touch screen every `.icon-button` and Send
+  answer a `sys.size.touch.target` square centred on them; `::before` on an
+  icon button is reserved for that. An icon button beside another grows only
+  vertically, since a later button's square would otherwise cover the earlier
+  one's visible face; a group that wants full squares keeps
+  `sys.size.touch.gap` between its controls, as the composer does. Two
+  exceptions: the microphone's menu trigger, which draws its divider in
+  `::before`, and a turn's message actions, which extend downward only and
+  stop where the next turn begins. No test guards this; it was checked by eye
+  and by hit-testing in a browser.
 - **There is one design and exactly two resolved appearances.** Adding a named
   theme family would restore UI and state the product no longer supports.
   Account-owned accent color is independent of this light/dark preference.
@@ -210,6 +270,11 @@ not own palettes. Application icons, member and connector brand colours, rich
 attachment content, and exported message documents have their own presentation
 contracts and do not become selectable Rally themes.
 
+The type scale and the densities are this module's: the roles, their values,
+and how the generator emits a density. Where a density applies, and the Dynamic
+Type measurement, belong to the mobile host
+([`mobile-canvas-client.md`](mobile-canvas-client.md)).
+
 The private font scheme is an asset cache, not a theme execution surface. It
 serves only generated, hash-addressed WOFF2 entries. The renderer cannot supply
 an arbitrary URL to it.
@@ -225,14 +290,28 @@ an arbitrary URL to it.
 - A token file that names an undeclared token, leaves a registry token unset
   between base and the appearances, restates a base token in an appearance,
   or sets a token to the same value in every appearance fails the token build
-  or its tests.
+  or its tests. So does a density that sets an unknown or appearance token,
+  one with a malformed or duplicate id, and an appearance token that aliases a
+  token a density changes, since the appearance block would pin the root's
+  value.
+- Dynamic Type runs only on iOS, where WebKit resolves the `-apple-system-*`
+  font keywords to the person's setting. Elsewhere nothing is set and the touch
+  roles keep their design values: Android's font scale is not read, and macOS
+  WebKit resolves the keywords to the Mac's sizes. A style without its own
+  keyword moves with its anchor (callout with body, the large titles with
+  title 1), an approximation of iOS's own curve. The keyword list has not been
+  confirmed on a device.
 
 ## Testing
 
-- `pnpm tokens:check` proves the committed generated files match the two JSON
-  sources.
+- `pnpm tokens:check` proves the committed generated files match the token
+  JSON.
 - `pnpm test:scripts` exercises the generator, schema, token completeness,
-  aliases, font declarations, and structural token rules.
+  aliases, font declarations, density blocks, structural token rules, and the
+  type-scale check.
+- `pnpm --filter @rally/browser exec vitest run test/dynamic-type.test.ts`
+  covers which hosts measure, how the measured iOS sizes become role sizes,
+  and that only changed roles are written.
 - `pnpm --filter @rally/desktop exec vitest run src/common/themes.test.ts src/main/theme-assets.test.ts src/renderer/lib/theme.test.ts src/renderer/components/theme-picker.test.tsx src/renderer/styles/themes.css.node.test.ts`
   covers preference migration, resolution, cross-window behavior, the picker,
   the font cache, and CSS invariants.
@@ -249,6 +328,49 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-11-15 — A type scale and a touch density replace the reading multiplier
+
+Shipped in #1617.
+
+**What changed:** The client's 411 literal font sizes, in 29 values, became
+twelve `sys.type.*` roles. Most desktop text moved by at most 0.5px; a few
+one-off headings moved by 1–2px (20→22, 24→22, 27→28, 32→34, the onboarding
+intro composer 17→18) and the plugin labels 8.5→9.5 through caption-2. The
+`sys.font.size.base`, `row`, `meta` and `title` aliases were removed in favour
+of the roles. A new token dimension, the density, emits
+`[data-density='touch']` with iOS's default sizes and the aliases that depend
+on them; an element carrying a density restarts at its body size. The mobile
+host sets it on `<html>` in `installMobileBridge`, resets it to `default` on
+artifact content, writes the person's Dynamic Type sizes over the roles inline,
+and keeps every text field at a 16px floor. Under touch, prose headings map to
+the title roles.
+`sys.size.touch.target` and `sys.size.touch.gap` make every icon button and
+Send a 44pt target on a touch screen. `scripts/check-type-scale.mjs`, run by
+`pnpm lint`, refuses new literals. `sys.font.scale.reading`, the entry below,
+is retired.
+
+**Why:** A multiplier could only scale sizes someone remembered to wrap, and
+the stylesheet had 29 sizes in literals, so every fix found another rule left
+behind. Per-role values let the touch sizes follow iOS's own scale, which is
+not proportional, and let Dynamic Type set each role. Doing it in the
+generator keeps the alias trap handled in one place.
+
+**Considered and rejected:** keeping the multiplier and wrapping every size in
+it, which cannot follow iOS's uneven scale; a hand-written `[data-density]`
+block, which hits the alias trap for every alias someone forgets; a
+`--av-dynamic-type-*` layer each touch role read first, replaced by writing
+the roles inline so there is one name per size; unitless line heights, left for
+later because changing what children inherit is a wider change.
+
+**Consequences:** the phone host now reads at iOS sizes everywhere, not only
+in the conversation, and grows with Dynamic Type. Desktop prose and headings
+are still off the scale.
+
+**What to respect:** a new size names a role. A new alias of a role needs no
+density work; the generator re-declares it. Do not add a theme-dependent value
+to a density, and do not alias a density-changed token from an appearance
+file. `::before` on an icon button belongs to the touch target.
 
 ### 2026-11-15 — `sys.font.scale.reading` sets a phone's conversation at Body size
 

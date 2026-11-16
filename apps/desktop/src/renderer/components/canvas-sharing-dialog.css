@@ -2,31 +2,31 @@
    avatars and controls. The standalone preview uses this production form too. */
 .dialog-content:has(.canvas-sharing-form) { width: 720px; max-height: calc(100dvh - 48px); }
 .dialog-content:has(.canvas-sharing-form) .dialog-header { padding: 24px 24px 0; }
-.dialog-content:has(.canvas-sharing-form) .dialog-title { font-size: 20px; font-weight: 600; }
+.dialog-content:has(.canvas-sharing-form) .dialog-title { font-size: var(--av-sys-type-title-1); font-weight: 600; }
 .dialog-content:has(.canvas-sharing-form) .dialog-body { padding: 24px; }
 .canvas-sharing-form { display: grid; gap: 24px; }
 .canvas-sharing-section { display: grid; gap: 14px; }
 .canvas-sharing-section + .canvas-sharing-section { border-top: 1px solid var(--av-sys-color-border-default); padding-top: 24px; }
-.canvas-sharing-heading { align-items: center; display: flex; font-size: 15px; font-weight: 600; gap: 10px; padding: 0; }
-.canvas-sharing-description { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 5px 0 16px; }
-.canvas-sharing-audience .action-tile { font-size: 13px; gap: 10px; min-height: 98px; padding: 18px 12px 12px; }
+.canvas-sharing-heading { align-items: center; display: flex; font-size: var(--av-sys-type-headline); font-weight: 600; gap: 10px; padding: 0; }
+.canvas-sharing-description { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-callout); margin: 5px 0 16px; }
+.canvas-sharing-audience .action-tile { font-size: var(--av-sys-type-callout); gap: 10px; min-height: 98px; padding: 18px 12px 12px; }
 .canvas-sharing-audience .canvas-sharing-use-options { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .canvas-sharing-audience .action-tile > span { max-width: 150px; }
 .canvas-sharing-audience .canvas-share-option-unavailable { cursor: not-allowed; opacity: 0.45; }
 .canvas-sharing-audience .action-tile.canvas-share-option-unavailable:hover { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-subtle); }
 .canvas-sharing-form .canvas-share-note { margin: 0; }
 .canvas-sharing-chips { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
-.canvas-sharing-person { align-items: center; background: var(--av-sys-color-surface-sunken); border-radius: var(--av-sys-size-radius-pill); display: inline-flex; font-size: 13px; gap: 8px; min-height: 36px; padding: 5px 10px 5px 6px; }
+.canvas-sharing-person { align-items: center; background: var(--av-sys-color-surface-sunken); border-radius: var(--av-sys-size-radius-pill); display: inline-flex; font-size: var(--av-sys-type-callout); gap: 8px; min-height: 36px; padding: 5px 10px 5px 6px; }
 .canvas-sharing-person .icon-button { height: 22px; width: 22px; }
 .canvas-sharing-people { display: grid; gap: 12px; }
 .canvas-sharing-picker { border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-cmp-control-radius); padding: 8px; }
 .canvas-sharing-picker .member-action-list { max-height: 160px; }
-.canvas-sharing-privacy { align-items: center; background: var(--av-sys-color-surface-sunken); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-muted); display: flex; font-size: 13px; gap: 10px; margin: 0; padding: 12px; }
+.canvas-sharing-privacy { align-items: center; background: var(--av-sys-color-surface-sunken); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-muted); display: flex; font-size: var(--av-sys-type-callout); gap: 10px; margin: 0; padding: 12px; }
 .canvas-sharing-privacy > svg { flex-shrink: 0; }
 .canvas-sharing-link { display: grid; gap: 8px; margin-top: 2px; }
-.canvas-sharing-link > label { font-size: 13px; font-weight: 500; }
+.canvas-sharing-link > label { font-size: var(--av-sys-type-callout); font-weight: 500; }
 .canvas-sharing-link-control { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-cmp-control-radius); display: flex; overflow: hidden; }
-.canvas-sharing-link-control > input { background: transparent; border: none; border-radius: 0; color: var(--av-sys-color-text-muted); flex: 1; font-size: 12px; min-width: 0; padding: 12px; text-overflow: ellipsis; }
+.canvas-sharing-link-control > input { background: transparent; border: none; border-radius: 0; color: var(--av-sys-color-text-muted); flex: 1; font-size: var(--av-sys-type-subheadline); min-width: 0; padding: 12px; text-overflow: ellipsis; }
 .canvas-sharing-link-control > .button { align-self: stretch; border: 0; border-left: 1px solid var(--av-sys-color-border-default); border-radius: 0; flex-shrink: 0; }
 .canvas-sharing-footer { align-items: center; border-top: 1px solid var(--av-sys-color-border-default); display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; padding-top: 20px; }
 .canvas-sharing-footer .button { min-width: 76px; }

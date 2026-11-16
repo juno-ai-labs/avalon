@@ -42,7 +42,8 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/protocol.ts` | Shared commands, validated snapshots, origin boundary, pin presentation capacity. |
 | `apps/mobile/src/CanvasIcon.tsx` | Saved Lucide glyphs and themed canvas shading, with a sheet fallback. |
 | `apps/browser/src/mobile-session.ts` | Account-bound organization preference and artifact routing decisions. |
-| `apps/browser/src/mobile-bridge.ts` | Native handshake and explicit browser-preview handshake. |
+| `apps/browser/src/mobile-bridge.ts` | Native handshake and explicit browser-preview handshake; marks `<html>` with the touch density. |
+| `apps/browser/src/dynamic-type.ts` | Reads the person's iOS text size and writes it over the touch type roles. |
 | `apps/browser/src/mobile.tsx`, `mobile.css` | Mobile dashboard, artifact selection and retained chat navigation. |
 | `apps/browser/src/mobile-conversation.tsx` | Deferred shared transcript, composer and creation form. |
 | `apps/browser/src/mobile-canvas-detail.ts` | One owner for publication/reconnect invalidation and shared event-driven detail queries. |
@@ -452,7 +453,7 @@ The browser imports the framework-independent protocol from `apps/mobile/src/pro
 
 Network and HTTP failures show retry views. Pin failure messages stay in the sidebar; failed writes do not manufacture a successful local order. New pins beyond the four visible mobile slots ask the user to unpin another; existing overflow remains accessible. Directory search filters the socket’s Canvas list. A removed or inaccessible canvas reports its read failure.
 
-Renderer termination reloads the visible WebView at once; hidden WebViews, Home included, wait until it has presented, are shown, or are needed for fresh access. A terminated artifact renderer reopens its canonical URL in a new WebView on the cookie the platform still holds, never replaying the spent open ticket; a missing or expired cookie falls through to the fresh-access renewal. An access or active metadata failure removes the stale native surface and exposes web recovery. The native handler also recognizes a failed `/redeem` bootstrap. Returning from inline chat republishes the active artifact descriptor. Sign-out and account/organization changes discard native artifact views; a full application-page reload can rebuild the tab directory. Foregrounding refreshes the directory and resource metadata. Unsaved in-artifact state survives tab switching, but a full page/app reload, closing that tab or process termination can discard it. Native navigation and Liquid Glass require device validation; a browser preview cannot validate WKWebView cookies, Android Back dispatch, keyboard resizing, native gestures, or system accessibility.
+Renderer termination reloads the visible WebView at once; hidden WebViews, Home included, wait until it has presented, are shown, or are needed for fresh access. A terminated artifact renderer reopens its canonical URL in a new WebView on the cookie the platform still holds, never replaying the spent open ticket; a missing or expired cookie falls through to the fresh-access renewal. An access or active metadata failure removes the stale native surface and exposes web recovery. The native handler also recognizes a failed `/redeem` bootstrap. Returning from inline chat republishes the active artifact descriptor. Sign-out and account/organization changes discard native artifact views; a full application-page reload can rebuild the tab directory. Foregrounding refreshes the directory and resource metadata. Unsaved in-artifact state survives tab switching, but a full page/app reload, closing that tab or process termination can discard it. Native navigation, Liquid Glass and Dynamic Type require device validation; a browser preview cannot validate WKWebView cookies, Android Back dispatch, keyboard resizing, native gestures, or system accessibility.
 
 Sign-in uses the system browser and returns to `rally-mobile://auth/complete`. Cancelling leaves the app signed out, and retry creates a new attempt and verifier. External HTTP(S) links open in the system browser on both platforms; Android reports every navigation as `other`, so the handler uses the platform and destination origin instead of requiring iOS’s `click` signal. Offline canvas copies are intentionally out of scope. Provider credentials and app-store signing remain release setup.
 
@@ -460,7 +461,9 @@ Sign-in uses the system browser and returns to `rally-mobile://auth/complete`. C
 
 `apps/mobile/src/sidebar-drop.test.ts` covers pin/unpin/reorder drop decisions.
 `apps/browser/test/mobile-pins.test.ts` covers membership-before-order writes and
-partial failures. Native gesture and capture evidence belongs in the PR validation.
+partial failures. `apps/browser/test/dynamic-type.test.ts` covers which hosts
+read Dynamic Type and how measured sizes become role sizes. Native gesture and
+capture evidence belongs in the PR validation.
 
 `background.test.ts` exercises download deduplication, rollback directives,
 retryable task failure, platform availability and the absence of automatic
@@ -597,6 +600,27 @@ retention remain unmeasured. The full method, before/after table and limitations
 are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
+
+### 2026-11-15 — The mobile host reads at iOS sizes and follows Dynamic Type
+
+**What changed:** `installMobileBridge` sets `data-density="touch"` on
+`<html>` before the first render, so the dashboard, Chat, creation form and
+portaled dialogs take the touch density's role sizes: 17pt body, the iOS
+default. Artifact content sits in a `display: contents` wrapper with
+`data-density="default"` and keeps its document sizes. On iOS,
+`dynamic-type.ts` measures the `-apple-system-*` font styles on a hidden probe
+at launch and on each return to the foreground, and writes the changed roles
+inline on `<html>`; the composer re-measures its height when they change.
+`mobile.css` names roles instead of px.
+
+**Why:** Phone text was 14pt, under the size iOS uses for body text, and a
+fixed size ignores the person's text-size setting. The density belongs to the
+design tokens (see `theming.md`); this host only decides which subtrees use it.
+
+**What to respect:** document content goes inside a `data-density="default"`
+wrapper; everything else inherits touch from `<html>`. The Dynamic Type path is unverified on a real
+WKWebView: Chromium has no `-apple-system-*` keywords, and only the plumbing
+was exercised, with `CSS.supports` stubbed.
 
 ### 2026-11-15 — Pull the iOS sidebar in from the left edge, and slide it in and out
 

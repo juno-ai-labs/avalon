@@ -36,6 +36,7 @@
     "sys.size.radius": "The corner scale.",
     "sys.size.border": "Border widths.",
     "sys.size.control": "The height of a control.",
+    "sys.size.touch": "A touch screen's minimum target, Apple's 44pt, and the gap that keeps two neighbouring targets from overlapping.",
     "sys.space.stack": "Between one turn and the next in the feed: the space under the action row a turn lays out beneath itself.",
     "sys.space.seam": "Between a row and the row before it when a stretch of transcript this client has not loaded lies between them. Nothing else marks the seam, so the distance is what says the two rows are not adjacent.",
     "sys.space.row": "Between rows in a list.",
@@ -44,8 +45,8 @@
     "sys.space.event": "Between one event row and the next, and between a run's work and the answer it produced.",
     "sys.space.prose": "Between paragraphs.",
     "sys.font.family": "System sans-serif for application UI, including secondary windows and portals. Bundled Geist Mono remains available for code and technical content.",
-    "sys.font.size": "The sizes the interface sets, as against the document size a theme inherits.",
-    "sys.font.scale": "Multiplier on conversation reading text: prose, headings, byline and composer. `1` by default; a host raises it on a subtree.",
+    "sys.font.size": "The size of reading prose in a document. Off the type scale on desktop, where a document reads larger than the interface around it; the touch density makes it body.",
+    "sys.type": "The type scale: twelve roles from `caption-2` to `display`, eleven named after Apple's text styles and `display` for the largest hero headings. A rule names a role, never a size, so a density can move every one together; `scripts/check-type-scale.mjs` rejects a literal in the client's stylesheets. The base values are the desktop sizes; `densities/touch.json` holds the touch ones, which are iOS's defaults for the same styles. The sizes a document sets for itself, `sys.font.size.prose` and the markdown headings, stay off the scale on desktop.",
     "sys.font.leading": "Line height.",
     "sys.font.weight": "Weights. Only meaningful to the degree the resolved family supports them.",
     "sys.label": "The four properties that decide whether a label is sentence case or letterspaced small capitals. They apply to the label over a turn in the feed as well as the one over a group of navigation rows.",
@@ -637,6 +638,12 @@
     "sys.size.control.height": {
       "$type": "dimension"
     },
+    "sys.size.touch.target": {
+      "$type": "dimension"
+    },
+    "sys.size.touch.gap": {
+      "$type": "dimension"
+    },
     "sys.space.stack.gap": {
       "$type": "dimension"
     },
@@ -664,23 +671,44 @@
     "sys.font.family.mono": {
       "$type": "fontFamily"
     },
-    "sys.font.size.base": {
-      "$type": "dimension"
-    },
     "sys.font.size.prose": {
       "$type": "dimension"
     },
-    "sys.font.size.row": {
+    "sys.type.caption-2": {
       "$type": "dimension"
     },
-    "sys.font.size.meta": {
+    "sys.type.caption-1": {
       "$type": "dimension"
     },
-    "sys.font.size.title": {
+    "sys.type.footnote": {
       "$type": "dimension"
     },
-    "sys.font.scale.reading": {
-      "$type": "number"
+    "sys.type.subheadline": {
+      "$type": "dimension"
+    },
+    "sys.type.callout": {
+      "$type": "dimension"
+    },
+    "sys.type.body": {
+      "$type": "dimension"
+    },
+    "sys.type.headline": {
+      "$type": "dimension"
+    },
+    "sys.type.title-3": {
+      "$type": "dimension"
+    },
+    "sys.type.title-2": {
+      "$type": "dimension"
+    },
+    "sys.type.title-1": {
+      "$type": "dimension"
+    },
+    "sys.type.large-title": {
+      "$type": "dimension"
+    },
+    "sys.type.display": {
+      "$type": "dimension"
     },
     "sys.font.leading.prose": {
       "$type": "number"

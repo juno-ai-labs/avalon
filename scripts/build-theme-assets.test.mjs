@@ -5,6 +5,8 @@ import test from 'node:test';
 import {
   assetManifest,
   defaultTheme,
+  checkDensities,
+  densityTokens,
   fontCacheId,
   fontFaces,
   generate,
@@ -14,7 +16,7 @@ import {
   selectorFor,
 } from './build-theme-assets.mjs';
 
-const { registry, base, themes } = readTokenSources();
+const { registry, base, themes, densities } = readTokenSources();
 
 /**
  * The JSON is the source of truth and `themes.css` is its output.
@@ -25,7 +27,7 @@ const { registry, base, themes } = readTokenSources();
  * through `pnpm test:scripts`.
  */
 test('every committed artefact is what the token JSON produces', () => {
-  for (const { path, contents } of outputs({ registry, base, themes })) {
+  for (const { path, contents } of outputs({ registry, base, themes, densities })) {
     assert.equal(
       readFileSync(path, 'utf8'),
       contents,
@@ -491,4 +493,57 @@ test('a card composer states its top edge as its frame, and a rule keeps a visib
       `${theme.id}'s card composer keeps a different top edge on focus`,
     );
   }
+});
+
+test('a density re-declares every alias that reaches a token it sets, however the chain is ordered', () => {
+  // The outer alias comes first, so one pass over the file would miss it.
+  const tinyBase = { tokens: { 'cmp.control.font-size': '{sys.label.font-size}', 'sys.label.font-size': '{sys.type.callout}', 'sys.type.callout': '13px', 'sys.size.radius.sm': '6px' } };
+  const density = { id: 'touch', name: 'Touch', description: 'd', tokens: { 'sys.type.callout': '16px' } };
+  assert.deepEqual(densityTokens(density, tinyBase, registry), {
+    'sys.type.callout': '16px',
+    'sys.label.font-size': '{sys.type.callout}',
+    'cmp.control.font-size': '{sys.label.font-size}',
+  });
+});
+
+test('a density may set only base tokens the registry declares', () => {
+  const appearanceToken = Object.keys(themes[0].tokens)[0];
+  assert.throws(() => densityTokens({ id: 'x', tokens: { 'sys.type.nope': '1px' } }, base, registry), /unknown token sys\.type\.nope/u);
+  assert.throws(() => densityTokens({ id: 'x', tokens: { [appearanceToken]: '1px' } }, base, registry), /not a base token/u);
+});
+
+test('an appearance token may not alias a measurement a density varies', () => {
+  const theme = { id: 'light', tokens: { 'sys.color.text.default': '{sys.type.callout}' } };
+  assert.throws(
+    () => densityTokens({ id: 'touch', tokens: { 'sys.type.callout': '16px' } }, base, registry, [theme]),
+    /light: sys\.color\.text\.default aliases sys\.type\.callout, which density "touch" changes/u,
+  );
+});
+
+test('a density file is refused for a reserved, repeated or malformed id, or missing tokens', () => {
+  const ok = { id: 'touch', name: 'Touch', description: 'd', tokens: {} };
+  assert.doesNotThrow(() => checkDensities([ok]));
+  assert.throws(() => checkDensities([{ ...ok, id: 'default' }]), /reserved/u);
+  assert.throws(() => checkDensities([ok, { ...ok }]), /used by two files/u);
+  assert.throws(() => checkDensities([{ ...ok, id: "touch'] , x" }]), /lower-kebab-case/u);
+  assert.throws(() => checkDensities([{ ...ok, tokens: undefined }]), /has no tokens/u);
+  assert.throws(() => checkDensities([{ ...ok, description: 'ends */ early' }]), /no "\*\/"/u);
+});
+
+test('a density block follows the themes and the default block restores the base values of everything a density changes', () => {
+  const density = { id: 'touch', name: 'Touch', description: 'd', tokens: { 'sys.type.callout': '16px', 'cmp.markdown.heading-1': '{sys.type.title-1}' } };
+  const css = generate({ registry, base: { tokens: { ...base.tokens, 'sys.type.callout': '13px', 'cmp.markdown.heading-1': '25px', 'cmp.control.font-size': '{sys.type.callout}' } }, themes, densities: [density] });
+  const touch = css.indexOf("[data-density='touch'] {");
+  const restore = css.indexOf("[data-density='default'] {");
+  const lastTheme = css.lastIndexOf("[data-theme='");
+  assert.ok(touch > lastTheme && restore > lastTheme, 'density blocks come after every theme block');
+  const block = (start) => css.slice(start, css.indexOf('}', start));
+  assert.match(block(touch), /--av-sys-type-callout: 16px;/u);
+  assert.match(block(touch), /--av-cmp-control-font-size: var\(--av-sys-type-callout\);/u);
+  assert.match(block(touch), /--av-cmp-markdown-heading-1: var\(--av-sys-type-title-1\);/u);
+  // The reset re-declares the alias as well as the role, or the alias keeps the
+  // outer density's value, and restores a token that is not a role at its own value.
+  assert.match(block(restore), /--av-sys-type-callout: 13px;/u);
+  assert.match(block(restore), /--av-cmp-control-font-size: var\(--av-sys-type-callout\);/u);
+  assert.match(block(restore), /--av-cmp-markdown-heading-1: 25px;/u);
 });
