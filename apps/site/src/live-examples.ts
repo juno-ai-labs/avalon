@@ -12,7 +12,7 @@
  * 04-triggers-and-schedules.md): a GitHub, Linear, Slack, Granola or Ashby
  * event, an email that meets a condition, or a schedule.
  */
-import { escapeHtml as escape } from './comparison-pages';
+import { escapeHtml as escape } from './html';
 
 type Person = 'maya' | 'theo' | 'priya' | 'guest' | 'rally';
 

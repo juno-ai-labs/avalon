@@ -1,21 +1,18 @@
 /**
- * Shared markup for the public marketing pages: the column footer and the
- * comparison table. Pages hold a marker comment and the Vite plugin in
- * `vite.config.ts` swaps in the markup, so the list of rivals and Trust Center
- * pages lives in one place instead of in every page that shows it. Node only.
+ * Shared markup for the public marketing pages, such as the header and the
+ * column footer. Pages hold a marker comment and the Vite plugin in
+ * `vite.config.ts` swaps in the markup, so the list of Trust Center pages lives
+ * in one place instead of in every page that shows it. Node only.
  */
 import { readFileSync } from 'node:fs';
 import { loadBlogPosts, type BlogPost } from './blog-pages';
-import { escapeHtml as escape, loadComparisons, type Comparison } from './comparison-pages';
+import { escapeHtml as escape } from './html';
 import { renderLoopFigure, renderPeopleFigure } from './explorable-figures';
 import { renderLiveCarousel } from './live-examples';
 import { renderHomeIllustration } from './home-illustrations';
 import { renderHomePricing } from './home-pricing';
 import { marketplaceTemplates, renderMarketHeader, renderMarketplaceCards, renderMarketplaceFilters, templatePagePath } from './marketplace-catalog';
 import { externalArrow } from './site-icons';
-
-/** Every rival, read from `content/compare/*.md` and sorted by `order`. */
-export const comparisons: readonly Comparison[] = loadComparisons(new URL('../content/compare/', import.meta.url));
 
 /** Every blog post, read from `content/blog/YYYY-MM-DD-<title>.md`, newest first. */
 export const blogPosts: readonly BlogPost[] = loadBlogPosts(new URL('../content/blog/', import.meta.url));
@@ -36,7 +33,7 @@ const ORIGIN = 'https://rallywith.ai';
 /** The header's links and sign-in button, the same on every marketing page. */
 export function renderSiteNav(): string {
   return '<nav aria-label="Primary"><a class="header-link" href="/canvases/">Canvases</a><a class="header-link" href="/sidekicks/">Sidekicks</a>'
-    + '<a class="header-link" href="/#pricing">Pricing</a><a class="header-link" href="/#footer-compared">Compare</a>'
+    + '<a class="header-link" href="/#pricing">Pricing</a>'
     // The web app signs in and signs up through one door, so the label rolls between the two.
     + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in to Rally or sign up for Rally">'
     + '<span class="header-sign-in-wheel" aria-hidden="true"><span>Sign in to Rally</span><span>Sign up for Rally</span></span></a></nav>';
@@ -91,7 +88,6 @@ const footerColumn = (id: string, title: string, links: readonly string[]): stri
  * page that already shows the full CASA badge below the footer.
  */
 export function renderSiteFooter({ casaLink = true }: { casaLink?: boolean } = {}): string {
-  const compared = comparisons.map(({ slug, name }) => `<a href="/compare/${slug}/">${escape(name)}</a>`);
   const trust = trustPages.map(({ href, name }) => `<a href="${href}">${escape(name)}</a>`);
   const help = [
     '<a href="/help/">Help Center</a>',
@@ -114,7 +110,6 @@ export function renderSiteFooter({ casaLink = true }: { casaLink?: boolean } = {
     + `<div class="footer-brand"><a class="wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark-ink.svg" width="24" height="24" alt=""><span>rally</span></a>`
     + `<p class="footer-tagline">Made for people who work with AI, not on it.</p></div>`
     + footerColumn('footer-product', 'Product', product)
-    + footerColumn('footer-compared', 'Compared to', compared)
     + footerColumn('footer-trust', 'Trust Center', trust)
     + footerColumn('footer-help', 'Help', help)
     + footerColumn('footer-blog', 'Blog', blog)
@@ -122,27 +117,10 @@ export function renderSiteFooter({ casaLink = true }: { casaLink?: boolean } = {
     + `<p class="footer-mark" aria-hidden="true">rally</p></footer>`;
 }
 
-/** Every rival in one table, each row linking to its own page. */
-export function renderComparisonTable(): string {
-  const rows = comparisons.map(({ slug, name, maker, kind, edge }) =>
-    `<tr><th scope="row"><a class="compare-name" href="/compare/${slug}/">${escape(name)}</a><span class="compare-maker">${escape(maker)}</span></th>`
-    + `<td data-label="What it is">${escape(kind)}</td>`
-    + `<td data-label="Why teams pick Rally">${escape(edge)}</td>`
-    + `<td class="compare-more"><a href="/compare/${slug}/" aria-label="Rally vs ${escape(name)}, full comparison">Rally vs ${escape(name)} <span aria-hidden="true">→</span></a></td></tr>`,
-  ).join('');
-  return `<div class="compare-table-wrap"><table class="compare-table">`
-    + `<thead><tr><th scope="col">Tool</th><th scope="col">What it is</th><th scope="col">Why teams pick Rally</th><th scope="col"><span class="visually-hidden">Full comparison</span></th></tr></thead>`
-    + `<tbody>${rows}</tbody></table></div>`;
-}
-
 const sitemap = (urls: readonly { loc: string; lastmod: string }[]): string =>
   `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`
     + urls.map(({ loc, lastmod }) => `  <url>\n    <loc>${loc}</loc>\n    <lastmod>${lastmod}</lastmod>\n  </url>\n`).join('')
     + '</urlset>\n';
-
-/** A sitemap of the comparison pages, which `robots.txt` lists beside the main one. */
-export const renderComparisonSitemap = (): string =>
-  sitemap(comparisons.map(({ slug, updated }) => ({ loc: `${ORIGIN}/compare/${slug}/`, lastmod: updated })));
 
 /** A sitemap of the blog index and every post, which `robots.txt` lists beside the main one. */
 export const renderBlogSitemap = (): string => {
@@ -169,12 +147,6 @@ export function renderLlmsTxt(): string {
 Templates a Canvas can start from, the same ones Rally's in-app Marketplace offers. Each page says what the template builds and which connectors it works best with.
 
 ${marketplaceTemplates().map(({ slug, name, description }) => `- [${name}](${ORIGIN}${templatePagePath(slug)}): ${description}`).join('\n')}
-
-## Compared to
-
-Written by the Rally team, so biased, and dated on each page. Each page's Markdown source is published beside it at \`index.md\`, for example ${ORIGIN}/compare/${comparisons[0]?.slug ?? ''}/index.md.
-
-${comparisons.map(({ slug, name, kind }) => `- [Rally vs ${name}](${ORIGIN}/compare/${slug}/): ${kind.replace(/\.$/u, '')}`).join('\n')}
 
 ## Blog
 
@@ -219,7 +191,6 @@ const markers: Record<string, () => string> = {
   'site-footer': () => renderSiteFooter(),
   'site-footer-without-casa': () => renderSiteFooter({ casaLink: false }),
   'casa-badge': renderCasaBadge,
-  'comparison-table': renderComparisonTable,
   'market-header': renderMarketHeader,
   'marketplace-filters': renderMarketplaceFilters,
   'marketplace-cards': renderMarketplaceCards,
