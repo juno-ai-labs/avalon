@@ -105,13 +105,9 @@ save its import, update and publish procedure.
 # Notices
 When this Sidekick's runs produce results people would want to hear about while
 away, such as a new episode, a finished report or a value crossing a line someone
-set, load sending-notifications and save a Notices step in the instructions. It
-says what counts as a result worth a notice, what the title says, that a run sends
-one notice covering everything new since the last run, and that a run with nothing
-new, or only progress, sends none. A run cannot see this discussion, so that step
-is how it knows the bar. If a person here asked to be told about results, turn
-notices on here with notifications_register; a run cannot. Save no Notices step
-when nobody would want one.
+set, load sending-notifications and follow its Sidekick setup section: it says
+what to agree with the person, when to turn notices on here, and the Notices step
+to save, since a run cannot see this discussion.
 
 # Scheduled self-review
 A message beginning "Notice from Rally, not from a person or an agent: a scheduled
