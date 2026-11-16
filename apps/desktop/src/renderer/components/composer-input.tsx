@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { TYPE_SCALE_CHANGED_EVENT } from '@rally/ui/lib/theme';
 import { agentModelInUseLabel, agentModelInUseTriggerLabel } from '../lib/agent-models';
 import { isComposingKeyEvent } from '../lib/ime';
 import {
@@ -397,7 +398,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
       resizeTextarea();
     });
     observer.observe(composer);
-    return () => observer.disconnect();
+    // A text-size change keeps the width, so the observer above misses it.
+    const remeasure = (): void => { resizeTextarea(); };
+    window.addEventListener(TYPE_SCALE_CHANGED_EVENT, remeasure);
+    return () => { observer.disconnect(); window.removeEventListener(TYPE_SCALE_CHANGED_EVENT, remeasure); };
   }, [resizeTextarea]);
   // The level ring is painted straight onto the control: ten writes a second
   // through React would re-render the whole composer for a box-shadow.

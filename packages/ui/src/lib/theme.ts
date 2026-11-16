@@ -21,6 +21,13 @@ import { readDevicePreferences, setDeviceTheme } from './device-preferences';
 
 const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
 
+/**
+ * Fired on `window` when the type scale's sizes change at runtime (the phone
+ * host following the person's Dynamic Type setting), so anything that sized
+ * itself to its text can measure again.
+ */
+export const TYPE_SCALE_CHANGED_EVENT = 'rally:type-scale-changed';
+
 export interface ThemeState {
   choice: ThemeChoice;
   resolved: ResolvedTheme;

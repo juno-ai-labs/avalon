@@ -1,0 +1,26 @@
+{
+  "$schema": "../density.schema.json",
+  "id": "touch",
+  "name": "Touch",
+  "description": "iOS's default text sizes for each role, for a subtree read on a phone. Set with data-density=\"touch\"; the mobile host writes the person's Dynamic Type sizes over the roles at runtime. Document prose and headings take body and the title roles.",
+  "tokens": {
+    "sys.type.caption-2": "11px",
+    "sys.type.caption-1": "12px",
+    "sys.type.footnote": "13px",
+    "sys.type.subheadline": "15px",
+    "sys.type.callout": "16px",
+    "sys.type.body": "17px",
+    "sys.type.headline": "17px",
+    "sys.type.title-3": "20px",
+    "sys.type.title-2": "22px",
+    "sys.type.title-1": "28px",
+    "sys.type.large-title": "34px",
+    "sys.type.display": "38px",
+    "sys.font.size.prose": "{sys.type.body}",
+    "cmp.markdown.heading-1": "{sys.type.title-1}",
+    "cmp.markdown.heading-2": "{sys.type.title-2}",
+    "cmp.markdown.heading-3": "{sys.type.title-3}",
+    "cmp.markdown.heading-4": "{sys.type.headline}",
+    "cmp.feed.byline.font-size": "{sys.type.footnote}"
+  }
+}
