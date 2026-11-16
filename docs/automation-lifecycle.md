@@ -1673,6 +1673,13 @@ the procedure; this document does not restate it.
 [`agent-communication.md`](agent-communication.md#a-run-asking-its-wizard-for-a-change)
 owns the tool and the frame.
 
+### Notices
+
+The guide's Notices section says when to load `sending-notifications`; its
+Sidekick setup section is the procedure for the Notices step a run follows. A
+scheduled self-review never adds or widens one. Why is in
+[the changelog](#2026-11-16--the-wizard-saves-when-a-run-sends-a-notice).
+
 ### Attached conversations
 
 A Sidekick has no home conversation outside itself. Its own conversation
@@ -2417,6 +2424,33 @@ conversation-object SQLite; the vocabulary, `StatusDot`, the
 survive as described above.
 
 ## Changelog
+
+### 2026-11-16 — The wizard saves when a run sends a notice
+
+**What changed:** The wizard's guide gained a Notices section that says when
+to load `sending-notifications`, and the skill gained a Sidekick setup section:
+decide the bar from the request without asking the person, turn notices on, and
+save a Notices step, with an example.
+
+**Why:** Canvas notices have no cooldown, and a run starts with no memory of
+the conversation that set it up. The `sending-notifications` skill gave a run
+the judgment, but a run loads it only if it thinks to, and each run would then
+decide the bar alone. Saving the bar once at setup makes every run apply the
+same one.
+
+**Considered and rejected:** Relying on the run to load the skill: nothing
+ties its choice of what counts as a result to what the person asked for. The
+procedure in the guide itself: every wizard turn would pay for it, and it would
+drift from the skill.
+
+**Consequences:** A Sidekick saved before this has no Notices step; its runs
+fall back on the notifications plugin's system message until a revision adds
+one. The step is saved only once notices are on for the Sidekick's one Canvas,
+so a refusal (notices off, no Canvas, several) is named once in the wizard's
+summary instead of every run repeating it. A scheduled self-review may not add or
+widen the step: it reaches people's phones, and nobody asked.
+
+PR: [#1624](https://github.com/juno-ai-labs/avalon/pull/1624).
 
 ### 2026-11-14 — A Canvas manages every Sidekick attached to it
 
