@@ -1081,10 +1081,12 @@ export function createTerminalResourceBridge(
       const row = await existingPublication(context, target, filePath, providerResourceId);
       if (!row || row.resource_type !== "generated_site") return null;
       const served = await existingArtifactForResource(workspace, context.workspaceId, row.id);
-      // Nothing to find stored is always safe: every file is then streamed.
-      const manifest = served ? await servedManifest(env, served) : null;
-      if (!manifest) return null;
-      return { manifest };
+      // Only bytes already in this artifact's blobs can be left unwritten, so
+      // only then does anything count as stored. With blobs off, or a live
+      // version from before them, every file streams and counts.
+      if (!served || env.ARTIFACT_BLOB_STORE !== "on") return null;
+      const manifest = await servedManifest(env, served);
+      return manifest?.assetStore === "blobs" ? { manifest } : null;
     },
 
     noteOversizedPublish(context, refused) {
@@ -1202,7 +1204,6 @@ export function createTerminalResourceBridge(
         mode: site.mode,
         stateful: site.stateful,
         files: site.files,
-        ...(site.live ? { live: site.live } : {}),
         fallbackTitle: title,
         serverModuleSha256: site.serverModuleSha256,
         recordResource: async ({ written: stored, version: claimed }) => {

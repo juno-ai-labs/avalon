@@ -28,8 +28,6 @@ export interface AzureAudioClient {
     voice: AudioVoice;
     instructions?: string;
     signal: AbortSignal;
-    /** Fewer bytes than the client's own maximum, for one piece of a longer recording. */
-    maximumBytes?: number;
   }): Promise<AzureAudioResult>;
   streamPcm(input: {
     text: string;
@@ -79,7 +77,7 @@ export function createAzureAudioClient(input: {
   return {
     async generate(request): Promise<AzureAudioResult> {
       const response = await requestAudio(request, "mp3");
-      return readAudioResponse(response, Math.min(input.maximumBytes, request.maximumBytes ?? input.maximumBytes));
+      return readAudioResponse(response, input.maximumBytes);
     },
     async streamPcm(request): Promise<AzureAudioStreamResult> {
       const response = await requestAudio(request, "pcm");

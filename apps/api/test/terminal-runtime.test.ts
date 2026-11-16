@@ -1542,7 +1542,7 @@ describe("Daytona Terminal runtime", () => {
     await runtime.publishResource(context, { filePath: "feed" });
     const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
     const named = (path: string) => site.files.find((file) => file.path === path)!;
-    expect(named("episodes/one.mp3")).toMatchObject({ sha256: await sha256Hex(big), sizeBytes: big.byteLength, stored: true });
+    expect(named("episodes/one.mp3")).toEqual({ path: "episodes/one.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength, storedIn: live.artifactId });
     const streamed = named("episodes/two.mp3");
     expect(streamed).not.toHaveProperty("bytes");
     expect(streamed).not.toHaveProperty("stored");
@@ -1557,8 +1557,6 @@ describe("Daytona Terminal runtime", () => {
       expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", `/workspace/.rally-output/feed/${path}`);
     }
     expect(resources.noteOversizedPublish).not.toHaveBeenCalled();
-    // The live manifest is handed on, so the writer does not read it again.
-    expect(site.live).toBe(live);
   });
 
   it("refuses a site publish whose new files stream more than its budget, and says so", async () => {
@@ -1568,7 +1566,7 @@ describe("Daytona Terminal runtime", () => {
     files.set("/workspace/.rally-output/feed/episodes/two.mp3", new Uint8Array(13_000_000).fill(2));
     provider.openFile = vi.fn(async () => new Response("").body!);
     await expect(runtime.publishResource(context, { filePath: "feed" }))
-      .rejects.toMatchObject({ code: "resource_limit_exceeded", details: { expected: "bytes new or changed since the live version at most 25000000" } });
+      .rejects.toMatchObject({ code: "resource_limit_exceeded", message: expect.stringContaining("If one new file is over this by itself, make it smaller") });
     expect(resources.noteOversizedPublish).toHaveBeenCalledWith(context,
       { shape: "directory", sizeBytes: 26_000_000, limitBytes: 25_000_000, filePath: "feed" });
     expect(resources.publishSiteResource).not.toHaveBeenCalled();
