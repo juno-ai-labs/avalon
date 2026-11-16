@@ -136,6 +136,21 @@ describe("publishing into a Canvas", () => {
     ]);
   });
 
+  it("makes a new name the Canvas's one artifact, and versions a listed one beside the others a converted Canvas holds", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const publisher = new CanvasPublicationService(TEST_ENV, auth(CREATOR));
+    const listed = async () => (await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).artifacts.map((artifact) => artifact.resourceId).sort();
+    const plan = await publisher.publish(canvasId, { kind: "file", name: "plan.md", content: text("# Plan") });
+    const budget = await publisher.publish(canvasId, { kind: "file", name: "budget.md", content: text("# Budget") });
+    expect(await listed()).toEqual([budget.resourceId]);
+    // As a Canvas converted from a Thread holds them: both listed.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("INSERT INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, 1)", canvasId, plan.resourceId);
+    });
+    await publisher.publish(canvasId, { kind: "file", name: "plan.md", content: text("# Plan, revised") });
+    expect(await listed()).toEqual([plan.resourceId, budget.resourceId].sort());
+  });
+
   it("refuses a first publication whose bytes were prepared before Canvas archive", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     const hold = heldBucket("put", (key) => key.includes("/published/"));

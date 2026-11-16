@@ -199,16 +199,16 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
  */
 export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentKind" | "parentId" | "substreamId">
     & Partial<Pick<WorkstreamWorkflowInput, "automationDelegation">>):
-  ((target: { parentId: string; substreamId: string }, resourceId: string) => Promise<boolean>) | null {
+  ((target: { parentId: string; substreamId: string }, resourceId: string, replace: boolean) => Promise<boolean>) | null {
   if (input.parentKind !== "canvas" && !(input.parentKind === "automation" && (input.substreamId ?? "0") !== "0")) return null;
   // Answers whether the resource is now one of a Canvas's artifacts, which is
   // what decides that its publish returns a URL that will serve.
-  return async (target, resourceId) => {
+  return async (target, resourceId, replace) => {
     if (target.substreamId !== "0") return false;
     const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, asWorkspaceId(input.workspaceId),
       workspaceDOName(env.AVALON_REGION, input.workspaceId));
-    const { noted } = await workspace.canvasNoteArtifact({
-      workspaceId: input.workspaceId, canvasId: target.parentId, resourceId,
+    const { noted, refused } = await workspace.canvasNoteArtifact({
+      workspaceId: input.workspaceId, canvasId: target.parentId, resourceId, ...(replace ? { replace } : {}),
       ...(input.parentKind === "canvas"
         ? { editor: { kind: "rally", id: null } }
         // `canvasArtifactNoter` admits only a run of a Sidekick and the agents
@@ -219,7 +219,7 @@ export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInpu
     // not hold is a defect to see, not a case to pass over.
     if (!noted) {
       logWarn(env, "canvas_artifact_note_failed", {
-        workspace_id: input.workspaceId, parent_id: target.parentId, resource_id: resourceId, error_code: "canvas_not_found",
+        workspace_id: input.workspaceId, parent_id: target.parentId, resource_id: resourceId, error_code: refused ?? "canvas_not_found",
       });
     }
     return noted;
