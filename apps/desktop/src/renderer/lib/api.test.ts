@@ -787,7 +787,7 @@ describe('Rally API wire adapter', () => {
     });
     const startHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      'https://api.rally.test/connections/linear/start?telemetryVersion=2&desktopHandoffVersion=2',
+      'https://api.rally.test/connections/linear/start?telemetryVersion=2&desktopHandoffVersion=2&claim=1',
     );
     expect(startHeaders.get('X-Rally-Operation-Id')).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
@@ -1400,9 +1400,9 @@ describe('browser cookie collaboration transport', () => {
     await api.startConnectorResourceAuthorization({ connectionId: 'connection-1', parentKind: 'canvas', parentId: workstreamId,
       substreamId: '0', failedToolInvocationId: 'tool-1' } as Parameters<RallyApi['startConnectorResourceAuthorization']>[0]).catch(() => undefined);
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
-      `${cookie.apiBaseUrl}/connections/linear/start?telemetryVersion=2&handoff=browser`,
-      `${cookie.apiBaseUrl}/connections/connection-1/reconnect?telemetryVersion=2&handoff=browser`,
-      `${cookie.apiBaseUrl}/connections/connection-1/resource-authorizations/start?handoff=browser`,
+      `${cookie.apiBaseUrl}/connections/linear/start?telemetryVersion=2&handoff=browser&claim=1`,
+      `${cookie.apiBaseUrl}/connections/connection-1/reconnect?telemetryVersion=2&handoff=browser&claim=1`,
+      `${cookie.apiBaseUrl}/connections/connection-1/resource-authorizations/start?handoff=browser&claim=1`,
     ]);
   });
 

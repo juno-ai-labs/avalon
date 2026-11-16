@@ -768,7 +768,8 @@ export class RallyApi {
 
   private connectorHandoffQuery(): string {
     const cookie = isCookieSession(this.session);
-    return cookie ? `handoff=${browserConnectorHandoff()}` : 'desktopHandoffVersion=2';
+    // `claim=1`: this client claims a held authorization (`docs/connectors.md`).
+    return `${cookie ? `handoff=${browserConnectorHandoff()}` : 'desktopHandoffVersion=2'}&claim=1`;
   }
 
   private async request<T>(path: string, options: RequestOptions<T>): Promise<T>;

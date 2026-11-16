@@ -1767,7 +1767,7 @@ describe('single-platform desktop identity routing', () => {
     expect(previewUrl).toBe('https://enterprise.api.rallywith.ai/connections/slack/link/preview');
     expect(linkUrl).toBe('https://enterprise.api.rallywith.ai/connections/slack/link');
     expect(startUrl).toBe(
-      'https://enterprise.api.rallywith.ai/connections/slack/start?telemetryVersion=2&desktopHandoffVersion=2',
+      'https://enterprise.api.rallywith.ai/connections/slack/start?telemetryVersion=2&desktopHandoffVersion=2&claim=1',
     );
     expect(new Headers(previewInit?.headers).get('authorization')).toBe(`Bearer ${enterpriseSession.accessToken}`);
     expect(previewInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));

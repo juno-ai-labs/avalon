@@ -85,9 +85,9 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
       if (message?.type === 'connector-authorize') {
         // Safari has no Rally session, so the page that started this claims
         // the callback; the auth session hands it back instead of Safari.
-        void openAuthSessionAsync(message.url, MOBILE_CONNECTOR_CALLBACK).then((result) => {
-          if (result.type === 'success') web.current?.injectJavaScript(commandScript({ type: 'connector-complete', url: result.url }, props.appUrl));
-        });
+        void openAuthSessionAsync(message.url, MOBILE_CONNECTOR_CALLBACK)
+          .then((result) => result.type === 'success' ? result.url : null, () => `${MOBILE_CONNECTOR_CALLBACK}?status=failed`)
+          .then((url) => { if (url) web.current?.injectJavaScript(commandScript({ type: 'connector-complete', url }, props.appUrl)); });
         return;
       }
       if (message) props.onEvent(message);
