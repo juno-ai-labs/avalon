@@ -11,8 +11,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { PLUGIN_BRAND_MARKS, type PluginBrandMark } from '../../../packages/ui/src/lib/plugin-marks';
 import type { TEMPLATE_PLUGINS } from '../../../packages/skills/marketplace-skills/connectors';
 
-const rendered = new Map<PluginBrandMark, string>();
-
 /**
  * The mark inside a `.connector-mark` span, hidden from assistive tech because
  * the connector's name sits beside it. Brands with no `mono` art arrive in
@@ -20,12 +18,8 @@ const rendered = new Map<PluginBrandMark, string>();
  * name does.
  */
 export function renderConnectorMark(mark: PluginBrandMark): string {
-  let svg = rendered.get(mark);
-  if (svg === undefined) {
-    const brand = PLUGIN_BRAND_MARKS[mark];
-    svg = renderToStaticMarkup(brand.mono ? createElement(brand.Mark, { variant: 'mono' }) : createElement(brand.Mark));
-    rendered.set(mark, svg);
-  }
+  const brand = PLUGIN_BRAND_MARKS[mark];
+  const svg = renderToStaticMarkup(brand.mono ? createElement(brand.Mark, { variant: 'mono' }) : createElement(brand.Mark));
   return `<span class="connector-mark" aria-hidden="true">${svg}</span>`;
 }
 

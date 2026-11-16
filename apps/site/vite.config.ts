@@ -20,17 +20,11 @@ const comparisonEntries = new Map(comparisons.map((comparison) => [
 // Every HTML page rendered from Markdown, by published path: the comparison
 // pages, the blog index, each blog post from `content/blog/YYYY-MM-DD-<title>.md`,
 // and each marketplace template's page from `packages/skills/marketplace-skills/`.
-// A template page reads the catalog again when rendered, so the dev server
-// shows an edited template without a restart.
 const renderedPages = new Map<string, () => string>([
   ...[...comparisonEntries].map(([path, comparison]) => [path, () => renderComparisonPage(comparison)] as const),
   [`${projectRoot}blog/index.html`, () => renderBlogIndex(blogPosts)],
   ...blogPosts.map((post) => [`${projectRoot}blog/${post.slug}/index.html`, () => renderBlogPost(post)] as const),
-  ...marketplaceTemplates().map(({ slug }) => [`${projectRoot}marketplace/${slug}/index.html`, () => {
-    const template = marketplaceTemplates().find((candidate) => candidate.slug === slug);
-    if (!template) throw new Error(`The marketplace template ${slug} is no longer in the catalog; restart the dev server.`);
-    return renderTemplatePage(template);
-  }] as const),
+  ...marketplaceTemplates().map((template) => [`${projectRoot}marketplace/${template.slug}/index.html`, () => renderTemplatePage(template)] as const),
 ]);
 // Everything else the comparison and blog data produce, by published path. The build
 // emits each one and the dev server answers for the same paths, so the two
