@@ -1228,60 +1228,17 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       this.ctx.facets.abort(FACET_NAME, "artifact_version_changed");
       this.facetVersion = state.current_version;
     }
-    const artifactId = state.artifact_id;
-    const version = state.current_version;
     const env = this.env;
-    // Parsed rather than cast, like every other read of this column: it was
-    // written by a possibly older deployment.
-    const manifest = ArtifactManifestSchema.parse(
-      JSON.parse(state.manifest_json),
-    );
+    const exports = this.ctx.exports;
     return this.ctx.facets.get<ArtifactFacetHost>(FACET_NAME, async () => {
       const loader = env.ARTIFACT_LOADER;
       if (!loader) throw new Error("artifact_loader_binding_missing");
-      const moduleKey = manifestServerModuleKey(manifest);
-      const module = moduleKey ? await env.PAYLOADS.get(moduleKey) : null;
-      if (!module) throw new Error("artifact_server_module_missing");
       // The revision keeps an isolate cached before a deploy, with older Rally
       // code, from answering for the new one.
-      const worker = loader.get(`${artifactIsolateId(artifactId, version)}:${FACET_HOST_REVISION}`, async () => ({
-        compatibilityDate: ARTIFACT_COMPATIBILITY_DATE,
-        // Rally's own module is the main one and imports the model's, so the
-        // facet never loads the model's class directly.
-        mainModule: FACET_HOST_MODULE,
-        modules: {
-          [FACET_HOST_MODULE]: FACET_HOST_MODULE_SOURCE,
-          [ASSET_SHIM_MODULE]: ASSET_SHIM_SOURCE,
-          "index.js": await module.text(),
-        },
-        // Scoped bindings and no network: published files and asynchronous
-        // Sidekick admission for this app. The skill teaches
-        // `this.env.ASSETS.fetch(request)` as the last line of `SiteData.fetch`,
-        // and with an empty env every stateful site answered the routes its
-        // model wrote and threw on its own `index.html`.
-        //
-        // A stub rather than a reader object because the loader's env
-        // serializer rejects a value carrying a function; the bucket behind it
-        // stays in the API Worker.
-        env: {
-          RALLY_SIDEKICKS: this.ctx.exports.ArtifactSidekickLoopback({
-            props: ArtifactSidekickAddressSchema.parse({ workspaceId: state.workspace_id, artifactId, artifactVersion: version }),
-          }),
-          RALLY_ASSETS: this.ctx.exports.ArtifactAssetLoopback({
-            props: {
-              artifactId,
-              version,
-              ...(manifest.assetStore ? { assetStore: manifest.assetStore } : {}),
-              assets: manifest.assets.map((asset) => ({
-                path: asset.path,
-                contentType: asset.contentType,
-                sha256: asset.sha256,
-              })),
-            },
-          }),
-        },
-        globalOutbound: null,
-      }));
+      const worker = loader.get(
+        `${artifactIsolateId(state.artifact_id, state.current_version)}:${FACET_HOST_REVISION}`,
+        facetWorkerCode(env, exports, state),
+      );
       return { class: worker.getDurableObjectClass<ArtifactFacetHost>(FACET_HOST_CLASS) };
     });
   }
@@ -1320,4 +1277,79 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       now,
     );
   }
+}
+
+/**
+ * The Worker Loader's code callback for a stateful artifact's facet.
+ *
+ * **Everything the callback returns is read inside it, on every run.** The
+ * loader documents that this callback "could run any number of times": it runs
+ * again whenever the runtime starts a fresh isolate for the same id, even
+ * behind a stub it already handed out. An R2 body is a stream that reads once,
+ * so a body fetched outside the callback and read inside it served the first
+ * run and threw `Body has already been used` on every later one. In
+ * production that was every request reaching a re-created isolate, a few
+ * seconds into any idle gap: an `<audio>` element's range probe, a page's
+ * poll, a podcast app's first fetch of a feed.
+ *
+ * A function of its own, not a closure inside `facetFor`, so the test suite can
+ * run it twice against real R2, the one property the loader's contract asks of
+ * it.
+ */
+export function facetWorkerCode(
+  env: Pick<Env, "PAYLOADS">,
+  exports: Cloudflare.Exports,
+  state: Pick<
+    z.infer<typeof ARTIFACT_STATE_ROW>,
+    "artifact_id" | "workspace_id" | "current_version" | "manifest_json"
+  >,
+): () => Promise<WorkerLoaderWorkerCode> {
+  const artifactId = state.artifact_id;
+  const version = state.current_version;
+  // Parsed rather than cast, like every other read of this column: it was
+  // written by a possibly older deployment.
+  const manifest = ArtifactManifestSchema.parse(JSON.parse(state.manifest_json));
+  return async () => {
+    const moduleKey = manifestServerModuleKey(manifest);
+    const module = moduleKey ? await env.PAYLOADS.get(moduleKey) : null;
+    if (!module) throw new Error("artifact_server_module_missing");
+    return {
+      compatibilityDate: ARTIFACT_COMPATIBILITY_DATE,
+      // Rally's own module is the main one and imports the model's, so the
+      // facet never loads the model's class directly.
+      mainModule: FACET_HOST_MODULE,
+      modules: {
+        [FACET_HOST_MODULE]: FACET_HOST_MODULE_SOURCE,
+        [ASSET_SHIM_MODULE]: ASSET_SHIM_SOURCE,
+        "index.js": await module.text(),
+      },
+      // Scoped bindings and no network: published files and asynchronous
+      // Sidekick admission for this app. The skill teaches
+      // `this.env.ASSETS.fetch(request)` as the last line of `SiteData.fetch`,
+      // and with an empty env every stateful site answered the routes its
+      // model wrote and threw on its own `index.html`.
+      //
+      // A stub rather than a reader object because the loader's env
+      // serializer rejects a value carrying a function; the bucket behind it
+      // stays in the API Worker.
+      env: {
+        RALLY_SIDEKICKS: exports.ArtifactSidekickLoopback({
+          props: ArtifactSidekickAddressSchema.parse({ workspaceId: state.workspace_id, artifactId, artifactVersion: version }),
+        }),
+        RALLY_ASSETS: exports.ArtifactAssetLoopback({
+          props: {
+            artifactId,
+            version,
+            ...(manifest.assetStore ? { assetStore: manifest.assetStore } : {}),
+            assets: manifest.assets.map((asset) => ({
+              path: asset.path,
+              contentType: asset.contentType,
+              sha256: asset.sha256,
+            })),
+          },
+        }),
+      },
+      globalOutbound: null,
+    };
+  };
 }
