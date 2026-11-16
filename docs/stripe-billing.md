@@ -198,7 +198,8 @@ existing lifecycle. Before Checkout, the free subscription is canceled and retai
 as award history, releasing Stripe's active-subscription currency restriction. A durable
 marker prevents cron recreating it while Checkout is pending. If paid checkout happened
 before the free record existed, awards are recorded on the Stripe customer without
-creating a conflicting free subscription. Customer metadata shows the current plan, included allowance,
+creating a conflicting free subscription. The Stripe customer name follows the
+Organization name. Customer metadata shows the current plan, included allowance,
 weekly allocation, quota anchor, paid/free subscription IDs, available pilot
 coupon and meter IDs. Use the Rally usage ledger for current delivery diagnostics.
 Older Stripe customers can still carry the last published usage-hour counts.
@@ -572,7 +573,8 @@ restart recovery after an uncertain provider response, and signed webhook dispat
 `test/stripe-billing-sync.test.ts` covers profile recovery, awards, first-paid
 eligibility, hourly delivery, delayed aggregation, replay, concurrent updates,
 retention, terminal expiry, closed-account cleanup, settlement continuing
-through sync failures, and usage reconciliation without customer metadata writes.
+through sync failures, Organization renames, and usage reconciliation without
+customer metadata writes.
 `test/trial-months.test.ts` covers fixed fee-waiver deadlines, remaining pilot
 coverage, calendar-month clamping, uncertain writes, cancellation and billable
 overages during trials. The workerd operator suite covers its audited MCP bridge.
@@ -778,10 +780,13 @@ Stripe customer metadata. Asynchronous meter reconciliation changed those counts
 so Stripe repeatedly sent `customer.updated` back to the same Organization's
 billing actor. Deliveries that overlapped an active billing operation returned
 `billing_busy` and Stripe retried them. The usage ledger now serves as the sole
-source for current delivery diagnostics. The profile sync also treats omitted
-metadata keys as empty when comparing fields that Stripe unsets with an empty
-value. Signed customer and subscription webhooks still reconcile payment details
-and subscription changes.
+source for current delivery diagnostics. Filtering these events at ingress would
+still leave Stripe generating and delivering them. Keep volatile diagnostics out
+of customer metadata because each change generates a `customer.updated` event.
+The profile sync compares the Organization name explicitly so renames reach Stripe
+even when billing metadata is stable. It also treats omitted metadata keys as
+empty when comparing fields that Stripe unsets with an empty value. Signed customer
+and subscription webhooks still reconcile payment details and subscription changes.
 
 PR: [#1642](https://github.com/juno-ai-labs/avalon/pull/1642).
 
