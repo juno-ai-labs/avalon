@@ -74,6 +74,7 @@ const MAXIMUM_PUBLISH_BYTES = DEFAULT_MAX_ATTACHMENT_BYTES;
  * `terminal_publish_over_size_limit`), not a memory figure.
  */
 const MAXIMUM_STREAMED_PUBLISH_BYTES = DEFAULT_MAX_ATTACHMENT_BYTES;
+const BUFFERED_BYTES = "read whole (pages, the server module, the preview image, or an archive)";
 const FILE_NOT_FOUND_EXIT_CODE = 44;
 const FILE_NOT_REGULAR_EXIT_CODE = 45;
 /** An edit's target no longer holds the bytes the edit was computed from. */
@@ -773,6 +774,14 @@ export function createDaytonaTerminalRuntime(
       resolved.kind,
     );
     const totalBytes = entries.reduce((total, entry) => total + entry.sizeBytes, 0);
+    const refuseOverBudget = (sizeBytes: number, limitBytes: number, what: string): never => {
+      resources.noteOversizedPublish(context, { shape: "directory", sizeBytes, limitBytes, filePath: input.filePath });
+      throw new TerminalToolError(
+        "resource_limit_exceeded",
+        `The directory has ${sizeBytes} bytes ${what}; one publication allows at most ${limitBytes}. Publish fewer new files at a time.`,
+        { field: "filePath", expected: `bytes ${what} at most ${limitBytes}` },
+      );
+    };
     const readEntry = async (entry: DirectoryEntry): Promise<ReadSiteFile> => {
       let bytes: Uint8Array;
       try {
@@ -808,6 +817,9 @@ export function createDaytonaTerminalRuntime(
     // this site already served at a path. A streamed file is checked by R2.
     const live = resolved.kind === "site" ? await resources.liveSiteFiles(context, input.filePath, input) : null;
     const index = resolved.kind === "site" ? entries.find((entry) => entry.path === "index.html") : undefined;
+    // The page is read before the other files are settled, so its own size is
+    // checked against the buffered budget before it is read.
+    if (index && index.sizeBytes > MAXIMUM_PUBLISH_BYTES) refuseOverBudget(index.sizeBytes, MAXIMUM_PUBLISH_BYTES, BUFFERED_BYTES);
     const readIndex = index ? await readEntry(index) : null;
     const previewSources = new Set(readIndex
       ? socialPreviewSourcePaths(new TextDecoder("utf-8", { fatal: false }).decode(readIndex.bytes))
@@ -834,17 +846,9 @@ export function createDaytonaTerminalRuntime(
       if (!file) readBytes += entry.sizeBytes;
       else if (!("stored" in file)) streamedBytes += entry.sizeBytes;
     }
-    for (const [sizeBytes, limitBytes, what] of [
-      [readBytes, MAXIMUM_PUBLISH_BYTES, "read whole (pages, the server module, the preview image, or an archive)"],
-      [streamedBytes, MAXIMUM_STREAMED_PUBLISH_BYTES, "new or changed since the live version"],
-    ] as const) {
-      if (sizeBytes <= limitBytes) continue;
-      resources.noteOversizedPublish(context, { shape: "directory", sizeBytes, limitBytes, filePath: input.filePath });
-      throw new TerminalToolError(
-        "resource_limit_exceeded",
-        `The directory has ${sizeBytes} bytes ${what}; one publication allows at most ${limitBytes}. Publish fewer new files at a time.`,
-        { field: "filePath", expected: `bytes ${what} at most ${limitBytes}` },
-      );
+    if (readBytes > MAXIMUM_PUBLISH_BYTES) refuseOverBudget(readBytes, MAXIMUM_PUBLISH_BYTES, BUFFERED_BYTES);
+    if (streamedBytes > MAXIMUM_STREAMED_PUBLISH_BYTES) {
+      refuseOverBudget(streamedBytes, MAXIMUM_STREAMED_PUBLISH_BYTES, "new or changed since the live version");
     }
     const siteFiles: SitePublishFile[] = [];
     for (const entry of entries) {
