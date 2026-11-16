@@ -3138,8 +3138,12 @@ export function executeAutomationCreatorDiscoveryTool(
           // to read the relationships this tool lists — which it did not list,
           // so the model was sent to a projection that omitted the one field
           // the refusal was about.
+          // The relationships narrow a rule to one resource; they are not
+          // required. A setup agent read Gmail's `gmail_thread` here as "this
+          // event cannot cover a whole mailbox" and fell back to polling.
           ...(trigger.resourceRelationships?.length
-            ? { resourceRelationships: trigger.resourceRelationships }
+            ? { resourceRelationships: trigger.resourceRelationships,
+              resourceRelationshipsAreOptional: "A rule or source on this event with no resource covers every such event on the whole connected account." }
             : {}),
           ...(trigger.openFilterFields ? { openFilterFields: true } : {}),
         })),

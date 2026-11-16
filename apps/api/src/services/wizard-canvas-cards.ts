@@ -18,18 +18,18 @@ import { diagnosticErrorCode, logWarn } from "../observability/logger";
 
 /**
  * The Canvas whose Chat started this wizard turn, or null for any other loop:
- * an agent's message from a Canvas's Chat to the Sidekick's wizard, or an
- * answer to a question such a turn asked there (`wizardCanvasId`).
+ * a message to the Sidekick's wizard from a Canvas's Chat or one of its
+ * background agents, or an answer to a question such a turn asked there
+ * (`wizardCanvasId`). The person is reading the Chat either way.
  */
 export function wizardTurnCanvasId(input: Pick<WorkstreamWorkflowInput, "sidekickWizard" | "agentExchange" | "wizardCanvasId">): string | null {
   if (input.sidekickWizard !== true) return null;
   // Answering a question the Chat drew continues in that Chat.
   if (input.wizardCanvasId) return input.wizardCanvasId;
-  // Only a Chat turn a person started: a Chat turn another agent's message
-  // started would pass on what that agent read.
+  // A message that acts for the Chat's person: not a host notice.
   if (input.agentExchange?.fromPersonTurn !== true) return null;
   const sender = agentAddressForId(input.agentExchange.senderAgentId);
-  return sender.parentKind === "canvas" && sender.substreamId === "0" ? sender.parentId : null;
+  return sender.parentKind === "canvas" ? sender.parentId : null;
 }
 
 /**

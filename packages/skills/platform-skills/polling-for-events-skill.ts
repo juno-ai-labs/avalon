@@ -16,7 +16,10 @@ The whole procedure runs through the Sidekicks plugin; load it before you start.
 - **Binding:** Limiting an event rule to changes associated with one resource
   through the selected connection. For example, a rule bound to one spreadsheet
   ignores changes to other spreadsheets on that connection. Binding does not
-  grant access to the file.
+  grant access to the file. It is optional: an event with no binding covers the
+  whole connected account. New mail anywhere in a mailbox is \`email.received\`
+  with no binding; bind a \`gmail_thread\` only to watch one thread, and skip
+  step 2.
 
 ## 1. Choose the trigger from the request and the available evidence
 
