@@ -4471,6 +4471,71 @@ describe("a member's message travels the whole pipeline", () => {
       }
     });
 
+    it("lets a call already running finish when the member stops, and asks the model nothing more", async () => {
+      const stub = agentStub();
+      // Holds one call's result write open, so the stop lands while that call
+      // is still in flight rather than between steps.
+      const scope = globalThis as { __heldResultWrite?: { held: boolean; gate: Promise<void> } };
+      let release!: () => void;
+      scope.__heldResultWrite = { held: false, gate: new Promise<void>((resolve) => { release = resolve; }) };
+      try {
+        await installScriptedProvider(stub, [
+          parallelTimeCalls,
+          [{ choices: [{ delta: { content: "both read" }, finish_reason: "stop" }] }],
+        ], { primaryModel: UNSAVED_RESULT_MODEL, fallbackModels: [] });
+        await runInDurableObject(stub, (instance) => {
+          const target = instance as unknown as { env: Env };
+          const payloads = target.env.PAYLOADS;
+          const wrapped = new Proxy(payloads, {
+            get: (current, property, receiver) => property === "put"
+              ? async (key: string, ...rest: unknown[]) => {
+                  if (key.includes("/tool-results/") && decodeURIComponent(key).includes(":tool:1/")) {
+                    scope.__heldResultWrite!.held = true;
+                    await scope.__heldResultWrite!.gate;
+                  }
+                  return (current.put as (...args: unknown[]) => unknown).call(current, key, ...rest);
+                }
+              : Reflect.get(current, property, receiver),
+          });
+          target.env = new Proxy(target.env, {
+            get: (current, property, receiver) => property === "PAYLOADS"
+              ? wrapped
+              : Reflect.get(current, property, receiver),
+          });
+        });
+
+        const opened = await initializeWorkstream(stub, "what time is it, twice");
+        const execution = runDurableObjectAlarm(stub);
+        await expect.poll(() => scope.__heldResultWrite!.held, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 })
+          .toBe(true);
+        await runInDurableObject(stub, async (instance) => {
+          await (instance as unknown as { product: WorkstreamObjectProductService }).product
+            .stop(AUTH, "00000000-0000-7000-8000-0000000005d1");
+        });
+        release();
+        await execution;
+
+        const run = await settledRun(stub, opened.body.harnessRunId as string);
+        expect(run.status).toBe("cancelled");
+        await waitForLoopRelease(stub);
+        // Both calls kept their results: the stop waited for the step rather
+        // than cutting the one in flight.
+        await runInDurableObject(stub, (_instance, state) => {
+          expect(state.storage.sql.exec<{ tool_call_id: string; status: string }>(
+            `SELECT tool_call_id, status FROM tool_effects WHERE run_id = ? ORDER BY tool_position`,
+            run.run_id,
+          ).toArray().map((row) => [row.tool_call_id.replace(/^.*:tool:/u, "tool:"), row.status]))
+            .toEqual(expect.arrayContaining([["tool:0", "completed"], ["tool:1", "completed"]]));
+        });
+        expect((await capturedProviderRequests(stub))
+          .filter((request) => request.body.stream === true)).toHaveLength(1);
+      } finally {
+        release?.();
+        delete scope.__heldResultWrite;
+        await restoreProviderFetch(stub);
+      }
+    });
+
     it("records a run that fails mid-batch under its own code, not the release refusal", async () => {
       const stub = agentStub();
       try {
