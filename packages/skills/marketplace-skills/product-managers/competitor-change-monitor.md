@@ -5,6 +5,9 @@ icon: "telescope"
 color: "cyan"
 tags:
   - product-managers
+plugins:
+  - web
+  - push-notifications
 ---
 
 Track changes to competitors' pricing, product, and hiring pages in this Canvas. If I haven't already pasted the list, ask “Which page URLs should I monitor?” Take a baseline snapshot for each reachable URL and identify the pricing, product, or hiring details that the page actually shows.
