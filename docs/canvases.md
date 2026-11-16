@@ -439,7 +439,7 @@ several until one replaces them, and any listed one republishes.
   once leave the second a resource of the Chat that the Canvas does not list,
   logged `canvas_artifact_note_failed`.
 
-A person's publish (`POST /canvases/:id/artifacts`) always replaces.
+A person's publish (`POST /canvases/:id/artifacts`) of a resource the Canvas does not list replaces.
 
 A replaced artifact keeps its resource, versions, `publication_parent_id` and
 `artifact_registry` row, so its URL still serves to the Canvas's readers; only

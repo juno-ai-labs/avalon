@@ -111,10 +111,11 @@ export class CanvasPublicationService {
     if (published.outcome !== "unchanged" || completed || !version?.listed) {
       const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
         workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
-      // A Canvas holds one artifact, and a person publishing into it is
-      // choosing what it shows: theirs replaces whatever it held.
+      // A Canvas holds one artifact, and a person publishing a new one into
+      // it is choosing what it shows: it replaces whatever it held. A new
+      // version of one it lists replaces nothing.
       await workspace.canvasNoteArtifact({ workspaceId: this.auth.workspaceId, canvasId, resourceId: published.resourceId,
-        editor: { kind: "person", id: this.auth.userId }, replace: true });
+        editor: { kind: "person", id: this.auth.userId }, replace: !version?.listed });
     }
     const url = await conversationCanonicalUrl(this.env, { region: this.env.AVALON_REGION, workspaceId: this.auth.workspaceId,
       parentId: canvasId, artifactId: published.resourceId }).catch(() => null);
