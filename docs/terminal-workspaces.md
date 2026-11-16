@@ -112,9 +112,14 @@ reason; the lease then stays with the run until its next call releases it,
 the run yields, or the lease deadline passes. A claim that finds the row no longer
 describing the cached sandbox (the generation replaced, the sandbox stopped by
 the sweep or a policy change) runs readiness again under the lease. So a
-conversation and the agents it starts interleave at call granularity: a
-sibling's `sandbox_busy` is a wait of seconds, for the length of one call or
-one command, and the model is told to retry rather than to wait for a run.
+conversation and the agents it starts interleave at call granularity. A call
+that finds a sibling holding the lease waits for it inside the tool, trying
+again every 250 ms for up to `TERMINAL_BUSY_WAIT_MS` (5 s), and does its work
+as soon as a try succeeds. Only the first try recovers a yielded holder's
+operation, since that asks the provider to stop a command; the retries only ask
+for the lease. Past the wait the call answers `sandbox_busy` and the model is
+told to retry rather than to wait for a run. A long command outlasts the wait,
+so its siblings are still refused.
 The reads, `read_file` and `view_image`, take no lease at all: it needs the sandbox running and the
 authority fingerprint to be this caller's, both read from the row, and it
 neither waits on another run's call nor blocks one. The bargain is that a read
@@ -138,7 +143,11 @@ joins this run's own readiness before it looks at the row, because the row is
 marked running before the checkout is prepared, and it takes the sandbox from
 the row only when the checks readiness makes also hold, the authority
 fingerprint, no revoked import, and a selected repository bootstrapped into
-this generation; otherwise it goes through readiness like a write.
+this generation; otherwise it goes through readiness like a write. An import
+still `planned` while a run holds a live lease is that run's import in flight,
+not a revoked one, and a read passes over it; once the lease has lapsed, a
+`planned` import is left over and the read goes through readiness, which
+cleans it up.
 
 Rally creates sandboxes from its own `rally-terminal-1` snapshot: Daytona's
 managed `daytonaio/sandbox:0.10.0` base with SQLite, `gh`, pnpm, and `tsx`
@@ -1497,6 +1506,35 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-16 — A busy lease is waited out inside the tool call, and reads pass over an import in flight
+
+**What changed:** A call waits up to `TERMINAL_BUSY_WAIT_MS` for a sibling's
+lease before answering `sandbox_busy`, and `peekRunning` passes over a
+`planned` import while a lease is live (both described above).
+
+**Why:** A Canvas's Chat started four background agents on one newsletter
+site, sharing its Terminal. Five calls across three agents were refused
+`sandbox_busy` while a sibling's call ran: one agent retried by hand, one asked
+its siblings to stay out of the Terminal, and one skipped a feed test it never
+ran again. Each was a wait of seconds the tool could have waited out. One of
+the five was a `read_file`, which takes no lease: the artwork agent's import
+was still `planned`, `hasRevokedImportedResource` counted that as revoked, and
+the read fell back to readiness and the importer's lease. The team set the
+wait at five seconds, the delay the refusal already asks the model for.
+
+**Considered and rejected:** Recovering on every try, which asks the provider
+to stop a yielded run's command up to twenty times in one wait, and takes the
+lease over once a stop that failed later succeeds. A wake-up signal on
+release, which the Terminal object does not have. A queue of waiters, which no
+measurement here can justify.
+
+**Consequences:** Readiness still counts a `planned` import as revoked, and
+that is safe only because it checks after claiming the lease, when the only
+`planned` import it can see is one a crashed run left. A change that checks
+imports before the claim would make a primary run rebuild the sandbox over a
+sibling's import in flight. A `planned` import row names no run, so reads also
+pass over a leftover import while an unrelated run holds the lease.
 
 ### 2026-11-16 — Directory listings reuse their digests; site files stream; size refusals are logged
 
