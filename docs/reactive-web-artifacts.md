@@ -885,7 +885,7 @@ keeping its own code (`daytona_file_stream_http_<status>`, say). Each logs
   import streaming, not before. With `ARTIFACT_BLOB_STORE=on`, bytes the live
   version already stores as this artifact's blobs, at any path, count against
   neither, so a site can hold a feed's episodes and each republish moves only
-  the new one. With it off (this release) every file counts, as before blobs. A data page returns at most 200 rows.
+  the new one. It is on in production. A data page returns at most 200 rows.
 
 Canvas archive records one durable `canvas_archive_artifact` alarm entry per
 registered site in WorkspaceDO. Delivery writes `archived_canvases` in the artifact
@@ -901,8 +901,7 @@ boundary ([Canvases](canvases.md#archiving)).
 ## Testing
 
 
-`wrangler.test.jsonc` sets `ARTIFACT_BLOB_STORE=on`, so the workerd suite runs
-the blob path that production does not run yet; the flag-off write path is
+`wrangler.test.jsonc` sets `ARTIFACT_BLOB_STORE=on`, as production does; the flag-off write path is
 covered by `artifact-asset-uploads.test.ts` "writes each file under its
 version's own prefix…". The blob, revalidation and file-name behavior is in
 `canvas-artifact-access.test.ts`.
