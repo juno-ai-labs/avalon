@@ -1,10 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { directoryListingCommands } from "../src/services/terminal/site-publish";
 
@@ -13,7 +13,9 @@ import { directoryListingCommands } from "../src/services/terminal/site-publish"
  * `sha256sum` wrapped to record which files it hashed: what the cache is for
  * is the hashing it skips, which only the calls show.
  */
-describe("the sandbox's cached directory listing", () => {
+// The listing is GNU shell (`find -printf`, `%C@`, `sha256sum`), as the
+// Daytona sandbox is; macOS has none of it.
+describe.skipIf(process.platform !== "linux")("the sandbox's cached directory listing", () => {
   let root: string;
   let target: string;
   let cache: string;
@@ -94,15 +96,19 @@ describe("the sandbox's cached directory listing", () => {
   it("keeps the digests it computed when the listing is stopped before it finishes", async () => {
     writeFileSync(join(target, "index.html"), "<h1>Show</h1>");
     for (const name of ["a", "b", "c"]) writeFileSync(join(target, "episodes", `${name}.mp3`), `episode ${name}`);
-    // Hashing `c` hangs, and the listing is stopped the way its time limit stops it.
+    // Hashing `c` signals that it started and then hangs; the listing is
+    // stopped then, the way its time limit stops it, so no clock decides it.
+    const reached = join(root, "reached-c");
     writeFileSync(join(bin, "sha256sum"), readFileSync(join(bin, "sha256sum"), "utf8")
-      .replace("exec ", `case "$2" in *c.mp3) [ -n "$RALLY_SLOW" ] && sleep 30;; esac\nexec `));
+      .replace("exec ", `case "$2" in *c.mp3) if [ -n "$RALLY_SLOW" ]; then : > '${reached}'; sleep 30; fi;; esac\nexec `));
     writeFileSync(hashed, "");
-    try {
-      execFileSync("timeout", ["--signal=TERM", "--kill-after=1s", "3s", "bash", "-c",
-        [`target='${target}'`, ...directoryListingCommands(cache)].join("\n")],
-      { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RALLY_SLOW: "1" }, stdio: "ignore" });
-    } catch { /* stopped, as intended */ }
+    const listing = spawn("bash", ["-c", [`target='${target}'`, ...directoryListingCommands(cache)].join("\n")], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RALLY_SLOW: "1" }, stdio: "ignore", detached: true,
+    });
+    const exited = new Promise((resolve) => listing.once("exit", resolve));
+    await vi.waitFor(() => { if (!existsSync(reached)) throw new Error("not yet"); }, { timeout: 15_000, interval: 20 });
+    process.kill(-listing.pid!, "SIGTERM");
+    await exited;
     // The next listing hashes only what the stopped one had not finished.
     const next = list();
     expect(next.hashed.sort()).toEqual(["episodes/c.mp3", "index.html"]);

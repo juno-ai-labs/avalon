@@ -126,6 +126,16 @@ type ArtifactSecurityHeaderOptions = Readonly<{
   revalidate?: boolean;
 }>;
 
+/**
+ * Whether stored bytes may stay in the browser and be revalidated. Not for a
+ * document navigation: a browser shows its back-forward and session-restore
+ * copies of those without asking, so a file opened in a tab would outlive its
+ * Canvas going private. A podcast app or an embedded load revalidates.
+ */
+function revalidatable(request: Request): boolean {
+  return request.headers.get("sec-fetch-dest") !== "document";
+}
+
 function withSecurityHeaders(
   response: Response,
   options: ArtifactSecurityHeaderOptions = {},
@@ -329,7 +339,7 @@ async function serveAdmitted(
       const served=await storedObjectResponse(env.PAYLOADS,version.contentRef,request,
         {'content-type':version.mimeType,'content-disposition':contentDisposition('inline',admission.file.title)});
       if(!served) return html(neutralPage(),503);
-      return withSecurityHeaders(served,{revalidate:true});
+      return withSecurityHeaders(served,{revalidate:revalidatable(request)});
     }
     const admitted: Admitted = admission;
 
@@ -464,7 +474,7 @@ async function serveAsset(
   }
   const served = await storedObjectResponse(env.PAYLOADS, key, request, { "content-type": asset.contentType });
   if (!served) return html(plainErrorPage("This page is temporarily unavailable."), 503);
-  return withSecurityHeaders(served, { revalidate: true });
+  return withSecurityHeaders(served, { revalidate: revalidatable(request) });
 }
 
 async function serveCurrent(
