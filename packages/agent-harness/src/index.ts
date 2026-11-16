@@ -3778,7 +3778,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "plugin_inspect",
-    description: "Inspect one authorized plugin's trusted system guidance and exact tool schemas before recommending it.",
+    description: "Inspect one authorized plugin's trusted system guidance and exact tool schemas before recommending it. An event's resourceRelationships are optional: a rule with no resource covers every such event on the whole account.",
     capability: "rally.sidekick.plugins.inspect",
     mode: "read",
     idempotency: "safe",
