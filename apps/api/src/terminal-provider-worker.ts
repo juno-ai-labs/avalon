@@ -144,6 +144,11 @@ export class TerminalProviderSessionTarget extends RpcTarget implements Terminal
     return terminalProviderRpcCall(() => this.provider.readFile(idOrName, path), callbacks);
   }
 
+  openFile(idOrName: string, path: string, callbacks?: TerminalProviderRpcCallbacks) {
+    return terminalProviderRpcCall(() => withTerminalProviderRpcAbort(callbacks, (signal) =>
+      this.provider.openFile(idOrName, path, signal)), callbacks);
+  }
+
   writeFile(
     idOrName: string,
     path: string,

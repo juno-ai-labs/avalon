@@ -1,4 +1,5 @@
-import { SITE_MANIFEST_MIME_TYPE, asUserId } from "@rally/contracts";
+import { siteFileSize } from "../src/services/terminal/site-resource-bridge";
+import { SITE_MANIFEST_MIME_TYPE, asArtifactId, asUserId, type ArtifactManifest } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -276,6 +277,8 @@ function fixture(
       contentMode: "read", derivativeStatus: "pending", createdAt: "2026-08-13T12:00:00.000Z",
     })),
     publishedKindForPath: vi.fn(async (): Promise<"site" | "archive" | "file" | null> => null),
+    noteOversizedPublish: vi.fn(),
+    liveSiteFiles: vi.fn(async () => null),
     publishSiteResource: vi.fn(async (
       _context,
       input,
@@ -287,7 +290,7 @@ function fixture(
       url: `https://${"1".repeat(8)}-g.rallyusercontent.test`,
       mode: site.mode, stateful: site.stateful, version: 1,
       mimeType: SITE_MANIFEST_MIME_TYPE, fileCount: site.files.length,
-      totalBytes: site.files.reduce((total, file) => total + file.bytes.byteLength, 0),
+      totalBytes: site.files.reduce((total, file) => total + siteFileSize(file), 0),
       manifestSha256: "c".repeat(64), createdAt: "2026-08-13T12:00:00.000Z",
     })),
   };
@@ -1434,6 +1437,16 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.runCommand).not.toHaveBeenCalled();
   });
 
+  it("records a publish refused for its size, with the size and the limit, before refusing it", async () => {
+    const { files, resources, runtime } = fixture();
+    files.set("/workspace/.rally-output/episode.mp3", new Uint8Array(25_000_001));
+    await expect(runtime.publishResource(context, { filePath: "episode.mp3" }))
+      .rejects.toMatchObject({ code: "resource_limit_exceeded" });
+    expect(resources.noteOversizedPublish).toHaveBeenCalledWith(context,
+      { shape: "file", sizeBytes: 25_000_001, limitBytes: 25_000_000, filePath: "episode.mp3" });
+    expect(resources.publishResource).not.toHaveBeenCalled();
+  });
+
   it("uses create-only automatic import destinations and delegates publication bytes", async () => {
     const { files, provider, resources, runtime } = fixture();
     await expect(runtime.importResource(context, { resourceId: "00000000-0000-4000-8000-000000000099" })).resolves.toMatchObject({
@@ -1502,6 +1515,81 @@ describe("Daytona Terminal runtime", () => {
     expect(site.files.map((file) => file.path).sort()).toEqual(["index.html", "index.js", "style.css"]);
     expect(site.serverModuleSha256).toMatch(/^[0-9a-f]{64}$/u);
     expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/rsvp/index.js");
+  });
+
+  it("settles each site file as already stored, streamed, or read, and counts each budget on its own", async () => {
+    const { files, provider, resources, runtime } = fixture();
+    const big = new Uint8Array(20_000_000).fill(7);
+    const art = new Uint8Array(10).fill(3);
+    const next = new Uint8Array(20_000_000).fill(8);
+    files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode('<meta property="og:image" content="cover.png">'));
+    files.set("/workspace/.rally-output/feed/about.html", new TextEncoder().encode("<p>About</p>"));
+    files.set("/workspace/.rally-output/feed/episodes/one.mp3", big);
+    files.set("/workspace/.rally-output/feed/cover.png", art);
+    files.set("/workspace/.rally-output/feed/episodes/two.mp3", next);
+    provider.openFile = vi.fn(async (_id: string, path: string) => new Response(files.get(path)!.slice().buffer).body!);
+    const live: ArtifactManifest = {
+      version: 1, artifactId: asArtifactId("00000000-0000-7000-8000-0000000000a1"), artifactVersion: 4,
+      mode: "static", stateful: false, serverModuleSha256: null, assetStore: "blobs",
+      totalBytes: 0, publishedAt: "2026-11-16T00:00:00.000Z", assets: [
+        // Stored under another name: matched by its bytes, not its path.
+        { path: "episodes/old-name.mp3", contentType: "audio/mpeg", sha256: await sha256Hex(big), sizeBytes: big.byteLength },
+        { path: "cover.png", contentType: "image/png", sha256: await sha256Hex(art), sizeBytes: art.byteLength },
+      ],
+    };
+    vi.mocked(resources.liveSiteFiles).mockResolvedValueOnce({ manifest: live });
+    // 40 MB of episodes, but only the new 20 MB one moves and counts.
+    await runtime.publishResource(context, { filePath: "feed" });
+    const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
+    const named = (path: string) => site.files.find((file) => file.path === path)!;
+    expect(named("episodes/one.mp3")).toEqual({ path: "episodes/one.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength, storedIn: live.artifactId });
+    const streamed = named("episodes/two.mp3");
+    expect(streamed).not.toHaveProperty("bytes");
+    expect(streamed).not.toHaveProperty("stored");
+    // Compared by digest: element-wise equality on 20 MB of bytes exhausts the test's heap.
+    expect(await sha256Hex(new Uint8Array(await new Response(await (streamed as { open(): Promise<ReadableStream> }).open()).arrayBuffer())))
+      .toBe(await sha256Hex(next));
+    // Only index.html and the preview image it names are read whole, even when stored.
+    expect(named("cover.png")).toHaveProperty("bytes");
+    expect(named("index.html")).toHaveProperty("bytes");
+    expect(named("about.html")).not.toHaveProperty("bytes");
+    for (const path of ["episodes/one.mp3", "episodes/two.mp3", "about.html"]) {
+      expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", `/workspace/.rally-output/feed/${path}`);
+    }
+    expect(resources.noteOversizedPublish).not.toHaveBeenCalled();
+  });
+
+  it("refuses a site publish whose new files stream more than its budget, and says so", async () => {
+    const { files, provider, resources, runtime } = fixture();
+    files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode("<h1>Show</h1>"));
+    files.set("/workspace/.rally-output/feed/episodes/one.mp3", new Uint8Array(13_000_000).fill(1));
+    files.set("/workspace/.rally-output/feed/episodes/two.mp3", new Uint8Array(13_000_000).fill(2));
+    provider.openFile = vi.fn(async () => new Response("").body!);
+    await expect(runtime.publishResource(context, { filePath: "feed" }))
+      .rejects.toMatchObject({ code: "resource_limit_exceeded", message: expect.stringContaining("If one new file is over this by itself, make it smaller") });
+    expect(resources.noteOversizedPublish).toHaveBeenCalledWith(context,
+      { shape: "directory", sizeBytes: 26_000_000, limitBytes: 25_000_000, filePath: "feed" });
+    expect(resources.publishSiteResource).not.toHaveBeenCalled();
+  });
+
+  it("refuses a page over the buffered budget before reading it", async () => {
+    const { files, provider, resources, runtime } = fixture();
+    files.set("/workspace/.rally-output/feed/index.html", new Uint8Array(25_000_001));
+    await expect(runtime.publishResource(context, { filePath: "feed" })).rejects.toMatchObject({ code: "resource_limit_exceeded" });
+    expect(resources.noteOversizedPublish).toHaveBeenCalledWith(context,
+      { shape: "directory", sizeBytes: 25_000_001, limitBytes: 25_000_000, filePath: "feed" });
+    expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/feed/index.html");
+  });
+
+  it("names a listing that timed out instead of calling the output unstable", async () => {
+    const { files, provider, runtime } = fixture();
+    files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode("<h1>Show</h1>"));
+    const listing = vi.mocked(provider.runUtilityCommand).getMockImplementation()!;
+    provider.runUtilityCommand = vi.fn(async (id, input) => input.operation === "resource.publish.inspect_target"
+      ? { exitCode: 124, stdout: "directory\n", stderr: "", timedOut: true }
+      : listing(id, input));
+    await expect(runtime.publishResource(context, { filePath: "feed" }))
+      .rejects.toMatchObject({ code: "resource_listing_timed_out" });
   });
 
   it("publishes a directory with only index.html as a static site with no database", async () => {

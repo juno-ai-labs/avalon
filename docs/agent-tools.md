@@ -969,13 +969,15 @@ inference endpoint and key are both configured, and Bind exposes its tools as
 `generate_image` and
 `edit_image`, and
 `generate_audio`. All three are serial
-`record_before_execute` writes with a five-minute timeout.
+`record_before_execute` writes with a five-minute timeout, except that a
+`generate_audio` call whose text needs more than one speech request gets the
+longest tool deadline `ToolDefinitionSchema` allows (1,050 seconds).
 
 | Tool | Strict input | Successful `output` |
 | --- | --- | --- |
 | `generate_image` | `{ prompt: string, title?: string, size?: "auto" \| "1024x1024" \| "1536x1024" \| "1024x1536" }` | One attached `generated_file` resource plus an ephemeral image part for the current model turn. |
 | `edit_image` | `{ resourceId: UUID, prompt: string, title?: string, size?: same enum, maskResourceId?: UUID }` | A new version of that same attached image resource, preserving its resource ID and history, plus an ephemeral image part. The source must be an attached PNG, JPEG, or WebP image; a mask must be an attached PNG. |
-| `generate_audio` | `{ text: string (1–4096 characters), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
+| `generate_audio` | `{ text: string (non-empty; longer than one request is recorded in pieces), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
 
 Both calls use Azure's `gpt-image-2` deployment. The caller controls only the
 prompt, title, and advertised size: moderation is fixed to `low`, quality to
@@ -986,7 +988,13 @@ R2 publication. Prompt text is never copied into resource metadata or logs.
 Audio calls use the main Azure `gpt-4o-mini-tts` deployment, whose live
 deployment version was `2025-12-15` when this contract was added. The response
 format and image count have no tool arguments: the response is exactly one MP3,
-and the voice defaults to `marin`. Text and optional speaking instructions are
+and the voice defaults to `marin`. Azure reads at most 4,096 characters per
+request, so longer text is split with message read-aloud's splitter
+(`speech-pieces.ts`), recorded piece by piece in order with the same voice and
+instructions, and joined into one MP3 without each piece's ID3 tags and length
+header. Each piece may use only what the earlier ones left of
+`MAX_ATTACHMENT_BYTES`, so text too long to keep stops at the piece that
+crosses it. Text and optional speaking instructions are
 sent to Azure but are not copied into the resource metadata, receipt, or logs.
 The plugin system message requires the final response to disclose that the
 recording uses an AI voice. Audio is a playable resource for people, not model
@@ -1112,7 +1120,10 @@ Common failures are designed as loop repairs:
 | `destination_exists` | Choose a new import destination or set `overwrite: true` only after confirming replacement is intended. |
 | `destination_not_regular` | Choose an absent destination or a regular file; Rally will not write through links, devices, or directories. |
 | `limit_exceeded`, `resource_limit_exceeded` | Narrow/split the operation or reduce the input/output size before retrying. Archives and unfamiliar binary types still publish as download-only `other` resources. |
-| `resource_empty`, `resource_not_ready` | Regenerate a non-empty file beneath `AVALON_RESOURCE_DIR`, wait for its producer to finish, then publish the stable final path with a new invocation. |
+| `resource_empty`, `resource_not_ready` | Regenerate a non-empty file beneath `AVALON_RESOURCE_DIR`, wait for its producer to finish, then publish the stable final path with a new invocation. For a site, `details.code: "site_file_changed_after_listing"` names a file whose bytes changed after it was listed. |
+| `resource_listing_timed_out` | Hashing the output ran out of time. For a directory, retry the same call: each retry continues from the files already hashed. If two retries in a row also time out, or the output is one file, tell the person it is too large to publish now. |
+| `resource_publish_failed` (site) | Storing a site file failed with the code in `details.code` (`daytona_file_stream_http_<status>`, say). Retry once; if the same code returns, stop and tell the person the site was not updated. It keeps serving its current version. |
+| `resource_not_importable` | Part of a site's source is unavailable. Retry the import once; if it fails again, stop and tell the person. Never publish the site's path without its current files. |
 | `command_rejected` | Use one bounded foreground command or a dedicated file tool; do not retry a PTY, detached/background process, or remote shell. Git and GitHub CLI are ordinary bounded commands whose actual authority comes from the selected repository credential. |
 | `sandbox_busy` | Wait the model-visible `retryAfterMs` before checking again. That value is retry cadence, not the lease deadline: an active harness execution owns the workspace through its valid operation lease, while an unsettled retained command blocks until Rally confirms provider quiescence. A `submitting` task renews exact durable authority before each provider mutation, then becomes `running` with the requested command-plus-observation horizon after provider acceptance. Recovery and lifecycle cleanup likewise renew their exact token before later provider mutations and cannot revive an expired token. An accepted `running` command requires whole-sandbox stop before linked handoff because named-session deletion does not prove the process stopped; a pre-acceptance or otherwise unprovable sandbox is retired and advanced to a fresh generation. Final expiry instead commits `expired` and preserves its final-diff reference. Never repeat a prior ambiguous command under a new invocation. |
 | command `timed_out`, `cancelled`, `output_limit_exceeded` | Inspect the final bounded output or `outputResourceId`, reduce the job, and rerun as a new bounded command only when doing so is safe. |

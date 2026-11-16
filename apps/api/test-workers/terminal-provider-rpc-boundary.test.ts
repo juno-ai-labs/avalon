@@ -95,6 +95,17 @@ describe("Terminal provider Service Binding RPC protocol", () => {
     }, { timeout: 5_000 });
   });
 
+  it("streams a file across the Worker boundary, readable after the call returns and the client is disposed", async () => {
+    const provider = createTerminalProviderRpcClient({
+      createSession: (configuration, instrumentation) => binding.createSession(configuration, instrumentation),
+    }, CONFIGURATION);
+    const stream = await provider.openFile!("sandbox-a", "/workspace/episode.mp3");
+    provider[Symbol.dispose]();
+    const text = await new Response(stream).text();
+    expect(text.slice(0, 33)).toBe("sandbox-a:/workspace/episode.mp3:");
+    expect(text.length).toBe(33 + 200_000);
+  });
+
   it("carries a start deadline across the Worker boundary in the position the session reads", async () => {
     // Every other test of this doubles the RPC client in-process, which cannot
     // see an argument-position skew: a deadline landing in the wrong slot comes

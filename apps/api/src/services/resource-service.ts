@@ -2,7 +2,7 @@ import { contentDisposition } from '../lib/content-disposition';
 import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { resolveShareableResources } from './resource-share-rules';
-import { annotationAllowedForResource, type Annotation, ArtifactManifestSchema, artifactAssetKey } from "@rally/contracts";
+import { annotationAllowedForResource, type Annotation, ArtifactManifestSchema, manifestAssetKey } from "@rally/contracts";
 import { resolveAssetPath } from "../artifacts/serving-policy";
 import { protectCanvaReference, readCanvaReference } from "./canva-resource-access";
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
@@ -544,7 +544,7 @@ export class ResourceService {
     if (!registry || registry.artifact_id !== manifest.artifactId) throw new ApiError(404,'artifact_not_found','The artifact is unavailable');
     const path = resolveAssetPath(new URL(pagePath,'https://artifact.invalid').pathname,new Set(manifest.assets.filter((asset) => asset.contentType.startsWith('text/html')).map((asset) => asset.path)));
     if (!path) throw new ApiError(404,'annotation_original_page_unavailable','The original page cannot be shown again');
-    const object = await this.env.PAYLOADS.get(artifactAssetKey(manifest.artifactId,manifest.artifactVersion,path));
+    const object = await this.env.PAYLOADS.get(manifestAssetKey(manifest,manifest.assets.find((asset)=>asset.path===path)!));
     if (!object) throw new ApiError(404,'annotation_original_page_unavailable','The original page cannot be shown again');
     return new Response(object.body,{headers:{'content-type':'text/html; charset=utf-8','content-security-policy':"default-src 'none'",'cache-control':'private, no-store'}});
   }

@@ -1,5 +1,6 @@
 import { AuthorizationService } from "../authorization-service";
 import { asWorkspaceId, DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
+import { publishedFilePath } from "@rally/contracts/artifact-access";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import {
   AttachmentKindSchema,
@@ -41,9 +42,10 @@ import type { TerminalResourceBridge } from "./runtime";
 import {
   importTreeFailure,
   materializeTreeCommand,
-  readArtifactVersionFiles,
+  readArtifactVersionFile,
+  storedArtifactVersionPaths,
 } from "./site-import";
-import { existingArtifactForResource, publishSiteVersion } from "./site-resource-bridge";
+import { existingArtifactForResource, publishSiteVersion, servedManifest, siteFileSize } from "./site-resource-bridge";
 import {
   requireTerminalEffectIntent,
   TerminalToolError,
@@ -434,8 +436,8 @@ export function createTerminalResourceBridge(
     }
     // Throws `resource_not_importable` for a version whose bytes are gone,
     // rather than materializing part of a tree.
-    const files = await readArtifactVersionFiles(env, manifest);
-    const totalBytes = files.reduce((total, file) => total + file.bytes.byteLength, 0);
+    const files = await storedArtifactVersionPaths(env, manifest);
+    const totalBytes = files.reduce((total, file) => total + file.sizeBytes, 0);
     const absolute = `/workspace/${destination}`;
     const staging = `/workspace/.rally/tmp/${newId()}`;
     const cleanupStaging = async (): Promise<void> => {
@@ -501,11 +503,12 @@ export function createTerminalResourceBridge(
         now: plannedAt,
       });
     try {
+      // One file in memory at a time: a site can hold a feed's episodes.
       for (const file of files) {
         await provider.writeFile(
           providerSandboxId,
           `${staging}/${file.path}`,
-          file.bytes,
+          await readArtifactVersionFile(env, file),
           context.signal,
         );
       }
@@ -581,14 +584,17 @@ export function createTerminalResourceBridge(
    * say) without asking a person to copy its link. Only a file the Canvas
    * noted gets one: any other would be a link that never serves.
    */
-  const withFileUrl = async <T extends { resourceId: string }>(workspaceId: string, published: T, inCanvas: boolean): Promise<T> => {
+  const withFileUrl = async <T extends { resourceId: string; title: string }>(workspaceId: string, published: T, inCanvas: boolean): Promise<T> => {
     if (!inCanvas) return published;
     // The file has landed, so a reservation that cannot run must not turn the
     // publish into a failure the model would retry; it is logged by name and
     // the result goes back without a link, as a file outside a Canvas would.
     try {
       const hostnameStub = await ensureArtifactHostname(env, { workspaceId, artifactId: published.resourceId });
-      return { ...published, url: artifactOrigin(hostnameStub, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN) };
+      // The URL ends in the file's own name where it has one, as podcast apps
+      // and download managers read a file's type from it.
+      const origin = artifactOrigin(hostnameStub, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN);
+      return { ...published, url: `${origin}${publishedFilePath(published.title) ?? ""}` };
     } catch (error) {
       logWarn(env, "canvas_file_hostname_failed", {
         workspace_id: workspaceId, resource_id: published.resourceId,
@@ -893,6 +899,7 @@ export function createTerminalResourceBridge(
       const target = await publicationAddress(context, input, input.providerResourceId);
       const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
       if (bytes.byteLength > maximum) {
+        bridge.noteOversizedPublish(context, { shape: "file", sizeBytes: bytes.byteLength, limitBytes: maximum, filePath: input.filePath });
         throw new TerminalToolError("resource_limit_exceeded", `The file is ${bytes.byteLength} bytes; published resources allow at most ${maximum}. Reduce or split it and retry.`, { field: "filePath", expected: `file bytes at most ${maximum}` });
       }
       // A receipt is still required before anything is written: an unplanned
@@ -1068,6 +1075,34 @@ export function createTerminalResourceBridge(
       };
     },
 
+    async liveSiteFiles(context, filePath, input = {}) {
+      const target = await publicationAddress(context, input);
+      const providerResourceId = await publishedResourceIdentity(target.parentId, filePath, target.substreamId);
+      const row = await existingPublication(context, target, filePath, providerResourceId);
+      if (!row || row.resource_type !== "generated_site") return null;
+      const served = await existingArtifactForResource(workspace, context.workspaceId, row.id);
+      // Only bytes already in this artifact's blobs can be left unwritten, so
+      // only then does anything count as stored. With blobs off, or a live
+      // version from before them, every file streams and counts.
+      if (!served || env.ARTIFACT_BLOB_STORE !== "on") return null;
+      const manifest = await servedManifest(env, served);
+      return manifest?.assetStore === "blobs" ? { manifest } : null;
+    },
+
+    noteOversizedPublish(context, refused) {
+      // The extension and the sizes only: a path is the participant's own
+      // naming and may say what the file is about.
+      const extension = /\.([A-Za-z0-9]{1,10})$/u.exec(refused.filePath)?.[1]?.toLowerCase() ?? null;
+      logWarn(env, "terminal_publish_over_size_limit", {
+        workspace_id: context.workspaceId,
+        harness_run_id: context.harnessRunId,
+        shape: refused.shape,
+        extension,
+        size_bytes: refused.sizeBytes,
+        limit_bytes: refused.limitBytes,
+      });
+    },
+
     async publishedKindForPath(context, filePath, input = {}) {
       const target = await publicationAddress(context, input);
       const providerResourceId = await publishedResourceIdentity(target.parentId, filePath, target.substreamId);
@@ -1144,7 +1179,7 @@ export function createTerminalResourceBridge(
           mode: previous.mode,
           stateful: site.stateful,
           fileCount: site.files.length,
-          totalBytes: site.files.reduce((total, file) => total + file.bytes.byteLength, 0),
+          totalBytes: site.files.reduce((total, file) => total + siteFileSize(file), 0),
           manifestSha256: settled.content_sha256 ?? "",
           hostnameStub,
           slug: settled.slug,

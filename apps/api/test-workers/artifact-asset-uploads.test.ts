@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
 import { reset } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { artifactAssetKey, artifactManifestKey } from "@rally/contracts";
+import { artifactBlobKey, artifactManifestKey, manifestAssetKey } from "@rally/contracts";
+import { sha256Hex } from "../src/lib/crypto";
 import { writeArtifactVersion } from "../src/services/terminal/site-resource-bridge";
 
 const artifactId = "00000000-0000-7000-8000-0000000000b1";
@@ -11,10 +12,11 @@ const input = {
   resourceId: "00000000-0000-7000-8000-0000000000e1",
   artifactId, region: "global" as const, version: 3, mode: "static" as const,
   stateful: false, serverModuleSha256: null, fallbackTitle: "Plan",
-  files: Array.from({ length: 8 }, (_, index) => ({
-    path: index === 0 ? "index.html" : `asset-${index}.txt`,
-    bytes: new TextEncoder().encode(index === 0 ? "<title>Plan</title>" : `asset ${index}`),
-    sha256: "1".repeat(64),
+  // Each its own bytes and digest: R2 checks every write against its digest,
+  // and files with the same digest share one stored copy.
+  files: await Promise.all(Array.from({ length: 8 }, async (_, index) => {
+    const bytes = new TextEncoder().encode(index === 0 ? "<title>Plan</title>" : `asset ${index}`);
+    return { path: index === 0 ? "index.html" : `asset-${index}.txt`, bytes, sha256: await sha256Hex(bytes) };
   })),
 };
 
@@ -22,6 +24,20 @@ beforeEach(async () => { await reset(); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("artifact asset publication in real R2", () => {
+  it("writes each file under its version's own prefix until blob writes are turned on", async () => {
+    const streamedBytes = new TextEncoder().encode("episode audio");
+    const streamed = { path: "episodes/one.mp3", sha256: await sha256Hex(streamedBytes), sizeBytes: streamedBytes.byteLength,
+      open: async () => new Response(streamedBytes).body! };
+    const result = await writeArtifactVersion({ PAYLOADS: env.PAYLOADS }, { ...input, files: [...input.files, streamed] });
+    expect(await (await env.PAYLOADS.get(`artifact/${artifactId}/v3/assets/episodes/one.mp3`))?.text()).toBe("episode audio");
+    expect(result.manifest).not.toHaveProperty("assetStore");
+    for (const file of input.files) {
+      expect(await (await env.PAYLOADS.get(manifestAssetKey(result.manifest, file)))?.text())
+        .toBe(new TextDecoder().decode(file.bytes));
+      expect(manifestAssetKey(result.manifest, file)).toBe(`artifact/${artifactId}/v3/assets/${file.path}`);
+    }
+  });
+
   it("overlaps uploads and withholds the manifest until every asset is stored", async () => {
     const bucket = env.PAYLOADS;
     const put = bucket.put.bind(bucket);
@@ -43,7 +59,7 @@ describe("artifact asset publication in real R2", () => {
       activeAtManifest = active;
       return await put(...args);
     });
-    const publishing = writeArtifactVersion({ PAYLOADS: bucket }, input);
+    const publishing = writeArtifactVersion({ PAYLOADS: bucket, ARTIFACT_BLOB_STORE: "on" }, input);
     try {
       await expect.poll(() => started.length, { timeout: 5_000 }).toBe(6);
       expect(await bucket.get(artifactManifestKey(artifactId, 3))).toBeNull();
@@ -52,7 +68,7 @@ describe("artifact asset publication in real R2", () => {
     expect(maximum).toBe(6);
     expect(activeAtManifest).toBe(0);
     for (const file of result.manifest.assets) {
-      const stored = await (await bucket.get(artifactAssetKey(artifactId, 3, file.path)))?.text();
+      const stored = await (await bucket.get(manifestAssetKey(result.manifest, file)))?.text();
       expect(stored).toBeTypeOf("string");
       expect(stored).not.toBe("");
       const inputFile = input.files.find((candidate) => candidate.path === file.path);
@@ -70,12 +86,12 @@ describe("artifact asset publication in real R2", () => {
     const attemptedAssets: string[] = [];
     vi.spyOn(bucket, "put").mockImplementation(async (...args) => {
       if (args[0] !== artifactManifestKey(artifactId, 3)) attemptedAssets.push(args[0]);
-      if (args[0] === artifactAssetKey(artifactId, 3, "asset-1.txt")) throw new Error("R2 unavailable");
+      if (args[0] === artifactBlobKey(artifactId, input.files[1]!.sha256)) throw new Error("R2 unavailable");
       active += 1;
       try { return await put(...args); }
       finally { active -= 1; }
     });
-    await expect(writeArtifactVersion({ PAYLOADS: bucket }, input)).rejects
+    await expect(writeArtifactVersion({ PAYLOADS: bucket, ARTIFACT_BLOB_STORE: "on" }, input)).rejects
       .toMatchObject({ code: "resource_publish_failed" });
     expect(active).toBe(0);
     expect(attemptedAssets).toHaveLength(6);

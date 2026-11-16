@@ -179,7 +179,7 @@ async function readBoundedBody(response: Response, maximumBytes: number): Promis
 function audioTooLarge(actual: number, maximum: number): AzureAudioProviderError {
   return new AzureAudioProviderError(
     "resource_limit_exceeded",
-    `The generated audio is ${actual} bytes; Rally accepts at most ${maximum} bytes. Shorten the text and try again.`,
+    `The generated audio is ${actual} bytes; Rally accepts at most ${maximum} bytes. Split the text into sections, such as chapters or segments, and record each with its own call.`,
     false,
   );
 }

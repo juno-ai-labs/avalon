@@ -58,6 +58,7 @@ function reportingProvider(): DaytonaTerminalProvider {
     configureGitHubReadAccess: () => report(undefined),
     clearGitHubReadAccess: () => report(undefined),
     readFile: () => report(new Uint8Array([1])),
+    openFile: () => report(new Response("1").body!),
     writeFile: () => report(undefined),
     runUtilityCommand: () => report(COMMAND_RESULT),
     runCommand: () => report(COMMAND_RESULT),

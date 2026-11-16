@@ -107,6 +107,7 @@ export interface TerminalProviderRpcSession {
   ): Promise<TerminalProviderRpcResult<void>>;
   clearGitHubReadAccess(idOrName: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<void>>;
   readFile(idOrName: string, path: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<Uint8Array>>;
+  openFile(idOrName: string, path: string, callbacks?: TerminalProviderRpcCallbacks): Promise<TerminalProviderRpcResult<ReadableStream<Uint8Array>>>;
   writeFile(
     idOrName: string,
     path: string,

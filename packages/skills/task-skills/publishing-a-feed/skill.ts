@@ -20,6 +20,11 @@ import type { HarnessSkill } from "../../types";
  * `creating-a-podcast-episode`. It composes `building-live-sites` for the
  * handler and storage class rather than repeating them.
  *
+ * Media lives in the feed's own site, never as separately published files:
+ * a site page can play only its own files, and a republish moves only new
+ * files, so a growing show fits. Hence the import-then-republish order, on
+ * every addition, since a directory left from an earlier run may be stale.
+ *
  * The audience follows the site skill's standing procedure: public by default,
  * set after publishing, then said back to the person with a question at the
  * end. The build never waits on that answer.
@@ -57,9 +62,10 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    HTML, which go unescaped inside \`<![CDATA[…]]>\`; split any \`]]>\`
    inside them. Write that renderer once, check its output (step 9), and
    leave it alone. Adding an entry is one row write with \`write_artifact_data\`;
-   changing the show's description is one update to its row. Never store
-   rendered XML or calendar text in a row, and never republish the site to
-   add an entry. The reference lists each format's columns. A podcast's
+   changing the show's description is one update to its row. An entry with
+   a media file also adds that file to the site (step 7); the feed's code
+   never changes for it. Never store rendered XML or calendar text in a
+   row. The reference lists each format's columns. A podcast's
    chapters file is rendered the same way, from the chapters rows, at its
    own route (\`reference/apple-podcasts.md\`).
 
@@ -78,9 +84,9 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    - the feed URL in a read-only field with a **Copy link** button beside it;
    - one line each on adding it in two or three common apps for its kind
      (the reference names them);
-   - the newest entries, each with its title and date, and a link to its
-     media file when it has one (\`building-live-sites\`, Media, downloads
-     and feeds, says how).
+   - the newest entries, each with its title and date, and its media
+     playable in place: \`<audio controls preload="none" src="episodes/….mp3">\`
+     with the path from its row, plus a plain download link.
 
 5. **Give the feed its artwork.** A podcast or news feed needs a cover:
    load \`rally_multimodal_generation\` and generate one image at size
@@ -110,16 +116,41 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    }
    \`\`\`
 
-7. **Publish each media file on its own.** When entries carry audio,
-   video or per-entry artwork, publish each file with \`publish_resource\`
-   and store its \`url\` and \`sizeBytes\` in the entry's row. Never bundle
-   media into the site's own files: a site publish has a size cap one long
-   episode can fill. In a Sidekick run, name the feed's Canvas in
-   \`publish_resource\`'s \`canvas\` argument, or the file lands in the
-   run's own Canvas, with a different audience from the feed's. A result
-   with no \`url\` is a file no app can reach (\`building-live-sites\`,
-   Media, downloads and feeds). To make a podcast episode (the script, the
-   audio and its artwork), load \`creating-a-podcast-episode\`.
+7. **Keep every media file inside the feed's site.** An entry's audio,
+   video and artwork go in the site's own directory, such as
+   \`episodes/2026-11-14-no-ai-slop.mp3\`, never published on their own
+   with \`publish_resource\`: the page can play only its own files, and the
+   feed names them by the site's URL. Add an entry with media in this
+   order, which is \`building-live-sites\`' refresh sequence (take its
+   shared-output claim first in a Sidekick run):
+   1. **Recover the site before writing any file.** If the feed's site has
+      never been published, skip to 2: you are building it now (steps 2 to
+      6). Otherwise call \`import_resource\` with the site's \`resourceId\`,
+      \`destinationPath: ".rally-output/<site>"\` (relative to \`/workspace\`;
+      if you do not know \`<site>\`, use the path the import tool reports) and
+      \`overwrite: true\`, even when a directory is already there: a
+      directory missing the earlier episodes publishes as a site without
+      them. Move any unpublished edits in that directory aside first, as
+      \`overwrite\` replaces the whole tree. If the import fails, say so and
+      stop; never publish the path without its current files.
+   2. **Add the new files** to that directory (\`creating-a-podcast-episode\`
+      makes an episode's).
+   3. **Republish the whole directory** with \`publish_resource\`
+      \`filePath: "<site>"\` (relative to \`.rally-output\`). Only new or
+      changed files move (\`building-live-sites\`, Media, downloads and
+      feeds). In a Sidekick run, name the feed's Canvas in the \`canvas\` argument, or the site
+      lands in the run's own Canvas as a second site.
+   4. **Write the entry's row**, with the file's path in the site and its
+      size in bytes. Write it after the publish, so no row names a file
+      the site does not serve yet.
+
+   To make a podcast episode (the script, the audio and its artwork), load
+   \`creating-a-podcast-episode\`.
+
+   When setting up a Sidekick that adds entries, save in its instructions
+   the site's resource id and Canvas id, \`<site>\`, the show's voice
+   settings, and the claim procedure from \`tracking-seen-or-done-items\`
+   keyed by the site's resource id.
 
 8. **Set the audience right after publishing, as every site does.** An app never
    signs in, so the feed works only when the Canvas's artifacts are **public:
@@ -144,8 +175,9 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    \`xml.etree.ElementTree\`; for a calendar, confirm every line ends in CRLF
    and every \`VEVENT\` has a \`UID\` and \`DTSTART\`. Confirm every entry row
    appears. For a podcast, also fetch one episode's chapters file and parse
-   it as JSON. For media, send a \`HEAD\` to one file's URL, which should report
-   \`accept-ranges: bytes\` and the file's length. A new file can take a few
+   it as JSON. For media, send a \`HEAD\` to the newest entry's enclosure
+   URL, which should report \`accept-ranges: bytes\` and the length its row
+   states. A new file can take a few
    seconds to serve after it is published. If Terminal cannot reach the URL,
    say you could not check it rather than reporting that it works.
 
@@ -162,7 +194,9 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
 
 Say this when it matters; do not build around it.
 
-- **No caching.** Every refresh by every app reaches the site.
+- **No shared cache.** Every refresh by every app reaches the site. A
+  browser or app may keep a media file and ask whether it changed, which
+  costs a small answer instead of the whole file.
 
 ## Anti-patterns
 
@@ -173,6 +207,9 @@ Say this when it matters; do not build around it.
   copy the link from. Build the page with every feed.
 - **Asking who may open it before building.** The default is public; build,
   then say who can open it and ask.
+- **Writing episode files before recovering the site.** The directory then
+  exists without the earlier episodes, and publishing it removes them. Do
+  instead: import the site first, every time (step 7).
 - **A viewer check on the feed or its media.** Every app gets 401. Answer
   the feed first, with no identity.
 - **A new id on every retry.** Subscribers get the entry twice. Derive it
@@ -277,9 +314,9 @@ read the same tags, so write every podcast feed to these rules.
 | \`title\` | \`<title>\` and \`<itunes:title>\`: the episode's own title, without the show's name or an episode number. |
 | \`description_html\` | \`<description>\` and \`<content:encoded>\`, each wrapped in \`<![CDATA[…]]>\`: show notes with the source link. Keep to \`<p>\`, \`<a>\`, \`<ul>\`, \`<ol>\` and \`<li>\`. |
 | \`published_at\` | \`<pubDate>\`, RFC 2822 with a zone offset: \`Sat, 14 Nov 2026 17:02:39 +0000\`. |
-| \`audio_url\`, \`audio_bytes\` | \`<enclosure url="…" length="…" type="audio/mpeg"/>\`. Apple requires all three, and ignores a duplicate enclosure URL. |
+| \`audio_path\`, \`audio_bytes\` | \`<enclosure url="…" length="…" type="audio/mpeg"/>\`, with as \`<site origin>/<audio_path>\`. Apple requires all three, and ignores a duplicate enclosure URL. |
 | \`duration_seconds\` | \`<itunes:duration>\` in whole seconds. |
-| \`image_url\` | \`<itunes:image href="…"/>\`: the episode's art. Leave it out when there is none, and Apple shows the cover. |
+| \`image_path\` | \`<itunes:image href="…"/>\`: the episode's art, with as \`<site origin>/<audio_path>\`. Leave it out when there is none, and Apple shows the cover. |
 | \`episode_number\` | \`<itunes:episode>\`, counting from 1. Give each new row the next number. |
 | \`season_number\` | \`<itunes:season>\`, only for a show that has seasons. |
 | \`episode_type\` | \`<itunes:episodeType>\`: \`full\`, \`trailer\` or \`bonus\`. |
@@ -337,7 +374,8 @@ artwork command in \`creating-a-podcast-episode\`.
 ## Hosting
 
 Apple asks for a public feed URL and media that answers \`HEAD\` and
-byte-range requests. Rally serves both for files and site assets.
+byte-range requests. Rally serves both for every file in a site, so keep
+episodes in the feed's site (\`publishing-a-feed\`, step 7).
 
 ## Apple's categories
 

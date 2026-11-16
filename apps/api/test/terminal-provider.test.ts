@@ -56,6 +56,30 @@ describe("Daytona Terminal provider", () => {
     ]);
   });
 
+  it("streams a sandbox file through a signed download, and names a refused one by its status", async () => {
+    const downloadUrl = vi.fn(async (path: string) => `https://proxy.daytona.test/sandbox-files/files/download?path=${encodeURIComponent(path)}&signature=v1_x`);
+    const sandbox = { id: "sandbox-files", name: "sandbox-files", state: "started", downloadUrl };
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: vi.fn(async () => sandbox) }));
+    const fetched = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("episode bytes"))
+      .mockResolvedValueOnce(new Response("expired", { status: 403 }));
+    const controller = new AbortController();
+    try {
+      const stream = await provider.openFile!("sandbox-files", "/workspace/.rally-output/feed/one.mp3", controller.signal);
+      expect(await new Response(stream).text()).toBe("episode bytes");
+      // Signed for as long as the buffered download may take, and cancellable.
+      expect(downloadUrl).toHaveBeenCalledWith("/workspace/.rally-output/feed/one.mp3", 120);
+      expect(fetched).toHaveBeenNthCalledWith(1, expect.stringContaining("signature="), { redirect: "error", signal: controller.signal });
+      await expect(provider.openFile!("sandbox-files", "/workspace/.rally-output/feed/two.mp3"))
+        .rejects.toThrow("daytona_file_stream_http_403");
+    } finally {
+      fetched.mockRestore();
+    }
+  });
+
   it("detects direct-command timeouts in Daytona's stdout-only response", async () => {
     const executeCommand = vi.fn(async () => ({
       exitCode: 124,

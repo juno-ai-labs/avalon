@@ -282,6 +282,12 @@ export interface Env extends FeatureFlagEnvironment {
   WEB_SEARCH_MAX_RESULTS: string;
   WEB_FETCH_MAX_BYTES: string;
   MAX_ATTACHMENT_BYTES: string;
+  /**
+   * `on` writes new site versions as content-addressed blobs
+   * (`reactive-web-artifacts.md`). Off until a deploy whose readers all
+   * understand blobs has reached every Worker.
+   */
+  ARTIFACT_BLOB_STORE?: string;
   WEBHOOK_REPLAY_WINDOW_SECONDS: string;
   PROVIDER_WEBHOOK_MAX_BYTES?: string;
   LOG_LEVEL: "debug" | "info" | "warn" | "error";
