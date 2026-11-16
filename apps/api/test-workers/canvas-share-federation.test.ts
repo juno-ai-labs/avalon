@@ -3,7 +3,7 @@
  * (`docs/canvas-share-federation.md`): a Canvas explicitly shared with a guest
  * of its Organization shows in the guest's other Organization, built by the
  * Worker from the Canvas's own Organization and relayed to their socket there;
- * a change to it, or to the guest, invalidates through the interactive queue.
+ * a change to it, or to the guest, invalidates through the activity queue.
  * Nothing about the Canvas is stored outside its Organization.
  */
 
@@ -96,7 +96,7 @@ const titles = (frames: Frame[]) => frames.at(-1)?.items.map((item) => `${item.o
 beforeEach(async () => {
   await reset();
   vi.restoreAllMocks();
-  queued = vi.spyOn(env.INTERACTIVE_QUEUE, "send");
+  queued = vi.spyOn(env.ACTIVITY_QUEUE, "send");
   ORIGIN = asWorkspaceId(crypto.randomUUID());
   HOME = asWorkspaceId(crypto.randomUUID());
   CANVAS = crypto.randomUUID();
@@ -172,6 +172,24 @@ describe("Canvas share federation", () => {
     home.close();
   });
 
+  it("relays nothing and asks to be retried when an origin cannot answer, so a complete list stays", async () => {
+    const home = await connect(GUEST);
+    await drain();
+    expect(titles(home.frames)).toEqual(["Acme: Launch plan"]);
+    const before = home.frames.length;
+    // A second Organization they are a guest of, whose object refuses: it was never set up.
+    const unreachable = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspaces(id, region, name) VALUES (?, 'global', 'Unreachable')`).bind(unreachable),
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at) VALUES (?, ?, 'active', NULL, 'guest', ?)`)
+        .bind(unreachable, GUEST, NOW),
+    ]);
+    await expect(refreshSharedCanvases(env, { kind: "shared_canvases_refresh", region: "global", workspaceId: HOME, userId: GUEST, scope: "this" }))
+      .rejects.toThrow("shared_canvases_origin_unread");
+    expect(home.frames.length).toBe(before);
+    home.close();
+  });
+
   it("sends a support session nothing from the person's other Organizations", async () => {
     const supported = await connect(GUEST, "00000000-0000-7000-8000-0000000cc0ff");
     expect(await drain()).toEqual([]);
@@ -198,6 +216,10 @@ describe("Canvas share federation", () => {
     // A later build marks the end: everything relayed before it has arrived.
     await relay(await ticket(), "Last");
     await vi.waitFor(() => expect(home.frames.slice(before).map((frame) => frame.items[0]?.canvas.title)).toEqual(["Newer", "Last"]));
+    // The mark is on the socket, so it outlives the object's hibernation.
+    const marks = await runInDurableObject(object(HOME), (_instance: WorkspaceDO, state) => state.getWebSockets()
+      .map((socket) => (socket.deserializeAttachment() as { sharedCanvasesTicket?: number }).sharedCanvasesTicket));
+    expect(marks.every((mark) => typeof mark === "number" && mark > newer)).toBe(true);
     home.close();
   });
 });

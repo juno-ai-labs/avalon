@@ -31,7 +31,7 @@ for the person in the regional D1, so it covers every Organization and device.
 | `apps/api/src/durable-objects/canvas-share-federation.ts` | The origin half: WorkspaceDO migration 151 (triggers only) and the query behind `guestSharedCanvases`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Hooks only: the alarm that queues a refresh, the subscribe that queues one, `guestSharedCanvases`, and `relayTicket` and `relayToPerson`, which send a built frame to one person's sockets in order. |
 | `apps/api/src/services/shared-canvases.ts` | The Worker builder: which Organizations the person is in and a guest of, asking each origin, building each target's list and relaying it; the switch. |
-| `apps/api/src/services/interactive-queue.ts`, `queues/interactive-consumer.ts` | The `shared_canvases_refresh` kind and its handler ([`interactive-queue.md`](interactive-queue.md)). |
+| `apps/api/src/queues/activity-consumer.ts` | Runs `shared_canvases_refresh`, retrying one that fails. It is on the activity queue, not the interactive one, so connects and invalidations never wait in front of Slack replies. |
 | `packages/db/migrations/0135_shared_canvases_settings.sql` | The switch. |
 | `apps/api/src/routes/shared-canvases.ts` | `GET` and `PUT /workspace/me/shared-canvases`. |
 | `apps/desktop/src/renderer/lib/shared-canvases.ts`, `lib/workspace-socket.tsx` | The socket-owned list and the switch's read and save. |
@@ -49,7 +49,7 @@ for the person in the regional D1, so it covers every Organization and device.
    nothing, so a Chat message never fans out. There is no backfill: lists are
    built from the Canvases themselves on every subscribe.
 2. **Invalidation.** The alarm sends `shared_canvases_refresh` (scope `others`)
-   on the interactive queue: rebuild this person's list in every other
+   on the activity queue: rebuild this person's list in every other
    Organization they are in.
 3. **On subscribe.** After a socket's subscribe answer (never ahead of it) the
    Organization queues `shared_canvases_refresh` (scope `this`) for that
@@ -66,9 +66,10 @@ for the person in the regional D1, so it covers every Organization and device.
 5. **The relay.** The target Organization's `relayToPerson` sends the frame to
    the person's subscribed sockets, never a support session's. Before reading
    anything, the build takes a ticket from each target (`relayTicket`),
-   strictly increasing per person; the relay drops a frame whose ticket is not
-   newer than the last one sent, so a slow build cannot land after a newer
-   one, even one started in the same millisecond.
+   strictly increasing per person. Each socket keeps, on its own attachment,
+   the ticket of the last frame it was sent and skips one that is not newer,
+   so a slow build cannot land after a newer one, even across the object's
+   hibernation or two builds started in the same millisecond.
 6. **The switch.** `PUT` saves it and, after answering, rebuilds every
    Organization the person is in.
 7. **The clients** apply the event to one query and merge it into the home
@@ -100,10 +101,10 @@ guest relationship and switching Organization are
 
 | Condition | Behavior |
 | --- | --- |
-| An origin Organization cannot answer during a build | `shared_canvases_origin_unread` with its id and a code; its Canvases are left out of that frame, the rest still show. A retired one is skipped silently. |
+| An origin Organization cannot answer during a build | `shared_canvases_origin_unread` with its id and a code, and nothing is relayed: the refresh is retried, then dead-lettered, and the last complete list stays on screen. A retired one is skipped silently. |
 | A target Organization cannot be relayed to | `shared_canvases_relay_failed` with its id and a code; its sockets get the list on their next subscribe. |
 | A refresh cannot be queued after a subscribe | `shared_canvases_refresh_unsent`; the next change or subscribe rebuilds. |
-| A refresh message fails as a whole (D1 unreadable) | The interactive queue retries it, then dead-letters it. |
+| A refresh message fails as a whole (D1 unreadable) | The activity queue retries it, then dead-letters it. |
 | A rename, re-icon or archive | Rebuilds the guest's other lists. Activity alone rebuilds nothing; a list built for another reason reads the current dates. |
 | The first time an Organization answers for a guest | Caching their relationship queues one extra, idempotent rebuild of their other Organizations. |
 | A person in another data region | Not federated: each region builds from its own Organizations and user ids. |

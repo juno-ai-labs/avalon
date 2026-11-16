@@ -4,11 +4,8 @@ The interactive queue carries inbound work a person is waiting on Rally to
 answer, on a Cloudflare Queue of its own, so that work never waits behind the
 activity queue's backlog. It is generic: a kind of work is a message schema
 and a handler, and the queue's contract, send helper and consumer own
-everything the kinds share. It carries two kinds: Slack ingress, every
-event, interaction and command the Slack edge admits; and
-`shared_canvases_refresh`, which rebuilds a person's Canvases shared from
-other Organizations when their socket subscribes or one of those Canvases
-changes ([`canvas-share-federation.md`](canvas-share-federation.md)).
+everything the kinds share. Today it carries one kind, Slack ingress: every
+event, interaction and command the Slack edge admits.
 
 ## Where the code lives
 

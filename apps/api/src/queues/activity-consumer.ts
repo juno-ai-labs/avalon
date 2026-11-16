@@ -19,6 +19,8 @@ import { AuthorizationProjectionJobSchema } from '../durable-objects/authorizati
 import { projectAuthorization } from '../services/authorization-projection-service';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
 import { projectConversationDisplay } from '../services/search-conversation-display';
+import { SharedCanvasesRefreshMessageSchema } from "@rally/contracts/canvas-share-federation";
+import { refreshSharedCanvases } from "../services/shared-canvases";
 
 import {
   ActivityQueueMessageSchema,
@@ -224,6 +226,20 @@ function searchSourceRevision(env: Env, reference: SearchSourceReference): (() =
 
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
+  const sharedCanvases = SharedCanvasesRefreshMessageSchema.safeParse(message.body);
+  if (sharedCanvases.success) {
+    if (sharedCanvases.data.region !== env.AVALON_REGION) { message.ack(); return; }
+    try {
+      await refreshSharedCanvases(env, sharedCanvases.data);
+      message.ack();
+    } catch (error) {
+      logWarn(env, "shared_canvases_refresh_retry", { region: env.AVALON_REGION, workspace_id: sharedCanvases.data.workspaceId,
+        user_id: sharedCanvases.data.userId, scope: sharedCanvases.data.scope, queue_attempts: message.attempts,
+        error_code: diagnosticErrorCode(error, "shared_canvases_refresh_failed") });
+      message.retry();
+    }
+    return;
+  }
   const viewJob = ConversationViewJobSchema.safeParse(message.body);
   if (viewJob.success) {
     const job = viewJob.data;
