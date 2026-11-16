@@ -395,18 +395,19 @@
   --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
-  /* Named sizes older than the type scale, each now an alias of a role. */
-  --av-sys-font-size-base: var(--av-sys-type-body);
+  /* The size of reading prose in a document. Off the type scale on desktop,
+   * where a document reads larger than the interface around it; the touch
+   * density makes it body. */
   --av-sys-font-size-prose: 16.5px;
-  --av-sys-font-size-row: var(--av-sys-type-body);
-  --av-sys-font-size-meta: var(--av-sys-type-caption-1);
-  --av-sys-font-size-title: var(--av-sys-type-headline);
 
-  /* The type scale: twelve roles named after Apple's text styles, from
-   * `caption-2` to `display`. A rule names a role, never a size, so a density
-   * can move every one together; `scripts/check-type-scale.mjs` rejects a
-   * literal. The base values are the desktop sizes; `densities/touch.json`
-   * holds the touch ones, which are iOS's defaults for the same styles. */
+  /* The type scale: twelve roles from `caption-2` to `display`, eleven named
+   * after Apple's text styles and `display` for the largest hero headings. A
+   * rule names a role, never a size, so a density can move every one together;
+   * `scripts/check-type-scale.mjs` rejects a literal in the client's
+   * stylesheets. The base values are the desktop sizes; `densities/touch.json`
+   * holds the touch ones, which are iOS's defaults for the same styles. The
+   * sizes a document sets for itself, `sys.font.size.prose` and the markdown
+   * headings, stay off the scale on desktop. */
   --av-sys-type-caption-2: 9.5px;
   --av-sys-type-caption-1: 10.5px;
   --av-sys-type-footnote: 11px;
@@ -852,11 +853,7 @@
   --av-sys-font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --av-sys-font-family-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 
-  --av-sys-font-size-base: var(--av-sys-type-body);
   --av-sys-font-size-prose: 16.5px;
-  --av-sys-font-size-row: var(--av-sys-type-body);
-  --av-sys-font-size-meta: var(--av-sys-type-caption-1);
-  --av-sys-font-size-title: var(--av-sys-type-headline);
 
   --av-sys-type-caption-2: 9.5px;
   --av-sys-type-caption-1: 10.5px;
@@ -962,11 +959,7 @@
 /* The base measurements, for a subtree inside another density. */
 [data-density='default'] {
   --av-cmp-control-font-size: var(--av-sys-type-callout);
-  --av-sys-font-size-base: var(--av-sys-type-body);
   --av-sys-font-size-prose: 16.5px;
-  --av-sys-font-size-row: var(--av-sys-type-body);
-  --av-sys-font-size-meta: var(--av-sys-type-caption-1);
-  --av-sys-font-size-title: var(--av-sys-type-headline);
   --av-sys-type-caption-2: 9.5px;
   --av-sys-type-caption-1: 10.5px;
   --av-sys-type-footnote: 11px;
@@ -986,30 +979,29 @@
   --av-cmp-markdown-heading-3: 18.5px;
   --av-cmp-markdown-heading-4: 17px;
 }
-/* Touch — iOS's default text sizes for each role, for a subtree read on a phone. Set with data-density="touch". Each role reads --av-dynamic-type-<role> first, which the mobile host sets from the person's Dynamic Type setting. */
+/* Touch — iOS's default text sizes for each role, for a subtree read on a
+ * phone. Set with data-density="touch"; the mobile host writes the person's
+ * Dynamic Type sizes over the roles at runtime. Document prose and headings
+ * take body and the title roles. */
 [data-density='touch'] {
   --av-cmp-control-font-size: var(--av-sys-type-callout);
-  --av-sys-font-size-base: var(--av-sys-type-body);
   --av-sys-font-size-prose: var(--av-sys-type-body);
-  --av-sys-font-size-row: var(--av-sys-type-body);
-  --av-sys-font-size-meta: var(--av-sys-type-caption-1);
-  --av-sys-font-size-title: var(--av-sys-type-headline);
-  --av-sys-type-caption-2: var(--av-dynamic-type-caption-2, 11px);
-  --av-sys-type-caption-1: var(--av-dynamic-type-caption-1, 12px);
-  --av-sys-type-footnote: var(--av-dynamic-type-footnote, 13px);
-  --av-sys-type-subheadline: var(--av-dynamic-type-subheadline, 15px);
-  --av-sys-type-callout: var(--av-dynamic-type-callout, 16px);
-  --av-sys-type-body: var(--av-dynamic-type-body, 17px);
-  --av-sys-type-headline: var(--av-dynamic-type-headline, 17px);
-  --av-sys-type-title-3: var(--av-dynamic-type-title-3, 20px);
-  --av-sys-type-title-2: var(--av-dynamic-type-title-2, 22px);
-  --av-sys-type-title-1: var(--av-dynamic-type-title-1, 28px);
-  --av-sys-type-large-title: var(--av-dynamic-type-large-title, 34px);
-  --av-sys-type-display: var(--av-dynamic-type-display, 38px);
+  --av-sys-type-caption-2: 11px;
+  --av-sys-type-caption-1: 12px;
+  --av-sys-type-footnote: 13px;
+  --av-sys-type-subheadline: 15px;
+  --av-sys-type-callout: 16px;
+  --av-sys-type-body: 17px;
+  --av-sys-type-headline: 17px;
+  --av-sys-type-title-3: 20px;
+  --av-sys-type-title-2: 22px;
+  --av-sys-type-title-1: 28px;
+  --av-sys-type-large-title: 34px;
+  --av-sys-type-display: 38px;
   --av-sys-label-font-size: var(--av-sys-type-caption-1);
   --av-cmp-feed-byline-font-size: var(--av-sys-type-footnote);
-  --av-cmp-markdown-heading-1: calc(var(--av-sys-type-body) * 30 / 17);
-  --av-cmp-markdown-heading-2: calc(var(--av-sys-type-body) * 25.5 / 17);
-  --av-cmp-markdown-heading-3: calc(var(--av-sys-type-body) * 22.5 / 17);
-  --av-cmp-markdown-heading-4: calc(var(--av-sys-type-body) * 20.5 / 17);
+  --av-cmp-markdown-heading-1: var(--av-sys-type-title-1);
+  --av-cmp-markdown-heading-2: var(--av-sys-type-title-2);
+  --av-cmp-markdown-heading-3: var(--av-sys-type-title-3);
+  --av-cmp-markdown-heading-4: var(--av-sys-type-headline);
 }
