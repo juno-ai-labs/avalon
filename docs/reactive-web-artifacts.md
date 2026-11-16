@@ -1047,10 +1047,10 @@ any other storage failure keeps its own code (a provider's
 `site_file_store_failed` log, so a failure a retry cannot fix is not reported as
 one it can. Streams are cancelled with the tool call. A provider Worker without
 `openFile` (an older deploy) has each file read whole, so the two Workers deploy
-in either order. Listing hashes every file on every publish, so a site large
-enough to take longer than the listing's time is refused as
-`resource_listing_timed_out`; a digest cache in the sandbox is the next step if
-feeds grow that large. Pruning versions, when it comes, must keep every blob a
+in either order. Listing hashes only files its sandbox digest cache has not seen
+([terminal workspaces](terminal-workspaces.md)); a listing that still runs out
+of time is refused as `resource_listing_timed_out`, keeps what it hashed, and
+the next publish continues from there. Pruning versions, when it comes, must keep every blob a
 kept manifest names, with a grace window for a publish in flight: a publish
 that found a file stored names a blob no manifest names until it lands.
 Nothing deletes `artifact/` keys today; the resource cleanup outbox deletes a

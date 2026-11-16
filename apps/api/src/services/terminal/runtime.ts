@@ -31,6 +31,7 @@ import {
   bundleArchive,
   declaresStorageClass,
   resolveDirectoryPublish,
+  directoryListingCommands,
   type DirectoryEntry,
 } from "./site-publish";
 import type { ReadSiteFile, SitePublishFile, StoredSiteFile, StreamedSiteFile } from "./site-resource-bridge";
@@ -246,6 +247,9 @@ function lineCount(value: string): number {
   if (!value) return 0;
   return value.split("\n").length - Number(value.endsWith("\n"));
 }
+
+/** Where a sandbox keeps each published directory's file digests between publishes. */
+const DIGEST_CACHE_DIRECTORY = `${ROOT}/.rally/publish-digests`;
 
 function containmentCommands(): string[] {
   return [
@@ -673,12 +677,7 @@ export function createDaytonaTerminalRuntime(
         // wrongly, and the model has no way to see which one went missing.
         'if [ -n "$(find "$target" -type l -print -quit)" ]; then exit 45; fi',
         'printf "directory\\n"',
-        // `%P` is the path relative to the target, which is exactly the
-        // manifest's key space, and NUL-free by the path rules the family
-        // already enforces.
-        'find "$target" -type f -printf "%s %P\\n" | sort -k2 | while read -r size rest; do',
-        '  printf "%s %s %s\\n" "$size" "$(sha256sum -- "$target/$rest" | cut -d " " -f 1)" "$rest"',
-        'done',
+        ...directoryListingCommands(DIGEST_CACHE_DIRECTORY),
       ].join("\n"),
       cwd: ROOT,
       timeoutMs: 60_000,

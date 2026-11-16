@@ -227,3 +227,53 @@ export function assertKindTransitionAllowed(
     { field: "filePath", reason: "Restore the site entry file, or publish under a different path." },
   );
 }
+
+/**
+ * The shell that lists every file beneath `$target` as `size sha256 path`,
+ * hashing only files it has not hashed before.
+ *
+ * Every publish of a directory lists it, and hashing every file every time
+ * made a publish cost the whole site: a feed with many episodes rehashed all
+ * of them to add one. So each directory keeps a digest cache in the sandbox,
+ * one line per file, keyed by inode, change time, size and path. The change
+ * time (`%C@`) is the kernel's, moved by any write or rename and settable by
+ * no user tool, unlike the modified time `touch` can restore, so a cached
+ * digest is never reused for other bytes. The cache is only as trusted as the
+ * listing already was: a "stored" file is decided by this digest, and a
+ * streamed one is checked again by R2.
+ *
+ * A digest computed now is appended to the cache as it is computed, so a
+ * listing too large to finish within its time still saves its progress, and
+ * the next publish starts where it stopped. A listing that finishes replaces
+ * the cache with exactly its own files, so deleted files drop out. Any failure
+ * to keep the cache only costs rehashing; it never fails the listing.
+ *
+ * `%P` is the path relative to the target, which is the manifest's key space,
+ * and NUL-free by the path rules the family already enforces.
+ */
+export function directoryListingCommands(cacheDirectory: string): string[] {
+  return [
+    `cache_dir='${cacheDirectory.replaceAll("'", `'"'"'`)}'`,
+    'cache="$cache_dir/$(printf %s "$target" | sha256sum | cut -c1-64)"',
+    'mkdir -p -- "$cache_dir" 2>/dev/null; touch -- "$cache" 2>/dev/null || cache=/dev/null',
+    'fresh=$(mktemp "$cache.XXXXXX" 2>/dev/null) || fresh=/dev/null',
+    // Known digests first (the last line for a key wins), then the listing:
+    // each file comes out as its cached digest or `-`, then its key and path.
+    // (Read in `BEGIN`, not as awk's first file: an empty first file would
+    // make `NR == FNR` hold for the listing too.)
+    'find "$target" -type f -printf "%i %C@ %s %P\\n" | sort -k4 | RALLY_TARGET="$target" RALLY_CACHE="$cache" awk \'',
+    '  BEGIN { while ((getline line < ENVIRON["RALLY_CACHE"]) > 0) { tab = index(line, "\\t"); if (tab) known[substr(line, tab + 1)] = substr(line, 1, tab - 1) } }',
+    '  { match($0, /^[^ ]+ [^ ]+ [^ ]+ /); meta = substr($0, 1, RLENGTH - 1); rest = substr($0, RLENGTH + 1)',
+    '    key = meta " " ENVIRON["RALLY_TARGET"] "/" rest',
+    '    print ((key in known) ? known[key] : "-") " " meta " " rest }',
+    '\' | while read -r sha inode changed size rest; do',
+    '  if [ "$sha" = "-" ]; then',
+    '    sha=$(sha256sum -- "$target/$rest" | cut -d " " -f 1)',
+    '    [ ${#sha} -eq 64 ] && printf "%s\\t%s %s %s %s/%s\\n" "$sha" "$inode" "$changed" "$size" "$target" "$rest" >> "$cache"',
+    '  fi',
+    '  printf "%s %s %s\\n" "$size" "$sha" "$rest"',
+    '  [ ${#sha} -eq 64 ] && printf "%s\\t%s %s %s %s/%s\\n" "$sha" "$inode" "$changed" "$size" "$target" "$rest" >> "$fresh"',
+    'done',
+    '[ "$fresh" = /dev/null ] || [ "$cache" = /dev/null ] || mv -f -- "$fresh" "$cache" 2>/dev/null || :',
+  ];
+}
