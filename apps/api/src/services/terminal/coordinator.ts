@@ -832,11 +832,17 @@ export class TerminalSandboxCoordinator {
   ): Promise<TerminalSandboxRecord> {
     let current = row;
     let at = now;
-    for (let waited = 0; ; waited += TERMINAL_BUSY_RETRY_MS) {
-      const claimed = await this.tryClaimOperation(context, current, at, waited === 0);
+    // The wait ends on elapsed time, which counts each try's hops, or on the
+    // time slept, which ends it under a clock that does not move.
+    const deadline = this.clock.now().getTime() + TERMINAL_BUSY_WAIT_MS;
+    for (let slept = 0; ; ) {
+      const claimed = await this.tryClaimOperation(context, current, at, slept === 0);
       if (claimed) return claimed;
-      if (waited >= TERMINAL_BUSY_WAIT_MS) break;
-      await this.clock.sleep(TERMINAL_BUSY_RETRY_MS, context.signal);
+      const remaining = deadline - this.clock.now().getTime();
+      if (slept >= TERMINAL_BUSY_WAIT_MS || remaining <= 0) break;
+      const pause = Math.min(TERMINAL_BUSY_RETRY_MS, remaining);
+      await this.clock.sleep(pause, context.signal);
+      slept += pause;
       if (context.signal.aborted) {
         throw new TerminalToolError("cancelled", "The Terminal operation was cancelled while it waited for the workspace lease.");
       }
