@@ -49,10 +49,6 @@
 /support/connectors/custom-mcp/  /help/connecting-your-tools/custom-mcp-server/  301
 /support/connectors/custom-mcp  /help/connecting-your-tools/custom-mcp-server/  301
 
-# The comparison pages were removed; every old /compare/ address lands home.
-/compare  /  301
-/compare/*  /  301
-
 # The manual was restructured around Canvases and Sidekicks when Channels,
 # Threads, Breakouts, the digest, email-started conversations and the iPhone
 # app were removed. A retired page whose subject still exists under a new name
