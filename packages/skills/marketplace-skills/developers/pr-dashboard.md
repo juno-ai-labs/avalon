@@ -5,6 +5,8 @@ icon: "git-pull-request"
 color: "violet"
 tags:
   - developers
+connectors:
+  - github
 ---
 
 Build a live GitHub PR dashboard in this Canvas. Ask me up to two questions for any details I haven't supplied. “Which GitHub repositories should I track?” and “After how long without activity should a pull request be marked stale?”

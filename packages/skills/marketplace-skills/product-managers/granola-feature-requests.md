@@ -5,6 +5,8 @@ icon: "thumbs-up"
 color: "green"
 tags:
   - product-managers
+connectors:
+  - granola
 ---
 
 Build a shared feature request board in this Canvas from customer interviews in Granola. If I haven't specified the source, ask “Which Granola folder or interview links should I use?” Read the relevant notes and available transcripts. Pull out explicit feature requests and the customer problem behind each one, with links back to the interviews.

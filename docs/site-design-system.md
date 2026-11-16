@@ -83,7 +83,7 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/landing.css` | The earlier product, start-fast and comparison system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
-| `apps/site/marketplace/index.html`, `apps/site/src/marketplace-catalog.ts`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The marketplace: the app Marketplace's own templates and categories, rendered at build time through `loadCanvasTemplates` (`packages/skills/marketplace-skills/catalog.ts`), a client-side category filter, and links into the web app. Linked from the homepage header. Styles build on `home.css` |
+| `apps/site/marketplace/index.html`, `apps/site/src/marketplace-catalog.ts`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The marketplace: the app Marketplace's own templates and categories, rendered at build time through `loadCanvasTemplates` (`packages/skills/marketplace-skills/catalog.ts`), a client-side category filter, and one page per template at `/marketplace/<slug>/` (`renderTemplatePage`, listed in `marketplace/sitemap.xml` and `llms.txt`). Each card and page lists the template's recommended connectors, linking to their help pages. Linked from the homepage header. Styles build on `home.css` |
 | `apps/site/src/home-illustrations.ts` | Shared artwork geometry and accessible SVG views |
 | `apps/site/src/home-pricing.ts` | Homepage plan markup from the product catalog and weekly allocation function |
 | `apps/site/start-fast/index.html` | The earlier landing design, with copy from `access-copy.ts` and shared sections |
@@ -295,6 +295,27 @@ automated test: it is checked in a real browser at desktop and phone widths,
 in light and dark, before a change ships, as the repository's rule on visible changes requires.
 
 ## Changelog
+
+### 2026-11-16 — A page per marketplace template, and recommended connectors
+
+**What changed:** Each marketplace card gained **More info**, which opens the
+template's own page at `/marketplace/<slug>/`, and a list of recommended
+connectors, each linking to its help page. The template page shows who it is
+for, the connectors, the prompt Rally starts from, and **Start from this**. A
+template names its connectors in its front matter (`connectors`), from the
+closed list in `packages/skills/marketplace-skills/connectors.ts`.
+
+**Why:** The product owner asked for a page to read before starting a
+template, and for the card to say which tools it needs.
+
+**Considered and rejected:** Connector ids from the API's connector types. One
+`google` type covers both Mail and Calendar and Drive, which have separate help
+pages; keying the list by help page slug makes every recommendation a working
+link.
+
+**Consequences:** A connector a template can recommend must have a help page
+under `/help/connecting-your-tools/`. The page shows the prompt verbatim, so a
+template's Markdown body is now public copy.
 
 ### 2026-11-16 — The marketplace page lists the app's Marketplace templates
 
