@@ -15,11 +15,13 @@ else in the Canvas.
 2. **The `/attach` command.** Type `/attach` into an empty box and press
    <kbd>Return</kbd>. The file picker opens. (More on slash commands in
    [The message box](02-the-message-box.md#slash-commands).)
-3. **Drag and drop.** Drag files from Finder onto the message box, onto the
+3. **Drag and drop.** Drag files from your desktop or a folder (Finder
+   on a Mac) onto the message box, onto the
    conversation, or onto the panel on the right. The area lights up while a file
    is over it. Selecting a pile of files in a folder and dragging them all at
    once works too.
-4. **Paste.** Copy a file or an image and press <kbd>⌘</kbd> <kbd>V</kbd>. You do
+4. **Paste.** Copy a file or an image and press <kbd>⌘</kbd> <kbd>V</kbd> (<kbd>Ctrl</kbd>
+   <kbd>V</kbd> on Windows and Linux). You do
    not have to click into the box first. Pasting works anywhere in the Canvas
    as long as you are not typing in some other field or dialog.
 
@@ -46,7 +48,7 @@ second and the next ones get **(2)** and **(3)** on the end. This saves you from
 a message full of files all called "image.png", which is nobody's idea of a good
 filing system.
 
-A file you copied from Finder keeps its own name. And if you copy cells from a
+A file you copied from a folder keeps its own name. And if you copy cells from a
 spreadsheet, you get the text of those cells in the box, not a picture of them.
 
 ## Limits

@@ -66,7 +66,8 @@ shown read-only. If a teammate asks why they cannot find something, this is
 usually why.
 
 Guests see even less. Their Settings lists every section, but they can open
-only **Account**, **Members** and, in the Mac app, **Application**; the others
+only **Account**, **Preferences**, **Members** and, in the desktop app,
+**Application**; the others
 are greyed out with **Only members of this organization can open this.** A
 guest cannot
 leave the Organization themselves; to end their access, see

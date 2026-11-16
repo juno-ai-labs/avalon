@@ -26,7 +26,7 @@ the message box. Pick more parts and comment on each if you like; each one
 gets its own chip. Then send the message as usual. You can add words of your
 own to the message, or send the comments on their own.
 
-While picking, <kbd>⌥ Option</kbd> or <kbd>↑</kbd> grows the outline to the
+While picking, <kbd>⌥ Option</kbd> (<kbd>Alt</kbd> on Windows and Linux) or <kbd>↑</kbd> grows the outline to the
 list or section around it, and <kbd>↓</kbd> shrinks it again. <kbd>Esc</kbd>
 leaves Comment mode and keeps the comments you already confirmed.
 
@@ -41,7 +41,7 @@ comment or on its chip removes it.
 | PDFs and Word files | Passages of their text |
 | Spreadsheets | A cell, a range, a row, a column or a whole sheet |
 | Images | A rectangular area |
-| Websites | Any element on the page |
+| Websites | Any element on the page, in [the desktop app](../08-rally-everywhere/04-the-desktop-app.md), where the site shows inside Rally |
 
 ## What happens when you send
 
@@ -63,7 +63,7 @@ a request, Rally answers it in the conversation instead.
 A comment you confirmed but have not sent is part of your draft. It waits for
 you if you switch to another Canvas or quit Rally, the same as the text of an
 unsent message (see [The message box](02-the-message-box.md#your-draft-waits-for-you)).
-Like the rest of a draft, it is kept on this Mac only.
+Like the rest of a draft, it is kept on this computer only.
 
 If a comment on an image cannot be saved, Rally says **The crop could not be
 uploaded.** If the preview itself cannot take comments yet, it says **The

@@ -25,7 +25,7 @@ them removed. This page summarizes section 8 of the
 | The one-time check Rally uses when you link your Slack account | 15 minutes. |
 | Rally's own records of product events and deliveries | Up to 90 days. |
 | Reduced analytics summaries | Up to 13 months. |
-| Usage reports waiting on your Mac to be sent | At most 14 days. If they have not gone by then, they are not sent. |
+| Usage reports waiting in the desktop app to be sent | At most 14 days. If they have not gone by then, they are not sent. |
 | Account, security and legal records | As long as reasonably needed for those purposes. |
 
 Two more points from the policy:

@@ -9,9 +9,10 @@ exact spot.
 
 ## Search your Organization
 
-Press <kbd>⌘</kbd> <kbd>⇧ Shift</kbd> <kbd>F</kbd> from anywhere in the main
-window, or click **Search organization** (the magnifying glass) at the top of
-the sidebar's list. A search window opens
+Press <kbd>⌘</kbd> <kbd>⇧ Shift</kbd> <kbd>F</kbd> (<kbd>Ctrl</kbd>
+<kbd>⇧ Shift</kbd> <kbd>F</kbd> on Windows and Linux) from anywhere in Rally,
+or click **Search organization** (the magnifying glass) at the top of
+the sidebar's list. A search box opens
 over everything else.
 
 Start typing. Results appear after a short pause, with no need to press
@@ -34,17 +35,18 @@ The tabs along the top, **All**, **Messages**, **Links**, **Artifacts** and
 Click a result, or move to it and press <kbd>Return</kbd>.
 
 - **A message** opens its Canvas or Sidekick and jumps to that exact message.
-- **A link** opens in your web browser.
+- **A link** opens in a new browser tab (in the desktop app, in your usual web
+  browser).
 - **An artifact or a file** opens in a preview. See
   [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md).
 
-Press <kbd>Esc</kbd> to close the search window without opening anything.
+Press <kbd>Esc</kbd> to close search without opening anything.
 
 | Key | What it does |
 | --- | --- |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Move through the results |
 | <kbd>Return</kbd> | Open the highlighted result |
-| <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> | Open the first to ninth result directly |
+| <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>9</kbd> (<kbd>Ctrl</kbd> on Windows and Linux) | Open the first to ninth result directly |
 | <kbd>←</kbd> <kbd>→</kbd> | Switch tabs, when a tab is selected |
 | <kbd>Esc</kbd> | Close search |
 
@@ -65,7 +67,7 @@ Results can be up to about 30 seconds old. If you repeat a search straight away,
 you may briefly see something that changed a moment ago. Opening it shows the
 current state.
 
-When something goes wrong, the search window says **Search could not be
+When something goes wrong, search says **Search could not be
 completed. Please try again.** If more results fail to load as you scroll,
 click **Retry loading more results**.
 
@@ -82,7 +84,7 @@ to a teammate and it opens Rally at exactly that place.
 If the copy fails, Rally says so and you can try again.
 
 The links are ordinary web addresses starting with `https://rallywith.ai/app/`,
-which beats a link only the app understands in two ways:
+which beats a link only an app understands in two ways:
 
 - **They work in email, Slack and documents**, anywhere a normal link works.
 - **They survive being forwarded.** Whoever opens one signs in as themselves,
@@ -90,10 +92,15 @@ which beats a link only the app understands in two ways:
 
 ### What happens when someone clicks one
 
-On a Mac with Rally installed, the link opens straight in the app. Otherwise it
-opens a short web page that says it is opening Rally and hands over to the app a moment later. If nothing
-happens, click **Open Rally**. If Rally is not installed, the page says to
-install it and come back.
+The link opens a short web page that names what it points at, such as
+**Opening “Launch plan” in Rally**. On most computers, phones and tablets the
+page has one button, **Open in browser**, which opens that place in the web app
+at [app.rallywith.ai](https://app.rallywith.ai).
+
+On a Mac, the page first tries to open [the desktop
+app](../08-rally-everywhere/04-the-desktop-app.md). It also offers **Open in
+Rally for Mac**, in case nothing happens, and **Continue in browser** for the
+web app. Once you choose the browser, the page stops trying the app first.
 
 If you belong to several Organizations and the link is for a different one,
 Rally switches to that Organization first.
@@ -108,9 +115,10 @@ Rally switches to that Organization first.
 
 ### For the curious: rallywithai:// links
 
-Behind the scenes, the web page hands over to the app with a link that starts
-`rallywithai://`. Sign-in, connecting your tools and accepting invitations use
-the same kind of link to bring you back to the right place in the app. You will
+Behind the scenes, the web page hands over to the desktop app with a link that
+starts `rallywithai://`. In the desktop app, sign-in, connecting your tools
+and accepting invitations use the same kind of link to bring you back to the
+right place in the app. You will
 rarely see one, and you never need to type one.
 
 Links from the earliest days of Rally began with `avalon://`, Rally's old code
@@ -118,6 +126,6 @@ name. They still open, though Rally no longer makes them. Links to Channels, Thr
 Breakouts, the conversations Rally had before Canvases, no longer open, because
 those conversations are gone.
 
-If a link will not open, Rally tells you why in a small window. Every message,
+If a link will not open, Rally tells you why. Every message,
 and what to do about it, is in
 [When a link won't open](../12-help-and-glossary/01-when-a-link-wont-open.md).

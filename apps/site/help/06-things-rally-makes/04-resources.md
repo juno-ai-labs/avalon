@@ -14,9 +14,9 @@ An origin is a pointer, not a copy where it can be. For a Slack message, Rally r
 
 ## Where to find resources
 
-In the web browser version of Rally, click a Canvas's name in its header pill and choose **More**. Below **Artifacts** is a **Resources** list, with an icon and the title of each. Click a row to open its details. Like the Artifacts list, it appears only when there is something in it.
+In the web app, click a Canvas's name in its header pill and choose **More**. Below **Artifacts** is a **Resources** list, with an icon and the title of each. Click a row to open its details. Like the Artifacts list, it appears only when there is something in it.
 
-In the Mac app, resources do not have their own list today. Open one from the conversation instead: click a citation or file chip that points to it (see [Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md)), or click **Resource details** in a file preview.
+In [the desktop app](../08-rally-everywhere/04-the-desktop-app.md), resources do not have their own list today. Open one from the conversation instead: click a citation or file chip that points to it (see [Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md)), or click **Resource details** in a file preview.
 
 ## A resource's details
 
@@ -38,7 +38,7 @@ If a refresh fails, Rally says **The resource couldn't be refreshed.**
 To give Rally a file to work from, attach it to a message, as described in [Attaching files](../02-canvases/03-attaching-files.md). To point Rally at something in one of your connected tools, such as a GitHub issue, a Notion page or a Google Doc, mention it or paste its link in the conversation and ask Rally to read it. Chapter 5, [Connecting your other tools](../05-connecting-your-tools/index.md), covers what Rally can reach in each tool.
 
 > [!NOTE]
-> Rally has groundwork for adding a resource by hand from a picker, and for a switch that watches an item for changes, but neither is in the Mac app today. When they arrive, this page will explain them.
+> Rally has groundwork for adding a resource by hand from a picker, and for a switch that watches an item for changes, but neither is in Rally today. When they arrive, this page will explain them.
 
 ## Archiving a resource
 

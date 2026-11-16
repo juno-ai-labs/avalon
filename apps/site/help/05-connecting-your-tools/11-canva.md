@@ -19,9 +19,9 @@ Canva decides which of these your Canva plan allows. Some actions may run into a
 
 ## Connecting
 
-Canva is personal only, and any member can connect it. Connect it from the Mac app: the browser version cannot connect Canva.
+Canva is personal only, and any member can connect it. Connect it from [the desktop app](../08-rally-everywhere/04-the-desktop-app.md): it is the one tool the web app cannot connect. In the browser, the card is greyed out and says **Download the Mac app to connect this.** (on a phone, **Connect this from the Mac app.**). Once it is connected, Rally can use Canva in your Canvases wherever you open them, browser included.
 
-1. Open **Settings → Connections** and find the **Canva** card.
+1. In the desktop app, open **Settings → Connections** and find the **Canva** card.
 2. Hover over **Connect for me** and read the note. Connecting lets Rally read and change your Canva designs, folders, assets and brand kit. Canva receives a brief description of each thing Rally asks it to do. Watches are off until you turn them on.
 3. Click **Connect for me**.
 4. Sign in to Canva in your browser and approve access. Keep Rally open until the browser says it worked.
@@ -31,7 +31,7 @@ If the Canva card says **Unavailable**, Canva is not set up in your Organization
 
 ## Watching a design
 
-Connecting does not start watching anything. Rally has the groundwork for watching a design for changes, but the switch for it is not in the Mac app today (see [Resources: things you bring in](../06-things-rally-makes/04-resources.md#bringing-things-in-yourself)). When it arrives, a watch covers one design at a time, and not every single edit is guaranteed to produce a notice.
+Connecting does not start watching anything. Rally has the groundwork for watching a design for changes, but the switch for it is not in Rally today (see [Resources: things you bring in](../06-things-rally-makes/04-resources.md#bringing-things-in-yourself)). When it arrives, a watch covers one design at a time, and not every single edit is guaranteed to produce a notice.
 
 ## Things to try
 

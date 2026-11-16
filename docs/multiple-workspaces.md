@@ -489,6 +489,27 @@ best-effort remote revocation.
 
 ## Changelog
 
+### 2026-11-16 — Accepting an invitation makes a guest a member, and starts setup
+
+**What changed:** `acceptInvitation` runs the regional accept even when the
+person already has an active binding to that workspace, and accepting a first
+organization makes an account eligible for setup, as creating one does
+(`makeFirstOrganizationEligible`, formerly `makeFirstCreatorEligible`).
+
+**Why:** A Canvas shared before the invitation makes the invitee a guest, and
+discovery records that relationship as an active binding. `completeRegionalAction`
+read the active binding as a committed acceptance and issued a session instead,
+so the call succeeded while the person stayed a guest and the invitation stayed
+open, on the Mac and, through `/browser/invitations`, in the browser. Separately,
+an email sign-in starts ineligible for setup, and only creation made it
+eligible, so someone who joined by invitation from the browser skipped
+**This is you in Rally** and kept their address as their name.
+
+**Consequences:** `completeRegionalAction` takes `actOnActiveBinding`; an action
+that passes it must be idempotent for the same person, as the regional accept
+is. Eligibility still leaves an account that is already a member elsewhere, or
+bound in another deployment, alone.
+
 ### 2026-11-16 — A guest's shared Canvases cross into the active Organization's list
 
 **What changed:** The invariant that background workspaces expose no directory
