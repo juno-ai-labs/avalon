@@ -30,6 +30,8 @@ const OWNER = asUserId("00000000-0000-7000-8000-00000000e301");
 const MEMBER = asUserId("00000000-0000-7000-8000-00000000e302");
 const OPEN_CANVAS = "00000000-0000-7000-8000-00000000e303";
 const PRIVATE_CANVAS = "00000000-0000-7000-8000-00000000e304";
+/** Another Canvas the member opens; a Canvas holds one artifact, so the late one lives here. */
+const LATE_CANVAS = "00000000-0000-7000-8000-00000000e30c";
 const REPORT = "00000000-0000-7000-8000-00000000e3a1";
 const COMP_TABLE = "00000000-0000-7000-8000-00000000e3a2";
 const LATE = "00000000-0000-7000-8000-00000000e3a3";
@@ -238,7 +240,7 @@ describe("workspace_resource_versions", () => {
 
     // An artifact can be recorded before its row arrives, so the first version
     // is written while a Canvas the member opens already lists it.
-    await canvas(OPEN_CANVAS, "Launch", "workspace", [LATE]);
+    await canvas(LATE_CANVAS, "Recovery", "workspace", [LATE]);
     await storeResource(LATE, "Late");
     await expect(workspace().renameResource({
       workspaceId: WORKSPACE_ID,
@@ -260,7 +262,7 @@ describe("workspace_resource_versions", () => {
   });
 
   it("leaves out an unlisted resource, which no conversation advertises", async () => {
-    await canvas(OPEN_CANVAS, "Launch", "workspace", [LATE]);
+    await canvas(LATE_CANVAS, "Recovery", "workspace", [LATE]);
     await storeResource(LATE, "Recovery backup", { size: 10, listing: "unlisted" });
     const member = await connect(MEMBER);
 
