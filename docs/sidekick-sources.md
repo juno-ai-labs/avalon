@@ -854,7 +854,9 @@ agent and a run have the same address shape, so a wizard's agent could not
 hand an ask back. Looking up the sender's record on each message: a lookup
 on every message. **Accepted risk:** a run's change request reaches its
 wizard as a turn that may ask, so a stranger's email a run read can shape a
-request sent in a person's name. The 2026-11-15 entry below closed exactly
+request emailed to colleagues in a person's name, and that turn's
+`test_source_condition` can hand snippets of the person's recent events
+back to the run. The owner confirmed this in review. The 2026-11-15 entry below closed exactly
 that; the owner reopened it because an ask approves nobody.
 
 **What a future change has to respect:** A loop that is handed event content
