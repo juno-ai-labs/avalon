@@ -57,6 +57,39 @@ function renderDesktopDownloads(): string {
     + '</div>';
 }
 
+/** A pointy-top hexagon, as SVG points in a 100 x 112 box, inset by `inset`. */
+const hexagon = (inset: number): string =>
+  [[50, 2], [96, 28.5], [96, 83.5], [50, 110], [4, 83.5], [4, 28.5]]
+    .map(([x = 0, y = 0]) => `${50 + (x - 50) * (1 - inset / 50)},${56 + (y - 56) * (1 - inset / 50)}`)
+    .join(' ');
+
+const shieldCheck = (x: number, y: number, scale: number): string =>
+  `<g transform="translate(${x} ${y}) scale(${scale})" fill="none" stroke="currentColor" stroke-width="${1.6 / scale}" stroke-linecap="round" stroke-linejoin="round">`
+  + '<path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></g>';
+
+/**
+ * Rally's own mark for its App Defense Alliance CASA AL1 validation. It is drawn
+ * here rather than copied from an issuer: ADA and Google publish no badge for AL1.
+ * `full` prints the level inside the hexagon; `mark` is the hexagon and check alone,
+ * for use beside text. Both draw in `currentColor`, so each page's accent colors them.
+ */
+export function renderCasaBadge(variant: 'full' | 'mark' = 'full'): string {
+  const label = 'App Defense Alliance CASA Assurance Level 1, validated by TAC Security, July 2026';
+  if (variant === 'mark') {
+    return `<svg class="casa-mark" viewBox="0 0 100 112" width="16" height="18" aria-hidden="true">`
+      + `<polygon points="${hexagon(0)}" fill="currentColor" fill-opacity=".14" stroke="currentColor" stroke-width="7"/>`
+      + shieldCheck(26, 28, 2.1) + '</svg>';
+  }
+  return `<svg class="casa-badge" viewBox="0 0 100 112" width="104" height="116" role="img" aria-label="${label}">`
+    + `<polygon points="${hexagon(0)}" fill="currentColor" fill-opacity=".1" stroke="currentColor" stroke-width="2.5"/>`
+    + `<polygon points="${hexagon(6)}" fill="none" stroke="currentColor" stroke-width=".8" stroke-opacity=".5"/>`
+    + shieldCheck(40, 17, 0.85)
+    + '<g fill="currentColor" text-anchor="middle" font-family="inherit">'
+    + '<text x="50" y="58" font-size="16" font-weight="650" letter-spacing=".5">CASA</text>'
+    + '<text x="50" y="76" font-size="14" font-weight="500" letter-spacing="1">AL1</text>'
+    + '<text x="50" y="91" font-size="6.2" letter-spacing="1.2">VALIDATED</text></g></svg>';
+}
+
 const footerColumn = (id: string, title: string, links: readonly string[]): string =>
   `<nav class="footer-column" aria-labelledby="${id}"><h2 class="footer-heading" id="${id}">${title}</h2><ul class="footer-links">${links.map((link) => `<li>${link}</li>`).join('')}</ul></nav>`;
 
@@ -88,7 +121,7 @@ export function renderSiteFooter(): string {
     + footerColumn('footer-trust', 'Trust Center', trust)
     + footerColumn('footer-help', 'Help', help)
     + footerColumn('footer-blog', 'Blog', blog)
-    + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small><small>ADA CASA AL1 validated</small><small>rallywith.ai</small></p>`
+    + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small><small><a class="footer-casa" href="/trust/security/#overview">${renderCasaBadge('mark')}ADA CASA AL1 validated</a></small><small>rallywith.ai</small></p>`
     + `<p class="footer-mark" aria-hidden="true">rally</p></footer>`;
 }
 
@@ -181,6 +214,7 @@ const markers: Record<string, () => string> = {
   'loop-figure': renderLoopFigure,
   'people-figure': renderPeopleFigure,
   'site-footer': renderSiteFooter,
+  'casa-badge': () => renderCasaBadge('full'),
   'comparison-table': renderComparisonTable,
   'marketplace-filters': renderMarketplaceFilters,
   'marketplace-cards': renderMarketplaceCards,
