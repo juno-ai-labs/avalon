@@ -374,7 +374,10 @@ describe("Canvas artifact access propagated to local serving", () => {
         open: typeof sent === "string" ? async () => new Response(sent).body! : sent };
     };
     const never = async (): Promise<ReadableStream> => { throw new Error("opened_a_file_that_needs_no_bytes"); };
-    const stored = async (path: string, text: string, open = never) => ({ ...await streamed(path, text, open), stored: true as const });
+    const stored = async (path: string, text: string, storedIn: string) => {
+      const bytes = new TextEncoder().encode(text);
+      return { path, sha256: await sha256Hex(bytes), sizeBytes: bytes.byteLength, storedIn };
+    };
     const site = (files: SitePublishFile[]) => ({ mode: "static" as const, stateful: false, serverModuleSha256: null, files });
     const publish = (files: SitePublishFile[]) => bridge.publishSiteResource(call(), { filePath: "feed" }, site(files));
 
@@ -392,8 +395,8 @@ describe("Canvas artifact access propagated to local serving", () => {
     const before = (await env.PAYLOADS.head(blob))!.uploaded.getTime();
     const second = await publish([
       await file("index.html", "<h1>Show, two episodes</h1>"),
-      await stored("episodes/one.mp3", "episode one audio"),
-      await stored("episodes/one-again.mp3", "episode one audio"),
+      await stored("episodes/one.mp3", "episode one audio", first.artifactId),
+      await stored("episodes/one-again.mp3", "episode one audio", first.artifactId),
       await streamed("episodes/two.mp3", "episode two audio"),
     ]);
     expect(second.version).toBe(2);
@@ -406,8 +409,16 @@ describe("Canvas artifact access propagated to local serving", () => {
         .rejects.toMatchObject({ code: "resource_not_ready", details: { code: "site_file_changed_after_listing" } });
     }
     await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
+      await streamed("episodes/three.mp3", "episode three audio", async () => { throw new Error("daytona_file_stream_http_502"); })]))
+      .rejects.toMatchObject({ code: "resource_publish_failed", details: { code: "daytona_file_stream_http_502" } });
+    // A file gone from the sandbox changed too, and a retry after its producer finishes can succeed.
+    await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
       await streamed("episodes/three.mp3", "episode three audio", async () => { throw new Error("daytona_file_stream_http_404"); })]))
-      .rejects.toMatchObject({ code: "resource_publish_failed", details: { code: "daytona_file_stream_http_404" } });
+      .rejects.toMatchObject({ code: "resource_not_ready", details: { code: "site_file_changed_after_listing" } });
+    // A file said to be in another artifact's blobs is refused, never left unwritten.
+    await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
+      await stored("episodes/elsewhere.mp3", "elsewhere", "00000000-0000-7000-8000-00000000beef")]))
+      .rejects.toMatchObject({ code: "resource_publish_failed", details: { code: "site_file_stored_in_another_artifact" } });
     // A download that breaks partway is named by its own error, not as a changed file.
     const breaksPartway = async () => new ReadableStream<Uint8Array>({
       start(controller) { controller.enqueue(new TextEncoder().encode("episode")); controller.error(new Error("daytona_download_reset")); },
@@ -418,29 +429,26 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect((await bridge.liveSiteFiles(call(), "feed"))?.manifest.assets.map((entry) => entry.path))
       .toEqual(expect.arrayContaining(["episodes/one.mp3", "episodes/two.mp3"]));
 
-    // A live version stored before blobs: a file it holds is streamed from the
-    // sandbox into a blob, once, rather than copied inside R2.
+    // A live version stored before blobs holds nothing a publish may leave
+    // unwritten, so the publish counts and streams every file.
     const liveManifestKey = artifactManifestKey(first.artifactId, 2);
     const liveManifest = ArtifactManifestSchema.parse(await (await env.PAYLOADS.get(liveManifestKey))!.json());
     const legacyManifest = { ...liveManifest };
     delete legacyManifest.assetStore;
-    const legacyText = "legacy audio";
-    const legacy = await sha256Hex(new TextEncoder().encode(legacyText));
-    await env.PAYLOADS.put(liveManifestKey, JSON.stringify({ ...legacyManifest, assets: [...legacyManifest.assets,
-      { path: "episodes/legacy.mp3", contentType: "audio/mpeg", sizeBytes: 12, sha256: legacy }] }));
-    await publish([
-      await file("index.html", "<h1>Show, legacy</h1>"),
-      await stored("episodes/legacy.mp3", legacyText, async () => new Response(legacyText).body!),
-    ]);
-    expect(await (await env.PAYLOADS.get(artifactBlobKey(first.artifactId, legacy)))?.text()).toBe(legacyText);
+    await env.PAYLOADS.put(liveManifestKey, JSON.stringify(legacyManifest));
+    expect(await bridge.liveSiteFiles(call(), "feed")).toBeNull();
+    await env.PAYLOADS.put(liveManifestKey, JSON.stringify(liveManifest));
 
     // The serving Worker reads the blob through the manifest.
     await share("public");
     await sync(first.artifactId, first.resourceId);
     const stub = new URL(first.url).hostname.split(".")[0]!.replace(/-g$/u, "");
-    const served = await visit(stub, "/episodes/legacy.mp3");
+    const served = await visit(stub, "/episodes/two.mp3");
     expect(served.status).toBe(200);
-    expect(await served.text()).toBe("legacy audio");
+    expect(await served.text()).toBe("episode two audio");
+    // A site's stored file revalidates; its page does not.
+    expect(served.headers.get("cache-control")).toBe("private, no-cache");
+    expect((await visit(stub, "/")).headers.get("cache-control")).toBe("private, no-store");
   });
 
   it("serves a byte range of a public file and a site's asset, as a player seeking asks for one", async () => {
@@ -540,6 +548,9 @@ describe("Canvas artifact access propagated to local serving", () => {
       new Request("https://x.invalid/", { headers: { "if-none-match": stored.httpEtag, range: "bytes=0-3" } }),
       { "content-type": "text/html" }, { ranges: false });
     expect(whole?.status).toBe(200);
+    // Nor is a file opened in a tab, whose back-forward copy the browser shows without asking.
+    expect((await fetchFrom(fileStub, { headers: { "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" } }))
+      .headers.get("cache-control")).toBe("private, no-store");
     // A page is never kept: a private page would outlive its Canvas in the browser.
     const page = await fetchFrom("quiet-blue-river-garden", {});
     expect(page.headers.get("cache-control")).toBe("private, no-store");
