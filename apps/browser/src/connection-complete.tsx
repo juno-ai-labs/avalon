@@ -11,10 +11,7 @@ type Outcome = { status: string | null; message: string | null };
  * that asked is still open and reconciles from the attempt itself, so this
  * page only says what happened and closes itself when it can: a popup can,
  * and a tab that the person navigated away from cannot.
- *
- * An authorization the provider has just answered arrives `authorized`, with a
- * ticket in the fragment: Rally holds it until this browser's own session
- * claims it (`docs/connectors.md`, "Claiming a connector authorization").
+ * A held authorization arrives `authorized`, and this page claims it.
  */
 export function ConnectionComplete(): React.JSX.Element {
   const [claim] = useState(() => parseConnectorClaimLink(location.href));

@@ -31,7 +31,7 @@ import type {
 import { providerSignInError, rememberedSignInProvider, signInProviderOfCode } from './sign-in-provider';
 import { accountReconnectRequired, workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
-import { RallyApi } from './api';
+import { ApiError, RallyApi } from './api';
 import { CollaborationSessionProvider, shellCapabilities, type ConnectorSetupCapability, type PendingConnectorOAuth } from './collaboration-session';
 export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
@@ -1215,15 +1215,21 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (intent.kind === 'connector-claim') {
-        // The provider has answered and Rally is holding it for the session
-        // that started it (`docs/connectors.md`, "Claiming a connector
-        // authorization"). The claim answers with the completion link the
-        // callback used to send, which is handled below like any other.
+        // The claim answers with a `connector-result` link, handled below.
         const claim = async (targetApi: RallyApi): Promise<void> => {
           let target: string;
           try {
             target = (await targetApi.claimConnectorOAuth(intent.ticket)).target;
           } catch (error: unknown) {
+            // The site's handoff page can deliver one link twice. A spent
+            // ticket whose attempt is done or still finishing is not a failure.
+            if (error instanceof ApiError && error.code === 'invalid_oauth_state' && intent.attemptId) {
+              const attempt = await targetApi.getConnectorOAuthAttempt(intent.attemptId).catch(() => null);
+              if (attempt?.status === 'succeeded' || attempt?.status === 'pending') {
+                await queryClient.invalidateQueries({ queryKey: ['connections'] });
+                return;
+              }
+            }
             const pending = pendingConnectorOAuthRef.current;
             if (pending?.provider === intent.provider && (intent.attemptId === null || pending.attemptId === intent.attemptId)) {
               setPendingConnectorOAuth(null);

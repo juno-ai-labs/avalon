@@ -27,8 +27,9 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
   return <iframe ref={frame} src={frameUrl.href} title="Rally canvas content" style={{ flex: 1, width: '100%', height: '100%', border: 0, background: props.background }}
     onLoad={() => {
       props.onLoading();
-      frame.current?.contentWindow?.postMessage({ channel: MOBILE_CHANNEL, attach: token.current, topInset: props.topInset ?? 0, // The preview has no auth session; its page returns to the browser's own completion page.
-      capabilities: MOBILE_CAPABILITIES.filter((name) => name !== CONNECTOR_AUTH_SESSION_CAPABILITY) }, origin);
+      // The preview has no auth session; its page returns to the browser's own completion page.
+      frame.current?.contentWindow?.postMessage({ channel: MOBILE_CHANNEL, attach: token.current, topInset: props.topInset ?? 0,
+        capabilities: MOBILE_CAPABILITIES.filter((name) => name !== CONNECTOR_AUTH_SESSION_CAPABILITY) }, origin);
     }} onError={props.onError} />;
 });
 

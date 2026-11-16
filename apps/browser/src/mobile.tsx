@@ -227,13 +227,14 @@ function MobileContent(): React.JSX.Element {
       }
       case 'reopen-artifact': void queryClient.invalidateQueries({ queryKey: ['mobile-site-access', message.canvasId, message.resourceId] }); break;
       case 'connector-complete': {
-        // Claim it as the session that started it; the pending connector
-        // card then reconciles from its attempt, as it does on the desktop.
+        // A denial or failure carries no ticket. Either way the pending card
+        // reconciles from its attempt, which a refused claim also ends failed.
         const claim = parseConnectorClaimLink(message.url);
-        if (!claim) break;
+        const refresh = () => { void queryClient.invalidateQueries({ queryKey: ['connections'] }); };
+        if (!claim) { refresh(); break; }
         void browserRequest(claim.region, `/api/${claim.workspaceId}/connections/oauth/claim`, ConnectorOAuthClaimSchema, { ticket: claim.ticket })
           .catch(() => undefined)
-          .finally(() => { void queryClient.invalidateQueries({ queryKey: ['connections'] }); });
+          .finally(refresh);
         break;
       }
       case 'pin':

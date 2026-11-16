@@ -2167,26 +2167,17 @@ export class ConnectionService {
     });
   }
 
-  /**
-   * Hold a provider's answer until the client that started the authorization
-   * claims it (`docs/connectors.md`, "Claiming a connector authorization").
-   *
-   * The callback is unauthenticated, and the state names only who *started*
-   * the authorization, never who consented: anyone can start one and send the
-   * provider's consent page to someone else. So nothing is exchanged or
-   * attached here. The ticket goes back only to the browser that consented,
-   * and `claimCallback` needs it and the starting session together.
-   */
+  /** Hold a provider's answer for the starting session to claim (`docs/connectors.md`, "Claiming a connector authorization"). */
   async holdCallback(provider: ConnectorOAuthProvider, state: string, callback: HeldConnectorCallback): Promise<string> {
     const ticket = randomToken(32);
     const row = await this.env.DB.prepare(
       `UPDATE oauth_states SET held_callback_encrypted = ?, claim_hash = ?
        WHERE id = ? AND provider = ? AND region = ?
-         AND purpose IN ('connector', 'github_install', 'resource_authorization')
+         AND purpose IN ('connector', 'resource_authorization')
          AND consumed_at IS NULL AND expires_at > ? AND claim_hash IS NULL
        RETURNING workspace_id, return_uri, code_verifier_encrypted`,
     ).bind(
-      await sealString(JSON.stringify(HeldConnectorCallbackSchema.parse(callback)), this.env.OAUTH_STATE_ENCRYPTION_KEY),
+      await sealString(JSON.stringify(callback), this.env.OAUTH_STATE_ENCRYPTION_KEY),
       await sha256(ticket),
       state,
       provider,
@@ -2204,12 +2195,7 @@ export class ConnectionService {
     });
   }
 
-  /**
-   * Admit a held callback for this session, or refuse it. A session that did
-   * not start the authorization is the attack the hold exists for, so its
-   * claim also burns the state: the provider's code is never exchanged, and
-   * the starter's attempt ends failed.
-   */
+  /** Admit a held callback for the session that started it; any other member's claim burns the state. */
   async claimCallback(ticket: string): Promise<ClaimedConnectorCallback> {
     const auth = this.requireAuth();
     const row = await this.env.DB.prepare(
