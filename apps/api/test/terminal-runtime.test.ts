@@ -1567,6 +1567,15 @@ describe("Daytona Terminal runtime", () => {
     expect(resources.publishSiteResource).not.toHaveBeenCalled();
   });
 
+  it("refuses a page over the buffered budget before reading it", async () => {
+    const { files, provider, resources, runtime } = fixture();
+    files.set("/workspace/.rally-output/feed/index.html", new Uint8Array(25_000_001));
+    await expect(runtime.publishResource(context, { filePath: "feed" })).rejects.toMatchObject({ code: "resource_limit_exceeded" });
+    expect(resources.noteOversizedPublish).toHaveBeenCalledWith(context,
+      { shape: "directory", sizeBytes: 25_000_001, limitBytes: 25_000_000, filePath: "feed" });
+    expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/feed/index.html");
+  });
+
   it("reads a file whole when the provider Worker cannot stream it yet", async () => {
     const { files, provider, resources, runtime } = fixture();
     files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode("<h1>Show</h1>"));
