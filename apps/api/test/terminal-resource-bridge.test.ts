@@ -1,5 +1,5 @@
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import { artifactAssetKey, asUserId } from "@rally/contracts";
+import { ArtifactManifestSchema, artifactAssetKey, artifactManifestKey, asUserId, manifestAssetKey } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -584,9 +584,13 @@ describe("Terminal resource bridge", () => {
       .rejects.toMatchObject({ code: "resource_publish_conflict" });
     await expect(rival).resolves.toMatchObject({ version: 3 });
     // Each run wrote its own version; only the winner's is registered and served.
-    const indexes = [...state.objects.keys()].filter((key) => key.includes(`artifact/${ARTIFACT}/`) && key.endsWith("index.html"));
-    expect(indexes.map((key) => [key.includes("/v2/") ? 2 : 3, new TextDecoder().decode(state.objects.get(key))]).sort())
-      .toEqual([[2, "<h1>A</h1>"], [3, "<h1>B</h1>"]]);
+    const page = (version: number) => {
+      const manifest = ArtifactManifestSchema.parse(JSON.parse(new TextDecoder().decode(
+        state.objects.get(artifactManifestKey(ARTIFACT, version)))));
+      const index = manifest.assets.find((asset) => asset.path === "index.html")!;
+      return new TextDecoder().decode(state.objects.get(manifestAssetKey(manifest, index)));
+    };
+    expect([page(2), page(3)]).toEqual(["<h1>A</h1>", "<h1>B</h1>"]);
     expect(state.database.prepare("SELECT current_version FROM artifact_registry WHERE artifact_id = ?").get(ARTIFACT))
       .toEqual({ current_version: 3 });
     expect(state.recordPublish).toHaveBeenCalledTimes(1);

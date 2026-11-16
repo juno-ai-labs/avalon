@@ -47,7 +47,7 @@ describe("writing a materialized site tree", () => {
     } satisfies Pick<Env, "PAYLOADS">;
 
     await expect(storedArtifactVersionPaths(env, manifest)).resolves.toEqual([
-      { path: "index.html", sizeBytes: 1 },
+      { path: "index.html", sizeBytes: 1, key: `artifact/${artifactId}/v2/assets/index.html` },
     ]);
     expect(head).toHaveBeenCalledOnce();
   });
@@ -86,8 +86,8 @@ describe("writing a materialized site tree", () => {
     } satisfies Pick<Env, "PAYLOADS">;
 
     await expect(storedArtifactVersionPaths(env, manifest)).resolves.toEqual([
-      { path: "index.html", sizeBytes: 1 },
-      { path: "social-preview.png", sizeBytes: 1 },
+      { path: "index.html", sizeBytes: 1, key: `artifact/${artifactId}/v2/assets/index.html` },
+      { path: "social-preview.png", sizeBytes: 1, key: `artifact/${artifactId}/v2/assets/social-preview.png` },
     ]);
     expect(head).toHaveBeenCalledTimes(2);
   });
