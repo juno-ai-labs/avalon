@@ -538,6 +538,12 @@ proved on a device: Home's snapshot delivering facts over the bridge, and Home
 opening the Marketplace page on `create` with `marketplace: true`. The browser
 host was driven through both at phone width in Chromium instead.
 
+The same build was then signed in to the production Juno Labs organization,
+whose browser host predates this change, to check the older-host path: the
+dashboard drew the organization's Canvases with no filter row, since no facts
+arrive, and Marketplace opened the prompt form, since that host drops the flag.
+The session was signed out and stopped.
+
 ### Native verification (2026-11-15)
 
 An iPhone simulator (iOS 26.5, 402×874 points) on a fresh development build, signed in to
