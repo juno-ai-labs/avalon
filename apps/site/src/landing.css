@@ -782,3 +782,8 @@ main{counter-reset:fig}
 .versus-table th,.versus-table td{padding:12px}
 .blog-body{font-size:17px}
 }
+
+/* The CASA mark in the footer's legal row; site-theme.css holds the same rules for the other pages. */
+.footer-casa { display: inline-flex; align-items: center; gap: 6px; color: inherit; text-decoration: none; }
+.footer-casa:hover { color: var(--green); }
+.casa-mark { flex: none; color: var(--green); }
