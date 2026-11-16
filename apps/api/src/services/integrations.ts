@@ -5282,17 +5282,7 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  * no Canvas, which is most of them, so their runs read no extra message.
  * `docs/automation-lifecycle.md#attached-conversations`.
  */
-/**
- * Whether a loop may ask people for a source (`sidekick_request_source` and
- * its two companions): a Canvas's Chat, a Sidekick's wizard, and a background
- * agent of either (`actsForAPerson`), whatever started the turn. A Sidekick
- * run and its workers, which are handed event content such as a stranger's
- * email, and a scheduled self-review and its agents, which read runs, may
- * not. A turn another agent's message started is not refused, a run's change
- * request to its wizard included: the owner chose a setup that works across
- * hand-offs over that guard, since asking approves nobody.
- * `docs/sidekick-sources.md#agent-tools`.
- */
+/** Whether a loop may ask people for a source: `actsForAPerson`; `docs/sidekick-sources.md#agent-tools`. */
 function asksForSources(input: WorkstreamWorkflowInput): boolean {
   return actsForAPerson(input);
 }
