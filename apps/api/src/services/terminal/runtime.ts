@@ -166,6 +166,16 @@ export interface TerminalResourceBridge {
     filePath: string,
     input?: { canvas?: string | undefined; displayName?: string | undefined },
   ): Promise<"site" | "archive" | "file" | null>;
+  /**
+   * Record that a publish was refused for its size, before the refusal is
+   * thrown. The cap was copied from the upload limit rather than chosen for
+   * audio or video, and this row is how the team sees how often real work hits
+   * it and by how much before choosing another number.
+   */
+  noteOversizedPublish(
+    context: HarnessToolContext,
+    refused: { shape: "file" | "directory"; sizeBytes: number; limitBytes: number; filePath: string },
+  ): void;
 }
 
 export interface TerminalRepositoryPublisher {
@@ -710,6 +720,7 @@ export function createDaytonaTerminalRuntime(
     );
     const totalBytes = entries.reduce((total, entry) => total + entry.sizeBytes, 0);
     if (totalBytes > MAXIMUM_PUBLISH_BYTES) {
+      resources.noteOversizedPublish(context, { shape: "directory", sizeBytes: totalBytes, limitBytes: MAXIMUM_PUBLISH_BYTES, filePath: input.filePath });
       throw new TerminalToolError(
         "resource_limit_exceeded",
         `The directory holds ${totalBytes} bytes; publication allows at most ${MAXIMUM_PUBLISH_BYTES} bytes. Reduce or split it before retrying.`,
@@ -1355,6 +1366,7 @@ export function createDaytonaTerminalRuntime(
         );
       }
       if (before.size > MAXIMUM_PUBLISH_BYTES) {
+        resources.noteOversizedPublish(context, { shape: "file", sizeBytes: before.size, limitBytes: MAXIMUM_PUBLISH_BYTES, filePath: input.filePath });
         throw new TerminalToolError(
           "resource_limit_exceeded",
           `The output file is ${before.size} bytes; publication allows at most ${MAXIMUM_PUBLISH_BYTES} bytes. Reduce or split it before retrying.`,
