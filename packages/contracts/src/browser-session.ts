@@ -5,7 +5,6 @@ import { ConfiguredRegionSchema } from "./regions";
 import { IdSchema } from "./identifiers";
 import { HttpsUrlSchema } from "./url-schemas";
 import { ArtifactHostnameStubSchema } from "./artifacts";
-import { CanvasSidebarRowSchema } from "./canvases";
 
 /** Browser metadata deliberately excludes bearer and refresh credentials. */
 export const BrowserSessionSchema = SessionSchema.pick({ user: true, workspace: true, impersonator: true, expiresAt: true });
@@ -16,19 +15,6 @@ export const BrowserWorkspaceAttentionSchema = z.object({
   attention: z.array(z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema, attention: WorkspaceAttentionSchema })),
 });
 export type BrowserWorkspaceAttention = z.infer<typeof BrowserWorkspaceAttentionSchema>;
-/**
- * The Canvases someone else shared with this person, in each Organization they
- * belong to, guests included; an Organization whose read failed is absent.
- * Each row is the Organization's own list row (`sharedWithMe` set).
- */
-export const BrowserWorkspaceSharedCanvasesSchema = z.object({
-  canvases: z.array(z.object({
-    region: ConfiguredRegionSchema,
-    workspaceId: WorkspaceIdSchema,
-    items: z.array(CanvasSidebarRowSchema),
-  })),
-});
-export type BrowserWorkspaceSharedCanvases = z.infer<typeof BrowserWorkspaceSharedCanvasesSchema>;
 /** A site's hostname stub, sent by the browser client's site-opening page. */
 export const BrowserSiteResolveSchema = z.strictObject({ hostnameStub: ArtifactHostnameStubSchema });
 /**

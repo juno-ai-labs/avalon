@@ -65,9 +65,8 @@ beforeEach(() => {
 
 describe('CanvasesHomeScreen', () => {
   it("lists a Canvas shared from another Organization by date, names that Organization, and opens it there", () => {
-    const organization = { id: '00000000-0000-7000-8000-0000000000e1', name: 'Acme', region: 'enterprise' as const };
-    elsewhere.items = [{ organization, row: canvas('00000000-0000-7000-8000-0000000000d1', 'Partner roadmap', {
-      createdByUserId: MAYA, sharedWithMe: true, visibility: 'participants', updatedAt: '2026-11-08T09:00:00.000Z' }) }];
+    const organization = { id: '00000000-0000-7000-8000-0000000000e1', name: 'Acme', region: 'global' as const };
+    elsewhere.items = [{ organization, canvas: { id: '00000000-0000-7000-8000-0000000000d1', title: 'Partner roadmap', updatedAt: '2026-11-08T09:00:00.000Z' } }];
     renderHome(clientWith([canvas('00000000-0000-7000-8000-0000000000c1', 'Our plan')]));
     const recent = screen.getByRole('region', { name: 'Recent' });
     // The newer one first, whichever Organization it is from.
@@ -76,7 +75,7 @@ describe('CanvasesHomeScreen', () => {
     expect(shared).toHaveAccessibleDescription('Shared from Acme');
     expect(shared.closest('li')!.querySelector('.canvas-card-organization')).toHaveTextContent('A');
     fireEvent.click(shared);
-    expect(openWorkspaceCanvas).toHaveBeenCalledWith({ region: 'enterprise', workspaceId: organization.id, canvasId: '00000000-0000-7000-8000-0000000000d1' });
+    expect(openWorkspaceCanvas).toHaveBeenCalledWith({ region: 'global', workspaceId: organization.id, canvasId: '00000000-0000-7000-8000-0000000000d1' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Shared with me' }));
     expect(within(recent).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(['Partner roadmap']);

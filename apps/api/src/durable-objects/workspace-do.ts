@@ -3,6 +3,9 @@ import { artifactSidekickBinding } from "./artifact-sidekick-bindings";
 import { ArtifactHostnameStubSchema } from '@rally/contracts';
 import { CANVAS_ARTIFACT_ACCESS_ALARM, CANVAS_ARTIFACT_ACCESS_STATEMENTS, canvasArtifactAccessSnapshot, canvasArtifactAccessForReader, canvasArtifactTargets, canvasArtifactFile } from './canvas-artifact-access';
 import { ArtifactAccessMessageSchema } from '@rally/contracts/artifact-access';
+import { CanvasShareChangedMessageSchema, WorkspaceSharedCanvasesEventSchema } from '@rally/contracts/canvas-share-federation';
+import { CANVAS_SHARE_FEDERATION_ALARM, CANVAS_SHARE_FEDERATION_STATEMENTS, canvasShareFederationKey, canvasShareState } from './canvas-share-federation';
+import { readSharedCanvases } from '../services/canvas-share-inbox';
 import {
   CHANNEL_COLOR_SYNC_MIGRATION,
   CHANNEL_MESSAGE_SEARCH_MIGRATION,
@@ -1053,7 +1056,7 @@ const RETIRED_ALARM_KINDS: ReadonlySet<string> = new Set([
 const WORKSPACE_DISPATCHED_ALARM_KINDS: ReadonlySet<string> = new Set([
   CANVAS_ARTIFACT_ACCESS_ALARM, ...HOSTED_SIDEKICK_ALARM_KINDS, ...RETIRED_ALARM_KINDS, ...WORKSPACE_SCHEDULE_ALARM_KINDS,
   SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND, CANVAS_NAMING_ALARM_KIND, CANVAS_ARCHIVE_CONVERSATION_ALARM, CANVAS_ARCHIVE_ARTIFACT_ALARM,
-  CANVAS_DISCARD_ERASE_ALARM, REPLY_BATCH_ALARM_KIND,
+  CANVAS_DISCARD_ERASE_ALARM, REPLY_BATCH_ALARM_KIND, CANVAS_SHARE_FEDERATION_ALARM,
 ]);
 
 function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTargetKind {
@@ -4496,6 +4499,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "a Canvas's notices: the kind they record, whether a Canvas turned them on, and each person's choice for one Canvas",
   // See canvas-notices.ts and docs/PRDs/2026-11-14_canvas-notices.
   statements: CANVAS_NOTICES_SCHEMA_STATEMENTS,
+}, {
+  version: 151,
+  description: "publish who each Canvas is shared with, for the people's inboxes in their other Organizations",
+  // See canvas-share-federation.ts and docs/canvas-share-federation.md. Also
+  // queues one delivery for every share made before it.
+  statements: CANVAS_SHARE_FEDERATION_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5547,6 +5556,46 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(input.workspaceId);
     return canvasSidebarRows(this.state.storage.sql, { userId: input.userId, member: input.accessClass === "member" },
       this.presentByCanvas(), SIDEBAR_LIST_LIMIT, canvasAppearanceReporter(this.env), input.titleQuery ?? null);
+  }
+
+  /** One person's state of one Canvas here, for their inbox elsewhere (`canvas-share-federation.ts`). */
+  async canvasShareState(input: { workspaceId: string; canvasId: string; userId: string }) {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    return canvasShareState(this.state.storage.sql, input.canvasId, input.userId, canvasAppearanceReporter(this.env));
+  }
+
+  /**
+   * Push a person's shared Canvases from their other Organizations to their
+   * sockets here: their inbox changed, or their setting did. Nothing is kept
+   * here; the inbox is read each time (`docs/canvas-share-federation.md`).
+   */
+  async publishSharedCanvases(input: { workspaceId: string; userId: string }): Promise<void> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    const sockets = this.state.getWebSockets().filter((socket) => {
+      const attachment = readAttachment(socket);
+      return attachment?.subscribed === true && attachment.userId === input.userId;
+    });
+    if (sockets.length > 0) await this.sendSharedCanvases(input.userId, sockets);
+  }
+
+  private async sendSharedCanvases(userId: string, sockets: readonly WebSocket[]): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (workspaceId === null) return;
+    let built: string;
+    try {
+      const shared = await readSharedCanvases(this.env, userId, workspaceId);
+      built = JSON.stringify(WorkspaceSharedCanvasesEventSchema.parse({
+        type: "workspace_shared_canvases", occurredAt: new Date().toISOString(), ...shared,
+      }));
+    } catch (error) {
+      logWarn(this.env, "workspace_shared_canvases_unpublished", {
+        workspace_id: workspaceId, user_id: userId, code: diagnosticErrorCode(error, "workspace_shared_canvases_unbuilt"),
+      });
+      return;
+    }
+    for (const socket of sockets) sendSidebarListFrame(socket, built);
   }
 
   /** The Canvases a Sidekick writes that this viewer may open; see `canvasesWrittenBy`. */
@@ -7414,6 +7463,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           await this.bootstrapArtifactAccessMembers(workspaceId);
           await this.env.ACCESS_REVOCATION_QUEUE.send(ArtifactAccessMessageSchema.parse({
             kind: 'canvas_artifact_access_changed', region:this.env.AVALON_REGION, workspaceId, canvasId: alarm.key,
+          }));
+          return;
+        }
+        // An address only: the consumer reads the state back (`canvasShareState`).
+        if (alarm.kind === CANVAS_SHARE_FEDERATION_ALARM) {
+          const { canvasId, userId } = canvasShareFederationKey(alarm.key);
+          await this.env.ACTIVITY_QUEUE.send(CanvasShareChangedMessageSchema.parse({
+            kind: "canvas_share_changed", region: this.env.AVALON_REGION, workspaceId, canvasId, userId,
           }));
           return;
         }
@@ -12200,6 +12257,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       })));
     }
     this.logWorkspaceSocketHandshake(attachment, "sync_sent", diagnosticAttemptId);
+    // After the answer, never ahead of it: the inbox is a D1 read.
+    this.state.waitUntil(this.sendSharedCanvases(attachment.userId, [socket]));
     socket.serializeAttachment({
       ...attachment,
       subscribed: true,

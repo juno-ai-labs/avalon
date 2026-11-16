@@ -14,7 +14,7 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { AccountOnboarding, CanvasSidebarRow, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceAttention, WorkspaceDepartureOutcome } from '@rally/contracts';
+import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceAttention, WorkspaceDepartureOutcome } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import { canvasDeepLink, type CanvasLinkTarget } from '@rally/contracts/links';
@@ -139,12 +139,6 @@ export interface AppSessionValue {
    */
   getWorkspaceAttention: (input: { region: Region; workspaceId: string }) => Promise<WorkspaceAttention>;
   /**
-   * The Canvases someone else shared with this person in another
-   * Organization: on the Mac with its stored credential, in the browser
-   * through the identity cookie (`GET /browser/workspaces/shared-canvases`).
-   */
-  getWorkspaceSharedCanvases: (input: { region: Region; workspaceId: string }) => Promise<CanvasSidebarRow[]>;
-  /**
    * Opens a Canvas in any of this person's Organizations, switching to it
    * first when it is not the one in front, as a link to it would.
    */
@@ -211,7 +205,6 @@ export type AppSessionDesktopBridge = Pick<
   | 'exchangeDesktopTicket'
   | 'getOnboardingState'
   | 'getWorkspaceAttention'
-  | 'getWorkspaceSharedCanvases'
   | 'getAccountOnboarding'
   | 'updateAccountOnboarding'
   | 'getOrganizationNameSuggestion'
@@ -504,10 +497,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   );
   const getWorkspaceAttention = useCallback(
     (input: { region: Region; workspaceId: string }) => bridge.getWorkspaceAttention(input),
-    [bridge],
-  );
-  const getWorkspaceSharedCanvases = useCallback(
-    (input: { region: Region; workspaceId: string }) => bridge.getWorkspaceSharedCanvases(input),
     [bridge],
   );
   // Set by the deep-link queue below, so an in-app open takes the same path,
@@ -1443,7 +1432,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       },
       getOnboardingState,
       getWorkspaceAttention,
-      getWorkspaceSharedCanvases,
       openWorkspaceCanvas,
       activateWorkspace,
       acceptInvitation,
@@ -1485,7 +1473,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       finishWorkspaceSetup,
       getOnboardingState,
       getWorkspaceAttention,
-      getWorkspaceSharedCanvases,
       openWorkspaceCanvas,
       pendingInvitation,
       pendingAccessRequestId,

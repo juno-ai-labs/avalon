@@ -1,3 +1,4 @@
+import { useOtherOrganizationCanvases } from './shared-canvases';
 import {
   AutomationSummarySchema,
   ClientFeatureFlagsSchema,
@@ -185,6 +186,28 @@ function initialSidebarFrame() {
 }
 
 describe('WorkspaceSocketProvider', () => {
+  it("lists the Canvases shared from other Organizations that the socket pushes, replacing the last push whole", async () => {
+    const queryClient = new QueryClient();
+    const item = (title: string) => ({ organization: { id: '00000000-0000-7000-8000-0000000000f1', name: 'Acme', region: 'global' },
+      canvas: { id: '00000000-0000-7000-8000-0000000000d1', title, updatedAt: '2026-11-10T12:00:00.000Z' } });
+    function Probe(): JSX.Element {
+      return <ul>{useOtherOrganizationCanvases().map((shared) => <li key={shared.canvas.id}>{shared.canvas.title}</li>)}</ul>;
+    }
+    render(<QueryClientProvider client={queryClient}><WorkspaceSocketProvider
+      region="global" workspaceId="00000000-0000-7000-8000-000000000001"
+      api={{ getWorkspaceSocketTicket: async () => ({ url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+        ticket: 'workspace-ticket', protocols: socketTicketProtocols('workspace-ticket') }) }}><Probe />
+    </WorkspaceSocketProvider></QueryClientProvider>);
+    await flushPromises();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    act(() => socket.open());
+    act(() => socket.message({ type: 'workspace_shared_canvases', occurredAt: '2026-11-10T12:01:00.000Z', enabled: true, items: [item('Partner roadmap')] }));
+    await waitFor(() => expect(screen.getAllByRole('listitem').map((row) => row.textContent)).toEqual(['Partner roadmap']));
+    // Turned off: the server sends an empty list, and nothing of the last one stays.
+    act(() => socket.message({ type: 'workspace_shared_canvases', occurredAt: '2026-11-10T12:02:00.000Z', enabled: false, items: [] }));
+    await waitFor(() => expect(screen.queryAllByRole('listitem')).toEqual([]));
+  });
+
   it('renders live Canvas helper counts from pushes and hides them until reconnect has a fresh snapshot', async () => {
     const queryClient = new QueryClient();
     const id = '00000000-0000-7000-8000-000000000020';

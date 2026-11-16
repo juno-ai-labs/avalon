@@ -36,6 +36,7 @@ import { speechRoutes } from "./routes/speech";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
 import { linkRoutes } from "./routes/links";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
+import { sharedCanvasesRoutes } from "./routes/shared-canvases";
 import { connectedAppRoutes, deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { mcpOAuthRoutes } from "./routes/mcp-oauth";
@@ -165,6 +166,9 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.use("/workspace/me/connected-apps", requireWorkspaceAuth, refuseSupportSession);
   identityApi.use("/workspace/me/connected-apps/*", requireWorkspaceAuth, refuseSupportSession);
   identityApi.route("/workspace/me/connected-apps", connectedAppRoutes);
+  // The person's inbox spans their Organizations, as connected apps do.
+  identityApi.use("/workspace/me/shared-canvases", requireWorkspaceAuth, refuseSupportSession);
+  identityApi.route("/workspace/me/shared-canvases", sharedCanvasesRoutes);
   identityApi.route("/conversations", conversationRoutes);
   identityApi.route("/message-issues", messageIssueRoutes);
   identityApi.route("/sharing", sharingRoutes);

@@ -63,8 +63,8 @@ function MobileContent(): React.JSX.Element {
   const pinnedIds = useMemo<string[]>(() => rows.filter((row) => row.pinnedPosition !== null)
     .sort((a, b) => a.pinnedPosition! - b.pinnedPosition!).map((row) => row.id), [rows]);
   const summaries = useMemo(() => rows.map((row) => ({ id: row.id, title: row.title || 'Untitled canvas', updatedAt: row.updatedAt, icon: row.appearance?.icon ?? null, color: row.appearance?.color ?? null })), [rows]);
-  const sharedElsewhere = useMemo(() => elsewhere.map(({ row, organization }) => ({ id: row.id, title: row.title || 'Untitled canvas', updatedAt: row.updatedAt,
-    icon: row.appearance?.icon ?? null, color: row.appearance?.color ?? null, organization: { id: organization.id, name: organization.name, region: organization.region } })), [elsewhere]);
+  const sharedElsewhere = useMemo(() => elsewhere.map(({ canvas, organization }) => ({ id: canvas.id, title: canvas.title || 'Untitled canvas', updatedAt: canvas.updatedAt,
+    icon: canvas.appearance?.icon ?? null, color: canvas.appearance?.color ?? null, organization: { id: organization.id, name: organization.name, region: organization.region } })), [elsewhere]);
   const directoryError = directory === undefined && (socket.state === 'unavailable' || socket.state === 'reconnecting' || socket.state === 'update_required');
   useEffect(() => {
     if (session?.workspace) rememberMobileWorkspace(mobileStorage(), session.user.id, session.workspace);
@@ -236,7 +236,7 @@ function MobileContent(): React.JSX.Element {
   }, [session, rows, summaries, sharedElsewhere, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, conversation, descriptors]);
   return <main className="mobile-canvas-app">
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
-    <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => openElsewhere({ region: item.organization.region, workspaceId: item.organization.id, canvasId: item.row.id })} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={create} /></section>
+    <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={create} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
     {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Suspense></AppErrorBoundary></section>}
     {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
@@ -266,8 +266,10 @@ function Dashboard({ rows, elsewhere, openElsewhere: openOther, loading, failed,
   open: (id: string) => void; create: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const all: Array<{ row: CanvasSidebarRow; organization?: OtherOrganizationCanvas['organization'] }> = elsewhere.length === 0 ? rows.map((row) => ({ row }))
-    : [...rows.map((row) => ({ row })), ...elsewhere].sort((a, b) => b.row.updatedAt.localeCompare(a.row.updatedAt));
+  type Card = { row: OtherOrganizationCanvas['canvas']; organization?: OtherOrganizationCanvas['organization'] };
+  const all: Card[] = elsewhere.length === 0 ? rows.map((row) => ({ row }))
+    : [...rows.map((row): Card => ({ row })), ...elsewhere.map(({ canvas, organization }): Card => ({ row: canvas, organization }))]
+      .sort((a, b) => b.row.updatedAt.localeCompare(a.row.updatedAt));
   const filtered = all.filter(({ row }) => row.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return <div className="mobile-dashboard"><h1>Your canvases</h1>
     <label className="mobile-search"><Search size={19} /><input aria-label="Find a canvas" placeholder="Find a canvas" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
@@ -277,7 +279,7 @@ function Dashboard({ rows, elsewhere, openElsewhere: openOther, loading, failed,
         const { icon: Icon, ink, tint, color } = canvasMark(row.id, row.appearance);
         const style = { '--card-hue': `var(--av-sys-color-project-${color})`, '--card-tint': tint, '--card-ink': ink } as React.CSSProperties;
         const from = organization ? `Shared from ${organization.name}` : undefined;
-        return <button aria-description={from} className="mobile-card" key={`${organization?.id ?? ''}:${row.id}`} onClick={() => organization ? openOther({ row, organization }) : open(row.id)} style={style} title={from}>
+        return <button aria-description={from} className="mobile-card" key={`${organization?.id ?? ''}:${row.id}`} onClick={() => organization ? openOther({ canvas: row, organization }) : open(row.id)} style={style} title={from}>
           {organization && <span aria-hidden="true" className="mobile-card-organization organization-badge-initial">{organization.name.slice(0, 1).toLocaleUpperCase()}</span>}
           <div className="mobile-card-art" aria-hidden="true"><Icon size={index === 0 ? 50 : 32} strokeWidth={1.5} /></div><h3>{row.title || 'Untitled canvas'}</h3><p>Open canvas <ArrowUpRight size={14} aria-hidden="true" /></p></button>;
       })}</div>

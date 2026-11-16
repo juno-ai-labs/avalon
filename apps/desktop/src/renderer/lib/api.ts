@@ -1,4 +1,5 @@
 import type { NotificationChannel } from '@rally/contracts';
+import { SharedCanvasesSettingSchema, type SharedCanvasesSetting } from '@rally/contracts/canvas-share-federation';
 import { WorkstreamMessageAdmissionReceiptSchema, type CreateMessageRequestSchema, type WorkstreamMessageAdmissionReceipt } from '@rally/contracts';
 import { CrashIngestResponseSchema, type ProductAnalyticsPreference } from '@rally/contracts/telemetry';
 import type { MobileCrashReport } from '@rally/contracts/crash-reports';
@@ -890,6 +891,15 @@ export class RallyApi {
       body: preferences,
       schema: MemberPreferencesSchema,
     });
+  }
+
+  /** Whether Canvases shared with this person in their other Organizations join every list (`docs/canvas-share-federation.md`). */
+  async getSharedCanvasesSetting(signal?: AbortSignal): Promise<SharedCanvasesSetting> {
+    return this.request('/workspace/me/shared-canvases', { schema: SharedCanvasesSettingSchema, signal });
+  }
+
+  async setSharedCanvasesSetting(enabled: boolean): Promise<SharedCanvasesSetting> {
+    return this.request('/workspace/me/shared-canvases', { method: 'PUT', body: { enabled }, schema: SharedCanvasesSettingSchema });
   }
 
   /** Text the agent reads in its system prompt on every turn this person starts. */
