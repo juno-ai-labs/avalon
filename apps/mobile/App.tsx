@@ -72,6 +72,8 @@ type Session = {
   directory: MobileSnapshot | null;
   updateDirectory: (snapshot: MobileSnapshot | null) => void;
   controls: React.RefObject<Map<string, CanvasWebViewHandle>>;
+  /** Home's own sender, which holds a command until Home's page answers. */
+  homeSender: React.RefObject<((command: MobileCommand) => void) | null>;
   directoryOwner: React.RefObject<string>;
   signIn: (web: CanvasWebViewHandle | null) => Promise<void>;
   signOut: () => void;
@@ -161,6 +163,7 @@ function AppContent() {
     saveDirectory(next);
   }, []);
   const controls = useRef(new Map<string, CanvasWebViewHandle>());
+  const homeSender = useRef<((command: MobileCommand) => void) | null>(null);
   const directoryOwner = useRef('Home');
   const [chatReturn, setChatReturn] = useState<ChatReturn | null>(null);
   const accountScope = directory ? `${directory.userId}:${directory.workspaceId}` : '';
@@ -226,12 +229,15 @@ function AppContent() {
     setChatReturn(null);
     rootNavigation.dispatch(StackActions.popTo('Canvases', { screen: 'Home' }));
   }, []);
-  const openSettingsSection = useCallback((section: MobileSettingsSection) => { showHome(); sendHome({ type: 'settings', section }); }, [showHome, sendHome]);
+  // Opening Settings hides Home, which is when a stale Home reloads, so these
+  // go through Home's queue rather than into a page that may be loading.
+  const sendHomeWhenReady = useCallback((command: MobileCommand) => (homeSender.current ?? sendHome)(command), [sendHome]);
+  const openSettingsSection = useCallback((section: MobileSettingsSection) => { showHome(); sendHomeWhenReady({ type: 'settings', section }); }, [showHome, sendHomeWhenReady]);
   const accountCommand = useCallback((type: 'sign-out' | 'switch-workspace') => {
     receiveCrashEvent({ type: 'signed-out' });
     showHome();
-    sendHome({ type });
-  }, [showHome, sendHome, receiveCrashEvent]);
+    sendHomeWhenReady({ type });
+  }, [showHome, sendHomeWhenReady, receiveCrashEvent]);
   const shownScope = (directory ?? savedDirectory) ? `${(directory ?? savedDirectory)!.userId}:${(directory ?? savedDirectory)!.workspaceId}` : null;
   const rememberedSite = useCallback((canvasId: string): NativeArtifact | null => {
     const site = rememberedSites[canvasId];
@@ -245,7 +251,7 @@ function AppContent() {
       return { ...sites, [access.canvasId]: { scope: shownScope, resourceId: access.resourceId, version: access.version, canonicalUrl: access.canonicalUrl } };
     });
   }, [shownScope]);
-  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, shownDirectory: directory ?? savedDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar, artifactTone: artifactStatusBar?.style }),
+  const session = useMemo(() => ({ directoryOwner, chatReturn, setChatReturn, prepared, directory, updateDirectory, controls, homeSender, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, shownDirectory: directory ?? savedDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar, artifactTone: artifactStatusBar?.style }),
     [chatReturn, prepared, directory, savedDirectory, updateDirectory, signIn, signOut, authEpoch, notifications, notificationOpened, receiveCrashEvent, homeStale, reportHomeBuild, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar, artifactStatusBar]);
   const theme = isDark ? DarkTheme : DefaultTheme;
   return <GestureHandlerRootView style={styles.fill}><SafeAreaProvider>
@@ -481,7 +487,7 @@ function useChatNavigation(navigation: NativeBottomTabScreenProps<ParamListBase>
 
 function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactId, onContentReady }: NativeBottomTabScreenProps<ParamListBase> & { canvasId?: string; artifactId?: string; onContentReady?: () => void }) {
   const floatingHeader = useContext(FloatingHeaderContext);
-  const { directory, updateDirectory, controls, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild, shownDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar } = useSession();
+  const { directory, updateDirectory, controls, homeSender, signIn, signOut, notifications, notificationOpened, receiveCrashEvent, prepared, setChatReturn, directoryOwner, homeStale, reportHomeBuild, shownDirectory, rememberedSite, rememberSite, claimStatusBar, releaseStatusBar } = useSession();
   const { colors } = useTheme();
   const canvasId = assignedCanvasId ?? route.name;
   const routeCanvases = useContext(CanvasRoutesContext);
@@ -524,11 +530,19 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   // terminated page answers nothing until it reloads.
   const queued = useRef<MobileCommand[]>([]);
   const [answering, setAnswering] = useState(false);
+  // Read at send time: a reload clears it before the page reports loading.
+  const answeringNow = useRef(answering);
+  answeringNow.current = answering;
   const [opening, setOpening] = useState<string | null>(null);
   const sendHome = useCallback((command: MobileCommand) => {
-    if (answering) web.current?.send(command);
+    if (answeringNow.current) web.current?.send(command);
     else queued.current.push(command);
-  }, [answering]);
+  }, []);
+  useEffect(() => {
+    if (!home) return;
+    homeSender.current = sendHome;
+    return () => { homeSender.current = null; };
+  }, [home, sendHome, homeSender]);
   useEffect(() => {
     if (!answering || queued.current.length === 0) return;
     for (const command of queued.current.splice(0)) web.current?.send(command);
@@ -657,7 +671,11 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
   // A stale Home reloads only where nobody sees its page: off screen, or under
   // the native dashboard, which keeps drawing from the directory meanwhile. An
   // open inline chat, create flow or canvas lives in the page and is never cut.
-  useEffect(() => { if (home && homeStale && (!focused || showDashboard)) web.current?.reload(); }, [home, homeStale, focused, showDashboard]);
+  useEffect(() => {
+    if (!home || !homeStale || (focused && !showDashboard)) return;
+    answeringNow.current = false; setAnswering(false);
+    web.current?.reload();
+  }, [home, homeStale, focused, showDashboard]);
   const openFromDashboard = useCallback((id: string) => {
     if (shownDirectory?.pins.slice(0, VISIBLE_PIN_COUNT).includes(id)) { open(id); return; }
     setOpening(id);
