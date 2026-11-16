@@ -18,10 +18,9 @@ const examples: Record<ExampleId, Example> = {
       "Pull the deal emails from Maya’s, Theo’s and Priya’s Gmail into one pipeline dashboard.",
     reply:
       "Done, from your inbox. To add Theo’s and Priya’s, each of them needs to let the Sidekick act as them.",
-    followup:
-      "Allowed. One tweak: when a prospect sends a contract, move the deal to Closing and tell #sales.",
+    followup: "Allowed. Send a push notification when a new deal opens.",
     receipt:
-      "Example run: Northwind sent Priya a contract → Closing, #sales told, version 2.",
+      "Example run: Northwind emailed Priya → new deal, push notification sent, version 2.",
   },
   requests: {
     name: "Listening to users",
