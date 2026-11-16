@@ -68,7 +68,7 @@ mobile dashboard ([`mobile-canvas-client.md`](mobile-canvas-client.md)).
 Markdown file in `packages/skills/marketplace-skills/` supplies its card's `name`,
 `description`, `icon` and `color` (its card's mark, from the Canvas appearance
 catalog; it never becomes the started Canvas's mark), category `tags`, and the
-`connectors` the public marketplace recommends (`marketplace-skills/connectors.ts`). The builds check tags against
+`connectors` and Rally `plugins` the public marketplace shows (`marketplace-skills/connectors.ts`). The builds check tags against
 `marketplace-skills/categories.ts`. Each starter is tagged with its own directory.
 Selecting a template creates and opens a Canvas with the Markdown body sent
 as the creator's first Chat message through the **Start from a prompt** flow.

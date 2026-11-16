@@ -83,7 +83,7 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/landing.css` | The earlier product, start-fast and comparison system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
-| `apps/site/marketplace/index.html`, `apps/site/src/marketplace-catalog.ts`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The marketplace: the app Marketplace's own templates and categories, rendered at build time through `loadCanvasTemplates` (`packages/skills/marketplace-skills/catalog.ts`), a client-side category filter, and one page per template at `/marketplace/<slug>/` (`renderTemplatePage`, listed in `marketplace/sitemap.xml` and `llms.txt`). Each card and page lists the template's recommended connectors with the app's own marks (`connector-marks.ts`, rendered at build time), linking to their help pages. Each template page has its own link preview (`renderTemplateCard`). Linked from the homepage header. Styles build on `home.css` |
+| `apps/site/marketplace/index.html`, `apps/site/src/marketplace-catalog.ts`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The marketplace: the app Marketplace's own templates and categories, rendered at build time through `loadCanvasTemplates` (`packages/skills/marketplace-skills/catalog.ts`), a client-side category filter, and one page per template at `/marketplace/<slug>/` (`renderTemplatePage`, listed in `marketplace/sitemap.xml` and `llms.txt`). Each card and page lists the template's recommended connectors with the app's own marks, and the Rally plugins it leans on (web search, push notifications, audio and images) with the transcript's glyphs (`connector-marks.ts`, rendered at build time), each linking to its help page. Each template page has its own link preview (`renderTemplateCard`). Linked from the homepage header. Styles build on `home.css` |
 | `apps/site/src/home-illustrations.ts` | Shared artwork geometry and accessible SVG views |
 | `apps/site/src/home-pricing.ts` | Homepage plan markup from the product catalog and weekly allocation function |
 | `apps/site/start-fast/index.html` | The earlier landing design, with copy from `access-copy.ts` and shared sections |
@@ -300,11 +300,14 @@ in light and dark, before a change ships, as the repository's rule on visible ch
 
 **What changed:** Each marketplace card gained **More info**, which opens the
 template's own page at `/marketplace/<slug>/`, and a list of recommended
-connectors, each with its company's mark and a link to its help page. The
+connectors, each with its company's mark and a link to its help page, and the
+Rally plugins it leans on (web search, push notifications, audio and images),
+each with a glyph and a link to the help page that explains it. The
 template page shows who it is for, the connectors, the prompt Rally starts
 from, and **Start from this**, and has its own pencil-style link preview. A
 template names its connectors in its front matter (`connectors`), from the
-closed list in `packages/skills/marketplace-skills/connectors.ts`.
+closed list in `packages/skills/marketplace-skills/connectors.ts`, and its
+Rally plugins (`plugins`) from a second list beside it.
 
 **Why:** The product owner asked for a page to read before starting a
 template, and for the card to say which tools it needs.

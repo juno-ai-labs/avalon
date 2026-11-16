@@ -12,8 +12,8 @@ import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
 import { renderComparisonCard, renderTemplateCard } from '../src/social-cards';
-import { renderConnectorMark } from '../src/connector-marks';
-import { TEMPLATE_CONNECTORS } from '../../../packages/skills/marketplace-skills/connectors';
+import { renderConnectorMark, renderPluginGlyph } from '../src/connector-marks';
+import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS } from '../../../packages/skills/marketplace-skills/connectors';
 import { marketplaceTemplates, renderMarketplaceSitemap, renderTemplatePage } from '../src/marketplace-catalog';
 import { parseCanvasTemplate } from '../../../packages/skills/marketplace-skills/catalog';
 import sharp from 'sharp';
@@ -346,14 +346,22 @@ describe('public Rally site', () => {
     expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/marketplace/pr-dashboard/social.png" />');
     expect(page).toContain('<blockquote class="market-prompt"><p>Build a live GitHub PR dashboard in this Canvas.');
     expect(page).toContain('<a class="button primary" data-site-action="web-app-template" href="https://app.rallywith.ai/app/templates/pr-dashboard">Start from this');
+    expect(page).not.toContain('Built into Rally');
     expect(renderSiteChrome(renderTemplatePage(template('shared-grocery-list'))))
       .toContain('<p>Nothing to connect. Rally builds it from what you tell it.</p>');
+    expect(renderSiteChrome(renderTemplatePage(template('recruiting-market-map'))))
+      .toMatch(/<p>Built into Rally, so there is nothing to set up:<\/p><ul [^>]*aria-label="Rally plugins it uses"><li><a href="\/help\/working-with-rally\/research-and-the-web\/"><span class="connector-mark" aria-hidden="true"><svg [\s\S]*?<\/svg><\/span>Web search<\/a><\/li><\/ul>/u);
     expect([...renderMarketplaceSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc).slice(0, 2))
       .toEqual(['https://rallywith.ai/marketplace/pr-dashboard/', 'https://rallywith.ai/marketplace/email-notification-screener/']);
   });
   it("draws every connector a template may recommend with the app's own mark, as static SVG", () => {
     for (const { mark, name } of TEMPLATE_CONNECTORS) {
       expect(renderConnectorMark(mark), name).toMatch(/^<span class="connector-mark" aria-hidden="true"><svg [^>]*viewBox="[^"]+"[^>]*>[\s\S]*<path [^>]*d="[Mm][\s\S]*<\/svg><\/span>$/u);
+    }
+  });
+  it("draws every Rally plugin a template may call out with a glyph, as static SVG", () => {
+    for (const { glyph, name } of TEMPLATE_PLUGINS) {
+      expect(renderPluginGlyph(glyph), name).toMatch(/^<span class="connector-mark" aria-hidden="true"><svg [^>]*viewBox="0 0 24 24"[^>]*>[\s\S]*<path [^>]*d="[Mm][\s\S]*<\/svg><\/span>$/u);
     }
   });
   it('draws a link preview for a template at the size social sites ask for', async () => {
@@ -386,6 +394,13 @@ describe('public Rally site', () => {
       ['/help/connecting-your-tools/github/', 'GitHub'],
       ['https://app.rallywith.ai/app/templates/pr-dashboard', 'Start from this'],
       ['/marketplace/pr-dashboard/', 'More info'],
+    ]);
+    // Rally's own plugins follow the connectors, linking to the help pages that explain them.
+    expect(links(cardOf('Competitor change monitor'))).toEqual([
+      ['/help/working-with-rally/research-and-the-web/', 'Web search'],
+      ['/help/rally-everywhere/notifications/', 'Push notifications'],
+      ['https://app.rallywith.ai/app/templates/competitor-change-monitor', 'Start from this'],
+      ['/marketplace/competitor-change-monitor/', 'More info'],
     ]);
     expect(links(cardOf('Shared grocery list'))).toEqual([
       ['https://app.rallywith.ai/app/templates/shared-grocery-list', 'Start from this'],

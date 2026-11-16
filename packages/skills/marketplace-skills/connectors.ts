@@ -23,3 +23,17 @@ export type TemplateConnectorId = (typeof TEMPLATE_CONNECTORS)[number]['id'];
 
 /** The help page that explains connecting one. */
 export const templateConnectorHelpPath = (id: TemplateConnectorId): string => `/help/connecting-your-tools/${id}/`;
+
+/**
+ * Rally's own plugins a template may call out: built in, so there is nothing
+ * to connect, but worth knowing a template leans on. Each links to the help
+ * page that explains it, and draws the glyph the app's transcript gives that
+ * plugin (`glyph`, drawn by the site's `connector-marks.ts`).
+ */
+export const TEMPLATE_PLUGINS = [
+  { id: 'web', name: 'Web search', helpPath: '/help/working-with-rally/research-and-the-web/', glyph: 'web' },
+  { id: 'push-notifications', name: 'Push notifications', helpPath: '/help/rally-everywhere/notifications/', glyph: 'notifications' },
+  { id: 'audio-and-images', name: 'Audio and images', helpPath: '/help/working-with-rally/pictures-and-voices/', glyph: 'image-generation' },
+] as const;
+
+export type TemplatePluginId = (typeof TEMPLATE_PLUGINS)[number]['id'];

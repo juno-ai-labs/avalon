@@ -5,6 +5,8 @@ icon: "map"
 color: "blue"
 tags:
   - recruiters
+plugins:
+  - web
 ---
 
 Build a recruiting market map in this Canvas. Ask me these two questions if I haven't already answered them. “What role are you hiring for?” and “Which company are you hiring for?”
