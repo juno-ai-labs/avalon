@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { artifactAssetKey, asArtifactId, manifestAssetKey } from "@rally/contracts";
+import { artifactAssetKey, asArtifactId } from "@rally/contracts";
 import type { ArtifactManifest } from "@rally/contracts";
 import {
   ASSET_SHIM_MODULE,
@@ -117,7 +117,7 @@ async function serve(path: string, init: RequestInit = {}): Promise<Response> {
           assets: site.assets.map((asset) => ({
             path: asset.path,
             contentType: asset.contentType,
-            key: manifestAssetKey(site, asset),
+            sha256: asset.sha256,
           })),
         },
       }),

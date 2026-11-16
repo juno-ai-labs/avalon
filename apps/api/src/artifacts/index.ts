@@ -646,10 +646,11 @@ function assetLoopback(ctx: ExecutionContext, artifactId: string, manifest: Arti
     props: {
       artifactId,
       version: manifest.artifactVersion,
+      ...(manifest.assetStore ? { assetStore: manifest.assetStore } : {}),
       assets: manifest.assets.map((asset) => ({
         path: asset.path,
         contentType: asset.contentType,
-        key: manifestAssetKey(manifest, asset),
+        sha256: asset.sha256,
       })),
     },
   });

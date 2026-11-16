@@ -18,8 +18,10 @@ import {
   asWorkspaceId,
   asAutomationId,
   asSubstreamId,
+  ArtifactManifestSchema,
   artifactAssetKey,
   artifactBlobKey,
+  artifactManifestKey,
   type ArtifactManifest,
 } from "@rally/contracts";
 import type { SitePublishFile } from "../src/services/terminal/site-resource-bridge";
@@ -363,48 +365,69 @@ describe("Canvas artifact access propagated to local serving", () => {
       const bytes = new TextEncoder().encode(text);
       return { path, bytes, sha256: await sha256Hex(bytes) };
     };
-    const streamed = async (path: string, text: string, sent = text) => {
+    const streamed = async (path: string, text: string, sent: string | (() => Promise<ReadableStream>) = text) => {
       const bytes = new TextEncoder().encode(text);
       return { path, sha256: await sha256Hex(bytes), sizeBytes: bytes.byteLength,
-        open: async () => new Response(sent).body! };
+        open: typeof sent === "string" ? async () => new Response(sent).body! : sent };
     };
+    const never = async (): Promise<ReadableStream> => { throw new Error("opened_a_file_that_needs_no_bytes"); };
+    const stored = async (path: string, text: string, open = never) => ({ ...await streamed(path, text, open), stored: true as const });
     const site = (files: SitePublishFile[]) => ({ mode: "static" as const, stateful: false, serverModuleSha256: null, files });
+    const publish = (files: SitePublishFile[]) => bridge.publishSiteResource(call(), { filePath: "feed" }, site(files));
 
     const one = await streamed("episodes/one.mp3", "episode one audio");
-    const first = await bridge.publishSiteResource(call(), { filePath: "feed" },
-      site([await file("index.html", "<h1>Show</h1>"), one]));
+    const first = await publish([await file("index.html", "<h1>Show</h1>"), one, await streamed("empty.txt", "", never)]);
     const blob = artifactBlobKey(first.artifactId, one.sha256);
     expect(await (await env.PAYLOADS.get(blob))?.text()).toBe("episode one audio");
-    const live = await bridge.liveSiteFiles(call(), "feed");
-    expect(live?.files).toContainEqual({ path: "episodes/one.mp3", sha256: one.sha256, sizeBytes: 17, storedAt: blob });
+    // An empty file is stored without being opened.
+    expect((await env.PAYLOADS.head(artifactBlobKey(first.artifactId, await sha256Hex(new Uint8Array()))))?.size).toBe(0);
+    expect((await bridge.liveSiteFiles(call(), "feed"))?.files)
+      .toContainEqual({ path: "episodes/one.mp3", sha256: one.sha256, sizeBytes: 17 });
 
-    // The next episode: the first is already stored, so nothing is written for it.
+    // The next episode: the first is already stored, so it is neither opened nor written,
+    // and a second path with the same bytes shares its blob.
     const before = (await env.PAYLOADS.head(blob))!.uploaded.getTime();
-    const second = await bridge.publishSiteResource(call(), { filePath: "feed" }, site([
+    const second = await publish([
       await file("index.html", "<h1>Show, two episodes</h1>"),
-      { path: "episodes/one.mp3", sha256: one.sha256, sizeBytes: 17, storedAt: blob },
+      await stored("episodes/one.mp3", "episode one audio"),
+      await stored("episodes/one-again.mp3", "episode one audio"),
       await streamed("episodes/two.mp3", "episode two audio"),
-    ]));
+    ]);
     expect(second.version).toBe(2);
     expect((await env.PAYLOADS.head(blob))!.uploaded.getTime()).toBe(before);
 
-    // A file that changed after it was listed is refused, and the site keeps serving version 2.
-    await expect(bridge.publishSiteResource(call(), { filePath: "feed" }, site([
-      await file("index.html", "<h1>Show, three</h1>"),
-      await streamed("episodes/three.mp3", "episode three audio", "episode three AUDIO"),
-    ]))).rejects.toMatchObject({ code: "resource_publish_failed" });
-    expect((await bridge.liveSiteFiles(call(), "feed"))?.files.map((entry) => entry.path).sort())
+    // A file that changed after it was listed (other bytes, fewer, or more) is named as
+    // that, and the site keeps serving version 2. A provider's failure keeps its own code.
+    for (const sent of ["episode three AUDIO", "episode three", "episode three audio, longer"]) {
+      await expect(publish([await file("index.html", "<h1>Show, three</h1>"), await streamed("episodes/three.mp3", "episode three audio", sent)]))
+        .rejects.toMatchObject({ code: "resource_not_ready", details: { code: "site_file_changed_after_listing" } });
+    }
+    await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
+      await streamed("episodes/three.mp3", "episode three audio", async () => { throw new Error("daytona_file_stream_http_404"); })]))
+      .rejects.toMatchObject({ code: "resource_publish_failed", details: { code: "daytona_file_stream_http_404" } });
+    expect((await bridge.liveSiteFiles(call(), "feed"))?.files.map((entry) => entry.path))
       .toEqual(expect.arrayContaining(["episodes/one.mp3", "episodes/two.mp3"]));
 
-    // A version stored before blobs is copied into one, once.
-    const legacyKey = artifactAssetKey(first.artifactId, 1, "episodes/legacy.mp3");
-    await env.PAYLOADS.put(legacyKey, "legacy audio");
-    const legacy = await sha256Hex(new TextEncoder().encode("legacy audio"));
-    await bridge.publishSiteResource(call(), { filePath: "feed" }, site([
+    // A live version stored before blobs: its file is copied into a blob, once; and a
+    // file it names but no longer holds is streamed from the sandbox instead.
+    const liveManifestKey = artifactManifestKey(first.artifactId, 2);
+    const liveManifest = ArtifactManifestSchema.parse(await (await env.PAYLOADS.get(liveManifestKey))!.json());
+    const legacyManifest = { ...liveManifest };
+    delete legacyManifest.assetStore;
+    const legacyText = "legacy audio";
+    const legacy = await sha256Hex(new TextEncoder().encode(legacyText));
+    const gone = await sha256Hex(new TextEncoder().encode("gone audio"));
+    await env.PAYLOADS.put(artifactAssetKey(first.artifactId, 2, "episodes/legacy.mp3"), legacyText);
+    await env.PAYLOADS.put(liveManifestKey, JSON.stringify({ ...legacyManifest, assets: [...legacyManifest.assets,
+      { path: "episodes/legacy.mp3", contentType: "audio/mpeg", sizeBytes: 12, sha256: legacy },
+      { path: "episodes/gone.mp3", contentType: "audio/mpeg", sizeBytes: 10, sha256: gone }] }));
+    await publish([
       await file("index.html", "<h1>Show, legacy</h1>"),
-      { path: "episodes/legacy.mp3", sha256: legacy, sizeBytes: 12, storedAt: legacyKey },
-    ]));
-    expect(await (await env.PAYLOADS.get(artifactBlobKey(first.artifactId, legacy)))?.text()).toBe("legacy audio");
+      await stored("episodes/legacy.mp3", legacyText),
+      await stored("episodes/gone.mp3", "gone audio", async () => new Response("gone audio").body!),
+    ]);
+    expect(await (await env.PAYLOADS.get(artifactBlobKey(first.artifactId, legacy)))?.text()).toBe(legacyText);
+    expect(await (await env.PAYLOADS.get(artifactBlobKey(first.artifactId, gone)))?.text()).toBe("gone audio");
 
     // The serving Worker reads the blob through the manifest.
     await share("public");
@@ -570,6 +593,49 @@ describe("Canvas artifact access propagated to local serving", () => {
       expect(served.body).toContain("<body>Board</body>");
       expect(served.length === null || Number(served.length) === new TextEncoder().encode(served.body).length).toBe(true);
     }
+  });
+
+  it("serves a blob-stored active site: its module loads by digest and its assets by the manifest", async () => {
+    await runInDurableObject(
+      env.SUBSTREAM_AGENTS.getByName(conversationObjectName(env.AVALON_REGION, workspaceId, CANVAS, "0")),
+      (_instance, state) => seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: CANVAS, parentKind: "canvas" }),
+    );
+    const bridge = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(env, workspaceId),
+      createTerminalPortFactory(env, undefined, "0"), undefined, null, null, null, "0",
+      canvasArtifactNoter(env, { workspaceId, parentKind: "canvas", parentId: CANVAS, substreamId: asSubstreamId("0") }));
+    const file = async (path: string, text: string) => {
+      const bytes = new TextEncoder().encode(text);
+      return { path, bytes, sha256: await sha256Hex(bytes) };
+    };
+    const module = await file("index.js", "export default { async fetch(request, env) { return env.ASSETS.fetch(request); } };");
+    const published = await bridge.publishSiteResource({
+      workspaceId, workstreamId: CANVAS, harnessRunId: crypto.randomUUID(), toolCallId: crypto.randomUUID(),
+      effectIntentId: crypto.randomUUID(), executionPrincipal: { type: "user", userId: OWNER },
+      signal: new AbortController().signal,
+    }, { filePath: "board" }, {
+      mode: "active", stateful: false, serverModuleSha256: module.sha256,
+      files: [module, await file("index.html", "<h1>Board</h1>"), await file("data/rows.json", "[1,2,3]")],
+    });
+    // The module is a blob like every other file, and nothing is at the old path.
+    expect(await env.PAYLOADS.head(artifactBlobKey(published.artifactId, module.sha256))).not.toBeNull();
+    expect(await env.PAYLOADS.head(artifactAssetKey(published.artifactId, 1, "index.js"))).toBeNull();
+    await share("public");
+    await sync(published.artifactId, published.resourceId);
+    const loader = env.ARTIFACT_LOADER;
+    if (!loader) throw new Error("this test needs the worker_loaders binding");
+    const stub = new URL(published.url).hostname.split(".")[0]!.replace(/-g$/u, "");
+    const fetchPath = async (path: string) => {
+      const ctx = createExecutionContext();
+      const response = await artifactWorker.fetch(new Request(`https://${stub}-g.rallyusercontent.com${path}`), {
+        APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+        ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+        ARTIFACT_LOADER: loader, PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
+      }, ctx);
+      await waitOnExecutionContext(ctx);
+      return { status: response.status, body: await response.text() };
+    };
+    expect(await fetchPath("/data/rows.json")).toEqual({ status: 200, body: "[1,2,3]" });
+    expect((await fetchPath("/")).body).toContain("<h1>Board</h1>");
   });
 
   it("artifact-only users can use artifacts but cannot read the conversation; old cookies lose access", async () => {

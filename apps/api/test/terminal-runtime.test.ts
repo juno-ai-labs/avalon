@@ -1517,38 +1517,76 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/rsvp/index.js");
   });
 
-  it("settles each site file as already stored, streamed, or read, and counts only new bytes against the limit", async () => {
+  it("settles each site file as already stored, streamed, or read, and counts each budget on its own", async () => {
     const { files, provider, resources, runtime } = fixture();
     const big = new Uint8Array(20_000_000).fill(7);
     const art = new Uint8Array(10).fill(3);
     const next = new Uint8Array(20_000_000).fill(8);
     files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode('<meta property="og:image" content="cover.png">'));
+    files.set("/workspace/.rally-output/feed/about.html", new TextEncoder().encode("<p>About</p>"));
     files.set("/workspace/.rally-output/feed/episodes/one.mp3", big);
     files.set("/workspace/.rally-output/feed/cover.png", art);
     files.set("/workspace/.rally-output/feed/episodes/two.mp3", next);
     provider.openFile = vi.fn(async (_id: string, path: string) => new Response(files.get(path)!.slice().buffer).body!);
     vi.mocked(resources.liveSiteFiles).mockResolvedValueOnce({ files: [
       // Stored under another name: matched by its bytes, not its path.
-      { path: "episodes/old-name.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength, storedAt: "artifact/a/blobs/one" },
-      { path: "cover.png", sha256: await sha256Hex(art), sizeBytes: art.byteLength, storedAt: "artifact/a/blobs/art" },
+      { path: "episodes/old-name.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength },
+      { path: "cover.png", sha256: await sha256Hex(art), sizeBytes: art.byteLength },
     ] });
     // 40 MB of episodes, but only the new 20 MB one moves and counts.
     await runtime.publishResource(context, { filePath: "feed" });
     const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
     const named = (path: string) => site.files.find((file) => file.path === path)!;
-    expect(named("episodes/one.mp3")).toEqual({
-      path: "episodes/one.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength, storedAt: "artifact/a/blobs/one",
-    });
+    expect(named("episodes/one.mp3")).toMatchObject({ sha256: await sha256Hex(big), sizeBytes: big.byteLength, stored: true });
     const streamed = named("episodes/two.mp3");
     expect(streamed).not.toHaveProperty("bytes");
-    expect(new Uint8Array(await new Response(await (streamed as { open(): Promise<ReadableStream> }).open()).arrayBuffer()))
-      .toEqual(next);
-    expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/feed/episodes/one.mp3");
-    expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/feed/episodes/two.mp3");
-    // The page and the preview image it names are always read, even when stored.
+    expect(streamed).not.toHaveProperty("stored");
+    // Compared by digest: element-wise equality on 20 MB of bytes exhausts the test's heap.
+    expect(await sha256Hex(new Uint8Array(await new Response(await (streamed as { open(): Promise<ReadableStream> }).open()).arrayBuffer())))
+      .toBe(await sha256Hex(next));
+    // Only index.html and the preview image it names are read whole, even when stored.
     expect(named("cover.png")).toHaveProperty("bytes");
     expect(named("index.html")).toHaveProperty("bytes");
+    expect(named("about.html")).not.toHaveProperty("bytes");
+    for (const path of ["episodes/one.mp3", "episodes/two.mp3", "about.html"]) {
+      expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", `/workspace/.rally-output/feed/${path}`);
+    }
     expect(resources.noteOversizedPublish).not.toHaveBeenCalled();
+  });
+
+  it("refuses a site publish whose new files stream more than its budget, and says so", async () => {
+    const { files, provider, resources, runtime } = fixture();
+    files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode("<h1>Show</h1>"));
+    files.set("/workspace/.rally-output/feed/episodes/one.mp3", new Uint8Array(13_000_000).fill(1));
+    files.set("/workspace/.rally-output/feed/episodes/two.mp3", new Uint8Array(13_000_000).fill(2));
+    provider.openFile = vi.fn(async () => new Response("").body!);
+    await expect(runtime.publishResource(context, { filePath: "feed" }))
+      .rejects.toMatchObject({ code: "resource_limit_exceeded", details: { expected: "bytes new or changed since the live version at most 25000000" } });
+    expect(resources.noteOversizedPublish).toHaveBeenCalledWith(context,
+      { shape: "directory", sizeBytes: 26_000_000, limitBytes: 25_000_000, filePath: "feed" });
+    expect(resources.publishSiteResource).not.toHaveBeenCalled();
+  });
+
+  it("reads a file whole when the provider Worker cannot stream it yet", async () => {
+    const { files, provider, resources, runtime } = fixture();
+    files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode("<h1>Show</h1>"));
+    files.set("/workspace/.rally-output/feed/episode.mp3", new TextEncoder().encode("audio"));
+    provider.openFile = vi.fn(async () => { throw new Error("terminal_provider_file_stream_unavailable"); });
+    await runtime.publishResource(context, { filePath: "feed" });
+    const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
+    const episode = site.files.find((file) => file.path === "episode.mp3") as { open(): Promise<ReadableStream> };
+    expect(await new Response(await episode.open()).text()).toBe("audio");
+  });
+
+  it("names a listing that timed out instead of calling the output unstable", async () => {
+    const { files, provider, runtime } = fixture();
+    files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode("<h1>Show</h1>"));
+    const listing = vi.mocked(provider.runUtilityCommand).getMockImplementation()!;
+    provider.runUtilityCommand = vi.fn(async (id, input) => input.operation === "resource.publish.inspect_target"
+      ? { exitCode: 124, stdout: "directory\n", stderr: "", timedOut: true }
+      : listing(id, input));
+    await expect(runtime.publishResource(context, { filePath: "feed" }))
+      .rejects.toMatchObject({ code: "resource_listing_timed_out" });
   });
 
   it("publishes a directory with only index.html as a static site with no database", async () => {

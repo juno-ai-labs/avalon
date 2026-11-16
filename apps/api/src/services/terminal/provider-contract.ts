@@ -146,10 +146,11 @@ export interface TerminalSandboxProvider {
   readFile(idOrName: string, path: string): Promise<Uint8Array>;
   /**
    * The file's bytes as a stream, never held whole: how a site publish moves a
-   * large file into storage. Optional, so a provider without one has every
-   * file read with {@link readFile} instead.
+   * large file into storage. `signal` cancels the download until the stream is
+   * returned; the caller cancels the stream itself after that. Optional: a
+   * provider without it has each file read whole instead.
    */
-  openFile?(idOrName: string, path: string): Promise<ReadableStream<Uint8Array>>;
+  openFile?(idOrName: string, path: string, signal?: AbortSignal): Promise<ReadableStream<Uint8Array>>;
   writeFile(idOrName: string, path: string, bytes: Uint8Array, signal: AbortSignal): Promise<void>;
   runUtilityCommand(idOrName: string, input: {
     operation: TerminalUtilityOperation;

@@ -60,6 +60,19 @@ const PATH_OUTSIDE_ROOT_EXIT_CODE = 43;
  * and the team's to set.
  */
 const MAXIMUM_PUBLISH_BYTES = DEFAULT_MAX_ATTACHMENT_BYTES;
+
+/**
+ * The most new bytes one site publish may stream from the sandbox, beside the
+ * {@link MAXIMUM_PUBLISH_BYTES} it may read into memory.
+ *
+ * Two budgets because they bound different things. The buffered one guards
+ * the Worker's memory and the provider RPC's message size, and must not move
+ * for media. This one bounds only transfer and storage per publish, so the
+ * team can raise it for longer episodes without touching memory. Its value is
+ * the team's: 25 MB, the number they chose to keep (and to watch through
+ * `terminal_publish_over_size_limit`), not a memory figure.
+ */
+const MAXIMUM_STREAMED_PUBLISH_BYTES = DEFAULT_MAX_ATTACHMENT_BYTES;
 const FILE_NOT_FOUND_EXIT_CODE = 44;
 const FILE_NOT_REGULAR_EXIT_CODE = 45;
 /** An edit's target no longer holds the bytes the edit was computed from. */
@@ -157,16 +170,15 @@ export interface TerminalResourceBridge {
     },
   ): Promise<TerminalPublishedSiteOutput>;
   /**
-   * The files the site at this path serves now, each with the key that
-   * stores it, or `null` when the path has no site. A directory publish
-   * writes nothing for a file whose bytes are already among them
-   * (`StoredSiteFile`).
+   * The files the site at this path serves now, or `null` when the path has
+   * no site. A directory publish writes nothing for a file whose bytes are
+   * already among them (`StoredSiteFile`).
    */
   liveSiteFiles(
     context: HarnessToolContext,
     filePath: string,
     input?: { canvas?: string | undefined; displayName?: string | undefined },
-  ): Promise<{ files: readonly { path: string; sha256: string; sizeBytes: number; storedAt: string }[] } | null>;
+  ): Promise<{ files: readonly { path: string; sha256: string; sizeBytes: number }[] } | null>;
   /**
    * What this path already published as, or `null` if it never has.
    *
@@ -390,6 +402,27 @@ export function createDaytonaTerminalRuntime(
    */
   async function probeFragment(touched: readonly string[]): Promise<TerminalInstructionProbe | null> {
     return instructions ? instructions.fragment({ touched }) : null;
+  }
+
+  /**
+   * One sandbox file as a stream, cancelled with the tool call. A provider
+   * Worker deployed before streaming (`terminal_provider_file_stream_unavailable`,
+   * or an RPC method it does not have) is read whole instead, so a deploy in
+   * either order keeps publishing.
+   */
+  async function openSandboxFile(sandbox: AcquiredTerminalSandbox, path: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+    const whole = async () => new Response((await provider.readFile(sandbox.providerSandboxId, path)).slice().buffer).body!;
+    let stream: ReadableStream<Uint8Array>;
+    try {
+      stream = provider.openFile ? await provider.openFile(sandbox.providerSandboxId, path, signal) : await whole();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!/terminal_provider_file_stream_unavailable|does not implement/u.test(message)) throw error;
+      stream = await whole();
+    }
+    // After the provider returns, cancelling the tool call cancels the stream,
+    // which reaches the download across the RPC.
+    return stream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>(), { signal });
   }
 
   /** Record what the probe found and hand back the tool's own stdout. */
@@ -666,6 +699,15 @@ export function createDaytonaTerminalRuntime(
         { reason: result.exitCode === 45 ? "symbolic links cannot be published" : "the path is neither a regular file nor a directory" },
       );
     }
+    if (result.timedOut) {
+      // Not instability: listing and hashing this output took longer than the
+      // command may run, which a retry repeats.
+      throw new TerminalToolError(
+        "resource_listing_timed_out",
+        "Rally could not list and hash this output within the time one publish allows, so the publish did not start. It is too large to republish whole right now; tell the person, and do not retry the same publish.",
+        { field: "filePath", reason: "Listing and hashing every file timed out." },
+      );
+    }
     const lines = result.stdout.split("\n").filter((line) => line.trim().length > 0);
     const head = lines[0] ?? "";
     const file = /^file (\d+) ([0-9a-f]{64})$/u.exec(head);
@@ -757,46 +799,52 @@ export function createDaytonaTerminalRuntime(
     // Each file of a site is settled here, so the model only ever publishes a
     // directory:
     // - **stored**: the live version already holds these bytes (by digest, at
-    //   any path), so nothing moves and nothing counts against the limit;
-    // - **read**: pages, the server module and the preview image the page
-    //   names, whose bytes this publish reads itself;
+    //   any path), so nothing moves and nothing counts against a budget; the
+    //   writer finds the live copy itself;
+    // - **read**: `index.html`, the server module and the preview image the
+    //   page names, whose bytes this publish itself needs;
     // - **streamed**: everything else, from the sandbox into its blob, never
     //   held by the Worker.
-    // The listing's digest decides "stored"; a wrong one can only keep bytes
-    // this site already served. A streamed file is checked by R2 against it.
+    // The listing's digest decides "stored"; a wrong one can only put bytes
+    // this site already served at a path. A streamed file is checked by R2.
     const live = resolved.kind === "site" ? await resources.liveSiteFiles(context, input.filePath, input) : null;
     const index = resolved.kind === "site" ? entries.find((entry) => entry.path === "index.html") : undefined;
     const readIndex = index ? await readEntry(index) : null;
     const previewSources = new Set(readIndex
       ? socialPreviewSourcePaths(new TextDecoder("utf-8", { fatal: false }).decode(readIndex.bytes))
       : []);
-    const liveByDigest = new Map((live?.files ?? []).map((file) => [`${file.sha256}:${file.sizeBytes}`, file]));
+    const liveDigests = new Set((live?.files ?? []).map((file) => `${file.sha256}:${file.sizeBytes}`));
     const needsBytes = (entry: DirectoryEntry): boolean => resolved.kind !== "site"
-      || /\.html?$/iu.test(entry.path)
+      || entry.path === "index.html"
       || previewSources.has(entry.path)
       || (resolved.mode === "active" && entry.path === resolved.entryPath);
+    const open = (entry: DirectoryEntry) => () => openSandboxFile(sandbox, `${path}/${entry.path}`, context.signal);
     const settle = (entry: DirectoryEntry): StoredSiteFile | StreamedSiteFile | null => {
       if (needsBytes(entry)) return null;
-      const stored = liveByDigest.get(`${entry.sha256}:${entry.sizeBytes}`);
-      if (stored) return { path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes, storedAt: stored.storedAt };
-      const openFile = provider.openFile;
-      if (!openFile) return null;
-      return {
-        path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes,
-        open: () => openFile.call(provider, sandbox.providerSandboxId, `${path}/${entry.path}`),
-      };
+      const file = { path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes, open: open(entry) };
+      return liveDigests.has(`${entry.sha256}:${entry.sizeBytes}`) ? { ...file, stored: true } : file;
     };
     const settled = new Map(entries.flatMap((entry) => {
       const file = settle(entry);
       return file ? [[entry.path, file] as const] : [];
     }));
-    const newBytes = entries.reduce((total, entry) => total + ("storedAt" in (settled.get(entry.path) ?? {}) ? 0 : entry.sizeBytes), 0);
-    if (newBytes > MAXIMUM_PUBLISH_BYTES) {
-      resources.noteOversizedPublish(context, { shape: "directory", sizeBytes: newBytes, limitBytes: MAXIMUM_PUBLISH_BYTES, filePath: input.filePath });
+    let readBytes = 0;
+    let streamedBytes = 0;
+    for (const entry of entries) {
+      const file = settled.get(entry.path);
+      if (!file) readBytes += entry.sizeBytes;
+      else if (!("stored" in file)) streamedBytes += entry.sizeBytes;
+    }
+    for (const [sizeBytes, limitBytes, what] of [
+      [readBytes, MAXIMUM_PUBLISH_BYTES, "read whole (pages, the server module, the preview image, or an archive)"],
+      [streamedBytes, MAXIMUM_STREAMED_PUBLISH_BYTES, "new or changed since the live version"],
+    ] as const) {
+      if (sizeBytes <= limitBytes) continue;
+      resources.noteOversizedPublish(context, { shape: "directory", sizeBytes, limitBytes, filePath: input.filePath });
       throw new TerminalToolError(
         "resource_limit_exceeded",
-        `The directory has ${newBytes} bytes that are new or changed since the live version; one publication allows at most ${MAXIMUM_PUBLISH_BYTES}. Publish fewer new files at a time.`,
-        { field: "filePath", expected: `new or changed directory bytes at most ${MAXIMUM_PUBLISH_BYTES}` },
+        `The directory has ${sizeBytes} bytes ${what}; one publication allows at most ${limitBytes}. Publish fewer new files at a time.`,
+        { field: "filePath", expected: `bytes ${what} at most ${limitBytes}` },
       );
     }
     const siteFiles: SitePublishFile[] = [];

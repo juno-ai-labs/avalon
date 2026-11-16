@@ -298,7 +298,11 @@ A directory published as a site moves only bytes its live version does not
 already store, and streams each large new file from the sandbox into storage
 (`TerminalSandboxProvider.openFile`, a Daytona signed download the provider
 Worker fetches and returns across RPC as a stream), so the Worker never holds
-it; [reactive web artifacts](reactive-web-artifacts.md) has the storage.
+it; [reactive web artifacts](reactive-web-artifacts.md) has the storage. The
+tool call's signal cancels the download before the stream returns and the
+stream after. A provider Worker without `openFile` has the file read whole, so
+the API and provider Workers deploy in either order. A listing that times out
+is `resource_listing_timed_out`, not `resource_not_ready`: a retry repeats it.
 
 A publish refused for its size (`resource_limit_exceeded`) first logs
 `terminal_publish_over_size_limit` with the shape (file or directory), the
