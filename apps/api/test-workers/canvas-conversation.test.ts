@@ -30,6 +30,7 @@ import { createTerminalPortFactory } from "../src/services/terminal/object-port"
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { bootstrapWorkstreamRuntimeEnvironment } from "../src/services/workstream-runtime-database";
+import { createResourceObjectPort } from "../src/runtime/resource-port";
 import { createTranscriptObjectPort } from "../src/runtime/transcript-port";
 import { CANVAS_NAMING_ALARM_KIND } from "../src/durable-objects/canvas-schema";
 import { __integrationTesting } from "../src/services/integrations";
@@ -1088,6 +1089,43 @@ describe("a Canvas's artifacts", () => {
     return canvasBridge(canvasId).publishResource(toolContext(canvasId),
       { filePath, ...(replaceCanvasArtifact === undefined ? {} : { replaceCanvasArtifact }) }, new TextEncoder().encode(text));
   }
+
+  it("makes a background agent's publication available in the Canvas Chat and to the producing agent", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const substreamId = asSubstreamId(crypto.randomUUID());
+    await workspace().reserveChild({
+      workspaceId: WORKSPACE_ID, parentId: canvasId, substreamId, kind: "child",
+      createdByUserId: CREATOR, authorityGeneration: 1,
+    });
+    const producer = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, canvasId, substreamId),
+    ));
+    expect((await producer.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: canvasId, substreamId, generation: 1,
+    })).status).toBe(200);
+
+    const bridge = createTerminalResourceBridge(
+      withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID),
+      createTerminalPortFactory(TEST_ENV, undefined, "0"),
+      async (input) => {
+        const result = await producer.attachRuntimeResource(input);
+        expect(result.status).toBe(200);
+      },
+      null, substreamId, null, "0",
+      canvasArtifactNoter(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: canvasId, substreamId }),
+    );
+    const published = await bridge.publishResource(toolContext(canvasId),
+      { filePath: "plan.md", displayName: "Background plan" }, new TextEncoder().encode("# Launch plan"));
+    const detail = await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId);
+    expect(detail.artifacts).toMatchObject([{ resourceId: published.resourceId, title: "Background plan" }]);
+    const conversations = new ConversationService(TEST_ENV, auth(CREATOR));
+    const chat = await conversations.client(canvasId, true);
+    expect((await chat.boot()).workstream.resources).toMatchObject([
+      { id: published.resourceId, title: "Background plan", direction: "artifact" },
+    ]);
+    expect(await createResourceObjectPort(TEST_ENV, WORKSPACE_ID, canvasId, undefined, substreamId)
+      .isAttached({ resourceId: published.resourceId })).toBe(true);
+  });
 
   it("pushes stored-data status from listed database-backed artifacts, independently of the newest artifact or presence", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });

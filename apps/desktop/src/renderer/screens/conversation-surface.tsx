@@ -33,6 +33,7 @@ import { expandToggle, openResourceRequest, usePaneExpansion } from '../lib/navi
 import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
+  type CanvasArtifact,
   type TranscriptActivity,
   type TranscriptTurn,
   type WorkstreamMessageDeliveryState,
@@ -1061,6 +1062,8 @@ export interface ConversationSurfaceProps {
    * and browser tools, and no card offers the audience.
    */
   artifactSharing?: { publishedIds: readonly string[]; audience?: ArtifactAudienceControl | undefined } | undefined;
+  /** The Canvas's own published artifacts. null while its detail is loading. */
+  canvasArtifacts?: readonly CanvasArtifact[] | null | undefined;
   /**
    * Ways to start the conversation, drawn under the composer while it has no
    * messages: a Canvas's templates. Present, the empty conversation lifts its
@@ -1108,6 +1111,7 @@ function ConversationSurfaceContent({
   withoutComposer = false,
   embedded = false,
   artifactSharing,
+  canvasArtifacts,
   renderStarters,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
@@ -1403,17 +1407,28 @@ function ConversationSurfaceContent({
     [api],
   );
   const siteArtifacts = useSiteArtifacts(api);
+  const canvasArtifact = canvasArtifacts?.find((artifact) => artifact.resourceId === resourcePanel?.resourceId);
+  const conversationResource = routedDetail?.resources.find((resource) => resource.id === resourcePanel?.resourceId);
+  const readCanvasArtifact = Boolean(api && canvasArtifact
+    && (!conversationResource || conversationResource.currentVersion < canvasArtifact.version));
+  const canvasArtifactResource = useQuery({
+    queryKey: ['canvas-artifact-resource', id, canvasArtifact?.resourceId, canvasArtifact?.version],
+    queryFn: async ({ signal }): Promise<WorkstreamResource> => ({
+      ...await api!.getResource(canvasArtifact!.resourceId, signal),
+      direction: 'artifact',
+      relationshipType: 'generated',
+    }),
+    enabled: readCanvasArtifact,
+  });
+  const panelResource = (readCanvasArtifact ? canvasArtifactResource.data : undefined) ?? conversationResource;
   useEffect(() => {
-    if (!resourcePanel) return;
-    if (!routedDetail || routedDetail.resources.some((resource) => resource.id === resourcePanel.resourceId)) return;
-    // The device cache's copy of the conversation is not the room's word on
-    // what it holds; it can predate the artifact, or hold none at all, and
-    // closing on it shut the panel a Canvas had just opened onto its newest
-    // artifact on a first visit.
-    if (feedFromLocalCache) return;
+    if (!resourcePanel || canvasArtifact || canvasArtifacts === null || conversationResource) return;
+    // A device cache can predate an attachment. Only the live conversation
+    // can tell us that an ordinary conversation resource has gone away.
+    if (!routedDetail || feedFromLocalCache) return;
     setPanel(null);
     closeOwnRail();
-  }, [resourcePanel, closeOwnRail, feedFromLocalCache, routedDetail]);
+  }, [resourcePanel, canvasArtifact, canvasArtifacts, conversationResource, closeOwnRail, feedFromLocalCache, routedDetail]);
   useOpenAttachedArtifact(
     artifactPanelKey,
     feedFromLocalCache ? undefined : routedDetail?.resources,
@@ -2063,8 +2078,9 @@ function ConversationSurfaceContent({
   // The rail's detail shows one resource at a time, so its history is fetched
   // for that one rather than for every attachment the work stream carries.
   const inspectedResourceId = resourcePanel ? resourcePanel.resourceId : inspector?.type === 'resource' ? inspector.id : null;
-  const inspectedResourceVersion = workstream.data?.resources
-    .find((resource) => resource.id === inspectedResourceId)?.currentVersion ?? null;
+  const inspectedResourceVersion = resourcePanel
+    ? panelResource?.currentVersion ?? canvasArtifact?.version ?? null
+    : workstream.data?.resources.find((resource) => resource.id === inspectedResourceId)?.currentVersion ?? null;
   const resourceVersions = useQuery({
     queryKey: resourceVersionsQueryKey(inspectedResourceId, inspectedResourceVersion),
     queryFn: ({ signal }) => api!.getResourceVersions(inspectedResourceId!, signal),
@@ -2808,7 +2824,7 @@ function ConversationSurfaceContent({
               ? 'refresh'
               : attachResource.error ? 'attach' : undefined}
         leaving={railLeaving}
-        {...(substreamId === '0' ? {
+        {...(substreamId === '0' && (!canvasArtifact || conversationResource) ? {
           onAddResource: () => setResourceDialogOpen(true),
           onDetachResource: (resource: WorkstreamResource) => detachResource.mutateAsync(resource),
           onRefreshResource: (resource: WorkstreamResource) => refreshResource.mutate(resource),
@@ -2819,6 +2835,8 @@ function ConversationSurfaceContent({
           onRenameResource: (resource: WorkstreamResource, title: string) => renameResource.mutateAsync({ resource, title }),
         } : {})}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
+        resource={panelResource ?? (readCanvasArtifact && canvasArtifactResource.isError ? null : undefined)}
+        resourcePending={canvasArtifacts === null || (readCanvasArtifact && canvasArtifactResource.isPending)}
         resourceVersions={resourceVersions.data}
         resourceVersionsFailed={Boolean(resourceVersions.error)}
         {...(siteArtifacts ? { siteArtifacts } : {})}
