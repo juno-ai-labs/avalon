@@ -15,7 +15,8 @@ stream finishes or the person stops it.
 | `apps/desktop/src/renderer/lib/pcm-speech-player.ts` | Incremental 24 kHz signed little-endian PCM decoding and gapless Web Audio scheduling. |
 | `apps/desktop/src/renderer/lib/api.ts` | Authenticated `POST /speech` fetch and response-format validation without body buffering. |
 | `apps/api/src/routes/speech.ts` | The protected regional streaming response and content-free operational events. |
-| `apps/api/src/services/message-speech-service.ts` | Markdown-to-speech text reduction, Azure-sized chunking, one-chunk prefetch, and provider-stream composition. |
+| `apps/api/src/services/message-speech-service.ts` | Markdown-to-speech text reduction, one-chunk prefetch, and provider-stream composition. |
+| `apps/api/src/services/multimodal-generation/speech-pieces.ts` | The Azure-sized splitter (`splitSpeechText`), shared with `generate_audio`, and the MP3 join. |
 | `apps/api/src/services/multimodal-generation/azure-audio-client.ts` | The shared `gpt-4o-mini-tts` Azure request boundary for streamed PCM and resource-producing MP3. |
 
 ## How it works

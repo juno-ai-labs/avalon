@@ -294,14 +294,28 @@ name is a plain file name; the host's root serves the same file. It serves
 under the Canvas's artifact audience once that delivery lands, normally within
 seconds.
 
+A directory publish lists every file with its digest. The sandbox keeps one
+digest cache per published directory, at
+`/workspace/.rally/publish-digests/<sha256 of the path>`, one line per file keyed
+by inode, change time, size and path, and hashes only files it has no line for.
+A digest is appended as it is computed, so a listing stopped by its time limit
+keeps its progress, and a finished listing rewrites the cache with its own
+files. A file whose bytes later disagree with its digest drops the cache. A tree
+just imported has new inodes and change times, so the first publish after an
+import hashes everything.
+
 A directory published as a site moves only bytes its live version does not
-already store, and streams each large new file from the sandbox into storage
-(`TerminalSandboxProvider.openFile`, a Daytona signed download the provider
-Worker fetches and returns across RPC as a stream), so the Worker never holds
-it; [reactive web artifacts](reactive-web-artifacts.md) has the storage. The
-tool call's signal cancels the download before the stream returns and the
-stream after. A provider Worker without `openFile` has the file read whole, so
-the API and provider Workers deploy in either order. A listing that times out
+already store as blobs, and streams each other non-page file from the sandbox
+into storage (`TerminalSandboxProvider.openFile`, a Daytona signed download the
+provider Worker fetches and returns across RPC as a stream), so the API Worker
+never holds it; [reactive web artifacts](reactive-web-artifacts.md) has the
+storage. The tool call's signal cancels the download before the stream returns
+and the stream after. The signed URL is fetched inside the provider Worker, so
+it appears in that Worker's own traces for the URL's 120-second life. The
+provider Worker must be promoted before the API, as `deploy-api.yml` does: an
+older provider Worker has no `openFile`. If streaming cannot start (a failed
+signing, a missing method), the file is read whole instead, which fits because
+a streamed file is within the streamed budget. A listing that times out
 is `resource_listing_timed_out`, not `resource_not_ready`. For a directory the
 same call again continues from the files already hashed, so the refusal asks
 for a retry; a single file hashes from the start each time.
@@ -1022,6 +1036,12 @@ network proxy, or a general GitHub administration surface.
 ## Testing
 
 The focused API suites are `apps/api/test/terminal-*.test.ts`; they use injected
+
+`test/terminal-directory-listing.test.ts` runs the listing's real shell over
+temporary files (Linux only; it is GNU `find`, as the sandbox is) and counts
+which files `sha256sum` hashed; `test/terminal-provider.test.ts` covers
+`openFile`'s signed fetch; `test-workers/terminal-provider-rpc-boundary.test.ts`
+reads a stream across a real service binding after the client is disposed.
 Daytona, GitHub, R2, clock, and D1 fakes and never require network access. The
 schema those fixtures are built on is proved by
 `packages/db/test/baseline-migration.test.ts`. Renderer states are covered by
@@ -1202,6 +1222,12 @@ credential identifier. It is sampled aggregate telemetry, never authority or a
 recovery ledger.
 
 ## Operations
+
+Publishing logs `terminal_publish_over_size_limit` (shape, extension, sizes,
+limit) before every size refusal, `site_file_store_failed` (artifact, code,
+extension, size, source) when a site file cannot be stored, and
+`site_served_manifest_unreadable` when a live manifest cannot be read, after
+which every file of that publish streams.
 
 A sandbox's warm-stop, archive, and expiry deadlines are workspace alarm
 entries derived from `next_terminal_action_at` in the workspace directory
@@ -1472,9 +1498,12 @@ update lag before changing the default.
 
 ## Changelog
 
-### 2026-11-16 — Directory listings reuse their digests; size refusals are logged
+### 2026-11-16 — Directory listings reuse their digests; site files stream; size refusals are logged
 
-**What changed:** A directory publish's listing (`directoryListingCommands`,
+**What changed:** `TerminalSandboxProvider.openFile` returns a sandbox file as a
+stream: the provider Worker signs a Daytona download URL and fetches it, since
+the SDK's own stream download refuses to run in a Worker and its buffered one
+holds the whole file. A directory publish's listing (`directoryListingCommands`,
 `site-publish.ts`) keeps a digest cache per directory under
 `/workspace/.rally/publish-digests/`, one line per file keyed by inode, change
 time, size and path, and hashes only files it has no line for. A digest is
@@ -1501,6 +1530,8 @@ damaged or unwritable cache only costs rehashing. On a real Daytona sandbox
 (2026-11-16) hashing ran at about 1.4 GB/s, so the cache matters for feeds of
 many gigabytes rather than for ordinary sites. A new size check on a publish
 path calls `noteOversizedPublish` before it throws.
+
+Shipped in #1626.
 
 ### 2026-11-15 — Canvas files return their URL, and the snapshot ships ffmpeg
 

@@ -132,7 +132,8 @@ recurring refresh changes rows and publishes nothing: save the resource ID, the
 tables and columns, and the statement each run sends with
 \`write_artifact_data\`. Runs can overlap, and a row write is safe when they
 do. The import, edit and publish steps below are for a site whose content is
-its files, and for changing a site's code.
+its files, for changing a site's code, and for a refresh that also adds files
+(a feed's episodes): save the claim and the sequence below for those too.
 
 A Sidekick run publishes into a Canvas attached to the Sidekick. Save the
 instruction to publish each refresh into the saved Canvas by naming it in
@@ -469,9 +470,10 @@ Rally serves a site's files in ways a page can rely on:
   publish states applies to those new files alone, so one episode or
   report must fit under it, and a site can hold many. Two rules follow:
   - **Publish the whole directory every time.** A file missing from the
-    directory is removed from the site. When the directory is not in the
-    sandbox (a new run, a new sandbox), bring it back with
-    \`import_resource\` and the site's resource id before adding to it.
+    directory is removed from the site. Before adding to it, recover the
+    site by import (step 1 of the sequence above), even when a directory is
+    already there: one left from an earlier run may be missing files another
+    run published since.
   - **Name each new file once and never reuse the name**, such as
     \`episodes/2026-11-14-no-ai-slop.mp3\`, so an app that saved the old
     file never gets new bytes under a name it already has.

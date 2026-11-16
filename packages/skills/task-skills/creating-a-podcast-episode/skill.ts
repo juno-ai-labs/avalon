@@ -42,6 +42,11 @@ created before they were added may not. If either is missing, install it with
 too, stop and say the sandbox has no ffmpeg, before spending any speech
 calls.
 
+Then recover the feed's site, also before any speech call: load
+\`publishing-a-feed\` and do its step 7.1 (in a Sidekick run, take the claim
+first). If the feed has never been published, there is nothing to recover
+and you build it with this episode. If recovery fails, stop.
+
 Name the episode once, at the start, with only letters, digits, hyphens and
 dots and dated so it never collides with another, such as
 \`2026-11-14-no-ai-slop\`. Its recording and its art are published under that
@@ -95,10 +100,9 @@ name; a fixed name would make every episode replace the last.
    halfway through. The instructions are about delivery only; never put
    script text in them.
 
-4. **Record one section per call, and keep a ledger.** Call
-   \`generate_audio\` once per section, in order, with that section's whole
-   text, whatever its length: Rally records long text in pieces and joins
-   them. For each section, keep its index, a hash of its text and the
+4. **Record one section per call, and keep a ledger.** Record each section
+   with one speech call, in order, sending the section's whole text: Rally
+   records text longer than one request in pieces and joins them. For each section, keep its index, a hash of its text and the
    resource id it returned, so a retry reuses the sections it already has
    and records only the missing ones. One call per section, not one for the
    whole script, is what lets each chapter start exactly where a section
@@ -119,9 +123,10 @@ name; a fixed name would make every episode replace the last.
    \`\`\`
 
    Name the sections with zero-padded numbers (\`section-01.mp3\`) so they
-   sort in order. Mono at 64 kbps is plenty for one voice and keeps an
-   episode of about 50 minutes under the size one publish accepts; for a
-   longer one use \`-b:a 48k\`. Loudness at -16 LUFS is the common podcast
+   sort in order. Mono at 64 kbps is plenty for one voice, about 0.48 MB a
+   minute. The episode and its artwork go up in one publish and must fit
+   together under the size a refused publish states; for a long episode use
+   \`-b:a 48k\`. Loudness at -16 LUFS is the common podcast
    level, so episodes play at the same volume.
 
 6. **Check the length against the script.** Speech runs at about 150 words
@@ -177,12 +182,11 @@ name; a fixed name would make every episode replace the last.
    ffmpeg -y -i art.png -vf "scale=3000:3000:flags=lanczos,format=rgb24" -q:v 3 2026-11-14-no-ai-slop.jpg
    \`\`\`
 
-9. **Put the recording and the artwork in the feed site's directory**, after
-   recovering the site there (\`publishing-a-feed\`, step 7.1; never before):
+9. **Put the recording and the artwork in the recovered site directory**:
    \`episodes/2026-11-14-no-ai-slop.mp3\` and
-   \`episodes/2026-11-14-no-ai-slop.jpg\`. They are never published on their
-   own, since the site's page plays only its own files. Read each file's size
-   in bytes with \`stat -c %s\` for the record.
+   \`episodes/2026-11-14-no-ai-slop.jpg\` (\`building-live-sites\`, Media,
+   downloads and feeds). Read each file's size in bytes with \`stat -c %s\`
+   for the record.
 
 10. **Write the show notes**: two or three sentences on what the episode
     covers, a link to the source, and one sentence saying the audio is an AI
@@ -213,9 +217,14 @@ name; a fixed name would make every episode replace the last.
 - **Chapters timed by guesswork.** A chapter that starts mid-sentence sends
   the listener to the wrong place. Do instead: record one section per call,
   and time it from the sections' measured lengths (step 7).
-- **Splitting a section by hand to fit a request.** \`generate_audio\`
-  records a long section in pieces itself. Do instead: send each section
-  whole, and if one is refused for its size, split it at a natural break.
+- **Splitting a section by hand to fit a request.** The speech tool records
+  a long section in pieces itself. Do instead: send each section whole. If
+  one is refused for its size, split it at a natural break into two calls
+  (\`section-03a.mp3\`, \`section-03b.mp3\`); both stay one section, with
+  one ledger entry and one chapter starting at the first part.
+- **Recording before recovering the site.** If the import then fails or
+  another run holds the claim, every speech call is wasted. Do instead:
+  recover first.
 - **Reporting a finished episode on the recording alone.** Check its
   length (step 6) and confirm its row was written.
 `;
