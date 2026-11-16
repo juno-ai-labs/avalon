@@ -2450,6 +2450,8 @@ so a refusal (notices off, no Canvas, several) reaches the person at setup
 instead of every run repeating it. A scheduled self-review may not add or
 widen the step: it reaches people's phones, and nobody asked.
 
+PR: [#1624](https://github.com/juno-ai-labs/avalon/pull/1624).
+
 ### 2026-11-14 — A Canvas manages every Sidekick attached to it
 
 **What changed:** `sidekickManages` admits everyone a Canvas the Sidekick is

@@ -854,6 +854,8 @@ recurring work.
 (outcomes, not progress; turn on only when asked) so it reads whole; change
 both together. It names no tool, so a tool rename does not strand it.
 
+PR: [#1623](https://github.com/juno-ai-labs/avalon/pull/1623).
+
 ### 2026-11-15 — Canvas notices: an agent tells a Canvas's people
 
 **What changed:** The `canvas_notice` kind, the `rally:notifications`
