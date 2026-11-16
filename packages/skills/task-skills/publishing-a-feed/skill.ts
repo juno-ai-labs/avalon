@@ -58,7 +58,10 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    The site's code renders the feed from those rows on every request, with
    one function per element and one escaping function every text value
    passes through. Store values as plain text (\`&\`, not \`&amp;\`) and let
-   that function escape them. The one exception is show notes stored as
+   that function escape them. Plain text means no Markdown either: convert
+   Markdown from an inbox or another connected account to plain text
+   before writing it (see \`building-live-sites\`), or the page and every
+   podcast app show its brackets and asterisks. The one exception is show notes stored as
    HTML, which go unescaped inside \`<![CDATA[…]]>\`; split any \`]]>\`
    inside them. Write that renderer once, check its output (step 9), and
    leave it alone. Adding an entry is one row write with \`write_artifact_data\`;
