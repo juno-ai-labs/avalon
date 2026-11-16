@@ -37,6 +37,7 @@ exists.
 | `apps/api/src/services/artifact-site-resolution.ts` | The hostname-to-organization lookup behind `/browser/sites/resolve`, for signing in from a site's link. |
 | `apps/api/src/artifacts/facet-host.ts` | The Rally-authored module source loaded into a stateful artifact's facet beside the model's own. |
 | `apps/api/src/artifacts/asset-loopback.ts` | `ArtifactAssetLoopback`: the `ASSETS` binding, as an exported entrypoint. The file-reading capability that crosses into an artifact's isolate. |
+| `apps/api/src/artifacts/stored-object-response.ts` | `storedObjectResponse`: every stored byte Rally serves (a published file, a static asset, an `ASSETS` read), with one byte range honoured. |
 | `apps/api/src/artifacts/sidekick-dispatch.ts`, `sidekick-forwarder.ts`, `sidekick-input.ts` | App-scoped Sidekick invocation: the facet loopback, the serving Worker's narrow API service bridge, and the common input parser. |
 | `apps/api/src/durable-objects/artifact-sidekick-bindings.ts` | Resolving accepted named bindings and checking the attached, open Canvas. |
 | `apps/api/src/artifacts/asset-shim.ts` | The two module sources that run inside the isolate: the wrapper that makes `fetch(string)` true, and the entry Rally puts in front of a stateless active site's own module. |
@@ -45,7 +46,8 @@ exists.
 | `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, reaching the supervisor through the one supported resolver, and the write gate: which runs are offered the write tool (`artifactDataWriteAccess`) and which sites each may write (`resolveWritableArtifact`). |
 | `apps/api/src/durable-objects/workspace-artifact-data-write.ts` | WorkspaceDO's one read for the write gate (`artifactDataWriteFacts`): the artifact a resource is, its Canvas, whether that Canvas is archived, and whether it is attached to the Sidekick named. |
 | `packages/prompts/harness/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
-| `packages/agent-harness/src/platform-skills/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
+| `packages/skills/platform-skills/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
+| `packages/skills/task-skills/publishing-a-feed/skill.ts` | The loadable skill for any feed an app subscribes to without signing in, with its page and copyable link, composing the build craft above. |
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
 | `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions and lazy menu levels it contributes to its host, and the Stored data pop-out. |
 | `apps/desktop/src/renderer/components/detail-header-actions.tsx` | How a detail hands its actions to the header of the rail or panel showing it, as data the host draws as its own. Not artifact-specific: it is what keeps this detail's controls out of the page it is showing. |
@@ -289,6 +291,21 @@ endpoint, prior-version mounts) and everything else is artifact content: assets
 resolved against the manifest for a static site, the loader for a stateless
 active one, or the facet for a stateful one.
 
+Stored bytes (a published file, a static asset, and an asset a site's code
+reads through `env.ASSETS`) are served by `storedObjectResponse`, after
+admission. Each response carries `Accept-Ranges: bytes`, its `Content-Length`
+and the object's `ETag`. A `GET` with one range (`bytes=a-b`, `bytes=a-`,
+`bytes=-n`) gets `206` with `Content-Range`; a range past the end gets `416`;
+a request for several ranges, or an `If-Range` naming another version, gets
+the whole object with `200`. A `HEAD` reads only the object's metadata. HTML
+that Rally rewrites (the social tags, the annotation script, a prior
+version's base) is a new body each time and is always sent whole: a static
+site's rewritten page is built fresh, an `env.ASSETS` read of HTML ignores
+`Range` because the serving Worker may inject into an active site's response
+afterwards, and an injected response loses its `Content-Length`, `ETag`,
+`Accept-Ranges` and `Content-Range`, which `HTMLRewriter` would otherwise keep
+from the stored page.
+
 For successful current-version HTML, the Worker adds the manifest's normalized
 canonical, description, Open Graph, and Twitter/X tags after authored tags, so
 the page's own values win and Rally fills what is missing. Static injection is
@@ -460,8 +477,11 @@ not offered the tool:
    person who can open the site's Canvas now. It is there to check a row write
    it saves before the first real run makes one; its guide says to use a row it
    can tell is a test and delete it after.
-4. **Nobody else**: not a background agent, a Chat under Organization
-   authority, or any other parent kind.
+4. **A background agent** writes as its root does: a Chat's agent under rule
+   1, a wizard's under rule 3, and a run's worker under rule 2 with its run's
+   id ([`agent-loop-types.md`](agent-loop-types.md#a-background-agent-acts-with-its-roots-authority)).
+5. **Nobody else**: not a Chat under Organization authority, or any other
+   parent kind.
 
 The read resolution runs first, then one WorkspaceDO call,
 `artifactDataWriteFacts`, in place of the read path's registry lookup. A site
@@ -942,6 +962,36 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-15 — Stored files and assets answer byte ranges
+
+**What changed:** Published files, static assets and `env.ASSETS` reads go
+through one helper that honours a single byte range (`206`, `416`), and sends
+`Accept-Ranges`, `Content-Length` and `ETag` on every response. A `HEAD` reads
+metadata only. The site content-type table gained `rss`, `atom`, `ics` and
+`m4a`.
+
+**Why:** A podcast feed's audio could not be seeked: every response was the
+whole object with `200`, so a player could not skip ahead until an episode had
+downloaded, and Apple's podcast directory refuses media that does not answer
+ranges. Assets also sent no length. A `HEAD` read the whole object to throw it
+away.
+
+**Considered and rejected:** Multipart responses for several ranges, which no
+player needs; RFC 9110 lets the whole object answer instead. Handing the
+`Range` header straight to R2, which leaves a range past the end to R2's own
+error rather than a `416`; a ranged request reads metadata first instead, one
+extra read only when a range is asked for. Relaxing `private, no-store` for
+public reads, which is a separate decision: a shared cache cannot tell an
+anonymous response from a personalized one.
+
+**Consequences:** A new path that serves stored bytes uses
+`storedObjectResponse` rather than `PAYLOADS.get`, or it loses ranges again.
+A path that rewrites a response after it is served strips the stored body's
+headers (`withoutStoredBodyHeaders`): `HTMLRewriter` keeps them, and review
+found that the new `Content-Length` would have truncated every active-site page
+Rally injects into.
+Each stored key is one immutable version, so a range never splices versions.
 
 ### 2026-11-15 — Viewer sessions last a year from the last open
 

@@ -59,7 +59,10 @@ and delivery replay. Start reserves an ordinary child under the same conversatio
 parent, bootstraps the existing harness, and provisions its name, description and
 inherited model override. It grants no private-child viewer memberships. The
 child retains its inherited execution principal; admission resolves it locally,
-and messages do not replace it with a teammate's credentials. A worker's
+and messages do not replace it with a teammate's credentials. It also acts with
+its root's authority and is offered its root's tools, apart from a run's
+`report_outcome`
+([`agent-loop-types.md`](agent-loop-types.md#a-background-agent-acts-with-its-roots-authority)). A worker's
 Terminal is its owner's: it uses the sandbox and checkout of the conversation
 or Sidekick it works for, through further delegation, under a mutation lease
 held per tool call, so a worker's write waits with `sandbox_busy` only while a
@@ -275,7 +278,8 @@ After verifying current state, the agent corrects or retracts superseded blocker
 or pending-status memory while preserving the user's preferences.
 First authorized contact joins the authoring
 conversation to the team. Drafting tools are available only on a Sidekick's main
-authoring conversation, not ordinary workstreams, workers or scheduled runs.
+authoring conversation and the agents it starts, not ordinary workstreams, run
+workers or scheduled runs.
 Authoring guidance identifies its own Sidekick, reads the current definition,
 and preserves the scope already selected under existing publication rules.
 Questions from agent exchanges use replies instead of participant forms. This
@@ -284,11 +288,12 @@ at a later Bind boundary during a participant-started run follow the same rule.
 
 ### In a Canvas's Chat
 
-A Canvas's Chat (`parentKind: canvas`, substream `"0"`, a user principal) gets
-the plugin with `canvasChat` set, which changes three tools and adds one. The
-Canvas every one of them acts on is the loop's own (`canvasChatId`); none has a
-Canvas argument, so a Chat makes and archives Sidekicks for its own Canvas and
-for no other.
+A Canvas's Chat (`parentKind: canvas`, substream `"0"`, a user principal), and
+any background agent it started, gets the plugin with `canvasChat` set, which
+changes three tools and adds one. The Canvas every one of them acts on is the
+loop's own (`canvasChatId`, from `canvasChatAuthority`); none has a Canvas
+argument, so a Chat makes and archives Sidekicks for its own Canvas and for no
+other.
 
 | Tool | In a Canvas's Chat |
 | --- | --- |
@@ -328,14 +333,17 @@ it asks is also drawn in the Chat that messaged it
 
 ### A run asking its wizard for a change
 
-A Sidekick run child (`automationRun` set) also gets `request_sidekick_change`
-and a paragraph of guidance in this plugin's message: a request for a lasting
-change to the Sidekick goes to its wizard, even when it reaches the run as
-external evidence. No other conversation is offered the tool, and the service
-refuses one that calls it (`sidekick_change_outside_run`).
+A Sidekick run child (`automationRun` set), and each worker it started, also
+gets `request_sidekick_change` and a paragraph of guidance in this plugin's
+message: a request for a lasting change to the Sidekick goes to its wizard,
+even when it reaches the run as external evidence. No other conversation is
+offered the tool, and the service refuses one that calls it
+(`sidekick_change_outside_run`). A worker's request carries no
+`automationContinuation`, so the wizard reads it as possibly external content,
+the safe direction.
 
-The host names the recipient from `automationRun.automationId`, so a run
-reaches only its own wizard; the model supplies only `changes`. Delivery is the
+The host names the recipient from the run's authority (`loopAuthority`), so a
+run and its workers reach only their own wizard; the model supplies only `changes`. Delivery is the
 ordinary `send`, with its contact check, team join and reply route. The host
 frames the text (`sidekickChangeRequestText`) under `SIDEKICK_CHANGE_REQUEST_HEADER`
 with `Run:` and `Run turn started by:` lines it derives from the run's input;
@@ -376,7 +384,8 @@ posts into an email thread. The wizard's continuation note (`renderRunContinuati
 - WorkspaceDO is the sole team authority; a D1 fallback would create divergent
   membership decisions.
 - A run's change request goes only to its own Sidekick's wizard. The recipient
-  comes from the run's `automationRun`, never from a model argument; a field
+  comes from the run's authority (`automationRun`, or a worker's
+  `automationDelegation`), never from a model argument; a field
   for it would let a run's model, steered by a Slack reply, address another
   Sidekick's wizard.
 - A conversation may message a Sidekick's authoring agent when its principal

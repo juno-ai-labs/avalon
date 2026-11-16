@@ -6,6 +6,7 @@
   "include": [
     "index.ts",
     "types.ts",
+    "platform-skills/**/*.ts",
     "task-skills/**/*.ts"
   ]
 }

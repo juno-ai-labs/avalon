@@ -158,9 +158,16 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = Object.freeze({
   webm: "video/webm",
   mp4: "video/mp4",
   mp3: "audio/mpeg",
+  m4a: "audio/mp4",
   wav: "audio/wav",
   pdf: "application/pdf",
   xml: "application/xml",
+  // Feeds an app subscribes to. A browser shows RSS and Atom as XML, as it
+  // already shows `xml`, and a calendar or audio file not at all, so none
+  // widens what model-authored bytes can be read as.
+  rss: "application/rss+xml; charset=utf-8",
+  atom: "application/atom+xml; charset=utf-8",
+  ics: "text/calendar; charset=utf-8",
   wasm: "application/wasm",
 });
 
