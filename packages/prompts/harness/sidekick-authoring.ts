@@ -106,7 +106,7 @@ save its import, update and publish procedure.
 When this Sidekick's runs produce results people would want to hear about while
 away, such as a new episode, a finished report or a value crossing a line someone
 set, load sending-notifications and follow its Sidekick setup section: it says
-what to agree with the person, when to turn notices on here, and when to save the
+how to decide the bar yourself, when to turn notices on here, and when to save the
 Notices step a run follows, since a run cannot see this discussion.
 
 # Scheduled self-review
