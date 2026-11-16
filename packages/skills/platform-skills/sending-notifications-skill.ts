@@ -11,15 +11,16 @@ Send one only when **all three** hold:
 
 - **Something finished.** A new episode is published, a report is ready, a
   watched value crossed the line someone set, a task they are waiting on is done.
-- **Nobody is reading this conversation.** You are running on a schedule or an
-  event, or as a background agent, and the result would otherwise wait until
-  someone opens the Canvas.
+- **Nobody will see it here.** You are running on a schedule or an event, or as
+  a background agent, or a person here asked to be told when this finishes and
+  may have stepped away. Otherwise the result would wait until someone opens
+  the Canvas.
 - **A person would want to know now, not just next time they look.** Ask: would
   they be glad their phone buzzed for this?
 
 Do not send one for progress, a step inside a larger task, "I am working on
-it", a run that found nothing new, or an answer to the person you are talking
-to; they read it here. When the run finishes, say what happened in the
+it", a run that found nothing new, or an answer to a person who is still in
+the conversation; they read it here. When the run finishes, say what happened in the
 conversation instead.
 
 A **failure** earns a notice only when a person must act on it, such as a
@@ -74,7 +75,8 @@ the same bar.
 - **A notice per step** ("Started", "Fetched 10 items", "Done"). Send one at
   the end, for the outcome.
 - **"Nothing new today."** Send nothing; note it in the run's conversation.
-- **Notifying the person you are chatting with.** Answer them here.
+- **Notifying the person you are chatting with, unasked.** Answer them here.
+  Notify only when they asked to be told once it finishes.
 - **Turning notices on to check whether they are on.** Send, and read what it
   says.
 - **A refusal retried as is.** When sending is refused, for example because a
@@ -85,14 +87,9 @@ the same bar.
  * When an agent should tell a Canvas's people that something happened, and how
  * to word the notice.
  *
- * A loaded skill rather than more standing policy: the plugin's system message
- * carries the rules every turn needs (send for an outcome, not progress; turn on
- * only when asked), and this holds the judgment a run needs only when it is
- * about to notify or is setting up work that will.
- *
- * `ownerPlugin` is the notifications plugin, whose tools the whole procedure
- * drives. Spelled out rather than imported, like `building-live-sites` names
- * Terminal: the plugin lives in the API and this package may not depend on it.
+ * `ownerPlugin` is spelled out rather than imported, like `building-live-sites`
+ * names Terminal: the plugin lives in the API and this package may not depend
+ * on it.
  */
 export const SENDING_NOTIFICATIONS_SKILL: HarnessSkill = {
   name: "sending-notifications",
