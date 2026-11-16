@@ -188,8 +188,11 @@ Save acknowledges the source transaction, not every serving host. Each host
 adopts the policy when its queue delivery completes. Requests admitted before
 that application can finish. Open pages become subject to the new policy on
 their next network request; previously downloaded content and local computation
-cannot be withdrawn. HTTP responses remain `private, no-store` so shared caches
-cannot bypass the gate.
+cannot be withdrawn. HTTP responses are `private`, so shared caches cannot
+bypass the gate. Stored bytes (a published file, a static site's asset) are
+`private, no-cache` with an `ETag`: the browser keeps its copy but asks again
+before each use, and that request is admitted like any other, so a Canvas made
+private stops answering at once. Everything else stays `no-store`.
 
 WorkspaceDO migration 147 schedules initial propagation for existing Canvases
 and preserves public access for Canvases with existing registered publications.

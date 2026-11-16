@@ -176,6 +176,18 @@ its abandoned cost grows with message length.
 
 ## Changelog
 
+### 2026-11-16 — The splitter moved to `speech-pieces.ts`
+
+**What changed:** `splitSpeechText` and `AZURE_SPEECH_INPUT_CHARACTERS` moved,
+unchanged, to `apps/api/src/services/multimodal-generation/speech-pieces.ts`;
+this service re-exports them.
+
+**Why:** `generate_audio` now records long text in pieces too, and two splitters
+would cut the same text in different places.
+
+**Consequences:** A change to how text is cut changes both read-aloud and
+generated recordings.
+
 ### 2026-10-17 — Speak reads a link's name and not its address
 
 **What changed:** The speech service asks the shared plain-text reducer for

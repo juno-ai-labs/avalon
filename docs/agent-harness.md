@@ -1904,6 +1904,33 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-11-16 — `generate_audio` records text of any length
+
+**What changed:** `generate_audio` dropped its 4,096-character cap. Rally splits
+longer text with the splitter message read-aloud already used (moved to
+`speech-pieces.ts`), records each piece in order with the same voice and
+instructions, and joins the MP3s, removing each piece's ID3 tags and its
+Xing, Info or VBRI length frame. A call needing several requests gets the
+1,050-second tool ceiling through `resolveTimeoutMs`, and the tool is marked
+`longRunning`.
+
+**Why:** An episode-length script took many calls, a ledger and an ffmpeg join
+in a sandbox, all steps an agent had to get right, and each call could drift in
+voice. One call now makes one recording.
+
+**Considered and rejected:** Azure AI Speech batch synthesis, which takes a
+whole script in one job but needs its own Speech resource and key and delivers
+the file later; it stays the option for episodes past what this timeout and the
+attachment limit allow. Leaving each piece's length frame in place, which makes
+players read the first piece's length as the whole file's. A new text cap: the
+existing attachment limit already bounds the result, and each piece is checked
+against what is left of it.
+
+**Consequences:** Pieces run one after another, so a long script takes a few
+seconds per piece; running them in parallel is a latency win that needs Azure's
+rate limit in hand first. A retried call records every piece again; nothing
+caches a piece across calls.
+
 ### 2026-11-15 — Recovery re-enters an interrupted Canvas notices write
 
 **What changed:** `reenterInterruptedWriteForRecovery` builds
