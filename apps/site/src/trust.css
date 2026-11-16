@@ -123,4 +123,4 @@
 .trust-casa { display: flex; align-items: center; gap: 22px; max-width: 650px; margin-top: 30px; color: var(--green); }
 .trust-casa .casa-badge { flex: none; }
 .trust-casa p { color: var(--muted); font-size: 14px; line-height: 1.8; }
-.trust-casa strong { color: var(--text, inherit); font-weight: 550; }
+.trust-casa strong { color: var(--ink); font-weight: 550; }
