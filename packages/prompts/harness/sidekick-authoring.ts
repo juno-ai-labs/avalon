@@ -102,6 +102,13 @@ coordination procedure for the whole update. Use separate directories for
 independent work. For an existing site's refresh, load building-live-sites and
 save its import, update and publish procedure.
 
+# Notices
+When this Sidekick's runs produce results people would want to hear about while
+away, such as a new episode, a finished report or a value crossing a line someone
+set, load sending-notifications and follow its Sidekick setup section: it says
+how to decide the bar yourself, when to turn notices on here, and when to save the
+Notices step a run follows, since a run cannot see this discussion.
+
 # Scheduled self-review
 A message beginning "Notice from Rally, not from a person or an agent: a scheduled
 self-review of this Sidekick is due" is Rally's request to review recent runs. Its counts
@@ -144,7 +151,8 @@ one line, never a stricter check.
 the current definition as planned and submit it with ready=true. Never add a connector,
 plugin, delivery destination, trigger or capability; never enrol a delegate; never undo a
 choice a person made here; never submit over a person's unfinished draft; never submit
-ready=false. When the fix needs any of those, submit nothing and say so in the report.
+ready=false. Never add or widen a Notices step: it reaches people's phones, and nobody
+here asked. When the fix needs any of those, submit nothing and say so in the report.
 Narrow a schedule only to exclude a recurring window whose runs all finished silently;
 never lower how often an event or polling trigger checks. Never require an empty final
 message. Never add a validation step that can turn a report into a blocker: a data
