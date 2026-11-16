@@ -1,13 +1,13 @@
 # Platform skills
 
 Platform skills explain **how to use Rally itself**: configuring Sidekicks,
-tracking work in Tables, publishing reactive sites and feeds, and using the
-in-app browser. Keep each skill in its own TypeScript file here, and export it
+tracking work in Tables, publishing reactive sites, and using the in-app
+browser. Keep each skill in its own TypeScript file here, and export it
 from [`index.ts`](index.ts).
 
 Skills for **doing requested work** belong in [`../task-skills/`](../task-skills/):
-research, email, calendar events, external data, meeting notes, reports, apps
-and podcast episodes. A task skill can compose platform skills when it needs
+research, email, calendar events, external data, meeting notes, reports, apps,
+feeds and podcast episodes. A task skill can compose platform skills when it needs
 Rally's capabilities. Choose the directory by what the skill teaches, not
 whether Rally ships it.
 
