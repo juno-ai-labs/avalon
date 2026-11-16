@@ -40,6 +40,17 @@ change. Build it to stay current, not as a snapshot:
    storage class or from a bundled data file: the class runs its setup on
    every start, so a seed there would undo newer writes or bring back
    deleted rows.
+   **Store text in the form the page shows it.** Text read from a connected
+   account often arrives as Markdown: an email body with
+   \`[label](https://…)\` links, \`**bold**\` and \`_italics_\`, a Slack message,
+   a meeting note. A page that puts it in \`textContent\` shows every bracket
+   and asterisk. Before writing the row, convert it to plain text: a link
+   becomes its label (keep the URL in its own column when the page links
+   it), emphasis loses its marks, and an image line is dropped or becomes
+   its caption. Keep paragraph breaks and render them with
+   \`white-space: pre-wrap\`. Store Markdown only when the page vendors a
+   Markdown renderer that escapes raw HTML, and say so in the column's name
+   (\`body_markdown\`).
 2. **Keep source facts apart from people's edits.** Give each record a stable
    key from its source: a message id, an email address, a document id.
    Declare that key \`PRIMARY KEY\` or \`UNIQUE\` when you build the site: an

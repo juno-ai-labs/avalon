@@ -3,7 +3,7 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { artifactHostDOName } from "../src/durable-objects/names";
-import type { ArtifactHostDO } from "../src/durable-objects/artifact-host-do";
+import { facetWorkerCode, type ArtifactHostDO } from "../src/durable-objects/artifact-host-do";
 import { artifactAssetKey, asArtifactId, asWorkspaceId } from "@rally/contracts";
 
 /**
@@ -335,6 +335,31 @@ describe("a stateful artifact's facet", () => {
     expect(after.hits).toBeLessThan(before.hits + 3);
     const tally = await (await host.fetchThroughFacet(viewerRequest("/tally"))).json();
     expect(tally).toEqual({ votes: [{ member: VIEWER, choice: "yes" }] });
+  });
+
+  it("hands the loader the site's code every time its callback runs, not only the first", async () => {
+    // The loader may run this callback again whenever it starts a fresh
+    // isolate for the same id. An R2 body read once outside it served the
+    // first isolate and threw "Body has already been used" for every later
+    // one, so a site broke a few seconds into any idle gap. When the runtime
+    // re-runs the callback cannot be steered from a test, so the test runs it
+    // twice itself.
+    await publish(VOTING_MODULE);
+    const sources = await runInDurableObject(hostStub(), async (_instance: ArtifactHostDO, state) => {
+      const row = state.storage.sql.exec<{
+        artifact_id: string;
+        workspace_id: string;
+        current_version: number;
+        manifest_json: string;
+      }>(
+        "SELECT artifact_id, workspace_id, current_version, manifest_json FROM artifact_state WHERE id = 1",
+      ).one();
+      const code = facetWorkerCode(env, state.exports, row);
+      const first = await code();
+      const second = await code();
+      return [first.modules["index.js"], second.modules["index.js"]];
+    });
+    expect(sources).toEqual([VOTING_MODULE, VOTING_MODULE]);
   });
 
   it("refuses a write through the query tool and leaves the rows alone", async () => {
