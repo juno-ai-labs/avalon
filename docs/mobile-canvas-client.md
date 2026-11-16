@@ -523,6 +523,21 @@ corepack pnpm --filter @rally/mobile build
 
 `apps/browser/test/mobile-session.test.ts` checks account-bound organization restoration and the stale-empty artifact race. `apps/desktop/src/renderer/lib/api.test.ts` checks that a retried opening message sends the caller’s original receipt key and attachments. The pure protocol tests execute command injection with adversarial IDs, validate the bridge and artifact origin boundaries, and exercise pin ordering. Expo export compiles iOS, Android, and web bundles; it does not install or launch native apps. Browser host tests still exercise the real Worker transport and CSP. Renderer `browser-entry`, `browser-cookie-writers`, and `browser-collaboration` tests cover transient recovery, schema diagnostics, cookie-writer ordering through a browser capability double, hosted-site remounts, socket publication/head updates, metadata recovery, inline-chat return, mention confirmation, pending submission and edited creation retry.
 
+### Native verification (2026-11-16)
+
+The dashboard filters and Marketplace button were checked on an Expo iPhone
+simulator (402×874 points) running the 2026-11-15 development build. No browser
+host with this change was reachable from the remote device: local egress is not
+enabled for `juno-ai-labs`, and production lacks the change. So a temporary,
+uncommitted entry file loaded the real `Dashboard` with five sample Canvases
+carrying filter facts, one shared from another Organization. Each filter showed
+exactly the Canvases its facts named. The row scrolled sideways inside the
+gutter, the title kept one line above the Marketplace button, and dark mode
+inverted the selected filter legibly. Marketplace called its handler. Not
+proved on a device: Home's snapshot delivering facts over the bridge, and Home
+opening the Marketplace page on `create` with `marketplace: true`. The browser
+host was driven through both at phone width in Chromium instead.
+
 ### Native verification (2026-11-15)
 
 An iPhone simulator (iOS 26.5, 402×874 points) on a fresh development build, signed in to
@@ -659,9 +674,10 @@ update. A new `view: 'marketplace'`; an older shell's snapshot schema would
 reject it.
 
 **What to respect:** a new filter goes in `canvas-filters.ts`, as a fact and a
-match, and every client gets it. Native rendering of the filter row and the
-Marketplace button was not seen on a device or simulator in this change; the
-browser host's preview dashboard and Marketplace were driven at iPhone 14 size,
+match, and every client gets it. The native filter row and Marketplace button
+were seen on an iOS simulator with sample data, not against a live Home
+([Native verification (2026-11-16)](#native-verification-2026-11-16)); the
+browser host's dashboard and Marketplace were driven at iPhone 14 size,
 including starting a Canvas from a template.
 
 ### 2026-11-15 — The mobile host reads at iOS sizes and follows Dynamic Type
