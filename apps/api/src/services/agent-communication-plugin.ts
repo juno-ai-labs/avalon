@@ -13,16 +13,16 @@ export type AgentCommunicationTools = Pick<AgentCommunicationService,
   | "requestSidekickChange">;
 
 /**
- * Appended only in a Canvas's Chat, where `create_sidekick` attaches what it
+ * Appended only in a Canvas's Chat and its agents, where `create_sidekick` attaches what it
  * makes to this Canvas and `archive_sidekick` is offered. It says which write
  * recurring work should use, because the two are not equivalent: runs
  * overlap, so two that each republish a site lose one's change, while two
  * that each write a row do not.
  */
 /**
- * `sidekickRun` adds `request_sidekick_change` and its guidance. Only a
- * Sidekick run child has a wizard of its own to ask; everywhere else the tool
- * would be a refusal waiting to happen, so it is not offered.
+ * `sidekickRun` adds `request_sidekick_change` and its guidance: a Sidekick
+ * run child and the workers it started, which act with its authority
+ * (`loopAuthority`), have a wizard of their own to ask.
  */
 export function createAgentCommunicationPlugin(service: AgentCommunicationTools, roleGuidance: string,
   options: { sidekickRun?: boolean; canvasChat?: boolean } = {}): HarnessPlugin {

@@ -84,6 +84,7 @@ import {
   injectAnnotationScriptResponse,
 } from "./annotation-script";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
+import { storedObjectResponse } from "./stored-object-response";
 import {
   injectSocialPreviewIntoHtml,
   injectSocialPreviewResponse,
@@ -312,11 +313,10 @@ async function serveAdmitted(
       if(mount.version!==null && mount.version!==latest && !admission.editor) return html(neutralPage(),403);
       const version=admission.file.versions.find(version=>version.version===(mount.version??latest));
       if(!version) return html(neutralPage(),404);
-      const object=await env.PAYLOADS.get(version.contentRef);
-      if(!object) return html(neutralPage(),503);
-      return withSecurityHeaders(new Response(request.method==='HEAD'?null:object.body,{
-        headers:{'content-type':version.mimeType,'content-length':String(object.size),'content-disposition':contentDisposition('inline',admission.file.title)},
-      }));
+      const served=await storedObjectResponse(env.PAYLOADS,version.contentRef,request,
+        {'content-type':version.mimeType,'content-disposition':contentDisposition('inline',admission.file.title)});
+      if(!served) return html(neutralPage(),503);
+      return withSecurityHeaders(served);
     }
     const admitted: Admitted = admission;
 
@@ -333,7 +333,7 @@ async function serveAdmitted(
       }
       const refusal = refuseUnsafeVersionRequest(request);
       if (refusal) return html(plainErrorPage(refusal), 405);
-      return servePriorVersion(env, artifactId, mount.version, mount.path, admitted);
+      return servePriorVersion(env, request, artifactId, mount.version, mount.path, admitted);
     }
 
     const response = await serveCurrent(env, ctx, artifact, artifactId, request, url, admitted);
@@ -412,6 +412,7 @@ type Admitted = {
  */
 async function serveAsset(
   env: ArtifactServingEnv,
+  request: Request,
   artifactId: string,
   version: number,
   manifest: ArtifactManifest,
@@ -424,11 +425,14 @@ async function serveAsset(
   const resolved = resolveAssetPath(path, assetPaths);
   if (!resolved) return html(plainErrorPage("This page does not exist in the artifact."), 404);
   const asset = manifest.assets.find((entry) => entry.path === resolved)!;
-  const object = await env.PAYLOADS.get(`artifact/${artifactId}/v${version}/assets/${resolved}`);
-  if (!object) return html(plainErrorPage("This page is temporarily unavailable."), 503);
+  const key = `artifact/${artifactId}/v${version}/assets/${resolved}`;
   const htmlAsset = asset.contentType.toLowerCase().startsWith("text/html");
   const social = htmlAsset && socialPageUrl !== null && manifest.socialPreview !== undefined && resolved === "index.html";
   if (htmlAsset && (rewriteHtmlForVersion !== null || social || annotationScriptPath !== null)) {
+    // Rewritten HTML is a new body each time, so it is sent whole: a range of
+    // it would name bytes of a page no stored object holds.
+    const object = await env.PAYLOADS.get(key);
+    if (!object) return html(plainErrorPage("This page is temporarily unavailable."), 503);
     // Static HTML is bounded by the publish ceiling, so it is rewritten as
     // text. The annotation script goes in last so it ends up first in `<head>`.
     let source = await object.text();
@@ -445,10 +449,9 @@ async function serveAsset(
       headers: { "content-type": asset.contentType },
     }));
   }
-  return withSecurityHeaders(new Response(object.body, {
-    status: 200,
-    headers: { "content-type": asset.contentType },
-  }));
+  const served = await storedObjectResponse(env.PAYLOADS, key, request, { "content-type": asset.contentType });
+  if (!served) return html(plainErrorPage("This page is temporarily unavailable."), 503);
+  return withSecurityHeaders(served);
 }
 
 async function serveCurrent(
@@ -469,7 +472,7 @@ async function serveCurrent(
     parentOrigin: browserFrameAncestor(env.BROWSER_APP_ORIGIN),
   });
   if (manifest.mode === "static") {
-    return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null, url, annotationScriptPath);
+    return serveAsset(env, request, artifactId, manifest.artifactVersion, manifest, url.pathname, null, url, annotationScriptPath);
   }
   // A stateful site runs through the supervisor's facet and needs no loader
   // binding here. A stateless active site cannot safely fall back to assets:
@@ -488,7 +491,7 @@ async function serveCurrent(
     const rewritten = annotationScriptPath !== null
       ? injectAnnotationScriptResponse(withPreview, annotationScriptPath)
       : withPreview;
-    return withSecurityHeaders(rewritten);
+    return withSecurityHeaders(rewritten === response ? response : withoutStoredBodyHeaders(rewritten));
   } catch (error) {
     // The viewer never sees a stack trace. For an identified participant it
     // lands in the rail, where it can be pasted back into chat for the model.
@@ -508,8 +511,20 @@ async function serveCurrent(
   }
 }
 
+/**
+ * A rewritten page is a new body: the stored object's length, `ETag` and range
+ * support describe bytes it no longer has, so a client trusting them would
+ * truncate the page or splice it with another response.
+ */
+function withoutStoredBodyHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const name of ["content-length", "etag", "accept-ranges", "content-range"]) headers.delete(name);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 async function servePriorVersion(
   env: ArtifactServingEnv,
+  request: Request,
   artifactId: string,
   version: number,
   path: string,
@@ -527,7 +542,7 @@ async function servePriorVersion(
   // A prior *static* version serves its frozen assets exactly. A prior
   // stateless-active version would run its frozen module over its frozen
   // assets; until the loader binding exists, its assets are what render.
-  return serveAsset(env, artifactId, version, manifest, path, version, null, null);
+  return serveAsset(env, request, artifactId, version, manifest, path, version, null, null);
 }
 
 /**

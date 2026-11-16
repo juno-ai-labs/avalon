@@ -248,7 +248,7 @@ export function createTerminalResourceBridge(
    * Canvas's Chat, the Canvas records the artifact and its last editor
    * (`WorkspaceDO.canvasNoteArtifact`). Null where no destination can be one.
    */
-  noteCanvasArtifact: ((target: { parentId: string; substreamId: string }, resourceId: string) => Promise<void>) | null = null,
+  noteCanvasArtifact: ((target: { parentId: string; substreamId: string }, resourceId: string) => Promise<boolean>) | null = null,
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to AgentLoopDO. Keep every statement single-authority;
@@ -559,10 +559,10 @@ export function createTerminalResourceBridge(
    * the tool call; it is logged by name, and the next publish of the path
    * notes it again (the note is idempotent).
    */
-  const noteInCanvas = async (target: { parentId: string; substreamId: string }, resourceId: string): Promise<void> => {
-    if (!noteCanvasArtifact) return;
+  const noteInCanvas = async (target: { parentId: string; substreamId: string }, resourceId: string): Promise<boolean> => {
+    if (!noteCanvasArtifact) return false;
     try {
-      await noteCanvasArtifact(target, resourceId);
+      return await noteCanvasArtifact(target, resourceId);
     } catch (error) {
       logWarn(env, "canvas_artifact_note_failed", {
         parent_id: target.parentId, resource_id: resourceId,
@@ -570,6 +570,32 @@ export function createTerminalResourceBridge(
           : error instanceof Error && isCodeShaped(error.message) ? error.message
             : codeShaped(error instanceof Error ? error.name : typeof error),
       });
+      return false;
+    }
+  };
+  /**
+   * A file in a Canvas is served at its own host, under the Canvas's artifact
+   * audience, once the access queue delivers it. The hostname is reserved from
+   * the resource id, idempotently, so reserving it here gives the same one the
+   * queue registers; the agent can then cite or link the file (a feed's audio,
+   * say) without asking a person to copy its link. Only a file the Canvas
+   * noted gets one: any other would be a link that never serves.
+   */
+  const withFileUrl = async <T extends { resourceId: string }>(workspaceId: string, published: T, inCanvas: boolean): Promise<T> => {
+    if (!inCanvas) return published;
+    // The file has landed, so a reservation that cannot run must not turn the
+    // publish into a failure the model would retry; it is logged by name and
+    // the result goes back without a link, as a file outside a Canvas would.
+    try {
+      const hostnameStub = await ensureArtifactHostname(env, { workspaceId, artifactId: published.resourceId });
+      return { ...published, url: artifactOrigin(hostnameStub, env.AVALON_REGION, env.ARTIFACT_SERVING_DOMAIN) };
+    } catch (error) {
+      logWarn(env, "canvas_file_hostname_failed", {
+        workspace_id: workspaceId, resource_id: published.resourceId,
+        error_code: error instanceof Error && isCodeShaped(error.message) ? error.message
+          : codeShaped(error instanceof Error ? error.name : typeof error),
+      });
+      return published;
     }
   };
   const bridge: TerminalResourceBridge = {
@@ -848,12 +874,13 @@ export function createTerminalResourceBridge(
         } catch { /* legacy metadata; every other output field still resolves */ }
         // A recovered publish is as much the Canvas's artifact as one that
         // returned: the interrupted attempt may have died before its note.
-        await noteInCanvas(target, document.id);
+        const inCanvas = await noteInCanvas(target, document.id);
         // Built from the captured version rather than the live row, because
         // those differ exactly when somebody revised the document afterwards,
         // and what this attempt published is the version it wrote.
         return { outcome: "landed" as const, result: {
-          output: publishedOutput({ ...mine, id: document.id, created_at: mine.captured_at }, size),
+          output: await withFileUrl(context.workspaceId,
+            publishedOutput({ ...mine, id: document.id, created_at: mine.captured_at }, size), inCanvas),
           summary: `Published ${input.filePath}`,
         } };
       }
@@ -1252,16 +1279,18 @@ export function createTerminalResourceBridge(
   // artifacts; the note is idempotent, so a replayed publish notes it again.
   const noted = async <T extends { resourceId: string }>(context: HarnessToolContext,
     input: { canvas?: string | undefined; displayName?: string | undefined; providerResourceId?: string | undefined },
-    published: T): Promise<T> => {
-    if (input.providerResourceId === undefined) {
-      await noteInCanvas(await publicationAddress(context, input), published.resourceId);
-    }
-    return published;
+    published: T): Promise<{ published: T; inCanvas: boolean }> => {
+    if (input.providerResourceId !== undefined) return { published, inCanvas: false };
+    const target = await publicationAddress(context, input);
+    return { published, inCanvas: await noteInCanvas(target, published.resourceId) };
   };
   return {
     ...bridge,
-    publishResource: async (context, input, bytes) => noted(context, input, await bridge.publishResource(context, input, bytes)),
-    publishSiteResource: async (context, input, site) => noted(context, input, await bridge.publishSiteResource(context, input, site)),
+    publishResource: async (context, input, bytes) => {
+      const { published, inCanvas } = await noted(context, input, await bridge.publishResource(context, input, bytes));
+      return withFileUrl(context.workspaceId, published, inCanvas);
+    },
+    publishSiteResource: async (context, input, site) => (await noted(context, input, await bridge.publishSiteResource(context, input, site))).published,
   };
 }
 

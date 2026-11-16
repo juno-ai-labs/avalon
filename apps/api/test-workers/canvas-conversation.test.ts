@@ -217,6 +217,9 @@ beforeEach(async () => {
 // makes new Canvases private rather than taking the Organization-wide default.
 beforeEach(async () => {
   await workspace().saveCanvasSharingDefaults({ workspaceId: WORKSPACE_ID, defaults: { editors: "creator" } });
+  // A file published into a Canvas reserves its host, as production's PLATFORM_DB migration declares it.
+  await env.PLATFORM_DB.prepare(`CREATE TABLE IF NOT EXISTS artifact_hostname_routes(hostname_stub TEXT NOT NULL PRIMARY KEY,
+    region TEXT NOT NULL, artifact_id TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(region, artifact_id))`).run();
 });
 
 describe("a Canvas's Chat", () => {
@@ -1137,9 +1140,18 @@ describe("a Canvas's artifacts", () => {
       .publishResource(context, { filePath: "plan.md" }, new TextEncoder().encode("# Launch plan"));
     const detail = () => workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" } });
     expect((await detail()).artifacts).toEqual([]);
+    // The attempt died before its note, so it never became the Canvas's and has no link.
+    expect("url" in published).toBe(false);
     const recovered = await canvasBridge(canvasId).reconcilePublishedResource({ ...context, attemptStartedAt }, { filePath: "plan.md" });
     expect(recovered.outcome).toBe("landed");
     expect((await detail()).artifacts).toMatchObject([{ resourceId: published.resourceId, version: 1 }]);
+    // Recovered and noted, it is the Canvas's file, and its link is the host reserved for it.
+    const output = recovered.outcome === "landed" ? recovered.result.output as { url?: string } : {};
+    const url = output.url ?? null;
+    const route = await env.PLATFORM_DB.prepare("SELECT hostname_stub FROM artifact_hostname_routes WHERE artifact_id = ?")
+      .bind(published.resourceId).first<{ hostname_stub: string }>();
+    expect(route).not.toBeNull();
+    expect(url).toContain(route!.hostname_stub);
   });
 
   it("makes the first publish version 1 by Rally, a republish of the path a new version, and another path another artifact", async () => {
@@ -1206,6 +1218,16 @@ describe("a Canvas's artifacts", () => {
     // A version of its artifact, noted as run #3's publish notes it.
     const { resourceId } = await publish(canvasId, "digest.md", "# Digest");
     expect(await lastWrittenBy()).toBeNull();
+    // A worker run #3 started publishes where run #3 does, and notes as run #3,
+    // not as a run of its own that would make a second Canvas.
+    const worker = { ...run, substreamId: asSubstreamId(crypto.randomUUID()), backgroundAgent: true,
+      backgroundAgentRootSubstreamId: runIds[2]!, automationDelegation: { runId: runIds[2]!, stopGeneration: 0 } };
+    expect(await resolveTerminalPublicationHome(TEST_ENV, worker, { title: "Digest" })).toEqual(home);
+    await canvasArtifactNoter(TEST_ENV, worker)!(home, resourceId);
+    expect(await lastWrittenBy()).toEqual({ sidekickId, runId: runIds[2], runNumber: 3, sidekickName: "Weekly digest" });
+    // An agent the wizard started publishes nowhere, as the wizard.
+    expect(await resolveTerminalPublicationHome(TEST_ENV, { ...run, substreamId: asSubstreamId(crypto.randomUUID()),
+      backgroundAgent: true, backgroundAgentRootSubstreamId: "0" }, { title: "Digest" })).toBeNull();
     await canvasArtifactNoter(TEST_ENV, run)!(home, resourceId);
     expect(await lastWrittenBy()).toEqual({ sidekickId, runId: runIds[2], runNumber: 3, sidekickName: "Weekly digest" });
     // A deleted Sidekick's run is no run to open.
@@ -1219,6 +1241,23 @@ describe("a Canvas's artifacts", () => {
     // A later version from its Chat, which a person asks for, is no run's.
     await publish(canvasId, "digest.md", "# Digest, revised");
     expect(await lastWrittenBy()).toBeNull();
+  });
+
+  it("returns no link for a file a Sidekick's own agent publishes, which lands in no Canvas", async () => {
+    const sidekickId = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    // An agent the wizard started: its publications have no Canvas home.
+    const agent = { workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId: sidekickId,
+      substreamId: asSubstreamId(crypto.randomUUID()), executionPrincipal: { type: "user" as const, userId: CREATOR } };
+    const bridge = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID),
+      createTerminalPortFactory(TEST_ENV, undefined, "0"), undefined, () => Promise.resolve(null), null, null, "0",
+      canvasArtifactNoter(TEST_ENV, agent));
+    const published = await bridge.publishResource({ ...toolContext(sidekickId) }, { filePath: "notes.md" },
+      new TextEncoder().encode("# Notes"));
+    expect(published.publishKind).toBe("file");
+    expect("url" in published).toBe(false);
+    expect(await env.PLATFORM_DB.prepare("SELECT hostname_stub FROM artifact_hostname_routes WHERE artifact_id = ?")
+      .bind(published.resourceId).first()).toBeNull();
   });
 
   it("refuses a canvas argument anywhere but a Sidekick run", async () => {

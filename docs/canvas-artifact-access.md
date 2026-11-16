@@ -55,8 +55,9 @@ artifact fields; omitted artifact settings are preserved. A supplied artifact
 recipient list replaces that audience. Both policies commit in one transaction.
 The MCP tool requires `userIds` explicitly even for artifact-only changes;
 clients preserve editors by copying the current `participantUserIds`.
-A Canvas's Chat sets the artifact audience with `set_artifact_audience`, as
-its person and under Share's manager rule; it changes `artifact_visibility`
+A Canvas's Chat, and any background agent it started, sets the artifact
+audience with `set_artifact_audience`, as its person and under Share's
+manager rule; it changes `artifact_visibility`
 alone and never names people. `artifact_visibility_chosen` (migration 148)
 records that someone set it: Share saves that send an artifact audience, and
 every tool call, mark it, and every Canvas that existed before the migration
