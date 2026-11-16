@@ -8,8 +8,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { marked } from 'marked';
 import { parse as parseYaml } from 'yaml';
-import { escapeHtml, longDate } from './comparison-pages';
+import { escapeHtml, longDate } from './html';
 import { renderHomeIllustration } from './home-illustrations';
+import { renderReadingCard } from './reading-card';
 
 export interface BlogPost {
   /** Path segment under `/blog/`, from the front matter. */
@@ -181,5 +182,16 @@ export function renderBlogPost(post: BlogPost): string {
       + `<h1 class="display blog-title">${escapeHtml(title)}</h1>\n`
       + `<p class="blog-meta"><time datetime="${date}">${longDate(date)}</time> · ${escapeHtml(author)}</p>\n`
       + `<div class="blog-body">${renderMarkdown(post.body)}</div>\n</article>`,
+  });
+}
+
+/** The 1200x630 card a post's link unfurls into. */
+export function renderBlogCard({ slug, title, description }: { slug: string; title: string; description: string }): Promise<Buffer> {
+  return renderReadingCard({
+    eyebrow: 'Rally blog',
+    title,
+    description,
+    address: `rallywith.ai/blog/${slug}`,
+    scene: 'together',
   });
 }
