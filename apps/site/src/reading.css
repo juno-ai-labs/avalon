@@ -134,3 +134,7 @@ em { font-family: var(--display-font); }
   .changelog { width: 100%; }
   .changelog-date { position: static; }
 }
+
+/* The CASA link in the footer's legal row. */
+.footer-casa { color: inherit; text-decoration: none; }
+.footer-casa:hover { color: var(--green); }

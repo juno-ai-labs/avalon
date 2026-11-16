@@ -783,6 +783,6 @@ main{counter-reset:fig}
 .blog-body{font-size:17px}
 }
 
-/* The CASA link in the footer's legal row; site-theme.css holds the same rule for the other pages. */
+/* The CASA link in the footer's legal row; reading.css and home.css hold the same rule for the other pages. */
 .footer-casa { color: inherit; text-decoration: none; }
 .footer-casa:hover { color: var(--green); }
