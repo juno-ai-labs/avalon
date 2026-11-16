@@ -429,10 +429,12 @@ Three more rules keep a source the person's own act
 - **Who may ask through an agent.** The three source tools and the
   `setting-up-a-filtered-trigger` skill ask from a Canvas's Chat, a
   Sidekick's wizard and their background agents (`asksForSources` in
-  `integrations.ts`). A run, its workers, a self-review and a turn one of
-  their messages started work from content, a stranger's email among it, so
-  none may ask in a person's name: their `request_source` asks nobody and
-  says which turn may. No
+  `integrations.ts`), whatever started the turn. A run, its workers and a
+  self-review work from content, a stranger's email among it, so none may
+  ask in a person's name: their `request_source` asks nobody and says which
+  turn may. A run's change request to its wizard starts a turn that may ask;
+  the owner accepted that, since asking approves nobody
+  ([`sidekick-sources.md`](sidekick-sources.md#changelog)). No
   tool answers a request at all, and asking approves nobody: an ask for the
   asker's own account waits for their press like any other. A Sidekick run
   and its background workers are not offered `sidekick_set_delegation`

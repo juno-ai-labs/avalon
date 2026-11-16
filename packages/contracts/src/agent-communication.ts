@@ -42,9 +42,9 @@ export const AgentExchangeSchema = z.strictObject({
   messageId: IdSchema,
   senderAgentId: AgentIdSchema,
   /**
-   * No longer written or read: whether a message may lead to a source
-   * request is read from its sender's address (`senderActsForAPerson`).
-   * Accepted so that stored messages that carry it still parse.
+   * No longer written or read: a message's sender no longer decides whether
+   * the turn it starts may ask for a source. Accepted so that stored messages
+   * that carry it still parse.
    */
   fromPersonTurn: z.literal(true).optional(),
   /** Absent on a model-authored message, which is every message but two. */

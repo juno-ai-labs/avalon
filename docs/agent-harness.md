@@ -826,7 +826,8 @@ how a filter is judged and that the person reads and approves the same text,
 gives a way to try a draft on real events, and leaves the wording to the
 model. It names its owner plugin's three source tools, as an owned skill may.
 A Canvas's Chat, a Sidekick's wizard and their background agents may ask
-(`asksForSources` in `apps/api/src/services/integrations.ts`): no run, run
+(`asksForSources` in `apps/api/src/services/integrations.ts`), whatever started
+the turn: no run, run
 worker or self-review, which work from content a person did not write, may
 ask in anyone's name. Every other loop holds a `request_source` that refuses and says which
 turn may. The skill tells the
