@@ -5,6 +5,8 @@ icon: "calendar-days"
 color: "rose"
 tags:
   - parents
+connectors:
+  - google-mail-and-calendar
 ---
 
 Create a shared family calendar in this Canvas and give me an iCalendar subscription I can add to Apple Calendar or Google Calendar. Ask only which shared calendars or other sources to sync. When an event doesn't specify a timezone, use mine. Ask “What event details may the subscription show?” before exposing private family information to an external calendar client.

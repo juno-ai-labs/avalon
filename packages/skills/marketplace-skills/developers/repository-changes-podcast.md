@@ -5,6 +5,8 @@ icon: "podcast"
 color: "indigo"
 tags:
   - developers
+connectors:
+  - github
 ---
 
 Create a podcast feed in this Canvas with a short episode each morning about changes in my repositories. Create each new episode at 8 a.m. my time unless I say otherwise. Ask only which repositories to cover. Cover changes that landed on each repository's default branch, grouping merged pull requests and their commits into a single item.

@@ -12,6 +12,8 @@ import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
 import { renderComparisonCard } from '../src/social-cards';
+import { marketplaceTemplates, renderMarketplaceSitemap, renderTemplatePage } from '../src/marketplace-catalog';
+import { parseCanvasTemplate } from '../../../packages/skills/marketplace-skills/catalog';
 import sharp from 'sharp';
 import { normalizedTelemetryPathname, SITE_ACTION_LINKS, siteActionForLink, sitePageForPath } from '../src/telemetry';
 
@@ -331,6 +333,25 @@ describe('public Rally site', () => {
       .toEqual(['https://rallywith.ai/blog/', ...blogPosts.map(({ slug }) => `https://rallywith.ai/blog/${slug}/`)]);
     expect(blogPosts.map(({ slug }) => slug)).toContain('blastoff');
   });
+  it('gives each template a page with its audience, connectors, the prompt it sends and a way to start it', () => {
+    const template = (slug: string) => marketplaceTemplates().find((candidate) => candidate.slug === slug)!;
+    const page = renderSiteChrome(renderTemplatePage(template('pr-dashboard')));
+    expect(page).toContain('<title>PR dashboard · Rally Marketplace</title>');
+    expect(page).toContain('<link rel="canonical" href="https://rallywith.ai/marketplace/pr-dashboard/" />');
+    expect(page).toContain('<p class="eyebrow">For developers</p>');
+    expect(page).toContain('<h1 id="template-title">PR dashboard</h1>');
+    expect(page).toContain('<li><a href="/help/connecting-your-tools/github/">GitHub</a></li>');
+    expect(page).toContain('<blockquote class="market-prompt"><p>Build a live GitHub PR dashboard in this Canvas.');
+    expect(page).toContain('<a class="button primary" data-site-action="web-app-template" href="https://app.rallywith.ai/app/templates/pr-dashboard">Start from this');
+    expect(renderSiteChrome(renderTemplatePage(template('shared-grocery-list'))))
+      .toContain('<p>Nothing to connect. Rally builds it from what you tell it.</p>');
+    expect([...renderMarketplaceSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc).slice(0, 2))
+      .toEqual(['https://rallywith.ai/marketplace/pr-dashboard/', 'https://rallywith.ai/marketplace/email-notification-screener/']);
+  });
+  it('refuses a template that recommends a connector Rally does not offer, naming the field', () => {
+    const source = '---\nname: "X"\ndescription: "Y"\nicon: "map"\ncolor: "blue"\ntags:\n  - developers\nconnectors:\n  - jira\n---\n\nBuild it.\n';
+    expect(() => parseCanvasTemplate(source, 'developers/x.md')).toThrow(/developers\/x\.md: invalid template frontmatter \(.*connectors\.0/u);
+  });
   it('builds the marketplace from the app Marketplace templates, in catalog order', () => {
     const cards = renderSiteChrome('<!-- rally:marketplace-cards -->');
     expect([...cards.matchAll(/<h3>([^<]+)<\/h3>/gu)].map(([, name]) => name)).toEqual([
@@ -340,8 +361,22 @@ describe('public Rally site', () => {
       'Recruiting market map',
     ]);
     expect(cards).toContain('<li class="market-card" data-categories="developers"><div class="market-card-body"><p class="market-kind">For developers</p><h3>PR dashboard</h3>');
-    expect([...cards.matchAll(/href="([^"]+)"/gu)].map(([, href]) => href).slice(0, 2))
-      .toEqual(['https://app.rallywith.ai/app/templates/pr-dashboard', 'https://app.rallywith.ai/app/templates/email-notification-screener']);
+    // Each card's links: its recommended connectors' help pages, Start from this, then More info.
+    const links = (card: string) => [...card.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]+)/gu)].map(([, href, text]) => [href, text!.trim()]);
+    const cardOf = (name: string) => {
+      const at = cards.indexOf(`<h3>${name}</h3>`);
+      const next = cards.indexOf('<li class="market-card"', at);
+      return cards.slice(at, next === -1 ? undefined : next);
+    };
+    expect(links(cardOf('PR dashboard'))).toEqual([
+      ['/help/connecting-your-tools/github/', 'GitHub'],
+      ['https://app.rallywith.ai/app/templates/pr-dashboard', 'Start from this'],
+      ['/marketplace/pr-dashboard/', 'More info'],
+    ]);
+    expect(links(cardOf('Shared grocery list'))).toEqual([
+      ['https://app.rallywith.ai/app/templates/shared-grocery-list', 'Start from this'],
+      ['/marketplace/shared-grocery-list/', 'More info'],
+    ]);
     expect([...renderSiteChrome('<!-- rally:marketplace-filters -->').matchAll(/data-filter="([^"]+)"/gu)].map(([, tag]) => tag))
       .toEqual(['all', 'developers', 'product-managers', 'parents', 'recruiters']);
   });
