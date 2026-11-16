@@ -36,8 +36,9 @@ export function Dashboard({ canvases, sharedElsewhere = [], loading, failed, top
   const { colors } = useTheme();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<CanvasFilter>('all');
-  // A host older than the facts sends none: it gets no filters rather than empty ones.
-  const filterable = canvases.some((canvas) => canvas.facts);
+  // A host older than the facts sends none: it gets no filters rather than empty
+  // ones. Canvases from elsewhere carry fixed facts, so they alone still filter.
+  const filterable = canvases.length + sharedElsewhere.length > 0 && canvases.every((canvas) => canvas.facts);
   const shownFilter = filterable ? filter : 'all';
   const filtered = useMemo(() => {
     // This Organization's list is already newest first; another's goes in by the same date.
@@ -45,10 +46,7 @@ export function Dashboard({ canvases, sharedElsewhere = [], loading, failed, top
       : [...canvases, ...sharedElsewhere].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const needle = query.toLocaleLowerCase();
     return all.filter((canvas) => (!needle || canvas.title.toLocaleLowerCase().includes(needle))
-      && (shownFilter === 'all' || (() => {
-        const facts = canvas.organization ? ELSEWHERE_CANVAS_FACTS : canvas.facts;
-        return facts !== undefined && matchesCanvasFilter(facts, shownFilter);
-      })()));
+      && (shownFilter === 'all' || matchesCanvasFilter(canvas.organization ? ELSEWHERE_CANVAS_FACTS : canvas.facts!, shownFilter)));
   }, [canvases, sharedElsewhere, query, shownFilter]);
   const narrowed = query !== '' || shownFilter !== 'all';
   const choose = (canvas: DashboardCanvas): void => {

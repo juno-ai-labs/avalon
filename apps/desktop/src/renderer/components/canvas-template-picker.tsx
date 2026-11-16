@@ -47,6 +47,26 @@ export function CanvasTemplateCard({ audience, compact = false, disabled = false
 }
 
 /**
+ * The Marketplace page's catalog: one category at a time, starting on the
+ * first, and a card per template. Desktop's Canvases page and the mobile
+ * host's create flow both draw it, each with its own heading around it.
+ */
+export function CanvasMarketplace({ disabled = false, onStart }: { disabled?: boolean; onStart: (prompt: string) => void }): React.JSX.Element {
+  const [category, setCategory] = useState<(typeof CANVAS_TEMPLATE_CATEGORIES)[number]['tag']>(CANVAS_TEMPLATE_CATEGORIES[0].tag);
+  const templates = CANVAS_TEMPLATES.filter((template) => template.tags.includes(category));
+  return <section aria-label="Canvas templates" className="canvas-marketplace">
+    <div aria-label="Template category" className="sidekick-filters canvas-template-categories" role="group">
+      {CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => <button aria-pressed={category === tag} key={tag} onClick={() => setCategory(tag)} type="button">{label}</button>)}
+    </div>
+    <ul className="dashboard-grid">
+      {templates.map((template) => <li key={template.name}>
+        <CanvasTemplateCard disabled={disabled} onStart={onStart} template={template} />
+      </li>)}
+    </ul>
+  </section>;
+}
+
+/**
  * The Marketplace's templates under an empty Canvas's composer: every group
  * named in one row, Popular first, and a card per template. Picking one hands
  * its prompt to `onStart`, which sends it as the Chat's first message exactly

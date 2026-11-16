@@ -15,9 +15,7 @@ import { AttachmentLightbox } from '../../desktop/src/renderer/components/attach
 import type { AttachmentPreview } from '../../desktop/src/renderer/components/attachments';
 import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
 import { ConversationVisibilityContext } from '../../desktop/src/renderer/lib/conversation-visibility';
-import { CanvasTemplateCard } from '../../desktop/src/renderer/components/canvas-template-picker';
-import { CANVAS_TEMPLATE_CATEGORIES } from '../../desktop/src/renderer/lib/canvas-template-categories';
-import { CANVAS_TEMPLATES } from '../../desktop/src/renderer/lib/canvas-templates';
+import { CanvasMarketplace } from '../../desktop/src/renderer/components/canvas-template-picker';
 import { ErrorNotice } from '@rally/ui/components/error-notice';
 
 /** The mentions a composer hands its send. */
@@ -56,6 +54,8 @@ export function CreateCanvas({ created, marketplace = false }: { created: (id: s
   const fileInput = useRef<HTMLInputElement>(null);
   const attempt = useRef<{ signature: string; operationId: string; workstreamId: string; clientMessageId: string } | null>(null);
   const blocked = sending || (!guest && !roster.data);
+  // One failure flag serves both modes; a failed template must not greet the prompt form, nor the reverse.
+  useEffect(() => setFailed(false), [marketplace]);
   // An unchanged retry replays its receipts; a changed one keeps the reserved Canvas.
   const begin = async (text: string, mentions: MentionDrafts, participantIds: string[], attachmentIds: string[]): Promise<void> => {
     if (!api) return;
@@ -99,16 +99,11 @@ export function CreateCanvas({ created, marketplace = false }: { created: (id: s
   </div>;
 }
 
-/** The Marketplace on a phone: desktop's categories and template cards, one category at a time. */
+/** The Marketplace on a phone: desktop's catalog under the mobile page's own heading. */
 function MobileMarketplace({ disabled, failed, onStart }: { disabled: boolean; failed: boolean; onStart: (prompt: string) => void }) {
-  const [category, setCategory] = useState<(typeof CANVAS_TEMPLATE_CATEGORIES)[number]['tag']>(CANVAS_TEMPLATE_CATEGORIES[0].tag);
-  const templates = CANVAS_TEMPLATES.filter((template) => template.tags.includes(category));
-  return <section aria-label="Canvas templates" className="mobile-marketplace">
+  return <div className="mobile-marketplace">
     <h1>Marketplace</h1><p>Templates to start a Canvas from. Pick one and Rally builds it with you.</p>
-    <div aria-label="Template category" className="mobile-filters" role="group">
-      {CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => <button aria-pressed={category === tag} key={tag} onClick={() => setCategory(tag)} type="button">{label}</button>)}
-    </div>
     {failed && <ErrorNotice title="Your canvas couldn’t be created">Check your connection and pick the template again.</ErrorNotice>}
-    <ul>{templates.map((template) => <li key={template.name}><CanvasTemplateCard disabled={disabled} onStart={onStart} template={template} /></li>)}</ul>
-  </section>;
+    <CanvasMarketplace disabled={disabled} onStart={onStart} />
+  </div>;
 }

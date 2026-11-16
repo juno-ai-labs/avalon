@@ -8,14 +8,12 @@ import { Link } from 'react-router-dom';
 
 import { canvasMark } from '../components/canvas-mark';
 import { OrganizationCardBadge, sharedFromLabel, useOpenOtherOrganizationCanvas } from '../components/other-organization-canvas';
-import { CanvasTemplateCard } from '../components/canvas-template-picker';
+import { CanvasMarketplace } from '../components/canvas-template-picker';
 import { CanvasSharingStatus } from '../components/canvas-sharing-status';
 import { AvatarStack, Button, EmptyState, TitleSkeleton } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
-import { CANVAS_TEMPLATE_CATEGORIES } from '../lib/canvas-template-categories';
-import { CANVAS_TEMPLATES } from '../lib/canvas-templates';
 import { canvasNaming, canvasRoute, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useDocumentTitle } from '../lib/document-title';
@@ -145,21 +143,6 @@ export function CanvasesHomeScreen(): React.JSX.Element {
             : <ul className="dashboard-grid">{shown.map((card) => card.kind === 'own' ? row(card.row) : sharedCard(card.item))}</ul>}
         </section>}
   </main>;
-}
-
-function CanvasMarketplace({ onStart }: { onStart: (prompt: string) => void }): React.JSX.Element {
-  const [category, setCategory] = useState<(typeof CANVAS_TEMPLATE_CATEGORIES)[number]['tag']>(CANVAS_TEMPLATE_CATEGORIES[0].tag);
-  const templates = CANVAS_TEMPLATES.filter((template) => template.tags.includes(category));
-  return <section aria-label="Canvas templates" className="canvas-marketplace">
-    <div aria-label="Template category" className="sidekick-filters canvas-template-categories" role="group">
-      {CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => <button aria-pressed={category === tag} key={tag} onClick={() => setCategory(tag)} type="button">{label}</button>)}
-    </div>
-    <ul className="dashboard-grid">
-      {templates.map((template) => <li key={template.name}>
-        <CanvasTemplateCard onStart={onStart} template={template} />
-      </li>)}
-    </ul>
-  </section>;
 }
 
 /**
