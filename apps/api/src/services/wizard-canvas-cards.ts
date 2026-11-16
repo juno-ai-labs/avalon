@@ -18,40 +18,42 @@ import { diagnosticErrorCode, logWarn } from "../observability/logger";
 
 /**
  * The Canvas whose Chat started this wizard turn, or null for any other loop:
- * an agent's message from a Canvas's Chat to the Sidekick's wizard, or an
- * answer to a question such a turn asked there (`wizardCanvasId`).
+ * a message to the Sidekick's wizard from a Canvas's Chat or one of its
+ * background agents, or an answer to a question such a turn asked there
+ * (`wizardCanvasId`). The person is reading the Chat either way.
  */
 export function wizardTurnCanvasId(input: Pick<WorkstreamWorkflowInput, "sidekickWizard" | "agentExchange" | "wizardCanvasId">): string | null {
   if (input.sidekickWizard !== true) return null;
   // Answering a question the Chat drew continues in that Chat.
   if (input.wizardCanvasId) return input.wizardCanvasId;
-  // Only a Chat turn a person started: a Chat turn another agent's message
-  // started would pass on what that agent read.
-  if (input.agentExchange?.fromPersonTurn !== true) return null;
+  if (!input.agentExchange) return null;
   const sender = agentAddressForId(input.agentExchange.senderAgentId);
-  return sender.parentKind === "canvas" && sender.substreamId === "0" ? sender.parentId : null;
+  return sender.parentKind === "canvas" ? sender.parentId : null;
 }
 
 /**
- * Post a card into a Canvas's Chat as the Sidekick, once per `clientMessageId`.
+ * Post a card as the Sidekick, once per `clientMessageId`, into a Canvas's
+ * Chat or, for an ask from a wizard's background agent, the Sidekick's own
+ * shared conversation (`parentKind: "automation"`).
  * The post's text is what the Chat's agent reads; its card is what the client
  * draws. Best-effort: the question or the request it mirrors already exists,
  * so a failed post is logged by name and never fails the tool that made it.
  */
-export async function postWizardCard(env: Env, input: WorkstreamWorkflowInput, canvasId: string, clientMessageId: string,
+export async function postWizardCard(env: Env, input: WorkstreamWorkflowInput,
+  to: { parentKind: "canvas" | "automation"; id: string }, clientMessageId: string,
   post: { text: string; card: Pick<AutomationActivationV1, "sourceRequests" | "question">; sidekickId?: string }): Promise<void> {
   const workspaceId = asWorkspaceId(input.workspaceId);
   // The Sidekick the card is about: the wizard's own, unless it asked for another's sources.
   const sidekickId = post.sidekickId ?? input.parentId;
   const failed = (code: string) => logWarn(env, "wizard_card_post_failed", { workspace_id: workspaceId, automation_id: sidekickId,
-    workstream_id: canvasId, client_message_id: clientMessageId, code });
+    workstream_id: to.id, client_message_id: clientMessageId, code });
   try {
     const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
     const name = await workspace.sidekickDisplayName({ workspaceId, sidekickId });
     const chat = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, workspaceId,
-      conversationObjectName(env.AVALON_REGION, workspaceId, canvasId, asSubstreamId("0")));
+      conversationObjectName(env.AVALON_REGION, workspaceId, to.id, asSubstreamId("0")));
     const appended = await chat.appendConversationPost({
-      schemaVersion: 1, workspaceId, parentKind: "canvas", workstreamId: canvasId, substreamId: "0", clientMessageId, text: post.text,
+      schemaVersion: 1, workspaceId, parentKind: to.parentKind, workstreamId: to.id, substreamId: "0", clientMessageId, text: post.text,
       post: { type: "automation_activation", schemaVersion: 1, automationId: asAutomationId(sidekickId), automationName: name,
         runId: input.harnessRunId, deliveryId: clientMessageId, occurredAt: Date.now(), ...post.card },
     });
