@@ -459,7 +459,13 @@ export class TerminalSandboxCoordinator {
     // some run's preparation still in flight, and a read of a half-made
     // checkout is a read of the wrong files.
     if (repository && repository.bootstrappedSandboxGeneration !== row.generation) return null;
-    if (await this.hasRevokedImportedResource(context, row)) return null;
+    // A `planned` import is a sibling's import in flight while the lease is
+    // live: its call holds the lease and settles the row. A read may see its
+    // files half copied, as it may see any file mid-write. Once the lease has
+    // lapsed, a `planned` import is left over and readiness cleans it up.
+    const importInFlight = row.operationRunId !== null
+      && (row.operationLeaseExpiresAt ?? 0) > this.clock.now().getTime();
+    if (await this.hasRevokedImportedResource(context, row, importInFlight)) return null;
     if (
       observation
       && observation.generation === row.generation
@@ -1068,10 +1074,16 @@ export class TerminalSandboxCoordinator {
       : null;
   }
 
-  private async hasRevokedImportedResource(context: HarnessToolContext, row: TerminalSandboxRecord): Promise<boolean> {
-    const links = await this.terminal(context).importedResources(row.generation);
+  private async hasRevokedImportedResource(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    /** Pass over `planned` imports: the caller knows a live lease holder will settle them. */
+    importInFlight = false,
+  ): Promise<boolean> {
+    const all = await this.terminal(context).importedResources(row.generation);
+    if (!importInFlight && all.some((candidate) => candidate.state !== "completed")) return true;
+    const links = all.filter((candidate) => candidate.state === "completed");
     if (links.length === 0) return false;
-    if (links.some((candidate) => candidate.state !== "completed")) return true;
     // Completed imports are retained Sidekick state, like its shared history.
     // A new import still checks the selected user's current read access.
     if (this.scope.parentKind === "automation") return false;
