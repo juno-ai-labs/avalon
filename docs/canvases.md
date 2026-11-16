@@ -627,7 +627,9 @@ Settings window reaches the main window through the `storage` event.
   initial, drawn as the account menu's mark: on the card's upper right, and as
   a top-right badge on the sidebar tile (`IdentityTile` badges take a `corner`).
   Both say **Shared from <Organization>** on hover, and the row or card says it
-  to a screen reader. Such a row has no menu, no drag and no pin, since those
+  to a screen reader. The Expo app's native dashboard shows the same rows from
+  the browser host's snapshot ([`mobile-canvas-client.md`](mobile-canvas-client.md)).
+  Such a row has no menu, no drag and no pin, since those
   are its own Organization's; choosing it calls `openWorkspaceCanvas`, which
   on the Mac goes through the deep-link queue (`canvasDeepLink`, entry point
   `in_app_link`) and so switches Organization first, and in the browser loads
@@ -1085,9 +1087,10 @@ why the refresh lease shares the owning object's transaction.
 ### 2026-11-16 — Show shared Canvases in every Organization
 
 **What changed:** A Canvas shared with a person in one Organization shows in
-the Canvas list of each of their other Organizations, badged with its
-Organization's initial on the top right and **Shared from <Organization>** on
-hover; choosing it switches there. A per-device switch under Settings →
+the Canvas list of each of their other Organizations, on the Mac, in the
+browser and in the Expo app, badged with its Organization's initial on the top
+right and **Shared from <Organization>** on hover (in the card's label on a
+phone); choosing it switches there. A per-device switch under Settings →
 Account → Preferences turns it off; it defaults on.
 
 **Why:** A person who is a guest in a partner's Organization, or a member of
