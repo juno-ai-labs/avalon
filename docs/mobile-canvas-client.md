@@ -34,6 +34,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/CanvasWebView.web.tsx` | Development-only iframe preview of the native shell. |
 | `apps/mobile/src/background.ts`, `runtime.ts` | Top-level background update task and registration; downloads never interrupt an open canvas. |
 | `apps/mobile/src/notifications.ts`, `notification-target.ts` | Platform permission/token lifecycle and canonical notification routing. |
+| `apps/mobile/src/SettingsScreen.tsx`, `SettingsList.tsx` | Native Settings: an inset grouped list of the shared Settings pages Home can show, this device's notifications and updates, Diagnostics and sign-out. |
 | `apps/mobile/src/diagnostics.ts`, `DiagnosticsScreen.tsx`, `RecoveryBoundary.tsx` | Local content-free diagnostics, user-requested sharing and recovery. |
 | `apps/mobile/.eas/workflows/`, `.github/workflows/release-mobile.yml` | One-channel native-build/OTA releases and explicit store submission. |
 | `apps/mobile/store.config.json`, `apps/mobile/metadata/` | English store listing, TestFlight description, test instructions and review notes. Review credentials stay in App Store Connect. |
@@ -46,6 +47,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/browser/src/dynamic-type.ts` | Reads the person's iOS text size and writes it over the touch type roles. |
 | `apps/browser/src/mobile.tsx`, `mobile.css` | Mobile dashboard, artifact selection and retained chat navigation. |
 | `apps/browser/src/mobile-conversation.tsx` | Deferred shared transcript, composer and creation form. |
+| `apps/browser/src/mobile-settings.tsx` | Deferred shared Settings page, desktop's `WorkspaceSettingsScreen` with `nativeShell`. |
 | `apps/browser/src/mobile-canvas-detail.ts` | One owner for publication/reconnect invalidation and shared event-driven detail queries. |
 
 ## How it works
@@ -354,8 +356,22 @@ A screen with a native artifact in front (a pinned site, or a site Home opened) 
 
 Opening a canvas from the dashboard is canonical-first. The shell remembers, per account, the site each canvas last presented and its canonical URL (`remembered-sites.ts`). A tap on a remembered canvas shows that site at once on its cookie while Home navigates behind it; Home's own view takes over when it reports one. Home's fresh access for the same site does not reload a view already on its cookie, unless it brings a newer version or answers a renewal the view asked for (`canonical-first.ts`). An expired cookie takes the existing renewal path. Nothing is started on touch-down: that would run a canvas's artifact before a tap was certain, and only the four tab-bar pins may run hidden.
 
-Settings and diagnostics is available from the sidebar's settings button.
-Notification permission is requested only through Enable notifications. The
+Settings opens from the sidebar as a native list (`SettingsScreen.tsx`). Its
+account and Organization rows are desktop's own Settings sections: a row sends
+Home `{ type: 'settings', section }`, and Home shows `WorkspaceSettingsScreen`
+with `nativeShell` at `#/settings?section=` in a deferred chunk, as `view:
+'settings'`. `nativeShell` drops what the app owns itself: appearance, start
+page, device notifications and sign-out. Home lists the sections the person
+may open in `settingsSections`; a host that omits it gets no rows. That field
+is any string, filtered by the shell, so a newer host's section never fails an
+older shell's snapshot. Home reports `view: 'settings'` only to a shell that
+declares the `settings` capability, since desktop's own `openSettings` reaches
+the same route. Checkout and connector sign-in reserve a blank tab
+(`prepareExternalLink`), which a WebView never creates; to a shell declaring
+`open-external`, the page sends `{ type: 'open-external', url }` instead and
+the shell opens the http(s) URL in the system browser.
+Notification permission is requested only through This device › Push
+notifications. The
 native installation ID is in SecureStore; APNs device tokens pass through the
 trusted browser bridge to the existing authenticated registry. Registration is
 serialized and cancelled with the current account/organization view, including network-recovery retries. Token rotation,
@@ -468,7 +484,7 @@ platform's bundle first to catch resolution errors before device testing.
 - Home cannot be removed or reordered. Pin ordering preserves every server pin, including desktop overflow; `movePin` tests cover preservation and invalid moves. The fixed Home control is verified visually, with no automated guard.
 - A failed resource request cannot imply no artifact. Error recovery precedes fallback routing; `mobile-session.test.ts` checks the routing decision, and browser acceptance exercises the stale-cache and recovery paths.
 - Native makes exactly one data request of its own (`artifact-access.ts`): fresh access to a pinned artifact, on the browser transport's endpoint and the same HttpOnly session cookie the WebViews hold, with the app's `Origin`. It reads no token and stores nothing but the canonical URL. Any failure records its reason code in diagnostics and falls back to asking Home. Its only other request, `web-build.ts`'s `GET /` of the public app shell to read the deployed build, reads no account data. Adding another native data request is a decision, not a convenience.
-- Credentials remain in browser cookies. The bridge transmits display metadata, commands, short-lived artifact open URLs, APNs registration tokens, account-bound regional crash envelopes and the single-use sign-in redemption proof, never a password, access/refresh token or session cookie. Runtime schemas define this boundary.
+- Credentials remain in browser cookies. The bridge transmits display metadata, commands, short-lived artifact open URLs, http(s) links the page opens outside (`open-external`), APNs registration tokens, account-bound regional crash envelopes and the single-use sign-in redemption proof, never a password, access/refresh token or session cookie. Runtime schemas define this boundary.
 
 ## Boundary
 
@@ -629,6 +645,33 @@ retention remain unmeasured. The full method, before/after table and limitations
 are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
+
+### 2026-11-16 — Native Settings list, with the desktop's Settings pages
+
+**What changed:** The plain "Settings and diagnostics" page became an inset
+grouped list built from two primitives (`SettingsGroup`, `SettingsRow`), with
+Diagnostics on its own page. Account and Organization rows open desktop's
+Settings sections in Home through a new `settings` command and `view:
+'settings'`. `WorkspaceSettingsScreen` gained `nativeShell`, and
+`GUEST_SETTINGS_SECTIONS` moved to `common/settings.ts` so Home can filter
+without loading the Settings chunk.
+
+**Why:** Mobile had notifications, updates and a JSON dump but none of the
+settings the browser and desktop offer: profile, timezone, agent work,
+notification channels, memories, members, billing, connections.
+
+**Considered and rejected:** Native forms over the same API, which would break
+the one-native-request invariant and copy a 3,000-line screen. A second
+WebView booting the browser at `#/settings`, which pays a full shell start each
+time; Home is already loaded. Hiding the duplicate controls by CSS alone,
+which would still mount them and run their reads, Web Push's among them.
+
+**What to respect:** a new snapshot value an older shell cannot parse goes
+behind a capability the shell declares, as `view: 'settings'` does.
+`settingsSections` stays open to any string in the
+snapshot schema. Adding to `MOBILE_SETTINGS_SECTIONS` is safe only because of
+that: a closed enum there would make every older shell drop the whole
+snapshot. A control the app owns natively belongs behind `nativeShell`.
 
 ### 2026-11-16 — Dashboard filters and the Marketplace on mobile
 
