@@ -342,6 +342,9 @@ describe('public Rally site', () => {
     expect(page).toContain('<link rel="canonical" href="https://rallywith.ai/marketplace/pr-dashboard/" />');
     expect(page).toContain('<p class="eyebrow">For developers</p>');
     expect(page).toContain('<h1 id="template-title">PR dashboard</h1>');
+    // The breadcrumb names the page; the header marks only the section.
+    expect(page.match(/aria-current="page"/gu)).toHaveLength(1);
+    expect(page).toContain('<a href="/marketplace/" aria-current="true">Marketplace</a>');
     expect(page).toMatch(/<li><a href="\/help\/connecting-your-tools\/github\/"><span class="connector-mark" aria-hidden="true"><svg [^>]*>[\s\S]*?<\/svg><\/span>GitHub<\/a><\/li>/u);
     expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/marketplace/pr-dashboard/social.png" />');
     expect(page).toContain('<blockquote class="market-prompt"><p>Build a live GitHub PR dashboard in this Canvas.');

@@ -95,8 +95,10 @@ not a company mark there, and adding React to the site just to mount one
 component is not the fallback. No automated test pins the
 inlined `d` against the pack.
 
-The marketplace's connector chips take the other route, because they show
-the same connectors the app does: `apps/site/src/connector-marks.ts` renders
+The marketplace's connector chips take another route, which keeps that rule:
+they render at build time and the page ships no React runtime, so nothing is
+mounted in the browser. They do it because they show the same connectors the
+app does: `apps/site/src/connector-marks.ts` renders
 `PLUGIN_BRAND_MARKS` with `react-dom/server` at build time, so the page gets
 the app's own art as static SVG and ships no React. React and
 `@thesvg/react` are site *dev* dependencies for that reason. The site's
