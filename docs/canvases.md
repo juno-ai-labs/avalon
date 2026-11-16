@@ -1078,8 +1078,9 @@ had no way back to an older one but scrolling the Chat for its card.
 
 **Considered and rejected:** Pushing the detail over the socket to keep the
 list current: a refetch on open is enough for a list read only when the menu
-opens. The refetch goes through the query client, not `canvas.refetch()`,
-which ignores `enabled` and would read a Canvas still being created.
+opens. That read calls the API directly and writes the cache only on success:
+through the query, a failed read sets `canvas.error`, which replaces the open
+Chat of a Canvas with no list row with the error pane.
 
 ### 2026-11-15 — A person the Canvas admits can join its participant list
 

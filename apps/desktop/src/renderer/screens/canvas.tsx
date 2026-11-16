@@ -316,6 +316,21 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     publishedIds: publishedKey ? publishedKey.split(' ') : [],
     audience: artifactAudience,
   }, [artifactAudience, publishedKey]);
+  // The detail is not pushed, so an artifact the Chat made since it was read
+  // would be missing from the Artifacts section: the cached list draws at once
+  // and a stale one is read again behind it. Not through the query: a failed
+  // refetch sets `canvas.error`, which swaps a Canvas with no list row for the
+  // error pane, and a menu's read must not take down the open Chat. Staleness is
+  // read from the cache now, not the render's snapshot.
+  const refreshArtifacts = (): void => {
+    if (!api || creationBlocked || !canvas.data || canvas.isFetching) return;
+    if (!queryClient.getQueryCache().find({ queryKey: canvasDetailQueryKey(id) })?.isStale()) return;
+    api.getCanvas(id).then(
+      (fresh) => queryClient.setQueryData(canvasDetailQueryKey(id), fresh),
+      // The list already drawn stays; the next opening tries again.
+      () => undefined,
+    );
+  };
   if (leaving) return <OpeningState label="Opening Canvases…" />;
   if (canvas.error && !row && !recoverableDetailFailure) {
     // One in-pane state, never a dialog over it (canvases.md). A malformed id
@@ -427,12 +442,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
     label: naming ? 'Canvas menu: Rally is choosing a name' : `Canvas menu: ${title}`,
     menu: menuItems(panelOpen, openPanel),
-    // The detail is not pushed, so an artifact the Chat made since it was
-    // read would be missing from the Artifacts section: the cached list draws
-    // at once and a stale one is read again behind it. Through the client, which
-    // reads staleness now and skips the query while it is disabled (no api, or
-    // the Canvas still being created); `canvas.refetch()` would ignore `enabled`.
-    onMenuOpen: () => { void queryClient.refetchQueries({ queryKey: canvasDetailQueryKey(id), type: 'active', stale: true }); },
+    onMenuOpen: refreshArtifacts,
     iconAction: creationBlocked ? undefined : appearancePicker,
   };
   const header = (presentUserIds: readonly string[], panelOpen: boolean, openPanel?: ConversationHeaderContext['openPanel']): React.JSX.Element => {
