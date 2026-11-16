@@ -72,7 +72,7 @@ describe("Daytona Terminal provider", () => {
       expect(await new Response(stream).text()).toBe("episode bytes");
       // Signed for as long as the buffered download may take, and cancellable.
       expect(downloadUrl).toHaveBeenCalledWith("/workspace/.rally-output/feed/one.mp3", 120);
-      expect(fetched).toHaveBeenNthCalledWith(1, expect.stringContaining("signature="), { signal: controller.signal });
+      expect(fetched).toHaveBeenNthCalledWith(1, expect.stringContaining("signature="), { redirect: "error", signal: controller.signal });
       await expect(provider.openFile!("sandbox-files", "/workspace/.rally-output/feed/two.mp3"))
         .rejects.toThrow("daytona_file_stream_http_403");
     } finally {

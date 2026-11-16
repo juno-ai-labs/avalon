@@ -302,7 +302,9 @@ it; [reactive web artifacts](reactive-web-artifacts.md) has the storage. The
 tool call's signal cancels the download before the stream returns and the
 stream after. A provider Worker without `openFile` has the file read whole, so
 the API and provider Workers deploy in either order. A listing that times out
-is `resource_listing_timed_out`, not `resource_not_ready`: a retry repeats it.
+is `resource_listing_timed_out`, not `resource_not_ready`. For a directory the
+same call again continues from the files already hashed, so the refusal asks
+for a retry; a single file hashes from the start each time.
 
 A publish refused for its size (`resource_limit_exceeded`) first logs
 `terminal_publish_over_size_limit` with the shape (file or directory), the
@@ -1482,7 +1484,7 @@ own files. Separately, `TerminalResourceBridge.noteOversizedPublish` logs
 
 **Why:** A site now holds a feed's episodes, and every publish hashed every
 file to add one, so a large feed's publish grew with the whole site and could
-run past the listing's time limit, where a retry repeats it. The team also
+run past the listing's time limit, where a retry would start over. The team also
 kept the 25 MB limit and asked to see how often media reaches it; a refusal
 reached only the model.
 

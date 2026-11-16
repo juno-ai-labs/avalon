@@ -87,7 +87,7 @@ import {
 } from "./annotation-script";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
 import { storedObjectResponse } from "./stored-object-response";
-import { publishedFilePath } from "@rally/contracts/artifact-access";
+import { isPublishedFileNamePath } from "@rally/contracts/artifact-access";
 import {
   injectSocialPreviewIntoHtml,
   injectSocialPreviewResponse,
@@ -135,12 +135,15 @@ function withSecurityHeaders(
   if (options.referrerPolicy === "same-origin") {
     headers.set("referrer-policy", options.referrerPolicy);
   }
-  // Stored bytes carry an `ETag`, so the browser may keep its copy and ask
-  // again on every use: each revalidation is admitted like any other request,
-  // so a Canvas that goes private stops answering at once, and an unchanged
-  // file costs a `304` instead of its whole body. Everything else, including
-  // whatever an active site's own code returns, stays `no-store`.
-  if (options.revalidate && response.headers.has("etag")) headers.set("cache-control", "private, no-cache");
+  // Stored bytes other than a page may stay in the browser and be asked about
+  // again on each use; every revalidation is admitted, and an unchanged file
+  // costs a `304`. A page stays `no-store`, as does whatever an active site's
+  // code returns: a private page left in the browser's cache or back-forward
+  // cache would still show after its Canvas went private.
+  if (options.revalidate && response.headers.has("etag")
+    && !(response.headers.get("content-type") ?? "").toLowerCase().startsWith("text/html")) {
+    headers.set("cache-control", "private, no-cache");
+  }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
@@ -318,7 +321,7 @@ async function serveAdmitted(
     if(admission.kind==='file') {
       if(request.method!=='GET' && request.method!=='HEAD') return html(neutralPage(),405);
       const mount=splitVersionMount(url.pathname);
-      if(mount.path!=='/' && mount.path!=='/index.html' && mount.path!==publishedFilePath(admission.file.title)) return html(neutralPage(),404);
+      if(mount.path!=='/' && mount.path!=='/index.html' && !isPublishedFileNamePath(mount.path)) return html(neutralPage(),404);
       const latest=Math.max(...admission.file.versions.map(version=>version.version));
       if(mount.version!==null && mount.version!==latest && !admission.editor) return html(neutralPage(),403);
       const version=admission.file.versions.find(version=>version.version===(mount.version??latest));

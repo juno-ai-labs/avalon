@@ -8,6 +8,7 @@
   "rules": [{ "type": "Text", "globs": ["**/*.py", "**/*.sandbox.mjs", "**/canvas-seeds/*/site/*"], "fallthrough": true }],
   "vars": {
     "APP_ENV": "test",
+    "ARTIFACT_BLOB_STORE": "on",
     "APP_VERSION": "workerd-test",
     "AVALON_REGION": "global",
     "PUBLIC_API_BASE_URL": "https://api.test",
