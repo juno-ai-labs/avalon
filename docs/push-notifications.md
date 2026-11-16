@@ -380,13 +380,9 @@ The plugin's contract: model id `rally_notifications`, wire prefix
 `notifications_`, preloaded, with its guidance in
 `packages/prompts/api/notifications-plugin.ts`. Both tools are `mode: "write"`,
 `record_before_execute`, serial and reenterable, keyed on the call's receipt.
-The system message carries the rules every turn needs; the judgment a run
-needs only when it is about to notify, or is setting up work that will, is the
-`sending-notifications` skill
+When to send one and how to word it is the `sending-notifications` skill
 (`packages/skills/platform-skills/sending-notifications-skill.ts`), owned by
-`rally:notifications` so it is in the catalog wherever the plugin is: whether
-an outcome is worth a notice, one notice per outcome, how to word the title and
-body, when to turn notices on, and what to save in a Sidekick's instructions.
+`rally:notifications`.
 
 | Tool | Input | Output |
 | --- | --- | --- |
