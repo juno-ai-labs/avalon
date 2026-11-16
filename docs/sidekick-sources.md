@@ -236,12 +236,15 @@ none makes it `not_connected`. An `error` connection counts as connected,
 because reconnecting is not its fix.
 
 Every reader of the request sees it, the asker included, so the asker and the
-agent that asked know whose step is left. The card, the Activity row and the
-Sources panel draw, for the person asked and only while their request waits,
-the conversation's own connection card (`ConnectorConnectionCard`, chosen by
-`sourceConnectionCardId`) above the pair, and hold Approve until the account
-works. Decline is never held. Once the card sees the connection healthy it
-re-reads the Sidekick's sources, which unlocks Approve. Everyone else reads
+agent that asked know whose step is left. Only the request's card, in the
+conversation it was asked from, draws the connect step: for the person asked
+and only while their request waits, the conversation's own connection card
+(`ConnectorConnectionCard`, chosen by `sourceConnectionCardId`) above the
+pair, with Approve held until the account works. Decline is never held. Once
+the card sees the connection healthy it re-reads the Sidekick's sources, which
+unlocks Approve. The Sources panel holds the person's Approve too and points
+them at that conversation; the Activity row keeps its plain pair, and an
+Approve there before connecting is refused by name. Everyone else reads
 "Needs to connect Gmail" or "Needs to reconnect Gmail" in that person's row. A
 connector no card connects (a webhook, X, a custom server) points at Settings
 instead.
@@ -252,8 +255,8 @@ needs reconnecting (`sidekick_source_connection_reconnect`): such an
 approval would let nothing in, and would read later as a Sidekick with
 nothing to do. A lapsed connection beside a working one still gets its rows,
 which let events in again once it is reconnected. The emailed link that meets
-either refusal sends the person to their Activity row, where the connect step
-is.
+either refusal sends the person to the request in its conversation, where the
+connect step is.
 
 ### Which connections a rule is registered on
 
@@ -867,9 +870,10 @@ one as it is resolved; the resolution becomes a changelog entry.
 ### 2026-11-16 — Connecting is part of answering a request
 
 **What changed:** A request view carries the asked person's `connection`
-(`connected`, `reconnect_required`, `not_connected`), and the card, Activity
-row and Sources panel draw the conversation's connection card above the
-person's own Approve, which waits until the account works. An ask for the
+(`connected`, `reconnect_required`, `not_connected`), and the request's card in
+its conversation draws the conversation's connection card above the person's
+own Approve, which waits until the account works. The owner asked that the
+step live only there, so Activity and the Sources panel point at it. An ask for the
 asker's own account with nothing connected is no longer refused. Approval
 counts, and writes rows on, only the connections that announce the asked
 event types, and is refused `sidekick_source_connection_reconnect` when every
@@ -894,7 +898,8 @@ would believe they had shared and nothing would arrive.
 
 **What a future change has to respect:** Which connection carries an event
 is the connection's own announcement, not its connector type. The connect
-step is the conversation's connection card, so a change to how an account
+step lives on the conversation's card alone, and is the conversation's
+connection card, so a change to how an account
 connects changes it here too.
 
 ### 2026-11-16 — A Chat's and a wizard's turns ask for a source, whatever started them

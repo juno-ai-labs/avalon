@@ -182,7 +182,7 @@ export function SidekickSourceRequestCardView({ requests, words, live = true, on
  * and who has been asked. It sits beside delegation and is not delegation: a
  * source lets events in and lends no account.
  */
-export function SidekickSourcesList({ data, loading, words, onDecide, deciding = null, onWithdraw, withdrawing = null, connectStep }: {
+export function SidekickSourcesList({ data, loading, words, onDecide, deciding = null, onWithdraw, withdrawing = null }: {
   data?: SidekickSourcesResult | undefined;
   loading: boolean;
   words: SourceWords;
@@ -192,8 +192,6 @@ export function SidekickSourcesList({ data, loading, words, onDecide, deciding =
   onWithdraw: (connectionId: string) => void;
   /** The connection whose withdrawal is in flight. */
   withdrawing?: string | null;
-  /** As on the card: the reader's own connect step above their Approve. */
-  connectStep?: SourceConnectStep | undefined;
 }): React.JSX.Element {
   const who = (person: SourcePerson, yours: boolean): React.JSX.Element => <span>
     {person.displayName}{yours && <small>You</small>}
@@ -234,8 +232,10 @@ export function SidekickSourcesList({ data, loading, words, onDecide, deciding =
               <small>Asked by {request.requestedByName} · {events} in {connector}</small>
               {request.condition && <small>Only when {quoted(request.condition)}</small>}
               {!answerable && <small>{standing(request)}</small>}
-              {toMake && !request.yours && <small>{connectionWords(toMake, connector)}</small>}
-              {answerable && toMake && connectStep?.(request)}
+              {toMake && <small>{request.yours
+                // Connecting happens on the request's card, in the conversation it was asked from.
+                ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} from the request in its conversation first`
+                : connectionWords(toMake, connector)}</small>}
               {answerable && <SourceDecisionButtons
                 approveBlocked={toMake ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} first` : undefined}
                 deciding={deciding?.requestId === request.requestId ? deciding.decision : null}

@@ -61,9 +61,10 @@ function useSourceDecision(): Decide {
 }
 
 /**
- * The asked person's own connect or reconnect, above their Approve: the same
- * card a conversation draws when an agent asks for a connection, so a person
- * who never connected the account, or whose sign-in lapsed, settles the
+ * The asked person's own connect or reconnect, above their Approve, in the
+ * card in the conversation the request was asked from, and nowhere else: the
+ * same card a conversation draws when an agent asks for a connection, so a
+ * person who never connected the account, or whose sign-in lapsed, settles the
  * request in one place. It reads the viewer's own connections under the key
  * the conversation already uses, and once the account works it re-reads the
  * Sidekick's sources, which unlocks Approve. A connector no card connects
@@ -163,22 +164,10 @@ export function SourceRequestActions({ request, sidekickName }: {
   /** For the buttons' names, so two Sidekicks' requests differ; absent while the row has no title. */
   sidekickName: string | undefined;
 }): React.JSX.Element {
-  const { api } = useCollaborationSession();
   const decide = useSourceDecision();
   const answered = decide.data?.state;
-  // The row carries no account state, so it reads the request as its card does, under the
-  // card's key: one read serves both, and connecting re-reads it.
-  const live = useQuery({
-    queryKey: sidekickSourceRequestsQueryKey(request.sidekickId, [request.requestId]),
-    queryFn: ({ signal }) => api!.readSidekickSourceRequests([request.requestId], signal),
-    enabled: Boolean(api),
-    refetchOnWindowFocus: true,
-  }).data?.[0];
-  const toMake = live?.state === 'pending' && live.connection !== undefined && live.connection !== 'connected' ? live.connection : null;
   return <>
-    {toMake && live && <SourceConnectionStep request={live} />}
     <SourceDecisionButtons
-      approveBlocked={toMake ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${sourceWords(request).connector} first` : undefined}
       deciding={decide.isPending ? decide.variables.decision : null}
       onDecide={(decision) => decide.mutate({ request, decision })}
       state={answered === 'approved' || answered === 'declined' ? answered : 'pending'}
@@ -220,7 +209,6 @@ export function SidekickSources({ id }: { id: string }): React.JSX.Element {
   });
   return <>
     <SidekickSourcesList
-      connectStep={connectStep}
       data={query.data}
       deciding={decidingOf(decide)}
       loading={query.isPending}

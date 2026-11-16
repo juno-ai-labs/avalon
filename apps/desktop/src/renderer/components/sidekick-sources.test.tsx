@@ -236,6 +236,16 @@ describe('the Sidekick panel\'s Sources section', () => {
       .toEqual(['Decline your Slack for Deals', 'Approve your Slack for Deals']);
   });
 
+  it('holds my Approve while my account lapsed and points me at the request\'s conversation, with no connect card of its own', async () => {
+    api.getSidekickSources.mockResolvedValue(sources({ requests: [request('r-me', ME, 'Me', { connection: 'reconnect_required' })] }));
+    mount(<SidekickSources id={SIDEKICK} />);
+    await screen.findByRole('list', { name: 'Asked' });
+    expect(item('Asked', 'Me')).toHaveTextContent('Reconnect Gmail from the request in its conversation first');
+    expect(screen.queryByRole('button', { name: /^Connect card/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Approve your Gmail for Deals' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Decline your Gmail for Deals' })).toBeEnabled();
+  });
+
   it('says so when nothing lets events in', async () => {
     api.getSidekickSources.mockResolvedValue(sources({ sources: [], requests: [] }));
     mount(<SidekickSources id={SIDEKICK} />);
