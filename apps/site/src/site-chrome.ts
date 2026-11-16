@@ -35,7 +35,7 @@ const ORIGIN = 'https://rallywith.ai';
 /** The header's links and sign-in button, the same on every marketing page. */
 export function renderSiteNav(): string {
   return '<nav aria-label="Primary"><a class="header-link" href="/canvases/">Canvases</a><a class="header-link" href="/sidekicks/">Sidekicks</a>'
-    + '<a class="header-link" href="/#pricing">Pricing</a><a class="header-link" href="/#compare">Compare</a>'
+    + '<a class="header-link" href="/#pricing">Pricing</a><a class="header-link" href="/#footer-compared">Compare</a>'
     // The web app signs in and signs up through one door, so the label rolls between the two.
     + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in to Rally or sign up for Rally">'
     + '<span class="header-sign-in-wheel" aria-hidden="true"><span>Sign in to Rally</span><span>Sign up for Rally</span></span></a></nav>';
@@ -76,6 +76,7 @@ export function renderSiteFooter(): string {
   const product = [
     '<a href="/canvases/">Canvases</a>',
     '<a href="/sidekicks/">Sidekicks</a>',
+    '<a href="/marketplace/">Marketplace</a>',
     '<a href="/#pricing">Pricing</a>',
   ];
   return `<footer class="rally-footer"><div class="footer-grid">`

@@ -1,10 +1,9 @@
 # Landing comparisons and site footer
 
 The public site's "Compared to" pages and the column footer they share with the
-landing page and the Trust Center. The landing page's "Compared to" section lists five rival
-products in one table, and each rival has its own page at `/compare/<slug>/`
+landing page and the Trust Center. The landing page no longer has a "Compared to" section; each rival has its own page at `/compare/<slug>/`
 that answers "Rally vs X" for a person or an AI search engine. There is no
-`/compare/` index page: `_redirects` sends it to `/#compare`. The footer lists every comparison in one column and
+`/compare/` index page: `_redirects` sends it to `/#footer-compared`, the footer's "Compared to" column, as do the header's Compare link and each page's breadcrumb. The footer lists every comparison in one column and
 every Trust Center page in another.
 
 The copy is written by the Rally team and says so on every page. It is meant to
@@ -150,6 +149,18 @@ section, the footer, and one rival page at 1440px and 390px, and open
 `dist/compare/*/social.png`.
 
 ## Changelog
+
+### 2026-11-16: The landing page drops its comparison section
+
+**What changed:** The homepage no longer lists rivals. `/compare/` redirects,
+the header's Compare link and each page's breadcrumb point at the footer's
+"Compared to" column (`/#footer-compared`) instead of `/#compare`.
+
+**Why:** The product owner asked for the comparison to leave the landing page.
+The footer column is on every page, so it is the one place left that lists them.
+
+**Consequences:** The comparison pages still ship and are still linked from the
+footer. A new landing-page section for them needs a new decision.
 
 ### 2026-10-01: Drop the closing buttons, render quotes anywhere
 
