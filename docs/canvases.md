@@ -2,10 +2,11 @@
 
 A **Canvas** is the shared home for work in Rally: a conversation with Rally
 that everyone in the Canvas can read and take part in, and the artifacts that
-conversation generates — documents, spreadsheets, images, PDFs, archives and
-reactive sites. A Canvas is a conversation first. Its id is the parent id of its
-`canvas`-kind conversation, so one Canvas can generate many artifacts, and a
-new Canvas has none until its Chat publishes one.
+conversation generates — a document, spreadsheet, image, PDF, archive or
+reactive site. A Canvas is a conversation first. Its id is the parent id of its
+`canvas`-kind conversation. A Canvas holds one artifact
+([One artifact](#one-artifact)), and a new Canvas has none until its Chat
+publishes one.
 
 This document owns a Canvas's identity, who can open it, its directory row,
 its participants and guests, and how its artifacts hang off its conversation.
@@ -362,7 +363,8 @@ conversation generated: Rally's `publish_resource` from the Chat publishes
 under the identity it always has, `terminal:<conversation>:<path>`, and the
 conversation is now the Canvas. The first publish of a path is a new resource,
 version 1; a later publish of the same path is a new version of it; a different
-path is another artifact. A file of any kind, or a directory that becomes a
+path is refused while the Canvas holds an artifact, unless the publish replaces
+it ([One artifact](#one-artifact)). A file of any kind, or a directory that becomes a
 site or an archive, as [`reactive-web-artifacts.md`](reactive-web-artifacts.md) decides.
 
 A person can also publish a file or a static site made elsewhere, through
@@ -372,7 +374,8 @@ right to take part in the Canvas, and lands through the same writes as Rally's
 publish, with the person as the version's author and the Canvas's last editor.
 Its identity is `canvas:<canvasId>:<name>`, so publishing the same name again
 is a new version of it. The two namespaces never meet: a name Rally published
-from the Chat and the same name published by a person are two artifacts. A
+from the Chat and the same name published by a person are two resources, and a
+person's publish replaces whatever the Canvas held. A
 component or project site is built first, in the Canvas's own Terminal sandbox
 (`services/canvas-build/`), which every participant's runs share
 ([`terminal-workspaces.md`](terminal-workspaces.md),
@@ -413,6 +416,37 @@ Only a version whose publish notes the Canvas does: one written by another
 producer (an image edit, a connector refetch) tells nobody until the next
 publish of the Canvas, which covers what the pinner cares about here, the
 Canvas's own work.
+
+### One artifact
+
+A Canvas holds one artifact, its main artifact: a request that needs a reader,
+a feed and a page is one site with several routes. `canvas_artifacts` keeps its
+`(canvas_id, resource_id)` key, so a Canvas converted from a Thread may hold
+several until one replaces them, and any listed one republishes.
+
+- **`HostedCanvas.noteArtifact`** is the rule. A note for a resource the Canvas
+  lists, or for a Canvas holding none, is recorded. A note for any other
+  resource is refused, `{ noted: false, refused: "canvas_artifact_held" }`,
+  unless it carries `replace`, which deletes the Canvas's other
+  `canvas_artifacts` rows in the same transaction.
+- **The Terminal resource bridge** asks first, before a model's
+  `publish_resource` writes anything. It resolves the resource the publish
+  would update, as the publish does, and refuses with `canvas_artifact_held`
+  (naming the held artifact and the `filePath` that republishes it) when the
+  Canvas lists another and the call did not pass `replaceCanvasArtifact: true`.
+  Recovery of an interrupted publish (`reconcilePublishedResource`) notes with
+  the call's own `replaceCanvasArtifact`. Two publishes that pass the check at
+  once leave the second a resource of the Chat that the Canvas does not list,
+  logged `canvas_artifact_note_failed`.
+
+A person's publish (`POST /canvases/:id/artifacts`) of a resource the Canvas does not list replaces.
+
+A replaced artifact keeps its resource, versions, `publication_parent_id` and
+`artifact_registry` row, so its URL still serves to the Canvas's readers; only
+the Canvas's detail, list row and agent context stop naming it. Its database
+keeps taking rows, so a Sidekick whose saved instructions name the old
+`resourceId` for `write_artifact_data` keeps writing to an artifact the Canvas
+no longer shows until its instructions change.
 
 ### From a Sidekick run
 
@@ -509,8 +543,9 @@ Rally is told about the Canvas in a host-provided message, `CANVAS CONTEXT`
 (`canvasRunContextMessage`, from `WorkspaceDO.canvasContext`): the Canvas's
 title, its artifacts at their current versions (each with the `filePath` a
 publish names and whether it stores data, `HostedCanvas.agentArtifacts`), the
-Sidekicks attached to it, and that republishing a path
-is a new version attributed to Rally while a new path adds an artifact. It is a
+Sidekicks attached to it, and that the Canvas holds one artifact: republishing its path
+is a new version attributed to Rally, a new path is refused, and
+`replaceCanvasArtifact` puts another in its place ([One artifact](#one-artifact)). It is a
 derived user message, as a Sidekick run's activation context is, not system
 prompt text, because the system prompt prefix is byte-stable and cached and
 the artifact list changes with every publish; it is keyed on the message that
@@ -824,6 +859,8 @@ detached artifact window's **Copy link** adds the artifact's segment.
   triggers on this table and `canvas_directory`. A new way to share a Canvas
   with a guest must write `canvas_participants`, or add a trigger of its own
   ([`canvas-share-federation.md`](canvas-share-federation.md)).
+- **A Canvas holds one artifact.** `HostedCanvas.noteArtifact` adds a second
+  `canvas_artifacts` row only by replacing the first.
 - **Every `canvas_*` statement names `canvas_id`, and every hosted-conversation
   statement names the parent id.** Without it a write reaches every Canvas or
   every Sidekick in the Organization.
@@ -1066,6 +1103,37 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-16 — A Canvas holds one artifact
+
+**What changed:** A Canvas holds one artifact. `HostedCanvas.noteArtifact`
+refuses a different resource (`canvas_artifact_held`) unless the note
+carries `replace`, which drops the others from `canvas_artifacts`. The
+Terminal bridge refuses a model's publish of a new path into a Canvas that
+holds one before writing anything, and `publish_resource` gained
+`replaceCanvasArtifact` to make the new path the Canvas's artifact. A
+person's publish always replaces. The Chat's publishing guidance, the
+Sidekick run guidance and the live-sites skill now say so.
+
+**Why:** A Chat asked for a newsletter reader that could also be listened to
+split the work between two background agents, and each published its own
+site, so the Canvas showed two artifacts for one request. The product wants
+one main artifact per Canvas for now.
+
+**Considered and rejected:** Prompt text alone, which is what produced two
+artifacts in the first place. Enforcing only in the note, after the publish
+wrote the resource, which leaves an orphaned resource and tells the model
+nothing. A schema change making `canvas_id` unique in `canvas_artifacts`,
+which would need a table rebuild and a decision for every converted Canvas
+that already holds several; the rule is cheap to lift while it lives in code.
+
+**Consequences:** A Sidekick whose saved instructions publish a new file
+each run (a dated digest) is refused from its second run on unless it
+replaces. Replacing on every run is allowed, and each replaced file still
+serves at its URL. The run guidance and the refusal nudge toward adding the
+new file or entry inside the one artifact, and keep `replaceCanvasArtifact`
+for output meant to take the artifact's place. A race between two publishes is accepted: the second is not listed
+and the model is not told.
 
 ### 2026-11-16 — The Canvas menu lists its artifacts
 

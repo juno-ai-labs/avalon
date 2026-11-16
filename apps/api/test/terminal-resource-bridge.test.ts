@@ -30,7 +30,7 @@ import {
   seedToolReceipt,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
+import { applyWorkspaceResourceSchema, createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
 import { createTestWorkspaceDO, workspaceResourceMaintenanceRpcs } from "./helpers/workspace-object-rpcs";
 import { sha256Hex } from "../src/lib/crypto";
 import { RESOURCE_SLUG_PATTERN } from "../src/services/resource-slug";
@@ -256,6 +256,9 @@ function fixture(
       null,
       U,
     ),
+    /** A bridge whose publications land in a Canvas's Chat, noted to the Canvas through `note`. */
+    bridgeNotingCanvas: (note: (target: { parentId: string; substreamId: string }, resourceId: string, replace: boolean) => Promise<boolean>) =>
+      createTerminalResourceBridge(env, testTerminalPortFactory(objectStore), inObjectResourceAttacher, null, null, U, "0", note),
     /** A bridge whose publications land in `publicationWorkstreamId`. */
     bridgeFor: (publicationWorkstreamId: string | null) => createTerminalResourceBridge(
       env,
@@ -1224,6 +1227,65 @@ describe("Terminal resource bridge", () => {
     expect(attachResource).toHaveBeenCalledWith(expect.objectContaining({
       eventType: "resource_updated",
     }));
+  });
+
+  describe("in a Canvas, which holds one artifact", () => {
+    function canvasFixture() {
+      const state = fixture();
+      if (!state.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'canvas_artifacts'").get()) {
+        createWorkspaceObjectTable(state.database, "canvas_artifacts");
+      }
+      // The Canvas's note, as the WorkspaceDO records it; its own rule is proved on workerd.
+      const notes: Array<{ resourceId: string; replace: boolean }> = [];
+      const bridge = state.bridgeNotingCanvas(async (target, resourceId, replace) => {
+        notes.push({ resourceId, replace });
+        state.database.prepare("INSERT OR IGNORE INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, 1)")
+          .run(target.parentId, resourceId);
+        return false;
+      });
+      return { ...state, bridge, notes };
+    }
+    const second = { ...context, effectIntentId: I2, toolCallId: "resource-recall" };
+
+    it("refuses a new path while the Canvas holds an artifact, before writing anything, and names the artifact", async () => {
+      const { database, put, bridge } = canvasFixture();
+      const reader = await bridge.publishResource(context, { filePath: "reader.md", displayName: "Reader" }, new TextEncoder().encode("# Reader\n"));
+
+      await expect(bridge.publishResource(second, { filePath: "podcast.md" }, new TextEncoder().encode("# Podcast\n")))
+        .rejects.toMatchObject({ code: "canvas_artifact_held", details: { field: "replaceCanvasArtifact", heldResourceId: reader.resourceId } });
+      await expect(bridge.publishResource(second, { filePath: "podcast.md" }, new TextEncoder().encode("# Podcast\n")))
+        .rejects.toThrow("republish filePath reader.md");
+      expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 1 });
+      expect(put).toHaveBeenCalledOnce();
+    });
+
+    it("republishes an artifact a converted Canvas lists beside others", async () => {
+      const { database, bridge } = canvasFixture();
+      const reader = await bridge.publishResource(context, { filePath: "reader.md" }, new TextEncoder().encode("# Reader\n"));
+      // A Canvas converted from a Thread lists another artifact first.
+      database.prepare(`INSERT INTO resources (id, workspace_id, resource_type, provider, provider_resource_id, title, metadata_json, created_at, updated_at)
+        VALUES (?, ?, 'generated_file', 'avalon_generated', ?, 'Thread notes', '{}', '2026-08-13', '2026-08-13')`).run(RESOURCE, W, `terminal:${S}:notes.md`);
+      database.prepare("INSERT INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, 0)").run(S, RESOURCE);
+      const revised = await bridge.publishResource(second, { filePath: "reader.md" }, new TextEncoder().encode("# Reader v2\n"));
+      expect(revised.resourceId).toBe(reader.resourceId);
+    });
+
+    it("republishes the artifact it holds, and publishes a new path only as a replacement", async () => {
+      const { database, bridge, notes } = canvasFixture();
+      const reader = await bridge.publishResource(context, { filePath: "reader.md" }, new TextEncoder().encode("# Reader\n"));
+      const revised = await bridge.publishResource(second, { filePath: "reader.md" }, new TextEncoder().encode("# Reader v2\n"));
+      expect(revised.resourceId).toBe(reader.resourceId);
+
+      const podcast = await bridge.publishResource(second, { filePath: "podcast.md", replaceCanvasArtifact: true },
+        new TextEncoder().encode("# Podcast\n"));
+      expect(podcast.resourceId).not.toBe(reader.resourceId);
+      expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 2 });
+      expect(notes).toEqual([
+        { resourceId: reader.resourceId, replace: false },
+        { resourceId: reader.resourceId, replace: false },
+        { resourceId: podcast.resourceId, replace: true },
+      ]);
+    });
   });
 
   it("keeps distinct sandbox paths as distinct documents", async () => {

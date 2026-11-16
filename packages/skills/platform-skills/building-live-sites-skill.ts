@@ -635,13 +635,12 @@ HTML the annotation quotes and say the view could not be rebuilt.
   who is acting.
 - **Embedding a separately published file.** An \`<audio>\` or \`<img>\`
   whose \`src\` is a published file's \`url\` stays empty, because the page
-  loads media only from its own site. Do instead: put media the page plays
-  in the site's directory, and link a separately published file with
-  \`<a href>\`.
+  loads media only from its own site, and a Canvas holds one artifact, so
+  publishing another file there is refused. Do instead: put media the
+  page plays, and any file it offers to download, in the site's directory.
 - **Streaming the site into chat.** The transcript gets a sentence and
   a citation; the code lives in the files. If someone asks to see the
-  code, publish the files as ordinary resources or read out the
-  specific part they asked about.
+  code, read out the specific part they asked about.
 
 ## Stateful sites: the storage class
 
