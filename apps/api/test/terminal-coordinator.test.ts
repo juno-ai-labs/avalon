@@ -77,7 +77,8 @@ function fixture() {
     createdAt: Date.parse("2026-08-13"),
   });
   let now = new Date("2026-08-13T12:00:00.000Z");
-  const clock: TerminalClock = { now: () => new Date(now) };
+  // The busy wait sleeps through this; a frozen clock makes each try answer the same.
+  const clock: TerminalClock = { now: () => new Date(now), sleep: async () => undefined };
   const provider: TerminalSandboxProvider = {
     createSandbox: vi.fn(async (input) => ({
       id: `sandbox-${input.generation}`,
@@ -1342,6 +1343,40 @@ describe("Terminal sandbox coordinator", () => {
       .resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
     expect(provider.createSandbox).toHaveBeenCalledOnce();
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
+  });
+
+  it("waits for a sibling's call to release the lease and then does the work", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const sibling = "00000000-0000-4000-8000-0000000000c1";
+    seedWorkstreamRun(objectStore, { id: sibling, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    const holder = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await holder.acquire(context());
+    const slept: number[] = [];
+    const waiting = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, {
+      now: clock.now,
+      // The holder's call ends during the second wait.
+      sleep: async (ms) => { slept.push(ms); if (slept.length === 2) await holder.release(context()); },
+    });
+    await expect(waiting.acquire({ ...context(), harnessRunId: sibling, toolCallId: "sibling-call" }))
+      .resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    expect(slept).toEqual([250, 250]);
+  });
+
+  it("answers sandbox_busy after five seconds of a sibling holding the lease", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const sibling = "00000000-0000-4000-8000-0000000000c2";
+    seedWorkstreamRun(objectStore, { id: sibling, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    const holder = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await holder.acquire(context());
+    let slept = 0;
+    const waiting = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, {
+      now: clock.now, sleep: async (ms) => { slept += ms; },
+    });
+    await expect(waiting.acquire({ ...context(), harnessRunId: sibling, toolCallId: "sibling-call" }))
+      .rejects.toMatchObject({ code: "sandbox_busy" });
+    expect(slept).toBe(5_000);
   });
 
   it("holds a publication build's lease against an agent run until it expires, though no run backs it", async () => {
