@@ -64,7 +64,7 @@ sheet's bar carries the title and New Canvas, the header still shows the
 Marketplace button, and the Marketplace's own title and way back.
 The filters' rules live in `@rally/contracts/canvas-filters`, shared with the
 mobile dashboard ([`mobile-canvas-client.md`](mobile-canvas-client.md)).
-`apps/desktop/src/renderer/lib/canvas-templates.ts` orders the catalog. Each
+`apps/desktop/canvas-template-catalog.ts` lists and orders the catalog and parses it; the app's builds read it as the `virtual:rally-canvas-templates` module, and the public site's `/marketplace/` page renders from the same loader. Each
 Markdown file in `packages/skills/marketplace-skills/` supplies its card's `name`,
 `description`, `icon` and `color` (its card's mark, from the Canvas appearance
 catalog; it never becomes the started Canvas's mark), and category `tags`. The builds check tags against
