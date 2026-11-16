@@ -34,8 +34,8 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   a Granola feature-request board with voting, a podcast feed) each draw their
   own artifact in `index.html`. The GTM example's chat also shows the Sidekick's
   delegation card, in the app's own words, with Theo and Priya allowing it to act
-  as them (Maya, its creator, is enrolled already), then Theo changing its
-  behavior and Rally showing the instruction it added to the Sidekick; "Run the Sidekick" only swaps local markup to
+  as them (Maya, its creator, is enrolled already), then Theo asking it to send a push
+  notification when a new deal opens and Rally showing the instruction it added; "Run the Sidekick" only swaps local markup to
   version 2 (`data-new` rows appear, `data-v2` text replaces the original).
   They do not run jobs or connect to tools. Preserve that distinction
   and the acquisition action IDs. The historical offer action is now an inline
