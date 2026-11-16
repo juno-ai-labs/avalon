@@ -38,8 +38,8 @@ exactly that.
 
 The pages that follow start with how Rally decides what to do and why it
 rarely stops to ask. Then come the things it can do for you. It can search the
-web and read pages, and open links in a browser right beside the conversation.
-It has its own private computer for running code, crunching data and working
+web and read pages, and, in the desktop app, open links in a browser right
+beside the conversation. It has its own private computer for running code, crunching data and working
 on GitHub repositories. It can draw pictures and record voices. It can
 remember things between conversations and set itself a reminder to come back
 later. And for big jobs it can call in helpers, while keeping receipts so

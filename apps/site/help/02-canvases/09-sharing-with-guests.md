@@ -11,7 +11,7 @@ who join this way are **guests**.
 
 ## Invite a guest
 
-Guests are invited from the same window used to add teammates, and by the same
+Guests are invited from the same dialog used to add teammates, and by the same
 people: the Canvas's creator, or an owner or administrator of the Organization.
 For a Canvas a Sidekick made, the Sidekick's managers can invite guests too.
 
@@ -45,7 +45,7 @@ other Canvases, your Sidekicks, or anything else in your Organization.
 > a guest. Anyone else gets access the first time they sign in with that
 > address.
 
-Once someone is a guest, they appear in the **Share** window's list of people
+Once someone is a guest, they appear in the **Share** dialog's list of people
 with a **Guest** badge, and you can tick them for other Canvases the same way
 you choose a teammate. The Organization-wide setting never includes guests, so
 a Canvas open to **Everyone in the Organization** is still closed to them until
@@ -57,10 +57,11 @@ The guest gets an email with a link to the Canvas. Signing in with that email
 address is all it takes: there is nothing to accept. Only someone who can sign
 in as that address gets in, so a forwarded invitation is no use to anyone else.
 
-Guests use Rally in a web browser. They see the Canvases shared with them, and
+Guests use Rally in the web app. They see the Canvases shared with them, and
 who is in your Organization, by name and picture, so a message shows who wrote
 it. They see nothing else, and they cannot create Canvases, make Sidekicks or
-add people. [Rally in a web browser](../08-rally-everywhere/04-rally-in-a-browser.md)
+add people. [Opening a Canvas shared with
+you](../01-getting-started/02-create-or-join-an-organization.md#opening-a-canvas-shared-with-you)
 shows what that looks like from their side.
 
 In the **Members** list in Settings, guests appear with a **Guest** badge.
@@ -68,10 +69,10 @@ In the **Members** list in Settings, guests appear with a **Guest** badge.
 ## Taking access back
 
 To end access for a guest who has joined, untick them in the Canvas's
-**Share** window and click **Save**, as described in
+**Share** dialog and click **Save**, as described in
 [People in a Canvas](07-people-in-a-canvas.md#adding-and-removing-people).
 
-The **Share** window does not list invitations nobody has accepted yet, and
+The **Share** dialog does not list invitations nobody has accepted yet, and
 there is no way to withdraw one from it today. An invitation only ever opens
 the Canvas to someone who signs in with that exact address, but it does mean
 that a typo cannot be taken back, so check addresses before you save.

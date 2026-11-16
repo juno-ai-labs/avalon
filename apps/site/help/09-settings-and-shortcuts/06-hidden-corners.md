@@ -16,7 +16,7 @@ be one of the people who built Rally, and you should be getting back to work.
 - **Your drafts survive almost anything.** Switch Canvases, close the window or
   quit halfway through a sentence, and what you typed, the files you attached and
   the people you mentioned are waiting when you come back. Each Canvas and
-  Sidekick conversation keeps its own draft, on this Mac, for 12 hours after your last edit.
+  Sidekick conversation keeps its own draft, on this device, for 12 hours after your last edit.
   See [The message box](../02-canvases/02-the-message-box.md).
 - **Type a slash for commands.** In an empty message box, type <kbd>/</kbd> and a
   small **Commands** menu appears: `/participants` to mention someone,
@@ -30,8 +30,9 @@ be one of the people who built Rally, and you should be getting back to work.
 - **Lists from the keyboard.** <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>8</kbd> for
   bullets, <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>7</kbd> for numbers, <kbd>Tab</kbd> to
   indent. The rest are in [Keyboard shortcuts](05-keyboard-shortcuts.md#in-the-message-box).
-- **Right-click to fix your spelling.** See
-  [the spelling menu](#the-spelling-and-edit-menu) below.
+- **Right-click to fix your spelling.** In the desktop app, see
+  [the spelling menu](#the-spelling-and-edit-menu) below. In a browser, your
+  browser's own right-click menu does the same job.
 
 ## While Rally works
 
@@ -52,8 +53,8 @@ be one of the people who built Rally, and you should be getting back to work.
   [Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md).
 - **Copy as markdown.** Right-click any message for **Copy** (with formatting),
   **Copy as markdown** (plain text with the formatting marks, handy for pasting
-  into a code editor or a wiki), and **Speak** to hear it read aloud. On a Mac
-  you also get **Look Up** and **Share**. See
+  into a code editor or a wiki), and **Speak** to hear it read aloud. In the Mac
+  app you also get **Look Up** and **Share**. See
   [Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md).
 - **Ask for a diagram.** Ask Rally for a flowchart or a sequence diagram and it
   draws a real one in the conversation, in your colours, once the answer has finished
@@ -88,9 +89,9 @@ be one of the people who built Rally, and you should be getting back to work.
 - **Resize the right-hand panel.** Drag the thin line on the left edge of the
   panel beside the conversation (what Rally made, or the browser). Rally
   remembers the width for each Canvas. Double-click the line to put it back.
-- **Pop an artifact out.** **Open in a new window** in an artifact's header
-  gives it a window of its own, ideal for a second screen. Rally reopens it where
-  you left it next time. See
+- **Pop an artifact out.** In the desktop app, **Open in a new window** in an
+  artifact's header gives it a window of its own, ideal for a second screen.
+  Rally reopens it where you left it next time. See
   [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md).
 
 ## Getting things in and out
@@ -98,22 +99,28 @@ be one of the people who built Rally, and you should be getting back to work.
 - **A Sidekick can have an email address.** Forward an email to it and a run
   starts with that email as its material. See
   [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md#email-a-sidekick).
-- **Links open the app.** The links you copy with **Copy link** in a header pill's menu, and the
-  ones in invitation emails, are web addresses that begin `rallywith.ai/app/`.
-  With Rally installed, they open it on your Mac at the right Canvas
-  or Sidekick, switching Organization first if they need to. Behind the
-  scenes the last hop is a `rallywithai://` link, which you will rarely see.
+- **Links open the right place.** The links you copy with **Copy link** in a
+  header pill's menu, and the ones in invitation emails, are web addresses that
+  begin `rallywith.ai/app/`. They open Rally at the right Canvas or Sidekick,
+  switching Organization first if they need to. On a Mac with the desktop app
+  installed, the page offers to open it there instead, with **Continue in
+  browser** for the web app. Behind the scenes the app's last hop is a
+  `rallywithai://` link, which you will rarely see.
   Old links that start `avalon://` still work: Avalon was Rally's name when
   it was a prototype. See [Search and links](../02-canvases/11-search-and-links.md).
-- **What is waiting is in the menu bar.** Click the Rally mark at the top
-  of the screen to jump to a Sidekick that needs input, or a Canvas with
+- **What is waiting is in the menu bar.** In the Mac app, click the Rally
+  mark at the top of the screen to jump to a Sidekick that needs input, or a Canvas with
   something new, from whatever app you are in. See [Rally on your Mac](03-rally-on-your-mac.md#rally-in-the-menu-bar).
 
 ## The spelling and edit menu
 
-Rally checks your spelling as you type, in the message box and in every other
-text box in the main window and Settings. A misspelled word
-gets the usual wavy underline.
+In a browser, spelling is your browser's business: it underlines misspellings
+and offers fixes in its own right-click menu, as on any other site. This
+section is about the [desktop app](../08-rally-everywhere/04-the-desktop-app.md).
+
+The desktop app checks your spelling as you type, in the message box and in
+every other text box in the main window and Settings. A misspelled word gets
+the usual wavy underline.
 
 Right-click it and Rally offers:
 

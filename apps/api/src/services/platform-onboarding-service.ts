@@ -287,6 +287,27 @@ function mapWorkspace(row: Record<string, unknown>): z.infer<typeof regionalWork
   });
 }
 
+/**
+ * The invitations waiting for `email` in this deployment: one read, nothing
+ * written, so listing them never links a user or claims a share as `discover`
+ * does.
+ */
+async function pendingInvitationsHere(env: Env, email: string): Promise<Array<z.infer<typeof regionalPendingInvitationSchema>>> {
+  const result = await env.DB.prepare(
+    `SELECT i.id, i.workspace_id, w.name AS workspace_name,
+       w.region AS workspace_region, w.placement_affinity, i.email, i.role,
+       inviter.name AS invited_by_name, i.expires_at
+     FROM workspace_invitations i
+     JOIN workspaces w ON w.id = i.workspace_id
+     JOIN users inviter ON inviter.id = i.invited_by_user_id
+     WHERE i.email = ? COLLATE NOCASE
+       AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?
+       AND w.region = ? AND w.abandoned_at IS NULL
+     ORDER BY i.created_at DESC LIMIT 100`,
+  ).bind(email, nowIso(), env.AVALON_REGION).all<InvitationDiscoveryRow>();
+  return (result.results ?? []).map(mapPendingInvitation);
+}
+
 function mapPendingInvitation(
   row: InvitationDiscoveryRow,
 ): z.infer<typeof regionalPendingInvitationSchema> {
@@ -331,18 +352,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
            AND w.abandoned_at IS NULL
          ORDER BY m.access_class = 'guest', m.joined_at, w.created_at, w.id`,
       ).bind(user.id, this.env.AVALON_REGION).all<Record<string, unknown>>(),
-      this.env.DB.prepare(
-        `SELECT i.id, i.workspace_id, w.name AS workspace_name,
-           w.region AS workspace_region, w.placement_affinity, i.email, i.role,
-           inviter.name AS invited_by_name, i.expires_at
-         FROM workspace_invitations i
-         JOIN workspaces w ON w.id = i.workspace_id
-         JOIN users inviter ON inviter.id = i.invited_by_user_id
-         WHERE i.email = ? COLLATE NOCASE
-           AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?
-           AND w.region = ? AND w.abandoned_at IS NULL
-         ORDER BY i.created_at DESC LIMIT 100`,
-      ).bind(identity.email, nowIso(), this.env.AVALON_REGION).all<InvitationDiscoveryRow>(),
+      pendingInvitationsHere(this.env, identity.email),
     ]);
     // Memberships before guest relationships: a device with nothing selected
     // opens the first one, and that should be the person's own Organization
@@ -351,7 +361,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     return regionalDiscoverySchema.parse({
       region: this.env.AVALON_REGION,
       workspaces: memberships,
-      invitations: (invitationResult.results ?? []).map(mapPendingInvitation),
+      invitations: invitationResult,
     });
   }
 
@@ -1252,6 +1262,26 @@ export class PlatformOnboardingService {
     };
   }
 
+  /**
+   * Invitations waiting for this account's address. This deployment's are one
+   * read; every other deployment answers through discovery on its own, and one
+   * that is down hides only its own, as `otherDeploymentWorkspaces` does.
+   */
+  async invitations(): Promise<{ invitations: WorkspaceOnboardingState["invitations"]; failed: Array<{ region: Region; code: string }> }> {
+    const identity = await this.loadPlatformIdentity();
+    const regions = configuredRegions.filter((region) => region !== this.env.AVALON_REGION);
+    const [local, settled] = await Promise.all([
+      pendingInvitationsHere(this.env, identity.email),
+      Promise.allSettled(regions.map(async (region) => this.gateway(region).discover(identity))),
+    ]);
+    return {
+      invitations: [...local, ...settled.flatMap((result) => result.status === "fulfilled" ? result.value.invitations : [])],
+      failed: settled.flatMap((result, index) => result.status === "rejected"
+        ? [{ region: regions[index]!, code: settledFailureCode(result.reason, "regional_discovery") }]
+        : []),
+    };
+  }
+
   async activate(region: Region, workspaceId: string, options: { guests?: boolean } = {}): Promise<Session> {
     const identity = await this.loadPlatformIdentity();
     const discovery = await this.discover(identity);
@@ -1384,21 +1414,22 @@ export class PlatformOnboardingService {
         preference,
       }),
       preference,
-      () => this.makeFirstCreatorEligible(identity.platformUserId, region, workspaceId),
+      () => this.makeFirstOrganizationEligible(identity.platformUserId, region, workspaceId),
     );
     return session;
   }
 
   /**
-   * Someone whose first organization this is sets it up as its creator, as a
-   * new Mac account does. An email sign-in starts ineligible, since most arrive
-   * as guests, and a guest relationship here does not exempt them. Runs only
+   * Someone whose first organization this is, by creating it or by accepting an
+   * invitation to it, goes through setup, as a new Mac account does. An email
+   * sign-in starts ineligible, since most arrive as guests, and a guest
+   * relationship here does not exempt them. Runs only
    * once the organization exists, so a failed create changes nothing. An
    * active binding in another deployment keeps the exemption: the binding
    * does not say member or guest, and an established member must not be sent
    * through setup again.
    */
-  private async makeFirstCreatorEligible(platformUserId: string, region: Region, workspaceId: string): Promise<void> {
+  private async makeFirstOrganizationEligible(platformUserId: string, region: Region, workspaceId: string): Promise<void> {
     await this.env.DB.prepare(
       `UPDATE users SET onboarding_eligible = 1 WHERE id = ? AND onboarding_eligible = 0
          AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE user_id = users.id AND workspace_id <> ?
@@ -1477,6 +1508,11 @@ export class PlatformOnboardingService {
         preference,
       }),
       preference,
+      () => this.makeFirstOrganizationEligible(identity.platformUserId, region, operation.workspace_id),
+      // A guest of this organization already has an active route to it; the
+      // invitation must still be accepted, which the regional step does
+      // idempotently, or they stay a guest.
+      { actOnActiveBinding: true },
     );
   }
 
@@ -1605,6 +1641,7 @@ export class PlatformOnboardingService {
     preference: z.infer<typeof PreferenceProjectionSchema>,
     /** Runs beside the binding's activation once the regional action has committed. */
     committed?: () => Promise<void>,
+    options: { actOnActiveBinding?: boolean } = {},
   ): Promise<Session> {
     const reservation = await this.bindings.reserve(
       identity.platformUserId, region, workspaceId, placementAffinity, operationId,
@@ -1614,6 +1651,12 @@ export class PlatformOnboardingService {
     }
     if (reservation.placement_affinity !== placementAffinity) {
       throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
+    }
+    if (reservation.status === "active" && options.actOnActiveBinding) {
+      const session = await action(operationId, preference);
+      this.assertRegionalSession(session, region, workspaceId);
+      await Promise.all([this.operations.complete(identity.platformUserId, operationId), committed?.()]);
+      return session;
     }
     if (reservation.status === "active") {
       // A replay of an action that committed: `committed` may not have run, or

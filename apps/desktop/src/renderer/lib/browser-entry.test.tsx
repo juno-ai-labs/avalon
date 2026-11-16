@@ -19,12 +19,23 @@ const workspace = { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Shared te
 
 afterEach(() => { vi.useRealTimers(); sessionStorage.clear(); history.replaceState(null, '', '/'); });
 
+/**
+ * The entry reads waiting invitations beside the organization list. Cases about
+ * something else have none, so their fake API answers that read empty and
+ * records every other request as before.
+ */
+function stubFetch(fetcher: (input: string, init?: RequestInit) => Promise<Response> | Response) {
+  vi.stubGlobal('fetch', vi.fn((input: string, init?: RequestInit) => input.endsWith('/browser/invitations')
+    ? Promise.resolve(Response.json({ invitations: [] }))
+    : fetcher(input, init)));
+}
+
 it('retries a transient native session failure without announcing sign-out', async () => {
   const events: Array<{ event: { type: string } }> = [];
   vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'test-capability');
   vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw)) });
   let unavailable = true;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     if (input.endsWith('/workspace/select')) return unavailable
       ? Response.json({ error: { message: 'Unavailable' } }, { status: 503 })
       : Response.json({ user, workspace, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
@@ -49,7 +60,7 @@ it('retries a transient native session failure without announcing sign-out', asy
 it('names a rejected exchange response field without exposing its value', async () => {
   vi.stubGlobal('__RALLY_MOBILE_BRIDGE_TOKEN__', 'test-capability');
   vi.stubGlobal('ReactNativeWebView', { postMessage: () => undefined });
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     if (input.endsWith('/mobile/exchange')) return Response.json({ user: { ...user, id: 'private-invalid-value' }, workspace: null, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
     return Response.json({ error: { message: 'Sign in' } }, { status: 401 });
   }));
@@ -70,7 +81,7 @@ it('revalidates other-tab session changes and same-user organization changes wit
   let allowed = true;
   let promoted = false;
   let workspaceReads = 0;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     const metadata = { user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() };
     if (!signedIn) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
@@ -120,7 +131,7 @@ it('opens a workspace in another deployment through Global the first time, then 
   const regionalUser = { ...user, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' };
   let activated = false;
   const calls: string[] = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     calls.push(`${init?.method ?? 'GET'} ${input}`);
     const metadata = { user: regionalUser, workspace: enterprise, expiresAt: new Date(Date.now() + 100_000).toISOString() };
     if (input === '/regional/enterprise/browser/workspace/select') {
@@ -149,7 +160,7 @@ it('counts each organization\'s activity after the list, and shows nothing for o
   const quiet = { ...workspace, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', name: 'Quiet team', accessClass: 'member', role: 'member' };
   const busy = { ...workspace, name: 'Busy team', accessClass: 'member', role: 'member' };
   const counts = (readerAttentionCount: number) => ({ waitingForYou: 0, waitingReason: null, hasUnreadActivity: readerAttentionCount > 0, readerAttentionCount });
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
     if (path === '/workspaces') return Response.json({ workspaces: [busy, quiet] });
@@ -169,7 +180,7 @@ it('counts each organization\'s activity after the list, and shows nothing for o
 
 it('signs out of every deployment, so no other deployment keeps a session in this browser', async () => {
   const logouts: string[] = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
     if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
@@ -185,7 +196,7 @@ it('signs out of every deployment, so no other deployment keeps a session in thi
 });
 
 it('says so when a deployment does not answer sign-out', async () => {
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
     if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
@@ -207,7 +218,7 @@ it('reopens a workspace in another deployment through Global when its renewal fi
   const enterprise = { ...workspace, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', name: 'Enterprise team', region: 'enterprise', accessClass: 'member', role: 'member' };
   let cookie = false;
   let activations = 0;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const unauthorized = () => Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
     if (input === '/regional/enterprise/browser/session/renew') { cookie = false; return unauthorized(); }
     if (input === '/regional/enterprise/browser/workspace/select') {
@@ -233,7 +244,7 @@ it.each([false, true])('renews before expiry and respects an unchanged absolute 
   vi.setSystemTime(now);
   let expiry = now + 100_000;
   let renewals = 0;
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const path = input.split('/browser')[1];
     if (Date.now() >= expiry) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
     if (path === '/session/renew') {
@@ -267,7 +278,7 @@ it('ignores a renewal response delivered after sign-out', async () => {
   vi.setSystemTime(now);
   const metadata = { user, workspace: null, expiresAt: new Date(now + 100_000).toISOString() };
   let finishRenewal: ((response: Response) => void) | undefined;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     if (path === '/session/renew') return new Promise<Response>((resolve) => { finishRenewal = resolve; });
     if (path === '/session') return Response.json(metadata);
@@ -307,7 +318,7 @@ it('restores the organization picker for a legacy conversation link', async () =
   const fetcher = vi.fn(async (input: string) => input.endsWith('/workspaces')
     ? Response.json({ workspaces: [workspace] })
     : Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() }));
-  vi.stubGlobal('fetch', fetcher);
+  stubFetch(fetcher);
   render(<BrowserEntry />);
   expect(await screen.findByRole('link', { name: /Shared team/ })).toBeInTheDocument();
   expect(fetcher.mock.calls.some(([url]) => url.endsWith('/workspace/select'))).toBe(false);
@@ -318,7 +329,7 @@ it('keeps explicit magic-link confirmation visible after a focus session restore
   const fetcher = vi.fn(async (input: string) => input.endsWith('/workspaces')
     ? Response.json({ workspaces: [workspace] })
     : Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() }));
-  vi.stubGlobal('fetch', fetcher);
+  stubFetch(fetcher);
   render(<BrowserEntry />);
   expect(await screen.findByRole('heading', { name: 'Confirm your sign-in' })).toBeInTheDocument();
   await act(async () => { window.dispatchEvent(new Event('focus')); });
@@ -327,14 +338,14 @@ it('keeps explicit magic-link confirmation visible after a focus session restore
 });
 
 it('returns to email entry on a non-JSON unauthorized response', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response('Unauthorized', { status: 401 })));
+  stubFetch(vi.fn(async () => new Response('Unauthorized', { status: 401 })));
   render(<BrowserEntry />);
   expect(await screen.findByRole('heading', { name: 'Welcome to Rally' })).toBeInTheDocument();
   expect(screen.queryByRole('alertdialog')).toBeNull();
 });
 
 it('leads with Google and opens the email form only when asked', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 })));
+  stubFetch(vi.fn(async () => Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 })));
   render(<BrowserEntry />);
   const google = await screen.findByRole('button', { name: 'Continue with Google' });
   expect(google).toHaveClass('button-primary');
@@ -351,7 +362,7 @@ it('leads with Google and opens the email form only when asked', async () => {
 it('offers the development account where the API does, and opens the organization list with it', async () => {
   const expiresAt = new Date(Date.now() + 100_000).toISOString();
   const calls: string[] = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const route = input.split('/browser')[1]!;
     calls.push(`${init?.method ?? 'GET'} ${route}`);
     if (route === '/dev/session' && (init?.method ?? 'GET') === 'GET') return new Response(null, { status: 204 });
@@ -367,7 +378,7 @@ it('offers the development account where the API does, and opens the organizatio
 });
 
 it('offers no development account where the API does not', async () => {
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => input.endsWith('/dev/session')
+  stubFetch(vi.fn(async (input: string) => input.endsWith('/dev/session')
     ? new Response(null, { status: 404 })
     : Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 })));
   render(<BrowserEntry />);
@@ -378,7 +389,7 @@ it('offers no development account where the API does not', async () => {
 
 it('names a Sidekick link on the sign-in page', async () => {
   history.replaceState(null, '', `/app/global/${uuidToBase58(workspace.id)}/sk/${uuidToBase58('dddddddd-dddd-4ddd-8ddd-dddddddddddd')}/`);
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 })));
+  stubFetch(vi.fn(async () => Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 })));
   render(<BrowserEntry />);
   expect(await screen.findByText('Sign in to open this Sidekick.')).toBeInTheDocument();
 });
@@ -389,7 +400,7 @@ it('preserves renewal requested while a focus restore is in flight', async () =>
   const metadata = { user, workspace: null, expiresAt: new Date(now + 100_000).toISOString() };
   let reads = 0, renewals = 0;
   let finish: ((response: Response) => void) | undefined;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     if (input.endsWith('/session/renew')) { renewals++; return Response.json(metadata); }
     if (input.endsWith('/session') && ++reads === 2) return new Promise<Response>((resolve) => { finish = resolve; });
     if (input.endsWith('/workspaces')) return Response.json({ workspaces: [workspace] });
@@ -411,7 +422,7 @@ it('does not publish an old account organization list after focus restores anoth
   const other = { ...user, id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', email: 'other@example.test' };
   let listReads = 0;
   let finish: ((response: Response) => void) | undefined;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     if (input.endsWith('/workspaces')) {
       if (++listReads === 1) return new Promise<Response>((resolve) => { finish = resolve; });
       return Response.json({ workspaces: [{ ...workspace, name: 'Other account organization' }] });
@@ -438,7 +449,7 @@ it('opens a shared Canvas straight from sign-in, with nothing to accept', async 
   let startBody: unknown = null;
   let signedIn = false;
   const expiresAt = new Date(Date.now() + 100_000).toISOString();
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const route = input.split('/browser')[1]!;
     requests.push(route);
     if (route === '/session' || (route === '/workspace/select' && !signedIn)) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
@@ -468,7 +479,7 @@ it('signs in from an emailed link that landed on a shared path and opens what it
   let signedIn = false;
   const redeemed: unknown[] = [];
   const expiresAt = new Date(Date.now() + 100_000).toISOString();
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const route = input.split('/browser')[1]!;
     if (route === '/session' || (route === '/workspace/select' && !signedIn)) return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
     if (route === '/email/redeem') { signedIn = true; redeemed.push(JSON.parse(String(init?.body))); return Response.json({ user, workspace: null, expiresAt }); }
@@ -489,7 +500,7 @@ it('signs in from an emailed link that landed on a shared path and opens what it
 it('treats an old token invitation link as a plain sign-in page', async () => {
   history.replaceState(null, '', `/invite#inv_${'this-is-not-a-real-token'.padEnd(43, '0')}`);
   const requests: string[] = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const route = input.split('/browser')[1]!;
     requests.push(route);
     if (route === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
@@ -508,7 +519,7 @@ it('treats an old token invitation link as a plain sign-in page', async () => {
 
 it('waits for the organization list before saying nothing has been shared', async () => {
   let finish: ((response: Response) => void) | undefined;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const route = input.split('/browser')[1]!;
     if (route === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
     if (route === '/workspaces') return new Promise<Response>((resolve) => { finish = resolve; });
@@ -525,7 +536,7 @@ it('waits for the organization list before saying nothing has been shared', asyn
 it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {
   const starts: Array<{ signupFlowId: string; returnPath: string }> = [];
   const views: Array<{ flowId: string }> = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const path = input.split('/browser')[1];
     if (path === '/workspace/select' || path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
     if (path === '/signup/view') { views.push(JSON.parse(String(init?.body))); return new Response(null, { status: 204 }); }
@@ -548,7 +559,7 @@ it('starts Google sign-in for the page it was opened on and explains a declined 
 
 it('says why an Apple sign-in came back, then starts Apple again from the same page', async () => {
   const starts: Array<{ returnPath: string }> = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const path = input.split('/browser')[1];
     if (path === '/workspace/select' || path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
     if (path === '/signup/view') return new Response(null, { status: 204 });
@@ -572,7 +583,7 @@ it.each([
 ])('handles landing signup flow %s without retaining it in the URL', async (incoming, expected) => {
   const views: Array<{ flowId: string }> = [];
   const starts: Array<{ signupFlowId: string }> = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const path = input.split('/browser')[1];
     if (path === '/session') return Response.json({ error: { message: 'Sign in' } }, { status: 401 });
     if (path === '/signup/view') { views.push(JSON.parse(String(init?.body))); return new Response(null, { status: 204 }); }
@@ -593,7 +604,7 @@ it.each([
 
 it('keeps landing attribution when the signed-out page reloads, and a new CTA replaces it', async () => {
   const views: Array<{ flowId: string }> = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const path = input.split('/browser')[1];
     if (path === '/session') return Response.json({ error: { message: 'Sign in' } }, { status: 401 });
     if (path === '/signup/view') { views.push(JSON.parse(String(init?.body))); return new Response(null, { status: 204 }); }
@@ -621,7 +632,7 @@ it.each(['google', 'email'] as const)('keeps %s sign-in available on an older st
   const legacy = method === 'google'
     ? z.strictObject({ returnPath: z.string() })
     : z.strictObject({ challengeId: z.string().uuid(), email: z.string().email() });
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const requestedPath = input.split('/browser')[1];
     if (requestedPath === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
     if (requestedPath === '/signup/view') return Response.json({ error: { message: 'Not found' } }, { status: 404 });
@@ -652,7 +663,7 @@ it.each(['google', 'email'] as const)('keeps %s sign-in available on an older st
 
 it.each([[503, 'unavailable'], [400, 'not_a_validation_error']] as const)('does not retry a signup start rejected with %s %s', async (status, code) => {
   const starts: unknown[] = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const path = input.split('/browser')[1];
     if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
     if (path === '/signup/view') return new Response(null, { status: 204 });
@@ -670,7 +681,7 @@ it.each([[503, 'unavailable'], [400, 'not_a_validation_error']] as const)('does 
 
 it('returns to the Google-first choice after an email sign-in signs out', async () => {
   let signedIn = false;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     if (path === '/session' || path === '/email/redeem') return signedIn
       ? Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() })
@@ -697,7 +708,7 @@ it.each([
 ])('%s', async (_name, standalone, instructions) => {
   Object.defineProperty(navigator, 'standalone', { configurable: true, value: standalone });
   try {
-    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    stubFetch(vi.fn(async (input: string) => {
       const path = input.split('/browser')[1];
       if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
       if (path === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 }, { status: 202 });
@@ -714,7 +725,7 @@ it.each([
 });
 
 it('drops a returned Google failure once an email sign-in starts', async () => {
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     if (path === '/session') return Response.json({ error: { message: 'Sign in to continue' } }, { status: 401 });
     if (path === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 }, { status: 202 });
@@ -739,7 +750,7 @@ it('shows the opening mark, not an empty organization list, while a sign-in open
   let signedIn = false;
   let openWorkspace!: () => void;
   const opened = new Promise<void>((resolve) => { openWorkspace = resolve; });
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     const metadata = { user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() };
     if (path === '/email/start') return Response.json({ challengeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expiresAt: Date.now() + 600_000 });
@@ -769,7 +780,7 @@ it('shows the opening mark while a sign-in activates a linked organization in an
   let activated = false;
   let openWorkspace!: () => void;
   const opened = new Promise<void>((resolve) => { openWorkspace = resolve; });
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const metadata = { user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() };
     if (input === '/regional/global/browser/email/start') return Response.json({ challengeId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', expiresAt: Date.now() + 600_000 });
     if (input === '/regional/global/browser/email/redeem') { signedIn = true; return Response.json(metadata); }
@@ -800,7 +811,7 @@ it('creates an organization from the empty shared-work screen and opens it in pl
   const createdId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
   const expiresAt = new Date(Date.now() + 100_000).toISOString();
   const owned = { ...workspace, id: createdId, name: 'Acme Research', accessClass: 'member', role: 'owner' };
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     calls.push(input);
     if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
     if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
@@ -832,10 +843,57 @@ it('creates an organization from the empty shared-work screen and opens it in pl
   } finally { view.unmount(); }
 });
 
+it('lists invitations in place of Create, declines one, and opens the organization another joins', async () => {
+  const joinedId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  const invitation = (id: string, workspaceId: string, workspaceName: string, role: 'member' | 'admin') => ({ id, workspaceId, workspaceName,
+    region: 'global', email: user.email, role, expiresAt, invitedByName: 'Maya Owner' });
+  let invitations = [
+    invitation('11111111-1111-4111-8111-111111111111', joinedId, 'Acme Research', 'admin'),
+    invitation('22222222-2222-4222-8222-222222222222', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2', 'Other Org', 'member'),
+  ];
+  const answered: Array<{ path: string; body: unknown }> = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
+    if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
+    if (input === '/regional/global/browser/invitations') return Response.json({ invitations });
+    if (input.endsWith('/decline')) {
+      answered.push({ path: input, body: JSON.parse(String(init?.body)) });
+      invitations = invitations.filter((item) => !input.includes(item.id));
+      return new Response(null, { status: 204 });
+    }
+    if (input.endsWith('/accept')) {
+      answered.push({ path: input, body: JSON.parse(String(init?.body)) });
+      return Response.json({ region: 'global', workspaceId: joinedId });
+    }
+    if (input === '/regional/global/browser/workspace/select') {
+      return Response.json({ user, workspace: { ...workspace, id: joinedId, name: 'Acme Research', accessClass: 'member', role: 'admin' }, expiresAt });
+    }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />);
+  try {
+    expect(await screen.findByText('Invited by Maya Owner · Administrator')).toBeInTheDocument();
+    expect(screen.getByText('Invited by Maya Owner · Member')).toBeInTheDocument();
+    // A waiting invitation comes first: there is nothing to create yet.
+    expect(screen.queryByRole('button', { name: 'Create an organization' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Decline' })[1]!);
+    await waitFor(() => expect(screen.queryByText('Other Org')).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+    expect(await screen.findByText('global:Acme Research')).toBeInTheDocument();
+    expect(location.pathname).toBe(`/app/workspaces/global/${joinedId}`);
+    expect(answered).toEqual([
+      { path: '/regional/global/browser/invitations/22222222-2222-4222-8222-222222222222/decline', body: { region: 'global' } },
+      { path: '/regional/global/browser/invitations/11111111-1111-4111-8111-111111111111/accept',
+        body: { region: 'global', operationId: expect.stringMatching(/^[0-9a-f-]{14}7/u) } },
+    ]);
+  } finally { view.unmount(); }
+});
+
 it('does not offer Create again when a created organization fails to open', async () => {
   const createdId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef';
   const expiresAt = new Date(Date.now() + 100_000).toISOString();
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
     if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
     if (input === '/regional/global/browser/workspace/create') return Response.json({ region: 'global', workspaceId: createdId }, { status: 201 });
@@ -862,7 +920,7 @@ it('does not offer Create again when a created organization fails to open', asyn
 it('holds Back while an organization is being created and reuses its operation after an uncertain failure', async () => {
   const created: Array<{ operationId: string }> = [];
   let fail!: () => void;
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
     if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
     if (input === '/regional/global/browser/workspace/create') {
@@ -893,7 +951,7 @@ it('holds Back while an organization is being created and reuses its operation a
 
 it('drops the organization form when another account signs in elsewhere', async () => {
   let current = user;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     if (input === '/regional/global/browser/session') return Response.json({ user: current, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
     if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
     throw new Error(`Unexpected request ${input}`);
@@ -911,7 +969,7 @@ it('drops the organization form when another account signs in elsewhere', async 
 });
 
 it('says a retired Breakout link names something gone, and says nothing of the kind on the Organization shell path', async () => {
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
     if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
@@ -940,7 +998,7 @@ it('says a retired Breakout link names something gone, and says nothing of the k
 it('adopts a password cookie session and shows a failed password without losing the email', async () => {
   let attempts = 0;
   const submitted: unknown[] = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+  stubFetch(vi.fn(async (input: string, init?: RequestInit) => {
     const path = input.split('/browser')[1];
     if (path === '/password') {
       submitted.push(JSON.parse(String(init?.body)));
@@ -972,7 +1030,7 @@ it('adopts a password cookie session and shows a failed password without losing 
 
 it('shows organization discovery failure after password login unmounts the form', async () => {
   let finishDiscovery!: (response: Response) => void;
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1];
     if (path === '/password') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
     if (path === '/workspaces') return new Promise<Response>((resolve) => { finishDiscovery = resolve; });
@@ -1000,7 +1058,7 @@ it('restores the remembered mobile organization in place and preserves the scree
   vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw).event.type) });
   rememberMobileWorkspace(localStorage, user.id, workspace);
   history.replaceState(null, '', '/?mobile=1');
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const path = input.split('/browser')[1]!; calls.push(path);
     if (path === '/session') return Response.json({ user, workspace: null, expiresAt });
     if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
@@ -1034,7 +1092,7 @@ it('keeps an explicitly requested mobile organization picker usable and selects 
   vi.stubGlobal('ReactNativeWebView', { postMessage: (raw: string) => events.push(JSON.parse(raw).event.type) });
   rememberMobileWorkspace(localStorage, user.id, workspace);
   history.replaceState(null, '', '/?mobile=1&chooseWorkspace=1');
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     if (input.endsWith('/session')) return Response.json({ user, workspace: null, expiresAt });
     if (input.endsWith('/workspaces')) return Response.json({ workspaces: [workspace] });
     if (input.endsWith('/workspaces/attention')) return Response.json({ attention: [] });
@@ -1059,7 +1117,7 @@ it.each([false, true])('adopts the regional identity when opening an organizatio
   const regionalUser = { ...user, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' };
   let activated = false;
   vi.stubGlobal('ReactNativeWebView', { postMessage: () => undefined });
-  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+  stubFetch(vi.fn(async (input: string) => {
     const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
     if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
     if (input.endsWith('/workspaces')) return Response.json({ workspaces: [enterprise] });

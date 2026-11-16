@@ -12,7 +12,7 @@ help/
   index.md                       -> /help/            (the cover and contents)
   01-getting-started/
     index.md                     -> /help/getting-started/          (chapter opener)
-    01-install-rally.md          -> /help/getting-started/install-rally/
+    01-open-rally-and-sign-in.md -> /help/getting-started/open-rally-and-sign-in/
     05-your-first-canvas.md      -> /help/getting-started/your-first-canvas/
     images/first-canvas.png      (only published if a page uses it)
   02-canvases/
@@ -89,10 +89,16 @@ pnpm --filter @rally/site build    # fails, listing every problem, if anything i
 ## How the manual reads
 
 The manual is a book, not a pile of articles. Chapters run from "I just
-installed this" to "I run Sidekicks across my whole Organization", and each
+opened app.rallywith.ai" to "I run Sidekicks across my whole Organization", and each
 page assumes the reader has read the ones before it. A chapter's `index.md` is
 its opener: a short, readable essay on what the chapter is about and why
 anyone would care, then the pages follow.
+
+The book describes the **web app** at app.rallywith.ai. The Mac and Linux
+desktop app shows the same screens, so most pages need no second version. When
+something works only in the desktop app, say so where it comes up and link to
+[The desktop app](08-rally-everywhere/04-the-desktop-app.md); do not write the
+page around it. Installing the app belongs on that page alone.
 
 When you add a page, find where it belongs in the story. If nothing fits, the
 story probably needs a new page that leads into it, not a page bolted onto the

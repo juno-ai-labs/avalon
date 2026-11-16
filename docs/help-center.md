@@ -4,8 +4,9 @@ The help center is Rally's user manual, published at `rallywith.ai/help/`. Its
 source is a folder of Markdown files with front matter in `apps/site/help/`,
 written by people and by agents, and the public site's Vite build turns that
 folder into static pages. The manual is ordered like a book: chapters run from
-installing Rally to running Sidekicks across an Organization, and each page
-assumes the ones before it.
+signing in to the web app to running Sidekicks across an Organization, and each
+page assumes the ones before it. The book describes the web app; the desktop
+app's extras have one page of their own and are marked where they come up.
 
 Every page is built for two readers. People get a three-column page: chapters on
 the left, the rendered Markdown in the middle, and on the right an outline of the

@@ -76,7 +76,7 @@ saved.
 The drafting assistant chooses an icon and colour, but the hexagon is yours
 to repaint. Click the hexagon at the top of the Sidekick's details column
 (**Change Sidekick icon and color**) to open the palette, then pick from the **Color** ring and the **Icon** grid. Each click
-saves at once, and the palette stays open while you try a few. Every window
+saves at once, and the palette stays open while you try a few. Every tab and window
 showing that Sidekick updates to match.
 
 A recognisable hexagon is worth a minute: it is how you spot the Sidekick in

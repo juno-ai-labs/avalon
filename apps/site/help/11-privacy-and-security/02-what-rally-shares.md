@@ -4,29 +4,34 @@ description: The product analytics switch, the outside companies that help run R
 nav_title: What Rally shares
 ---
 
-Only part of Rally runs on your Mac. Most of the work happens on Rally's
-servers and with a handful of outside companies that provide the hosting, the
-AI models, email and web search. This page covers what information goes
-where, and the one switch you control on your own Mac.
+Only a small part of Rally runs in your browser or on your computer. Most of
+the work happens on Rally's servers and with a handful of outside companies
+that provide the hosting, the AI models, email and web search. This page covers
+what information goes where, and the one switch you control yourself.
 
 ## The Product analytics switch
 
-The desktop app can report how it is used and when it goes wrong, which is how
-the Rally team finds bugs and learns which features people rely on. You decide
-how much of that is sent.
+The [desktop app](../08-rally-everywhere/04-the-desktop-app.md) can report how
+it is used and when it goes wrong, which is how the Rally team finds bugs and
+learns which features people rely on. You decide how much of that is sent.
+
+The web app sends none of these reports. Its **Product analytics** switch is
+still there, because the choice belongs to your account: changing it in the
+browser changes what the desktop app sends, wherever you use it.
 
 ### What it sends when it is on
 
-Open **Settings → Application** and look under **Privacy & diagnostics**. The
-**Product analytics** switch is on unless you turn it off. While it is on,
-Rally shares:
+Open **Settings → Preferences** (indented under **Account**) and look under
+**Privacy & diagnostics**. The **Product analytics** switch is on unless you
+turn it off. While it is on, the desktop app shares:
 
 - Product usage: which features you use and when, described as events such
   as opening a Canvas, not as the contents of what you wrote.
 - Error reports: details of errors in the app, cleaned of sensitive
   information first, with a short trail of the steps that led up to the error.
   Rally calls these steps *breadcrumbs*.
-- Crash reports: the technical record macOS produces when the app crashes.
+- Crash reports: the technical record your computer produces when the app
+  crashes.
 
 These reports can include your name and email address as they appear on your
 verified account, so the Rally team can contact you about a problem you hit.
@@ -43,16 +48,15 @@ them to keep the service working, and they cannot be turned off.
 - It follows your account. The choice is saved to your Rally account and
   applies on your other devices too. While Rally is saving it you see
   **Waiting to sync this account preference.**
-- Turning it off takes effect at once on this Mac. Crash reports stop being
-  sent for the rest of this launch, and the page says **Crash upload has
+- In the desktop app, turning it off takes effect at once. Crash reports stop
+  being sent for the rest of this launch, and the page says **Crash upload has
   stopped for this launch. Restart Rally to remove local native crash dumps and
   apply the current setting.** Restart Rally when convenient to clear out any
-  crash reports already saved on the Mac.
+  crash reports already saved on the computer.
 - Turning it back on is confirmed first. Rally checks with its servers
   before it starts sending again. If it cannot confirm, the setting stays off.
-- It lives in the Mac app. Where Rally cannot change the setting, the switch
-  is greyed out and you see **Product analytics is managed in the Rally desktop
-  app.**
+- In the web app, saving the choice needs a connection. If it cannot be
+  saved, Rally shows an error and reads your account's choice again.
 
 > [!NOTE]
 > The switch controls what the desktop app reports about your use of it.
@@ -127,15 +131,16 @@ deployment, so do not plan on your data being kept in one particular country.
 
 ## Protections that work without you
 
-Some of Rally's security happens automatically in the Mac app. There is
-nothing to set, but your IT team may ask about it.
+Some of Rally's security happens automatically. There is nothing to set, but
+your IT team may ask about it. The first three are about the desktop app; in
+the web app, your browser keeps each site fenced off in the same spirit.
 
 - Each window is fenced off. The parts of Rally that display content run in
-  a restricted sandbox and cannot reach your Mac's system directly.
+  a restricted sandbox and cannot reach your computer's system directly.
 - Unexpected pages are blocked. If something inside a Rally window tries to
   send it to an unexpected web address, or to open a pop-up, Rally refuses.
 - Exports are made in isolation. When you save a message as an image or PDF
-  (see [Saving and sharing what Rally wrote](../06-things-rally-makes/05-saving-and-exporting.md)),
+  in the desktop app (see [Saving and sharing what Rally wrote](../06-things-rally-makes/05-saving-and-exporting.md)),
   Rally draws it in a separate, hidden window set aside for that job.
 - Live connections use short-lived passes. The connection that streams new
   messages to you uses a signed pass that expires quickly and works only for

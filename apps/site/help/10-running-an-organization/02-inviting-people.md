@@ -52,9 +52,13 @@ Organization, and whether as a member or an administrator. It also says:
 - **It is one-time.** The link works once. After it has been used, it is done.
 - **When it expires.** Seven days after you sent it. The email states the exact
   time, in UTC.
-- **How to get Rally.** If the person does not have Rally yet, the email can
-  include a **Download it for macOS** link. That download link keeps working
-  until the invitation expires, and stops if you revoke the invitation.
+
+Its **Accept invitation** button leads to a page where they continue in the
+browser, or open the desktop app if they use it. There is nothing to install.
+
+If someone only needs a few Canvases, [share those with
+them](../02-canvases/09-sharing-with-guests.md) instead of inviting them to
+the whole Organization.
 
 An invitation belongs to the address you typed. To accept it, the person must
 sign in to Rally with exactly that email address. If they have a personal and

@@ -14,7 +14,7 @@ If you joined an existing Organization, you see only step 1.
 
 Connecting the tools your team uses is not part of the setup. Do it whenever you are ready in [Settings → Connections](../05-connecting-your-tools/01-connections.md).
 
-Every step is optional, and everything here can be done again later in Settings. If you close Rally partway through, your choices so far are saved and it picks up where you left off.
+Every step is optional, and everything here can be done again later in Settings. If you close Rally partway through, even by closing the tab, your choices so far are saved and it picks up where you left off.
 
 ## This is you in Rally
 
@@ -27,7 +27,7 @@ This screen sets how you appear to your teammates.
 
 The button stays greyed out until both the name and the initials are filled in.
 
-Your look belongs to your account, not to this Mac, so it follows you to your other devices and to every Organization you belong to. To change it later, open **Settings → Account**, where changes save as you make them. [Light, dark and your own colour](../09-settings-and-shortcuts/02-appearance-and-icon.md) has more.
+Your look belongs to your account, not to this browser, so it follows you to your other devices and to every Organization you belong to. To change it later, open **Settings → Account**, where changes save as you make them. [Light, dark and your own colour](../09-settings-and-shortcuts/02-appearance-and-icon.md) has more.
 
 ## Invite your teammates
 

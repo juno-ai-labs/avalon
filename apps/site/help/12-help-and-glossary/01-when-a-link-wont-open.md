@@ -3,22 +3,69 @@ title: When a link won't open
 description: What each 'Rally could not open that link' message means and what to do about it.
 ---
 
-Lots of things hand you into Rally by link: an invitation email, the browser
-page you sign in on, the page where you approve a connection to Google or
-Slack, a Canvas link a teammate pasted into Slack. Most of the time the link
-does its job and you land where you meant to. This page is for the other
-times.
+Lots of things hand you into Rally by link: an invitation email, the page
+where you approve a connection to Google or Slack, a Canvas link a teammate
+pasted into Slack. Most of the time the link does its job and you land where
+you meant to. This page is for the other times. It starts with the web app,
+then covers the window the desktop app shows when it refuses a link.
+
+## In the web app
+
+Links to Canvases and Sidekicks are ordinary web addresses starting with
+`https://rallywith.ai/app/`. Click one and a short page hands you over.
+
+- **On a Mac,** the page tries the desktop app first, if you have it. It offers
+  **Open in Rally for Mac** and **Continue in browser**. Choose **Continue in
+  browser** to stay in the web app. The page remembers which you chose.
+- **Anywhere else,** the page has one button, **Open in browser**, which opens
+  the link in the web app.
+
+If you are signed out, the web app asks you to sign in first, with a line such
+as **Sign in to open this Canvas.** After you sign in, it opens what the link
+pointed at.
+
+A few other things can happen:
+
+- **"This link is to something that no longer exists."** The link is to a
+  Channel, a Thread or a Breakout, which Rally replaced with Canvases. Ask
+  whoever sent it for the Canvas's link instead.
+- **The Canvas does not open, but Rally does.** The Canvas was not shared with
+  you. See [Links into an Organization](#links-into-an-organization) below.
+- **A page headed "Join on Rally".** That is an Organization invitation. Click
+  **Continue in browser** and sign in with the invited address; the invitation
+  waits at the top of **Your organizations**.
+- **A page headed "Continue in the Rally app".** Linking your Slack account
+  still needs the [desktop app](../08-rally-everywhere/04-the-desktop-app.md).
+  Install it, then click the link again.
+
+### Connecting a tool in the browser
+
+When you connect Google, GitHub, Slack and friends, Rally opens the tool's own
+page in a new tab, where you approve it. If your browser blocks that tab, Rally
+says **Allow pop-ups for Rally in this browser, then try again.** Allow pop-ups
+for app.rallywith.ai in your browser's settings (most browsers show a small
+icon in the address bar when they block one), then click **Connect** again.
+
+When you have approved it, the new tab says **Connection added** and closes by
+itself, or tells you that you can close it. Back in your Rally tab, **Settings
+→ Connections** shows the new row. If it says **Connection not added** instead,
+you either cancelled on the tool's page or something went wrong. Close the tab
+and start **Connect** again from Rally.
+
+[Settings → Connections](../05-connecting-your-tools/01-connections.md) covers
+the rest.
 
 ## The "Rally could not open that link" window
 
-When the Rally app on your Mac is given a link it will not follow, a small
-window appears in front of whatever you were doing. It is titled **Rally could
-not open that link**. Under the title is one sentence saying why, and under
-that is a single **Continue** button.
+This section is about the [desktop
+app](../08-rally-everywhere/04-the-desktop-app.md). When it is given a link it
+will not follow, a small window appears in front of whatever you were doing.
+It is titled **Rally could not open that link**. Under the title is one
+sentence saying why, and under that is a single **Continue** button.
 
 Read the sentence, then click **Continue**. The button is already selected
 when the window opens, so <kbd>Return</kbd> does the same thing. Closing the
-window with the red close button at its top left works too.
+window with its close button works too.
 
 A few things about this window:
 
@@ -33,13 +80,13 @@ A few things about this window:
 - It floats on top. It stays in front of every Rally window, including
   Settings, until you dismiss it. That is deliberate: a failed connection used
   to leave no message at all, which was worse.
-- It works whatever state Rally is in, even while it is starting up or
+- It works whatever state the app is in, even while it is starting up or
   after your session has expired.
-- It is on the Mac only. The browser version does not have it.
+- It is in the desktop app only. The web app does not have it.
 
 ## When you are signed out
 
-If you are not signed in at all, Rally does not open the window. The sign-in
+If you are not signed in to the desktop app at all, it does not open the window. The sign-in
 screen is the only thing showing, so the message appears there instead, under
 the sign-in buttons. For example:
 
@@ -59,8 +106,9 @@ use the window, not the sign-in screen.
 
 ## What each message means
 
-Find the sentence you saw in the left column. The text in angle brackets, like
-`<email>`, stands for whatever Rally filled in.
+These are the sentences the desktop app's window shows. Find the one you saw
+in the left column. The text in angle brackets, like `<email>`, stands for
+whatever Rally filled in.
 
 ### Invitations
 
@@ -94,9 +142,9 @@ attempt without a word. Only the newest one counts.
 
 ### Connecting a tool
 
-When you connect Google, GitHub, Slack and friends, you approve Rally on the
-tool's own page in your browser, which then sends you back to Rally. If that
-return trip goes wrong you see one of these. `<Connector>` is the tool's name,
+When you connect a tool from the desktop app, you approve Rally on the tool's
+own page in your browser, which then sends you back to the app. If that return
+trip goes wrong you see one of these. `<Connector>` is the tool's name,
 or "Connector" on its own when Rally cannot tell which tool it was.
 
 | Message | What it means | What to do |
@@ -151,23 +199,22 @@ A link to a Channel, a Thread or a Breakout no longer opens anything: those
 were the conversations Rally had before Canvases, and they were removed. Ask
 whoever sent it what they meant to show you; it may be in a Canvas now.
 
-## When a browser link does not open Rally at all
+## When a link does not open the desktop app
 
-Links to Canvases and Sidekicks are ordinary web addresses starting
-with `https://rallywith.ai/app/`. If Rally is installed, the link should open
-straight in the app. Otherwise you see a short web page that hands you over,
-as described in [Search and links](../02-canvases/11-search-and-links.md).
+On a Mac with the desktop app installed, a `https://rallywith.ai/app/` link
+should open straight in the app. If you end up staring at a browser page and
+no Rally:
 
-If you end up staring at a browser page and no Rally:
-
-1. Check Rally is installed. If the page says to install Rally, it could
-   not find the app. Follow [Install Rally and sign in](../01-getting-started/01-install-rally.md),
+1. Click **Continue in browser** if you are happy to use the web app. Nothing
+   is lost: it shows the same Canvases and Sidekicks.
+2. Check the app is installed. If the page offers a download, it could not
+   find the app. Follow [the desktop app](../08-rally-everywhere/04-the-desktop-app.md#install-it),
    then come back to the link.
-2. Click **Open Rally** on the page, if there is one. Your browser may ask
-   whether it may open Rally. Say yes.
-3. Open Rally first, then the link again. Start Rally from Applications,
-   wait for it to finish opening, then click the original link once more.
-4. Search instead. If the link is to a Canvas you can open, the search box on
+3. Click **Open in Rally for Mac** on the page. Your browser may ask whether it
+   may open Rally. Say yes.
+4. Open Rally first, then the link again. Start Rally from Applications, wait
+   for it to finish opening, then click the original link once more.
+5. Search instead. If the link is to a Canvas you can open, the search box on
    the Canvases home page gets you there as well. Search for its name.
 
 ## Who to ask
@@ -183,4 +230,4 @@ If you end up staring at a browser page and no Rally:
   administrator, since only they can manage those.
 - Anything that keeps failing after you have tried the fix above: the
   Rally team. [Contacting support](03-contact-support.md) says how, and copying
-  the exact sentence from the window into your email saves a round trip.
+  the exact sentence Rally showed you into your email saves a round trip.
