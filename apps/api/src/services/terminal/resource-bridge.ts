@@ -1343,7 +1343,8 @@ export function createTerminalResourceBridge(
     const republish = path && !path.startsWith("sha256:") ? `republish filePath ${path} to change it` : "it cannot be republished from a path";
     throw new TerminalToolError("canvas_artifact_held",
       `This Canvas already has its one artifact, "${held.title}" (resourceId ${held.id}); ${republish}. `
-        + "Build what you meant to publish into that artifact, or publish again with replaceCanvasArtifact true to make this the Canvas's artifact in its place.",
+        + "Add what you meant to publish to that artifact as a new file or entry inside it, keeping what it already holds. "
+        + "Publish again with replaceCanvasArtifact true only when this is meant to take that artifact's place.",
       { field: "replaceCanvasArtifact", heldResourceId: held.id });
   };
   // A publish that landed in a Canvas's Chat is the Canvas's artifact; the
