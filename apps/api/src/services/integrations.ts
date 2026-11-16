@@ -57,6 +57,7 @@ import {
   AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
   AVALON_MEMORY_PLUGIN_ID,
   AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
+  AVALON_OFFER_TO_ADD_MEMBER_TOOL_DEFINITION,
   AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
   AVALON_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION,
   AVALON_SKILLS_PLUGIN_ID,
@@ -143,6 +144,9 @@ import {
   type WorkstreamWorkflowInput,
   AutomationRunDefinitionV1Schema,
   CONNECTION_QUESTION_CONTINUE_ANSWER,
+  MEMBER_QUESTION_OPTIONS,
+  MemberCardInputSchema,
+  type MemberCardInput,
   ConnectorConnectionCardCatalog,
   ConnectorConnectionCardInputSchema,
   type ConnectorConnectionCardInput,
@@ -5293,6 +5297,16 @@ function asksForSources(input: WorkstreamWorkflowInput): boolean {
 }
 
 /**
+ * Whether a question this loop asked would be answered by an agent rather
+ * than a person: a background agent, or a Sidekick conversation another
+ * agent's message started outside a Canvas's wizard turn. No person reads it.
+ */
+function questionAnswersGoToAnAgent(input: WorkstreamWorkflowInput): boolean {
+  return input.backgroundAgent === true
+    || (input.parentKind === "automation" && !!input.agentExchange && wizardTurnCanvasId(input) === null);
+}
+
+/**
  * Why a loop whose answers go to an agent may not ask a person a question,
  * and where to send it instead: no person is reading this conversation, so a
  * question here would wait on nobody.
@@ -5931,8 +5945,7 @@ async function loadHarnessTools(
   const registry = connectorRegistryForEnv(env);
   // A wizard turn a Canvas's Chat started asks its person directly: its
   // question is drawn in that Chat too (`wizard-canvas-cards.ts`).
-  const routesAnswersToAgent = input.backgroundAgent
-    || (input.parentKind === "automation" && !!input.agentExchange && wizardTurnCanvasId(input) === null);
+  const routesAnswersToAgent = questionAnswersGoToAnAgent(input);
   const pageReceipts = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
   const paginationSources = new WeakMap<HarnessTool, HarnessTool>();
   const priorPaginationTools = (tools: readonly HarnessTool[]) => prePaginationTools(
@@ -8299,6 +8312,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
   const coreTools = tools.filter((tool) =>
     tool.definition.name === "current_time"
     || tool.definition.name === "request_elicitation"
+    || tool.definition.name === "offer_to_add_member"
     || tool.definition.name === "get_connector_connection_state"
     || tool.definition.name === "show_connector_connection"
     || tool.definition.name === CHECK_RESOURCE_ACCESS_TOOL_NAME);
@@ -8315,7 +8329,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           // unambiguously, so `core_` only lengthened the name the model reads
           // and repeated a plugin it can neither load nor unload.
           shortWireName: "",
-          description: "Check the current time, connector connection status, and access to linked files, or pause to ask for required information.",
+          description: "Check the current time, connector connection status, access to linked files, and whether someone is a member, or pause to ask for required information or to add someone.",
           systemMessage: renderCorePluginSystemMessage({
             currentTime: holds("current_time"),
             elicitation: holds("request_elicitation"),
@@ -8904,6 +8918,44 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       execute: async (raw, context) => openToolQuestion(env, input, context, "request_elicitation",
         RequestElicitationInputSchema.parse(raw)),
     },
+    {
+      definition: AVALON_OFFER_TO_ADD_MEMBER_TOOL_DEFINITION,
+      validateInput: (raw) => {
+        const result = MemberCardInputSchema.safeParse(raw);
+        return result.success ? null : result.error;
+      },
+      execute: async (raw, context) => {
+        const card = MemberCardInputSchema.parse(raw);
+        // The address's account, by the address it signs in with, and its place here.
+        const held = await env.DB.prepare(
+          `SELECT u.id, u.name, m.status, m.access_class FROM users u
+             LEFT JOIN workspace_members m ON m.user_id = u.id AND m.workspace_id = ?
+            WHERE u.id = COALESCE((SELECT user_id FROM user_verified_emails WHERE email = ? COLLATE NOCASE),
+                                  (SELECT id FROM users WHERE email = ? COLLATE NOCASE))`,
+        ).bind(input.workspaceId, card.email, card.email)
+          .first<{ id: string; name: string; status: string | null; access_class: string | null }>();
+        if (held?.status === "active" && held.access_class === "member") {
+          return {
+            output: { status: "member", userId: held.id, name: held.name, email: card.email },
+            summary: `${card.email} is a member`,
+          };
+        }
+        // The check is anyone's; the card is a question, which only a loop a person reads may ask.
+        if (questionAnswersGoToAnAgent(input)) {
+          const refusal = questionRefusal(input);
+          throw new ApiError(403, refusal.code, `${card.email} is not a member of this Organization. ${refusal.message}`);
+        }
+        const who = card.name ? `${card.name} (${card.email})` : card.email;
+        return openToolQuestion(env, input, context, "offer_to_add_member", {
+          prompt: `Add ${who} to the Organization as a member?`,
+          responseType: "radio",
+          options: [...MEMBER_QUESTION_OPTIONS],
+          minimumSelections: 1,
+          maximumSelections: 1,
+          member: card,
+        });
+      },
+    },
   ];
   tools.splice(2, 0, ...createFirecrawlWebTools(env));
   tools.push(...createMemoryTools(env, input));
@@ -8933,8 +8985,8 @@ async function openToolQuestion(
   env: Env,
   input: WorkstreamWorkflowInput,
   context: HarnessToolContext,
-  toolName: "request_elicitation" | "show_connector_connection",
-  question: RequestElicitationInput & { connection?: ConnectorConnectionCardInput },
+  toolName: "request_elicitation" | "show_connector_connection" | "offer_to_add_member",
+  question: RequestElicitationInput & { connection?: ConnectorConnectionCardInput; member?: MemberCardInput },
 ): Promise<HarnessToolResult> {
   const providerIdempotencyKey = requireProviderIdempotencyKey(toolName, context.providerIdempotencyKey);
   const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
@@ -8948,15 +9000,17 @@ async function openToolQuestion(
     // A connection question is answered by its two options alone: no typed
     // answer, and no Skip, since Decline is how a person lets the run go on without.
     ...(question.connection ? { connection: question.connection, allowOther: false, allowSkip: false } : {}),
+    // The same for adding someone: Added or Not now, the card's press being the first.
+    ...(question.member ? { member: question.member, allowOther: false, allowSkip: false } : {}),
   };
   const summary = question.connection
     ? `Asked for the ${question.connection.connectorId} ${question.connection.scope} connection`
-    : "Requested human input";
+    : question.member ? `Offered to add ${question.member.email} as a member` : "Requested human input";
   const halted = { output: { elicitationId: id }, summary, providerOperationId: id, halt: "needs_input" as const };
   // A wizard turn a Canvas's Chat started draws its question in that Chat as
   // well, after the question is announced, keyed on it so a replay posts once.
   // The question records the Canvas, so the turn its answer starts asks there too.
-  const askingCanvasId = toolName === "request_elicitation" ? wizardTurnCanvasId(input) : null;
+  const askingCanvasId = toolName === "request_elicitation" || toolName === "offer_to_add_member" ? wizardTurnCanvasId(input) : null;
   // The replay check used to be a read of its own in front of the batch,
   // because the batch could not both ask and act. It is the operation's
   // first statement now, so a retried receipt is answered by the write

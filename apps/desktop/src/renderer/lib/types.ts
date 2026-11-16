@@ -1,6 +1,6 @@
 import type { ImportedMessageProvenance } from "@rally/contracts";
 import type { CanvasNoticesRecord } from "@rally/contracts/canvases";
-import type { ConnectorConnectionCardInput, WorkstreamAppearance } from '@rally/contracts';
+import type { ConnectorConnectionCardInput, MemberCardInput, WorkstreamAppearance } from '@rally/contracts';
 import type {
   AgentModelOverride,
   AutomationDraft as ContractAutomationDraft,
@@ -450,6 +450,8 @@ export interface ElicitationData {
   createdAt?: string;
   /** A question a connection answers: the panel shows the card that makes it. */
   connection?: ConnectorConnectionCardInput;
+  /** A question adding someone answers (`offer_to_add_member`): the panel shows the card that adds them. */
+  member?: MemberCardInput;
 }
 
 /** A thread's opening message before the room has it; see `pendingOpening`. */

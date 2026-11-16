@@ -18,6 +18,7 @@ import { AutomationLifecycleStateSchema,
   AutomationRunTriggerV1Schema,
   AutomationScopeSchema, SidekickAudienceSchema, StoredAutomationScopeSchema } from "./automation-agent";
 import { ConnectorConnectionCardInputSchema } from "./connector-connection-card";
+import { MemberCardInputSchema } from "./member-card";
 import { ConnectorInstallationSchema } from "./connector-installation";
 export * from "./conversation-attention";
 export * from "./conversation-source";
@@ -56,6 +57,7 @@ import {
 export * from "./automation-agent";
 export * from "./automation-evaluators";
 export * from "./connector-connection-card";
+export * from "./member-card";
 export * from "./conversation-effects";
 export * from "./conversation-parent";
 export * from "./canvases";
@@ -1057,6 +1059,12 @@ export const ElicitationSchema = z.object({
    * one (it strips the key) and a stored question without it still parses.
    */
   connection: ConnectorConnectionCardInputSchema.optional(),
+  /**
+   * A question adding someone to the Organization answers
+   * (`offer_to_add_member`): the panel shows the card that adds them, and its
+   * press answers `added`. Optional for the same reasons as `connection`.
+   */
+  member: MemberCardInputSchema.optional(),
   /**
    * Whether the panel offers a typed answer beside the options ("Other").
    * Absent reads as true; false means these options only, as the connection
