@@ -276,6 +276,7 @@ function fixture(
       contentMode: "read", derivativeStatus: "pending", createdAt: "2026-08-13T12:00:00.000Z",
     })),
     publishedKindForPath: vi.fn(async (): Promise<"site" | "archive" | "file" | null> => null),
+    noteOversizedPublish: vi.fn(),
     publishSiteResource: vi.fn(async (
       _context,
       input,
@@ -1432,6 +1433,16 @@ describe("Daytona Terminal runtime", () => {
     await expect(runtime.runCommand(context, { command: "printf done", timeoutMs: 120_000 }))
       .rejects.toMatchObject({ code: "command_recovery_unavailable" });
     expect(provider.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("records a publish refused for its size, with the size and the limit, before refusing it", async () => {
+    const { files, resources, runtime } = fixture();
+    files.set("/workspace/.rally-output/episode.mp3", new Uint8Array(25_000_001));
+    await expect(runtime.publishResource(context, { filePath: "episode.mp3" }))
+      .rejects.toMatchObject({ code: "resource_limit_exceeded" });
+    expect(resources.noteOversizedPublish).toHaveBeenCalledWith(context,
+      { shape: "file", sizeBytes: 25_000_001, limitBytes: 25_000_000, filePath: "episode.mp3" });
+    expect(resources.publishResource).not.toHaveBeenCalled();
   });
 
   it("uses create-only automatic import destinations and delegates publication bytes", async () => {

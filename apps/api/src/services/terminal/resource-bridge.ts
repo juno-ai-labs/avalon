@@ -897,6 +897,7 @@ export function createTerminalResourceBridge(
       const target = await publicationAddress(context, input, input.providerResourceId);
       const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
       if (bytes.byteLength > maximum) {
+        bridge.noteOversizedPublish(context, { shape: "file", sizeBytes: bytes.byteLength, limitBytes: maximum, filePath: input.filePath });
         throw new TerminalToolError("resource_limit_exceeded", `The file is ${bytes.byteLength} bytes; published resources allow at most ${maximum}. Reduce or split it and retry.`, { field: "filePath", expected: `file bytes at most ${maximum}` });
       }
       // A receipt is still required before anything is written: an unplanned
@@ -1070,6 +1071,20 @@ export function createTerminalResourceBridge(
         derivativeStatus,
         createdAt: timestamp,
       };
+    },
+
+    noteOversizedPublish(context, refused) {
+      // The extension and the sizes only: a path is the participant's own
+      // naming and may say what the file is about.
+      const extension = /\.([A-Za-z0-9]{1,10})$/u.exec(refused.filePath)?.[1]?.toLowerCase() ?? null;
+      logWarn(env, "terminal_publish_over_size_limit", {
+        workspace_id: context.workspaceId,
+        harness_run_id: context.harnessRunId,
+        shape: refused.shape,
+        extension,
+        size_bytes: refused.sizeBytes,
+        limit_bytes: refused.limitBytes,
+      });
     },
 
     async publishedKindForPath(context, filePath, input = {}) {
