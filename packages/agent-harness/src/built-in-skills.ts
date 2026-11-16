@@ -5,6 +5,7 @@ import {
   POLLING_FOR_EVENTS_SKILL,
   PUBLISHING_A_FEED_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
+  SENDING_NOTIFICATIONS_SKILL,
   SETTING_UP_A_FILTERED_TRIGGER_SKILL,
   TASK_SKILLS,
   TRACKING_SEEN_OR_DONE_ITEMS_SKILL,
@@ -21,6 +22,7 @@ export {
   POLLING_FOR_EVENTS_SKILL,
   PUBLISHING_A_FEED_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
+  SENDING_NOTIFICATIONS_SKILL,
   SETTING_UP_A_FILTERED_TRIGGER_SKILL,
   TRACKING_SEEN_OR_DONE_ITEMS_SKILL,
   USING_EXTERNAL_STRUCTURED_DATA_SKILL,
@@ -59,6 +61,9 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   SETTING_UP_A_FILTERED_TRIGGER_SKILL,
   // Available during authoring and execution wherever durable Tables are in scope.
   TRACKING_SEEN_OR_DONE_ITEMS_SKILL,
+  // Offered only where the notifications plugin is in scope, by its
+  // `ownerPlugin`: when a notice is worth sending and how to word it.
+  SENDING_NOTIFICATIONS_SKILL,
   // Offered only where the Terminal plugin is in scope, by its `ownerPlugin`:
   // the whole procedure ends in publishing a directory from a sandbox.
   BUILDING_LIVE_SITES_SKILL,
