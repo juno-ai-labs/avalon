@@ -456,10 +456,12 @@ email by default, and may override it per Canvas
 (`canvas_notification_choices`, `PUT /canvases/:id/notifications`): a list of
 channels, `[]` to mute, or no row to follow Settings. Settings →
 Notifications lists, under the Canvas notices row, one row for each Canvas
-whose notices reach the person (it sends notices, is not archived, and they
-made it or are on its list; `GET /canvases/notice-choices`): it shows the
-default until changed there, and **Use default** drops the Canvas's own
-choice. The record in the Chat changes the same choice. `notificationAllows`
+that sends notices and is not archived (`GET /canvases/notice-choices`).
+Where its notices reach the person (they made it or are on its list), the
+row shows the default until changed there, and **Use default** drops the
+Canvas's own choice. An Organization-wide Canvas a member is not on is
+listed greyed, with **Add as participant** (`canvasJoin`); a guest is never
+admitted by Organization visibility, so sees none of these. The record in the Chat changes the same choice. `notificationAllows`
 reads the override when the kind is `canvas_notice` and the message carries
 the Canvas. A person who picked one channel gets that one. When both are
 chosen, the producer asks `enqueueNotice` for `pushElseEmail`: it queues one

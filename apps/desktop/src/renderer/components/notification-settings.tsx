@@ -48,7 +48,7 @@ function midSentence(label: string): string {
  * every kind.
  */
 export function NotificationChannelSettings({ api, workspaceId, pushAvailable, email }: {
-  api: Pick<RallyApi, 'getMyPreferences' | 'updateMyPreferences' | 'canvasNoticeChoices' | 'setCanvasNoticeChoice'>;
+  api: Pick<RallyApi, 'getMyPreferences' | 'updateMyPreferences' | 'canvasNoticeChoices' | 'setCanvasNoticeChoice' | 'joinCanvas'>;
   workspaceId: string;
   /** Push is offered only where this deployment can push. */
   pushAvailable: boolean;
@@ -100,12 +100,13 @@ export function NotificationChannelSettings({ api, workspaceId, pushAvailable, e
 }
 
 /**
- * One row per Canvas whose notices reach this person, under the Canvas
- * notices default. A Canvas with no choice of its own shows the default; a
- * change here becomes that Canvas's choice, and Use default drops it.
+ * One row per Canvas that sends notices, under the Canvas notices default. A
+ * Canvas with no choice of its own shows the default; a change here becomes
+ * that Canvas's choice, and Use default drops it. An Organization-wide
+ * Canvas the person is not on is shown greyed, with a way to join it.
  */
 function CanvasNoticeRows({ api, workspaceId, defaults, options }: {
-  api: Pick<RallyApi, 'canvasNoticeChoices' | 'setCanvasNoticeChoice'>;
+  api: Pick<RallyApi, 'canvasNoticeChoices' | 'setCanvasNoticeChoice' | 'joinCanvas'>;
   workspaceId: string;
   defaults: readonly NotificationChannel[];
   options: ChannelOption[];
@@ -127,10 +128,31 @@ function CanvasNoticeRows({ api, workspaceId, defaults, options }: {
     // The open Canvas's record and menu read the same choice.
     onSuccess: (detail) => queryClient.setQueryData(canvasDetailQueryKey(detail.id), detail),
   });
+  const join = useMutation({
+    mutationFn: (canvasId: string) => api.joinCanvas(canvasId),
+    onSuccess: (detail) => {
+      queryClient.setQueryData(canvasDetailQueryKey(detail.id), detail);
+      queryClient.setQueryData<CanvasNoticeChoices>(key, (current) => current
+        && { canvases: current.canvases.map((row) => row.canvasId === detail.id ? { ...row, participant: true } : row) });
+    },
+  });
   const rows = choices.data?.canvases ?? [];
   if (rows.length === 0 && !choices.error) return null;
   return <>
     {rows.map((row) => {
+      if (!row.participant) {
+        return <div className="settings-preference-row settings-preference-row-nested is-unjoined" key={row.canvasId}>
+          <span className="settings-row-copy">
+            <strong>{row.title}</strong>
+            <small>You are not a participant, so these do not reach you. {row.purpose}</small>
+            <span className="settings-row-inline-action">
+              <Button disabled={join.isPending} onClick={() => join.mutate(row.canvasId)}>Add as participant</Button>
+            </span>
+          </span>
+          <ChannelPicker disabled label={`How ${row.title} tells you`} none="Off" onToggle={() => undefined}
+            options={options} selected={row.channels ?? defaults} />
+        </div>;
+      }
       const selected = row.channels ?? defaults;
       const toggle = (channel: NotificationChannel) => choose.mutate({ canvasId: row.canvasId,
         channels: selected.includes(channel) ? selected.filter((candidate) => candidate !== channel) : [...selected, channel] });
@@ -149,5 +171,6 @@ function CanvasNoticeRows({ api, workspaceId, defaults, options }: {
     })}
     {choices.error && <ErrorNotice occurrence={choices.error}>Your Canvases' notices could not be loaded.</ErrorNotice>}
     {choose.error && <ErrorNotice occurrence={choose.error}>{choose.error.message}</ErrorNotice>}
+    {join.error && <ErrorNotice occurrence={join.error}>{join.error.message}</ErrorNotice>}
   </>;
 }
