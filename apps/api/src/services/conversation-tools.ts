@@ -37,6 +37,7 @@ import { searchAudienceGroup, searchAudienceGroupIds } from "./search-audience";
 import { workspaceSearchIndex, type TextSearchCandidate } from "./text-search";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { POST_DEFAULT_SENTENCE, conversationsSystemMessage } from "@rally/prompts/api/conversations-plugin";
+import { actsAsSidekickWizard, loopAuthority } from "../lib/loop-authority";
 
 /**
  * `rally:conversations`: list, read, and post to Rally conversations, with a
@@ -105,6 +106,9 @@ export interface ConversationToolAccess {
  * - A Sidekick run (`automationRun` present): the same conversations, without
  *   attach, so a run cannot widen its own reach.
  *
+ * A background agent gets its root's scope (`loopAuthority`): a run's worker
+ * the run's, a wizard's agent the wizard's.
+ *
  * A Canvas's Chat gets none: its own transcript and Canvas are its context.
  * A run reaches its Sidekick's conversations whoever it acts as, a person or
  * the Sidekick itself. A run child woken without its run has no Sidekick
@@ -113,18 +117,16 @@ export interface ConversationToolAccess {
  */
 export function conversationToolAccess(input: WorkstreamWorkflowInput): ConversationToolAccess | null {
   const actingUserId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
-  const substreamId = input.substreamId ?? "0";
-  if (input.parentKind !== "automation") return null;
-  if (input.automationRun) {
-    return { scope: { kind: "sidekick", automationId: input.automationRun.automationId },
-      tools: ["list", "read", "search", "post"], actingUserId, runId: input.automationRun.runId };
+  const authority = loopAuthority(input);
+  if (authority?.kind === "sidekick_run") {
+    return { scope: { kind: "sidekick", automationId: authority.sidekickId },
+      tools: ["list", "read", "search", "post"], actingUserId, runId: authority.runId };
   }
-  if (actingUserId === null) return null;
-  if (substreamId !== "0") return null;
   // Attach widens what every later run reaches, and post speaks as the
   // Sidekick, so only a turn the claim marked as the wizard's, which it does
-  // only for a principal who manages the Sidekick, gets them.
-  if (input.sidekickWizard !== true) return null;
+  // only for a principal who manages the Sidekick, and the agents it started,
+  // get them.
+  if (actingUserId === null || !actsAsSidekickWizard(input)) return null;
   return { scope: { kind: "sidekick", automationId: input.parentId, authoring: true },
     tools: ["list", "read", "search", "post", "attach"], actingUserId };
 }
@@ -181,18 +183,21 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
   const workspaceId = asWorkspaceId(input.workspaceId);
   const messages = (target: ConversationToolEntry) => createMessageObjectPort(env, workspaceId, target.parentId,
     undefined, target.substreamId);
+  // A run's worker posts for its run, so a refused post is that run's to report.
+  const authority = loopAuthority(input);
+  const run = authority?.kind === "sidekick_run" ? authority : null;
   return {
-    ...(input.automationRun ? { notePostRefused: async () => {
+    ...(run ? { notePostRefused: async () => {
       try {
         const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
           workspaceDOName(env.AVALON_REGION, workspaceId));
-        await workspace.sidekickNotePermissionReportUnavailable({ workspaceId, automationId: input.automationRun!.automationId,
-          runId: input.automationRun!.runId });
+        await workspace.sidekickNotePermissionReportUnavailable({ workspaceId, automationId: run.sidekickId,
+          runId: run.runId });
       } catch (error) {
         // Attention is diagnostic; its failure must not replace the posting
         // refusal the model needs to explain and recover from.
         logWarn(env, "sidekick_permission_attention_failed", { workspace_id: workspaceId,
-          automation_id: input.automationRun!.automationId, run_id: input.automationRun!.runId,
+          automation_id: run.sidekickId, run_id: run.runId,
           code: diagnosticErrorCode(error, "permission_attention_failed") });
       }
     } } : {}),
@@ -675,7 +680,8 @@ export function createConversationsPlugin(
           schemaVersion: 1,
           automationId: asAutomationId(automationId),
           automationName: resolved.sidekickName ?? "Sidekick",
-          runId: run?.runId ?? input.harnessRunId,
+          // A run's worker posts as its run; a wizard's post keeps its own attempt.
+          runId: access.runId ?? input.harnessRunId,
           deliveryId: clientMessageId,
           ...(run ? { trigger: { kind: run.trigger.kind } } : {}),
           occurredAt,
@@ -757,7 +763,7 @@ export function createConversationsPlugin(
     displayName: "Conversations",
     searchAliases: ["canvas", "chat", "sidekick conversation", "messages", "search", "post"],
     description: "List, read, search, and post to the Rally conversations this agent can reach.",
-    systemMessage: conversationsSystemMessage({ posts, attaches, run: input.automationRun !== undefined,
+    systemMessage: conversationsSystemMessage({ posts, attaches, run: access.runId !== undefined,
       reads: access.tools.includes("read") }),
     tools,
     preload: true,

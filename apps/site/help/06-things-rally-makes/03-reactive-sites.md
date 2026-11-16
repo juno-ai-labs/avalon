@@ -84,8 +84,8 @@ access cannot make further requests once the update reaches the site. Content
 already downloaded and work done entirely in the browser cannot be taken back.
 
 **Open in browser** and **Open in a new window** sign you in for that visit.
-The sign-in session lasts up to 24 hours, but a change in artifact access takes
-effect without waiting for it to expire. Earlier versions and administrative
+The sign-in session lasts a year from the last time you open the artifact, but a
+change in artifact access takes effect without waiting for it to expire. Earlier versions and administrative
 stored-data views are available to editors.
 
 

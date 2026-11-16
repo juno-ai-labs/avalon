@@ -29,3 +29,16 @@ it('clears a rejected cookie before requesting fresh access and never replays a 
     expect(hook.result.current.access).toBeNull();
   } finally { hook.unmount(); }
 });
+
+it('opens another artifact chosen in a pin\'s picker on its own access, not the preferred site\'s cookie', async () => {
+  const preferred = 'https://reader.rallyusercontent.com/';
+  const saved = { canvasId: 'canvas', resourceId: 'reader', version: 1, title: 'Newsletter', canonicalUrl: preferred, openUrl: preferred };
+  const other = { canvasId: 'canvas', resourceId: 'archive', version: 4, title: 'Newsletter' };
+  const fresh = { ...other, canonicalUrl: 'https://archive.rallyusercontent.com/', openUrl: 'https://archive.rallyusercontent.com/__rally/open#one' };
+  const open = vi.fn(async () => fresh);
+  const hook = renderHook(() => usePreparedSiteAccess(other, { canvas: saved }, open, 'rallyusercontent.com'));
+  try {
+    await waitFor(() => expect(hook.result.current.access?.openUrl).toBe(fresh.openUrl));
+    expect(open).toHaveBeenCalledWith(other);
+  } finally { hook.unmount(); }
+});

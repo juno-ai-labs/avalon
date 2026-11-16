@@ -1,12 +1,14 @@
 import { CanvasIcon } from './CanvasIcon';
-import { useEffect, useRef, useState, type ComponentRef } from 'react';
-import { AccessibilityInfo, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ComponentRef, type Ref } from 'react';
+import { AccessibilityInfo, Animated, Easing, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { movePin, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from './protocol';
 import { useTheme } from './theme';
 import { SidebarDragRow } from './SidebarDragRow';
 import { sidebarDropCommand, type SidebarDrop } from './sidebar-drop';
+import type { EdgePullTarget } from './EdgePull';
+import { edgePullOpens } from './edge-swipe';
 
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
 interface Props {
@@ -15,6 +17,10 @@ interface Props {
   snapshot: MobileSnapshot;
   close: () => void;
   send: (command: MobileCommand) => void;
+  /** An edge pull's finger offset, and how the screen shows the sidebar once
+   * a pull lets go open. `ref` receives the pull's begin and end. */
+  pull?: { x: Animated.Value; open: () => void };
+  ref?: Ref<EdgePullTarget>;
 }
 
 interface DragState { id: string; x: number; y: number; target: SidebarDrop | null }
@@ -22,7 +28,9 @@ interface Bounds { x: number; y: number; width: number; height: number }
 
 const ROW_HEIGHT = 52;
 const AUTO_SCROLL_ROWS_PER_SECOND = 8;
-export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) {
+const OPEN_MS = 280;
+const CLOSE_MS = 220;
+export function Sidebar({ visible, snapshot, close, send, diagnostics, pull, ref }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -47,6 +55,68 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
       || (previous?.target?.section === 'pins' ? previous.target.index : null) !== (value?.target?.section === 'pins' ? value.target.index : null)) setDrag(value);
   };
   const dragging = drag !== null;
+  const drawerWidth = Math.min(width - insets.right - 44, 336 + insets.left);
+  // The Modal stays up while the drawer slides out, then goes. It presents
+  // with no animation of its own; the drawer and scrim animate inside it.
+  const [mounted, setMounted] = useState(visible);
+  const mountedRef = useRef(mounted);
+  mountedRef.current = mounted;
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const progress = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => subscription.remove();
+  }, []);
+  // Settling covers only the distance left, so a drawer let go halfway does
+  // not slow down. A pull leaves `progress` where the finger let go.
+  const settled = useRef(0);
+  const settle = (toValue: 0 | 1, after?: () => void) => {
+    const remaining = Math.abs(toValue - settled.current);
+    settled.current = toValue;
+    Animated.timing(progress, { toValue, duration: (toValue ? OPEN_MS : CLOSE_MS) * remaining, easing: toValue ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic), useNativeDriver: true })
+      .start(({ finished }) => { if (finished) after?.(); });
+  };
+  // Both the visible effect and onShow may ask to open; a second request must
+  // not restart the slide with no distance left, which would snap it open.
+  const animateOpen = () => { if (settled.current !== 1) settle(1); };
+  const unmountUnlessShown = () => { if (!visibleRef.current) setMounted(false); };
+  useEffect(() => {
+    // A first open waits for the Modal to present (onShow) before sliding in.
+    if (visible) { if (mountedRef.current) animateOpen(); else setMounted(true); return; }
+    if (!mountedRef.current) return;
+    settle(0, unmountUnlessShown);
+  }, [visible]);
+  // While a finger pulls from the edge, the drawer follows it: `pull.x` moves
+  // on the native side. On release that offset moves into `progress`, which
+  // settles open or closed from there.
+  const pulling = useRef(false);
+  useImperativeHandle(ref, () => ({
+    begin: () => {
+      if (visibleRef.current || mountedRef.current) return;
+      pulling.current = true;
+      settled.current = 0;
+      progress.setValue(0);
+      setMounted(true);
+    },
+    end: (translationX, velocityX, canceled) => {
+      pull?.x.setValue(0);
+      if (!pulling.current || !pull) return;
+      pulling.current = false;
+      const fraction = Math.max(0, Math.min(1, translationX / drawerWidth));
+      progress.setValue(fraction);
+      settled.current = fraction;
+      if (!canceled && edgePullOpens(fraction, velocityX)) pull.open();
+      else settle(0, unmountUnlessShown);
+    },
+  }), [pull, drawerWidth, progress]);
+  const pullX = pull?.x;
+  const position = useMemo(() => Animated.add(progress, pullX ? Animated.divide(pullX, drawerWidth) : 0)
+    .interpolate({ inputRange: [0, 1], outputRange: [0, 1], extrapolate: 'clamp' }), [pullX, drawerWidth, progress]);
+  // Reduce Motion fades the drawer in place instead of sliding it.
+  const drawerMotion = reduceMotion ? { opacity: position } : { transform: [{ translateX: position.interpolate({ inputRange: [0, 1], outputRange: [-drawerWidth, 0] }) }] };
   const pinKey = JSON.stringify(snapshot.pins);
   useEffect(() => { dragRef.current = null; setDrag(null); }, [visible, snapshot.userId, snapshot.workspaceId, pinKey]);
   const resetScroll = () => {
@@ -137,10 +207,12 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
     style={({ pressed }) => [styles.control, { opacity: disabled ? 0.35 : pressed ? 0.6 : 1 }]}>
     <Ionicons name={name} size={20} color={colors.muted} />
   </Pressable>;
-  return <Modal transparent visible={visible} animationType="fade" onRequestClose={close} onShow={() => { resetScroll(); measureViewport(); }}>
-    <View style={[styles.overlay, { backgroundColor: colors.scrim }]}>
-      <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close sidebar" accessibilityRole="button" onPress={close} />
-      <View accessibilityViewIsModal style={[styles.drawer, { width: Math.min(width - insets.right - 44, 336 + insets.left), paddingLeft: 14 + insets.left, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12, backgroundColor: colors.sidebar }]}>
+  return <Modal transparent visible={mounted} animationType="none" onRequestClose={close} onShow={() => { resetScroll(); measureViewport(); if (visibleRef.current) animateOpen(); }}>
+    <View style={styles.overlay}>
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: colors.scrim, opacity: position }]}>
+        <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close sidebar" accessibilityRole="button" onPress={close} />
+      </Animated.View>
+      <Animated.View accessibilityViewIsModal style={[styles.drawer, drawerMotion, { width: drawerWidth, paddingLeft: 14 + insets.left, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12, backgroundColor: colors.sidebar }]}>
         <View style={styles.heading}><Text style={[styles.brand, { color: colors.text }]}>Rally</Text>{iconButton('menu-outline', 'Close sidebar', close)}</View>
         <View ref={viewport} style={{ flex: 1 }} onLayout={() => measureViewport()}>
         <ScrollView ref={scroll} scrollEnabled={!dragging} onScroll={({ nativeEvent }) => { scrollY.current = nativeEvent.contentOffset.y; }} scrollEventThrottle={16}
@@ -194,7 +266,7 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics }: Props) 
           {diagnostics && iconButton('settings-outline', 'Settings and diagnostics', () => { close(); diagnostics(); })}
           {iconButton('log-out-outline', 'Sign out', () => action({ type: 'sign-out' }, true))}
         </View>
-      </View>
+      </Animated.View>
       {drag && <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.row, { position: 'absolute', left: viewportBounds.current.x, top: 0, transform: [{ translateY: dragY }], width: viewportBounds.current.width, paddingHorizontal: 12, gap: 12, backgroundColor: colors.surface, boxShadow: '0 5px 18px rgba(0, 0, 0, 0.18)' }]}>
         <CanvasIcon canvas={snapshot.canvases.find((canvas) => canvas.id === drag.id)} size={21} /><Text numberOfLines={1} style={[styles.title, { color: colors.text }]}>{titleFor(drag.id)}</Text>
       </Animated.View>}

@@ -188,6 +188,52 @@ export function terminalPlaywrightAcceptanceCommand(): string {
 }
 
 /**
+ * ffmpeg and ffprobe, for audio and video work: joining a recording's pieces,
+ * levelling it, writing its chapters, and resizing artwork
+ * (`creating-a-podcast-episode`).
+ *
+ * Image-only for Playwright's reasons: the package and its codec libraries are
+ * large enough that installing them in the runtime bootstrap would slow every
+ * sandbox created from a snapshot built before this, and a per-sandbox probe
+ * would refuse those sandboxes until the weekly rebuild is adopted. The
+ * acceptance gate requires it instead (`terminalMediaToolsAcceptanceCommand`).
+ * A skill that uses ffmpeg checks for it first and installs it on a sandbox
+ * from an older snapshot.
+ */
+export function terminalMediaToolsInstallCommand(): string {
+  return [
+    "set -euo pipefail",
+    "if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then sudo -n apt-get update -qq && sudo -n apt-get install -y --no-install-recommends ffmpeg >/dev/null; fi",
+  ].join("\n");
+}
+
+/** The ffmpeg step as one Dockerfile-safe line, for the reason the bootstrap's is. */
+export function terminalMediaToolsImageBuildCommand(): string {
+  const encoded = Buffer.from(terminalMediaToolsInstallCommand(), "utf8").toString("base64");
+  return `echo ${encoded} | base64 -d | bash -l`;
+}
+
+/**
+ * Proves a built snapshot can make an episode's audio: encode MP3 with
+ * libmp3lame, join two pieces with the concat demuxer, write one chapter into
+ * the ID3 tags, and read it back with ffprobe. Run by the acceptance gate.
+ */
+export function terminalMediaToolsAcceptanceCommand(): string {
+  return [
+    "set -euo pipefail",
+    "probe=$(mktemp -d)",
+    "trap 'rm -rf -- \"$probe\"' EXIT",
+    "cd \"$probe\"",
+    "ffmpeg -loglevel error -f lavfi -i sine=frequency=440:duration=1 -ac 1 -codec:a libmp3lame -b:a 64k piece.mp3",
+    "printf \"file 'piece.mp3'\\nfile 'piece.mp3'\\n\" > parts.txt",
+    "ffmpeg -loglevel error -f concat -safe 0 -i parts.txt -ac 1 -codec:a libmp3lame -b:a 64k joined.mp3",
+    "printf ';FFMETADATA1\\n[CHAPTER]\\nTIMEBASE=1/1000\\nSTART=0\\nEND=1000\\ntitle=Opening\\n' > chapters.txt",
+    "ffmpeg -loglevel error -i joined.mp3 -i chapters.txt -map 0:a -map_metadata 1 -map_chapters 1 -codec copy -id3v2_version 3 episode.mp3",
+    "test \"$(ffprobe -v error -show_chapters -of csv=p=0 episode.mp3 | wc -l)\" -eq 1",
+  ].join("\n");
+}
+
+/**
  * Verifies the pinned snapshot still satisfies the manifest.
  *
  * The probes are independent of one another, and each one pays a whole runtime

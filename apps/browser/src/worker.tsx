@@ -24,6 +24,25 @@ function deploymentCookies(header: string | null, region: string): string | null
 /** The favicon, install manifest and icons, which a browser reads from the root. */
 const INSTALL_FILES = new Set(["/favicon.svg", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"]);
 
+/**
+ * A built file an earlier deploy served. Static assets hold only the current
+ * deploy's files, and the web host ships many times a day, so a page loaded
+ * before a deploy would 404 on a lazy chunk it has not fetched yet. Each
+ * deploy's files are uploaded to this bucket first and never change after.
+ */
+async function pastAsset(env: Cloudflare.Env, pathname: string): Promise<Response> {
+  // The archive only extends what static assets serve: if it cannot be read,
+  // answer as static assets would have, with a 404, not a 500.
+  const object = await env.PAST_ASSETS.get(pathname.slice(1)).catch(() => null);
+  if (!object) return unavailable();
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("ETag", object.httpEtag);
+  headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(object.body, { headers });
+}
+
 const unavailable = () => new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
 
 export default {
@@ -62,7 +81,20 @@ export default {
       response.headers.set("X-Content-Type-Options", "nosniff");
       return response;
     }
-    if (url.pathname.startsWith("/assets/") || INSTALL_FILES.has(url.pathname)) return env.ASSETS.fetch(request);
+    if (url.pathname.startsWith("/assets/")) {
+      // Vite names every built file by its content hash, so a name never
+      // changes meaning. Without this, the mobile shell and every browser
+      // revalidate each chunk on a cold start: a round trip per file before
+      // the dashboard can draw. The shell HTML stays `no-store`, so a deploy
+      // is still picked up on the next load.
+      const asset = await env.ASSETS.fetch(request);
+      if (asset.status === 404) return pastAsset(env, url.pathname);
+      if (!asset.ok) return asset;
+      const response = new Response(asset.body, asset);
+      response.headers.set("Cache-Control", "public, max-age=31536000, immutable");
+      return response;
+    }
+    if (INSTALL_FILES.has(url.pathname)) return env.ASSETS.fetch(request);
     if (url.pathname === "/annotation-frame.js") {
       // The annotation script an HTML file's opaque preview frame loads from
       // this origin under its nonce. Revalidated on every check so a deploy

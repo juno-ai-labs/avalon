@@ -35,6 +35,7 @@ import {
   TERMINAL_SNAPSHOT_BASE_IMAGE,
   TERMINAL_SNAPSHOT_RESOURCES,
   terminalPlaywrightImageBuildCommand,
+  terminalMediaToolsImageBuildCommand,
   terminalSnapshotImageBuildCommand,
 } from "../src/services/terminal/snapshot-manifest";
 import { acceptBuiltTerminalSnapshot } from "./terminal-snapshot-acceptance";
@@ -66,10 +67,11 @@ const daytona = new Daytona({
 // each Dockerfile unique; it also reaches every sandbox as an environment
 // variable, so a sandbox can say which build it came from.
 const builtAt = new Date().toISOString();
-// Playwright is an image-only step; see `TERMINAL_PLAYWRIGHT_VERSION`.
+// Playwright and ffmpeg are image-only steps; see `TERMINAL_PLAYWRIGHT_VERSION`
+// and `terminalMediaToolsInstallCommand`.
 const image = Image.base(baseImage)
   .env({ RALLY_TERMINAL_SNAPSHOT_BUILT_AT: builtAt, PLAYWRIGHT_BROWSERS_PATH: TERMINAL_PLAYWRIGHT_BROWSERS_PATH })
-  .runCommands(terminalSnapshotImageBuildCommand(), terminalPlaywrightImageBuildCommand());
+  .runCommands(terminalSnapshotImageBuildCommand(), terminalPlaywrightImageBuildCommand(), terminalMediaToolsImageBuildCommand());
 
 process.stdout.write(
   `Building Terminal snapshot ${configuration.snapshot} from ${baseImage} (built-at ${builtAt}) at ${TERMINAL_SNAPSHOT_RESOURCES.cpu} vCPU / ${TERMINAL_SNAPSHOT_RESOURCES.memory} GiB / ${TERMINAL_SNAPSHOT_RESOURCES.disk} GiB\n`,

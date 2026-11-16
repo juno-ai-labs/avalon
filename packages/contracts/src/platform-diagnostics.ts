@@ -38,6 +38,7 @@ const PLATFORM_ERRORS: readonly (readonly [RegExp, string])[] = [
   [/too many SQL variables/u, "sqlite_too_many_variables"],
   [/string or blob too big|SQLITE_TOOBIG/u, "sqlite_too_big"],
   [/database is locked|SQLITE_BUSY/u, "sqlite_busy"],
+  [/CF_PIPELINE_MESSAGE_TOO_LARGE/u, "pipeline_message_too_large"],
   [/: syntax error/u, "sqlite_syntax_error"],
 ];
 

@@ -123,6 +123,8 @@ class ToolSelectionDatabase {
   readonly submittedDefinitions: Array<Record<string, unknown>> = [];
   /** The plugin defaults the automation's definition names; see {@link runDefinition}. */
   defaultPluginIds: string[] = [];
+  /** The saved tools the automation's definition carries; see {@link runDefinition}. */
+  customTools: AutomationRunDefinitionV1["definition"]["customTools"] = [];
   readonly runDefinitionReads: Array<Record<string, unknown>> = [];
   readonly proposedDraftCards: Array<Record<string, unknown>> = [];
   /** Every `create` request, so an edit can be shown not to make a second automation. */
@@ -591,7 +593,7 @@ function runDefinition(database: ToolSelectionDatabase): AutomationRunDefinition
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
-      customTools: [],
+      customTools: database.customTools,
     },
     defaultPluginIds: database.defaultPluginIds,
     activitySourcePluginIds: {},
@@ -691,11 +693,59 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
     harnessRunId: CHILD_HARNESS_RUN_ID,
     substreamId: asSubstreamId(CHILD_HARNESS_RUN_ID),
     backgroundAgent: true,
+    // As the host reads it from the agent's row: its starter's conversation.
+    backgroundAgentRootSubstreamId: parent.substreamId ?? "0",
     reason: "agent_message",
   };
 }
 
 describe("connector tools selected for harness runs", () => {
+  it("offers a background agent every tool the loop it was started from has, except the run's own report_outcome", async () => {
+    const database = new ToolSelectionDatabase([]);
+    // A run with a saved tool, which only Code Mode materializes: a worker
+    // that missed its run's definition would miss the tool.
+    database.customTools = [{
+      name: "day_math", description: "Doubles a day count.",
+      inputSchema: { type: "object", properties: { days: { type: "integer", description: "Days to double." } },
+        required: ["days"], additionalProperties: false },
+      code: "return { doubled: input.days * 2 };", requiredPlugins: ["rally_core"],
+    }];
+    const runtimeEnv = createTestEnv({ ...env(database), CODE_LOADER: { get: vi.fn() } as unknown as WorkerLoader });
+    const toolNames = async (input: WorkstreamWorkflowInput) => {
+      const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, input);
+      return [...new Set([
+        ...selected.tools.map((tool) => tool.definition.name),
+        ...selected.plugins.flatMap((plugin) => plugin.tools.map((tool) => `${plugin.canonicalId} ${tool.definition.name}`)),
+      ])].sort();
+    };
+    const wizardRoot: WorkstreamWorkflowInput = { ...childWorkflowInput(automationConversationInput()) };
+    delete wizardRoot.sidekickWizard;
+    const runRoot: WorkstreamWorkflowInput = { ...childWorkflowInput(automationRunInput()) };
+    delete runRoot.automationRun;
+    const roots: [WorkstreamWorkflowInput, WorkstreamWorkflowInput, string[]][] = [
+      // The host builds an agent's input from its root's identity: no wizard
+      // flag, and a run's worker carries the run as its delegation.
+      [workflowInput(), childWorkflowInput(), []],
+      [automationConversationInput(), wizardRoot, []],
+      [automationRunInput(), { ...runRoot, automationDelegation: { runId: RUN_ID, stopGeneration: 0 } },
+        ["rally:sidekick-outcome report_outcome"]],
+    ];
+    expect((await toolNames(automationRunInput())).some((name) => name.includes("day_math"))).toBe(true);
+    // The gated tools are there to compare: a gate that dropped one from both
+    // sides would otherwise pass as parity.
+    expect(await toolNames(workflowInput())).toEqual(expect.arrayContaining(["write_artifact_data", "set_artifact_audience",
+      "avalon:agents archive_sidekick"]));
+    expect(await toolNames(automationConversationInput())).toEqual(expect.arrayContaining(["write_artifact_data",
+      "rally:sidekicks submit_draft", "rally:conversations attach"]));
+    expect(await toolNames(automationRunInput())).toEqual(expect.arrayContaining(["write_artifact_data",
+      "avalon:agents request_sidekick_change", "rally:conversations post"]));
+    for (const [root, agent, rootOnly] of roots) {
+      const rootTools = await toolNames(root);
+      expect(rootTools).toEqual(expect.arrayContaining(rootOnly));
+      expect(await toolNames(agent)).toEqual(rootTools.filter((name) => !rootOnly.includes(name)));
+    }
+  });
+
   it("offers the question tool where answers go to an agent, refusing with where to send the question", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const question = async (input: WorkstreamWorkflowInput) => {
@@ -751,7 +801,7 @@ describe("connector tools selected for harness runs", () => {
     expect(selected.tools.some((tool) => tool.definition.name === "run_subagent")).toBe(false);
   });
 
-  it("offers drafting only to Sidekick authoring and communication to ordinary conversations", async () => {
+  it("offers drafting only to Sidekick authoring and its agents, and communication to ordinary conversations", async () => {
     const database = new ToolSelectionDatabase([]);
     const runtimeEnv = env(database);
     const room = await __integrationTesting.loadHarnessTools(runtimeEnv, workflowInput());
@@ -763,13 +813,12 @@ describe("connector tools selected for harness runs", () => {
       ?.tools.map((tool) => tool.definition.name)).toEqual([
         "my_delegations_list", "delegates_list", "set_delegation",
         "sources_list", "request_source", "test_source_condition"]);
-    // The wizard's background agent reads runs for it; a run's delegation worker does not.
-    // Both hold the source tools; neither may ask, since both read content, runs among it.
-    const sidekicks = child.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
-    expect(sidekicks?.tools.map((tool) => tool.definition.name))
-      .toEqual(["runs_list", "runs_list_next", "runs_read", "runs_read_next", "my_delegations_list", "delegates_list", "set_delegation",
-        "sources_list", "request_source", "test_source_condition"]);
-    expect(sidekicks?.preload).toBe(true);
+    // The wizard's background agent acts with the wizard's authority and holds
+    // its authoring tools; a run's delegation worker holds its run's.
+    const sidekickTools = (selected: typeof child) => selected.plugins
+      .find((plugin) => plugin.canonicalId === "rally:sidekicks")?.tools.map((tool) => tool.definition.name);
+    expect(sidekickTools(child)).toEqual(sidekickTools(authoring));
+    expect(sidekickTools(child)).toEqual(expect.arrayContaining(["submit_draft", "runs_list", "set_delegation"]));
     expect(worker.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")?.tools.map((tool) => tool.definition.name))
       .toEqual(["my_delegations_list", "delegates_list", "sources_list", "request_source", "test_source_condition"]);
     expect(authoring.plugins.map((plugin) => plugin.canonicalId)).toContain("rally:sidekicks");

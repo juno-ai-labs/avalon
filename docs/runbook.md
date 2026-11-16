@@ -362,8 +362,15 @@ Use a custom token restricted to the Rally Cloudflare account and the `rallywith
 
 - Account: Account Settings Read
 - Account: Workers Scripts Write (shown as Edit in older dashboards)
-- Account: D1 Write/Edit
-- Account: Workers R2 Storage Write/Edit
+- Account: D1 Write/Edit: also lets the API deployment create a missing D1
+  database and pin its id (`scripts/ensure-cloudflare-d1-kv.mjs`;
+  `pnpm cloudflare:d1-kv:ensure` runs it locally).
+- Account: Workers KV Storage Write/Edit: the same script lists and creates
+  pinned KV namespaces, and Wrangler provisions the unpinned ones on deploy.
+- Account: Workers R2 Storage Write/Edit: Wrangler creates any R2 bucket a
+  binding names on deploy, and the browser deploy creates its asset archive
+  bucket before uploading to it. The `site-production` token the browser deploy
+  uses needs it too.
 - Account: R2 Admin Read & Write — used by explicit lakehouse reconciliation to
   create the Global analytical buckets and Data Catalogs and as the
   non-interactive credential source for their Global Catalog sinks
