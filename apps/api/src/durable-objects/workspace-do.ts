@@ -4,6 +4,7 @@ import { ArtifactHostnameStubSchema } from '@rally/contracts';
 import { CANVAS_ARTIFACT_ACCESS_ALARM, CANVAS_ARTIFACT_ACCESS_STATEMENTS, canvasArtifactAccessSnapshot, canvasArtifactAccessForReader, canvasArtifactTargets, canvasArtifactFile } from './canvas-artifact-access';
 import { ArtifactAccessMessageSchema } from '@rally/contracts/artifact-access';
 import { CANVAS_SHARE_FEDERATION_ALARM, CANVAS_SHARE_FEDERATION_STATEMENTS, guestSharedCanvases } from './canvas-share-federation';
+import type { SharedCanvasesRefreshMessage } from '@rally/contracts/canvas-share-federation';
 import {
   CHANNEL_COLOR_SYNC_MIGRATION,
   CHANNEL_MESSAGE_SEARCH_MIGRATION,
@@ -917,6 +918,8 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
    * since the renderer does not resend for a route it has not left.
    */
   pendingForegroundWorkstreamId?: string | null;
+  /** The ticket of the last shared-Canvas frame this socket was sent (`relayToPerson`). */
+  sharedCanvasesTicket?: number | undefined;
 }
 
 interface WorkspaceConnectorEventRow extends Record<string, SqlStorageValue> {
@@ -4625,6 +4628,9 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       // for a socket that predates it: `member` is what every attachment
       // written before Spaces existed meant.
       accessClass: z.enum(["member", "guest"]).default("member"),
+      // The ticket of the last shared-Canvas frame this socket was sent
+      // (`relayToPerson`). Kept on the socket so it outlives hibernation.
+      sharedCanvasesTicket: z.number().int().nonnegative().optional(),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
@@ -5354,13 +5360,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private readonly writerSidekickReaders = new Map<string, string>();
   /**
-   * Per person, the last relay ticket issued and the ticket of the last frame
-   * sent (`relayTicket`, `relayToPerson`). In memory: a ticket is floored at
-   * the clock, so one issued after an eviction is newer than any before it,
-   * and a frame from before the eviction is no longer compared.
+   * Per person, the last relay ticket issued (`relayTicket`). In memory and
+   * floored at the clock, so a ticket issued after an eviction is still newer
+   * than any before it; what each socket was last sent is on the socket.
    */
   private readonly relayTicketsIssued = new Map<string, number>();
-  private readonly relayTicketsSent = new Map<string, number>();
   /** What each attached Sidekick's Canvases showed of it when this instance last saw its row; see `noteAttachedSidekickFace`. In memory, as above. */
   private readonly attachedSidekickFaces = new Map<string, string>();
   /** Set by a hosted Canvas write that moved a directory row; the Canvas list is published after it. */
@@ -5594,19 +5598,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Send a person's shared-Canvas frame, built by the Worker, to their
-   * subscribed sockets here, keeping nothing but ordering: a frame whose
-   * ticket (`relayTicket`) is not newer than the last one sent is dropped, so
-   * a slow build cannot land after a newer one. A support session's sockets
-   * never get it: the frame spans Organizations its grant does not cover.
+   * subscribed sockets here. A socket that was already sent a frame with a
+   * newer or equal ticket (`relayTicket`) skips it, so a slow build cannot
+   * land after a newer one; the mark is kept on the socket's attachment, so
+   * it holds across hibernation. A support session's sockets never get it:
+   * the frame spans Organizations its grant does not cover.
    */
   async relayToPerson(input: { workspaceId: string; userId: string; ticket: number; frame: string }): Promise<void> {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);
-    if ((this.relayTicketsSent.get(input.userId) ?? -1) >= input.ticket) return;
-    this.relayTicketsSent.set(input.userId, input.ticket);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       if (attachment?.subscribed !== true || attachment.userId !== input.userId || attachment.impersonatorUserId) continue;
+      if ((attachment.sharedCanvasesTicket ?? -1) >= input.ticket) continue;
+      socket.serializeAttachment({ ...attachment, sharedCanvasesTicket: input.ticket });
       sendSidebarListFrame(socket, input.frame);
     }
   }
@@ -7482,10 +7487,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // Invalidate only: the person's other Organizations rebuild their
         // lists, asking this one again (`guestSharedCanvases`).
         if (alarm.kind === CANVAS_SHARE_FEDERATION_ALARM) {
-          await sendInteractive(this.env, {
+          await this.env.ACTIVITY_QUEUE.send({
             kind: "shared_canvases_refresh", region: this.env.AVALON_REGION, workspaceId: asWorkspaceId(workspaceId),
             userId: asUserId(alarm.key), scope: "others",
-          });
+          } satisfies SharedCanvasesRefreshMessage);
           return;
         }
         // Archive deliveries commit with the tombstone and retry independently.
@@ -12275,10 +12280,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // Worker and relayed back after this answer, never ahead of it. A support
     // session asks for none: they may span Organizations its grant does not.
     if (!attachment.impersonatorUserId) {
-      this.state.waitUntil(sendInteractive(this.env, {
+      this.state.waitUntil(this.env.ACTIVITY_QUEUE.send({
         kind: "shared_canvases_refresh", region: this.env.AVALON_REGION, workspaceId: asWorkspaceId(attachment.workspaceId),
         userId: asUserId(attachment.userId), scope: "this",
-      }).catch((error: unknown) => logWarn(this.env, "shared_canvases_refresh_unsent", {
+      } satisfies SharedCanvasesRefreshMessage).catch((error: unknown) => logWarn(this.env, "shared_canvases_refresh_unsent", {
         workspace_id: attachment.workspaceId, user_id: attachment.userId, code: diagnosticErrorCode(error, "shared_canvases_refresh_unsent"),
       })));
     }

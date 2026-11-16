@@ -1,4 +1,3 @@
-import { refreshSharedCanvases } from "../services/shared-canvases";
 import { codeShaped, isCodeShaped, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { ConnectorError, connectorDiagnosticCode, connectorRetryAfterMs } from "@rally/connectors";
 
@@ -27,10 +26,6 @@ const HANDLERS: { [K in InteractiveKind]: InteractiveHandler<K> } = {
   slack_ingress: {
     fields: (message) => ({ job_id: message.jobId }),
     run: (env, message) => new SlackAgentService(env).processQueuedIngress(message.workspaceId, message.jobId),
-  },
-  shared_canvases_refresh: {
-    fields: (message) => ({ user_id: message.userId, scope: message.scope }),
-    run: (env, message) => refreshSharedCanvases(env, message),
   },
 };
 

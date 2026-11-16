@@ -73,17 +73,21 @@ async function rebuild(env: Env, userId: string, organizations: readonly PersonO
   const origins = enabled ? organizations.filter((organization) => organization.guest) : [];
   const answered = await Promise.allSettled(origins.map(async (origin) =>
     (await organizationObject(env, origin.id)).guestSharedCanvases({ workspaceId: origin.id, userId })));
+  // A list missing an Organization that failed to answer would replace a
+  // complete one on screen: retry the whole refresh instead (the activity
+  // queue retries, then dead-letters). A retired Organization answers nothing.
+  const unread = answered.flatMap((result, index) =>
+    result.status === "rejected" && !isRetirementRefusal(result.reason) ? [{ origin: origins[index]!, reason: result.reason }] : []);
+  for (const { origin, reason } of unread) {
+    logWarn(env, "shared_canvases_origin_unread", {
+      workspace_id: origin.id, user_id: userId, code: diagnosticErrorCode(reason, "shared_canvases_origin_unread"),
+    });
+  }
+  if (unread.length > 0) throw new Error("shared_canvases_origin_unread");
   const shared = new Map<string, SharedCanvas[]>();
   answered.forEach((result, index) => {
     const origin = origins[index]!;
-    if (result.status === "rejected") {
-      if (!isRetirementRefusal(result.reason)) {
-        logWarn(env, "shared_canvases_origin_unread", {
-          workspace_id: origin.id, user_id: userId, code: diagnosticErrorCode(result.reason, "shared_canvases_origin_unread"),
-        });
-      }
-      return;
-    }
+    if (result.status === "rejected") return;
     shared.set(origin.id, result.value.map((canvas): SharedCanvas => ({
       organization: { id: asWorkspaceId(origin.id), name: origin.name, region: env.AVALON_REGION },
       canvas: {

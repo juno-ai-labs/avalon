@@ -1,4 +1,4 @@
-import { useOtherOrganizationCanvases } from './shared-canvases';
+import { SHARED_CANVASES_SETTING_QUERY_KEY, useOtherOrganizationCanvases } from './shared-canvases';
 import {
   AutomationSummarySchema,
   ClientFeatureFlagsSchema,
@@ -206,6 +206,8 @@ describe('WorkspaceSocketProvider', () => {
     // Turned off: the server sends an empty list, and nothing of the last one stays.
     act(() => socket.message({ type: 'workspace_shared_canvases', occurredAt: '2026-11-10T12:02:00.000Z', enabled: false, items: [] }));
     await waitFor(() => expect(screen.queryAllByRole('listitem')).toEqual([]));
+    // Turned off on another device: the switch here shows it too.
+    expect(queryClient.getQueryData(SHARED_CANVASES_SETTING_QUERY_KEY)).toEqual({ enabled: false });
   });
 
   it('renders live Canvas helper counts from pushes and hides them until reconnect has a fresh snapshot', async () => {

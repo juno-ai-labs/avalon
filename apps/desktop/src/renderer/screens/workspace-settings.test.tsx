@@ -53,6 +53,8 @@ const api = vi.hoisted(() => ({
   getMyPersonalSystemPrompt: vi.fn(),
   updateMyPersonalSystemPrompt: vi.fn(),
   getMyPreferences: vi.fn(),
+  getSharedCanvasesSetting: vi.fn(),
+  setSharedCanvasesSetting: vi.fn(),
   updateMyPreferences: vi.fn(),
   canvasNoticeChoices: vi.fn(async () => ({ canvases: [] })),
   setCanvasNoticeChoice: vi.fn(),
@@ -327,6 +329,7 @@ describe('Organization settings', () => {
     api.getConnections.mockResolvedValue([]);
     api.getMyPersonalSystemPrompt.mockResolvedValue('');
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
+    api.getSharedCanvasesSetting.mockResolvedValue({ enabled: true });
     api.getMyMemory.mockResolvedValue({ facts: [] });
     api.getConnectedApps.mockResolvedValue({ apps: [] });
     api.getOrganizationMemory.mockResolvedValue({ facts: [] });
@@ -626,6 +629,25 @@ describe('Organization settings', () => {
     } finally {
       window.localStorage.removeItem(`rally:member-preferences:${workspace.id}`);
     }
+  });
+
+  it('says when the shared-Canvases switch could not be read, and reads it again on request', { timeout: 20_000 }, async () => {
+    api.getSharedCanvasesSetting.mockRejectedValue(new Error('unavailable'));
+    renderSettings();
+    openSettingsSection('Preferences');
+
+    // The failure is said once, in the popup every error uses; the page offers the retry.
+    const popup = await screen.findByRole('alertdialog', {}, { timeout: 10_000 });
+    expect(popup).toHaveTextContent('The setting couldn’t be loaded.');
+    fireEvent.click(within(popup).getByRole('button', { name: 'OK' }));
+    const toggle = await screen.findByRole('switch', { name: /Show shared Canvases in every Organization/u });
+    const again = await screen.findByRole('button', { name: 'Load the setting again' });
+    // Never shown as a value it does not know.
+    expect(toggle).toBeDisabled();
+    api.getSharedCanvasesSetting.mockResolvedValue({ enabled: false });
+    fireEvent.click(again);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    expect(toggle).toBeEnabled();
   });
 
   it('saves the agent-work switch to the server', async () => {
