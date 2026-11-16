@@ -8333,6 +8333,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           systemMessage: renderCorePluginSystemMessage({
             currentTime: holds("current_time"),
             elicitation: holds("request_elicitation"),
+            addMember: holds("offer_to_add_member"),
             connectorConnection: holds("get_connector_connection_state") && holds("show_connector_connection"),
             resourceAccess: holds(CHECK_RESOURCE_ACCESS_TOOL_NAME),
           }),
