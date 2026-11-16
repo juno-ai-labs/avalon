@@ -115,11 +115,19 @@ const systemClock: TerminalClock = {
 export const TERMINAL_BUSY_WAIT_MS = 5_000;
 
 /**
- * How often a waiting call tries the lease again: twenty retries in a full
- * wait. Each costs about three hops: re-reading the row and claiming it from
- * the Terminal's object, and, for a holder in another conversation, asking
- * that conversation whether it has yielded. Chosen here, not by the team;
- * nothing else depends on it.
+ * How long a waiting call sleeps between tries for the lease.
+ *
+ * Bounds: the tries one waiting call makes, twenty in a full wait. Each costs
+ *   about three hops: re-reading the row and claiming it from the Terminal's
+ *   object, and, for a holder in another conversation, asking that
+ *   conversation whether it has yielded.
+ * Without it: the wait would retry as fast as the hops return, loading both
+ *   objects for the whole five seconds.
+ * Direction: a minimum interval; a lease released mid-sleep is taken up to
+ *   this much later.
+ * Trips: nothing. It only paces the wait {@link TERMINAL_BUSY_WAIT_MS} bounds.
+ * Derive from: the team set 250 ms, a delay short beside the five-second wait
+ *   that keeps a full wait to about sixty hops.
  */
 const TERMINAL_BUSY_RETRY_MS = 250;
 
