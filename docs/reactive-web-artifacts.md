@@ -838,13 +838,15 @@ facet that holds a stateful artifact's data. It does not own:
   outside the artifact), never by the page's own requests. The shape, not just
   the number, is the sleep guarantee, since compute per open is bounded by rate
   ceiling × lifetime: an abandoned page stops within a year of its last open. The open code lives 60
-  seconds. A publish carries at most 25,000,000 new bytes, transcribed from
-  the file path's existing bound rather than chosen. Bytes the live version
-  already stores, at any path, are new to nobody: nothing is written for them
-  and they count against nothing. So a site can hold a feed's episodes, and
-  each republish moves only the new one. Since new files stream from the
-  sandbox, this number no longer guards Worker memory; it is the team's to
-  raise. A data page returns at most 200 rows.
+  seconds. A site publish has two budgets. Bytes it reads whole (`index.html`,
+  the server module, the preview image the page names, or every file of an
+  archive) are at most 25,000,000, transcribed from the file path's bound; this
+  one guards Worker memory and the provider RPC's message size, and must not be
+  raised for media. Bytes it streams (new or changed files) are at most
+  `MAXIMUM_STREAMED_PUBLISH_BYTES`, also 25,000,000 today because the team kept
+  that number; it bounds only transfer per publish and is theirs to raise. Bytes
+  the live version already stores, at any path, count against neither. So a site
+  can hold a feed's episodes, and each republish moves only the new one. A data page returns at most 200 rows.
 
 Canvas archive records one durable `canvas_archive_artifact` alarm entry per
 registered site in WorkspaceDO. Delivery writes `archived_canvases` in the artifact
@@ -1032,10 +1034,27 @@ bytes, which are the same for every viewer, get it. Serving a file at any name
 with its extension, which would let a link claim a name the file does not have.
 
 **Consequences:** "Stored" trusts the sandbox listing's digest; a wrong one
-can only put bytes this site already served at a path. A streamed file that
-changed after it was listed is refused by R2, which fails the publish and
-leaves the site on its previous version. Pruning versions, when it comes, must
-keep every blob a kept manifest names. A publish whose
+can only put bytes this site already served at a path, and two listed paths
+with one digest share one blob, so a lying listing can alias files within its
+own site and nowhere else. The writer resolves a stored file's live copy from
+the served manifest itself; no caller hands it a storage key. A stored file
+whose live copy is missing is streamed from the sandbox instead, so a retry
+recovers. An empty file is written without opening it. A file whose bytes no
+longer match its listing (R2's digest check, or a stream shorter or longer than
+listed) is refused as `resource_not_ready` with `site_file_changed_after_listing`;
+any other storage failure keeps its own code (a provider's
+`daytona_file_stream_http_<status>`, say) in the refusal and in the
+`site_file_store_failed` log, so a failure a retry cannot fix is not reported as
+one it can. Streams are cancelled with the tool call. A provider Worker without
+`openFile` (an older deploy) has each file read whole, so the two Workers deploy
+in either order. Listing hashes every file on every publish, so a site large
+enough to take longer than the listing's time is refused as
+`resource_listing_timed_out`; a digest cache in the sandbox is the next step if
+feeds grow that large. Pruning versions, when it comes, must keep every blob a
+kept manifest names, with a grace window for a publish in flight: a publish
+that found a file stored names a blob no manifest names until it lands.
+Nothing deletes `artifact/` keys today; the resource cleanup outbox deletes a
+site resource's own manifest copy under `resources/`, never these. A publish whose
 directory lacks a file removes it, so the skills tell agents to import the site
 before adding to it in a new sandbox. Admission runs on every revalidation, so `no-cache` changes
 bandwidth, not who can read. A path that serves stored bytes passes

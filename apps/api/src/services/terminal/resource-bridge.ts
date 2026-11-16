@@ -6,8 +6,6 @@ import {
   AttachmentKindSchema,
   type ArtifactManifest,
   ArtifactManifestSchema,
-  artifactManifestKey,
-  manifestAssetKey,
   type ArtifactHostnameStub,
   SITE_MANIFEST_MIME_TYPE,
   artifactOrigin,
@@ -47,7 +45,7 @@ import {
   readArtifactVersionFile,
   storedArtifactVersionPaths,
 } from "./site-import";
-import { existingArtifactForResource, publishSiteVersion, siteFileSize } from "./site-resource-bridge";
+import { existingArtifactForResource, publishSiteVersion, servedManifest, siteFileSize } from "./site-resource-bridge";
 import {
   requireTerminalEffectIntent,
   TerminalToolError,
@@ -1083,20 +1081,10 @@ export function createTerminalResourceBridge(
       const row = await existingPublication(context, target, filePath, providerResourceId);
       if (!row || row.resource_type !== "generated_site") return null;
       const served = await existingArtifactForResource(workspace, context.workspaceId, row.id);
-      if (!served) return null;
-      const stored = await env.PAYLOADS.get(artifactManifestKey(served.artifactId, served.version));
-      if (!stored) return null;
-      // Nothing to carry is always safe: every file is then read again.
-      let parsed: unknown;
-      try { parsed = JSON.parse(await stored.text()); } catch { return null; }
-      const manifest = ArtifactManifestSchema.safeParse(parsed);
-      if (!manifest.success) return null;
-      return {
-        files: manifest.data.assets.map((entry) => ({
-          path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes,
-          storedAt: manifestAssetKey(manifest.data, entry),
-        })),
-      };
+      // Nothing to find stored is always safe: every file is then streamed.
+      const manifest = served ? await servedManifest(env, served) : null;
+      if (!manifest) return null;
+      return { files: manifest.assets.map(({ path, sha256, sizeBytes }) => ({ path, sha256, sizeBytes })) };
     },
 
     noteOversizedPublish(context, refused) {
