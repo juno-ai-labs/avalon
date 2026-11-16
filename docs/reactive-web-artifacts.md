@@ -1033,9 +1033,7 @@ shows its saved quote and image. The script and trust boundaries are owned by
 **What changed:** `facetFor` hands the Worker Loader `facetWorkerCode`, a
 callback that fetches the server module from R2 and reads it each time it
 runs. Before, `facetFor` fetched the R2 object in the outer `facets.get`
-callback and read its body inside the inner `loader.get` callback. The site
-skills now tell the model to turn text from a connected account into plain text
-before writing a row, rather than storing the Markdown a mail body arrives as.
+callback and read its body inside the inner `loader.get` callback.
 
 **Why:** The loader documents that its callback "could run any number of
 times": it runs again whenever the runtime starts a fresh isolate for the same
@@ -1045,9 +1043,7 @@ whatever request came first after an idle gap of a few seconds. On a podcast
 site that was the `<audio>` range probe (the player gave up, in the desktop and
 mobile apps alike), Apple Podcasts' first fetch of the feed (it refused to add
 the show) and every other poll of the page's API. The stateless path already
-read its module inside the callback and was not affected. Separately, a reader
-built from a newsletter stored the email's Markdown and showed it raw through
-`textContent`.
+read its module inside the callback and was not affected.
 
 **Considered and rejected:** Reading the body once to a string outside the
 callback. It works, but keeps the source in the supervisor's memory for as long
@@ -1055,9 +1051,7 @@ as the facet stub lives, and leaves the next edit to this function one step from
 the same bug. A runtime retry on `Body has already been used`, which hides the
 cause.
 
-**Consequences:** Everything a loader callback returns is read inside it. A test
-in `test-workers/artifact-facet.test.ts` runs the callback twice against real
-R2; when the runtime re-runs it cannot be steered from a test.
+**Consequences:** Everything a loader callback returns is read inside it.
 
 ### 2026-11-16 — Site files are stored once by digest; stored bytes revalidate; files answer at their own name
 
