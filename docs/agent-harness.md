@@ -623,7 +623,7 @@ returns `plugin_tools_unavailable` and leaves the plugin inactive. The protocol,
 validation, and provider declaration are owned by
 [`hosted-mcp-connectors.md`](hosted-mcp-connectors.md).
 
-Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. The always-active plugins whose canonical names are already globally unambiguous declare an empty short name and are advertised unprefixed: `rally_discovery` keeps the global controls `list_plugins`, `search_plugins`, and `load_plugin`, `rally_skills` keeps `load_skill` and `read_skill_resource`, and `rally_core` keeps `current_time`, `request_elicitation`, `get_connector_connection_state`, and `show_connector_connection`. `rally_memory` and `rally_tables` are always active too but keep `memory_` and `table_`: `rally_tables` owns a `search` that collides with `rally_web`'s, and Bind refuses duplicate always-active wire names outright; `rally_memory`'s `recall`, `remember` and `forget` would reach the model as bare verbs with no object. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_sidekicks` (canonical id `rally:sidekicks`, wire prefix `sidekick_`, deferred in a room, preloaded in a Sidekick's own conversation) owns Sidekick research, the `sidekicks_list` an edit starts from, and draft submission; `rally_conversations` (canonical id `rally:conversations`, wire prefix `conversation_`) is preloaded wherever a loop has a conversation scope and holds `list`, `read`, `post` and `attach` as that scope allows ([`conversation-tools.md`](conversation-tools.md)). The canonical ids are the identity of a persisted activation and stay; the model reads only the model id, the wire prefix, and the prose. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin, and `rally_code` (canonical id `rally:code`, wire prefix `code_`) is loadable wherever the Worker has a `CODE_LOADER` binding; a Sidekick run whose definition carries saved tools also holds the always-active `rally_custom_tools` (`rally:custom-tools`, wire prefix `custom_`) ([`code-mode.md`](code-mode.md)). A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
+Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. The always-active plugins whose canonical names are already globally unambiguous declare an empty short name and are advertised unprefixed: `rally_discovery` keeps the global controls `list_plugins`, `search_plugins`, and `load_plugin`, `rally_skills` keeps `load_skill` and `read_skill_resource`, and `rally_core` keeps `current_time`, `request_elicitation`, `get_connector_connection_state`, and `show_connector_connection`. `rally_memory` and `rally_tables` are always active too but keep `memory_` and `table_`: `rally_tables` owns a `search` that collides with `rally_web`'s, and Bind refuses duplicate always-active wire names outright; `rally_memory`'s `recall`, `remember` and `forget` would reach the model as bare verbs with no object. The always-active `rally_core` plugin owns exact time and structured elicitation; elicitation uses `provider_key` idempotency because the receipt-derived key is also the durable question identity. `rally_sidekicks` (canonical id `rally:sidekicks`, wire prefix `sidekick_`, deferred in a room, preloaded in a Sidekick's own conversation) owns Sidekick research, the `sidekicks_list` an edit starts from, and draft submission; `rally_conversations` (canonical id `rally:conversations`, wire prefix `conversation_`) is preloaded wherever a loop has a conversation scope and holds `list`, `read`, `post` and `attach` as that scope allows ([`conversation-tools.md`](conversation-tools.md)); `rally_notifications` (canonical id `rally:notifications`, wire prefix `notifications_`) is preloaded in every loop and holds `register` and `send`, refusing by name where a loop may not use one ([`push-notifications.md`](push-notifications.md#canvas-notices)). The canonical ids are the identity of a persisted activation and stay; the model reads only the model id, the wire prefix, and the prose. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin, and `rally_code` (canonical id `rally:code`, wire prefix `code_`) is loadable wherever the Worker has a `CODE_LOADER` binding; a Sidekick run whose definition carries saved tools also holds the always-active `rally_custom_tools` (`rally:custom-tools`, wire prefix `custom_`) ([`code-mode.md`](code-mode.md)). A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary conversation runs also register the
 deferred built-in `rally:terminal` plugin. It has no connection row. An explicit
@@ -921,8 +921,9 @@ the missing call positions against their durable receipts. A completed or
 failed receipt becomes the corresponding exact tool result; an admitted call is
 terminalized as `not_run`; an executing *read* is failed. An executing **write**
 is not classified from its status: the host re-enters the tool over that same
-receipt, through `reenterInterruptedWriteForRecovery`. Terminal and consent
-recovery build their owning plugin directly; consent recovery builds the
+receipt, through `reenterInterruptedWriteForRecovery`. Terminal, consent and
+notifications (`rally:notifications`) recovery build their owning plugin
+directly; consent recovery builds the
 delegation tools as every live loop offers them (`rally_sidekicks`, unprefixed
 canonical names), whatever the conversation's parent. Authored connector writes with
 provider keys reuse ordinary inventory construction and invoke only the owning
@@ -1902,6 +1903,22 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-15 — Recovery re-enters an interrupted Canvas notices write
+
+**What changed:** `reenterInterruptedWriteForRecovery` builds
+`rally:notifications` from the run's own input, as it does Terminal and the
+Sidekicks consent plugin, and re-enters an interrupted `register` or `send`.
+
+**Why:** Both tools are `record_before_execute` writes. Without a recovery
+executor an interrupted call stayed ambiguous, so a notice might never be
+sent, or a Canvas's notices turned on with no record in its Chat. Both are
+keyed on the call's receipt, so a re-entry lands the record or the send once.
+
+**Consequences:** The live loop and recovery share one builder
+(`notificationsPlugin` in `integrations.ts`); a change to how the live loop
+builds the plugin applies to recovery too. The full entry is in
+[`push-notifications.md`](push-notifications.md#changelog).
 
 ### 2026-11-15 — `publishing-a-feed` and `creating-a-podcast-episode` join the built-in skills
 

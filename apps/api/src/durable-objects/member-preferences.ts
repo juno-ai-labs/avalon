@@ -90,6 +90,9 @@ export const NOTIFICATION_KIND_FOR_PUSH: Partial<Record<PushNotificationData["ki
   source_request: "sourceRequests",
   source_approved: "sourceRequests",
   source_declined: "sourceRequests",
+  // An agent's notice from a Canvas the person takes part in; a choice for
+  // that one Canvas overrides it (canvas-notices.ts).
+  canvas_notice: "canvasNotices",
 };
 
 /** `changes` over `base`, switch by switch; a switch `changes` does not name keeps its value. */
@@ -225,5 +228,7 @@ export type MemberPreferencesWriteRequest = z.infer<typeof MemberPreferencesWrit
 export const NotificationAllowsRequestSchema = MemberPreferencesReadRequestSchema.extend({
   kind: PushNotificationDataSchema.shape.kind,
   channel: NotificationChannelSchema,
+  /** The Canvas a `canvas_notice` is from, whose own choice for this person outranks Settings. */
+  parentId: z.string().min(1).optional(),
 }).strict();
 export type NotificationAllowsRequest = z.infer<typeof NotificationAllowsRequestSchema>;

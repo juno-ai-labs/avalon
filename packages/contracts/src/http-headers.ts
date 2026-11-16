@@ -65,7 +65,7 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  * `14` reads an Activity row of kind `source_request`, `source_approved` or `source_declined`.
  * `15` reads Start/Grow/Max/Ultra usage plans.
  */
-export const CLIENT_CONTRACT_VERSION = 15;
+export const CLIENT_CONTRACT_VERSION = 16;
 /** First build that parses Max and Ultra in usage snapshots. */
 export const USAGE_PLANS_CLIENT_CONTRACT = 15;
 /**
@@ -93,6 +93,15 @@ export const GUEST_WORKSPACES_CLIENT_CONTRACT = 4;
  * filter it feeds, when {@link MINIMUM_SERVED_CLIENT_CONTRACT} reaches it.
  */
 export const SOURCE_ACTIVITY_CLIENT_CONTRACT = 14;
+
+/**
+ * First client contract that reads a Canvas notice's Activity kind
+ * (`canvas_notice`), gated as {@link SOURCE_ACTIVITY_CLIENT_CONTRACT} is and
+ * for the same reason: an older build would fail to parse the whole
+ * subscribe answer. Delete the gate when
+ * {@link MINIMUM_SERVED_CLIENT_CONTRACT} reaches it.
+ */
+export const CANVAS_NOTICE_ACTIVITY_CLIENT_CONTRACT = 16;
 
 /**
  * The oldest client contract a Worker still answers.

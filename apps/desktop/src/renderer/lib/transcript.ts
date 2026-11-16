@@ -1,4 +1,5 @@
 import { ImportedMessageProvenanceSchema } from "@rally/contracts";
+import { CanvasNoticesRecordSchema } from "@rally/contracts/canvases";
 import { visibleParticipantText } from "@rally/contracts/text";
 import { personMentionMarkdownRanges } from '@rally/contracts/citations';
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
@@ -584,6 +585,8 @@ export function orderedTranscriptMessages(
             ...(imported.success ? { importProvenance: imported.data } : {}),
             ...draftProposedFields(structured),
             ...automationActivationFields(structured, block.sidekickRun, turn.revision),
+            // Only the host writes a notices record, as a system message.
+            ...(turn.actor === 'system' ? canvasNoticesRecordFields(structured) : {}),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
           };
         }
@@ -2937,4 +2940,11 @@ function automationActivationFields(
       ...(sidekickRun ? { requesterUserId: sidekickRun.requesterUserId, runNumber: sidekickRun.runNumber } : {}),
     },
   };
+}
+
+/** A Canvas's notices record: the system message drawn as its card (`CanvasNoticesRecordCard`). */
+function canvasNoticesRecordFields(structured: Record<string, unknown>): Pick<Message, 'canvasNoticesRecord'> {
+  if (structured['kind'] !== 'canvas_notices_record') return {};
+  const record = CanvasNoticesRecordSchema.safeParse(structured);
+  return record.success ? { canvasNoticesRecord: record.data } : {};
 }

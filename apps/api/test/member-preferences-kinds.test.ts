@@ -12,16 +12,16 @@ const row = (notify: Record<string, unknown>, push: Record<string, unknown> = {}
 });
 
 describe("member notification kinds", () => {
-  it("defaults the offered kinds to push, and a source request to push and email", () => {
+  it("defaults the offered kinds to push, and a source request and a Canvas notice to push and email", () => {
     expect(storedMemberPreferences(row({})).notify).toEqual({
       mentions: ["push"], newMessages: ["push"], added: ["push"], runFinished: ["push"],
-      artifactUpdates: ["push"], accessRequests: ["push"], sourceRequests: ["push", "email"],
+      artifactUpdates: ["push"], accessRequests: ["push"], sourceRequests: ["push", "email"], canvasNotices: ["push", "email"],
     });
   });
 
   it("drops a Thread-era kind a person stored", () => {
     const notify = storedMemberPreferences(row({ newThreads: ["email"], merges: ["email"] })).notify;
-    expect(Object.keys(notify).sort()).toEqual(["accessRequests", "added", "artifactUpdates", "mentions", "newMessages", "runFinished", "sourceRequests"]);
+    expect(Object.keys(notify).sort()).toEqual(["accessRequests", "added", "artifactUpdates", "canvasNotices", "mentions", "newMessages", "runFinished", "sourceRequests"]);
     expect(notificationAllows(notify, "thread_started", "email")).toBe(false);
     expect(notificationAllows(notify, "merged", "email")).toBe(false);
   });

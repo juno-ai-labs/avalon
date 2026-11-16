@@ -1831,10 +1831,10 @@ export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
  * record still names but this list does not (the Thread-era `newThreads`,
  * `newBreakouts` and `merges`) is stripped on read.
  */
-export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests", "sourceRequests"]);
+export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests", "sourceRequests", "canvasNotices"]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
 /** The kinds Settings offers, in its order: each one a real producer records. */
-export const OFFERED_NOTIFICATION_KINDS = ["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests", "sourceRequests"] as const satisfies readonly NotificationKind[];
+export const OFFERED_NOTIFICATION_KINDS = ["mentions", "newMessages", "added", "runFinished", "artifactUpdates", "accessRequests", "sourceRequests", "canvasNotices"] as const satisfies readonly NotificationKind[];
 export type OfferedNotificationKind = (typeof OFFERED_NOTIFICATION_KINDS)[number];
 /**
  * Lenient on read: a channel this build does not know (a newer server's, or
@@ -1864,6 +1864,13 @@ export const NotificationChannelsSchema = z.object({
    * (docs/sidekick-sources.md).
    */
   sourceRequests: NotificationChannelListSchema.default(["push", "email"]),
+  /**
+   * A notice an agent sends from a Canvas the person takes part in. Both
+   * channels together mean push when a device is set up and email otherwise;
+   * one alone means that one (docs/PRDs/2026-11-14_canvas-notices). Defaulted
+   * for a server or a stored record older than it.
+   */
+  canvasNotices: NotificationChannelListSchema.default(["push", "email"]),
 });
 export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
 /**
@@ -1877,6 +1884,7 @@ export const NotificationChannelsChoiceSchema = NotificationChannelsSchema
     artifactUpdates: NotificationChannelsSchema.shape.artifactUpdates.unwrap(),
     accessRequests: NotificationChannelsSchema.shape.accessRequests.unwrap(),
     sourceRequests: NotificationChannelsSchema.shape.sourceRequests.unwrap(),
+    canvasNotices: NotificationChannelsSchema.shape.canvasNotices.unwrap(),
   })
   .partial();
 export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
@@ -1887,6 +1895,7 @@ export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
   artifactUpdates: ["push"],
   accessRequests: ["push"],
   sourceRequests: ["push", "email"],
+  canvasNotices: ["push", "email"],
 };
 export const MemberPreferencesSchema = z.object({
   /** Whether the transcript shows the agent's work: its thinking and its tool and plugin calls. */

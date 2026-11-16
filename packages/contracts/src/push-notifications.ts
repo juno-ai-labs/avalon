@@ -84,7 +84,12 @@ const PushDeliveryAddressSchema = z.object({
  * is only acknowledged: nothing queues it now.
  */
 export const PushDeliveryMessageSchema = z.union([
-  PushDeliveryAddressSchema.extend({ intentId: z.string(), channel: z.literal("email").optional() }).strict(),
+  PushDeliveryAddressSchema.extend({
+    intentId: z.string(),
+    channel: z.literal("email").optional(),
+    /** A push that reaches no device sends the email in its place (Canvas notices' push else email). */
+    emailFallback: z.literal(true).optional(),
+  }).strict(),
   PushDeliveryAddressSchema.extend({
     activityItemId: z.string().min(1).max(400),
     channel: AutomationDeliveryTargetTypeSchema.optional(),
@@ -102,7 +107,7 @@ export type PushDeliveryMessage = z.infer<typeof PushDeliveryMessageSchema>;
  */
 export const PushNotificationDataSchema = z.object({
   v: z.literal(1),
-  kind: z.enum(["mention", "new_message", "participant_added", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated", "needs_input", "access_request", "access_granted", "access_denied", "source_request", "source_approved", "source_declined"]),
+  kind: z.enum(["mention", "new_message", "participant_added", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated", "needs_input", "access_request", "access_granted", "access_denied", "source_request", "source_approved", "source_declined", "canvas_notice"]),
   url: HttpsUrlSchema,
   workspaceId: z.string(),
   region: RegionSchema,
