@@ -2265,7 +2265,7 @@ function createAvalonAutomationsPlugin(
     })), ...createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
       .flatMap((tool) => expandPages(tool, "sidekick", null)),
       ...(delegationUser ? [...sidekickDelegationTools(env, input, delegationUser, false),
-        ...sidekickSourceTools(env, input, delegationUser, false, asksForSources(input))] : [])],
+        ...sidekickSourceTools(env, input, delegationUser, false, asksForSources(input), () => turnIsSelfReview(env, input))] : [])],
     onActivate: async () => prepare(),
   };
 }
@@ -6044,7 +6044,7 @@ async function loadHarnessTools(
       tools: [...(readsRuns ? createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
         .flatMap((tool) => expandPages(tool, "sidekick", null)) : []),
       ...sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
-      ...sidekickSourceTools(env, input, input.executionPrincipal.userId, false, asksForSources(input))],
+      ...sidekickSourceTools(env, input, input.executionPrincipal.userId, false, asksForSources(input), () => turnIsSelfReview(env, input))],
     } : organizationSidekicksPlugin(env, input, readsRuns, (tool) => expandPages(tool, "sidekick", null));
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
