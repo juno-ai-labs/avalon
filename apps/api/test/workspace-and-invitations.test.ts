@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env, IdentityAuthContext } from "../src/env";
 import { sha256 } from "../src/lib/crypto";
 import { AuthService, __authServiceTesting } from "../src/services/auth-service";
+import { resolveVerifiedEmailIdentity } from "../src/services/login-identity-service";
 import {
   acceptInvitationForUser,
   declineInvitationForUser,
@@ -398,135 +399,6 @@ describe("workspace invitation lifecycle", () => {
 
   });
 
-  it("reissues duplicate pending invitations, revoking the superseded one's download grant", async () => {
-    const supersededId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79ff";
-    const database = new StubDatabase(
-      ({ sql }) => {
-        if (sql.includes("SELECT 1 AS present")) return null;
-        if (sql.includes("WHERE i.id = ?")) return invitationRow;
-        return undefined;
-      },
-      undefined,
-      undefined,
-      ({ sql }) => (sql.includes("UPDATE workspace_invitations SET revoked_at") ? [{ id: supersededId }] : undefined),
-    );
-
-    const result = await new WorkspaceService(environment(database), ownerAuth)
-      .createInvitation(invitationRow.email.toUpperCase(), "member");
-
-    expect(database.batches).toHaveLength(1);
-    expect(database.batches[0]![0]!.sql).toContain("SET revoked_at = ?");
-    expect(database.batches[0]![0]!.sql).toContain("RETURNING id");
-    expect(database.batches[0]![1]!.values[2]).toBe(invitationRow.email);
-    // The superseded invitation's own download grant must not outlive it.
-    const inviteUrl = new URL(result.inviteUrl);
-    expect(inviteUrl.origin).toBe("https://with-avalon.com");
-    expect(inviteUrl.pathname).toBe("/invite/");
-    expect(inviteUrl.search).toBe("");
-    const fragment = new URLSearchParams(inviteUrl.hash.slice(1));
-    expect(fragment.get("region")).toBe("global");
-    expect(fragment.get("token")?.length).toBeGreaterThanOrEqual(40);
-    expect(result.emailDelivery).toBe("skipped");
-  });
-
-  it("sends a branded Resend email without persisting the bearer invitation token", async () => {
-    const row = {
-      ...invitationRow,
-      workspace_name: "Research <script>alert(1)</script>",
-      invited_by_name: "Adam & Team",
-    };
-    const database = new StubDatabase(({ sql }) => {
-      if (sql.includes("SELECT 1 AS present")) return null;
-      if (sql.includes("WHERE i.id = ?")) return row;
-      return undefined;
-    });
-    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "resend-email-id" }));
-    emailSend = resend;
-
-    const result = await new WorkspaceService(environment(database, {
-      APP_ENV: "production",
-    }), ownerAuth).createInvitation(" INVITEE@EXAMPLE.COM ", "member");
-
-    expect(result.emailDelivery).toBe("sent");
-    expect(resend).toHaveBeenCalledTimes(1);
-    const body = resend.mock.calls[0]![0];
-    expect(body.headers).toMatchObject({
-      "X-Rally-Delivery-Key": `avalon-workspace-invitation/${invitationRow.id}`,
-    });
-    expect(body).toMatchObject({
-      from: { email: "invites@with-avalon.com", name: "Avalon" },
-      to: invitationRow.email,
-    });
-    expect(String(body.text)).toContain(result.inviteUrl);
-    expect(String(body.html)).toContain("Research &lt;script&gt;alert(1)&lt;/script&gt;");
-    expect(String(body.html)).toContain("Adam &amp; Team");
-    expect(String(body.html)).not.toContain("<script>alert(1)</script>");
-    const token = new URLSearchParams(new URL(result.inviteUrl).hash.slice(1)).get("token");
-    expect(token).toBeTruthy();
-    expect(JSON.stringify(database.batches)).not.toContain(token!);
-
-
-  });
-
-  it("does not issue a download link for an enterprise workspace invitation, since redemption is Global-only", async () => {
-    const enterpriseRow = { ...invitationRow, workspace_region: "enterprise" as const };
-    const database = new StubDatabase(({ sql }) => {
-      if (sql.includes("SELECT 1 AS present")) return null;
-      if (sql.includes("WHERE i.id = ?")) return enterpriseRow;
-      return undefined;
-    });
-    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "resend-email-id" }));
-    emailSend = resend;
-
-    // A session's own region always matches its workspace's (middleware/auth.ts
-    // rejects a mismatch), so an enterprise invitation is only ever created by the enterprise
-    // Worker: pair the region override with the enterprise row for a realistic case.
-    await new WorkspaceService(environment(database, {
-      APP_ENV: "production",
-      AVALON_REGION: "enterprise",
-    }), ownerAuth).createInvitation(invitationRow.email, "member");
-
-    const body = resend.mock.calls[0]![0];
-    expect(String(body.text)).not.toContain("/download/");
-    expect(String(body.html)).not.toContain("Download it for macOS");
-  });
-
-  it("revokes a newly persisted invitation when Cloudflare rejects delivery", async () => {
-    const database = new StubDatabase(({ sql }) => {
-      if (sql.includes("SELECT 1 AS present")) return null;
-      if (sql.includes("WHERE i.id = ?")) return invitationRow;
-      return undefined;
-    });
-    emailSend = vi.fn(async () => { throw Object.assign(new Error("domain not verified"), { code: "E_SENDER_NOT_VERIFIED" }); });
-
-    await expect(new WorkspaceService(environment(database, {
-      APP_ENV: "production",
-    }), ownerAuth).createInvitation(invitationRow.email, "member"))
-      .rejects.toMatchObject({ status: 502, code: "invitation_email_failed" });
-    const revocation = database.runs.find(({ sql }) => sql.includes("UPDATE workspace_invitations SET revoked_at = ?"));
-    expect(revocation?.values.slice(1)).toEqual([invitationRow.id, ownerAuth.workspaceId]);
-  });
-
-
-  it("lets any administrator invite another administrator, and no ordinary member invite at all", async () => {
-    // The owner-only gate this used to assert was the other half of the
-    // single-administrator problem: an administrator could not grow the set
-    // they were part of. It is gone, and what remains is the admin gate —
-    // proved by an administrator reaching the roster check behind it.
-    const seated = new StubDatabase(({ sql }) =>
-      sql.includes("SELECT 1 AS present FROM workspace_members") ? { present: 1 } : undefined);
-    const admin = { ...ownerAuth, role: "admin" as const };
-    await expect(new WorkspaceService(environment(seated), admin)
-      .createInvitation("admin@example.com", "admin"))
-      .rejects.toMatchObject({ status: 409, code: "already_workspace_member" });
-
-    const refused = new StubDatabase(() => undefined);
-    await expect(new WorkspaceService(environment(refused), { ...ownerAuth, role: "member" })
-      .createInvitation("admin@example.com", "admin"))
-      .rejects.toMatchObject({ status: 403, code: "workspace_admin_required" });
-    expect(refused.batches).toHaveLength(0);
-  });
-
   it("rejects expired previews without exposing workspace details", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-09T00:00:00.000Z"));
@@ -766,7 +638,7 @@ describe("desktop login ticket PKCE binding", () => {
   });
 });
 
-describe("pending invitees for the people pickers", () => {
+describe("adding members, and the invitations still waiting from before", () => {
   function seeded() {
     const database = migratedSqliteDatabase();
     const at = "2026-08-01T00:00:00.000Z";
@@ -792,6 +664,66 @@ describe("pending invitees for the people pickers", () => {
     invite.run("018f3f4e-7b5a-7cc1-9a6f-2aa0324b7a05", workspaceId, "guest@example.com", owner, "h5", "member", future, null, null, at);
     return database;
   }
+
+  const addAs = (database: ReturnType<typeof seeded>, role: "owner" | "admin" | "member" = "owner") =>
+    new WorkspaceService(environment(new StubDatabase(() => undefined), { DB: sqliteD1(database), APP_ENV: "production" }), { ...ownerAuth, role });
+  const membership = (database: ReturnType<typeof seeded>, userId: string) => database.prepare(
+    `SELECT role, access_class, status FROM workspace_members WHERE workspace_id = ? AND user_id = ?`).get(invitationRow.workspace_id, userId);
+
+  it("adds someone who has never signed in as an active member, and their first email sign-in reaches that account", async () => {
+    const database = seeded();
+    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "resend-email-id" }));
+    emailSend = resend;
+    try {
+      const added = await addAs(database).addMember(" Nancy@Example.com ", "member");
+      expect(added).toEqual({ member: { userId: expect.any(String), email: "nancy@example.com", role: "member" }, emailDelivery: "sent" });
+      // A member now, with nothing to accept: an agent can ask something of them by id.
+      expect(membership(database, added.member.userId)).toEqual({ role: "member", access_class: "member", status: "active" });
+      // Signing in with the address lands on the account the adding made, not a second one.
+      const signedIn = await resolveVerifiedEmailIdentity(sqliteD1(database), "nancy@example.com");
+      expect(signedIn).toEqual({ id: added.member.userId, created: false });
+      // The email says they were added, and opens the Organization.
+      const body = resend.mock.calls[0]![0];
+      expect([body.to, body.subject]).toEqual(["nancy@example.com", "Owner added you to Avalon Studio on Rally"]);
+      expect(String(body.text)).toContain("Open Rally and sign in with nancy@example.com");
+    } finally { database.close(); }
+  });
+
+  it("makes a guest a member, revokes the invitation still waiting for the address, and refuses someone already a member", async () => {
+    const database = seeded();
+    emailSend = vi.fn(async () => ({ messageId: "resend-email-id" }));
+    try {
+      const guestId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79e1";
+      // The seeded guest is unverified, as a share's guest can be; bind the address as their sign-in did.
+      database.prepare(`INSERT INTO user_verified_emails (email, user_id, verified_at) VALUES (?, ?, ?)`).run("guest@example.com", guestId, "2026-08-01T00:00:00.000Z");
+      const added = await addAs(database, "admin").addMember("guest@example.com", "member");
+      expect(added.member.userId).toBe(guestId);
+      expect(membership(database, guestId)).toEqual({ role: "member", access_class: "member", status: "active" });
+      expect(database.prepare(`SELECT revoked_at IS NOT NULL AS revoked FROM workspace_invitations WHERE email = ?`).get("guest@example.com"))
+        .toEqual({ revoked: 1 });
+      await expect(addAs(database).addMember("guest@example.com", "member"))
+        .rejects.toMatchObject({ status: 409, code: "already_workspace_member" });
+    } finally { database.close(); }
+  });
+
+  it("refuses an ordinary member, and adds nobody", async () => {
+    const database = seeded();
+    try {
+      await expect(addAs(database, "member").addMember("nancy@example.com", "member"))
+        .rejects.toMatchObject({ status: 403, code: "workspace_admin_required" });
+      expect(database.prepare(`SELECT COUNT(*) AS n FROM users WHERE email = ?`).get("nancy@example.com")).toEqual({ n: 0 });
+    } finally { database.close(); }
+  });
+
+  it("keeps the membership when the email cannot be sent, and says so", async () => {
+    const database = seeded();
+    emailSend = vi.fn(async () => { throw Object.assign(new Error("domain not verified"), { code: "E_SENDER_NOT_VERIFIED" }); });
+    try {
+      const added = await addAs(database).addMember("nancy@example.com", "member");
+      expect(added.emailDelivery).toBe("failed");
+      expect(membership(database, added.member.userId)).toEqual({ role: "member", access_class: "member", status: "active" });
+    } finally { database.close(); }
+  });
 
   it("lists only addresses still waiting to accept, for an ordinary member", async () => {
     const database = seeded();

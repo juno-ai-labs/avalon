@@ -106,29 +106,19 @@ describe('organization and invitation API routing', () => {
     );
   });
 
-  it('sends the selected administrator role to the authenticated invitation endpoint', async () => {
+  it('sends the selected administrator role when adding a member', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json({
-      invitation: {
-        id: invitationId,
-        email: 'admin@example.com',
-        role: 'admin',
-        status: 'pending',
-        invitedByName: 'Owner',
-        expiresAt: '2026-08-08T01:00:00.000Z',
-        acceptedAt: null,
-        createdAt: timestamp,
-      },
-      inviteUrl: 'https://rallywith.ai/invite/#region=enterprise&token=invite-token',
+      member: { userId: invitationId, email: 'admin@example.com', role: 'admin' },
       emailDelivery: 'sent',
     }, { status: 201 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const api = new RallyApi('https://enterprise.api.rallywith.ai', session);
-    await expect(api.createWorkspaceInvitation('admin@example.com', 'admin'))
-      .resolves.toMatchObject({ invitation: { role: 'admin' } });
+    await expect(api.addWorkspaceMember('admin@example.com', 'admin'))
+      .resolves.toEqual({ member: { userId: invitationId, email: 'admin@example.com', role: 'admin' }, emailDelivery: 'sent' });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://enterprise.api.rallywith.ai/workspace/invitations',
+      'https://enterprise.api.rallywith.ai/workspace/members',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ email: 'admin@example.com', role: 'admin' }),

@@ -33,7 +33,7 @@ function AddMembersForm({ api, onClose }: { api: InviteMembersApi | null; onClos
     try {
       const { failures } = await inviteMembers(api, addresses, () => undefined);
       invite.replace(failures);
-      if (failures.length) throw new Error(`Could not invite: ${failures.join(', ')}. Check the addresses and retry.`);
+      if (failures.length) throw new Error(`Could not add: ${failures.join(', ')}. Check the addresses and retry.`);
       onClose();
     } catch (caught) {
       setError(caught instanceof Error ? caught : new Error('Something went wrong. Try again.'));
@@ -44,11 +44,11 @@ function AddMembersForm({ api, onClose }: { api: InviteMembersApi | null; onClos
     }
   };
   return <Modal open onOpenChange={(next) => { if (!next && !busy) onClose(); }} title="Add new members"
-    description="Invite teammates by email. Links expire after seven days."
+    description="Add teammates by email. They're members right away, and get an email to sign in."
     footer={<>
       <Button disabled={busy} onClick={onClose}>Cancel</Button>
       <Button className="button-primary" disabled={busy || !api} onClick={() => void send()}>
-        {busy ? 'Inviting…' : count ? `Invite ${count} ${count === 1 ? 'teammate' : 'teammates'}` : 'Invite teammates'}
+        {busy ? 'Adding…' : count ? `Add ${count} ${count === 1 ? 'teammate' : 'teammates'}` : 'Add teammates'}
       </Button>
     </>}>
     <InviteEmailField invite={invite} disabled={busy} />

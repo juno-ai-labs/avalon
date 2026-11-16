@@ -15,6 +15,7 @@ import {
   type WorkspaceInvitation,
   type WorkspaceInvitationPreview,
   type WorkspaceInvitationRole,
+  type AddWorkspaceMemberResponse,
   type MemoryForgetResponse,
   type MemoryReview,
 } from "@rally/contracts";
@@ -25,12 +26,11 @@ import { newId, nowIso } from "@rally/db";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { workspaceSlug } from "../lib/workspace-slug";
-import { randomToken, sha256 } from "../lib/crypto";
+import { sha256 } from "../lib/crypto";
 import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import {
-  sendWorkspaceInvitationEmail,
   sendWorkspaceInvitationResolutionEmail,
-  type InvitationEmailDelivery,
+  sendWorkspaceMemberAddedEmail,
 } from "./invitation-email-service";
 import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-delivery";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
@@ -972,84 +972,102 @@ export class WorkspaceService {
     return (result.results ?? []).map(mapInvitation);
   }
 
-  async createInvitation(
-    email: string,
-    role: WorkspaceInvitationRole,
-  ): Promise<{ invitation: WorkspaceInvitation; inviteUrl: string; emailDelivery: InvitationEmailDelivery }> {
+  /**
+   * Add someone to this Organization by address, as a member at once. Someone
+   * with no account yet gets one now, shaped as their first email sign-in would
+   * make it (`resolveVerifiedEmailIdentity`): the address bound as verified and
+   * as their email login, so signing in with it by email, Google or Apple
+   * reaches this account. Proving the address is what binds it, as accepting an
+   * invitation sent to it did. A guest becomes a member; an owner or
+   * administrator keeps their role. Any invitation still waiting for the
+   * address is revoked: there is nothing left for it to do. The email tells
+   * them; a failed send leaves the membership in place and says so.
+   */
+  async addMember(email: string, role: WorkspaceInvitationRole): Promise<AddWorkspaceMemberResponse> {
     this.requireAdmin();
     const normalizedEmail = email.trim().toLowerCase();
-    const existingMember = await this.env.DB.prepare(
-      `SELECT 1 AS present FROM workspace_members m JOIN users u ON u.id = m.user_id
-       WHERE m.workspace_id = ? AND u.email = ? COLLATE NOCASE AND m.status = 'active' LIMIT 1`,
-    )
-      .bind(this.auth.workspaceId, normalizedEmail)
-      .first<{ present: number }>();
-    if (existingMember) {
+    const workspace = await this.env.DB.prepare(
+      `SELECT w.name, w.region, inviter.name AS inviter_name FROM workspaces w, users inviter
+        WHERE w.id = ? AND w.abandoned_at IS NULL AND inviter.id = ?`,
+    ).bind(this.auth.workspaceId, this.auth.userId).first<{ name: string; region: Region; inviter_name: string }>();
+    if (!workspace) throw new ApiError(404, "workspace_not_found", "This Organization no longer exists");
+    const held = () => this.env.DB.prepare(
+      `SELECT u.id, m.status, m.access_class FROM users u
+         LEFT JOIN workspace_members m ON m.user_id = u.id AND m.workspace_id = ?
+        WHERE u.id = COALESCE((SELECT user_id FROM user_verified_emails WHERE email = ? COLLATE NOCASE),
+                              (SELECT id FROM users WHERE email = ? COLLATE NOCASE))`,
+    ).bind(this.auth.workspaceId, normalizedEmail, normalizedEmail)
+      .first<{ id: string; status: string | null; access_class: string | null }>();
+    let person = await held();
+    if (person?.status === "active" && person.access_class === "member") {
       throw new ApiError(409, "already_workspace_member", "That person is already a member of this workspace");
     }
-
-    const token = randomToken(32);
-    const id = newId();
-    const createdAt = nowIso();
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
-    await this.env.DB.batch([
+    if (!person) {
+      const id = newId();
+      const at = nowIso();
+      // Converges with a sign-in racing it through the unique email, as two first sign-ins do.
+      await this.env.DB.batch([
+        this.env.DB.prepare(`INSERT INTO users (id, email, name, platform_user_id, onboarding_eligible, created_at, updated_at)
+          SELECT ?, ?, ?, ?, 0, ?, ? WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = ? COLLATE NOCASE)`)
+          .bind(id, normalizedEmail, normalizedEmail, id, at, at, normalizedEmail),
+        this.env.DB.prepare(`INSERT OR IGNORE INTO user_verified_emails (email, user_id, verified_at) SELECT email, id, ? FROM users WHERE id = ?`)
+          .bind(at, id),
+        this.env.DB.prepare(`INSERT OR IGNORE INTO user_login_identities (provider, subject, user_id, verified_at)
+          SELECT 'email', email, user_id, ? FROM user_verified_emails WHERE user_id = ?`).bind(at, id),
+      ]);
+      person = await held();
+      if (!person) throw new ApiError(409, "member_account_unavailable", "Could not make an account for that address");
+    }
+    const at = nowIso();
+    const [added] = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+         SELECT w.id, ?, ?, 'active', ? FROM workspaces w WHERE w.id = ? AND w.abandoned_at IS NULL
+         ON CONFLICT(workspace_id, user_id) DO UPDATE SET
+           access_class = 'member',
+           role = CASE
+             WHEN workspace_members.role = 'owner' THEN 'owner'
+             WHEN workspace_members.role = 'admin' THEN 'admin'
+             ELSE excluded.role
+           END,
+           status = 'active',
+           joined_at = COALESCE(workspace_members.joined_at, excluded.joined_at)`,
+      ).bind(person.id, role, at, this.auth.workspaceId),
       this.env.DB.prepare(
         `UPDATE workspace_invitations SET revoked_at = ?
-         WHERE workspace_id = ? AND email = ? COLLATE NOCASE
-           AND accepted_at IS NULL AND revoked_at IS NULL
-         RETURNING id`,
-      ).bind(createdAt, this.auth.workspaceId, normalizedEmail),
-      this.env.DB.prepare(
-        `INSERT INTO workspace_invitations
-         (id, workspace_id, email, invited_by_user_id, token_hash, role, expires_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(
-        id,
-        this.auth.workspaceId,
-        normalizedEmail,
-        this.auth.userId,
-        await sha256(token),
-        role,
-        expiresAt,
-        createdAt,
-      ),
+          WHERE workspace_id = ? AND email = ? COLLATE NOCASE AND accepted_at IS NULL AND revoked_at IS NULL`,
+      ).bind(at, this.auth.workspaceId, normalizedEmail),
     ]);
-    const row = await loadInvitationById(this.env, id);
-    if (!row) throw new ApiError(500, "invitation_persistence_failed", "Could not create the invitation");
-    const inviteUrl = new URL("/invite/", this.env.PUBLIC_WEB_BASE_URL);
-    inviteUrl.hash = new URLSearchParams({ region: this.env.AVALON_REGION, token }).toString();
-    let emailDelivery: InvitationEmailDelivery;
+    if (Number(added?.meta?.changes ?? 0) === 0) throw new ApiError(404, "workspace_not_found", "This Organization no longer exists");
+    const userId = person.id;
+    // The membership trigger recorded the delivery with the write. Dispatch now so the
+    // Organization object knows them before anyone asks something of them.
+    await dispatchWorkspaceRelationshipChanges(this.env, { workspaceId: this.auth.workspaceId, userId })
+      .catch((error: unknown) => logWarn(this.env, "workspace_relationship_dispatch_failed", {
+        workspace_id: this.auth.workspaceId, user_id: userId,
+        error: diagnosticErrorCode(error, "workspace_relationship_dispatch_failed"),
+      }));
+    try { await publishWorkspaceSync(this.env, this.auth.workspaceId, ["member_directory"], { memberUserIds: [userId] }); }
+    catch (error) {
+      logWarn(this.env, "search_authorization_member_push_failed", { workspace_id: this.auth.workspaceId, user_id: userId,
+        error_code: diagnosticErrorCode(error, "search_authorization_member_push_failed") });
+    }
+    await recordSlackIdentityForMember(this.env, this.auth.workspaceId, { id: userId, email: normalizedEmail });
+    const openUrl = this.env.BROWSER_APP_ORIGIN
+      ? new URL(`/app/workspaces/${workspace.region}/${this.auth.workspaceId}`, this.env.BROWSER_APP_ORIGIN).toString()
+      : this.env.PUBLIC_WEB_BASE_URL;
+    let emailDelivery: AddWorkspaceMemberResponse["emailDelivery"];
     try {
-      emailDelivery = await sendWorkspaceInvitationEmail(this.env, {
-        id: row.id,
-        recipientEmail: row.email,
-        workspaceName: row.workspace_name,
-        inviterName: row.invited_by_name,
-        role: row.role,
-        region: row.workspace_region,
-        expiresAt: row.expires_at,
-        inviteUrl: inviteUrl.toString(),
+      emailDelivery = await sendWorkspaceMemberAddedEmail(this.env, {
+        workspaceId: this.auth.workspaceId, userId, recipientEmail: normalizedEmail, workspaceName: workspace.name,
+        inviterName: workspace.inviter_name, role, region: workspace.region, openUrl,
       });
     } catch (error) {
-      await this.env.DB.prepare(
-        `UPDATE workspace_invitations SET revoked_at = ?
-         WHERE id = ? AND workspace_id = ? AND accepted_at IS NULL AND revoked_at IS NULL`,
-      ).bind(nowIso(), row.id, this.auth.workspaceId).run();
-      await emitInvitationTerminal(this.env, row, {
-        userId: this.auth.userId,
-        action: "created",
-        deliveryResult: "failed",
-        workspaceBound: true,
-      }).catch(() => undefined);
-      throw error;
+      emailDelivery = "failed";
+      logWarn(this.env, "workspace_member_added_email_failed", { workspace_id: this.auth.workspaceId, user_id: userId,
+        error: diagnosticErrorCode(error, "workspace_member_added_email_failed") });
     }
-    await emitInvitationTerminal(this.env, row, {
-      userId: this.auth.userId,
-      action: "created",
-      deliveryResult: emailDelivery === "sent" ? "success" : "not_applicable",
-      workspaceBound: true,
-    }).catch(() => undefined);
-    return { invitation: mapInvitation(row), inviteUrl: inviteUrl.toString(), emailDelivery };
+    return { member: { userId, email: normalizedEmail, role }, emailDelivery };
   }
 
   async revokeInvitation(id: string): Promise<void> {

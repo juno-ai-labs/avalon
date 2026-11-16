@@ -8,17 +8,6 @@ const EMAIL_ERRORS = {
   failed: { code: "invitation_email_failed", message: "The invitation email could not be sent" },
 };
 
-export interface WorkspaceInvitationEmail {
-  id: string;
-  recipientEmail: string;
-  workspaceName: string;
-  inviterName: string;
-  role: "admin" | "member";
-  region: Region;
-  expiresAt: string;
-  inviteUrl: string;
-}
-
 export interface WorkspaceInvitationResolutionEmail {
   id: string;
   outcome: "accepted" | "declined";
@@ -33,45 +22,65 @@ export interface WorkspaceInvitationResolutionEmail {
 
 export type InvitationEmailDelivery = "sent" | "skipped";
 
-export async function sendWorkspaceInvitationEmail(
+/** Someone added to an Organization, who is a member as of this email: nothing to accept. */
+export interface WorkspaceMemberAddedEmail {
+  workspaceId: string;
+  userId: string;
+  recipientEmail: string;
+  workspaceName: string;
+  inviterName: string;
+  role: "admin" | "member";
+  region: Region;
+  openUrl: string;
+}
+
+/**
+ * Tell a person they were added to an Organization. They are a member when
+ * this is sent; the link only opens Rally, where signing in with this address
+ * reaches the account the adding made for them. One email per membership.
+ */
+export async function sendWorkspaceMemberAddedEmail(
   env: Env,
-  invitation: WorkspaceInvitationEmail,
+  added: WorkspaceMemberAddedEmail,
   send?: (message: EmailMessageBuilder) => Promise<EmailSendResult>,
 ): Promise<InvitationEmailDelivery> {
-  const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
-  const expiration = new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "UTC",
-    timeZoneName: "short",
-  }).format(new Date(invitation.expiresAt));
-  const subject = `${singleLine(invitation.inviterName)} invited you to ${singleLine(invitation.workspaceName)} on Rally`;
+  const roleLabel = added.role === "admin" ? "an administrator" : "a member";
+  const subject = `${singleLine(added.inviterName)} added you to ${singleLine(added.workspaceName)} on Rally`;
   const text = [
-    `${invitation.inviterName} invited you to join ${invitation.workspaceName} as ${roleLabel}.`,
+    `${added.inviterName} added you to ${added.workspaceName} as ${roleLabel}.`,
     "",
-    `Accept the invitation: ${invitation.inviteUrl}`,
-    "",
-    `This one-time invitation expires ${expiration}.`,
-    "",
-    "If you were not expecting this invitation, you can ignore this email.",
+    `Open Rally and sign in with ${added.recipientEmail}: ${added.openUrl}`,
   ].join("\n");
-  const html = invitationEmailHtml({
-    ...invitation,
-    roleLabel,
-    expiration,
-  });
-
+  const workspaceName = escapeHtml(added.workspaceName);
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
+  </head>
+  <body style="margin:0;background:#ffffff;color:#141414;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff;padding:40px 16px">
+      <tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;table-layout:fixed;overflow-wrap:anywhere;background:#ffffff;border:1px solid #e5e5e5;border-radius:12px;padding:28px">
+          <tr><td><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="padding-right:10px;vertical-align:middle"><img src="https://rallywith.ai/brand/rally-mark-email.png" width="32" height="32" alt="" style="display:block;border:0"></td><td style="font-size:18px;font-weight:700;color:#141414;vertical-align:middle">Rally</td></tr></table></td></tr>
+          <tr><td><h1 style="margin:18px 0 12px;font-size:28px;line-height:1.2;color:#141414">You're in ${workspaceName}</h1></td></tr>
+          <tr><td style="font-size:16px;line-height:1.6;color:#3d3d3d">${escapeHtml(added.inviterName)} added you to <strong style="color:#141414">${workspaceName}</strong> as ${escapeHtml(roleLabel)}.</td></tr>
+          <tr><td style="padding:28px 0"><a href="${escapeHtml(added.openUrl)}" style="display:inline-block;background:#070707;color:#fcfcfc;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:8px">Open Rally</a></td></tr>
+          <tr><td style="font-size:13px;line-height:1.6;color:#696969">Sign in with ${escapeHtml(added.recipientEmail)}.</td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
   return sendEmail(env, {
-    recipientEmail: invitation.recipientEmail,
+    recipientEmail: added.recipientEmail,
     subject,
     html,
     text,
-    idempotencyKey: `avalon-workspace-invitation/${invitation.id}`,
+    idempotencyKey: `avalon-workspace-member-added/${added.workspaceId}/${added.userId}`,
     category: "workspace_invitation",
-    region: invitation.region,
+    region: added.region,
     sender: "transactional",
     errors: EMAIL_ERRORS,
   }, send);
@@ -124,39 +133,6 @@ export async function sendWorkspaceInvitationResolutionEmail(
   }, send);
 }
 
-
-function invitationEmailHtml(input: WorkspaceInvitationEmail & {
-  roleLabel: string;
-  expiration: string;
-}): string {
-  const workspaceName = escapeHtml(input.workspaceName);
-  const inviterName = escapeHtml(input.inviterName);
-  const inviteUrl = escapeHtml(input.inviteUrl);
-  const roleLabel = escapeHtml(input.roleLabel);
-  const expiration = escapeHtml(input.expiration);
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light">
-    <meta name="supported-color-schemes" content="light">
-  </head>
-  <body style="margin:0;background:#ffffff;color:#141414;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff;padding:40px 16px">
-      <tr><td align="center">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;table-layout:fixed;overflow-wrap:anywhere;background:#ffffff;border:1px solid #e5e5e5;border-radius:12px;padding:28px">
-          <tr><td><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="padding-right:10px;vertical-align:middle"><img src="https://rallywith.ai/brand/rally-mark-email.png" width="32" height="32" alt="" style="display:block;border:0"></td><td style="font-size:18px;font-weight:700;color:#141414;vertical-align:middle">Rally</td></tr></table></td></tr>
-          <tr><td><h1 style="margin:18px 0 12px;font-size:28px;line-height:1.2;color:#141414">Join ${workspaceName}</h1></td></tr>
-          <tr><td style="font-size:16px;line-height:1.6;color:#3d3d3d">${inviterName} invited you to join <strong style="color:#141414">${workspaceName}</strong> as ${roleLabel}.</td></tr>
-          <tr><td style="padding:28px 0"><a href="${inviteUrl}" style="display:inline-block;background:#070707;color:#fcfcfc;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:8px">Accept invitation</a></td></tr>
-          <tr><td style="font-size:13px;line-height:1.6;color:#696969">This one-time invitation expires ${expiration}.</td></tr>
-          <tr><td style="padding-top:24px;font-size:12px;line-height:1.5;color:#696969;border-top:1px solid #e5e5e5">If you were not expecting this invitation, you can ignore this email.</td></tr>
-        </table>
-      </td></tr>
-    </table>
-  </body>
-</html>`;
-}
 
 function invitationResolutionEmailHtml(input: WorkspaceInvitationResolutionEmail & {
   actor: string;

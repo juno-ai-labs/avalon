@@ -80,19 +80,21 @@ one it was. The card opens without waiting and fills the field only while it is
 empty and untouched, so the suggestion never replaces what the person typed or
 a remembered name.
 
-The invite page uses manual email chips separated by spaces, commas or semicolons.
-Invite stays enabled: invalid chips are highlighted, and clicking Invite checks
-every address for `something@something` before sending any invitations.
-Before sending, it reconciles pending invitees (`/workspace/invitees`, which
-lists every pending address, unlike `/workspace/invitations`, which stops at the
-newest 100 of any status) and active members, so retrying a lost response does
-not replace an invitation already sent. Failed addresses stay
-editable. Onboarding has no teammate discovery API.
+The **Add your teammates** page uses manual email chips separated by spaces,
+commas or semicolons. Add stays enabled: invalid chips are highlighted, and
+clicking Add checks every address for `something@something` before adding
+anyone. Each address is added with `POST /workspace/members` and is a member at
+once, with nothing to accept: someone who has never signed in gets their
+account then, and their first sign-in with that address lands in the
+Organization ([`workspace-member-roles.md`](workspace-member-roles.md#how-it-works)).
+Before adding, it reads the active members, so retrying a lost response does
+not add anyone twice. Failed addresses stay editable. Onboarding has no
+teammate discovery API.
 
 The same field, check and send back **Add new member** in the account menu.
 Every member sees it; for anyone but an administrator it is disabled with a
 tooltip saying only administrators can add members, rather than hidden. It closes once every address is
-invited and otherwise stays open holding the addresses that failed.
+added and otherwise stays open holding the addresses that failed.
 
 ## Invariants
 
@@ -172,6 +174,21 @@ inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-r
 Onboarding no longer starts an agent run or a connector authorization.
 
 ## Changelog
+
+### 2026-11-16 — Teammates are added, not invited
+
+**What changed:** The people step and **Add new member** add each address as a
+member at once (`POST /workspace/members`), and say so: "Add your teammates",
+"Add 2 teammates". They no longer send invitations to accept.
+
+**Why:** The owner removed the invitation step. A teammate who had not yet
+accepted had no account, so nothing could be asked of them: a Sidekick set up
+to read two people's mail could not ask the second person, whose request
+should be waiting for them the first time they open Rally.
+
+**What a future change has to respect:** An address someone is added at is
+bound to the account made for it, so whoever proves that address owns the
+account, as accepting an invitation sent there did.
 
 ### 2026-11-16 — Finishing setup keeps the Canvas a link opened
 
