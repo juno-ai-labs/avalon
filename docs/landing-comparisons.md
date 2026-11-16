@@ -157,6 +157,25 @@ section, the footer, and one rival page at 1440px and 390px, and open
 
 ## Changelog
 
+### 2026-11-16: The footer and landing page carry the CASA AL1 validation
+
+**What changed:** The footer's legal row links "ADA CASA AL1 validated" to the
+security page. A `casa-badge` marker draws a hexagon badge, which the security
+page shows in its hero and the landing page shows below its footer. The landing
+page uses a `site-footer-without-casa` marker so the footer link doesn't repeat
+the badge right below it.
+
+**Why:** Rally completed an App Defense Alliance CASA assessment (Tier 2, now
+called AL1) in July 2026, and the site still said Rally claimed no
+certification. The product owner asked for the claim in the footer and for the
+footer link to leave the landing page. The badge is Rally's own design because
+neither ADA nor Google publishes one for AL1.
+
+**Consequences:** The validation renews every year. When it does, update the
+date in `renderCasaBadge`, the security page and the help center's privacy and
+security articles. If Rally moves to a new Google OAuth project, the validation
+does not carry over and the claim must come down.
+
 ### 2026-11-16: The landing page drops its comparison section
 
 **What changed:** The homepage no longer lists rivals. `/compare/` redirects,
