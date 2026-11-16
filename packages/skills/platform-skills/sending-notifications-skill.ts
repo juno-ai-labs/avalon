@@ -9,8 +9,10 @@ people, so send one only when it is worth that.
 
 Send one only when **all three** hold:
 
-- **Something finished.** A new episode is published, a report is ready, a
-  watched value crossed the line someone set, a task they are waiting on is done.
+- **Something finished, or stopped on something only a person can fix.** A new
+  episode is published, a report is ready, a watched value crossed the line
+  someone set, a task they are waiting on is done, or a connection needs
+  signing in again before the next run can work.
 - **Nobody will see it here.** You are running on a schedule or an event, or as
   a background agent, or a person here asked to be told when this finishes and
   may have stepped away. Otherwise the result would wait until someone opens
@@ -23,9 +25,7 @@ it", a run that found nothing new, or an answer to a person who is still in
 the conversation; they read it here. When the run finishes, say what happened in the
 conversation instead.
 
-A **failure** earns a notice only when a person must act on it, such as a
-connection that needs signing in again before the next run can work. A failure
-the next run will retry on its own does not.
+A failure the next run will retry on its own does not earn a notice.
 
 ## 2. Send one notice per outcome
 
