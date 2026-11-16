@@ -17,6 +17,7 @@ import type { ArtifactAudienceControl } from '../components/artifact-card-tools'
 import { editorUserIds } from '../lib/canvas-sharing';
 import { CanvasTemplateStarters } from '../components/canvas-template-picker';
 import { CanvasNoticesJoinBanner, CanvasNoticesMenuSection } from '../components/canvas-notices';
+import { CanvasArtifactsSection } from '../components/canvas-artifacts-menu';
 import { CanvasSidekicksSection, madeSidekicksArchiveCopy } from '../components/canvas-sidekicks-menu';
 import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasCreation, useCanvasList, useCanvasNameSources, type CanvasCreation } from '../lib/canvases';
@@ -315,6 +316,21 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     publishedIds: publishedKey ? publishedKey.split(' ') : [],
     audience: artifactAudience,
   }, [artifactAudience, publishedKey]);
+  // The detail is not pushed, so an artifact the Chat made since it was read
+  // would be missing from the Artifacts section: the cached list draws at once
+  // and a stale one is read again behind it. Not through the query: a failed
+  // refetch sets `canvas.error`, which swaps a Canvas with no list row for the
+  // error pane, and a menu's read must not take down the open Chat. Staleness is
+  // read from the cache now, not the render's snapshot.
+  const refreshArtifacts = (): void => {
+    if (!api || creationBlocked || !canvas.data || canvas.isFetching) return;
+    if (!queryClient.getQueryCache().find({ queryKey: canvasDetailQueryKey(id) })?.isStale()) return;
+    api.getCanvas(id).then(
+      (fresh) => queryClient.setQueryData(canvasDetailQueryKey(id), fresh),
+      // The list already drawn stays; the next opening tries again.
+      () => undefined,
+    );
+  };
   if (leaving) return <OpeningState label="Opening Canvases…" />;
   if (canvas.error && !row && !recoverableDetailFailure) {
     // One in-pane state, never a dialog over it (canvases.md). A malformed id
@@ -380,6 +396,13 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     }}>
       Change appearance
     </TitleMenuItem>
+    <CanvasArtifactsSection
+      artifacts={canvas.data?.artifacts ?? []}
+      onOpen={(artifact) => {
+        // Replace the entry, as Open artifact does, so Back leaves the Canvas.
+        void navigate(location.pathname, { replace: true, state: openResourceState(id, artifact.resourceId, { expanded: false }) });
+      }}
+    />
     <CanvasSidekicksSection
       onOpen={(sidekick) => {
         if (!openPanel) { void navigate(`/sidekicks/${encodeURIComponent(sidekick.id)}`); return; }
@@ -419,6 +442,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
     label: naming ? 'Canvas menu: Rally is choosing a name' : `Canvas menu: ${title}`,
     menu: menuItems(panelOpen, openPanel),
+    onMenuOpen: refreshArtifacts,
     iconAction: creationBlocked ? undefined : appearancePicker,
   };
   const header = (presentUserIds: readonly string[], panelOpen: boolean, openPanel?: ConversationHeaderContext['openPanel']): React.JSX.Element => {
