@@ -1,8 +1,10 @@
-import { asWorkspaceId } from "@rally/contracts";
-import type {
-  SharedCanvas,
-  SharedCanvasesRefreshMessage,
-  WorkspaceSharedCanvasesEvent,
+import { asUserId, asWorkspaceId, type WorkspaceId } from "@rally/contracts";
+import {
+  GuestSharedCanvasSchema,
+  type SharedCanvas,
+  type SharedCanvasesRefreshMessage,
+  type WorkspaceSharedCanvasesEvent,
+  WorkspaceSharedCanvasesEventSchema,
 } from "@rally/contracts/canvas-share-federation";
 
 import { workspaceDOName } from "../durable-objects/names";
@@ -57,37 +59,46 @@ async function organizationObject(env: Env, workspaceId: string) {
 }
 
 /**
- * Rebuild this person's list in each target Organization and relay it there.
- * The Canvases come from every Organization they are a guest of, each asked
- * once whatever the number of targets. An Organization that cannot answer is
- * left out and named in the log; a retired one answers nothing.
+ * Rebuild this person's list in each target Organization where they have a
+ * socket, and relay it there. The Canvases come from every Organization they
+ * are a guest of, each asked once whatever the number of targets.
+ *
+ * An Organization that cannot answer is named in the frame's `unavailable`,
+ * so the client keeps what it last showed from it while the rest of the list,
+ * an unshare elsewhere included, still lands. The build then throws, so the
+ * activity queue retries it until a complete list follows or it dead-letters.
+ * A failed relay throws the same way. A retired Organization answers nothing.
  */
 async function rebuild(env: Env, userId: string, organizations: readonly PersonOrganization[], targets: readonly string[]): Promise<void> {
-  if (targets.length === 0) return;
   // Each target's ticket before anything is read, so a build that reads later
-  // always relays after one that read earlier (`relayTicket`).
+  // always relays after one that read earlier (`relayTicket`). A target with
+  // no socket for the person answers `null` and is skipped.
   const tickets = await Promise.allSettled(targets.map(async (target) =>
     (await organizationObject(env, target)).relayTicket({ workspaceId: target, userId })));
+  const live: { target: string; ticket: PromiseSettledResult<number> }[] = [];
+  tickets.forEach((ticket, index) => {
+    if (ticket.status === "rejected" ? isRetirementRefusal(ticket.reason) : ticket.value === null) return;
+    live.push({ target: targets[index]!, ticket: ticket as PromiseSettledResult<number> });
+  });
+  if (live.length === 0) return;
   const builtAt = Date.now();
   const enabled = await readSharedCanvasesEnabled(env, userId);
   const origins = enabled ? organizations.filter((organization) => organization.guest) : [];
   const answered = await Promise.allSettled(origins.map(async (origin) =>
-    (await organizationObject(env, origin.id)).guestSharedCanvases({ workspaceId: origin.id, userId })));
-  // A list missing an Organization that failed to answer would replace a
-  // complete one on screen: retry the whole refresh instead (the activity
-  // queue retries, then dead-letters). A retired Organization answers nothing.
-  const unread = answered.flatMap((result, index) =>
-    result.status === "rejected" && !isRetirementRefusal(result.reason) ? [{ origin: origins[index]!, reason: result.reason }] : []);
-  for (const { origin, reason } of unread) {
-    logWarn(env, "shared_canvases_origin_unread", {
-      workspace_id: origin.id, user_id: userId, code: diagnosticErrorCode(reason, "shared_canvases_origin_unread"),
-    });
-  }
-  if (unread.length > 0) throw new Error("shared_canvases_origin_unread");
+    GuestSharedCanvasSchema.array().parse(
+      await (await organizationObject(env, origin.id)).guestSharedCanvases({ workspaceId: origin.id, userId }))));
   const shared = new Map<string, SharedCanvas[]>();
+  const unavailable: WorkspaceId[] = [];
   answered.forEach((result, index) => {
     const origin = origins[index]!;
-    if (result.status === "rejected") return;
+    if (result.status === "rejected") {
+      if (isRetirementRefusal(result.reason)) return;
+      unavailable.push(asWorkspaceId(origin.id));
+      logWarn(env, "shared_canvases_origin_unread", {
+        workspace_id: origin.id, user_id: userId, code: diagnosticErrorCode(result.reason, "shared_canvases_origin_unread"),
+      });
+      return;
+    }
     shared.set(origin.id, result.value.map((canvas): SharedCanvas => ({
       organization: { id: asWorkspaceId(origin.id), name: origin.name, region: env.AVALON_REGION },
       canvas: {
@@ -96,42 +107,50 @@ async function rebuild(env: Env, userId: string, organizations: readonly PersonO
       },
     })));
   });
-  const relayed = await Promise.allSettled(targets.map(async (target, index) => {
-    const ticket = tickets[index]!;
+  const relayed = await Promise.allSettled(live.map(async ({ target, ticket }) => {
     if (ticket.status === "rejected") throw ticket.reason;
     const items = [...shared.entries()].filter(([origin]) => origin !== target).flatMap(([, canvases]) => canvases)
       .sort((a, b) => b.canvas.updatedAt.localeCompare(a.canvas.updatedAt)).slice(0, SIDEBAR_LIST_LIMIT);
-    const frame = JSON.stringify({
+    const frame = WorkspaceSharedCanvasesEventSchema.parse({
       type: "workspace_shared_canvases", occurredAt: new Date(builtAt).toISOString(), enabled, items,
+      unavailable: unavailable.filter((origin) => origin !== target),
     } satisfies WorkspaceSharedCanvasesEvent);
-    await (await organizationObject(env, target)).relayToPerson({ workspaceId: target, userId, ticket: ticket.value, frame });
+    await (await organizationObject(env, target)).relayToPerson({
+      workspaceId: target, userId, ticket: ticket.value, frame: JSON.stringify(frame),
+    });
   }));
+  let relayFailed = false;
   relayed.forEach((result, index) => {
     if (result.status === "rejected" && !isRetirementRefusal(result.reason)) {
+      relayFailed = true;
       logWarn(env, "shared_canvases_relay_failed", {
-        workspace_id: targets[index], user_id: userId, code: diagnosticErrorCode(result.reason, "shared_canvases_relay_failed"),
+        workspace_id: live[index]!.target, user_id: userId, code: diagnosticErrorCode(result.reason, "shared_canvases_relay_failed"),
       });
     }
   });
+  if (unavailable.length > 0) throw new Error("shared_canvases_origin_unread");
+  if (relayFailed) throw new Error("shared_canvases_relay_failed");
 }
 
 /**
- * One `shared_canvases_refresh`: after a subscribe, the list in that
- * Organization; after a change in an Organization, the lists in every other
- * one the person is in. A failed origin or relay is logged and skipped rather
- * than retried: the next change or subscribe rebuilds from the Canvases
- * themselves, and nothing here can drift.
+ * One `shared_canvases_refresh`: after a subscribe (`this`), the list in that
+ * Organization; after a change in an Organization (`others`), the lists in
+ * every other one the person is in; after their switch changed (`all`), every
+ * list. Throws when any part failed, for the queue to retry: every attempt
+ * takes fresh tickets, so a retry never lands an older list.
  */
 export async function refreshSharedCanvases(env: Env, message: SharedCanvasesRefreshMessage): Promise<void> {
   const organizations = await personOrganizations(env, message.userId);
-  const targets = message.scope === "this"
-    ? organizations.filter((organization) => organization.id === message.workspaceId).map((organization) => organization.id)
-    : organizations.filter((organization) => organization.id !== message.workspaceId).map((organization) => organization.id);
+  const targets = organizations.map((organization) => organization.id).filter((id) =>
+    message.scope === "all" || (message.scope === "this" ? id === message.workspaceId : id !== message.workspaceId));
+  if (targets.length === 0) return;
   await rebuild(env, message.userId, organizations, targets);
 }
 
-/** After the person's switch changed: every Organization they are in rebuilds. */
-export async function refreshSharedCanvasesEverywhere(env: Env, userId: string): Promise<void> {
-  const organizations = await personOrganizations(env, userId);
-  await rebuild(env, userId, organizations, organizations.map((organization) => organization.id));
+/** Save the person's switch, then queue a rebuild of every list they have, so the queue's retry covers it. */
+export async function setSharedCanvasesEnabled(env: Env, workspaceId: string, userId: string, enabled: boolean): Promise<void> {
+  await writeSharedCanvasesEnabled(env, userId, enabled);
+  await env.ACTIVITY_QUEUE.send({
+    kind: "shared_canvases_refresh", region: env.AVALON_REGION, workspaceId: asWorkspaceId(workspaceId), userId: asUserId(userId), scope: "all",
+  } satisfies SharedCanvasesRefreshMessage);
 }

@@ -279,9 +279,9 @@ function Dashboard({ rows, elsewhere, openElsewhere: openOther, loading, failed,
         const { icon: Icon, ink, tint, color } = canvasMark(row.id, row.appearance);
         const style = { '--card-hue': `var(--av-sys-color-project-${color})`, '--card-tint': tint, '--card-ink': ink } as React.CSSProperties;
         const from = organization ? `Shared from ${organization.name}` : undefined;
-        return <button aria-description={from} className="mobile-card" key={`${organization?.id ?? ''}:${row.id}`} onClick={() => organization ? openOther({ canvas: row, organization }) : open(row.id)} style={style} title={from}>
+        return <button className="mobile-card" key={`${organization?.id ?? ''}:${row.id}`} onClick={() => organization ? openOther({ canvas: row, organization }) : open(row.id)} style={style}>
           {organization && <span aria-hidden="true" className="mobile-card-organization organization-badge-initial">{organization.name.slice(0, 1).toLocaleUpperCase()}</span>}
-          <div className="mobile-card-art" aria-hidden="true"><Icon size={index === 0 ? 50 : 32} strokeWidth={1.5} /></div><h3>{row.title || 'Untitled canvas'}</h3><p>Open canvas <ArrowUpRight size={14} aria-hidden="true" /></p></button>;
+          <div className="mobile-card-art" aria-hidden="true"><Icon size={index === 0 ? 50 : 32} strokeWidth={1.5} /></div><h3>{row.title || 'Untitled canvas'}</h3><p>{from ?? 'Open canvas'} <ArrowUpRight size={14} aria-hidden="true" /></p></button>;
       })}</div>
       {!filtered.length && <div className="mobile-empty"><Sparkles size={32} /><h2>{query ? 'No canvases found' : 'Make room for an idea.'}</h2><p>{query ? 'Try another name, or load more canvases.' : 'Create a plan, a little tool, or something just for you.'}</p>{!query && <button className="mobile-primary" onClick={create}><Plus size={18} /> Create a canvas</button>}</div>}
       {hasMore && <button className="mobile-load" onClick={more}>Load more canvases</button>}

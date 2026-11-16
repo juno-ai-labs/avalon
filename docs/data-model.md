@@ -295,6 +295,13 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   what each role means, the one write that assigns one, why a guest has none,
   and the guard against demoting a workspace's last administrator.
 
+- `shared_canvases_settings` (migration 0135) holds one row per person who
+  changed **Show shared Canvases in every Organization**: `user_id`, `enabled`
+  and `updated_at`, with no row meaning on. It is keyed by person, not
+  workspace, because the switch spans every Organization the person is in
+  within the region. It stores nothing about a Canvas; see
+  [`canvas-share-federation.md`](canvas-share-federation.md).
+
 - WorkspaceDO's `scope_grant_directory` is a typed-RPC-only candidate projection
   keyed by parent, user and exact scope. It retains generation/version tombstones
   and filters by membership incarnation. It never replaces canonical grant

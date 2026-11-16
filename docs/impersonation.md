@@ -96,7 +96,13 @@ exactly what that person can. What sets it apart:
 - `refuseSupportSession` turns it away from `/auth/workspaces`,
   `/auth/workspace/select`, `/onboarding/*` and `/push-devices/*`. Those mint
   another credential or bind a device to the person, which would outlive the
-  grant or reach beyond the Organization.
+  grant or reach beyond the Organization. It also turns it away from
+  `/workspace/me/device-timezone`, `/workspace/me/connected-apps` and
+  `/workspace/me/shared-canvases`, which change the person's own account or
+  span their other Organizations.
+- A support session's workspace socket gets no list of the person's Canvases
+  from their other Organizations: it queues no refresh on subscribe and the
+  relay skips it ([`canvas-share-federation.md`](canvas-share-federation.md)).
 - Revoking the grant, and a Juno Labs relationship delivery that ends a staff
   membership (for that membership's incarnation only), call
   `revokeSupportSessions`. It expires the sessions at once and publishes

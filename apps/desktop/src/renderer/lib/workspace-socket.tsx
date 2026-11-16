@@ -1,6 +1,6 @@
 import { WorkspaceConversationViewEventSchema, type WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
-import { WorkspaceSharedCanvasesEventSchema } from '@rally/contracts/canvas-share-federation';
-import { SHARED_CANVASES_QUERY_KEY, SHARED_CANVASES_SETTING_QUERY_KEY } from './shared-canvases';
+import { type WorkspaceSharedCanvasesEvent, WorkspaceSharedCanvasesEventSchema } from '@rally/contracts/canvas-share-federation';
+import { applySharedCanvasesEvent, SHARED_CANVASES_QUERY_KEY, SHARED_CANVASES_SETTING_QUERY_KEY } from './shared-canvases';
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -754,8 +754,10 @@ export function WorkspaceSocketProvider({
           }
           const sharedCanvases = safeParseSocketEvent(WorkspaceSharedCanvasesEventSchema, decoded);
           if (sharedCanvases.success) {
-            // Built by the server from each Canvas's own Organization; it replaces the last one whole.
-            queryClient.setQueryData(SHARED_CANVASES_QUERY_KEY, sharedCanvases.data);
+            // Built by the server from each Canvas's own Organization; it replaces the last one,
+            // keeping only what an Organization that could not answer last showed.
+            queryClient.setQueryData<WorkspaceSharedCanvasesEvent>(SHARED_CANVASES_QUERY_KEY,
+              (previous) => applySharedCanvasesEvent(previous, sharedCanvases.data));
             // The switch, as the server last applied it: another device may have changed it.
             queryClient.setQueryData(SHARED_CANVASES_SETTING_QUERY_KEY, { enabled: sharedCanvases.data.enabled });
             return;

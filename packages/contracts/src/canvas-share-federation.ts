@@ -13,17 +13,18 @@ import { WorkstreamAppearanceSchema } from "./workstream-appearance";
  */
 
 /**
- * The interactive-queue message that rebuilds one person's shared-Canvas
- * lists. `others`: something changed for them in `workspaceId` (a share, an
- * unshare, a rename, their relationship), so every other Organization they are
- * in rebuilds. `this`: their socket in `workspaceId` just subscribed.
+ * The activity-queue message that rebuilds one person's shared-Canvas lists.
+ * `others`: something changed for them in `workspaceId` (a share, an unshare,
+ * a rename, their relationship), so every other Organization they are in
+ * rebuilds. `this`: their socket in `workspaceId` just subscribed. `all`: they
+ * changed their switch, so every Organization they are in rebuilds.
  */
 export const SharedCanvasesRefreshMessageSchema = z.strictObject({
   kind: z.literal("shared_canvases_refresh"),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
   userId: UserIdSchema,
-  scope: z.enum(["others", "this"]),
+  scope: z.enum(["others", "this", "all"]),
 });
 export type SharedCanvasesRefreshMessage = z.infer<typeof SharedCanvasesRefreshMessageSchema>;
 
@@ -52,13 +53,16 @@ export type SharedCanvas = z.infer<typeof SharedCanvasSchema>;
  * The workspace socket's push of a person's shared Canvases from their other
  * Organizations: after every subscribe, and whenever one of those Canvases or
  * their setting changes. Its own event type, which a released client ignores.
- * `items` is empty while `enabled` is off.
+ * `items` is empty while `enabled` is off. `unavailable` names the
+ * Organizations that could not answer for this build: the client keeps what it
+ * last showed from them, and a complete build follows.
  */
 export const WorkspaceSharedCanvasesEventSchema = z.strictObject({
   type: z.literal("workspace_shared_canvases"),
   occurredAt: z.string().datetime(),
   enabled: z.boolean(),
   items: z.array(SharedCanvasSchema).max(250),
+  unavailable: z.array(WorkspaceIdSchema),
 });
 export type WorkspaceSharedCanvasesEvent = z.infer<typeof WorkspaceSharedCanvasesEventSchema>;
 

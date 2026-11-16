@@ -236,7 +236,8 @@ async function consumeOne(message: Message<unknown>, env: Env,
       logWarn(env, "shared_canvases_refresh_retry", { region: env.AVALON_REGION, workspace_id: sharedCanvases.data.workspaceId,
         user_id: sharedCanvases.data.userId, scope: sharedCanvases.data.scope, queue_attempts: message.attempts,
         error_code: diagnosticErrorCode(error, "shared_canvases_refresh_failed") });
-      message.retry();
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
     return;
   }

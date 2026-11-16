@@ -19,7 +19,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/CanvasWebView.tsx` | Application WebView and isolated first-party reactive artifact WebViews. |
 | `apps/mobile/src/Dashboard.tsx` | Home's dashboard, drawn natively from the directory (the saved copy until Home answers) over Home's page. |
 | `apps/mobile/src/dashboard-visibility.ts` | When the native dashboard covers Home's page. |
-| `apps/mobile/src/directory.ts` | Compares Home snapshots on the fields the shell shows, so `updatedAt` ticks and Home's own navigation do not re-render every tab. |
+| `apps/mobile/src/directory.ts` | Compares Home snapshots on the fields the shell shows, so Home's own navigation does not re-render every tab, nor do `updatedAt` ticks while no Canvas from another Organization is listed. With one listed, the dashboard sorts both by date, so the dates count. |
 | `apps/mobile/src/artifact-access.ts` | The one data request the native shell makes itself: fresh access to a pinned artifact on the shared session cookie, so renewal never waits for Home. |
 | `apps/mobile/src/EdgePull.tsx`, `edge-swipe.ts` | iOS pull from the leading edge that drags the focused screen's sidebar open. |
 | `apps/mobile/src/FloatingHeader.tsx` | The sidebar and chat buttons drawn over a native artifact in place of the native header, in the artifact's tone. |
@@ -63,8 +63,10 @@ in the snapshot's own `sharedElsewhere` list, each with its Organization, never
 in `canvases`: that list feeds tabs, pins and the sidebar, which are this
 Organization's. The native dashboard places them among the Organization's own
 by `updatedAt`, draws the Organization's initial in a square on the card's upper
-right, and names it in the card's label ("Open Partner roadmap, Shared from
-Acme"), since a touch screen has no hover. A tap sends Home `open-elsewhere`
+right, and writes "Shared from Acme" on the card in place of its "Open canvas"
+footer, since a touch screen has no hover and two Organizations can share an
+initial. The card's label says the same ("Open Partner roadmap, Shared from
+Acme"). The browser preview's card does the same. A tap sends Home `open-elsewhere`
 (region, Organization, Canvas); Home loads that Canvas's canonical page with
 `mobile=1` (and the preview's `mobilePreviewOrigin`), which opens it in its
 Organization, as a notification's link from another Organization does. A shell

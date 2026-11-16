@@ -4638,6 +4638,17 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
   }
 }
 
+/** The person a shared-Canvas build or relay is for (`relayTicket`, `relayToPerson`, `guestSharedCanvases`). */
+const SharedCanvasesPersonSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema });
+
+/**
+ * Whether a socket gets a person's shared-Canvas frame: theirs, subscribed,
+ * and never a support session's, whose grant covers only this Organization.
+ */
+function relayAdmits(attachment: WorkspaceSocketAttachment | null, userId: string): attachment is WorkspaceSocketAttachment {
+  return attachment?.subscribed === true && attachment.userId === userId && !attachment.impersonatorUserId;
+}
+
 function contributesPresence(
   attachment: WorkspaceSocketAttachment | null,
 ): attachment is WorkspaceSocketAttachment & {
@@ -5575,8 +5586,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * this Organization, and only the Canvases they were explicitly added to.
    * Anyone else gets none, decided here every time a list is built.
    */
-  async guestSharedCanvases(input: { workspaceId: string; userId: string }) {
+  async guestSharedCanvases(rawInput: { workspaceId: string; userId: string }) {
     await this.initialized;
+    const input = parseRpcInput(SharedCanvasesPersonSchema, rawInput, "guest_shared_canvases");
     this.assertWorkspace(input.workspaceId);
     const relationship = await this.readRelationship(input.workspaceId, input.userId);
     if (relationship?.accessClass !== "guest" || relationship.status !== "active") return [];
@@ -5587,10 +5599,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * A ticket for a frame about to be built for one person here, taken before
    * the build reads anything. Tickets are strictly increasing per person, so
    * two builds are always ordered, even ones started in the same millisecond.
+   * `null` when the person has no socket here to send it to: a socket that
+   * subscribes later asks for its own build.
    */
-  async relayTicket(input: { workspaceId: string; userId: string }): Promise<number> {
+  async relayTicket(rawInput: { workspaceId: string; userId: string }): Promise<number | null> {
     await this.initialized;
+    const input = parseRpcInput(SharedCanvasesPersonSchema, rawInput, "relay_ticket");
     this.assertWorkspace(input.workspaceId);
+    if (!this.state.getWebSockets().some((socket) => relayAdmits(readAttachment(socket), input.userId))) return null;
     const ticket = Math.max(Date.now(), (this.relayTicketsIssued.get(input.userId) ?? 0) + 1);
     this.relayTicketsIssued.set(input.userId, ticket);
     return ticket;
@@ -5604,12 +5620,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * it holds across hibernation. A support session's sockets never get it:
    * the frame spans Organizations its grant does not cover.
    */
-  async relayToPerson(input: { workspaceId: string; userId: string; ticket: number; frame: string }): Promise<void> {
+  async relayToPerson(rawInput: { workspaceId: string; userId: string; ticket: number; frame: string }): Promise<void> {
     await this.initialized;
+    const input = parseRpcInput(SharedCanvasesPersonSchema.extend({ ticket: z.number().int().nonnegative(), frame: z.string() }),
+      rawInput, "relay_to_person");
     this.assertWorkspace(input.workspaceId);
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
-      if (attachment?.subscribed !== true || attachment.userId !== input.userId || attachment.impersonatorUserId) continue;
+      if (!relayAdmits(attachment, input.userId)) continue;
       if ((attachment.sharedCanvasesTicket ?? -1) >= input.ticket) continue;
       socket.serializeAttachment({ ...attachment, sharedCanvasesTicket: input.ticket });
       sendSidebarListFrame(socket, input.frame);
