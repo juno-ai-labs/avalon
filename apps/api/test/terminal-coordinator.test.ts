@@ -1363,6 +1363,21 @@ describe("Terminal sandbox coordinator", () => {
     expect(slept).toEqual([250, 250]);
   });
 
+  it("answers cancelled, not sandbox_busy, when the call is cancelled while it waits", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const sibling = "00000000-0000-4000-8000-0000000000c5";
+    seedWorkstreamRun(objectStore, { id: sibling, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    const holder = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await holder.acquire(context());
+    const cancel = new AbortController();
+    const waiting = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, {
+      now: clock.now, sleep: async () => { cancel.abort(); },
+    });
+    await expect(waiting.acquire({ ...context(), harnessRunId: sibling, toolCallId: "sibling-call", signal: cancel.signal }))
+      .rejects.toMatchObject({ code: "cancelled" });
+  });
+
   it("lets a read pass over a sibling's import in flight but not one left over", async () => {
     const { objectStore, env, provider, clock } = fixture();
     const sibling = "00000000-0000-4000-8000-0000000000c3";
