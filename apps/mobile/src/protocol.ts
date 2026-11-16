@@ -69,6 +69,11 @@ export type SharedElsewhereSummary = z.infer<typeof SharedElsewhereSummarySchema
 export const MOBILE_SETTINGS_SECTIONS = ['account', 'preferences', 'memories', 'notifications', 'workspace', 'members', 'billing', 'internet-access', 'connections'] as const;
 export const MobileSettingsSectionSchema = z.enum(MOBILE_SETTINGS_SECTIONS);
 export type MobileSettingsSection = z.infer<typeof MobileSettingsSectionSchema>;
+/** Each page's name, for the shell's row and Home's title alike. */
+export const MOBILE_SETTINGS_TITLES: Record<MobileSettingsSection, string> = {
+  account: 'Profile', preferences: 'Preferences', memories: 'Memories', notifications: 'Notifications',
+  workspace: 'Organization', members: 'Members', billing: 'Billing', 'internet-access': 'Security', connections: 'Connections',
+};
 
 export const MobileSnapshotSchema = z.object({
   userId: z.string(),
@@ -92,8 +97,12 @@ export const MobileSnapshotSchema = z.object({
   artifactPicker: z.boolean(),
   inlineChat: z.boolean().optional(),
   /** The settings pages this person may open through `settings`. An older
-   * host omits it and can open none, so the shell offers none. */
-  settingsSections: z.array(MobileSettingsSectionSchema).optional(),
+   * host omits it and can open none, so the shell offers none. It stays open
+   * to any string: a newer host's section would otherwise fail an older
+   * shell's whole snapshot. The shell keeps the sections it knows. */
+  settingsSections: z.array(z.string())
+    .transform((sections) => sections.filter((section): section is MobileSettingsSection => MobileSettingsSectionSchema.safeParse(section).success))
+    .optional(),
 });
 export type MobileSnapshot = z.infer<typeof MobileSnapshotSchema>;
 

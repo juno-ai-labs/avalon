@@ -39,10 +39,9 @@ type RowProps = {
   navigates?: boolean;
   destructive?: boolean;
   disabled?: boolean;
-  accessibilityHint?: string;
 };
 
-export function SettingsRow({ label, icon: Icon, value, detail, onPress, navigates = false, destructive = false, disabled = false, accessibilityHint }: RowProps) {
+export function SettingsRow({ label, icon: Icon, value, detail, onPress, navigates = false, destructive = false, disabled = false }: RowProps) {
   const { colors } = useTheme();
   const ink = destructive ? colors.error : colors.text;
   const content = <>
@@ -55,7 +54,7 @@ export function SettingsRow({ label, icon: Icon, value, detail, onPress, navigat
     {navigates && <ChevronRight size={18} color={colors.muted} />}
   </>;
   if (!onPress) return <View accessible accessibilityLabel={value ? `${label}, ${value}` : label} style={styles.row}>{content}</View>;
-  return <Pressable accessibilityRole="button" accessibilityLabel={value ? `${label}, ${value}` : label} accessibilityHint={accessibilityHint}
+  return <Pressable accessibilityRole="button" accessibilityLabel={value ? `${label}, ${value}` : label}
     accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
     android_ripple={{ color: colors.selected }}
     style={({ pressed }) => [styles.row, { opacity: disabled ? 0.45 : 1, backgroundColor: pressed && Platform.OS === 'ios' ? colors.selected : 'transparent' }]}>

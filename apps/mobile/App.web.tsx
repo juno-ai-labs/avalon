@@ -9,7 +9,7 @@ import { EXPANDED_LAYOUT_WIDTH, FLOATING_HEADER_INSET } from './src/layout';
 import { Glass } from './src/Glass';
 import { TabBar, TAB_BAR_SPACE, TAB_RAIL_SPACE } from './src/PreviewTabBar';
 import { Sidebar } from './src/Sidebar';
-import { SettingsScreen } from './src/SettingsScreen';
+import { SettingsScreen, type NotificationsControl } from './src/SettingsScreen';
 import { mobileUrl, trustedArtifact, type NativeArtifact, type MobileCommand, type MobileEvent, type MobileSnapshot } from './src/protocol';
 import { useTheme } from './src/theme';
 
@@ -133,7 +133,7 @@ function CanvasApp() {
   </KeyboardAvoidingView>;
 }
 
-const PREVIEW_NOTIFICATIONS = { permission: 'unavailable', registration: 'unavailable', enable: async () => undefined, retry: async () => undefined };
+const PREVIEW_NOTIFICATIONS: NotificationsControl = { permission: 'unavailable', registration: 'unavailable', enable: async () => undefined, retry: async () => undefined };
 
 interface ConversationProps { visible: boolean; url: string; title: string; onClose: () => void; onOpen: (id: string) => void; onSignedOut: () => void }
 function Conversation(props: ConversationProps) {

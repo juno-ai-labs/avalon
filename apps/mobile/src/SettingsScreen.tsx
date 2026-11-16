@@ -6,22 +6,23 @@ import { SettingsGroup, SettingsRow } from './SettingsList';
 import { useRuntimeStatus } from './diagnostics';
 import { downloadUpdate } from './background';
 import { useTheme } from './theme';
-import type { MobileSettingsSection, MobileSnapshot } from './protocol';
+import { MOBILE_SETTINGS_TITLES, type MobileSettingsSection, type MobileSnapshot } from './protocol';
 
 export type NotificationsControl = { permission: string; registration: string; enable: () => Promise<void>; retry: () => Promise<void> };
 
-/** The shared Settings pages, in the desktop's order and with its names and icons. */
-const ACCOUNT_PAGES: ReadonlyArray<{ section: MobileSettingsSection; label: string; icon: LucideIcon; detail?: string }> = [
-  { section: 'preferences', label: 'Preferences', icon: MonitorCog },
-  { section: 'notifications', label: 'Notifications', icon: Bell, detail: 'What Rally tells you about' },
-  { section: 'memories', label: 'Memories', icon: Brain },
+type Page = { section: MobileSettingsSection; icon: LucideIcon; detail?: string };
+/** The shared Settings pages, in the desktop's order and with its icons. */
+const ACCOUNT_PAGES: readonly Page[] = [
+  { section: 'preferences', icon: MonitorCog },
+  { section: 'notifications', icon: Bell, detail: 'What Rally tells you about' },
+  { section: 'memories', icon: Brain },
 ];
-const ORGANIZATION_PAGES: ReadonlyArray<{ section: MobileSettingsSection; label: string; icon: LucideIcon }> = [
-  { section: 'workspace', label: 'Organization', icon: Users },
-  { section: 'members', label: 'Members', icon: UsersRound },
-  { section: 'billing', label: 'Billing', icon: CreditCard },
-  { section: 'internet-access', label: 'Security', icon: ShieldCheck },
-  { section: 'connections', label: 'Connections', icon: Plug },
+const ORGANIZATION_PAGES: readonly Page[] = [
+  { section: 'workspace', icon: Users },
+  { section: 'members', icon: UsersRound },
+  { section: 'billing', icon: CreditCard },
+  { section: 'internet-access', icon: ShieldCheck },
+  { section: 'connections', icon: Plug },
 ];
 
 export function SettingsScreen({ directory, notifications, openSection, switchOrganization, signOut, openDiagnostics }: {
@@ -37,8 +38,8 @@ export function SettingsScreen({ directory, notifications, openSection, switchOr
   const status = useRuntimeStatus();
   const { isUpdatePending } = Updates.useUpdates();
   const available = new Set(directory?.settingsSections ?? []);
-  const page = ({ section, label, icon, detail }: { section: MobileSettingsSection; label: string; icon: LucideIcon; detail?: string }) =>
-    available.has(section) ? <SettingsRow key={section} label={label} icon={icon} detail={detail} navigates onPress={() => openSection(section)} /> : null;
+  const page = ({ section, icon, detail }: Page) =>
+    available.has(section) ? <SettingsRow key={section} label={MOBILE_SETTINGS_TITLES[section]} icon={icon} detail={detail} navigates onPress={() => openSection(section)} /> : null;
   const updateReady = isUpdatePending || status.update === 'ready';
   const updatesOff = __DEV__ || !Updates.isEnabled;
   const version = [Application.nativeApplicationVersion, Application.nativeBuildVersion && `(${Application.nativeBuildVersion})`].filter(Boolean).join(' ');
@@ -51,7 +52,7 @@ export function SettingsScreen({ directory, notifications, openSection, switchOr
           <Text numberOfLines={1} style={{ color: colors.muted, fontSize: 15, marginTop: 2 }}>{directory.workspaceName}</Text>
         </View>
       </View>
-      {page({ section: 'account', label: 'Profile', icon: UserRound })}
+      {page({ section: 'account', icon: UserRound })}
       <SettingsRow label="Switch organization" icon={ArrowLeftRight} onPress={switchOrganization} />
     </SettingsGroup>}
     {directory && <SettingsGroup title="Account">{ACCOUNT_PAGES.map(page)}</SettingsGroup>}

@@ -150,6 +150,10 @@ describe('Canvases shared from other Organizations', () => {
     expect(parsed?.type === 'snapshot' && parsed.snapshot.sharedElsewhere).toEqual([shared]);
     expect(event({ ...base, sharedElsewhere: [{ ...shared, organization: undefined }] })).toBeNull();
   });
+  it('keeps the settings pages it knows when a newer host lists one it does not', () => {
+    const parsed = event({ ...base, settingsSections: ['account', 'a-page-from-a-later-host', 'members'] });
+    expect(parsed?.type === 'snapshot' && parsed.snapshot.settingsSections).toEqual(['account', 'members']);
+  });
   it('accepts an open in another Organization only when it names the Organization and the Canvas', () => {
     expect(MobileCommandSchema.safeParse({ type: 'open-elsewhere', region: 'enterprise', workspaceId: 'w2', canvasId: 'c9' }).success).toBe(true);
     expect(MobileCommandSchema.safeParse({ type: 'open-elsewhere', region: 'enterprise', canvasId: 'c9' }).success).toBe(false);
