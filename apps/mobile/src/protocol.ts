@@ -61,6 +61,15 @@ export const SharedElsewhereSummarySchema = CanvasSummarySchema.extend({
 });
 export type SharedElsewhereSummary = z.infer<typeof SharedElsewhereSummarySchema>;
 
+/**
+ * The account and Organization settings pages Home can show in its mobile
+ * presentation: the shared Settings screen's sections, less the Mac app's own
+ * (`application`) and a single connection's page, which Connections opens.
+ */
+export const MOBILE_SETTINGS_SECTIONS = ['account', 'preferences', 'memories', 'notifications', 'workspace', 'members', 'billing', 'internet-access', 'connections'] as const;
+export const MobileSettingsSectionSchema = z.enum(MOBILE_SETTINGS_SECTIONS);
+export type MobileSettingsSection = z.infer<typeof MobileSettingsSectionSchema>;
+
 export const MobileSnapshotSchema = z.object({
   userId: z.string(),
   userName: z.string(),
@@ -77,11 +86,14 @@ export const MobileSnapshotSchema = z.object({
   directoryError: z.boolean().default(false),
   canvasId: z.string().nullable(),
   tabId: z.string().nullable(),
-  view: z.enum(['home', 'artifact', 'conversation', 'create']),
+  view: z.enum(['home', 'artifact', 'conversation', 'create', 'settings']),
   title: z.string(),
   artifactId: z.string().nullable(),
   artifactPicker: z.boolean(),
   inlineChat: z.boolean().optional(),
+  /** The settings pages this person may open through `settings`. An older
+   * host omits it and can open none, so the shell offers none. */
+  settingsSections: z.array(MobileSettingsSectionSchema).optional(),
 });
 export type MobileSnapshot = z.infer<typeof MobileSnapshotSchema>;
 
@@ -151,6 +163,8 @@ export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('create'), marketplace: z.boolean().optional() }),
   z.object({ type: z.literal('open-chat'), id: z.string().min(1) }),
   z.object({ type: z.literal('close-chat') }),
+  /** Show a shared Settings page in Home; `home` leaves it. */
+  z.object({ type: z.literal('settings'), section: MobileSettingsSectionSchema }),
   z.object({ type: z.literal('open'), id: z.string().min(1), pinned: z.boolean() }),
   /** Open a Canvas in another of this person's Organizations, switching to it. */
   z.object({ type: z.literal('open-elsewhere'), region: z.string().min(1), workspaceId: z.string().min(1), canvasId: z.string().min(1) }),
