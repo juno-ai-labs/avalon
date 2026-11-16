@@ -880,7 +880,7 @@ export function createTerminalResourceBridge(
         } catch { /* legacy metadata; every other output field still resolves */ }
         // A recovered publish is as much the Canvas's artifact as one that
         // returned: the interrupted attempt may have died before its note.
-        const inCanvas = await noteInCanvas(target, document.id);
+        const inCanvas = await noteInCanvas(target, document.id, input.replaceCanvasArtifact === true);
         // Built from the captured version rather than the live row, because
         // those differ exactly when somebody revised the document afterwards,
         // and what this attempt published is the version it wrote.
@@ -1326,10 +1326,14 @@ export function createTerminalResourceBridge(
     const target = await publicationAddress(context, input);
     if (target.substreamId !== "0") return;
     const identity = await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
+    // A path the Canvas already lists republishes, even beside others a
+    // Canvas converted from a Thread may hold.
     const held = (await workspace.prepare(
       `SELECT resource.id, resource.title, resource.provider_resource_id
          FROM canvas_artifacts artifact JOIN resources resource ON resource.id = artifact.resource_id
-        WHERE artifact.canvas_id = ? AND resource.provider_resource_id IS NOT ?
+        WHERE artifact.canvas_id = ?1 AND resource.provider_resource_id IS NOT ?2
+          AND NOT EXISTS (SELECT 1 FROM canvas_artifacts listed JOIN resources own ON own.id = listed.resource_id
+                           WHERE listed.canvas_id = ?1 AND own.provider_resource_id = ?2)
         ORDER BY artifact.added_at, resource.id LIMIT 1`,
     ).bind(target.parentId, identity).first<{ id: string; title: string; provider_resource_id: string | null }>());
     if (!held) return;
