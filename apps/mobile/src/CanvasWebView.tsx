@@ -1,12 +1,13 @@
-import { recordFailure } from './diagnostics';
+import { recordFailure, recordTiming } from './diagnostics';
 import { artifactInsetScript } from './layout';
-import { artifactPresented, artifactPresentationScript } from './artifact-presentation';
+import { artifactBackground, artifactPresented, artifactPresentationScript } from './artifact-presentation';
 import { useTheme } from './theme';
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
+import { recovery } from './recovery-order';
 import { Linking, Platform, StyleSheet, View, Text, Pressable, ActivityIndicator } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { randomUUID } from 'expo-crypto';
-import { artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, parseMobileEvent, type MobileCommand, type MobileEvent, type NativeArtifact } from './protocol';
+import { ARTIFACT_PICKER_CAPABILITY, MOBILE_CAPABILITIES_GLOBAL, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, parseMobileEvent, type MobileCommand, type MobileEvent, type NativeArtifact } from './protocol';
 
 export interface CanvasWebViewHandle { send: (command: MobileCommand) => void; reload: () => void }
 export interface CanvasWebViewProps {
@@ -14,6 +15,12 @@ export interface CanvasWebViewProps {
   appUrl: string;
   background: string;
   topInset?: number;
+  /** Shown to the person now. Defaults to true; hidden views recover last. */
+  focused?: boolean;
+  /** Recovery identity, so other code can `wake` this renderer. */
+  recoveryId?: string;
+  /** The page's renderer died; it answers nothing until it reloads. */
+  onTerminated?: () => void;
   onEvent: (event: MobileEvent) => void;
   onLoading: () => void;
   onError: () => void;
@@ -23,6 +30,21 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
   const web = useRef<WebView<unknown>>(null);
   const token = useRef(randomUUID());
   const lastNavigation = useRef(props.url);
+  const generatedId = useId();
+  const recoveryId = props.recoveryId ?? generatedId;
+  const focused = props.focused ?? true;
+  const shown = useRef(focused);
+  shown.current = focused;
+  useEffect(() => { if (focused) recovery.wake(recoveryId); else recovery.settled(recoveryId); }, [focused, recoveryId]);
+  useEffect(() => () => recovery.forget(recoveryId), [recoveryId]);
+  const terminated = () => {
+    recordFailure('webview_process_terminated');
+    props.onTerminated?.();
+    const reload = () => web.current?.reload();
+    if (!shown.current) { recovery.defer(recoveryId, reload); return; }
+    recovery.recovering(recoveryId);
+    reload();
+  };
   useEffect(() => { web.current?.injectJavaScript(`document.documentElement.style.setProperty("--mobile-top-inset", "${props.topInset ?? 0}px"); true;`); }, [props.topInset]);
   useImperativeHandle(ref, () => ({
     send: (command) => web.current?.injectJavaScript(commandScript(command, props.appUrl)),
@@ -41,7 +63,7 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
     contentInsetAdjustmentBehavior="never"
     automaticallyAdjustContentInsets={false}
     removeIosKeyboardObserver
-    injectedJavaScriptBeforeContentLoaded={`window.__RALLY_MOBILE_BRIDGE_TOKEN__=${JSON.stringify(token.current)}; true;`}
+    injectedJavaScriptBeforeContentLoaded={`window.__RALLY_MOBILE_BRIDGE_TOKEN__=${JSON.stringify(token.current)}; window.${MOBILE_CAPABILITIES_GLOBAL}=${JSON.stringify([ARTIFACT_PICKER_CAPABILITY])}; true;`}
     injectedJavaScriptBeforeContentLoadedForMainFrameOnly
     onLoadStart={(event) => {
       const previous = new URL(lastNavigation.current);
@@ -50,11 +72,11 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
       const sameDocument = previous.origin === next.origin && previous.pathname === next.pathname && previous.search === next.search && previous.hash !== next.hash;
       if (!sameDocument) props.onLoading();
     }}
-    onLoadEnd={() => web.current?.injectJavaScript(`window.__RALLY_MOBILE_BRIDGE_TOKEN__=${JSON.stringify(token.current)}; document.documentElement.style.setProperty("--mobile-top-inset", "${props.topInset ?? 0}px"); window.dispatchEvent(new Event("rally:mobile-ready")); true;`)}
-    onError={() => { recordFailure('webview_load_failed'); props.onError(); }}
+    onLoadEnd={() => { recovery.settled(recoveryId); web.current?.injectJavaScript(`window.__RALLY_MOBILE_BRIDGE_TOKEN__=${JSON.stringify(token.current)}; document.documentElement.style.setProperty("--mobile-top-inset", "${props.topInset ?? 0}px"); window.dispatchEvent(new Event("rally:mobile-ready")); true;`); }}
+    onError={() => { recovery.settled(recoveryId); recordFailure('webview_load_failed'); props.onError(); }}
     onHttpError={(event) => { if (event.nativeEvent.statusCode >= 400 && isAppUrl(event.nativeEvent.url, props.appUrl)) { recordFailure('webview_load_failed'); props.onError(); } }}
-    onContentProcessDidTerminate={() => { recordFailure('webview_process_terminated'); web.current?.reload(); }}
-    onRenderProcessGone={() => { recordFailure('webview_process_terminated'); web.current?.reload(); }}
+    onContentProcessDidTerminate={terminated}
+    onRenderProcessGone={terminated}
     onMessage={(event) => {
       const message = parseMobileEvent(event.nativeEvent.data, event.nativeEvent.url, props.appUrl, token.current);
       if (message) props.onEvent(message);
@@ -101,32 +123,73 @@ export function ArtifactSessionPreparation({ access, onReady }: { access: Native
 }
 
 /** A first-party artifact WebView avoids Safari's cross-site cookie restriction.
- * Only a presentation inset is injected; generated code has no native capability. */
-export function ArtifactView({ access, appUrl, background, topInset, onRetry }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; onRetry: () => void }) {
+ * Only a presentation inset is injected; generated code has no native capability.
+ *
+ * A terminated renderer recovers in place: the redeemed cookie lives in the
+ * platform cookie store, not the dead process, so a new WebView on the canonical
+ * URL needs no fresh access from Home. A lost cookie still reaches `renew`. */
+export function ArtifactView({ access, appUrl, background, topInset, focused = true, onRetry, onPresented, onBackground }: { access: NativeArtifact; appUrl: string; background: string; topInset: number; focused?: boolean; onRetry: () => void; onPresented?: () => void; onBackground?: (color: string) => void }) {
   const { colors } = useTheme();
   const web = useRef<WebView<unknown>>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const renewing = useRef(false);
   const renew = () => { if (!renewing.current) { renewing.current = true; onRetry(); } };
+  // After a crash this access's one-time open URL is spent; only the cookie
+  // path remains. Fresh access from the parent starts from its own open URL.
+  const [restart, setRestart] = useState({ count: 0, openUrl: '' });
+  const uri = restart.openUrl === access.openUrl ? access.canonicalUrl : access.openUrl;
+  const recoveryId = useId();
+  const shown = useRef(focused);
+  shown.current = focused;
+  const recoveringSince = useRef<number | null>(null);
+  const presentedLoad = useRef(false);
+  const presented = () => {
+    setLoading(false);
+    if (presentedLoad.current) return;
+    presentedLoad.current = true;
+    onPresented?.();
+    if (recoveringSince.current !== null) { recordTiming('artifact_recovery', performance.now() - recoveringSince.current); recoveringSince.current = null; }
+  };
+  const terminated = () => {
+    recordFailure('artifact_process_terminated');
+    // Only a recovery the person watches is timed.
+    recoveringSince.current = shown.current ? performance.now() : null;
+    setFailed(false); setLoading(true);
+    const openUrl = access.openUrl;
+    // Changing the source alone would load into the hidden view at once, so
+    // the remount sets the spent open URL and the new key together.
+    const remount = () => setRestart(({ count }) => ({ count: count + 1, openUrl }));
+    if (!shown.current) { recovery.defer(recoveryId, remount); return; }
+    recovery.recovering(recoveryId);
+    remount();
+  };
+  useEffect(() => { if (focused) recovery.wake(recoveryId); else recovery.settled(recoveryId); }, [focused, recoveryId]);
+  useEffect(() => { if (!loading || failed) recovery.settled(recoveryId); }, [loading, failed, recoveryId]);
+  useEffect(() => () => recovery.forget(recoveryId), [recoveryId]);
   useEffect(() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); }, [topInset]);
   return <View style={{ flex: 1, backgroundColor: background }}>
-    <WebView<unknown> ref={web} source={{ uri: access.openUrl }} style={styles.web}
+    <WebView<unknown> key={restart.count} ref={web} source={{ uri }} style={styles.web}
       sharedCookiesEnabled thirdPartyCookiesEnabled={false} javaScriptCanOpenWindowsAutomatically={false} setSupportMultipleWindows
       contentInsetAdjustmentBehavior="never" automaticallyAdjustContentInsets={false}
       removeIosKeyboardObserver
       injectedJavaScriptBeforeContentLoaded={artifactPresentationScript(topInset)}
       injectedJavaScriptBeforeContentLoadedForMainFrameOnly
-      onMessage={(event) => { if (artifactPresented(event.nativeEvent.data, event.nativeEvent.url, access.canonicalUrl)) setLoading(false); }}
-      onLoadStart={() => { setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); setLoading(false); }}
+      onMessage={(event) => {
+        const { data, url } = event.nativeEvent;
+        if (artifactPresented(data, url, access.canonicalUrl)) { presented(); return; }
+        const color = artifactBackground(data, url, access.canonicalUrl);
+        if (color) onBackground?.(color);
+      }}
+      onLoadStart={() => { presentedLoad.current = false; setLoading(true); setFailed(false); }} onLoadEnd={() => { web.current?.injectJavaScript(artifactInsetScript(topInset)); presented(); }}
       onError={() => { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }}
       onHttpError={(event) => {
-        const action = artifactLoadFailure(access, event.nativeEvent.url, event.nativeEvent.statusCode);
+        const action = artifactLoadFailure({ openUrl: uri, canonicalUrl: access.canonicalUrl }, event.nativeEvent.url, event.nativeEvent.statusCode);
         if (action === 'ignore') return;
         if (action === 'renew') { renew(); return; }
         recordFailure('artifact_load_failed'); setFailed(true);
       }}
-      onContentProcessDidTerminate={() => { recordFailure('artifact_process_terminated'); setFailed(true); setLoading(false); onRetry(); }} onRenderProcessGone={() => { recordFailure('artifact_process_terminated'); setFailed(true); setLoading(false); onRetry(); }}
+      onContentProcessDidTerminate={terminated} onRenderProcessGone={terminated}
       onOpenWindow={(event) => {
         try {
           const url = new URL(event.nativeEvent.targetUrl);
@@ -136,7 +199,7 @@ export function ArtifactView({ access, appUrl, background, topInset, onRetry }: 
       onShouldStartLoadWithRequest={(request) => {
         if (request.url === 'about:blank' || request.isTopFrame === false) return true;
         if (artifactAuthHandoff(access.canonicalUrl, request.url, appUrl)) {
-          if (access.openUrl === access.canonicalUrl) renew();
+          if (uri === access.canonicalUrl) renew();
           else { recordFailure('artifact_load_failed'); setFailed(true); setLoading(false); }
           return false;
         }

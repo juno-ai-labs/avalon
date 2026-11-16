@@ -3029,6 +3029,13 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * owns it.
    */
   backgroundAgentRootReason: z.string().min(1).max(500).optional(),
+  /**
+   * Beside `backgroundAgent`: the conversation at this agent's root, `"0"` for
+   * a Canvas's Chat or a Sidekick's wizard and a run id for a run's worker,
+   * from its `background_agent` row. Absent for an agent recorded before roots
+   * were, which therefore acts with no root's authority (`loopAuthority`).
+   */
+  backgroundAgentRootSubstreamId: z.string().min(1).max(64).optional(),
   activityId: IdSchema.nullable(),
   /**
    * Set when the workspace scheduler started this run from a due wake-up. The

@@ -1133,9 +1133,10 @@ access for someone who is not one is what the decision log forbids.
 
 Every turn that activates in `"0"` past the routing is the wizard's, and the
 claim marks its execution context `sidekickWizard: true`. `rally:sidekicks`
-loads its authoring tools in `"0"` only for a turn so marked
-(`services/integrations.ts`); a turn that reached `"0"`'s loop any other way
-gets the delegation tools alone.
+loads its authoring tools in `"0"` only for a turn so marked, and for an agent
+such a turn started, whose own turns meet the same manager check
+(`actsAsSidekickWizard`, [`agent-loop-types.md`](agent-loop-types.md#a-background-agent-acts-with-its-roots-authority));
+a turn that reached `"0"`'s loop any other way gets the delegation tools alone.
 
 **In the client.** The same Sidekick screen is hosted by a standalone route
 or by a Canvas's right panel. The panel keeps runs local, closes on archive,

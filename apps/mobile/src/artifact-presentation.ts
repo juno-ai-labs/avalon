@@ -1,6 +1,7 @@
 import { artifactInsetScript } from './layout';
 
 const ARTIFACT_READY = 'rally:artifact-presented';
+const ARTIFACT_BACKGROUND = 'rally:artifact-background ';
 
 /** A presentation-only message: generated pages receive no application commands. */
 export function artifactPresented(data: string, url: string, canonicalUrl: string): boolean {
@@ -11,15 +12,51 @@ export function artifactPresented(data: string, url: string, canonicalUrl: strin
   } catch { return false; }
 }
 
+/** The page's own background colour, reported with its presentation, or null for any other message. */
+export function artifactBackground(data: string, url: string, canonicalUrl: string): string | null {
+  if (!data.startsWith(ARTIFACT_BACKGROUND)) return null;
+  const color = data.slice(ARTIFACT_BACKGROUND.length);
+  return artifactPresented(ARTIFACT_READY, url, canonicalUrl) && /^rgba?\([\d.,\s%]+\)$/u.test(color) ? color : null;
+}
+
+/** Status bar text that reads over a background colour: dark over a light page, light over a dark one. */
+export function statusBarStyleFor(color: string): 'light' | 'dark' {
+  const [r = 255, g = 255, b = 255] = (color.match(/[\d.]+/gu) ?? []).map(Number);
+  const linear = (channel: number) => { const c = channel / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const luminance = 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+  // The luminance at which black and white text have equal contrast.
+  return luminance > 0.179 ? 'dark' : 'light';
+}
+
 /** Document readiness does not wait for images or other non-blocking subresources. */
 export function artifactPresentationScript(top: number): string {
   return `(() => {
     if (location.pathname.startsWith('/__rally/')) return;
+    // Modern colour spaces (oklch, display-p3) come back as written; drawing one
+    // pixel converts any CSS colour to sRGB, which the shell reads.
+    const srgb = (color) => {
+      if (/^rgba?\\(/u.test(color)) return color;
+      try {
+        const context = document.createElement('canvas').getContext('2d');
+        context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+        const [r, g, b] = context.getImageData(0, 0, 1, 1).data;
+        return 'rgb(' + r + ', ' + g + ', ' + b + ')';
+      } catch { return color; }
+    };
     const present = () => {
       if (!document.body) return;
       ${artifactInsetScript(top)}
       requestAnimationFrame(() => requestAnimationFrame(() => {
         window.ReactNativeWebView?.postMessage(${JSON.stringify(ARTIFACT_READY)});
+        // The colour the page paints under the status bar, so the shell can pick
+        // legible status bar text: the element at the top centre and its
+        // ancestors first (a full-page wrapper often carries the background),
+        // then body and html. A transparent page shows the WebView's white.
+        const under = [];
+        for (let element = document.elementFromPoint?.(innerWidth / 2, 1); element; element = element.parentElement) under.push(element);
+        const painted = [...under, document.body, document.documentElement].map((element) => getComputedStyle(element).backgroundColor)
+          .find((color) => color && color !== 'transparent' && !/^rgba\\(.*,\\s*0\\)$/u.test(color) && !/\\/\\s*0\\)$/u.test(color));
+        window.ReactNativeWebView?.postMessage(${JSON.stringify(ARTIFACT_BACKGROUND)} + srgb(painted || 'rgb(255, 255, 255)'));
       }));
     };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', present, { once: true });

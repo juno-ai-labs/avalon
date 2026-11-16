@@ -22,6 +22,8 @@ function nativeColors(appearance: typeof lightTheme | typeof darkTheme) {
       ink: value(pastel ? `sys.color.project-ink.${key}` : `sys.color.palette-ink.${PALETTE_INK[key] === 'white' ? 'light' : 'dark'}`),
       // Match packages/ui's markColors: tile ink can vanish on a bare surface.
       bare: value(pastel ? `sys.color.project-ink.${key}` : `sys.color.project.${key}`),
+      // The saturated hue, for mixes a stylesheet makes with `--av-sys-color-project-<key>`.
+      hue: value(`sys.color.project.${key}`),
     };
   }
   return {
@@ -36,6 +38,10 @@ function nativeColors(appearance: typeof lightTheme | typeof darkTheme) {
 }
 const light = nativeColors(lightTheme);
 const dark = nativeColors(darkTheme);
+/** One appearance's palette, for a surface drawn in a scheme other than the device's. */
+export function themeColors(scheme: 'light' | 'dark') {
+  return scheme === 'dark' ? dark : light;
+}
 export function useTheme() {
   const isDark = useColorScheme() === 'dark';
   return { colors: isDark ? dark : light, isDark };

@@ -19,7 +19,7 @@ The reference exemplar is `deep-research` in
 Read it before writing your own — most of what follows is distilled from it.
 
 `building-live-sites`
-([`building-live-sites-skill.ts`](../packages/agent-harness/src/platform-skills/building-live-sites-skill.ts))
+([`building-live-sites-skill.ts`](../packages/skills/platform-skills/building-live-sites-skill.ts))
 is the exemplar for the other shape: a skill that exists **because** its
 material would not fit anywhere cheaper. Its standing policy carries six lines
 of trigger and manners; everything the model needs once it is actually writing
@@ -28,7 +28,7 @@ headers — is here, loaded at the moment it matters. Its `ownerPlugin` scopes i
 to runs that hold the Terminal plugin, because the whole procedure ends in
 publishing a directory from a sandbox.
 
-The [platform-skills README](../packages/agent-harness/src/platform-skills/README.md)
+The [platform-skills README](../packages/skills/platform-skills/README.md)
 defines where platform and task skills belong. Task skills live one folder per
 skill in [`packages/skills/task-skills/`](../packages/skills/task-skills/index.ts).
 Skills can compose companion procedures instead of repeating them.
@@ -107,9 +107,9 @@ export const TRIAGE_SKILL: HarnessSkill = {
 
 Skills the package ships are authored in **TypeScript, not as `SKILL.md`
 files**, because the harness runs in `workerd` and has no filesystem to read
-them from at startup. Each skill has its own file under the harness's
-`platform-skills/` or `packages/skills/task-skills/`; `built-in-skills.ts`
-collects and re-exports the skills.
+them from at startup. Every skill lives in `@rally/skills`, in its own file
+under `packages/skills/platform-skills/` or `packages/skills/task-skills/`;
+the harness's `built-in-skills.ts` collects and re-exports them.
 A host that stores skills elsewhere can still author markdown:
 `parseSkillMarkdown` from `@juno-ai/bind/skills` parses a `SKILL.md` straight
 into this shape. Either way the same fields carry the same weight, and

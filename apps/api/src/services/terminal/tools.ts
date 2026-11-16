@@ -98,6 +98,13 @@ export interface TerminalPublishedResourceOutput {
   contentMode: "read" | "view" | "unsupported";
   derivativeStatus: "pending" | "ready" | "unsupported";
   createdAt: string;
+  /**
+   * Where anyone the Canvas's artifact audience admits opens the file: present
+   * for a file published into a Canvas, absent for one that stays in its
+   * conversation. It serves once the access change reaches the file's host,
+   * normally within seconds of the publish.
+   */
+  url?: string;
 }
 
 /**

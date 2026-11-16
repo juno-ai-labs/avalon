@@ -13,7 +13,7 @@ it('fences prepared descriptors and pending access replies to the signed-in orga
   const artifact = { canvasId: 'shopping', resourceId: 'site', version: 1, openUrl: 'https://site.rallyusercontent.com/open#one', canonicalUrl: 'https://site.rallyusercontent.com/' };
   const sent: MobileCommand[] = [];
   const send = (command: MobileCommand) => { sent.push(command); };
-  const hook = renderHook(({ directory }) => usePreparedCanvases(directory, send), { initialProps: { directory } });
+  const hook = renderHook(({ directory }) => usePreparedCanvases(directory, send, () => undefined), { initialProps: { directory } });
   act(() => { hook.result.current.receive({ type: 'snapshot', snapshot: directory }); });
   act(() => { hook.result.current.receive({ type: 'prepared-canvas', userId: 'alice', workspaceId: 'work', canvasId: 'shopping', canvas: descriptor }); });
   expect(hook.result.current.canvases.shopping).toEqual(descriptor);
@@ -36,25 +36,80 @@ it('fences prepared descriptors and pending access replies to the signed-in orga
   hook.unmount();
 });
 
-it('fails pending opens when the shared browser reloads and resumes after an authenticated snapshot', async () => {
+it('holds opens while the shared browser reloads and re-sends them once it is authenticated', async () => {
   const directory = { userId: 'alice', workspaceId: 'work', pins: ['shopping'], loading: false } as MobileSnapshot;
   const descriptor = { canvasId: 'shopping', resourceId: 'site', version: 1, title: 'Shopping' };
+  const artifact = { canvasId: 'shopping', resourceId: 'site', version: 1, openUrl: 'https://site.rallyusercontent.com/open#one', canonicalUrl: 'https://site.rallyusercontent.com/' };
   const sent: MobileCommand[] = [];
   const send = (command: MobileCommand) => { sent.push(command); };
-  const hook = renderHook(() => usePreparedCanvases(directory, send));
-  await expect(hook.result.current.open(descriptor)).resolves.toBeNull();
-  act(() => { hook.result.current.receive({ type: 'snapshot', snapshot: directory }); });
+  const wake = vi.fn();
+  const hook = renderHook(() => usePreparedCanvases(directory, send, wake));
   let opening!: Promise<unknown>;
   act(() => { opening = hook.result.current.open(descriptor); });
+  expect(wake).toHaveBeenCalledOnce();
+  expect(sent).toHaveLength(0);
+  act(() => { hook.result.current.receive({ type: 'snapshot', snapshot: directory }); });
+  expect(sent).toHaveLength(1);
+  const request = sent[0];
+  if (request?.type !== 'open-prepared-artifact') throw new Error('Expected an artifact request');
   act(() => hook.result.current.reset());
-  await expect(opening).resolves.toBeNull();
   act(() => { hook.result.current.receive({ type: 'ready' }); }); // The sign-in/picker page is not a business API host.
-  await expect(hook.result.current.open(descriptor)).resolves.toBeNull();
   expect(sent).toHaveLength(1);
   act(() => { hook.result.current.receive({ type: 'snapshot', snapshot: directory }); });
-  let retry!: Promise<unknown>;
-  act(() => { retry = hook.result.current.open(descriptor); });
   expect(sent).toHaveLength(2);
+  expect(sent[1]).toEqual(request);
+  act(() => { hook.result.current.receive({ type: 'prepared-artifact', requestId: request.requestId, artifact }); });
+  await expect(opening).resolves.toEqual(artifact);
+  let failing!: Promise<unknown>;
+  act(() => { failing = hook.result.current.open(descriptor); });
+  act(() => hook.result.current.fail());
+  await expect(failing).resolves.toBeNull();
   hook.unmount();
-  await expect(retry).resolves.toBeNull();
+});
+
+it('opens saved pins before Home answers, saves what Home prepares, and forgets them for another account', () => {
+  const directory = { userId: 'alice', workspaceId: 'work', pins: ['shopping', 'notes'], loading: false } as MobileSnapshot;
+  const shopping = { canvasId: 'shopping', resourceId: 'site', version: 2, title: 'Shopping' };
+  const site = 'https://site.rallyusercontent.com/';
+  const initial = {
+    entries: { shopping: { userId: 'alice', workspaceId: 'work', canvas: shopping } },
+    sessions: { shopping: { scope: 'alice:work', artifact: { canvasId: 'shopping', resourceId: 'site', version: 2, openUrl: site, canonicalUrl: site } } },
+  };
+  const saved: unknown[] = [];
+  const store = { initial, save: (pins: unknown) => { saved.push(pins); } };
+  const hook = renderHook(({ directory }) => usePreparedCanvases(directory, () => undefined, () => undefined, { store }), { initialProps: { directory } });
+  expect(hook.result.current.canvases.shopping).toEqual(shopping);
+  expect(hook.result.current.sessions.shopping?.openUrl).toBe(site);
+  const notes = { canvasId: 'notes', resourceId: 'notes-site', version: 1, title: 'Notes' };
+  act(() => { hook.result.current.receive({ type: 'prepared-canvas', userId: 'alice', workspaceId: 'work', canvasId: 'notes', canvas: notes }); });
+  expect(saved.at(-1)).toMatchObject({ entries: { shopping: { canvas: shopping }, notes: { canvas: notes } } });
+  act(() => hook.rerender({ directory: { ...directory, userId: 'bob' } }));
+  expect(hook.result.current.canvases).toEqual({});
+  expect(saved.at(-1)).toEqual({ entries: {}, sessions: {} });
+  hook.unmount();
+});
+
+it('gets fresh access without Home when it can, and asks Home only when that fails', async () => {
+  const directory = { userId: 'alice', workspaceId: 'work', pins: ['shopping'], loading: false, workspacePath: '/app/workspaces/global/work' } as MobileSnapshot;
+  const descriptor = { canvasId: 'shopping', resourceId: 'site', version: 1, title: 'Shopping' };
+  const fresh = { ...descriptor, openUrl: 'https://site.rallyusercontent.com/__rally/open#one', canonicalUrl: 'https://site.rallyusercontent.com/' };
+  const sent: MobileCommand[] = [];
+  const wake = vi.fn();
+  let answer: typeof fresh | null = fresh;
+  const direct = vi.fn(async () => answer);
+  const hook = renderHook(() => usePreparedCanvases(directory, (command) => { sent.push(command); }, wake, { direct }));
+  act(() => { hook.result.current.receive({ type: 'snapshot', snapshot: directory }); });
+  await expect(hook.result.current.open(descriptor)).resolves.toEqual(fresh);
+  expect(direct).toHaveBeenCalledWith(directory, descriptor);
+  expect(sent).toHaveLength(0);
+  expect(wake).not.toHaveBeenCalled();
+  answer = null;
+  let fallback!: Promise<unknown>;
+  await act(async () => { fallback = hook.result.current.open(descriptor); await Promise.resolve(); });
+  const request = sent[0];
+  if (request?.type !== 'open-prepared-artifact') throw new Error('Expected Home to be asked');
+  expect(wake).toHaveBeenCalledOnce();
+  act(() => { hook.result.current.receive({ type: 'prepared-artifact', requestId: request.requestId, artifact: fresh }); });
+  await expect(fallback).resolves.toEqual(fresh);
+  hook.unmount();
 });

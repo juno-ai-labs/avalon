@@ -27,7 +27,7 @@ on:
       # The scripts the deploy job itself runs: resource preflights, the local
       # binding materializer, their shared module, and the health check. A change
       # to any of them is a change to the deployment, and a redeploy is idempotent.
-      - "scripts/check-cloudflare-r2-buckets.mjs"
+      - "scripts/ensure-cloudflare-d1-kv.mjs"
       - "scripts/ensure-cloudflare-queues.mjs"
       - "scripts/ensure-cloudflare-inference-lakehouse.mjs"
       - "config/inference-lakehouse.json"
@@ -36,6 +36,8 @@ on:
       - "config/analytics-events-lakehouse-stream-schema.json"
       - "config/usage-lakehouse.json"
       - "config/usage-lakehouse-stream-schema.json"
+      - "config/engineering-mcp-audit-lakehouse.json"
+      - "config/engineering-mcp-audit-lakehouse-stream-schema.json"
       - "scripts/wrangler-config.mjs"
       - "scripts/entry-point.mjs"
       - "scripts/check-regional-health.mjs"
@@ -281,9 +283,6 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Require every R2 bucket declared by the regional Wrangler configs
-        run: node scripts/check-cloudflare-r2-buckets.mjs
-
       # Wrangler applies a consumer's settings but will not create the queue a
       # binding names, so a release that adds a queue would fail halfway through.
       # Read every Wrangler file and create whatever is missing first; nothing
@@ -293,13 +292,22 @@ jobs:
       - name: Ensure every Queue the Wrangler configs declare exists
         run: node scripts/ensure-cloudflare-queues.mjs
 
-      # Pipeline stream IDs are stable, production-account identifiers recorded
-      # in the lakehouse manifests. Materializing the ignored regional Wrangler
-      # configs is therefore a local operation: ordinary application deploys do
-      # not depend on the Pipelines control plane. Infrastructure changes use the
-      # script's explicit --reconcile mode before updating a pinned ID.
-      - name: Materialize pinned Global lakehouse bindings
-        run: node scripts/ensure-cloudflare-inference-lakehouse.mjs --materialize-bindings
+      # D1 and pinned KV bindings link to their resource only by a committed id.
+      # Find each by name, create what the account lacks, and pin the account's
+      # ids into this checkout's Wrangler files before the lakehouse configs are
+      # materialized from them and migrations or deploys read them. In the
+      # production account the ids already match and no file changes.
+      - name: Ensure every D1 database and pinned KV namespace exists, and pin their ids
+        run: node scripts/ensure-cloudflare-d1-kv.mjs
+
+      # Pipeline stream IDs are stable identifiers recorded in the lakehouse
+      # manifests, with the account they belong to. In that account,
+      # materializing the ignored regional Wrangler configs is a local operation:
+      # ordinary application deploys do not depend on the Pipelines control
+      # plane. In any other account (a fork), the same step reconciles that
+      # account's lakehouses and adopts its stream IDs for this checkout.
+      - name: Materialize Global lakehouse bindings, provisioning them in a new account
+        run: node scripts/ensure-cloudflare-inference-lakehouse.mjs --deploy-bindings
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile

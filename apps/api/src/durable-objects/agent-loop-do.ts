@@ -4041,7 +4041,12 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       // person's message meets when it is routed below and an agent's where
       // it was sent (`authorizeWizardTurn`). A review runs as a managing
       // delegate, so it passes. Refused by name otherwise.
-      if (sharedSidekickConversation && pending.actor !== "human") {
+      // A background agent the wizard started holds the wizard's authoring
+      // tools (`loopAuthority`), so its turn meets the same rule: a sender who
+      // no longer manages the Sidekick could otherwise reach those tools by
+      // messaging the agent instead of the wizard that would refuse them.
+      const wizardRootedAgent = identity.parentKind === "automation" && background !== undefined && authorityRunId === "0";
+      if ((sharedSidekickConversation && pending.actor !== "human") || wizardRootedAgent) {
         const principal = z.looseObject({ type: z.literal("user"), userId: z.string().min(1) })
           .safeParse(authorization.executionPrincipal);
         const manages = principal.success && await personManagesSidekick(this.env, {
@@ -4131,6 +4136,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         ...(sharedSidekickConversation ? this.answeredQuestionCanvas(pending.client_message_id) : {}),
         backgroundAgent: Boolean(background),
         ...(background?.root_reason ? { backgroundAgentRootReason: background.root_reason } : {}),
+        ...(background?.root_substream_id ? { backgroundAgentRootSubstreamId: background.root_substream_id } : {}),
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
@@ -7337,7 +7343,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       parentKind: identity.parentKind,
       substreamId,
       backgroundAgent: background ? (background.stopped_at !== null ? "stopped" : true) : false,
-      ...(background ? { rootSubstreamId: (background.root_substream_id ?? "0") as SubstreamId | "0" } : {}),
+      // A worker recorded before roots were has none: its wake-up carries no
+      // root, so it acts with no root's authority, as it did then.
+      ...(background?.root_substream_id ? { rootSubstreamId: background.root_substream_id as SubstreamId | "0" } : {}),
       ...(background?.root_reason ? { rootReason: background.root_reason } : {}),
     });
     // Not firing is a decision that consumes the row. One still pending lost

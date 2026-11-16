@@ -87,6 +87,8 @@ function testEnv(bindings: Partial<Env> = {}): Env {
     ENGINEERING_TASKS: new Proxy({} as Env["ENGINEERING_TASKS"], {
       get() { throw new Error("Task execution must run in workerd"); },
     }),
+    // Rows are asserted in apps/api/test-workers/engineering-mcp-audit.test.ts.
+    ENGINEERING_AUDIT_LAKEHOUSE: { send: async () => undefined },
     GLOBAL_INSPECTION: regionalBinding("global"),
     QUEUES_API_TOKEN: "queues-test-token",
     ENTERPRISE_INSPECTION: regionalBinding("enterprise"),

@@ -297,9 +297,10 @@ desktop meter is owned by the settings screens and
   391 bytes a row, 90 days is about 0.4 GB; the limit is about 20 times today's
   volume away.
 - **An unprovisioned lakehouse:** a manifest with the all-zero stream ID is
-  refused when the deploy materializes bindings, so a new region's deploy fails
-  until `pnpm cloudflare:lakehouses:ensure` creates the stream and its ID is
-  pinned, rather than every batch failing.
+  refused when the deploy materializes bindings in the pinned account, so a new
+  region's deploy fails until `pnpm cloudflare:lakehouses:ensure` creates the
+  stream and its ID is pinned, rather than every batch failing. A deploy to any
+  other account provisions and adopts its own streams.
 - **Plan-change push fails** (WorkspaceDO unreachable, or the read after the
   change fails): `usage_publish_failed` names the workspace and the code. The
   plan has changed; other members see the old meter until theirs reads again,

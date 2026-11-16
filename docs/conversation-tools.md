@@ -39,6 +39,7 @@ conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | --- | --- | --- | --- |
 | Sidekick configuration (`parentKind: automation`, substream `"0"`, no run), a wizard turn only (`sidekickWizard`, which the claim sets only for a principal who manages the Sidekick) | The Sidekick's own conversation (`isOwn`) and the Canvases attached to it | list, read, search, post, attach | The person talking to it |
 | Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`) and the Canvases attached to it | list, read, search, post | A run a schedule or an event started: the Sidekick itself, whose scope is its reach whoever the run acts as. A run a person asked for (the Run button or a message): that person. |
+| A background agent of either | Its root's scope (`loopAuthority`): a wizard's agent the configuration's, a run's worker the run's, posting as that run | Its root's | Its root's; a wizard's agent only while the person it runs as manages the Sidekick (`agent-loop-types.md`) |
 
 A Canvas's Chat gets no conversation tools: its own transcript is its context.
 The Canvases attached to a Sidekick are its rows of
@@ -175,8 +176,8 @@ Whose admission applies is the object's to decide, from the run's own row
   button or by a message, as a delegate or under their own access
   (`sidekick_runs.requester_user_id`, else the manual trigger's
   `requestedByUserId`).
-- A call that names a run id with no run row (a background agent's own
-  conversation, or an id nobody made) is never the Sidekick itself. It is the
+- A call that names a run id with no run row (an id nobody made) is never the
+  Sidekick itself. A run's worker names its run's id, not its own. It is the
   person its loop acts as, and reaches nothing when there is nobody.
 - The wizard, which names no run, is whoever is talking to it.
 
@@ -197,8 +198,9 @@ attaching is the consent to publish there.
 - **The scope is host-derived, from the loop input, in one function.**
   `conversationToolAccess` is the only place a scope or a tool set is decided. A
   scope that took a model argument would let a run widen its own reach.
-- **Only a Sidekick's configuration conversation attaches.** A run is offered
-  no attach, so it cannot reach anything its configuration did not grant.
+- **Only a Sidekick's configuration conversation, and an agent it started,
+  attaches.** A run and its workers are offered no attach, so they cannot reach
+  anything the configuration did not grant.
 - **A post never wakes the target's agent.** It is something people read, not a
   request to the agent there. Admitting it as loop input, as `post_result` did,
   would start that agent on every forwarded reply. The agent still reads it:

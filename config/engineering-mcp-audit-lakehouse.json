@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 5,
+  "binding": "ENGINEERING_AUDIT_LAKEHOUSE",
+  "deploymentTokenOwner": "account",
+  "namespace": "avalon",
+  "table": "engineering_mcp_audit",
+  "streamSchema": "config/engineering-mcp-audit-lakehouse-stream-schema.json",
+  "regions": {
+    "global": {
+      "jurisdiction": "default",
+      "sinkType": "r2_data_catalog",
+      "bucket": "avalon-global-engineering-mcp-audit-lakehouse",
+      "stream": "avalon_global_engineering_mcp_audit_lakehouse_stream",
+      "streamId": "00000000000000000000000000000000",
+      "sink": "avalon_global_engineering_mcp_audit_lakehouse_sink",
+      "pipeline": "avalon_global_engineering_mcp_audit_lakehouse"
+    }
+  }
+}
