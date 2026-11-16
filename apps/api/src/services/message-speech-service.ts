@@ -9,9 +9,9 @@ import {
   MULTIMODAL_AUDIO_MODEL,
 } from "./multimodal-generation/contract";
 import { markdownToEmailText } from "./email-markdown";
+import { splitSpeechText } from "./multimodal-generation/speech-pieces";
 
-/** Azure's speech endpoint rejects an individual input above 4,096 characters. */
-export const AZURE_SPEECH_INPUT_CHARACTERS = 4_096;
+export { AZURE_SPEECH_INPUT_CHARACTERS, splitSpeechText } from "./multimodal-generation/speech-pieces";
 
 export interface MessageSpeechStream {
   body: ReadableStream<Uint8Array>;
@@ -110,45 +110,4 @@ export async function streamMessageSpeech(input: {
   });
 
   return { body, chunkCount: chunks.length, model: MULTIMODAL_AUDIO_MODEL };
-}
-
-export function splitSpeechText(
-  text: string,
-  maximumCharacters = AZURE_SPEECH_INPUT_CHARACTERS,
-): string[] {
-  if (maximumCharacters < 1) throw new RangeError("maximumCharacters must be positive");
-  const characters = [...text];
-  if (characters.length <= maximumCharacters) return [text];
-
-  const chunks: string[] = [];
-  let offset = 0;
-  while (offset < characters.length) {
-    const remaining = characters.length - offset;
-    if (remaining <= maximumCharacters) {
-      chunks.push(characters.slice(offset).join("").trim());
-      break;
-    }
-    const window = characters.slice(offset, offset + maximumCharacters).join("");
-    const boundary = bestBoundary(window);
-    chunks.push(characters.slice(offset, offset + boundary).join("").trim());
-    offset += boundary;
-    while (/\s/u.test(characters[offset] ?? "")) offset += 1;
-  }
-  return chunks.filter(Boolean);
-}
-
-function bestBoundary(window: string): number {
-  const candidates = [
-    window.lastIndexOf("\n\n"),
-    Math.max(window.lastIndexOf(". "), window.lastIndexOf("! "), window.lastIndexOf("? ")),
-    window.lastIndexOf("\n"),
-    window.lastIndexOf(" "),
-  ];
-  // Do not produce a tiny leading chunk merely because it contains an early
-  // boundary; fill at least half of Azure's available request before splitting.
-  const minimum = Math.floor([...window].length / 2);
-  for (const candidate of candidates) {
-    if (candidate >= minimum) return [...window.slice(0, candidate + 1)].length;
-  }
-  return [...window].length;
 }

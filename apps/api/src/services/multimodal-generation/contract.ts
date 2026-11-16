@@ -9,6 +9,7 @@ import type { ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
 import { MULTIMODAL_GENERATION_SYSTEM_MESSAGE } from "@rally/prompts/api/multimodal-generation-plugin";
+import { splitSpeechText } from "./speech-pieces";
 
 export {
   MULTIMODAL_GENERATION_MODEL,
@@ -18,6 +19,8 @@ export {
 } from "@rally/contracts/runtime-config";
 export const MULTIMODAL_AUDIO_DEFAULT_VOICE = "marin";
 export const MULTIMODAL_GENERATION_TIMEOUT_MS = 300_000;
+/** The `timeoutMs` ceiling `ToolDefinitionSchema` allows any tool. */
+export const MULTIMODAL_LONG_AUDIO_TIMEOUT_MS = 1_050_000;
 
 export const ImageGenerationSizeSchema = z.enum([
   "auto",
@@ -57,7 +60,12 @@ export const AudioVoiceSchema = z.enum([
 ]);
 
 export const GenerateAudioArgumentsSchema = deferredZodSchema(() => z.strictObject({
-  text: z.string().trim().min(1).max(4_096),
+  // No length cap of its own: Rally records long text in pieces the speech
+  // model accepts and joins them (`speech-pieces.ts`). The attachment byte
+  // limit on the joined recording is what bounds it.
+  text: z.string().trim().min(1).describe(
+    "The words to speak, of any length. Long text is recorded in pieces and joined into one MP3, so send a whole script in one call.",
+  ),
   voice: AudioVoiceSchema.optional(),
   instructions: z.string().trim().min(1).optional(),
   title: z.string().trim().min(1).max(300).optional(),
@@ -97,7 +105,8 @@ const definitions = memoizedValue(() => ({
   },
   generate_audio: {
     name: "generate_audio",
-    description: "Turn text into one AI-generated MP3 voice recording and attach it to the current conversation as a durable audio resource.",
+    longRunning: true,
+    description: "Turn text of any length into one AI-generated MP3 voice recording, in one voice and reading style throughout, and attach it to the current conversation as a durable audio resource.",
     capability: "multimodal.generate",
     mode: "write",
     idempotency: "record_before_execute",
@@ -121,6 +130,13 @@ export function createMultimodalGenerationPlugin(
       serial: true,
       // The picture is the result and lives only in this turn; audio is a resource.
       ...(name === "generate_audio" ? {} : { yieldsContentParts: true as const }),
+      // Text that needs several speech requests gets the longest deadline a
+      // tool may have (`ToolDefinitionSchema`'s `timeoutMs` ceiling), not one
+      // request's: the pieces are recorded one after another.
+      ...(name === "generate_audio" ? { resolveTimeoutMs: (input: unknown) => {
+        const parsed = GenerateAudioArgumentsSchema.safeParse(input);
+        return parsed.success && splitSpeechText(parsed.data.text).length > 1 ? MULTIMODAL_LONG_AUDIO_TIMEOUT_MS : undefined;
+      } } : {}),
       validateInput: (input) => {
         const result = schema.safeParse(input);
         return result.success ? null : result.error;
