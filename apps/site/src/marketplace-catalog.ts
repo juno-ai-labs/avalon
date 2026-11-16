@@ -12,31 +12,38 @@ import { loadCanvasTemplates, type CanvasTemplateData } from '../../../packages/
 import { CANVAS_TEMPLATE_CATEGORIES } from '../../../packages/skills/marketplace-skills/categories';
 import { TEMPLATE_CONNECTORS, templateConnectorHelpPath, type TemplateConnectorId } from '../../../packages/skills/marketplace-skills/connectors';
 import { escapeHtml as escape } from './comparison-pages';
+import { renderConnectorMark } from './connector-marks';
 
 const ORIGIN = 'https://rallywith.ai';
 const APP_ORIGIN = 'https://app.rallywith.ai';
 const arrow = '<svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg>';
 const CATEGORY_LABELS = new Map<string, string>(CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => [tag, label]));
-const CONNECTOR_NAMES = new Map<string, string>(TEMPLATE_CONNECTORS.map(({ id, name }) => [id, name]));
+const CONNECTORS = new Map(TEMPLATE_CONNECTORS.map((connector) => [connector.id, connector]));
 
 /** Every template, in catalog order. Read on each call so the dev server serves the current files. */
 export const marketplaceTemplates = (): CanvasTemplateData[] => loadCanvasTemplates((file) => readFileSync(file, 'utf8'));
 
+/** The names of a template's recommended connectors, in its order. */
+export const connectorNames = (connectors: readonly TemplateConnectorId[]): string[] =>
+  connectors.map((id) => CONNECTORS.get(id)!.name);
+
 /** A template's page on the site. */
 export const templatePagePath = (slug: string): string => `/marketplace/${slug}/`;
 
-const audience = (tags: readonly string[]): string =>
+export const audience = (tags: readonly string[]): string =>
   `For ${tags.map((tag) => CATEGORY_LABELS.get(tag) ?? tag).join(', ').toLocaleLowerCase()}`;
 
 /** "Start from this": the template's link on the web app, which signs the person in or up and starts it. */
 const startLink = (className: string, link: string): string =>
   `<a class="${className}" data-site-action="web-app-template" href="${APP_ORIGIN}${link}">Start from this ${arrow}</a>`;
 
-/** The recommended connectors, each linking to how to connect it; nothing when a template recommends none. */
+/** The recommended connectors, each with its company's mark and a link to how to connect it; nothing when a template recommends none. */
 function connectorList(connectors: readonly TemplateConnectorId[], className: string): string {
   if (connectors.length === 0) return '';
-  return `<ul class="${className}" aria-label="Recommended connectors">${connectors.map((id) =>
-    `<li><a href="${templateConnectorHelpPath(id)}">${escape(CONNECTOR_NAMES.get(id) ?? id)}</a></li>`).join('')}</ul>`;
+  return `<ul class="${className}" aria-label="Recommended connectors">${connectors.map((id) => {
+    const { name, mark } = CONNECTORS.get(id)!;
+    return `<li><a href="${templateConnectorHelpPath(id)}">${renderConnectorMark(mark)}${escape(name)}</a></li>`;
+  }).join('')}</ul>`;
 }
 
 /** The marketplace's header, the homepage's with Marketplace marked current. */
@@ -101,8 +108,13 @@ export function renderTemplatePage(template: CanvasTemplateData): string {
     <meta property="og:title" content="${escape(title)}" />
     <meta property="og:description" content="${escape(description)}" />
     <meta property="og:url" content="${ORIGIN}${path}" />
-    <meta property="og:image" content="${ORIGIN}/rally-pencil-social.png" />
+    <meta property="og:image" content="${ORIGIN}${path}social.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${escape(title)}" />
+    <meta name="twitter:description" content="${escape(description)}" />
+    <meta name="twitter:image" content="${ORIGIN}${path}social.png" />
     <link rel="stylesheet" href="/src/marketplace.css" />
   </head>
   <body>

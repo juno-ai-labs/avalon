@@ -83,8 +83,28 @@
 }
 
 .market-connectors a {
-  display: inline-block; border: 1px solid var(--line); border-radius: 20px; padding: 3px 10px;
-  font-size: 11px; color: var(--green); background: var(--sage); text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line);
+  border-radius: 20px; padding: 3px 10px; font-size: 11px; color: var(--green);
+  background: var(--sage); text-decoration: none;
+}
+
+/* The company's mark, as the app draws it: one colour, the chip's. */
+.connector-mark {
+  display: inline-flex; flex: none; width: 12px; height: 12px;
+}
+
+.connector-mark > svg {
+  width: 100%; height: 100%; pointer-events: none;
+}
+
+/* Slack and Granola ship no single-colour art, so their palette is repainted
+   in the chip's colour, as the app's `.connector-mark` rule does. Hollow
+   shapes (`fill="none"`) stay hollow. */
+.connector-mark svg [fill]:not([fill='none']) { fill: currentColor; }
+.connector-mark svg [stroke]:not([stroke='none']) { stroke: currentColor; }
+
+.market-connectors-large .connector-mark {
+  width: 15px; height: 15px;
 }
 
 .market-connectors a:hover {

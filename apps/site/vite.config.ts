@@ -2,8 +2,8 @@ import { renderAccessCopy } from './src/access-copy';
 import { helpCenter } from './build/help/plugin';
 import { renderBlogIndex, renderBlogPost } from './src/blog-pages';
 import { renderComparisonPage } from './src/comparison-pages';
-import { renderBlogCard, renderComparisonCard } from './src/social-cards';
-import { marketplaceTemplates, renderMarketplaceSitemap, renderTemplatePage, templatePagePath } from './src/marketplace-catalog';
+import { renderBlogCard, renderComparisonCard, renderTemplateCard } from './src/social-cards';
+import { audience, connectorNames, marketplaceTemplates, renderMarketplaceSitemap, renderTemplatePage, templatePagePath } from './src/marketplace-catalog';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from './src/site-chrome';
 import { defineConfig, type Plugin } from 'vite';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +48,10 @@ const generatedFiles = new Map<string, { type: string; render: () => string | Pr
   ] as const),
   ['compare/sitemap.xml', { type: 'application/xml', render: renderComparisonSitemap }],
   ['blog/sitemap.xml', { type: 'application/xml', render: renderBlogSitemap }],
+  ...marketplaceTemplates().map(({ slug, name, description, tags, connectors }) => [
+    `marketplace/${slug}/social.png`,
+    { type: 'image/png', render: () => renderTemplateCard({ slug, name, description, audience: audience(tags), connectors: connectorNames(connectors) }) },
+  ] as const),
   ['marketplace/sitemap.xml', { type: 'application/xml', render: renderMarketplaceSitemap }],
   ['llms.txt', { type: 'text/plain; charset=utf-8', render: renderLlmsTxt }],
 ]);
