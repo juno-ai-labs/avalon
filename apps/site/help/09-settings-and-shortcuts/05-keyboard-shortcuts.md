@@ -1,6 +1,6 @@
 ---
 title: Keyboard shortcuts
-description: Every key combination Rally knows, in one place.
+description: Every key combination Rally knows, in one place, and which ones need the desktop app.
 ---
 
 This is the page to print and prop against your monitor. Rally has no screen
@@ -8,18 +8,21 @@ that lists its shortcuts and no way to change them, so this is where they are
 all written down. They are grouped by where your cursor is when you press them,
 because the same keys can do different things in different places.
 
+Most of them work everywhere: in the web app and in the desktop app. A few
+belong to the [desktop app](../08-rally-everywhere/04-the-desktop-app.md) alone,
+because in a browser tab the same keys already belong to the browser. Those are
+at the end of the page.
+
 The symbols are the ones on a Mac keyboard: <kbd>⌘</kbd> is Command,
-<kbd>⌥</kbd> is Option, <kbd>⇧</kbd> is Shift and <kbd>⌃</kbd> is Control.
+<kbd>⌥</kbd> is Option, <kbd>⇧</kbd> is Shift and <kbd>⌃</kbd> is Control. On
+Windows, Linux and other keyboards without <kbd>⌘</kbd>, press <kbd>Ctrl</kbd>
+wherever this page says <kbd>⌘</kbd>.
 
 ## Anywhere in Rally
 
 | Keys | What they do |
 | --- | --- |
-| <kbd>⌘</kbd> <kbd>,</kbd> | Open [Settings](01-the-settings-window.md). |
 | <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>F</kbd> | Open **Search organization**, to find a message, link, artifact or file. See [Search and links](../02-canvases/11-search-and-links.md). |
-| <kbd>⌘</kbd> <kbd>W</kbd> | Close the front window. |
-| <kbd>⌘</kbd> <kbd>Q</kbd> | Quit Rally. (Closing the window does not; see [Rally on your Mac](03-rally-on-your-mac.md#closing-the-window-is-not-quitting).) |
-| <kbd>Esc</kbd> | In Settings, close it, as long as nothing else is open and you are not mid-way through typing. |
 
 ## In the search pop-up
 
@@ -33,7 +36,9 @@ Once **Search organization** is open:
 | <kbd>←</kbd> <kbd>→</kbd> | With a filter tab selected, move to the next or previous filter. |
 
 When the pop-up opens, your last search is already selected, so you can type
-straight over it.
+straight over it. Some browsers keep <kbd>⌘</kbd> <kbd>1</kbd> to
+<kbd>⌘</kbd> <kbd>9</kbd> for switching their own tabs; if yours does, use the
+arrows and <kbd>Return</kbd> instead.
 
 > [!TIP]
 > The number shortcuts are not marked on the results, so few people find them.
@@ -82,30 +87,6 @@ The letter and number keys work only when you are not typing in a text box
 inside the card, so you can still write an "Other" answer containing the letter
 A.
 
-## In the built-in browser
-
-When a web page is open in Rally's built-in browser (see
-[Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md)),
-the keys are the ones Safari and Chrome use. They work whether you last clicked
-Rally's browser controls or the page itself.
-
-| Keys | What they do |
-| --- | --- |
-| <kbd>⌘</kbd> <kbd>T</kbd> | Open a new tab. |
-| <kbd>⌘</kbd> <kbd>W</kbd> | Close the current tab. (Inside the browser this closes the tab, not the window.) |
-| <kbd>⌘</kbd> <kbd>L</kbd> | Jump to the address bar. |
-| <kbd>⌘</kbd> <kbd>R</kbd> | Reload the page. |
-| <kbd>⌘</kbd> <kbd>[</kbd> | Go back. |
-| <kbd>⌘</kbd> <kbd>]</kbd> | Go forward. |
-| <kbd>⌃</kbd> <kbd>Tab</kbd> or <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>]</kbd> | Next tab. |
-| <kbd>⌃</kbd> <kbd>⇧</kbd> <kbd>Tab</kbd> or <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>[</kbd> | Previous tab. |
-| <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>8</kbd> | Go to that tab. |
-| <kbd>⌘</kbd> <kbd>9</kbd> | Go to the last tab, however many there are. |
-
-With a tab button selected, <kbd>←</kbd> and <kbd>→</kbd> move between tabs,
-<kbd>Home</kbd> and <kbd>End</kbd> jump to the first and last, and
-<kbd>Delete</kbd> or <kbd>Backspace</kbd> closes that tab.
-
 ## Resizing panels
 
 | Keys | What they do |
@@ -130,8 +111,44 @@ Once you have clicked a Canvas's or a Sidekick's header pill to open its menu:
 While you rename a Canvas in its pill, <kbd>Return</kbd> saves the new name and
 <kbd>Esc</kbd> leaves the old one.
 
-## On computers other than a Mac
+## Only in the desktop app
 
-Rally is made for the Mac, and this page is written for it. If you meet Rally on
-another kind of computer, <kbd>Ctrl</kbd> takes the place of <kbd>⌘</kbd> for
-most of these shortcuts.
+These come from the desktop app's own menus and windows. In a browser tab, the
+same keys do whatever your browser does with them: <kbd>⌘</kbd> <kbd>W</kbd>
+closes the tab, for instance, and <kbd>⌘</kbd> <kbd>,</kbd> may open the
+browser's own settings.
+
+| Keys | What they do |
+| --- | --- |
+| <kbd>⌘</kbd> <kbd>,</kbd> | Open [Settings](01-the-settings-window.md) in its own window. |
+| <kbd>⌘</kbd> <kbd>W</kbd> | Close the front window. |
+| <kbd>⌘</kbd> <kbd>Q</kbd> | Quit Rally. (Closing the window does not; see [Rally on your Mac](03-rally-on-your-mac.md#closing-the-window-is-not-quitting).) |
+| <kbd>Esc</kbd> | In the Settings window, close it, as long as nothing else is open and you are not mid-way through typing. |
+
+On Linux, use <kbd>Ctrl</kbd> for these too.
+
+### In the built-in browser
+
+The built-in browser panel is a desktop app feature. When a web page is open
+in it (see
+[Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md)),
+the keys are the ones Safari and Chrome use. They work whether you last clicked
+Rally's browser controls or the page itself.
+
+| Keys | What they do |
+| --- | --- |
+| <kbd>⌘</kbd> <kbd>T</kbd> | Open a new tab. |
+| <kbd>⌘</kbd> <kbd>W</kbd> | Close the current tab. (Inside the browser this closes the tab, not the window.) |
+| <kbd>⌘</kbd> <kbd>L</kbd> | Jump to the address bar. |
+| <kbd>⌘</kbd> <kbd>R</kbd> | Reload the page. |
+| <kbd>⌘</kbd> <kbd>[</kbd> | Go back. |
+| <kbd>⌘</kbd> <kbd>]</kbd> | Go forward. |
+| <kbd>⌃</kbd> <kbd>Tab</kbd> or <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>]</kbd> | Next tab. |
+| <kbd>⌃</kbd> <kbd>⇧</kbd> <kbd>Tab</kbd> or <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>[</kbd> | Previous tab. |
+| <kbd>⌘</kbd> <kbd>1</kbd> to <kbd>⌘</kbd> <kbd>8</kbd> | Go to that tab. |
+| <kbd>⌘</kbd> <kbd>9</kbd> | Go to the last tab, however many there are. |
+
+With a tab button selected, <kbd>←</kbd> and <kbd>→</kbd> move between tabs,
+<kbd>Home</kbd> and <kbd>End</kbd> jump to the first and last, and
+<kbd>Delete</kbd> or <kbd>Backspace</kbd> closes that tab.
+

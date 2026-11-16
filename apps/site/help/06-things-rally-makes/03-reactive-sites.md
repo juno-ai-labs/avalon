@@ -26,27 +26,29 @@ A site can be one of three things, and Rally picks from what you asked for:
 
 ### Changing a site
 
-Ask for changes in the same Canvas, or leave a [comment](../02-canvases/06-comments.md) on the part of the page you mean: "make the button green", "add a field for t-shirt size". Rally updates the same site, and it stays at the same address, so a link you already sent keeps working and shows the new version.
+Ask for changes in the same Canvas, or, in [the desktop app](../08-rally-everywhere/04-the-desktop-app.md), leave a [comment](../02-canvases/06-comments.md) on the part of the page you mean: "make the button green", "add a field for t-shirt size". Rally updates the same site, and it stays at the same address, so a link you already sent keeps working and shows the new version.
 
 A request for a new thing makes a new site at a new address, even if it looks a lot like an existing one.
 
 ## Looking at a site inside Rally
 
-Click the **Site** card to open the site view, which shows the live page itself. Its header has these buttons:
+Click the **Site** card to open the site view. In the web app, the live page cannot be shown inside Rally, so the view says **Preview unavailable here** and **Open it in your browser to see the live page.** Click **Open in browser** in its header and the site opens in a new tab.
+
+In [the desktop app](../08-rally-everywhere/04-the-desktop-app.md), the site view shows the live page itself, and you can leave comments on it.
+
+The header has these buttons:
 
 - **Stored data**, only on sites that remember things (below).
-- **Open in a new window**, which gives the site its own window, handy for a dashboard on a second monitor. The window behaves as described in [Opening, docking and downloading](02-opening-and-downloading.md#giving-an-artifact-its-own-window).
+- **Open in a new window**, which gives the site its own tab or window, handy for a dashboard on a second monitor. It behaves as described in [Opening, docking and downloading](02-opening-and-downloading.md#giving-an-artifact-its-own-tab-or-window).
 - **Copy link**, which copies the site's address.
-- **Open in browser**, which opens the site in your usual web browser.
+- **Open in browser**, which opens the site in a new browser tab (from the desktop app, in your usual web browser).
 
 A site opens in the panel beside the conversation, the same way a document does.
 
 While the site loads you see **Opening…**. If it cannot load, Rally says **This site could not be opened**, with the reason underneath.
 
-In the web browser version of Rally, the live page cannot be shown inside Rally itself, so the site view says **Preview unavailable here** and suggests opening it in your browser with **Open in browser**.
-
 > [!NOTE]
-> Viewing sites inside the Mac app is switched on for some Organizations and not yet for others. If yours does not have it, a site shows as an ordinary card with its title, when it was last updated, its versions and **Archive**, and none of the buttons above. The site itself is still published and still works for anyone who opens its address.
+> Viewing sites inside the desktop app is switched on for some Organizations and not yet for others. If yours does not have it, a site shows as an ordinary card with its title, when it was last updated, its versions and **Archive**, and none of the buttons above. The site itself is still published and still works for anyone who opens its address.
 
 ## Seeing what visitors submitted
 
@@ -67,7 +69,7 @@ While the table loads you see **Reading…**. Before anyone has submitted anythi
 Every site has a public web address made of four ordinary words, ending in `rallyusercontent.com`. **Copy link** puts it on your clipboard, ready to paste into an email, a chat or a slide.
 
 A site's access comes from **Who can interact with artifacts** in its
-Canvas's **Share** window. The same audience applies to files and other artifacts
+Canvas's **Share** dialog. The same audience applies to files and other artifacts
 published in that Canvas.
 
 - **Editors only** is the default. Only the Canvas's editors can use it.

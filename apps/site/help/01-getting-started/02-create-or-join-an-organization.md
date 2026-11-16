@@ -30,14 +30,11 @@ You become the Organization's owner, and it opens straight away, empty and ready
 
 When a teammate invites you, you get an email saying who invited you, to which Organization, and as what (a member or an administrator).
 
-> [!IMPORTANT]
-> For now, accepting an Organization invitation needs the [desktop app](../08-rally-everywhere/04-the-desktop-app.md). The web app cannot accept one yet. Once you have joined, the Organization appears under **Your organizations** in the browser too, and you can do everything else there.
+Click the link in the email. Your browser opens a page headed **Join on Rally**. Click **Continue in browser** and sign in with the address the invitation was sent to. (If you use the [desktop app](../08-rally-everywhere/04-the-desktop-app.md), **Open the desktop app** opens it on the invitation instead.) If the page says **This invitation link is incomplete or invalid. Ask the sender for a new link.**, the link was damaged on its way to you, so ask for a fresh one.
 
-Click the invitation link in the email. Your browser opens a page headed **Continue in the Rally app**. Click **Open Rally**, and the app opens on that invitation. If the app does not open, install it first, then click the link again. If the page says **This invitation link is incomplete or invalid. Ask the sender for a new link.**, the link was damaged on its way to you, so ask for a fresh one.
+You do not need the link at all, as long as you sign in with the invited address. Rally finds invitations to your email on its own and lists them at the top of **Your organizations**. Each one shows the Organization's name, **Invited by** and the person's name, and the role you were offered: **Administrator** or **Member**.
 
-You do not need the link at all, as long as you sign in to the app with the invited address. Rally finds invitations to your email on its own and lists them under **Choose where to join**. Each one shows the Organization's name, **Invited by** and the person's name, and the role you were offered: **Administrator** or **Member**.
-
-- Click **Accept** to join.
+- Click **Accept** to join. The Organization opens straight away.
 - Click **Decline** to turn it down.
 
 The person who invited you gets an email either way, so nobody is left wondering.
@@ -46,12 +43,13 @@ A few rules apply to every invitation.
 
 - An invitation belongs to one email address. You must be signed in with exactly that address to accept it. If you are signed in as someone else, Rally says **This invitation is for** that address and asks you to sign in with that account.
 - They expire after seven days, and each one can be used once. The email says exactly when yours runs out. If it has expired, ask the sender to invite you again.
+- While an invitation is waiting, **Your organizations** shows it instead of **Create an organization**. Accept or decline it to move on.
 - If accepting fails, you see **The invitation could not be accepted.** and the list refreshes. Try again, or ask the sender to check that the invitation is still open.
 
-An invitation that reaches you after you are set up waits in the app's account menu, under **Invitations**. [Belonging to several Organizations](../10-running-an-organization/04-several-organizations.md) has more.
+An invitation that reaches you after you are set up also waits in the account menu, under **Invitations**. [Belonging to several Organizations](../10-running-an-organization/04-several-organizations.md) has more.
 
 > [!TIP]
-> If you only need to work on a few things with a team, and not join it, ask them to share those Canvases with you instead. That works entirely in the browser.
+> If you only need to work on a few things with a team, and not join it, ask them to share those Canvases with you instead.
 
 ## Opening a Canvas shared with you
 

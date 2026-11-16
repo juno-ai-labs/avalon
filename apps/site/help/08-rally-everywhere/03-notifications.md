@@ -63,8 +63,8 @@ or none. When the window is narrow, each row shows one button naming what is
 on, such as **Push and Email**, or **Off** with none; click it for a list you
 can tick. Your choices apply on every device in that Organization.
 
-- **Push** alerts every Mac and browser where you are signed in and have
-  notifications on.
+- **Push** alerts every browser and desktop app where you are signed in and
+  have notifications on.
 - **Email** goes to your account's address, from **Rally
   <notifications@rallywith.ai>**, with an **Open in Rally** button.
 Everything starts on **Push**. With **Off**, that kind still shows in
@@ -74,44 +74,73 @@ Notification text is plain: formatting is removed and mentions appear as
 **@Name**. A newer reply in the same conversation replaces the alert before it
 rather than stacking up.
 
-## Notifications on your Mac
+## Notifications in your browser
 
-Open **Settings → Notifications**. At the top, under **On this Mac**, the
-**Show notifications** switch turns alerts on this Mac on or off. It is on
-unless you turn it off, and your choices under **Notify me about** still apply
-to your other devices.
+Open **Settings → Notifications**. At the top, under **In this browser**, the
+**Show notifications** switch turns alerts in this browser on or off. Your
+choices under **Notify me about** still apply to your other devices.
 
-- Alerts arrive even when Rally is closed.
+- The first time you turn it on, your browser asks whether Rally may show
+  notifications. Say yes. If you said no, the switch is greyed out and the page
+  says **Blocked for this site**. Allow notifications for Rally in your
+  browser's site settings, then turn the switch on.
+- Alerts can arrive when no Rally tab is open, as long as your browser can
+  receive them.
 - Click an alert and Rally opens the exact Canvas or Sidekick it is about.
-- The first time, macOS asks whether Rally may send notifications. If you said
-  no, the settings page says **Turned off in macOS** with an **Open System
-  Settings** button to change your mind. If notifications are allowed but
-  badges are not, it says **Badges turned off in macOS**.
+- If the page says **Not available in this browser**, this browser cannot show
+  Rally's notifications. Try another one, or use email.
+
+The switch belongs to this browser on this computer. Turn it on in each browser
+where you want alerts.
+
+### On an iPhone or iPad
+
+Safari sends notifications only to websites added to the Home Screen, so in an
+ordinary Safari tab the page says **Add Rally to your Home Screen**.
+
+1. In Safari, tap Share, then **Add to Home Screen**.
+2. Open Rally from the new icon on your Home Screen and sign in there.
+3. Open **Settings → Notifications** and turn on **Show notifications** under
+   **In this browser**.
+
+### The number on the app icon
+
+If you added Rally to your Home Screen, or installed it as an app from your
+browser, its icon can carry a badge: the Activity rows you have not seen yet,
+the same number as the **Activity** button on the rail.
+
+## Notifications in the desktop app
+
+In the [desktop app](04-the-desktop-app.md) on a Mac, the switch sits under
+**On this Mac** instead. It works the same way, and it is on unless you turn it
+off. The Linux app cannot show notifications; keep a browser tab signed in, or
+choose email, if you want alerts there.
+
+- Alerts arrive even when the app is closed.
+- On a Mac, the first time, macOS asks whether Rally may send notifications. If
+  you said no, the settings page says **Turned off in macOS** with an **Open
+  System Settings** button to change your mind. If notifications are allowed
+  but badges are not, it says **Badges turned off in macOS**.
+- On a Mac, Rally's icon in the Dock carries the same badge as above. Rally
+  keeps it up to date while it is running, for the Organization you have open,
+  and an alert that arrives while Rally is closed sets it to that alert's count,
+  so the number is waiting when you come back.
 
 > [!NOTE]
 > The macOS permission prompt, and a few other system messages, may still say
 > "workspace". That is Rally's old word for an Organization.
 
-In a web browser the same switch sits under **In this browser**; see [Rally in
-a web browser](04-rally-in-a-browser.md). If there is no **On this Mac** or
-**In this browser** switch at all, push notifications have not been switched on
-for your account yet, and **Push** is not offered; Activity and email still
-work.
-
-### The number on the app icon
-
-Rally's icon in the Dock carries a badge: the Activity rows you have not seen
-yet, the same number as the **Activity** button on the rail. Rally keeps it up
-to date while it is running, for the Organization you have open, and an alert
-that arrives while Rally is closed sets it to that alert's count, so the
-number is waiting when you come back.
+If there is no **In this browser** or **On this Mac** switch at all, push
+notifications have not been switched on for your account yet, and **Push** is
+not offered; Activity and email still work.
 
 ## The small print
 
 - Turning the switch off, or refusing permission, takes that device off the
   list. Rally does not send an email instead unless you chose email.
-- Signing out of Rally on a Mac stops notifications to that Mac.
-- If your device is off or offline, Apple holds alerts for up to 24 hours.
+- Signing out stops notifications to that browser or computer until you sign
+  in there again.
+- If your device is off or offline, alerts are held for up to 24 hours.
 - Now and then the same alert can arrive twice. Rally would rather tell you
   twice than not at all.
 - After an alert about replies in a conversation, Rally waits a couple of
@@ -119,4 +148,4 @@ number is waiting when you come back.
   keeps moving meanwhile.
 - Rally no longer sends a daily digest. Activity is the place to catch up.
 
-Next: [Rally in a web browser](04-rally-in-a-browser.md).
+Next: [The desktop app](04-the-desktop-app.md).

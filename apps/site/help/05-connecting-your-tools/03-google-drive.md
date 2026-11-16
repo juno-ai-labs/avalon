@@ -43,7 +43,7 @@ Text Rally writes into a Doc goes in as plain text. If you see asterisks and has
 
 ## Watching Google files
 
-Rally has the groundwork for watching a Google file for changes, but the switch for it is not in the Mac app today, as [Resources: things you bring in](../06-things-rally-makes/04-resources.md#bringing-things-in-yourself) explains. When it arrives, expect a short delay: Rally checks Google for changes every few minutes rather than hearing about them the moment they happen.
+Rally has the groundwork for watching a Google file for changes, but the switch for it is not in Rally today, as [Resources: things you bring in](../06-things-rally-makes/04-resources.md#bringing-things-in-yourself) explains. When it arrives, expect a short delay: Rally checks Google for changes every few minutes rather than hearing about them the moment they happen.
 
 ## Things to try
 
