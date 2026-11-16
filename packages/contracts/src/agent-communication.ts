@@ -42,9 +42,13 @@ export const AgentExchangeSchema = z.strictObject({
   messageId: IdSchema,
   senderAgentId: AgentIdSchema,
   /**
-   * Set when a person started the sender's turn, so what the message asks
-   * traces to them and not to content the sender read. A Sidekick's wizard
-   * asks people directly only on such a message from a Canvas's Chat.
+   * Set when the sender acts for a person (`actsForAPerson`): a Canvas's
+   * Chat, a Sidekick's wizard, or a background agent of either, whatever
+   * started its turn. Not set by a Sidekick run or its worker, or a scheduled
+   * self-review. The name is from when only a turn a person started set it;
+   * stored messages carry it, so it was not renamed. A turn this message
+   * starts may ask people for a source, and a wizard turn a Canvas's message
+   * starts asks in that Chat (`wizardTurnCanvasId`).
    */
   fromPersonTurn: z.literal(true).optional(),
   /** Absent on a model-authored message, which is every message but two. */

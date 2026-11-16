@@ -190,14 +190,16 @@ drawn there for everyone who can open that conversation: they see who was
 asked, for what, and where it stands. Only the person asked can act on it.
 An agent's ask takes its place from the loop, never from a tool argument: a
 Canvas's Chat or a Sidekick's shared conversation. A wizard turn that a
-Canvas's Chat started by messaging the wizard (`wizardTurnCanvasId`) asks
-from that Chat: the place is the Canvas, and besides its own block in the
+Canvas's Chat or one of its background agents started by messaging the
+wizard (`wizardTurnCanvasId`) asks from that Chat, and so does a Chat's
+background agent itself, whose own conversation the person does not read: the place is the Canvas, and besides its own block in the
 wizard's conversation the tool posts a Sidekick message into the Chat whose
 `automation_activation` carries `sourceRequests: { requestIds }`
 (`postWizardCard`, keyed `sidekick-source-card:<receipt>`). The client draws
 the same card under that post. Test, in
 `apps/api/test-workers/conversation-tools.test.ts`: "is drawn in the Chat
-whose message started the wizard's turn, once per receipt".
+whose message started the wizard's turn, once per receipt" and "is drawn in
+the Chat when one of the Chat's background agents asks".
 
 The same turn's questions are drawn there too: `request_elicitation` posts
 `question: { elicitationId }` (keyed `sidekick-question-card:<id>`), and the
@@ -369,36 +371,37 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
 | `sidekick_request_source` | Asks people for a source. It never waits: it returns each request as it stands, and the client draws its output as the card. |
 | `sidekick_test_source_condition` | Judges the acting person's own ten most recent events of one type against a draft filter, with the production judge. It reads nobody else's events. It answers `judged: false` with a reason, and no events, when the classifier is not configured or when that person's account has no recent events of that type: nothing to judge is not a filter that refuses everything. |
 
-- **Offered to a turn a person started, and to a wizard turn a Canvas's
-  Chat started for them** (`asksForSources`). The latter is a wizard turn
-  whose `agentExchange` sender is a Canvas's Chat turn a person started
-  (`fromPersonTurn`, set by the sender from `derivedFromOf`), or the turn an
-  answer to one of its questions started (`wizardTurnCanvasId`). A Chat turn
-  another agent's message started cannot pass an ask on through the wizard. Every other loop with
-  the Sidekicks plugin is offered the same three: `sources_list` reads as
-  ever, and `request_source` and `test_source_condition` (which reads the
-  acting person's own events) refuse by name with the route to a turn that
-  may ask (`sidekickSourceRefusalTool`; [`agent-tools.md`](agent-tools.md)
-  rule 14):
+- **Offered to every loop that acts for a person** (`asksForSources`,
+  `actsForAPerson` in `lib/loop-authority.ts`): a Canvas's Chat, a Sidekick's
+  wizard, and a background agent of either, whatever started the turn,
+  unless another agent's message started it and that message carries no
+  `fromPersonTurn`. The sender sets `fromPersonTurn` when it acts for a
+  person, so a message between the Chat, the wizard and their agents keeps
+  the person's authority across hops, and one from a run, a run's worker or a
+  self-review does not. Every other loop with the Sidekicks plugin is offered
+  the same three: `sources_list` reads as ever, and `request_source` and
+  `test_source_condition` (which reads the acting person's own events) refuse
+  by name with the route to a turn that may ask
+  (`sidekickSourceRefusalTool`; [`agent-tools.md`](agent-tools.md) rule 14):
   - a Sidekick run (`automationRun`) and its delegation workers
     (`automationDelegation`): `sidekick_source_request_from_run`, which says
     to name the ask in the run's result for a person who manages it;
-  - a background agent (`backgroundAgent`):
-    `sidekick_source_request_from_background_agent`, which says to send the
-    ask to the agent it works for with `send_message`;
-  - the wizard's scheduled self-review (`reason: "sidekick_review"`), which
-    reads runs: `sidekick_source_request_from_review`, which says to name the
-    ask in the review;
-  - any other turn another agent's message started, a run's
+  - the wizard's scheduled self-review (`reason: "sidekick_review"`) and an
+    agent it started (`backgroundAgentRootReason`), which read runs:
+    `sidekick_source_request_from_review`, which says to name the ask in the
+    review;
+  - a background agent with no recorded root, which acts for nobody:
+    `sidekick_source_request_from_background_agent`;
+  - a turn a run's or a review's message started, a run's
     `request_sidekick_change` to its wizard among them:
-    `sidekick_source_request_from_agent_message`, which says to reply to that
-    agent.
+    `sidekick_source_request_from_agent_message`, which says to name the ask
+    in the reply.
 
   An ask goes out in a person's name with a filter the model wrote, and the
-  people asked get it by email, so nothing a loop read may bring one about.
-  A run is handed event content, a stranger's email among it; a background
-  agent reads runs and other content; a run's change request carries what
-  the run read.
+  people asked get it by email. A run is handed event content, a stranger's
+  email among it, and a run's change request carries what the run read, so
+  neither may bring one about. A Chat's or a wizard's own agents may: they
+  do that person's setup, and the person approves nothing by being asked.
 - **Asking never waits, and approves nobody.** `sidekick_request_source`
   returns each request `pending`, the acting person's own included: the
   model wrote the ask and its filter, and they have not read it until the
@@ -624,7 +627,7 @@ source's condition.
 | `apps/api/test-workers/sidekick-source-routes.test.ts` | Real workerd, through the HTTP routes: 401 with no session, an ask and its answer by the person asked and by nobody else, a body that smuggles a field refused 400, a request read by its asker, the person asked and a member who can open the Canvas it was asked in, and by no uninvolved member, withdrawing, each ask refusal by its status and code (an unknown connector or event, a person outside the Organization, the asker's own account with none connected, a Canvas the asker cannot open), an approval with no account connected, and the emailed link's malformed bodies and a person who has left. |
 | `apps/api/test-workers/canvas-sidekicks.test.ts`, `apps/api/test-workers/conversation-tools.test.ts` | Real workerd. A run nobody is behind lists, reads and is told about every attached Canvas that is not archived, and writes a site's rows there, with no person at all; a run somebody asked for is held to what that person can open; an id with no run row is never the Sidekick itself. |
 | `apps/api/test/semantic-trigger-admission.test.ts` | The delivery, with the object and the classifier stood in: the person's filter is judged first, the trigger's question is not asked of an event that filter kept out, both verdicts are sent, and neither is judged without a classifier credential. |
-| `apps/api/test/connector-tool-selection.test.ts` | Which turns are offered the three source tools: the wizard and a Canvas's Chat on a person's turn, and no run, delegation worker, background agent, agent's message or review; the filtered-trigger skill is listed on the same turns and no others; a run and its background worker are offered the delegation lists and not `set_delegation`, which a person's turn and a conversation's own background agent keep. |
+| `apps/api/test/connector-tool-selection.test.ts` | Which turns are offered the three source tools: the wizard, a Canvas's Chat and their background agents, on a person's turn or a stamped agent's message, and no run, delegation worker, review, review agent or unstamped message; the filtered-trigger skill is listed on the same turns and no others; a run and its background worker are offered the delegation lists and not `set_delegation`, which a person's turn and a conversation's own background agent keep. |
 | `apps/api/test/workspace-sidekick-sources-migration.test.ts` | Migration 146 over the real migration chain: a delegate gets a source for each connection of theirs a rule is configured or registered on, every delegate gets one on a configured Organization connection, and a withdrawn grant, a grant with no membership and a person with no grant get none; every active Sidekick with a trigger that nobody lends an account to is marked stopped, whatever it said before, and no other. |
 | `packages/connectors/src/index.test.ts` | Google's `readActivityContent`: one message for new mail, by one request, and nothing for a label change, a subject with no message, a missing message, or a connection that may not read mail. |
 | `apps/api/test/sidekick-event-content.test.ts` | The opening with content, cut content, no content, and unreadable content; content that tries to close its own fence, in any case or spacing. |
@@ -727,10 +730,10 @@ some Sidekicks stopped ([operations](#operations)).
   Organization's connections and the Canvases the Sidekick is attached to. It
   cannot use any person's connection and cannot write the Organization's
   memory ([`automation-lifecycle.md`](automation-lifecycle.md#who-a-run-acts-as)).
-- **Nothing a loop read can ask for a source.** A run, its delegation
-  workers, a background agent and a turn another agent's message started
-  cannot ask; a person's turn and a wizard turn a Canvas's Chat started for
-  them can. No loop can approve.
+- **Nothing a run read can ask for a source.** A run, its delegation
+  workers, a self-review and its agents, and a turn one of their messages
+  started cannot ask; a Canvas's Chat, a Sidekick's wizard and their
+  background agents can, whatever started the turn. No loop can approve.
 - **A Sidekick run cannot change delegation, and neither can its background
   workers.** Each is offered `sidekick_delegates_list` and
   `sidekick_my_delegations_list` and not `sidekick_set_delegation`
@@ -817,6 +820,35 @@ one as it is resolved; the resolution becomes a changelog entry.
    Sidekick asked about from its own conversation.
 
 ## Changelog
+
+### 2026-11-16 — A Chat's and a wizard's background agents, and their messages, ask for a source
+
+**What changed:** `asksForSources` asks `actsForAPerson`: a Canvas's Chat, a
+Sidekick's wizard and a background agent of either may ask, whatever started
+the turn, unless an unstamped agent message did. The sender stamps
+`fromPersonTurn` whenever it acts for a person, no longer only when a person
+started its turn. A Chat's background agent's ask, and a wizard turn its
+message started, are drawn in the Chat. A self-review's agents are refused by
+`backgroundAgentRootReason`.
+
+**Why:** In a real setup a person asked a Chat for a CRM fed by two
+mailboxes. The Chat started background agents and ended its turn; their reply
+started the next Chat turn, which created the Sidekick and messaged its
+wizard. That message carried no `fromPersonTurn`, so the wizard's
+`sidekick_request_source` refused, and the Chat told the person mailbox
+events were unavailable and asked how often to poll. A Chat hands setup to
+agents and hears back, so the person's authority has to survive those hops,
+and the owner asked for exactly this.
+
+**Considered and rejected:** Carrying the stamp only when the sender's own
+turn was stamped (transitive trust): more state for a case the owner judged
+not worth it. The accepted risk: the wizard's background agents can read
+runs, which hold event content, and may now ask. An ask approves nobody.
+
+**What a future change has to respect:** A loop that is handed event content
+(a run, its worker, a review) must not stamp `fromPersonTurn` or be offered
+the ask. The 2026-11-15 rule below is superseded where it refuses a Chat's or
+a wizard's agents.
 
 ### 2026-11-15 — Only a person's turn, or a Canvas's wizard turn, asks for a source
 

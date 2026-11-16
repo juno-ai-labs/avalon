@@ -35,7 +35,7 @@ import { conversationParentStub, hostedParentStub } from "./conversation-parent-
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createNotificationsPlugin, NOTIFICATIONS_PLUGIN_ID } from "./notification-tools";
-import { actsAsSidekickWizard, canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
+import { actsAsSidekickWizard, actsForAPerson, canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -5284,21 +5284,20 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  */
 /**
  * Whether a loop may ask people for a source (`sidekick_request_source` and
- * its two companions): a turn a person started, and a wizard turn a Canvas's
- * Chat started for them (`wizardTurnCanvasId`). An ask goes out in a person's
- * name with a filter the model wrote, and the people asked receive it by
- * email, so nothing a loop read may bring one about: not a run or its
- * workers, which are handed event content such as a stranger's email; not a
- * background agent, which reads runs and other content; and not a turn
- * another agent's message started, which includes a run asking its wizard
- * for a change, nor a scheduled self-review. A wake-up in a Chat or a wizard
- * continues its person's turn and may ask (`docs/agent-loop-types.md`).
+ * its two companions): a Canvas's Chat, a Sidekick's wizard, and a background
+ * agent of either (`actsForAPerson`), whatever started the turn, unless it
+ * was another agent's message from a loop that does not act for a person.
+ * That leaves out a Sidekick run and its workers, which are handed event
+ * content such as a stranger's email, a run's change request to its wizard,
+ * and a scheduled self-review and its agents, which read runs. Setting up a
+ * Sidekick is a Chat handing work to background agents and the wizard and
+ * hearing back, so a person's authority has to survive those hops: an earlier
+ * rule that only a turn a person started could ask refused nearly every real
+ * setup. `docs/sidekick-sources.md#agent-tools`.
  */
-function asksForSources(input: Pick<WorkstreamWorkflowInput,
-  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "sidekickWizard" | "wizardCanvasId" | "reason">): boolean {
-  return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true
-    && input.reason !== "sidekick_review"
-    && (!input.agentExchange || wizardTurnCanvasId(input) !== null);
+function asksForSources(input: WorkstreamWorkflowInput): boolean {
+  return actsForAPerson(input)
+    && (!input.agentExchange || input.agentExchange.fromPersonTurn === true || Boolean(input.wizardCanvasId));
 }
 
 /**
