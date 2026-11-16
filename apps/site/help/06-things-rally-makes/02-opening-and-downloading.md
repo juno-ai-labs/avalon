@@ -1,13 +1,13 @@
 ---
 title: Opening, docking and downloading
-description: Preview any file, keep an artifact open beside the chat, pop it into its own window, or save it to your Mac.
+description: Preview any file, keep an artifact open beside the chat, pop it into its own tab or window, or save it to your computer.
 ---
 
-Rally gives you four ways to look at a file, depending on how long you want to look at it. A quick glance gets the preview. Reading while you talk gets the docked sidebar. Keeping it in view all afternoon gets its own window. Taking it somewhere else gets a download.
+Rally gives you four ways to look at a file, depending on how long you want to look at it. A quick glance gets the preview. Reading while you talk gets the docked sidebar. Keeping it in view all afternoon gets its own tab or window. Taking it somewhere else gets a download.
 
 ## The preview
 
-Click any file in the conversation, whether it is a picture you attached, a file card Rally posted, or a tile in a message, and Rally opens a large preview over the window. You can look at it without downloading anything or leaving the Canvas.
+Click any file in the conversation, whether it is a picture you attached, a file card Rally posted, or a tile in a message, and Rally opens a large preview over the page. You can look at it without downloading anything or leaving the Canvas.
 
 What you see depends on the kind of file:
 
@@ -30,7 +30,7 @@ To close the preview, press <kbd>Esc</kbd>, click the **X** (**Close preview**),
 For documents and other files, the buttons sit in the header:
 
 - **Resource details** (when available) opens the file's details, with its title, versions and other actions.
-- **Download** followed by the file's name saves it to your Mac.
+- **Download** followed by the file's name saves it to your computer.
 - **Close preview** closes it.
 
 For images and video, the buttons sit in the corner: **Download attachment**, **Resource details**, **Close preview**, and a zoom button that switches between **Show preview at full size** and **Fit preview to window**.
@@ -47,7 +47,7 @@ A few details:
 
 ### Reduce Transparency
 
-The preview normally lays a see-through, slightly blurred wash over the window behind it. If you have turned on **Reduce transparency** in your Mac's **System Settings → Accessibility → Display**, Rally respects it: the wash becomes solid and the blur goes away. There is no separate setting in Rally for this.
+The preview normally lays a see-through, slightly blurred wash over the page behind it. If you have turned on **Reduce transparency** in your Mac's **System Settings → Accessibility → Display**, Rally respects it: the wash becomes solid and the blur goes away. The desktop app always picks the setting up; in a browser, it depends on whether your browser passes it on to websites (recent versions of Chrome and Edge do). There is no separate setting in Rally for this.
 
 ## Opening an artifact
 
@@ -64,13 +64,13 @@ Click the pill for the artifact's menu:
 
 - **Download**, **Rename**, **Copy link** and, for a site, a way to open it in
   your browser.
-- **Open in a new window** gives it a window of its own (below).
+- **Open in a new window** gives it a tab or window of its own (below).
 - **Versions** shows its history, as described in [Artifacts](01-artifacts.md#versions).
 - **More** holds **Archive**, which removes it from the Canvas. See
   [Resources: things you bring in](04-resources.md#archiving-a-resource)
   before you click it.
 
-Drag the panel's left edge to make it wider or narrower. When the window is
+Drag the panel's left edge to make it wider or narrower. When the page is
 too narrow for both, the panel fills the space and the conversation waits
 behind it.
 
@@ -80,33 +80,32 @@ Good to know:
 
 - Rally remembers which artifact you had open in each Canvas, on this device, and brings it back the next time you open Rally.
 - To get a closed panel back, click the Canvas's header pill and choose **Open artifact**.
-- If you open a web link while an artifact is open, Rally's built-in browser covers the panel. Close the browser and the artifact is back. The browser itself is covered in [Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md).
-- The panel works in the Mac app and in the web browser version.
+- In [the desktop app](../08-rally-everywhere/04-the-desktop-app.md), opening a web link while an artifact is open lets Rally's built-in browser cover the panel. Close the browser and the artifact is back. The browser itself is covered in [Research and the web](../04-working-with-rally/02-research-and-the-web.md#the-built-in-browser). In the web app, the link opens in a new tab and the panel stays as it was.
 
-## Giving an artifact its own window
+## Giving an artifact its own tab or window
 
-For a reference document you want in view all day, or a dashboard on a second monitor, pop the artifact out into a window you can move and resize like any other.
+For a reference document you want in view all day, or a dashboard on a second monitor, pop the artifact out on its own.
 
 1. Open the artifact.
 2. Click its pill and choose **Open in a new window**.
 
-What the window shows:
+In the web app, the artifact opens in a new browser tab. Drag the tab out of your browser if you want it in a window of its own. In [the desktop app](../08-rally-everywhere/04-the-desktop-app.md), it opens in a real window you can move and resize like any other.
+
+What it shows:
 
 - Images, audio and video play.
 - Everything else shows as read-only text.
 - Reactive sites show the page itself. Sites have their own **Open in a new window** button, covered in [Reactive sites](03-reactive-sites.md).
 
-The window stays up to date. If Rally publishes a newer version while the window is open, the window switches to it.
+It stays up to date. If Rally publishes a newer version while it is open, it switches to it.
 
-Windows you leave open come back when you quit and reopen Rally, on the same monitor if it is still connected, or on one you can see if it is not. Switching to another Organization closes them and brings them back when you switch back. Signing out closes them and forgets them.
+In the desktop app, windows you leave open come back when you quit and reopen Rally, on the same monitor if it is still connected, or on one you can see if it is not. Switching to another Organization closes them and brings them back when you switch back. Signing out closes them and forgets them.
 
-If the window cannot open, Rally says **The artifact couldn't be opened in a new window.**
-
-In the web browser version of Rally, this button opens a new browser tab or window instead, and its position is not remembered.
+If the window cannot open, Rally says **The artifact couldn't be opened in a new window.** A browser tab does not come back by itself; bookmark it if you want it again tomorrow.
 
 ## Download the original file
 
-To save a file to your Mac as the original file:
+To save a file to your computer as the original file:
 
 - On a file card in a message, click the download arrow on the right of the card.
 - In the preview, click the download arrow in the header or corner (**Download** followed by the file's name, or **Download attachment**).
@@ -118,7 +117,7 @@ There is no button that converts a document to Word or PDF. If you need another 
 Some things to watch for:
 
 - A file that is still uploading or still arriving has no download button yet.
-- Files you have attached but not sent yet have no download button. They are already on your Mac.
+- Files you have attached but not sent yet have no download button. They are already on your computer.
 - If a download fails, Rally says **Download failed. Please try again.**
 
 Next: when the thing Rally makes is a whole website, in [Reactive sites](03-reactive-sites.md).

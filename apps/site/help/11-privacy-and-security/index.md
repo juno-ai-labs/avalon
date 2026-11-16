@@ -41,9 +41,10 @@ another.
 
 ## What this chapter covers
 
-It starts on your own Mac, with how Rally keeps you signed in, how to sign out,
-and an optional switch that ties your saved sign-in to this particular
-computer. It then moves outward: what usage information the app reports, which
+It starts on your own device, with how Rally keeps you signed in, how to sign
+out, and an optional desktop app switch that ties its saved sign-in to one
+particular computer. It then moves outward: what usage information the desktop
+app reports, which
 outside companies process data for Rally, and where your Organization's data is
 stored. After that comes what Rally keeps and for how long, what archiving and
 leaving do, and how to ask for your data to be deleted. It ends with the

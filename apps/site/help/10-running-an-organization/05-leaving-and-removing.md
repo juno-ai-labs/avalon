@@ -30,10 +30,12 @@ connection and open Settings again.
 ### What happens when you leave
 
 - The Organization disappears from your account on every device.
-- On the Mac you left from, Rally deletes that Organization's unsent drafts and
-  the copies of its conversations it kept on your computer.
-- Rally then opens your next Organization, if you belong to another one, or
-  takes you back to the screen for joining or creating one.
+- In the browser or desktop app you left from, Rally deletes that
+  Organization's unsent drafts and the copies of its conversations it kept on
+  your computer.
+- The desktop app then opens your next Organization, if you belong to another
+  one, or takes you back to the screen for joining or creating one. The web
+  app takes you back to **Your organizations**.
 - Work you did in the Organization stays there with the people who remain.
   The Organization carries on without you.
 
@@ -53,7 +55,7 @@ is and who should take it over.
 
 ## The last person out: closing an Organization
 
-When you are the only member left, the Mac changes the wording to make the
+When you are the only member left, Rally changes the wording to make the
 consequence plain. Under **Organization access** the row reads **Leave and
 close this organization**, with the note **You are the last member. The
 organization will become unavailable without deleting its retained data.**
@@ -103,10 +105,10 @@ Removal takes effect without a warning to the person removed.
 - Within a few seconds, every Rally window they have open, on every device,
   loses the Organization. Canvases, Sidekick conversations and open live pages
   all stop.
-- On their Mac, Rally signs that Organization out, deletes its unsent drafts
-  and the copies of its conversations kept on the computer, closes any of its
-  artifacts popped out into their own windows, and moves to their next
-  Organization or the sign-in screen.
+- In their browser or desktop app, Rally signs that Organization out, deletes
+  its unsent drafts and the copies of its conversations kept on the computer,
+  closes any of its artifacts popped out into windows of their own in the
+  desktop app, and moves to their next Organization or the sign-in screen.
 - Anything they try to do in it is refused with **You can no longer access this
   organization.** If they pick it in the account menu later, they see **You are
   no longer a member of this organization.**

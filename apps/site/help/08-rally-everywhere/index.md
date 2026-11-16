@@ -1,14 +1,13 @@
 ---
 title: Rally outside the app
-description: Use Rally with Slack and email, choose how it tells you what needs you, and use it in a web browser.
+description: Use Rally with Slack and email, choose how it tells you what needs you, and decide whether you want the desktop app.
 ---
 
-So far this book has kept you at your desk, in the Mac app, with a Canvas or a
-Sidekick open in front of you. That is where Rally does its best work, and
-where you set everything up. But work has a habit of happening somewhere else.
-A question turns up in Slack. A customer emails. Someone mentions you while you
-are on a train, or a client wants to see one Canvas and has no intention of
-installing anything.
+So far this book has kept you in one browser tab, with a Canvas or a Sidekick
+open in front of you. That is where Rally does its best work, and where you set
+everything up. But work has a habit of happening somewhere else. A question
+turns up in Slack. A customer emails. Someone mentions you after you closed the
+tab and got on a train.
 
 This chapter is about those places.
 
@@ -24,12 +23,11 @@ from Slack or email is a Sidekick with a trigger.
 Rally can also reach you. Everything that happens to you, from a mention or a
 reply to a Sidekick run that needs your input or a request to open one of your
 Canvases, lands in your Activity list, and Rally can tell you about each kind
-on your Mac, in your browser, by email or in Slack.
+in your browser, on your phone, by email or in Slack.
 
-And Rally runs in a web browser, for the client who should see one Canvas, the
-teammate on a borrowed computer, and you on your phone. It shows the same
-Canvases and Sidekicks your team sees on their Macs. There is one Rally, and
-you pick the door.
+Then there is the desktop app, for the Mac and for Linux. It shows the same
+Canvases and Sidekicks as the browser and adds a few things a tab cannot do.
+There is one Rally, and you pick the door.
 
 > [!NOTE]
 > Slack calls its own top-level thing a **workspace**. A Slack workspace is not
@@ -39,4 +37,4 @@ you pick the door.
 > means Rally's.
 
 The chapter starts with Slack, because that is where most teams already talk.
-Then come Activity and notifications, and it ends with the browser.
+Then come Activity and notifications, and it ends with the desktop app.

@@ -4,7 +4,7 @@ description: Write to Rally and your teammates, with mentions, lists, slash comm
 ---
 
 Everything you say in a Canvas starts in the message box at the bottom of the
-window. It is where you ask Rally for work, answer its questions and talk to the
+page. It is where you ask Rally for work, answer its questions and talk to the
 people in the room. It looks like an ordinary chat box, and it mostly behaves
 like one, with a few extras.
 
@@ -42,16 +42,16 @@ it and try again, or attach the long material as a file instead (see
 ## Your draft waits for you
 
 If you are halfway through a message and switch to another Canvas, close the
-window or quit Rally, the draft is still there when you come back. That includes
+tab or quit Rally, the draft is still there when you come back. That includes
 the text, the files you attached and the people you mentioned. Each Canvas and
 each Sidekick conversation keeps its own draft.
 
 Some things to know about drafts:
 
-- They are kept on this computer only. A draft does not follow you to another
-  Mac or to your phone.
+- They are kept in this browser, or in the desktop app, on this computer only.
+  A draft does not follow you to another computer or to your phone.
 - A draft is thrown away 12 hours after you last changed it.
-- If your Mac is out of storage, Rally warns you: **This device is out of room to
+- If your computer is out of storage, Rally warns you: **This device is out of room to
   hold attachments, so they will be lost if you quit before sending.** Send the
   message, or free up some space, before you quit.
 - If a message fails to send, it goes back into the box rather than vanishing.
@@ -130,6 +130,8 @@ list tidy.
   meetings need.
 - <kbd>⌘</kbd> <kbd>Z</kbd> undoes only the last list change.
 
+On Windows and Linux, press <kbd>Ctrl</kbd> where these say <kbd>⌘</kbd>.
+
 <kbd>Tab</kbd> indents only when the cursor is in a list. Anywhere else it moves
 to the next control, as usual.
 
@@ -156,13 +158,16 @@ Things to know about dictation:
 
 - Your spoken words are added after anything you had already typed.
 - You cannot type in the box while you are dictating.
-- The first time, your Mac asks for permission to use the microphone. If you
-  said no, Rally shows **Microphone access is blocked. Allow it in System Settings
-  and try again.** Open **System Settings → Privacy & Security → Microphone** and
-  turn Rally on.
+- The first time, your browser asks for permission to use the microphone (in
+  the desktop app, your computer asks). If you said no, Rally shows
+  **Microphone access is blocked. Allow it in System Settings and try again.**
+  In a browser, allow the microphone for
+  app.rallywith.ai in the site settings (the icon beside the address usually
+  opens them). In the desktop app on a Mac, open **System Settings → Privacy &
+  Security → Microphone** and turn Rally on.
 - If Rally heard nothing, it says so and sends nothing.
 - In a Canvas there is no microphone picker. Rally uses the microphone you chose
-  last, or your Mac's default. If that one has been unplugged, you see **The
+  last, or your computer's default. If that one has been unplugged, you see **The
   selected microphone is unavailable.**
 - The microphone is available only once Rally is signed in and connected.
 - If a lot of people are dictating at once you may see **Too many dictation

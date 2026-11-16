@@ -23,7 +23,7 @@ in [What a Sidekick is](../03-sidekicks/01-what-a-sidekick-is.md#who-a-sidekick-
 | **Everyone in the Organization** | Every member of the Organization, and any guests you add. |
 
 To check, click **Share** at the top right of the Canvas. The **Share Canvas**
-window shows the editor audience and a separate artifact audience.
+dialog shows the editor audience and a separate artifact audience.
 
 Whoever can open a Canvas can read all of it: the conversation, every version
 of what Rally made, and every comment. There is no way to show someone the
@@ -55,7 +55,7 @@ artifacts. Previously downloaded content cannot be taken back.
 
 Organization-wide audiences include active members, plus the guests you select.
 Guests do not gain access just by belonging to the Organization. Inviting a guest
-by email from this window grants editor access, including the conversation;
+by email from this dialog grants editor access, including the conversation;
 [Sharing with guests](09-sharing-with-guests.md) explains that invitation.
 
 ### Who can change the sharing
@@ -64,7 +64,7 @@ The creator of a Canvas, and the Organization's owners and administrators,
 decide who can open it: they choose people, invite guests, open it to the
 Organization or close it again, and answer requests to open it. Everyone else
 in the Canvas, members and guests alike, reads it and takes part, and sees the
-**Share** window read-only, with a note saying who can change it. If you want
+**Share** dialog read-only, with a note saying who can change it. If you want
 someone added, ask the creator. For a Canvas a Sidekick made, the Sidekick's
 managers decide too.
 
@@ -77,7 +77,7 @@ Activity row, such as **Theo asked to open Launch plan**, with **Approve** and
 **Deny** beside it, and a notification if they chose one for **Access
 requests** (see [Activity and notifications](../08-rally-everywhere/03-notifications.md)).
 The same request is listed under **Requests** at the top of the Canvas's
-**Share** window.
+**Share** dialog.
 
 - **Approve** adds the person to the Canvas. They get an Activity row saying
   you let them in, and the Canvas opens for them, even if they are still

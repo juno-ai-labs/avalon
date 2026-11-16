@@ -1,9 +1,9 @@
 ---
-title: A tour of the window
+title: A tour of Rally
 description: Find your way around the rail, the sidebar, the home pages, an open Canvas and an open Sidekick.
 ---
 
-Rally's window has a sidebar on the left and your work on the right. The sidebar is how you get anywhere: a narrow strip of buttons down its left edge, called the rail, and next to it the list for whichever button you picked. Whatever you open from that list fills the rest of the window.
+Rally has a sidebar on the left and your work on the right. The sidebar is how you get anywhere: a narrow strip of buttons down its left edge, called the rail, and next to it the list for whichever button you picked. Whatever you open from that list fills the rest of the page. On a phone, the sidebar hides behind an **Open navigation** button, and whatever you open takes the whole screen.
 
 | Part | What it shows |
 | --- | --- |
@@ -23,9 +23,9 @@ Three buttons run down the top of the rail, each an icon with its name under it.
 - **Sidekicks** lists the Sidekicks shared with you, keeping whatever you have open in place. Its red number counts the ones waiting for you: those under **Needs input**, and those with something new in their conversation.
 - **Activity** lists what happened to you: mentions, replies, being added to a Canvas, Sidekick runs that need you or finished, and requests to open a Canvas. Its number counts the rows you have not seen yet.
 
-At the bottom of the rail sits your avatar, labelled **Settings**. It opens the account menu described [below](#the-account-menu). <kbd>⌘</kbd> <kbd>,</kbd> opens the Settings window from anywhere.
+At the bottom of the rail sits your avatar, labelled **Settings**. It opens the account menu described [below](#the-account-menu).
 
-The Mac menu bar adds up the **Canvases** and **Sidekicks** numbers. The Dock icon shows **Activity**'s number, the rows you have not seen yet.
+On a computer, the foot of the sidebar holds **Download the Mac app**, for when you want [the desktop app](../08-rally-everywhere/04-the-desktop-app.md). Phones and tablets do not show it.
 
 ## The sidebar
 
@@ -62,7 +62,7 @@ To make the sidebar narrower or wider, drag its right edge.
 
 ## The home pages
 
-The Canvases and Sidekicks sections each have a home page, which shows the whole section at once and fills the window when nothing in the section is open.
+The Canvases and Sidekicks sections each have a home page, which shows the whole section at once and fills the page when nothing in the section is open.
 
 The **Canvases** home page has a **New Canvas** button, a search box and filter chips: **All**, **Data**, **Made by me**, **Shared with me** and **From Sidekicks**. **Recent** lists matching Canvases by their latest activity. Faces at a card's top left show who has it open; a **Data** badge at the top right means it contains an artifact with its own database. In a new Organization the page shows only **New Canvas** and a **Start from a prompt** card, which is the quickest way in, as you will see on [the next page](05-your-first-canvas.md).
 
@@ -70,7 +70,7 @@ The **Sidekicks** home page has **New Sidekick**, a search box and the filter ch
 
 ## An open Canvas
 
-Open a Canvas and it fills the window.
+Open a Canvas and it fills the page.
 
 - At the top center floats the Canvas's header pill, with its mark and name. Click it for four shortcuts: **Share**, **Open artifact**, **Copy link**, and **Pin** (or **Unpin**). **Open artifact** becomes available once Rally has made something and the artifact panel is closed. **Rename…** and **Change appearance** sit below the shortcuts.
 - At the top right are the faces of the people who have the Canvas open right now, then **Share**.
@@ -88,22 +88,23 @@ Open a Sidekick and you see its one shared conversation, with a details column b
 
 Your avatar at the bottom of the rail opens the account menu:
 
-- **Restart to Update** appears at the top when a new version of Rally has downloaded and is ready. See [Keeping Rally up to date](../09-settings-and-shortcuts/04-updates.md).
 - **Add new member** invites teammates by email. Only owners and administrators can use it. See [Inviting people](../10-running-an-organization/02-inviting-people.md).
 - **Members** opens the list of people in Settings.
 - **Sidekicks** opens the Sidekicks home page.
-- **Settings** opens the Settings window.
+- **Settings** opens Settings, which takes the whole tab. Close it to go back to where you were.
 - Below them, how much of this week's shared quota your Organization has left.
-- **Log out** signs you out of Rally on this Mac.
+- **Log out** signs you out of Rally in this browser, in every tab.
 
 If your account can belong to several Organizations, the menu also lists them under **Organizations**, with a check mark beside the one you are in, and any waiting **Invitations**. See [Belonging to several Organizations](../10-running-an-organization/04-several-organizations.md).
 
-For help, **Help → Rally website** in the Mac menu bar opens rallywith.ai, whose **Help Center** link leads to this manual, and [Contacting support](../12-help-and-glossary/03-contact-support.md) tells you how to reach a person.
+For help, this manual lives at [rallywith.ai/help](https://rallywith.ai/help/), and [Contacting support](../12-help-and-glossary/03-contact-support.md) tells you how to reach a person.
+
+In the desktop app the menu also offers **Restart to Update** when a new version is ready ([Keeping Rally up to date](../09-settings-and-shortcuts/04-updates.md)), and Settings opens in a window of its own.
 
 ## Rally remembers where you were
 
-When you quit Rally and open it again, it returns to what you were last looking at, with your sidebar width, the panel you had open and your place in the conversation as you left them. The rail shows the section of the Canvas or Sidekick it reopens; if it reopens on a home page, it keeps the section you last picked. The first time, or if that place has gone, it opens the Canvases home page.
+The address bar always shows what you have open: each Canvas and each Sidekick has its own link. So reloading the page keeps your place, **Back** and **Forward** work as you would expect, and you can bookmark a Canvas you open every day. When you come back to [app.rallywith.ai](https://app.rallywith.ai) later, Rally reopens the Organization you were last in.
 
-This memory belongs to this Mac; your other devices keep their own.
+Drafts you are typing survive switching to another tab and back.
 
 Next, put something in it: [start your first Canvas](05-your-first-canvas.md).

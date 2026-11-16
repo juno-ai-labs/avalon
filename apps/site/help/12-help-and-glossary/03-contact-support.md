@@ -37,9 +37,11 @@ questions. These help most:
   shown in [Search and links](../02-canvases/11-search-and-links.md).
   A link grants nothing by itself, so it is safe to send: it only tells us
   where to look.
-- Your Rally version. It is under **Settings → Application → About**, or
-  **Rally → About Rally** in the menu bar.
-- Which device: the Mac app, or Rally in a web browser.
+- Where you use Rally: the web app, and which browser (Chrome, Safari, Firefox,
+  Edge) on which kind of device, or the desktop app on a Mac or on Linux.
+- In the desktop app, your Rally version. It is under **Settings → Application
+  → About**, or **Rally → About Rally** in a Mac's menu bar. The web app is
+  always the newest version, so there is nothing to look up there.
 - Which connector, if the problem involves one, and whether it is your
   personal connection or the Organization's.
 - Screenshots, once you have covered or cropped out anything private.

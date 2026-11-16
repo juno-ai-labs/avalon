@@ -47,8 +47,8 @@ If you think you have found a security weakness in Rally, please tell us.
 
 1. Email **help@rallywith.ai** with the subject **Security report**.
 2. Describe:
-   - **the affected surface**: which part of Rally (the Mac app, the
-     browser version, the website or a particular feature);
+   - **the affected surface**: which part of Rally (the web app, the
+     desktop app, the website or a particular feature);
    - **the impact**: what someone could do by exploiting it;
    - **steps to reproduce it**, precise enough for someone else to follow;
    - **a safe proof of concept**, showing the problem without causing harm.
@@ -68,14 +68,18 @@ While you investigate:
 If someone at your company is reviewing Rally, here is the chapter in short,
 with a link to each point in full.
 
-- **Signing in.** Google sign-in. A saved sign-in renews with use, lapses after
-  30 days without use and lasts at most 90 days. Signing out ends it on the
-  server as well as the Mac. See
+- **Signing in.** Google, Apple or a one-time email code in the web app;
+  Google or Apple in the desktop app. A sign-in renews with use
+  and ends after a long time unused; in the desktop app it lapses after 30 days
+  without use and lasts at most 90 days. Signing out ends it on the server as
+  well as on the device. See
   [Signing in, signing out and Lockdown mode](01-signing-in-and-out.md).
-- **Saved sign-in on the Mac.** Encrypted by default; with **Lockdown mode** it
-  is protected by the Mac's keychain instead. Same page.
-- **Usage reporting.** The **Product analytics** switch controls detailed usage,
-  error and crash reports; content-free reliability signals always continue.
+- **Saved sign-in in the desktop app.** Encrypted by default; with **Lockdown
+  mode** it is protected by the Mac's keychain, or the system's password store
+  on Linux, instead. Same page.
+- **Usage reporting.** The web app sends no product analytics. In the desktop
+  app, the **Product analytics** switch controls detailed usage, error and
+  crash reports; content-free reliability signals always continue.
   See [What Rally shares, and with whom](02-what-rally-shares.md#the-product-analytics-switch).
 - **AI and outside providers.** The model sees only the context a task needs;
   connector credentials never go into prompts; customer content is not used to

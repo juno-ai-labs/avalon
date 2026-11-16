@@ -4,7 +4,7 @@ description: Set the Organization's name and time zone, decide where Rally's cod
 ---
 
 A handful of settings apply to everyone in the Organization at once. They live
-in three places in the Settings window: **Organization**, **Security**, and
+in three places in Settings: **Organization**, **Security**, and
 **Connections**. Everyone can look at them. Only
 owners and administrators can change them.
 
@@ -30,7 +30,7 @@ afternoon. Schedules are covered in [Triggers and schedules](../03-sidekicks/04-
 
 Your own time zone is a different setting, under **Settings → Account**,
 described in
-[The Settings window](../09-settings-and-shortcuts/01-the-settings-window.md).
+[Settings](../09-settings-and-shortcuts/01-the-settings-window.md).
 
 Below the preferences, **What Rally remembers about the Organization** lists
 what Rally has saved to the Organization's shared memory (see

@@ -9,7 +9,7 @@ bring someone in, and how Rally behaves when the room gets busy.
 ## Who is here now
 
 When other people have a Canvas open, their faces appear at the top right of
-the window, beside **Share**. Rest your pointer on a face to see the name. The
+the page, beside **Share**. Rest your pointer on a face to see the name. The
 same people show in the sidebar, under the Canvas's name, with a green dot:
 **Maya and Theo are here**. On the Canvases home page, their faces appear at
 the top left of the Canvas's card.
@@ -25,7 +25,7 @@ frozen in place.
 ## Who can open it
 
 Click **Share** at the top right to see who can open the Canvas. The **Share
-Canvas** window says which of three settings applies (**Only you**, **Specific
+Canvas** dialog says which of three settings applies (**Only you**, **Specific
 people** or **Everyone in the Organization**) and lists the people chosen,
 with their email addresses and a **Guest** badge for anyone from outside the
 Organization. [Who can see what](08-who-can-see-what.md) explains the three
@@ -35,7 +35,7 @@ settings.
 
 The Canvas's creator and the Organization's owners and administrators choose
 who can open it; for a Canvas a Sidekick made, so do the Sidekick's managers.
-Anyone else sees the same window read-only, with a note saying who can change
+Anyone else sees the same dialog read-only, with a note saying who can change
 it, as [Who can see what](08-who-can-see-what.md#who-can-change-the-sharing)
 explains.
 
@@ -60,7 +60,7 @@ A few rules:
   To bring in someone from outside your Organization, such as a client, see
   [Sharing with people outside your Organization](09-sharing-with-guests.md).
 - Someone who cannot open the Canvas can ask to. Their request appears at the
-  top of the **Share Canvas** window under **Requests**, with **Approve** and
+  top of the **Share Canvas** dialog under **Requests**, with **Approve** and
   **Deny**, and in your Activity. See
   [Who can see what](08-who-can-see-what.md#requests-to-open-a-canvas).
 
@@ -126,11 +126,11 @@ and "7 minutes ago" will not still be claiming to be 7 minutes ago at teatime.
 - Under a minute reads **just now**. Then it counts minutes, then hours, then
   days.
 - After seven days it switches to a fixed date and time, such as **Sep 10,
-  2026, 3:42 PM**, written the way your Mac's language and region settings like.
+  2026, 3:42 PM**, written the way your computer's language and region settings like.
 - Labels move on about every ten seconds, so one can lag behind by a few
   seconds.
-- When Rally's window is hidden or minimised the labels rest, and catch up the
-  moment you bring the window back.
+- When Rally's tab or window is hidden or minimised the labels rest, and catch
+  up the moment you bring it back.
 
 Rest your pointer on any of these times for a moment and a small tip shows the
 exact date and time, in your own time zone. That is handy when "3 days ago" is

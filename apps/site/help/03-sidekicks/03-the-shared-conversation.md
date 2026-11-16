@@ -3,7 +3,7 @@ title: Talking to a Sidekick
 description: Every Sidekick has one conversation shared by everyone it is shared with. Ask it for work, watch its runs, answer its questions.
 ---
 
-Open a Sidekick and the middle of the window is its conversation. There is only
+Open a Sidekick and the middle of the page is its conversation. There is only
 one, and everyone the Sidekick is shared with sees the same thing: what people
 said, what the Sidekick did, and what it made. It works like a team channel
 where one member happens to be an agent who never takes lunch.
