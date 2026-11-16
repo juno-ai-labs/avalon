@@ -21,7 +21,7 @@ const CATEGORY_LABELS = new Map<string, string>(CANVAS_TEMPLATE_CATEGORIES.map((
 const CONNECTORS = new Map(TEMPLATE_CONNECTORS.map((connector) => [connector.id, connector]));
 const PLUGINS = new Map(TEMPLATE_PLUGINS.map((plugin) => [plugin.id, plugin]));
 
-/** Every template, in catalog order. Read on each call so the dev server serves the current files. */
+/** Every template, in catalog order. */
 export const marketplaceTemplates = (): CanvasTemplateData[] => loadCanvasTemplates((file) => readFileSync(file, 'utf8'));
 
 /** The names of a template's recommended connectors, in its order. */
@@ -55,10 +55,14 @@ const pluginChips = (plugins: readonly TemplatePluginId[]): string[] => plugins.
 const chipList = (chips: readonly string[], className: string, label: string): string =>
   chips.length ? `<ul class="${className}" aria-label="${label}">${chips.join('')}</ul>` : '';
 
-/** The marketplace's header, the homepage's with Marketplace marked current. */
-export function renderMarketHeader(): string {
+/**
+ * The marketplace's header, the homepage's with Marketplace marked current:
+ * as the page on `/marketplace/`, and as the section (`true`) on a template's
+ * page, whose breadcrumb names the page itself.
+ */
+export function renderMarketHeader(current: 'page' | 'true' = 'page'): string {
   return '<header class="home-header"><a class="home-logo" href="/" aria-label="Rally home"><img src="/brand/rally-mark-ink.svg" width="32" height="32" alt="" />rally</a>'
-    + '<nav class="home-nav" aria-label="Primary"><a href="/#canvases">Canvases</a><a href="/marketplace/" aria-current="page">Marketplace</a>'
+    + `<nav class="home-nav" aria-label="Primary"><a href="/#canvases">Canvases</a><a href="/marketplace/" aria-current="${current}">Marketplace</a>`
     + '<a href="/#pricing">Pricing</a><a href="/help/">The manual</a></nav>'
     + `<a class="header-login" data-site-action="sign-in-header" href="${APP_ORIGIN}">Open Rally <span aria-hidden="true">${arrow}</span></a></header>`;
 }
@@ -131,7 +135,7 @@ export function renderTemplatePage(template: CanvasTemplateData): string {
   </head>
   <body>
     <a class="skip-link" href="#content">Skip to content</a>
-    <!-- rally:market-header -->
+    ${renderMarketHeader('true')}
     <main id="content">
       <article class="market-template wrap" aria-labelledby="template-title">
         <nav class="market-breadcrumbs" aria-label="Breadcrumb"><a href="/marketplace/">Marketplace</a> <span aria-hidden="true">/</span> <span aria-current="page">${escape(name)}</span></nav>
