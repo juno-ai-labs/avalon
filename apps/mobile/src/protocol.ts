@@ -46,6 +46,16 @@ export const CanvasSummarySchema = z.object({
   updatedAt: z.string(),
 });
 export type CanvasSummary = z.infer<typeof CanvasSummarySchema>;
+/**
+ * A Canvas shared with this person in another of their Organizations, which
+ * Home's dashboard lists beside this Organization's own. It is kept out of
+ * `canvases` so it is never offered as a tab or a pin, which are this
+ * Organization's; an older shell drops the field and shows only its own.
+ */
+export const SharedElsewhereSummarySchema = CanvasSummarySchema.extend({
+  organization: z.object({ id: z.string().min(1), name: z.string(), region: z.string().min(1) }),
+});
+export type SharedElsewhereSummary = z.infer<typeof SharedElsewhereSummarySchema>;
 
 export const MobileSnapshotSchema = z.object({
   userId: z.string(),
@@ -54,6 +64,7 @@ export const MobileSnapshotSchema = z.object({
   workspaceName: z.string(),
   workspacePath: z.string().regex(/^\/app\/workspaces\/[^/?#]+\/[^/?#]+$/u),
   canvases: z.array(CanvasSummarySchema),
+  sharedElsewhere: z.array(SharedElsewhereSummarySchema).default([]),
   pins: z.array(z.string()),
   hasMore: z.boolean(),
   loading: z.boolean(),
@@ -135,6 +146,8 @@ export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('open-chat'), id: z.string().min(1) }),
   z.object({ type: z.literal('close-chat') }),
   z.object({ type: z.literal('open'), id: z.string().min(1), pinned: z.boolean() }),
+  /** Open a Canvas in another of this person's Organizations, switching to it. */
+  z.object({ type: z.literal('open-elsewhere'), region: z.string().min(1), workspaceId: z.string().min(1), canvasId: z.string().min(1) }),
   z.object({ type: z.literal('pin'), id: z.string().min(1), pinned: z.boolean(), beforeId: z.string().min(1).optional() }),
   z.object({ type: z.literal('reorder'), ids: z.array(z.string().min(1)) }),
   z.object({ type: z.literal('load-more') }),
