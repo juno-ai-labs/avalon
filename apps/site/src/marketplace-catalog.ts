@@ -11,8 +11,9 @@ import { marked } from 'marked';
 import { loadCanvasTemplates, type CanvasTemplateData } from '../../../packages/skills/marketplace-skills/catalog';
 import { CANVAS_TEMPLATE_CATEGORIES } from '../../../packages/skills/marketplace-skills/categories';
 import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS, templateConnectorHelpPath, type TemplateConnectorId, type TemplatePluginId } from '../../../packages/skills/marketplace-skills/connectors';
-import { escapeHtml as escape } from './comparison-pages';
+import { escapeHtml as escape } from './html';
 import { renderConnectorMark, renderPluginGlyph } from './connector-marks';
+import { renderReadingCard } from './reading-card';
 
 const ORIGIN = 'https://rallywith.ai';
 const APP_ORIGIN = 'https://app.rallywith.ai';
@@ -161,4 +162,21 @@ export function renderMarketplaceSitemap(): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`
     + marketplaceTemplates().map(({ slug }) => `  <url>\n    <loc>${ORIGIN}${templatePagePath(slug)}</loc>\n  </url>\n`).join('')
     + '</urlset>\n';
+}
+
+/**
+ * The card for one marketplace template, in the marketplace's pencil style:
+ * who it is for and the connectors it works with above its name and
+ * description, beside the Canvas drawing, since starting one makes a Canvas.
+ */
+export function renderTemplateCard({ slug, name, description, audience, connectors }: {
+  slug: string; name: string; description: string; audience: string; connectors: readonly string[];
+}): Promise<Buffer> {
+  return renderReadingCard({
+    eyebrow: ['Rally Marketplace', audience, ...(connectors.length ? [`Works with ${connectors.join(', ')}`] : [])].join(' · '),
+    title: name,
+    description,
+    address: `rallywith.ai/marketplace/${slug}`,
+    scene: 'canvas',
+  });
 }
