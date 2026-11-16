@@ -46,7 +46,11 @@ People can have different filters: "all of mine, only the fundraising mail of
 hers" is two asks.
 
 Resolve each person to an Organization user before going further. If a name
-matches nobody or more than one person, ask which.
+matches nobody or more than one person, ask which. Someone named by an email
+address who may not be a member yet: call \`offer_to_add_member\` with the
+address. A member comes back at once with their userId. Anyone else gets a card
+an administrator presses to add them, and once it is answered \`added\`, the
+same call returns their userId; ask them like anyone else from there.
 
 Whether a person has connected that account yet does not decide whether to ask
 them. Someone who never connected it, or whose sign-in lapsed after a password

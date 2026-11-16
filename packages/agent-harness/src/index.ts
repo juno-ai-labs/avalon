@@ -22,6 +22,7 @@ import {
   withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
   ConnectorConnectionCardInputSchema,
+  MemberCardInputSchema,
   ConnectorConnectionStateInputSchema,
   PickedAppearanceSchema,
   PROJECT_COLOR_KEYS_STORABLE,
@@ -3612,6 +3613,33 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   idempotency: "provider_key",
   get inputSchema() {
     return requestElicitationInputJsonSchema();
+  },
+} as const satisfies ToolDefinition;
+
+const memberCardInputJsonSchema = memoizedValue(
+  () => z.toJSONSchema(MemberCardInputSchema, { io: "input" }) as Record<string, unknown>,
+);
+
+/**
+ * Bring someone into the Organization from the conversation. It looks the
+ * address up first, so it doubles as the check: a member comes back at once
+ * with their userId, and only someone who is not one is shown the card.
+ */
+export const AVALON_OFFER_TO_ADD_MEMBER_TOOL_DEFINITION = {
+  name: "offer_to_add_member",
+  description: [
+    "Check whether someone is a member of this Organization by email address, and if they are not, show a card that adds them.",
+    "A member comes back at once as status member with their userId, and nothing is shown: carry on and use that userId (for example, to ask them for a Sidekick source).",
+    "Anyone else, guests included, gets a card in this conversation that an Organization owner or administrator presses to add them as a member at once; they need not have signed in to Rally, and there is nothing for them to accept.",
+    "That pauses this run until someone answers. On the answer added, call this tool again with the same email: it returns their userId. On declined, carry on without them.",
+    "Use it when the work names a person by email who should be in the Organization. Do not tell the person to invite them some other way.",
+  ].join(" "),
+  capability: "workspace.members.offer",
+  mode: "write",
+  // The question's id derives from this receipt key, as request_elicitation's does.
+  idempotency: "provider_key",
+  get inputSchema() {
+    return memberCardInputJsonSchema();
   },
 } as const satisfies ToolDefinition;
 
