@@ -754,7 +754,10 @@ card grid with Sidekicks; the shared layout is described in
   Open artifact is disabled until the Canvas has an artifact and while its
   artifact panel is already open; closing the panel enables it again. A tooltip
   explains either disabled state on hover or keyboard focus. Rename… and
-  Change appearance follow as rows, then the **Sidekicks** section, then,
+  Change appearance follow as rows, then the **Artifacts** section
+  (`CanvasArtifactsSection`): one row per artifact, newest first, with its
+  kind's mark, its title and when it last changed; a row opens that artifact
+  in the right rail. Then the **Sidekicks** section, then,
   while the Canvas sends notices, a **Notifications** section
   (`CanvasNoticesMenuSection`): **Get notifications** for a member not listed
   on an Organization-wide Canvas, else **Mute notifications**, or **Turn on
@@ -1131,6 +1134,21 @@ serves at its URL. The run guidance and the refusal nudge toward adding the
 new file or entry inside the one artifact, and keep `replaceCanvasArtifact`
 for output meant to take the artifact's place. A race between two publishes is accepted: the second is not listed
 and the model is not told.
+
+### 2026-11-16 — The Canvas menu lists its artifacts
+
+**What changed:** The Canvas menu has an **Artifacts** section between the
+appearance rows and Sidekicks, one row per artifact that opens it in the right
+rail. Opening the menu refetches the Canvas detail when it is stale.
+
+**Why:** Open artifact reached only the newest artifact; a Canvas with several
+had no way back to an older one but scrolling the Chat for its card.
+
+**Considered and rejected:** Pushing the detail over the socket to keep the
+list current: a refetch on open is enough for a list read only when the menu
+opens. That read calls the API directly and writes the cache only on success:
+through the query, a failed read sets `canvas.error`, which replaces the open
+Chat of a Canvas with no list row with the error pane.
 
 ### 2026-11-15 — A person the Canvas admits can join its participant list
 

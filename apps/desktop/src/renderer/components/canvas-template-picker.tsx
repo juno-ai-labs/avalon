@@ -4,7 +4,7 @@ import { markColors } from '@rally/ui/lib/project-palette';
 import { ArrowUp } from 'lucide-react';
 import { useState } from 'react';
 
-import { CANVAS_TEMPLATE_CATEGORIES } from '../lib/canvas-template-categories';
+import { CANVAS_TEMPLATE_CATEGORIES } from '../../../../../packages/skills/marketplace-skills/categories';
 import { CANVAS_TEMPLATES, type CanvasTemplate } from '../lib/canvas-templates';
 
 type TemplateGroup = 'popular' | (typeof CANVAS_TEMPLATE_CATEGORIES)[number]['tag'];
