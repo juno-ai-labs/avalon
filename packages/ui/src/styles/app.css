@@ -80,7 +80,7 @@ html { background-color: var(--av-sys-backdrop-color); }
 body {
   background: var(--av-sys-backdrop-color);
   color: var(--av-sys-color-text-default);
-  font-size: var(--av-sys-font-size-base);
+  font-size: var(--av-sys-type-body);
   line-height: var(--av-sys-font-leading-base);
   -webkit-font-smoothing: antialiased;
 }
@@ -616,7 +616,7 @@ pre {
   border-radius: var(--av-sys-size-radius-pill);
   color: var(--av-ref-color-neutral-11);
   display: inline-flex;
-  font-size: var(--av-sys-font-size-meta);
+  font-size: var(--av-sys-type-caption-1);
   font-weight: var(--av-sys-font-weight-emphasis);
   line-height: 18px;
   max-width: 140px;
@@ -1168,7 +1168,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   display: flex;
   flex: 0 0 54px;
   font: inherit;
-  font-size: var(--av-sys-font-size-row);
+  font-size: var(--av-sys-type-body);
   gap: 8px;
   height: 54px;
   min-height: 54px;
@@ -1692,7 +1692,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   color: var(--av-sys-color-text-default);
   display: inline-flex;
   flex: 0 0 18px;
-  font-size: var(--av-sys-font-size-meta);
+  font-size: var(--av-sys-type-caption-1);
   height: 18px;
   justify-content: center;
 }
@@ -1709,13 +1709,13 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   border: 1px solid var(--av-sys-color-border-subtle);
   border-radius: var(--av-sys-size-radius-pill);
   color: var(--av-sys-color-text-muted);
-  font-size: var(--av-sys-font-size-meta);
+  font-size: var(--av-sys-type-caption-1);
   padding: 1px 5px;
 }
 /* One line: the menu label is a column, which put the time under its words. */
-.workspace-counts-stale { color: var(--av-sys-color-text-muted); display: block; font-size: var(--av-sys-font-size-meta); }
+.workspace-counts-stale { color: var(--av-sys-color-text-muted); display: block; font-size: var(--av-sys-type-caption-1); }
 .workspace-region-choice { border: 0; display: flex; gap: 12px; margin: 12px 0 0; padding: 0; }
-.workspace-region-choice legend { color: var(--av-sys-color-text-subtle); font-size: var(--av-sys-font-size-meta); margin-bottom: 6px; }
+.workspace-region-choice legend { color: var(--av-sys-color-text-subtle); font-size: var(--av-sys-type-caption-1); margin-bottom: 6px; }
 .workspace-region-choice label { align-items: center; display: flex; gap: 5px; }
 .workspace-region-choice label > span { display: flex; flex-direction: column; }
 .workspace-region-choice label small { color: var(--av-sys-color-text-muted); font-weight: 400; }
@@ -1793,7 +1793,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
    icon column the rows above it indent their labels to. After the popup's rule
    above, which it has to override at the same specificity. */
 .menu-content .workspace-usage-item.menu-item { align-items: stretch; flex-direction: column; gap: 5px; min-height: 0; padding: 6px 10px 8px; }
-.workspace-usage-item small { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-font-size-meta); }
+.workspace-usage-item small { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-caption-1); }
 
 .account-menu-item-with-value.menu-item { grid-template-columns: 18px minmax(0, 1fr) auto 14px; }
 .account-menu-item.menu-item[data-highlighted] { background-image: var(--hover-layer); }
@@ -3263,7 +3263,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
    states: without it the header grows when editing opens and the whole
    transcript below it steps down and back on every double click. */
 .workstream-title-line { align-items: center; display: flex; gap: 8px; min-height: 22px; min-width: 0; }
-.workstream-title-line h1 { font-size: var(--av-sys-font-size-title); margin: 0; min-width: 0; }
+.workstream-title-line h1 { font-size: var(--av-sys-type-headline); margin: 0; min-width: 0; }
 .workstream-header-actions { gap: 2px; }
 /* Every control that owns the right sidebar reads as pressed while its panel is
    the one showing there. */
@@ -5879,7 +5879,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 .app-shell {
   font-family: var(--av-sys-font-family-ui);
-  font-size: var(--av-sys-font-size-base);
+  font-size: var(--av-sys-type-body);
   font-weight: 420;
   letter-spacing: 0;
   line-height: var(--av-sys-font-leading-base);
@@ -8093,24 +8093,25 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
  * on Android. Important because the field rules it overrides are scoped deeper
  * than any one rule here could be. That also shrinks a larger field to 16px,
  * so a field styled above 16px has to be added to the :not() list, or given
- * a rule of its own below. Under the touch density a field with a role takes
- * `max(16px, <its role>)`, so it follows Dynamic Type above the floor: the
- * composer reads at the size of the messages above it.
+ * a rule of its own below. Under the touch density every field takes
+ * `max(16px, <the control role>)`, so it follows Dynamic Type above the
+ * floor, and the composer takes body, the size of the messages above it.
  */
 @media (hover: none) and (pointer: coarse) {
   input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']),
   textarea,
   select,
   .workstream-composer .composer-highlight { font-size: 16px !important; /* type-scale: iOS focus-zoom floor */ }
+  [data-density='touch'] :is(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']), textarea, select) { font-size: max(16px, var(--av-cmp-control-font-size)) !important; }
   [data-density='touch'] .workstream-composer :is(textarea, .composer-highlight) { font-size: max(16px, var(--av-sys-type-body)) !important; }
-  [data-density='touch'] .mobile-search input { font-size: max(16px, var(--av-sys-type-subheadline)) !important; }
 }
 
 /* 44pt touch targets; `docs/theming.md` has the rule. `::before` on an icon
    button is reserved for the target (the microphone's menu trigger draws its
-   divider there and is left out). A message's actions reach the target
-   downward only: a centred square would cover the turn's last line and take
-   taps meant for its links. */
+   divider there and is left out). A message's actions reach downward only: a
+   centred square would cover the turn's last line and take taps meant for its
+   links. The next turn's row paints over the rest, so the target stops where
+   that turn begins rather than taking taps meant for it. */
 @media (hover: none) and (pointer: coarse) {
   .composer-send { position: relative; }
   :is(.icon-button:not(.microphone-menu-trigger), .composer-send)::before {
@@ -8126,11 +8127,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
      button's square paints over the earlier one's visible face and takes its
      taps. A button beside another grows only vertically; a group that wants
      the full square spaces itself, as the composer's do below. */
-  :is(.icon-button:has(+ .icon-button), .icon-button + .icon-button)::before { width: 100%; }
-  /* Each turn is a transformed row of its own, so the next turn paints over
-     this one's area whatever it sets inside. The row whose actions show rises
-     above its neighbours while they do. */
-  .virtual-message-row:has(.message-block:is(:hover, :focus-within), .message-actions.is-speaking) { z-index: 1; }
+  :is(.icon-button:has(+ .icon-button), .icon-button + .icon-button):not(.microphone-menu-trigger)::before { width: 100%; }
   .message-actions button { position: relative; }
   .message-actions button::before {
     content: '';
@@ -8146,7 +8143,23 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
     gap: var(--composer-submit-gap);
     padding: calc((var(--av-sys-size-touch-target) - 28px) / 2);
   }
+  .has-message-capsule .is-message-capsule :is(.composer-tools, .composer-submit-area) .icon-button::before { width: max(var(--av-sys-size-touch-target), 100%); }
+  /* A row picked by touch, the mention list's, is a target itself. */
+  .mention-popover button { min-height: var(--av-sys-size-touch-target); }
 }
+
+/* A density boundary re-establishes base text as <body> does: custom properties
+   it re-declares do not recompute a font size its parent already resolved, so
+   text that names no role inside a `default` subtree would otherwise keep the
+   touch size. Not on <html>, so rem stays the browser's. */
+[data-density]:not(:root) { font-size: var(--av-sys-type-body); line-height: var(--av-sys-font-leading-base); }
+
+/* On a phone, a dialog's message sits a step below its title, as an iOS
+   alert's does, and the title carries the weight; at 17pt the two were one
+   size apart. Its actions wrap rather than run off a narrow screen. */
+[data-density='touch'] .dialog-title { font-weight: 600; }
+[data-density='touch'] .dialog-description { font-size: var(--av-sys-type-footnote); }
+[data-density='touch'] .message-actions { flex-wrap: wrap; }
 
 /* A touch screen has no keyboard to press the Submit shortcut or an option's letter with. */
 @media (hover: none) and (pointer: coarse) {

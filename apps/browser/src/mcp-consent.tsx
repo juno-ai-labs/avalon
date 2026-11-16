@@ -198,7 +198,7 @@ export function McpConsent(): React.JSX.Element {
       <p className="entry-lead">The app will be able to read, create, change and share the Canvases you can open in the Organization you choose, acting as {session.user.email}. It can also set up Sidekicks that keep a Canvas up to date for you, which run with your connected accounts. It can do only what you can.</p>
       <p className="signed-in-identity">{name ? "Rally has not verified the name the app gave itself. " : ""}You will return to {client.redirectOrigin}</p>
       {workspaces && workspaces.length > 0 ? <fieldset className="signin-choice-list">
-        <legend className="mb-2 text-[length:var(--av-sys-font-size-meta)] text-[color:var(--av-sys-color-text-subtle)]">Organization</legend>
+        <legend className="mb-2 text-[length:var(--av-sys-type-caption-1)] text-[color:var(--av-sys-color-text-subtle)]">Organization</legend>
         {workspaces.map((workspace) => <label className="signin-choice" key={workspace.id}>
           <input type="radio" name="workspace" checked={workspaceId === workspace.id} onChange={() => setWorkspaceId(workspace.id)} />
           <span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span>

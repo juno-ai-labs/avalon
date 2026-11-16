@@ -4,23 +4,28 @@
  * WebKit resolves `font: -apple-system-body` and its siblings to the sizes the
  * person chose in Settings > Display & Text Size. CSS cannot read a size back
  * out of a `font` keyword, so the host measures each style on a hidden probe
- * and hands the sizes to the touch density through `--av-dynamic-type-<role>`,
- * which every touch role reads before its design value
- * (`config/design-tokens/densities/touch.json`). The design values themselves
- * are read back from the stylesheet rather than repeated here.
+ * and writes the sizes over the touch roles, `--av-sys-type-<role>`, inline on
+ * `<html>`. An inline declaration beats the `[data-density='touch']` block on
+ * the same element, every alias of a role resolves against it there, and a
+ * subtree marked `data-density="default"` re-declares its own values, so
+ * artifacts keep their document sizes. The design values are read back from the
+ * stylesheet on the probe, which carries the density itself.
  *
  * iOS does not grow every style by the same factor, so a role with its own
- * keyword is measured directly; one without (callout, the large titles) moves
- * with body. Outside iOS nothing is set: other engines lack the keywords, and
- * macOS WebKit resolves them to the Mac's sizes rather than Dynamic Type.
+ * keyword is measured directly. Callout moves with body; large title and
+ * display, which have no keyword, move with title 1, the largest style that
+ * has one, because iOS grows its titles far less than its body text. Outside iOS
+ * nothing is set: other engines lack the keywords, and macOS WebKit resolves
+ * them to the Mac's sizes rather than Dynamic Type.
  */
+import { TYPE_SCALE_CHANGED_EVENT } from '@rally/ui/lib/theme';
 
 /** The type roles, smallest first. The sizes live in the design tokens. */
-export const TYPE_ROLES = ['caption-2', 'caption-1', 'footnote', 'subheadline', 'callout', 'body', 'headline', 'title-3', 'title-2', 'title-1', 'large-title', 'display'] as const;
-export type TypeRole = (typeof TYPE_ROLES)[number];
+const TYPE_ROLES = ['caption-2', 'caption-1', 'footnote', 'subheadline', 'callout', 'body', 'headline', 'title-3', 'title-2', 'title-1', 'large-title', 'display'] as const;
+type TypeRole = (typeof TYPE_ROLES)[number];
 
 /** WebKit's font keyword for each role that iOS has a text style for. */
-const KEYWORDS: Partial<Record<TypeRole, string>> = {
+const KEYWORDS = {
   'caption-2': '-apple-system-caption2',
   'caption-1': '-apple-system-caption1',
   footnote: '-apple-system-footnote',
@@ -30,39 +35,58 @@ const KEYWORDS: Partial<Record<TypeRole, string>> = {
   'title-3': '-apple-system-title3',
   'title-2': '-apple-system-title2',
   'title-1': '-apple-system-title1',
+} satisfies Partial<Record<TypeRole, string>>;
+
+/** The measured role a role without a keyword moves with. */
+const FOLLOWS: Record<Exclude<TypeRole, keyof typeof KEYWORDS>, keyof typeof KEYWORDS> = {
+  callout: 'body',
+  'large-title': 'title-1',
+  display: 'title-1',
 };
+
+/** Whether this engine's `-apple-system-*` keywords mean Dynamic Type: iOS, including an iPad that reports itself as a touch Mac. */
+export function isDynamicTypeHost(userAgent: string, platform: string, maxTouchPoints: number): boolean {
+  return /iP(?:hone|ad|od)/u.test(userAgent) || (platform === 'MacIntel' && maxTouchPoints > 1);
+}
 
 /**
  * The size of each role under the person's setting, in px, or null when body
- * cannot be measured. `measure` returns a keyword's size, or null when the
- * engine does not support that keyword.
+ * cannot be measured or a design value cannot be read. `measure` returns a
+ * keyword's size, or null when it cannot.
  */
 export function dynamicTypeSizes(defaults: Record<TypeRole, number>, measure: (keyword: string) => number | null): Record<TypeRole, number> | null {
-  const body = measure(KEYWORDS.body!);
-  if (!body || !defaults.body) return null;
-  const ratio = body / defaults.body;
+  if (!TYPE_ROLES.every((role) => Number.isFinite(defaults[role]) && defaults[role] > 0)) return null;
+  const measured: Partial<Record<TypeRole, number>> = {};
+  for (const [role, keyword] of Object.entries(KEYWORDS) as [keyof typeof KEYWORDS, string][]) {
+    const size = measure(keyword);
+    if (size !== null) measured[role] = size;
+  }
+  if (measured.body === undefined) return null;
   const sizes = {} as Record<TypeRole, number>;
   for (const role of TYPE_ROLES) {
-    const keyword = KEYWORDS[role];
-    const measured = keyword ? measure(keyword) : null;
-    sizes[role] = Math.round((measured ?? defaults[role] * ratio) * 2) / 2;
+    const anchor = role in FOLLOWS ? FOLLOWS[role as keyof typeof FOLLOWS] : (role as keyof typeof KEYWORDS);
+    const scaled = measured[anchor] === undefined ? defaults[role] * (measured.body / defaults.body) : defaults[role] * (measured[anchor] / defaults[anchor]);
+    sizes[role] = Math.round((role in FOLLOWS ? scaled : measured[role] ?? scaled) * 2) / 2;
   }
   return sizes;
 }
 
+/** The inline writes that bring `current` to `sizes`: only the roles whose value differs. */
+export function typeScaleWrites(current: (name: string) => string, sizes: Record<TypeRole, number>): [string, string][] {
+  return TYPE_ROLES.map((role): [string, string] => [`--av-sys-type-${role}`, `${sizes[role]}px`]).filter(([name, value]) => current(name) !== value);
+}
+
 /**
- * Measures on a hidden probe and touches `root` only for a value
- * that changed, so a return to the foreground with the same text size, nearly
- * every one, restyles nothing but the probe. The probe resets the host's
- * variables on itself with `initial`, which makes a custom property invalid, so
- * its touch roles fall back to their design values without clearing `root`.
+ * Measures on a hidden probe and writes `root` only for a value that changed,
+ * so a return to the foreground with the same text size, nearly every one,
+ * restyles nothing but the probe. A change is announced so a field that sized
+ * itself to its text, such as the composer, can measure again.
  */
 function apply(root: HTMLElement): void {
   const probe = document.createElement('span');
   probe.dataset.density = 'touch';
   probe.setAttribute('aria-hidden', 'true');
   probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none';
-  for (const role of TYPE_ROLES) probe.style.setProperty(`--av-dynamic-type-${role}`, 'initial');
   document.body.appendChild(probe);
   try {
     const computed = getComputedStyle(probe);
@@ -78,11 +102,9 @@ function apply(root: HTMLElement): void {
     };
     const sizes = dynamicTypeSizes(defaults, measure);
     if (!sizes) return;
-    for (const role of TYPE_ROLES) {
-      const name = `--av-dynamic-type-${role}`;
-      const value = `${sizes[role]}px`;
-      if (root.style.getPropertyValue(name) !== value) root.style.setProperty(name, value);
-    }
+    const writes = typeScaleWrites((name) => root.style.getPropertyValue(name), sizes);
+    for (const [name, value] of writes) root.style.setProperty(name, value);
+    if (writes.length) window.dispatchEvent(new Event(TYPE_SCALE_CHANGED_EVENT));
   } finally {
     probe.remove();
   }
@@ -91,16 +113,11 @@ function apply(root: HTMLElement): void {
 /**
  * Sets the touch roles from the person's text size, and again whenever the app
  * returns to the foreground, which is when a change made in Settings can have
- * happened. Returns the cleanup.
+ * happened. A no-op outside iOS.
  */
-export function installDynamicType(root: HTMLElement = document.documentElement): () => void {
-  // macOS WebKit resolves the same keywords to the Mac's own ~13px body, so a
-  // desktop preview of the phone host would shrink. Only iOS, including an
-  // iPad that reports itself as a touch Mac, means Dynamic Type by them.
-  const ios = /iP(?:hone|ad|od)/u.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  if (!ios || typeof CSS === 'undefined' || !CSS.supports('font', KEYWORDS.body!)) return () => undefined;
+export function installDynamicType(root: HTMLElement = document.documentElement): void {
+  if (!isDynamicTypeHost(navigator.userAgent, navigator.platform, navigator.maxTouchPoints)) return;
+  if (typeof CSS === 'undefined' || !CSS.supports('font', KEYWORDS.body)) return;
   apply(root);
-  const onVisibility = (): void => { if (document.visibilityState === 'visible') apply(root); };
-  document.addEventListener('visibilitychange', onVisibility);
-  return () => document.removeEventListener('visibilitychange', onVisibility);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') apply(root); });
 }

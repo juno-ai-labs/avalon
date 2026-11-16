@@ -7,9 +7,10 @@
  * The scale and the densities are in `config/design-tokens/`; `docs/theming.md`
  * owns the reasoning.
  *
- * A declaration may opt out with a `/* type-scale: <reason> *\/` comment on its
- * line, for a size that is not reading text: a letter drawn inside a fixed
- * tile, or the 16px floor that stops iOS zooming into a focused field.
+ * A declaration may opt out with a `/* type-scale: <reason> *\/` comment
+ * inside it or straight after its `;`, for a size that is not reading text: a
+ * letter drawn inside a fixed tile, or the 16px floor that stops iOS zooming
+ * into a focused field.
  *
  * Run by `pnpm lint`, ahead of ESLint, which has no CSS support here.
  */
@@ -25,33 +26,70 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const STYLESHEET_ROOTS = ['packages/ui/src', 'apps/browser/src', 'apps/desktop/src'];
 const GENERATED = new Set(['packages/ui/src/styles/themes.css']);
 
-const LENGTH = /(?<![\w-])\d*\.?\d+(px|rem|pt)\b/u;
-const ALLOW = /\/\*\s*type-scale:\s*\S/u;
+const LENGTH = /(?<![\w-])\d*\.?\d+(?:px|rem|pt)\b/iu;
+/** An opt-out: `/* type-scale: <reason> *\/`, with a reason. */
+const MARK = /\/\*\s*type-scale:\s*[^\s*][^]*?\*\//u;
+
+/** The top-level space-separated tokens of a value, keeping `fn(...)` whole. */
+function tokens(value) {
+  const out = [];
+  let depth = 0;
+  let current = '';
+  for (const char of value) {
+    if (char === '(') depth += 1;
+    if (char === ')') depth -= 1;
+    if (/\s/u.test(char) && depth === 0) {
+      if (current) out.push(current);
+      current = '';
+    } else current += char;
+  }
+  if (current) out.push(current);
+  return out;
+}
+
+/** Whether a size expression is a literal: a length with no token, or a `var()` that names no `--av-` token. */
+function literalSize(size) {
+  const names = [...size.matchAll(/var\(\s*(--[\w-]+)/gu)].map((match) => match[1]);
+  if (names.some((name) => !name.startsWith('--av-'))) return true;
+  // A literal beside a token in one expression, such as
+  // `max(16px, var(--av-sys-type-body))`, is a floor on a role and passes.
+  return names.length === 0 && LENGTH.test(size);
+}
+
+/**
+ * The size in a `font` shorthand: the token before `/line-height`, or else the
+ * first token that is a length or an expression, past the style and weight
+ * keywords and any weight token. Null for a keyword such as `inherit`.
+ */
+function shorthandSize(value) {
+  const slash = value.indexOf('/');
+  if (slash >= 0) return tokens(value.slice(0, slash)).at(-1) ?? null;
+  return tokens(value).find((token) => (LENGTH.test(token) || /^(?:var|calc|max|min|clamp)\(/iu.test(token)) && !/--av-sys-font-(?:family|weight)/u.test(token)) ?? null;
+}
 
 /**
  * The declarations in `css` that set a size from a literal: `font-size`, or
- * the size in a `font` shorthand, holding a length and no `var()`.
- * Returns `{ line, declaration }` for each, one-based.
+ * the size in a `font` shorthand, holding a length and no `--av-` token, or a
+ * `var()` that names something other than a token. Returns
+ * `{ line, declaration }` for each, one-based.
+ *
+ * A declaration opts out with the mark inside it or straight after its `;`,
+ * and the mark covers that declaration only.
  */
 export function typeLiterals(css) {
+  // Comments other than marks become spaces, keeping offsets and line numbers.
+  const code = css.replace(/\/\*[^]*?\*\//gu, (comment) => (MARK.test(comment) ? comment : comment.replace(/[^\n]/gu, ' ')));
   const found = [];
-  const lines = css.split('\n');
-  lines.forEach((text, index) => {
-    if (ALLOW.test(text)) return;
-    const code = text.replace(/\/\*.*?\*\//gu, '');
-    for (const match of code.matchAll(/(?<![\w-])(font-size|font)\s*:\s*([^;}]+)/gu)) {
-      const value = match[2].trim();
-      // In the shorthand, a token elsewhere (the family, the line height) does
-      // not excuse a literal size: drop every `var()` from the part before an
-      // optional `/line-height` and look for a length in what is left. In
-      // `font-size`, a literal beside a token in one expression, such as
-      // `max(16px, var(--av-sys-type-body))`, is a floor on a role and passes.
-      const literal = match[1] === 'font'
-        ? LENGTH.test(value.split('/')[0].replace(/var\([^()]*(\([^()]*\)[^()]*)*\)/gu, ''))
-        : !value.includes('var(') && LENGTH.test(value);
-      if (literal) found.push({ line: index + 1, declaration: `${match[1]}: ${value}` });
+  for (const match of code.matchAll(/(?<![\w(-])(font-size|font)\s*:\s*([^;}]*)([;}]?)/giu)) {
+    const [whole, property, raw, end] = match;
+    const after = end === ';' ? code.slice(match.index + whole.length).match(/^[ \t]*(\/\*[^]*?\*\/)/u)?.[1] ?? '' : '';
+    if (MARK.test(raw) || MARK.test(after)) continue;
+    const value = raw.replace(/\/\*[^]*?\*\//gu, ' ').replace(/\s+/gu, ' ').trim();
+    const size = property.toLowerCase() === 'font' ? shorthandSize(value) : value;
+    if (size !== null && literalSize(size)) {
+      found.push({ line: code.slice(0, match.index).split('\n').length, declaration: `${property}: ${value}` });
     }
-  });
+  }
   return found;
 }
 
