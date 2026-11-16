@@ -18,9 +18,10 @@ const examples: Record<ExampleId, Example> = {
       "Pull the deal emails from Maya’s, Theo’s and Priya’s Gmail into one pipeline dashboard.",
     reply:
       "Done, from your inbox. To add Theo’s and Priya’s, each of them needs to let the Sidekick act as them.",
-    followup: "Allowed. Now it’s all three inboxes. Split the value by owner?",
+    followup:
+      "Allowed. One tweak: when a prospect sends a contract, move the deal to Closing and tell #sales.",
     receipt:
-      "Example run: Northwind replied to Priya → a new deal in version 2.",
+      "Example run: Northwind sent Priya a contract → Closing, #sales told, version 2.",
   },
   requests: {
     name: "Listening to users",

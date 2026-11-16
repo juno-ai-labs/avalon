@@ -846,6 +846,33 @@ h2 {
   background: none; color: var(--muted);
 }
 
+/* Theo's tweak to the GTM Sidekick: the instruction it added. */
+.behavior-change {
+  border: 1px solid #d6dccb; border-radius: 6px; background: #f8f9f2; padding: 8px 10px;
+  margin-top: 8px; font-size: 10px; line-height: 1.5;
+}
+
+.behavior-change[hidden] {
+  display: none;
+}
+
+.behavior-change > p {
+  display: flex; align-items: center; gap: 6px; color: var(--ink); margin: 0;
+}
+
+.behavior-change strong {
+  font-weight: 600; margin-left: 3px;
+}
+
+.behavior-change ins {
+  display: block; text-decoration: none; margin-top: 6px; padding: 4px 8px; border-left: 2px solid #8f9e76;
+  background: #eef2e3; color: #4e5546; font-size: 9px;
+}
+
+.behavior-change small {
+  display: block; font-size: 8px; color: var(--muted); margin-top: 4px;
+}
+
 .example-artifact {
   background: #f6f5ef; min-width: 0; display: flex; flex-direction: column;
 }
