@@ -287,6 +287,27 @@ function mapWorkspace(row: Record<string, unknown>): z.infer<typeof regionalWork
   });
 }
 
+/**
+ * The invitations waiting for `email` in this deployment: one read, nothing
+ * written, so listing them never links a user or claims a share as `discover`
+ * does.
+ */
+async function pendingInvitationsHere(env: Env, email: string): Promise<Array<z.infer<typeof regionalPendingInvitationSchema>>> {
+  const result = await env.DB.prepare(
+    `SELECT i.id, i.workspace_id, w.name AS workspace_name,
+       w.region AS workspace_region, w.placement_affinity, i.email, i.role,
+       inviter.name AS invited_by_name, i.expires_at
+     FROM workspace_invitations i
+     JOIN workspaces w ON w.id = i.workspace_id
+     JOIN users inviter ON inviter.id = i.invited_by_user_id
+     WHERE i.email = ? COLLATE NOCASE
+       AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?
+       AND w.region = ? AND w.abandoned_at IS NULL
+     ORDER BY i.created_at DESC LIMIT 100`,
+  ).bind(email, nowIso(), env.AVALON_REGION).all<InvitationDiscoveryRow>();
+  return (result.results ?? []).map(mapPendingInvitation);
+}
+
 function mapPendingInvitation(
   row: InvitationDiscoveryRow,
 ): z.infer<typeof regionalPendingInvitationSchema> {
@@ -331,18 +352,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
            AND w.abandoned_at IS NULL
          ORDER BY m.access_class = 'guest', m.joined_at, w.created_at, w.id`,
       ).bind(user.id, this.env.AVALON_REGION).all<Record<string, unknown>>(),
-      this.env.DB.prepare(
-        `SELECT i.id, i.workspace_id, w.name AS workspace_name,
-           w.region AS workspace_region, w.placement_affinity, i.email, i.role,
-           inviter.name AS invited_by_name, i.expires_at
-         FROM workspace_invitations i
-         JOIN workspaces w ON w.id = i.workspace_id
-         JOIN users inviter ON inviter.id = i.invited_by_user_id
-         WHERE i.email = ? COLLATE NOCASE
-           AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?
-           AND w.region = ? AND w.abandoned_at IS NULL
-         ORDER BY i.created_at DESC LIMIT 100`,
-      ).bind(identity.email, nowIso(), this.env.AVALON_REGION).all<InvitationDiscoveryRow>(),
+      pendingInvitationsHere(this.env, identity.email),
     ]);
     // Memberships before guest relationships: a device with nothing selected
     // opens the first one, and that should be the person's own Organization
@@ -351,7 +361,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     return regionalDiscoverySchema.parse({
       region: this.env.AVALON_REGION,
       workspaces: memberships,
-      invitations: (invitationResult.results ?? []).map(mapPendingInvitation),
+      invitations: invitationResult,
     });
   }
 
@@ -1252,10 +1262,24 @@ export class PlatformOnboardingService {
     };
   }
 
-  /** Invitations waiting for this account's address in every deployment, without `state`'s binding reconciliation. */
-  async invitations(): Promise<WorkspaceOnboardingState["invitations"]> {
-    const discovery = await this.discover(await this.loadPlatformIdentity());
-    return discovery.flatMap((item) => item.invitations);
+  /**
+   * Invitations waiting for this account's address. This deployment's are one
+   * read; every other deployment answers through discovery on its own, and one
+   * that is down hides only its own, as `otherDeploymentWorkspaces` does.
+   */
+  async invitations(): Promise<{ invitations: WorkspaceOnboardingState["invitations"]; failed: Array<{ region: Region; code: string }> }> {
+    const identity = await this.loadPlatformIdentity();
+    const regions = configuredRegions.filter((region) => region !== this.env.AVALON_REGION);
+    const [local, settled] = await Promise.all([
+      pendingInvitationsHere(this.env, identity.email),
+      Promise.allSettled(regions.map(async (region) => this.gateway(region).discover(identity))),
+    ]);
+    return {
+      invitations: [...local, ...settled.flatMap((result) => result.status === "fulfilled" ? result.value.invitations : [])],
+      failed: settled.flatMap((result, index) => result.status === "rejected"
+        ? [{ region: regions[index]!, code: settledFailureCode(result.reason, "regional_discovery") }]
+        : []),
+    };
   }
 
   async activate(region: Region, workspaceId: string, options: { guests?: boolean } = {}): Promise<Session> {

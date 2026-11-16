@@ -14,7 +14,7 @@ You do not need an invitation to sign in. Signing in does not put you into anybo
 
 ## Open Rally
 
-Go to [app.rallywith.ai](https://app.rallywith.ai). The **Sign up now** buttons on [rallywith.ai](https://rallywith.ai) lead to the same place.
+Go to [app.rallywith.ai](https://app.rallywith.ai). **Get started for free** on [rallywith.ai](https://rallywith.ai) leads to the same place.
 
 The page opens on **Welcome to Rally**, with **Your team, your work, and Rally. All in one place.** under it. There is no separate sign-up. If this is your first time, signing in creates your Rally account.
 

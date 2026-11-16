@@ -155,7 +155,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     },
     // The canonical path, which the entry opens in its Organization (`session.ts`).
     openWorkspaceCanvas: (target) => { location.assign(new URL(canvasCanonicalUrl(location.origin, target)).pathname); },
-    activateWorkspace: async (target, workspaceId) => { location.assign(`/app/workspaces/${target}/${workspaceId}`); },
+    activateWorkspace: async (target, workspaceId) => { location.assign(organizationPath({ region: target, workspaceId })); },
     // Joined on Global, then opened as switching Organization opens one here.
     acceptInvitation: async (target, invitationId, operationId) => {
       location.assign(organizationPath(await acceptInvitation(target, invitationId, operationId ?? uuidV7())));
@@ -173,12 +173,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     },
     createDevelopmentSession: macAppOnly,
     signInWithPassword: macAppOnly,
-    // Created on Global, as the entry creates one, then opened as switching
-    // Organization opens one here. Organizations are only created on Global.
-    finishWorkspaceSetup: async (name, target, operationId) => {
-      if (target !== IDENTITY_REGION) throw new Error('Organizations are created in Rally’s Global deployment.');
-      location.assign(organizationPath(await createOrganization(name, operationId ?? uuidV7())));
-    },
+    finishWorkspaceSetup: async (name, _region, operationId) => { location.assign(organizationPath(await createOrganization(name, operationId ?? uuidV7()))); },
     refreshSession: async () => { onRevalidate(); return session; },
     getAccountOnboarding,
     getOrganizationNameSuggestion: () => identityApi.getOrganizationNameSuggestion(),

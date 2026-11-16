@@ -259,7 +259,7 @@ screens, the right panel and the Settings route. The value carries
 password sign-in and reconnecting a stored per-organization credential, none of
 which a cookie session reaches) rejects with
 "Available in the Mac app." `finishWorkspaceSetup` creates an organization
-through the same route as the entry and reloads the tab into it; see below. A browser tab cannot keep a window of its own, so the
+through the same route as the entry. A browser tab cannot keep a window of its own, so the
 surface the Mac app opens in one, Settings, is a route of the main window here
 (`#/settings`). `lib/window-surface.ts` lists it; on that route the shell takes
 the whole tab and hides the sidebar, which stays mounted so closing the surface
@@ -331,37 +331,24 @@ deployment links the account.
 
 ### Organization invitations
 
-The entry and the shell list and answer a workspace invitation over the cookie,
-on Global, through the same `PlatformOnboardingService` the Mac app's
-`/onboarding/invitations` routes call:
+The browser joins an organization through the Mac app's own
+`PlatformOnboardingService.acceptInvitation`, over `/browser/invitations` on
+Global, with three choices that matter:
 
-- `GET /browser/invitations` answers `PlatformOnboardingService.invitations()`:
-  discovery across every deployment, without `state`'s binding reconciliation.
-- `POST /browser/invitations/:id/accept` takes `{ region, operationId }` and runs
-  `acceptInvitation`. Like creation, that path ends in a bearer session, which
-  is revoked unread when it was minted on Global; one minted elsewhere is never
-  sent and lapses. It answers `{ region, workspaceId }` and the browser opens it
-  with `/workspace/select` like any other organization.
-- `POST /browser/invitations/:id/decline` takes `{ region }`.
+- **Invitations are found by the signed-in address, not the email's token.** An
+  invitation already requires signing in with its exact address, so the token
+  never has to reach the web app. Listing reads this deployment's invitations
+  directly, writing nothing; another deployment that is down is logged and
+  hides only its own, as `/workspaces` does.
+- **The accept path's bearer session is revoked unread**, as creation's is; the
+  browser opens the organization with `/workspace/select`.
+- **Create waits for invitations.** The entry reads `/workspaces` and
+  `/invitations` together and shows a waiting invitation instead of **Create an
+  organization**, as the Mac app's **Choose where to join** does.
 
-The entry reads `/workspaces` and `/invitations` together, so an empty list
-never offers **Create an organization** before the invitations have answered,
-and while one is waiting it shows the invitation instead of Create, as the Mac
-app's **Choose where to join** does. A failed invitations read leaves the list
-of organizations on screen. Both hosts draw the list with `InvitationChoices`
-(`apps/desktop/src/renderer/screens/invitation-choices.tsx`). The Expo app shows
-this entry, so it accepts the same way. In the shell, `getOnboardingState`
-carries the invitations, so the account menu's **Invitations** (behind the
-multiple-organizations flag) accepts and declines here too; accepting reloads
-the tab into the organization, as switching does.
-
-`apps/browser/src/organization-actions.ts` holds the cookie requests both the
-entry and the shell make to join or create an organization (list, accept and
-decline invitations, create), so the two cannot drift. The shell's
-`finishWorkspaceSetup` uses it too, which is what the account menu's create
-action calls; the shipped menu's compact presentation does not offer that
-action ([multiple workspaces](multiple-workspaces.md)), so today it is reached
-only by a surface that asks for it.
+The entry, the shell's account menu and the Mac app draw the list with
+`InvitationChoices`; the entry and the shell share their requests in
+`organization-actions.ts`. The Expo app shows the same entry and shell.
 
 A member can turn on Web Push for this browser, delivered as described in
 [push-notifications.md](push-notifications.md#web-push-for-browser-members).
@@ -779,10 +766,8 @@ answer with a bearer session a browser must not hold; creation had already
 solved that by revoking it on Global, and this reuses that answer rather than
 adding a cookie-issuing variant of acceptance.
 
-`finishWorkspaceSetup` in the shell, which also rejected with "Available in the
-Mac app.", now creates through `/browser/workspace/create`, so every
-organization action the shared shell can call works in a browser and the Expo
-app; the requests live in one module the entry and the shell share.
+The shell's `finishWorkspaceSetup` creates through `/browser/workspace/create`
+for the same reason.
 
 **Consequences:** Acceptance by token, the desktop's deep-link prompt, stays the
 Mac app's: the browser finds invitations by the signed-in address, which an

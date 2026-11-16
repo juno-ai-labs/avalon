@@ -62,13 +62,12 @@ type Listed = { region: string; workspaces: ReturnType<typeof BrowserWorkspacesS
 /**
  * The organizations the signed-in account belongs to and the invitations
  * waiting for it, read together so an empty list never offers Create before
- * the invitations have answered. Invitations are Global's to list; one that
- * cannot be read leaves the organizations on screen.
+ * the invitations have answered.
  */
 async function listOrganizations(region: string): Promise<Listed> {
   const [{ workspaces }, invitations] = await Promise.all([
     browserRequest(region, "/workspaces", BrowserWorkspacesSchema),
-    listInvitations().catch(() => []),
+    listInvitations(),
   ]);
   return { region, workspaces, invitations };
 }
