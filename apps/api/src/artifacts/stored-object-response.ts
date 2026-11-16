@@ -21,6 +21,11 @@
  * range on nearly every seek, so a metadata read in front of each would be paid
  * constantly for a check R2 already makes.
  *
+ * It also answers a browser's revalidation (`If-None-Match`) with `304`, which
+ * is what lets the serving Worker mark stored bytes `private, no-cache` rather
+ * than `no-store`: the browser keeps its copy, and every reuse is still
+ * admitted first.
+ *
  * Only `bytes=start-end`, `bytes=start-` and `bytes=-suffix` are honoured. A
  * request for several ranges gets the whole object with `200`, which RFC 9110
  * allows and every player handles; a multipart body is not worth its parser.
@@ -38,9 +43,22 @@ export async function storedObjectResponse(
   headers: Record<string, string>,
   options: { ranges?: boolean } = {},
 ): Promise<Response | null> {
+  // A browser revalidating its copy sends the `ETag` it holds; an unchanged
+  // object answers `304` with no body. A range is not served alongside: RFC
+  // 9110 lets a server ignore `Range`, and a revalidation is a whole-file
+  // request in practice.
+  const held = request.method === "GET" || request.method === "HEAD" ? heldEtag(request.headers.get("if-none-match")) : null;
   if (request.method === "HEAD") {
     const metadata = await bucket.head(key);
-    return metadata ? new Response(null, { status: 200, headers: whole(metadata, headers) }) : null;
+    if (!metadata) return null;
+    return held === metadata.etag ? notModified(metadata, headers) : new Response(null, { status: 200, headers: whole(metadata, headers) });
+  }
+  if (held !== null) {
+    const object = await bucket.get(key, { onlyIf: { etagDoesNotMatch: held } });
+    if (!object) return null;
+    return "body" in object
+      ? new Response(object.body, { status: 200, headers: whole(object, headers) })
+      : notModified(object, headers);
   }
   // A caller whose response may be rewritten after this returns (an active
   // site's HTML, which Rally injects into) asks for no ranges: a range of the
@@ -111,6 +129,22 @@ function resolvedRange(range: R2Range, size: number): { offset: number; length: 
   }
   const offset = range.offset ?? 0;
   return { offset, length: Math.min(range.length ?? size - offset, size - offset) };
+}
+
+/**
+ * The one `ETag` an `If-None-Match` names, unquoted, or null for none, `*`, or
+ * a list, which are answered in full: a browser sends the single tag it holds.
+ */
+function heldEtag(header: string | null): string | null {
+  if (header === null) return null;
+  const match = /^(?:W\/)?"([^",]+)"$/u.exec(header.trim());
+  return match?.[1] ?? null;
+}
+
+function notModified(object: R2Object, headers: Record<string, string>): Response {
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) if (name.toLowerCase() !== "content-type") kept[name] = value;
+  return new Response(null, { status: 304, headers: { ...kept, etag: object.httpEtag } });
 }
 
 async function unsatisfiable(bucket: R2Bucket, key: string, headers: Record<string, string>): Promise<Response | null> {

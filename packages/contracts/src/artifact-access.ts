@@ -33,4 +33,15 @@ export const PublishedArtifactFileSchema = z.strictObject({
 });
 export type PublishedArtifactFile = z.infer<typeof PublishedArtifactFileSchema>;
 
+/**
+ * The path a published file is also served at, besides `/`: its own name, so
+ * the URL ends in `.mp3` or `.pdf`. Podcast apps and download managers guess a
+ * file's type from its URL, and a feed's enclosure that ends in `/` is one some
+ * of them refuse. Null for a title that is not a plain file name (an upload's
+ * display title, say), which is served at `/` only.
+ */
+export function publishedFilePath(title: string): string | null {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.[A-Za-z0-9]{1,10}$/u.test(title) ? `/${title}` : null;
+}
+
 export const ArtifactLinkSchema = z.strictObject({artifactId:IdSchema,canonicalUrl:HttpUrlSchema});

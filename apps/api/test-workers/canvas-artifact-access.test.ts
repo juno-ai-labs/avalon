@@ -331,10 +331,15 @@ describe("Canvas artifact access propagated to local serving", () => {
     const stub = url.hostname.split(".")[0]!.replace(/-g$/u, "");
     await share("public");
     await sync(published.resourceId);
+    // The link ends in the file's own name, which podcast apps read its type from.
+    expect(url.pathname).toBe("/episode-1.mp3");
     // A podcast app sends no cookie and no fetch metadata.
-    const response = await visit(stub);
+    const response = await visit(stub, url.pathname);
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("episode one audio");
+    // The bare host still serves it; any other name does not.
+    expect(await (await visit(stub)).text()).toBe("episode one audio");
+    expect((await visit(stub, "/episode-2.mp3")).status).toBe(404);
   });
 
   it("serves a byte range of a public file and a site's asset, as a player seeking asks for one", async () => {
@@ -394,6 +399,43 @@ describe("Canvas artifact access propagated to local serving", () => {
     await share("editors");
     await sync(FILE);
     expect((await fetchFrom(fileStub, { headers: { range: "bytes=0-8" } })).status).toBe(401);
+  });
+
+  it("lets a browser keep a public file and revalidate it, and stops answering once the Canvas is private", async () => {
+    await share("public");
+    await sync(SITE_HOST, SITE);
+    await sync(FILE);
+    const fileStub = (await env.PLATFORM_DB.prepare("SELECT hostname_stub FROM artifact_hostname_routes WHERE artifact_id=?")
+      .bind(FILE).first<{ hostname_stub: string }>())!.hostname_stub;
+    const fetchFrom = async (stub: string, init: RequestInit) => {
+      const ctx = createExecutionContext();
+      const response = await artifactWorker.fetch(new Request(`https://${stub}-g.rallyusercontent.com/`, init), {
+        APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+        ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+        PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
+      }, ctx);
+      await waitOnExecutionContext(ctx);
+      return response;
+    };
+    const first = await fetchFrom(fileStub, {});
+    expect(first.headers.get("cache-control")).toBe("private, no-cache");
+    const etag = first.headers.get("etag")!;
+    const read = async (response: Response) => ({ status: response.status, body: await response.text() });
+    expect(await read(await fetchFrom(fileStub, { headers: { "if-none-match": etag } })))
+      .toEqual({ status: 304, body: "" });
+    expect((await fetchFrom(fileStub, { method: "HEAD", headers: { "if-none-match": etag } })).status).toBe(304);
+    expect(await read(await fetchFrom(fileStub, { headers: { "if-none-match": "\"another-version\"" } })))
+      .toEqual({ status: 200, body: "Published file" });
+    // A static site's stored asset revalidates the same way.
+    const page = await fetchFrom("quiet-blue-river-garden", {});
+    expect(page.headers.get("cache-control")).toBe("private, no-cache");
+    expect((await fetchFrom("quiet-blue-river-garden", { headers: { "if-none-match": page.headers.get("etag")! } })).status)
+      .toBe(304);
+
+    // Every revalidation is admitted first, so a private Canvas refuses at once.
+    await share("editors");
+    await sync(FILE);
+    expect((await fetchFrom(fileStub, { headers: { "if-none-match": etag } })).status).toBe(401);
   });
 
   it("sends an active site's page whole, with no stale length, when Rally injects into it", async () => {
