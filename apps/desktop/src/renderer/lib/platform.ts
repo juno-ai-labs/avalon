@@ -493,6 +493,10 @@ const browserBridge: RallyDesktopBridge = {
     if (!response.ok) throw new Error(`Organization attention failed (${response.status})`);
     return response.json();
   },
+  // Only other Organizations are asked, and this fallback holds none of them.
+  async getWorkspaceSharedCanvases() {
+    throw new Error('The browser keeps only its active organization session.');
+  },
   async leaveWorkspace({ expectedOutcome, region, workspaceId }) {
     if (
       !browserSession?.workspace

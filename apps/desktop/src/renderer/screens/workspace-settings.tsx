@@ -1,4 +1,5 @@
 import { readDevicePreferences, setDeviceStartupPage } from '../lib/device-preferences';
+import { useSharedCanvasesInAllOrganizations } from '../lib/shared-canvases';
 import { BrowserProductAnalyticsSetting } from '../components/browser-product-analytics-setting';
 import { startConnectorAuthorization } from '../lib/start-connector-authorization';
 import { useDocumentTitle } from '../lib/document-title';
@@ -264,6 +265,15 @@ function MemoryReviewSection({ emptyCopy, forget, heading, queryKey, read }: {
       <MemoryFactList {...memory} emptyCopy={emptyCopy} label={heading} />
     </div>
   </>;
+}
+
+/** Settings → Account → Preferences: whether other Organizations' shared Canvases join this one's list. */
+function SharedCanvasesSetting(): React.JSX.Element {
+  const [enabled, setEnabled] = useSharedCanvasesInAllOrganizations();
+  return <SettingToggle setting={settings.sharedCanvasesInAllOrganizations}
+    checked={enabled}
+    onChange={(event) => setEnabled(event.currentTarget.checked)}
+    role="switch" />;
 }
 
 /** Settings → Account → Preferences → Agent: whether this person's transcripts show the agent's work. */
@@ -1562,6 +1572,7 @@ export function WorkspaceSettingsScreen({
                       options={[{ label: 'Canvas Homepage', value: 'canvas-homepage' }, { label: 'Last Opened', value: 'last-opened' }]}
                       value={startupPage} variant="secondary" />
                   </div>
+                  <SharedCanvasesSetting />
                 </div>
                 {!guest && api && <>
                   <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Agent</h2></div>

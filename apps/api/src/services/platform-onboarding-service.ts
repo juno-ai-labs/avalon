@@ -3,7 +3,7 @@ import { resolveModelSelectorVisibleForNewOrgs } from "./client-feature-flags";
 import { RegionSchema } from "@rally/contracts/regions";
 import { configuredRegions, regionConfiguration } from "@rally/contracts/regions";
 import { regionalBindings } from "../lib/regional-bindings";
-import { AccountOnboardingSchema, PersonalPresentationSchema } from '@rally/contracts';
+import { AccountOnboardingSchema, CanvasSidebarRowSchema, PersonalPresentationSchema } from '@rally/contracts';
 import { publishWorkspaceSync } from './workspace-realtime-service';
 import {
   IanaTimezoneSchema,
@@ -42,6 +42,7 @@ import { AuthService } from "./auth-service";
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
 import { claimScopeInvitations } from "./scope-invitation-claims";
 import { membershipAttention } from "./workspace-attention-service";
+import { membershipSharedCanvases } from "./shared-canvases-service";
 import { settledFailureCode } from "../lib/settled-failure-code";
 import {
   PreferenceProjectionSchema,
@@ -91,6 +92,12 @@ const regionalAttentionSchema = z.object({
   failed: z.array(z.object({ workspaceId: z.string(), code: z.string() })),
 });
 export type RegionalAttention = z.infer<typeof regionalAttentionSchema>;
+
+const regionalSharedCanvasesSchema = z.object({
+  canvases: z.array(z.object({ region: RegionSchema, workspaceId: WorkspaceIdSchema, items: z.array(CanvasSidebarRowSchema) })),
+  failed: z.array(z.object({ workspaceId: z.string(), code: z.string() })),
+});
+export type RegionalSharedCanvases = z.infer<typeof regionalSharedCanvasesSchema>;
 
 const regionalActionBaseSchema = z.object({
   identity: platformIdentitySchema,
@@ -185,6 +192,7 @@ export type BrowserRegistration = z.infer<typeof browserRegistrationSchema>;
 export interface RegionalIdentityBridgeBinding {
   discover(identity: PlatformIdentity): Promise<RegionalDiscovery>;
   attention(identity: PlatformIdentity): Promise<RegionalAttention>;
+  sharedCanvases(identity: PlatformIdentity): Promise<RegionalSharedCanvases>;
   activate(input: RegionalActivateInput): Promise<Session>;
   activateBrowser(input: RegionalActivateInput): Promise<BrowserRegistration>;
   create(input: RegionalCreateInput): Promise<Session>;
@@ -196,6 +204,7 @@ export interface RegionalIdentityBridgeBinding {
 export interface RegionalIdentityBridgeRpcBinding {
   discover(identity: PlatformIdentity): Promise<RegionalRpcResult<RegionalDiscovery>>;
   attention(identity: PlatformIdentity): Promise<RegionalRpcResult<RegionalAttention>>;
+  sharedCanvases(identity: PlatformIdentity): Promise<RegionalRpcResult<RegionalSharedCanvases>>;
   activate(input: RegionalActivateInput): Promise<RegionalRpcResult<Session>>;
   activateBrowser(input: RegionalActivateInput): Promise<RegionalRpcResult<BrowserRegistration>>;
   create(input: RegionalCreateInput): Promise<RegionalRpcResult<Session>>;
@@ -213,6 +222,10 @@ export class RegionalIdentityBridgeClient implements RegionalIdentityBridgeBindi
 
   attention(identity: PlatformIdentity): Promise<RegionalAttention> {
     return this.call(this.rpc.attention(identity), regionalAttentionSchema);
+  }
+
+  sharedCanvases(identity: PlatformIdentity): Promise<RegionalSharedCanvases> {
+    return this.call(this.rpc.sharedCanvases(identity), regionalSharedCanvasesSchema);
   }
 
   activate(input: RegionalActivateInput): Promise<Session> {
@@ -368,6 +381,16 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     if (!user) return { attention: [], failed: [] };
     const workspaces = await new AuthService(this.env).listRegionalWorkspaces(user.id);
     return membershipAttention(this.env, user.id, workspaces);
+  }
+
+  /** The Canvases shared with the identity in each Organization it belongs to here, beside `attention`. */
+  async sharedCanvases(rawIdentity: PlatformIdentity): Promise<RegionalSharedCanvases> {
+    const identity = platformIdentitySchema.parse(rawIdentity);
+    const user = await this.env.DB.prepare("SELECT id FROM users WHERE platform_user_id = ?")
+      .bind(identity.platformUserId).first<{ id: string }>();
+    if (!user) return { canvases: [], failed: [] };
+    const workspaces = await new AuthService(this.env).listRegionalWorkspaces(user.id);
+    return membershipSharedCanvases(this.env, user.id, workspaces);
   }
 
   async activate(rawInput: RegionalActivateInput): Promise<Session> {
@@ -1298,6 +1321,20 @@ export class PlatformOnboardingService {
       attention: settled.flatMap((result) => result.status === "fulfilled" ? result.value.attention : []),
       failed: settled.flatMap((result, index) => result.status === "rejected"
         ? [{ region: regions[index]!, code: settledFailureCode(result.reason, "regional_attention") }]
+        : result.value.failed.map((item) => ({ region: regions[index]!, workspaceId: item.workspaceId, code: item.code }))),
+    };
+  }
+
+  /** Shared Canvases in every other deployment, beside `otherDeploymentAttention`. */
+  async otherDeploymentSharedCanvases(): Promise<{ canvases: RegionalSharedCanvases["canvases"]; failed: Array<{ region: Region; workspaceId?: string; code: string }> }> {
+    const identity = await this.loadPlatformIdentity();
+    if (identity.loginIdentities.length === 0) return { canvases: [], failed: [] };
+    const regions = configuredRegions.filter((region) => region !== this.env.AVALON_REGION);
+    const settled = await Promise.allSettled(regions.map(async (region) => this.gateway(region).sharedCanvases(identity)));
+    return {
+      canvases: settled.flatMap((result) => result.status === "fulfilled" ? result.value.canvases : []),
+      failed: settled.flatMap((result, index) => result.status === "rejected"
+        ? [{ region: regions[index]!, code: settledFailureCode(result.reason, "regional_shared_canvases") }]
         : result.value.failed.map((item) => ({ region: regions[index]!, workspaceId: item.workspaceId, code: item.code }))),
     };
   }

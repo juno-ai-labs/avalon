@@ -40,6 +40,8 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx` | The Canvases sidebar section: a Pinned group and every Canvas by recent activity. |
 | `apps/desktop/src/renderer/components/canvas-creation-notices.tsx` | Shell-owned failure notices and navigation back to a pending Canvas's recovery controls. |
 | `apps/desktop/src/renderer/lib/canvases.ts` | The list as the socket keeps it (`useCanvasList`), routes and Canvas creation. |
+| `apps/desktop/src/renderer/lib/shared-canvases.ts`, `components/other-organization-canvas.tsx` | Canvases shared with the person in their other Organizations (`useOtherOrganizationCanvases`), the device switch for them, and their badged row and card. |
+| `apps/api/src/services/shared-canvases-service.ts` | `membershipSharedCanvases`: each Organization's `sharedWithMe` rows for the browser's cross-Organization read. |
 
 ## How it works
 
@@ -594,6 +596,43 @@ viewer drops off their Pinned group; and a guest may pin a Canvas shared with
 them but not reorder the group, since the order route is on the member-only
 mount, which has to be decided before drag-to-reorder lands in the client.
 
+### Shared from another Organization
+
+A Canvas someone else shared with a person (`sharedWithMe`) in any of their
+Organizations, guest relationships included, also shows in the Canvas list of
+every other Organization they open, unless they turned off **Show shared
+Canvases in every Organization** (Settings → Account → Preferences). The
+setting is on by default and saved per device (`sharedCanvasesInAllOrganizations`
+in the device preferences, absent meaning on), as **On startup** is; the Mac's
+Settings window reaches the main window through the `storage` event.
+
+- **The read** is the attention read's shape
+  ([`multiple-workspaces.md`](multiple-workspaces.md#the-account-menus-directory)),
+  one call per Organization: on the Mac, main asks that Organization's own
+  `GET /canvases` with its stored credential (`workspace:get-shared-canvases`)
+  and keeps `sharedWithMe`; in the browser, one identity-cookie read,
+  `GET /browser/workspaces/shared-canvases`, fans out to each WorkspaceDO's
+  `canvasListFor` (`membershipSharedCanvases`) and, from Global, to each other
+  deployment over the identity bridge's `sharedCanvases`. An Organization whose
+  read fails is left out and logged (`browser_workspace_shared_canvases_failed`
+  with region, Organization and code); the rest still show. On the Mac only an
+  Organization this device holds a credential for is read, as for attention.
+- **No socket and no cache of its own.** `useOtherOrganizationCanvases` reads
+  through React Query, again when the window regains focus, so a row from
+  elsewhere is as fresh as the last focus, not live. A support session reads
+  nothing.
+- **In the list.** The home grid and the sidebar's All canvases merge these
+  rows with the Organization's own by `updatedAt` (or by name, in the sidebar's
+  Name order); the filters apply as to any row. Each carries the Organization's
+  initial, drawn as the account menu's mark: on the card's upper right, and as
+  a top-right badge on the sidebar tile (`IdentityTile` badges take a `corner`).
+  Both say **Shared from <Organization>** on hover, and the row or card says it
+  to a screen reader. Such a row has no menu, no drag and no pin, since those
+  are its own Organization's; choosing it calls `openWorkspaceCanvas`, which
+  on the Mac goes through the deep-link queue (`canvasDeepLink`, entry point
+  `in_app_link`) and so switches Organization first, and in the browser loads
+  the Canvas's canonical path.
+
 ### Presence
 
 A Canvas id is a conversation-parent id, so `set_presence` already carries it
@@ -824,6 +863,7 @@ becomes ([`reactive-web-artifacts.md`](reactive-web-artifacts.md)).
 | An invitation email cannot be sent | The share stays pending and its delivery alarm retries ([`scope-invitations.md`](scope-invitations.md)). |
 | A second create for the same Sidekick run under another Canvas id | Answers the run's first Canvas (`created: false`); `canvas_directory_run_idx` is the index that finds it. |
 | A create names a `canvasId` that is somebody else's Canvas, or another conversation's id | `canvas_id_unavailable` (409); nothing is written. |
+| Another Organization's shared-Canvas read fails | That Organization's rows are left out until the next focus; the browser read logs `browser_workspace_shared_canvases_failed`. |
 | A publish lands but its note to the Canvas cannot run (the Organization object fails, or holds no such Canvas) | The publish still succeeds and `canvas_artifact_note_failed` is logged with the reason. The artifact is missing from the Canvas until the path is published again or a retried attempt recovers it as `landed`, each of which notes it again; nothing else repairs it. |
 
 ## Testing
@@ -1041,6 +1081,30 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-16 — Show shared Canvases in every Organization
+
+**What changed:** A Canvas shared with a person in one Organization shows in
+the Canvas list of each of their other Organizations, badged with its
+Organization's initial on the top right and **Shared from <Organization>** on
+hover; choosing it switches there. A per-device switch under Settings →
+Account → Preferences turns it off; it defaults on.
+
+**Why:** A person who is a guest in a partner's Organization, or a member of
+several, had to switch Organization to find what was shared with them.
+
+**Considered and rejected:** Holding a workspace socket per background
+Organization, which the multiple-workspaces boundary forbids and which would
+cost a socket per Organization for a list that tolerates focus-fresh data.
+Storing the switch on the server: per-Organization member preferences are the
+wrong scope, and the one account-wide preference (analytics) needs the Global
+canonical write with regional projections; a device preference is the cheapest
+to reverse and matches **On startup**.
+
+**Consequences:** Rows from elsewhere are only as fresh as the last window
+focus. A Mac shows only Organizations it has a stored credential for. Anything
+that acts on a Canvas from its list row (pin, rename, share) must keep refusing
+a row from another Organization, which this list draws without those actions.
 
 ### 2026-11-15 — A person the Canvas admits can join its participant list
 
