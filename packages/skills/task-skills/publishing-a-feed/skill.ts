@@ -22,8 +22,8 @@ import type { HarnessSkill } from "../../types";
  *
  * Media lives in the feed's own site, never as separately published files:
  * a site page can play only its own files, and a republish moves only new
- * files, so a growing show fits. Hence the import-then-republish order when a
- * run's sandbox does not have the directory.
+ * files, so a growing show fits. Hence the import-then-republish order, on
+ * every addition, since a directory left from an earlier run may be stale.
  *
  * The audience follows the site skill's standing procedure: public by default,
  * set after publishing, then said back to the person with a question at the
@@ -123,19 +123,22 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    feed names them by the site's URL. Add an entry with media in this
    order, which is \`building-live-sites\`' refresh sequence (take its
    shared-output claim first in a Sidekick run):
-   1. **Recover the site before writing any file.** Import the published
-      site with \`import_resource\` and its resource id into
-      \`.rally-output/<its path>\`, with \`overwrite: true\`, even when a
-      directory is already there: a directory missing the earlier episodes
-      publishes as a site without them. If the import fails, say so and stop;
-      never publish the path without its current files.
+   1. **Recover the site before writing any file.** If the feed's site has
+      never been published, skip to 2: you are building it now (steps 2 to
+      6). Otherwise call \`import_resource\` with the site's \`resourceId\`,
+      \`destinationPath: ".rally-output/<site>"\` (relative to \`/workspace\`;
+      if you do not know \`<site>\`, use the path the import tool reports) and
+      \`overwrite: true\`, even when a directory is already there: a
+      directory missing the earlier episodes publishes as a site without
+      them. Move any unpublished edits in that directory aside first, as
+      \`overwrite\` replaces the whole tree. If the import fails, say so and
+      stop; never publish the path without its current files.
    2. **Add the new files** to that directory (\`creating-a-podcast-episode\`
       makes an episode's).
-   3. **Republish the whole directory** to the same path with
-      \`publish_resource\`. Rally moves only what is new or changed since
-      the live version, so the earlier episodes cost nothing, and the size a
-      refused publish states applies to the new files alone. In a Sidekick
-      run, name the feed's Canvas in the \`canvas\` argument, or the site
+   3. **Republish the whole directory** with \`publish_resource\`
+      \`filePath: "<site>"\` (relative to \`.rally-output\`). Only new or
+      changed files move (\`building-live-sites\`, Media, downloads and
+      feeds). In a Sidekick run, name the feed's Canvas in the \`canvas\` argument, or the site
       lands in the run's own Canvas as a second site.
    4. **Write the entry's row**, with the file's path in the site and its
       size in bytes. Write it after the publish, so no row names a file
@@ -143,6 +146,11 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
 
    To make a podcast episode (the script, the audio and its artwork), load
    \`creating-a-podcast-episode\`.
+
+   When setting up a Sidekick that adds entries, save in its instructions
+   the site's resource id and Canvas id, \`<site>\`, the show's voice
+   settings, and the claim procedure from \`tracking-seen-or-done-items\`
+   keyed by the site's resource id.
 
 8. **Set the audience right after publishing, as every site does.** An app never
    signs in, so the feed works only when the Canvas's artifacts are **public:
@@ -306,9 +314,9 @@ read the same tags, so write every podcast feed to these rules.
 | \`title\` | \`<title>\` and \`<itunes:title>\`: the episode's own title, without the show's name or an episode number. |
 | \`description_html\` | \`<description>\` and \`<content:encoded>\`, each wrapped in \`<![CDATA[…]]>\`: show notes with the source link. Keep to \`<p>\`, \`<a>\`, \`<ul>\`, \`<ol>\` and \`<li>\`. |
 | \`published_at\` | \`<pubDate>\`, RFC 2822 with a zone offset: \`Sat, 14 Nov 2026 17:02:39 +0000\`. |
-| \`audio_path\`, \`audio_bytes\` | \`<enclosure url="…" length="…" type="audio/mpeg"/>\`, with the site's origin before the path. Apple requires all three, and ignores a duplicate enclosure URL. |
+| \`audio_path\`, \`audio_bytes\` | \`<enclosure url="…" length="…" type="audio/mpeg"/>\`, with as \`<site origin>/<audio_path>\`. Apple requires all three, and ignores a duplicate enclosure URL. |
 | \`duration_seconds\` | \`<itunes:duration>\` in whole seconds. |
-| \`image_path\` | \`<itunes:image href="…"/>\`: the episode's art, with the site's origin before the path. Leave it out when there is none, and Apple shows the cover. |
+| \`image_path\` | \`<itunes:image href="…"/>\`: the episode's art, with as \`<site origin>/<audio_path>\`. Leave it out when there is none, and Apple shows the cover. |
 | \`episode_number\` | \`<itunes:episode>\`, counting from 1. Give each new row the next number. |
 | \`season_number\` | \`<itunes:season>\`, only for a show that has seasons. |
 | \`episode_type\` | \`<itunes:episodeType>\`: \`full\`, \`trailer\` or \`bonus\`. |

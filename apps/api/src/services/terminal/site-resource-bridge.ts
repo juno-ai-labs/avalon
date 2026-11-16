@@ -272,12 +272,12 @@ function siteFileStoreFailure(env: Partial<LogEnv>, error: unknown, file: SitePu
   return changed
     ? new TerminalToolError(
       "resource_not_ready",
-      "A file in the directory changed after Rally listed it. Wait for its producer to finish, then retry publish_resource with the final directory.",
+      `${file ? `\`${file.path}\`` : "A file in the directory"} changed or disappeared after Rally listed it. If a command is still writing it, wait for it to finish; then retry the same publish_resource call.`,
       { reason: "Wait for the producer to finish, then retry with the final stable directory.", code },
     )
     : new TerminalToolError(
       "resource_publish_failed",
-      `The site's files could not be stored (${code}). Retry publish_resource with the same directory; if the same code returns, the cause is not one a retry fixes.`,
+      `The site's files could not be stored (${code}). Retry the same publish_resource call once. If the same code returns, stop retrying and tell the person the site was not updated, naming the code; it keeps serving its current version.`,
       { reason: "Retry the same publish_resource call once.", code },
     );
 }

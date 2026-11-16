@@ -670,8 +670,9 @@ export function createDaytonaTerminalProvider(
     async openFile(idOrName, path, signal) {
       // The SDK's own stream download refuses to run in a Worker, and its
       // buffered one holds the whole file. A signed URL is an ordinary
-      // request whose body Workers stream. It never leaves this method, and
-      // it lives as long as the buffered download is allowed to take.
+      // request whose body Workers stream. It is never returned or logged, but
+      // this Worker's traces record it, so it lives only as long as the
+      // buffered download is allowed to take.
       const sandbox = await load(idOrName);
       if (!sandbox.downloadUrl) throw new Error("daytona_signed_download_unavailable");
       const url = await measureRequest("file.sign_download", () => sandbox.downloadUrl!(path, 120));
