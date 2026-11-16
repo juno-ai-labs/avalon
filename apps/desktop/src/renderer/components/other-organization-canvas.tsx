@@ -57,8 +57,8 @@ export function useOpenOtherOrganizationCanvas(): (item: OtherOrganizationCanvas
 /**
  * A sidebar row for a Canvas from another Organization: drawn as any Canvas
  * row is, with the Organization's mark on its tile's upper right and its name
- * on the second line. Its inbox copy carries no read state, so it is never
- * drawn unread. It has no
+ * on the second line. Its Organization sends no read state with it, so it
+ * is never drawn unread. It has no
  * menu and no drag, since pinning, renaming and sharing are its own
  * Organization's; choosing it opens it there.
  */

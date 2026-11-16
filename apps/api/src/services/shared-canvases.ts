@@ -1,12 +1,9 @@
 import { asWorkspaceId } from "@rally/contracts";
-import {
-  GuestSharedCanvasSchema,
-  SharedCanvasSchema,
-  WorkspaceSharedCanvasesEventSchema,
-  type SharedCanvas,
-  type SharedCanvasesRefreshMessage,
+import type {
+  SharedCanvas,
+  SharedCanvasesRefreshMessage,
+  WorkspaceSharedCanvasesEvent,
 } from "@rally/contracts/canvas-share-federation";
-import { z } from "zod";
 
 import { workspaceDOName } from "../durable-objects/names";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
@@ -23,8 +20,6 @@ import { SIDEBAR_LIST_LIMIT } from "./sidebar-reads";
  * which only relays it to the person's sockets. Nothing is stored but the
  * person's switch.
  */
-
-const RELAY_CHANNEL = "shared_canvases";
 
 /** Whether Canvases shared with this person join every Organization's list; no row is on. */
 export async function readSharedCanvasesEnabled(env: Env, userId: string): Promise<boolean> {
@@ -43,23 +38,22 @@ export async function writeSharedCanvasesEnabled(env: Env, userId: string, enabl
 export interface PersonOrganization {
   id: string;
   name: string;
-  region: string;
   guest: boolean;
 }
 
 /** Every Organization in this deployment the person is active in, as a member or a guest. */
 export async function personOrganizations(env: Env, userId: string): Promise<PersonOrganization[]> {
   const rows = await env.DB.prepare(
-    `SELECT w.id, w.name, w.region, m.access_class FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id
+    `SELECT w.id, w.name, m.access_class FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id
       WHERE m.user_id = ? AND m.status = 'active' AND w.region = ? AND w.abandoned_at IS NULL
       ORDER BY w.id`,
-  ).bind(userId, env.AVALON_REGION).all<{ id: string; name: string; region: string; access_class: string }>();
-  return rows.results.map((row) => ({ id: row.id, name: row.name, region: row.region, guest: row.access_class === "guest" }));
+  ).bind(userId, env.AVALON_REGION).all<{ id: string; name: string; access_class: string }>();
+  return rows.results.map((row) => ({ id: row.id, name: row.name, guest: row.access_class === "guest" }));
 }
 
-function organizationObject(env: Env, workspaceId: string) {
-  return (async () => durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
-    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)), await workspacePlacementAffinity(env, workspaceId)))();
+async function organizationObject(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)), await workspacePlacementAffinity(env, workspaceId));
 }
 
 /**
@@ -73,12 +67,12 @@ async function rebuild(env: Env, userId: string, organizations: readonly PersonO
   // Each target's ticket before anything is read, so a build that reads later
   // always relays after one that read earlier (`relayTicket`).
   const tickets = await Promise.allSettled(targets.map(async (target) =>
-    (await organizationObject(env, target)).relayTicket({ workspaceId: target, userId, channel: RELAY_CHANNEL })));
+    (await organizationObject(env, target)).relayTicket({ workspaceId: target, userId })));
   const builtAt = Date.now();
   const enabled = await readSharedCanvasesEnabled(env, userId);
   const origins = enabled ? organizations.filter((organization) => organization.guest) : [];
   const answered = await Promise.allSettled(origins.map(async (origin) =>
-    z.array(GuestSharedCanvasSchema).parse(await (await organizationObject(env, origin.id)).guestSharedCanvases({ workspaceId: origin.id, userId }))));
+    (await organizationObject(env, origin.id)).guestSharedCanvases({ workspaceId: origin.id, userId })));
   const shared = new Map<string, SharedCanvas[]>();
   answered.forEach((result, index) => {
     const origin = origins[index]!;
@@ -90,8 +84,8 @@ async function rebuild(env: Env, userId: string, organizations: readonly PersonO
       }
       return;
     }
-    shared.set(origin.id, result.value.map((canvas) => SharedCanvasSchema.parse({
-      organization: { id: origin.id, name: origin.name, region: origin.region },
+    shared.set(origin.id, result.value.map((canvas): SharedCanvas => ({
+      organization: { id: asWorkspaceId(origin.id), name: origin.name, region: env.AVALON_REGION },
       canvas: {
         id: canvas.id, title: canvas.title, updatedAt: new Date(canvas.updatedAt).toISOString(),
         ...(canvas.appearance ? { appearance: canvas.appearance } : {}),
@@ -103,12 +97,10 @@ async function rebuild(env: Env, userId: string, organizations: readonly PersonO
     if (ticket.status === "rejected") throw ticket.reason;
     const items = [...shared.entries()].filter(([origin]) => origin !== target).flatMap(([, canvases]) => canvases)
       .sort((a, b) => b.canvas.updatedAt.localeCompare(a.canvas.updatedAt)).slice(0, SIDEBAR_LIST_LIMIT);
-    const frame = JSON.stringify(WorkspaceSharedCanvasesEventSchema.parse({
+    const frame = JSON.stringify({
       type: "workspace_shared_canvases", occurredAt: new Date(builtAt).toISOString(), enabled, items,
-    }));
-    await (await organizationObject(env, target)).relayToPerson({
-      workspaceId: target, userId, channel: RELAY_CHANNEL, ticket: ticket.value, frame, supportSessions: false,
-    });
+    } satisfies WorkspaceSharedCanvasesEvent);
+    await (await organizationObject(env, target)).relayToPerson({ workspaceId: target, userId, ticket: ticket.value, frame });
   }));
   relayed.forEach((result, index) => {
     if (result.status === "rejected" && !isRetirementRefusal(result.reason)) {

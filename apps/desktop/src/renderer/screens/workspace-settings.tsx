@@ -269,8 +269,8 @@ function MemoryReviewSection({ emptyCopy, forget, heading, queryKey, read }: {
 
 /**
  * Settings → Account → Preferences: whether Canvases shared with this person
- * in their other Organizations join every Organization's list. Stored on
- * their inbox on the server, so it follows them to every device.
+ * as a guest in their other Organizations join every Organization's list.
+ * Stored on the server for the person, so it follows them to every device.
  */
 function SharedCanvasesSetting({ api }: { api: RallyApi }): React.JSX.Element {
   const { enabled, loading, save } = useSharedCanvasesSetting(api);
