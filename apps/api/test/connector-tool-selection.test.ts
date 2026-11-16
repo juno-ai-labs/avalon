@@ -866,9 +866,8 @@ describe("connector tools selected for harness runs", () => {
       return tool.execute({}, {} as never).then(() => null, (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }));
     };
     const wizard = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
-    // The sender stamps `fromPersonTurn` when it acts for a person; a run, its worker and a self-review do not.
-    const message = (sender: AgentId, fromPersonTurn = false) => ({ teamId: sender, senderAgentId: sender,
-      messageId: "00000000-0000-7000-8000-00000000e001", ...(fromPersonTurn ? { fromPersonTurn: true as const } : {}) });
+    // Whether a message may lead to an ask is read from its sender's address.
+    const message = (sender: AgentId) => ({ teamId: sender, senderAgentId: sender, messageId: "00000000-0000-7000-8000-00000000e001" });
     const canvasChat = agentIdForAddress({ parentKind: "canvas", parentId: "00000000-0000-7000-8000-00000000c001", substreamId: asSubstreamId("0") });
     const canvasAgent = agentIdForAddress({ parentKind: "canvas", parentId: "00000000-0000-7000-8000-00000000c001", substreamId: asSubstreamId(CHILD_HARNESS_RUN_ID) });
     const run = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("00000000-0000-7000-8000-00000000d001") });
@@ -878,10 +877,10 @@ describe("connector tools selected for harness runs", () => {
     // The Chat and the wizard ask, on a person's turn and on one a person-acting agent's message started.
     expect(await sourceTools(workflowInput())).toEqual(all);
     expect(await sourceTools(automationConversationInput())).toEqual(all);
-    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat, true) })).toEqual(all);
-    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasAgent, true) })).toEqual(all);
-    expect(await sourceTools({ ...workflowInput(), agentExchange: message(canvasAgent, true) })).toEqual(all);
-    expect(await sourceTools({ ...workflowInput(), agentExchange: message(wizard, true) })).toEqual(all);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toEqual(all);
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasAgent) })).toEqual(all);
+    expect(await sourceTools({ ...workflowInput(), agentExchange: message(canvasAgent) })).toEqual(all);
+    expect(await sourceTools({ ...workflowInput(), agentExchange: message(wizard) })).toEqual(all);
     expect(await sourceTools({ ...automationConversationInput(), wizardCanvasId: "00000000-0000-7000-8000-00000000c001" })).toEqual(all);
     // So do their background agents.
     expect(await sourceTools(childWorkflowInput())).toEqual(all);
@@ -893,10 +892,10 @@ describe("connector tools selected for harness runs", () => {
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toEqual(refused);
     expect(await sourceTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual(refused);
     expect(await sourceTools({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" })).toEqual(refused);
-    // A message from one of those, a run's change request to its wizard among them, or a host notice carries no stamp.
+    // A message from a run, its worker or a wizard's agent, which one Sidekick address cannot tell apart: a run's change
+    // request to its wizard among them.
     expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(run) })).toEqual(refused);
-    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toEqual(refused);
-    expect(await sourceTools({ ...workflowInput(), agentExchange: message(wizard) })).toEqual(refused);
+    expect(await sourceTools({ ...workflowInput(), agentExchange: message(run) })).toEqual(refused);
     // Each refusal says who can ask, and how to reach them.
     expect(await refusal({ ...automationConversationInput(), reason: "sidekick_review" })).toMatchObject({
       code: "sidekick_source_request_from_review", routes: expect.stringContaining("Name in your review") });
@@ -931,7 +930,7 @@ describe("connector tools selected for harness runs", () => {
     const listsTheSkill = async (input: WorkstreamWorkflowInput) =>
       __integrationTesting.builtInSkillsFor((await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins)
         .some((skill) => skill.name === "setting-up-a-filtered-trigger");
-    expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(canvasChat, true) })).toBe(true);
+    expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(canvasChat) })).toBe(true);
     expect(await listsTheSkill({ ...automationConversationInput(), agentExchange: message(run) })).toBe(true);
     expect(await listsTheSkill({ ...automationConversationInput(), reason: "sidekick_review" })).toBe(true);
     expect(await listsTheSkill(automationRunInput())).toBe(true);

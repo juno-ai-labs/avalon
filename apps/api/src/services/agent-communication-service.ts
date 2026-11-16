@@ -18,7 +18,7 @@ import { createAutomation } from "./automation-service";
 import { sidekickChangeRequestText } from "@rally/prompts/api/sidekick-change-request";
 import { renderAgentFailureNotice, renderAgentSilentCompletionNotice } from "@rally/prompts/api/agent-owner-notice";
 import { personManagesSidekick } from "./sidekick-run-continuation";
-import { actsForAPerson, canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
+import { canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
 
 // The wire names this service asks about — a message, and the delegation that
 // also counts as handing work on — are in `@rally/contracts` beside the schemas
@@ -267,7 +267,6 @@ export class AgentCommunicationService {
       recipientAgentId: target.recipientAgentId, resumeStopped, text: args.message, attachmentIds,
       agentExchange: {
         teamId: AgentIdSchema.parse(target.teamId), senderAgentId: this.senderId, messageId,
-        ...(!notice && actsForAPerson(this.input) ? { fromPersonTurn: true as const } : {}),
         ...(notice ? { notice } : {}),
         ...(noticeReason ? { noticeReason } : {}),
       },

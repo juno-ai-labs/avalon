@@ -1032,8 +1032,7 @@ describe("a Sidekick's source request asked from a Canvas's Chat", () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID, parentKind: "automation",
       parentId: AUTOMATION_ID, substreamId: "0", loopId: substreamLoopId(AUTOMATION_ID), harnessRunId: crypto.randomUUID(),
       triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test",
-      sidekickWizard: true, agentExchange: { teamId: chatAgent, senderAgentId: chatAgent, messageId: crypto.randomUUID(),
-        fromPersonTurn: true } });
+      sidekickWizard: true, agentExchange: { teamId: chatAgent, senderAgentId: chatAgent, messageId: crypto.randomUUID() } });
     const tool = sidekickSourceTools(TEST_ENV, input, AUTHOR_ID, false).find((candidate) => candidate.definition.name === "request_source")!;
     const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: input.harnessRunId,
       effectIntentId: crypto.randomUUID(), toolCallId: "ask-colleague", executionPrincipal: input.executionPrincipal,
