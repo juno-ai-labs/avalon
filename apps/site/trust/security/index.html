@@ -30,6 +30,7 @@
           <p class="trust-kicker">Security posture · Reviewed August 25, 2026</p>
           <h1 id="trust-title">Security should be<br /><em>inspectable.</em></h1>
           <p>This page describes the controls present in Rally today, names important operational boundaries, and provides a direct path for coordinated vulnerability reporting.</p>
+          <div class="trust-casa"><!-- rally:casa-badge --><p><strong>Rally completed an App Defense Alliance CASA security assessment at Assurance Level 1 (AL1).</strong> TAC Security, an ADA-authorized lab, validated it in July 2026. It renews every year.</p></div>
           <div class="trust-contact-row">
             <a href="mailto:help@rallywith.ai?subject=Security%20question">help@rallywith.ai <svg class="external-arrow" width="13" height="13" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10"/></svg></a>
             <a href="/trust/privacy/">Privacy Policy <span>→</span></a>
@@ -40,7 +41,7 @@
       <section class="trust-section" id="controls" aria-labelledby="controls-title">
         <header class="trust-section-heading">
           <div><p>01 / Implemented controls</p><h2 id="controls-title">What the product<br />enforces today.</h2></div>
-          <p>These summaries were checked against the current API, Electron, deployment, logging, and CI paths. They are not certification claims.</p>
+          <p>These summaries were checked against the current API, Electron, deployment, logging, and CI paths. Rally also holds an independent App Defense Alliance CASA AL1 validation.</p>
         </header>
 
         <div class="trust-control-grid">
@@ -98,7 +99,7 @@
         </header>
         <div class="trust-faq-list">
           <details><summary>Is this Trust Center gated?<span>＋</span></summary><p>No. Every resource linked here is public. Rally does not require an account, NDA, email submission, or access request to read this page.</p></details>
-          <details><summary>Does Rally claim a security certification?<span>＋</span></summary><p>No certification is claimed on this page. We list controls that can be tied to the current implementation and will add independent assurance only when it is complete and current.</p></details>
+          <details><summary>Has Rally had an independent security assessment?<span>＋</span></summary><p>Yes. Rally completed an App Defense Alliance CASA (Cloud Application Security Assessment) at Assurance Level 1 (AL1). TAC Security, an ADA-authorized lab, validated it in July 2026 for Google&rsquo;s restricted OAuth scopes, and it renews every year. The controls on this page are the ones we can tie to the current implementation.</p></details>
           <details><summary>Where does Rally run?<span>＋</span></summary><p>Rally operates the Global deployment with deployment-specific storage and keys. Network delivery and customer-selected service providers can process data outside this deployment, as explained in the Privacy Policy and Sub-processor List.</p></details>
           <details><summary>How are desktop sessions stored?<span>＋</span></summary><p>The default desktop mode encrypts stored session material with an application-wide AES-GCM key. Optional Lockdown mode rewraps session material with Electron safeStorage and the operating-system keystore. We do not describe the default mode as device-bound storage.</p></details>
           <details><summary>How do I report a vulnerability?<span>＋</span></summary><p>Email help@rallywith.ai with the subject “Security report.” Include the affected surface, impact, reproducible steps, and a safe proof of concept, but do not send credentials or full customer content.</p></details>

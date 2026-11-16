@@ -148,6 +148,7 @@ the web app, your browser keeps each site fenced off in the same spirit.
 - Your connections' keys are encrypted. The credentials for your connected
   tools are stored encrypted on Rally's servers and are blanked out of Rally's logs.
 
-These describe controls that exist in Rally today. They are not a security
-certification, and Rally does not claim one. The
-[Trust Center](04-trust-center-and-security-reports.md) has the full list.
+These describe controls that exist in Rally today. Separately, Rally completed
+an independent App Defense Alliance CASA security assessment at Assurance
+Level 1 (AL1). The [Trust Center](04-trust-center-and-security-reports.md) has
+the full list.
