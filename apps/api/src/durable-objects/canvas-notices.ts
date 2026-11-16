@@ -199,24 +199,26 @@ export function noteCanvasNoticeRecord(sql: SqlStorage, canvasId: string, revisi
 }
 
 /**
- * Every Canvas whose notices reach this person: it sends notices, is not
- * archived, and they made it or are on its list. Its title, what its notices
- * are about, and their choice for it. Settings lists these under the Canvas
- * notices default.
+ * Every Canvas that sends notices and is not archived, for Settings, which
+ * lists them under the Canvas notices default: those whose notices reach this
+ * person (they made it or are on its list), and, for a member, those open to
+ * the whole Organization that they could join to get them (`participant`
+ * false). Its title, what its notices are about, and their choice for it.
  */
-export function canvasNoticeChoicesFor(sql: SqlStorage, workspaceId: string, userId: string): CanvasNoticeChoiceRow[] {
-  return sql.exec<{ canvas_id: string; title: string; purpose: string }>(
-    `SELECT canvas.canvas_id, canvas.title, registration.purpose
+export function canvasNoticeChoicesFor(sql: SqlStorage, workspaceId: string, userId: string,
+  member: boolean): CanvasNoticeChoiceRow[] {
+  return sql.exec<{ canvas_id: string; title: string; purpose: string; participant: number }>(
+    `SELECT canvas.canvas_id, canvas.title, registration.purpose,
+            (canvas.created_by_user_id = ?2 OR EXISTS (SELECT 1 FROM canvas_participants participant
+              WHERE participant.canvas_id = canvas.canvas_id AND participant.user_id = ?2)) AS participant
        FROM canvas_notice_registrations registration
        JOIN canvas_directory canvas ON canvas.canvas_id = registration.canvas_id
       WHERE canvas.workspace_id = ?1 AND canvas.archived_at IS NULL
-        AND (canvas.created_by_user_id = ?2
-          OR EXISTS (SELECT 1 FROM canvas_participants participant
-                      WHERE participant.canvas_id = canvas.canvas_id AND participant.user_id = ?2))
+        AND (participant OR (?3 AND canvas.visibility = 'workspace'))
       ORDER BY canvas.title COLLATE NOCASE, canvas.canvas_id`,
-    workspaceId, userId,
+    workspaceId, userId, member ? 1 : 0,
   ).toArray().map((row) => ({
-    canvasId: asWorkstreamId(row.canvas_id), title: row.title, purpose: row.purpose,
+    canvasId: asWorkstreamId(row.canvas_id), title: row.title, purpose: row.purpose, participant: row.participant === 1,
     channels: canvasNoticeOverride(sql, row.canvas_id, userId) ?? null,
   }));
 }

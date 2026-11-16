@@ -252,17 +252,27 @@ describe("a Canvas's notices", () => {
   });
 
   it("list for Settings each Canvas whose notices reach a person, with their choice for it", async () => {
-    const choices = (userId: string) => workspace().canvasNoticeChoices({ workspaceId: WORKSPACE_ID, userId });
+    const choices = (userId: string, member = true) => workspace().canvasNoticeChoices({ workspaceId: WORKSPACE_ID, userId, member });
     // No Canvas sends notices yet.
     expect(await choices(PARTICIPANT)).toEqual({ canvases: [] });
     await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: CHAT_LOOP,
       action: { kind: "register", purpose: "New episodes.", operationId: "op-1" } });
-    expect(await choices(PARTICIPANT)).toEqual({ canvases: [{ canvasId: CANVAS, title: "Reading list", purpose: "New episodes.", channels: null }] });
+    expect(await choices(PARTICIPANT)).toEqual({ canvases: [{ canvasId: CANVAS, title: "Reading list", purpose: "New episodes.",
+      participant: true, channels: null }] });
     await workspace().canvasSetNoticeChoice({ workspaceId: WORKSPACE_ID, canvasId: CANVAS,
       actor: { userId: PARTICIPANT, actorRole: "member" }, channels: ["email"] });
     expect((await choices(PARTICIPANT)).canvases[0]?.channels).toEqual(["email"]);
-    // Someone not on the Canvas's list is not told of it.
-    expect(await choices(asUserId("00000000-0000-7000-8000-0000000ec009"))).toEqual({ canvases: [] });
+    // Someone not on a Canvas shared with specific people is not told of it.
+    const outsider = asUserId("00000000-0000-7000-8000-0000000ec009");
+    expect(await choices(outsider)).toEqual({ canvases: [] });
+    // A Canvas open to the whole Organization is listed for a member who could join it, and not for a guest.
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: OTHER_CANVAS, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "workspace", userIds: [] } });
+    await workspace().canvasNotices({ workspaceId: WORKSPACE_ID, loop: { ...CHAT_LOOP, parentId: OTHER_CANVAS },
+      action: { kind: "register", purpose: "Weekly digest.", operationId: "op-other" } });
+    expect(await choices(outsider)).toEqual({ canvases: [{ canvasId: OTHER_CANVAS, title: "Other", purpose: "Weekly digest.",
+      participant: false, channels: null }] });
+    expect(await choices(outsider, false)).toEqual({ canvases: [] });
   });
 
   it("refuse a choice from someone the Canvas does not admit, and keep none for them", async () => {

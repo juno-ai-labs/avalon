@@ -771,15 +771,18 @@ rewrites rows.
 
 **Decided:** Settings → Notifications keeps **Canvas notices** as the
 default for every Canvas, push and email on, and lists under it one row for
-each Canvas whose notices reach the person: it sends notices, is not
-archived, and they made it or are on its list. A row shows the default until
+each Canvas that sends notices and is not archived. Where its notices reach
+the person (they made it or are on its list), a row shows the default until
 changed there; a change is that Canvas's own choice, and **Use default** drops
-it. `GET /canvases/notice-choices` answers the rows.
+it. An Organization-wide Canvas a member is not on is listed greyed, with
+**Add as participant**. `GET /canvases/notice-choices` answers the rows.
 
 **Why:** The owner's call: every Canvas's choice should be visible in one
-place, not only on each Canvas's record.
+place, not only on each Canvas's record, and a Canvas one could join should
+be offered there too.
 
-**Changes:** Adds to Product behavior's Settings row. Canvases that send no
-notices, or whose list does not include the person, are not listed: a choice
-there would reach nobody.
+**Changes:** Adds to Product behavior's Settings row. A Canvas that sends no
+notices is not listed. Only an Organization-wide Canvas is offered to join,
+since a join is allowed only through Organization visibility (decision log,
+"Only Organization visibility admits a join").
 

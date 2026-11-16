@@ -12,6 +12,7 @@ describe('the Notifications settings pane', () => {
       updateMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
       canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [] }),
       setCanvasNoticeChoice: vi.fn(),
+      joinCanvas: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}>
@@ -32,6 +33,7 @@ describe('the Notifications settings pane', () => {
       updateMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
       canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [] }),
       setCanvasNoticeChoice: vi.fn(),
+      joinCanvas: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}>
@@ -81,6 +83,7 @@ describe('the Notifications settings pane', () => {
       updateMyPreferences: vi.fn().mockResolvedValue(stored),
       canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [] }),
       setCanvasNoticeChoice: vi.fn(),
+      joinCanvas: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}>
@@ -113,6 +116,7 @@ describe('the Notifications settings pane', () => {
       updateMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
       canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [] }),
       setCanvasNoticeChoice: vi.fn(),
+      joinCanvas: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}>
@@ -134,8 +138,9 @@ describe('the Notifications settings pane', () => {
     const api = {
       getMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
       updateMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
-      canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [{ canvasId, title: 'Newsletter', purpose: 'New episodes.', channels: null }] }),
+      canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [{ canvasId, title: 'Newsletter', purpose: 'New episodes.', participant: true, channels: null }] }),
       setCanvasNoticeChoice: vi.fn(),
+      joinCanvas: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}>
@@ -151,5 +156,28 @@ describe('the Notifications settings pane', () => {
     expect(choices.map((choice) => choice.getAttribute('aria-checked'))).toEqual(['true', 'true']);
     fireEvent.click(choices[1]!);
     await waitFor(() => expect(api.setCanvasNoticeChoice).toHaveBeenCalledWith(canvasId, ['push']));
+  });
+
+  it('greys a Canvas the person could join, and adds them as a participant from its row', async () => {
+    const canvasId = '00000000-0000-7000-8000-00000000c0c2';
+    const api = {
+      getMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
+      updateMyPreferences: vi.fn().mockResolvedValue(DEFAULT_MEMBER_PREFERENCES),
+      canvasNoticeChoices: vi.fn().mockResolvedValue({ canvases: [{ canvasId, title: 'Launch plan', purpose: 'Checklist changes.', participant: false, channels: null }] }),
+      setCanvasNoticeChoice: vi.fn(),
+      joinCanvas: vi.fn().mockResolvedValue({ id: canvasId }),
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <NotificationChannelSettings api={api} email="you@example.test" pushAvailable workspaceId="org" />
+    </QueryClientProvider>);
+
+    expect(await screen.findByText('You are not a participant, so these do not reach you. Checklist changes.')).toBeVisible();
+    expect(screen.getByLabelText('How Launch plan tells you')).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add as participant' }));
+    await waitFor(() => expect(api.joinCanvas).toHaveBeenCalledWith(canvasId));
+    // Joined: the row now follows the default and can be changed.
+    expect(await screen.findByText('Follows the default above. Checklist changes.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Add as participant' })).toBeNull();
   });
 });
