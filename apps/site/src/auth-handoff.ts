@@ -39,7 +39,7 @@ export function parseDesktopTarget(fragment: string): string | null {
   if (!rawTarget) return null;
 
   const intent = parseDesktopDeepLinkIntent(rawTarget);
-  return intent?.kind === 'identity-result' || intent?.kind === 'connector-result'
+  return intent?.kind === 'identity-result' || intent?.kind === 'connector-result' || intent?.kind === 'connector-claim'
     ? new URL(rawTarget).toString()
     : null;
 }
@@ -71,7 +71,11 @@ function initializeHandoff(): void {
   const provider = parsedTarget.searchParams.get('provider') as ConnectorProvider | null;
   const result = parsedTarget.searchParams.get('status');
   const error = parsedTarget.searchParams.get('error');
-  if (provider && result === 'connected') {
+  if (provider && result === 'authorized') {
+    // Rally holds the authorization until the app that started it claims it.
+    status.textContent = `Opening the Rally desktop app to finish connecting ${connectorName[provider]}…`;
+    help.textContent = 'Rally finishes the connection in the account that started it.';
+  } else if (provider && result === 'connected') {
     status.textContent = `${connectorName[provider]} is connected. Opening the Rally desktop app…`;
   } else if (provider && error) {
     status.textContent = `${connectorName[provider]} could not be connected. Opening Rally…`;

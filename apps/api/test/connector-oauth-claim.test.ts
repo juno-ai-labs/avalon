@@ -1,0 +1,237 @@
+import { asUserId, asWorkspaceId } from "@rally/contracts";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createApp } from "../src/app";
+import type { AuthContext, Env } from "../src/env";
+import { ConnectionService } from "../src/services/connection-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestWorkspaceDO, testWorkspaceObjectBinding } from "./helpers/workspace-object-rpcs";
+
+/**
+ * A connector authorization's callback only holds the provider's answer; the
+ * session that started it has to claim it (`docs/connectors.md`, "Claiming a
+ * connector authorization"). These run the real callback route and the real
+ * claim against the checked-in migrations, with only the provider doubled.
+ */
+
+const OWNER_ID = asUserId("00000000-0000-4000-8000-000000000001");
+const OTHER_ID = asUserId("00000000-0000-4000-8000-000000000002");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000003");
+
+const databases: DatabaseSync[] = [];
+
+afterEach(() => {
+  for (const database of databases.splice(0)) database.close();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; owner: AuthContext; other: AuthContext } {
+  const regional = migratedSqliteDatabase();
+  databases.push(regional);
+  const at = "2026-11-16T00:00:00.000Z";
+  const insertUser = regional.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)`);
+  insertUser.run(OWNER_ID, "claim-owner", "owner@example.test", "Owner", at, at);
+  insertUser.run(OTHER_ID, "claim-other", "other@example.test", "Other", at, at);
+  regional.prepare(`INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+    VALUES (?, 'Claims', 'claims', 'global', ?, ?, ?)`).run(WORKSPACE_ID, OWNER_ID, at, at);
+  const insertMember = regional.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+    VALUES (?, ?, ?, 'active', ?)`);
+  insertMember.run(WORKSPACE_ID, OWNER_ID, "owner", at);
+  insertMember.run(WORKSPACE_ID, OTHER_ID, "member", at);
+  const workspace = createTestWorkspaceDO({
+    workspaceId: WORKSPACE_ID,
+    regionalDatabase: regional,
+    register: (created) => { databases.push(created); },
+  });
+  const auth = (userId: typeof OWNER_ID, role: AuthContext["role"]): AuthContext =>
+    ({ sessionId: `session-${userId}`, userId, workspaceId: WORKSPACE_ID, region: "global", role });
+  return {
+    regional,
+    object: workspace.objectDatabase,
+    owner: auth(OWNER_ID, "owner"),
+    other: auth(OTHER_ID, "member"),
+    env: createTestEnv({
+      DB: sqliteD1(regional),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      LOG_LEVEL: "error",
+      ALLOWED_ORIGINS: "app://rally",
+      PUBLIC_API_BASE_URL: "https://api.rallywith.ai",
+      PUBLIC_WEB_BASE_URL: "https://rallywith.ai",
+      DESKTOP_DEEP_LINK_URI: "rallywithai://auth/complete",
+      BROWSER_APP_ORIGIN: "https://app.rallywith.ai",
+      OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
+      CONNECTOR_CREDENTIALS_KEY: "test-connector-credentials-key",
+      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, [
+        "startConnectorOAuthAttempt",
+        "abandonConnectorOAuthAttempt",
+        "extendConnectorOAuthAttempt",
+        "finishConnectorOAuthAttempt",
+        "connectorOAuthAttempt",
+        "bindConnectorOAuthAttemptTelemetry",
+        "executeRuntimeSql",
+      ]),
+    }),
+  };
+}
+
+/** Apollo's hosted MCP authorization server; records every code it is asked to exchange. */
+function stubApollo(tokenEndpoint: "ok" | "fails" = "ok"): string[] {
+  const exchanged: string[] = [];
+  vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes("oauth-protected-resource")) return Response.json({ resource: "https://mcp.apollo.io/mcp", authorization_servers: ["https://mcp.apollo.io"], scopes_supported: ["read_user_profile"] });
+    if (url.includes("oauth-authorization-server")) return Response.json({ authorization_endpoint: "https://mcp.apollo.io/authorize", token_endpoint: "https://mcp.apollo.io/token", registration_endpoint: "https://mcp.apollo.io/register", code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
+    if (url.endsWith("/register")) return Response.json({ client_id: "apollo-fixture-client", token_endpoint_auth_method: "none" });
+    if (url.endsWith("/token")) {
+      exchanged.push(new URLSearchParams(String(init?.body ?? "")).get("code") ?? "");
+      if (tokenEndpoint === "fails") return Response.json({ error: "server_error" }, { status: 500 });
+      return Response.json({ access_token: "apollo-access", refresh_token: "apollo-refresh", token_type: "Bearer", expires_in: 3600 });
+    }
+    throw new Error(`Unexpected provider request: ${url}`);
+  });
+  return exchanged;
+}
+
+/** Start as `auth`, then answer the provider's redirect the way a browser would. */
+async function consent(env: Env, auth: AuthContext, code: string): Promise<{ attemptId: string; target: URL }> {
+  const started = await new ConnectionService(env, auth).beginProvider("apollo", {
+    scope: "personal", capabilities: ["apollo.personal.mcp"], desktopHandoffVersion: 2,
+  });
+  const state = new URL(started.url).searchParams.get("state")!;
+  const response = await createApp().request(
+    `https://api.rallywith.ai/connections/apollo/callback?code=${code}&state=${encodeURIComponent(state)}`,
+    undefined,
+    env,
+  );
+  expect(response.status).toBe(302);
+  const handoff = new URL(response.headers.get("location")!);
+  return { attemptId: started.attemptId, target: new URL(new URLSearchParams(handoff.hash.slice(1)).get("target")!) };
+}
+
+/** The claim route, as the starting member's client calls it (development auth stands in for a session). */
+async function claimRoute(env: Env, auth: AuthContext, ticket: string): Promise<Response> {
+  return createApp().request("https://api.rallywith.ai/connections/oauth/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-rally-dev-user-id": auth.userId, "x-rally-dev-workspace-id": auth.workspaceId! },
+    body: JSON.stringify({ ticket }),
+  }, { ...env, APP_ENV: "development", RALLY_DEV_AUTH: "true" });
+}
+
+function connections(object: DatabaseSync): unknown[] {
+  return object.prepare("SELECT owner_user_id FROM connector_connections WHERE connector_type = 'apollo'").all();
+}
+
+describe("claiming a connector authorization", () => {
+  it("attaches the account only once the session that started it claims the callback", async () => {
+    const { env, object, owner } = fixture();
+    const exchanged = stubApollo();
+    const { attemptId, target } = await consent(env, owner, "owner-code");
+
+    expect(target.searchParams.get("status")).toBe("authorized");
+    expect(exchanged).toEqual([]);
+    expect(connections(object)).toEqual([]);
+
+    const service = new ConnectionService(env, owner);
+    const completed = new URL(await service.completeClaimedCallback(
+      await service.claimCallback(target.searchParams.get("ticket")!),
+    ));
+    expect(completed.searchParams.get("status")).toBe("connected");
+    expect(exchanged).toEqual(["owner-code"]);
+    expect(connections(object)).toEqual([{ owner_user_id: OWNER_ID }]);
+    expect(await service.getOAuthAttempt(attemptId)).toMatchObject({ status: "succeeded" });
+  });
+
+  it("refuses another account's claim and never exchanges the code it held", async () => {
+    const { env, object, owner, other, regional } = fixture();
+    const exchanged = stubApollo();
+    // The owner started this and sent the consent page on; the other person
+    // consented, so the ticket landed in the other person's client.
+    const { attemptId, target } = await consent(env, owner, "other-persons-code");
+    const ticket = target.searchParams.get("ticket")!;
+
+    await expect(new ConnectionService(env, other).claimCallback(ticket))
+      .rejects.toMatchObject({ status: 403, code: "connector_oauth_account_mismatch" });
+    expect(regional.prepare("SELECT consumed_at IS NOT NULL AS consumed FROM oauth_states").all()).toEqual([{ consumed: 1 }]);
+    // The starter cannot claim it afterwards either: the state is spent.
+    await expect(new ConnectionService(env, owner).claimCallback(ticket))
+      .rejects.toMatchObject({ status: 401, code: "invalid_oauth_state" });
+    expect(exchanged).toEqual([]);
+    expect(connections(object)).toEqual([]);
+    expect(await new ConnectionService(env, owner).getOAuthAttempt(attemptId))
+      .toMatchObject({ status: "failed", errorCode: "connector_oauth_account_mismatch" });
+  });
+
+  it("answers a failed exchange with its failure link and ends the attempt", async () => {
+    const { env, object, owner } = fixture();
+    stubApollo("fails");
+    const { attemptId, target } = await consent(env, owner, "owner-code");
+
+    const response = await claimRoute(env, owner, target.searchParams.get("ticket")!);
+    expect(response.status).toBe(200);
+    const completed = new URL((await response.json() as { target: string }).target);
+    expect(completed.searchParams.get("status")).toBe("failed");
+    expect(connections(object)).toEqual([]);
+    expect(await new ConnectionService(env, owner).getOAuthAttempt(attemptId)).toMatchObject({ status: "failed" });
+  });
+
+  it("leaves the attempt to a concurrent claim that consumed the state first", async () => {
+    const { env, object, owner, regional } = fixture();
+    stubApollo();
+    const { attemptId, target } = await consent(env, owner, "owner-code");
+    // Both claims passed the check; the other one has consumed the state and
+    // is still exchanging the code, so the attempt is pending.
+    const admitted = await new ConnectionService(env, owner).claimCallback(target.searchParams.get("ticket")!);
+    regional.prepare("UPDATE oauth_states SET consumed_at = ?").run(new Date().toISOString());
+    vi.spyOn(ConnectionService.prototype, "claimCallback").mockResolvedValue(admitted);
+
+    const response = await claimRoute(env, owner, target.searchParams.get("ticket")!);
+    expect(response.status).toBe(401);
+    expect(connections(object)).toEqual([]);
+    expect(await new ConnectionService(env, owner).getOAuthAttempt(attemptId)).toMatchObject({ status: "pending" });
+  });
+
+  it("answers a repeated callback without settling the attempt it holds for", async () => {
+    const { env, owner } = fixture();
+    stubApollo();
+    const started = await new ConnectionService(env, owner).beginProvider("apollo", {
+      scope: "personal", capabilities: ["apollo.personal.mcp"], desktopHandoffVersion: 2,
+    });
+    const callback = `https://api.rallywith.ai/connections/apollo/callback?code=owner-code&state=${encodeURIComponent(new URL(started.url).searchParams.get("state")!)}`;
+    expect((await createApp().request(callback, undefined, env)).status).toBe(302);
+    expect((await createApp().request(callback, undefined, env)).status).toBe(409);
+    expect(await new ConnectionService(env, owner).getOAuthAttempt(started.attemptId)).toMatchObject({ status: "pending" });
+  });
+
+  it("refuses to start for a client that cannot claim, before any provider redirect", async () => {
+    const { env, owner } = fixture();
+    const exchanged = stubApollo();
+    const start = (query: string) => createApp().request(`https://api.rallywith.ai/connections/apollo/start?${query}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-rally-dev-user-id": owner.userId, "x-rally-dev-workspace-id": owner.workspaceId! },
+      body: JSON.stringify({ scope: "personal", capabilities: ["apollo.personal.mcp"] }),
+    }, { ...env, APP_ENV: "development", RALLY_DEV_AUTH: "true" });
+
+    const old = await start("telemetryVersion=2&desktopHandoffVersion=2");
+    expect(old.status).toBe(400);
+    expect(await old.json()).toMatchObject({ error: { code: "connector_client_update_required" } });
+    expect((await start("telemetryVersion=2&desktopHandoffVersion=2&claim=1")).status).toBe(200);
+    expect(exchanged).toEqual([]);
+  });
+
+  it("holds a state's callback once", async () => {
+    const { env, owner } = fixture();
+    stubApollo();
+    const started = await new ConnectionService(env, owner).beginProvider("apollo", {
+      scope: "personal", capabilities: ["apollo.personal.mcp"], desktopHandoffVersion: 2,
+    });
+    const state = new URL(started.url).searchParams.get("state")!;
+    await new ConnectionService(env).holdCallback("apollo", state, { code: "first" });
+    await expect(new ConnectionService(env).holdCallback("apollo", state, { code: "second" }))
+      .rejects.toMatchObject({ status: 409, code: "connector_oauth_already_held" });
+  });
+});

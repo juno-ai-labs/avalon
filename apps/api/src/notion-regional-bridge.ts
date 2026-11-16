@@ -24,7 +24,7 @@ export class NotionRegionalBridge extends WorkerEntrypoint<Env> {
     return serializeNotionRpcResult(async () => {
       await requireWorkstreamIngress(this.env);
       const parsed = parseRpcInput(NotionCallbackInputSchema, input, "completeNotion");
-      return new ConnectionService(this.env).completeProvider("notion", parsed.code, parsed.state);
+      return new ConnectionService(this.env).holdCallback("notion", parsed.state, { code: parsed.code });
     });
   }
 
