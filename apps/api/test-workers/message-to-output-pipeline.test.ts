@@ -106,6 +106,7 @@ const STREAM_FAILURE_FALLBACK_MODEL = "pipeline-b06/fallback";
 const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
 const QUEUED_FOLLOW_UP_MODEL = "pipeline-queued/primary";
 const RETRY_AFTER_ASSISTANT_TURN_MODEL = "pipeline-retry-fence/primary";
+const UNSAVED_RESULT_MODEL = "pipeline-unsaved-result/primary";
 const ASIDE_MODEL = "pipeline-aside/primary";
 const SIDEKICK_POST_MODEL = "pipeline-sidekick-post/primary";
 const SKIPPED_ELICITATION_MODEL = "pipeline-skipped-elicitation/primary";
@@ -4380,6 +4381,116 @@ describe("a member's message travels the whole pipeline", () => {
       reconnectSocket?.close(1000, "test complete");
       await restoreProviderFetch(stub);
     }
+  });
+
+  describe("a parallel batch whose one result cannot be saved", () => {
+    const parallelTimeCalls = [{
+      choices: [{
+        delta: {
+          tool_calls: [0, 1].map((index) => ({
+            index,
+            id: `unsaved-call-${index}`,
+            type: "function",
+            function: { name: "current_time", arguments: "{}" },
+          })),
+        },
+        finish_reason: "tool_calls",
+      }],
+    }];
+
+    /**
+     * Refuse the R2 write of one call's result, the way a platform refusal
+     * arrives: a thrown error whose text is a sentence, not a code. Only that
+     * call's write, so every other write the run makes still lands.
+     */
+    async function refuseResultWrite(stub: DurableObjectStub, callIndex: number, message: string): Promise<void> {
+      await runInDurableObject(stub, (instance) => {
+        const target = instance as unknown as { env: Env };
+        const payloads = target.env.PAYLOADS;
+        const refused = (key: string) => key.includes("/tool-results/")
+          && decodeURIComponent(key).includes(`:tool:${callIndex}/`);
+        const wrapped = new Proxy(payloads, {
+          get: (current, property, receiver) => property === "put"
+            ? (key: string, ...rest: unknown[]) => refused(key)
+              ? Promise.reject(new Error(message))
+              : (current.put as (...args: unknown[]) => unknown).call(current, key, ...rest)
+            : Reflect.get(current, property, receiver),
+        });
+        target.env = new Proxy(target.env, {
+          get: (current, property, receiver) => property === "PAYLOADS"
+            ? wrapped
+            : Reflect.get(current, property, receiver),
+        });
+      });
+    }
+
+    function toolResults(request: { body: Record<string, unknown> }): Array<Record<string, unknown>> {
+      return (request.body.messages as Array<{ role: string; tool_call_id?: string; content: unknown }>)
+        .filter((message) => message.role === "tool")
+        .map((message) => ({
+          id: message.tool_call_id,
+          ...JSON.parse(String(message.content)) as Record<string, unknown>,
+        }));
+    }
+
+    it("gives the model the saved results and names the one that was not", async () => {
+      const stub = agentStub();
+      try {
+        await installScriptedProvider(stub, [
+          parallelTimeCalls,
+          [{ choices: [{ delta: { content: "both read" }, finish_reason: "stop" }] }],
+        ], { primaryModel: UNSAVED_RESULT_MODEL, fallbackModels: [] });
+        await refuseResultWrite(stub, 1, "Network connection lost.");
+
+        const opened = await initializeWorkstream(stub, "what time is it, twice");
+        const run = await settledRun(stub, opened.body.harnessRunId as string);
+        expect(run.status).toBe("completed");
+
+        const streamed = (await capturedProviderRequests(stub))
+          .filter((request) => request.body.stream === true);
+        expect(streamed).toHaveLength(2);
+        const results = toolResults(streamed[1]!);
+        expect(results.find((result) => result.id === "unsaved-call-0")).toMatchObject({ success: true });
+        expect(results.find((result) => result.id === "unsaved-call-1")).toMatchObject({
+          success: false,
+          data: {
+            code: "tool_result_not_saved",
+            details: { step: "Tool result save failed", cause: "unclassified_cause:network_connection_lost" },
+          },
+        });
+
+        await runInDurableObject(stub, (_instance, state) => {
+          expect(state.storage.sql.exec<{ tool_call_id: string; status: string }>(
+            `SELECT tool_call_id, status FROM tool_effects WHERE run_id = ? ORDER BY tool_position`,
+            run.run_id,
+          ).toArray().map((row) => [row.tool_call_id.replace(/^.*:tool:/u, "tool:"), row.status]))
+            .toEqual(expect.arrayContaining([["tool:0", "completed"], ["tool:1", "failed"]]));
+        });
+      } finally {
+        await restoreProviderFetch(stub);
+      }
+    });
+
+    it("records a run that fails mid-batch under its own code, not the release refusal", async () => {
+      const stub = agentStub();
+      try {
+        await installScriptedProvider(stub, [parallelTimeCalls], {
+          primaryModel: UNSAVED_RESULT_MODEL,
+          fallbackModels: [],
+        });
+        // A platform refusal is not narrowed to one call: the next write would
+        // hit the same limit, so the run fails while the batch is still open.
+        await refuseResultWrite(stub, 1, "Too many subrequests.");
+
+        const opened = await initializeWorkstream(stub, "what time is it, twice");
+        const run = await settledRun(stub, opened.body.harnessRunId as string);
+        expect(run.status).toBe("failed");
+        expect(JSON.parse(String(run.error_json))).toMatchObject({ code: "platform_limit_exceeded" });
+        await waitForLoopRelease(stub);
+      } finally {
+        await restoreProviderFetch(stub);
+      }
+    });
   });
 
   it("the failed run leaves the transcript readable and ordered", async () => {
