@@ -73,6 +73,7 @@ interface InspectorRailProps {
     surface: SiteResourceDetailProps['surface'];
   };
   workstream?: WorkstreamDetail;
+  resourcePending?: boolean;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -719,7 +720,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   };
   const resource = props.resource === undefined ? inspectedResource(inspector, props.workstream) : props.resource ?? undefined;
   // Whether a missing resource is gone, rather than still on its way.
-  const settled = props.resource === null || (props.resource === undefined && props.workstream !== undefined);
+  const settled = !props.resourcePending
+    && (props.resource === null || (props.resource === undefined && props.workstream !== undefined));
   const [archiveTarget, setArchiveTarget] = useState<WorkstreamResource | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [archiveFailed, setArchiveFailed] = useState(false);
