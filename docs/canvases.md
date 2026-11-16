@@ -397,8 +397,12 @@ Canvas: a Sidekick writing one Canvas across runs moves this and not that.
 Nothing was backfilled: a Canvas a run wrote before migration 137 reads as
 written by no run until its next publish. The resource versioning layer
 records every version with its run, as it does everywhere; `canvas_artifacts`
-records only which resources the Canvas holds. A version somebody else made
-since a viewer last read the Chat makes the Canvas's row unread to them, by
+records which resources the Canvas holds. The artifact menu and panel use
+that list. If the Chat's live detail lacks a listed resource, or carries an
+older version, the panel reads it through the authorized resource endpoint.
+A conversation attachment is never a prerequisite for viewing a listed
+artifact. A version somebody else made since a viewer last read the Chat
+makes the Canvas's row unread to them, by
 the rule a pinned artifact's news uses (a republish or replacement, not their
 own or one made on their behalf).
 
@@ -1103,6 +1107,17 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-16 — Open published artifacts from their Canvas
+
+A background agent and its Canvas Chat share a parent ID. The Terminal
+bridge was using that ID to choose the local resource writer, so it wrote
+the Chat link in the producer's child conversation. The Canvas listed the
+published site, but the panel closed when the Chat snapshot omitted it.
+The panel now recognizes Canvas membership and uses the authorized resource
+read when its Chat copy is missing or old. Terminal routing compares the
+parent and substream IDs so current clients receive the normal Chat update
+and the producer can still use the published resource.
 
 ### 2026-11-16 — A Canvas holds one artifact
 

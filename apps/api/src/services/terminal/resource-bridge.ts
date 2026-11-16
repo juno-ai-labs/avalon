@@ -256,8 +256,9 @@ export function createTerminalResourceBridge(
   // tool/link rows to AgentLoopDO. Keep every statement single-authority;
   // no query may join across those object-local databases.
   const workspace = env.DB;
+  const producingSubstreamId = importingSubstreamId ?? publicationSubstreamId;
   const attachResource = inObjectResourceAttacher
-    ?? ((input) => attachWorkstreamRuntimeResource(env, input));
+    ?? ((input) => attachWorkstreamRuntimeResource(env, { ...input, substreamId: producingSubstreamId }));
   /**
    * Where a publication belongs.
    *
@@ -282,7 +283,8 @@ export function createTerminalResourceBridge(
     }
     // Internal captures stay local and require no access to the home.
     if (internalProviderResourceId !== undefined || !publicationHome) {
-      return { parentId: context.workstreamId, substreamId: publicationSubstreamId };
+      return { parentId: context.workstreamId, substreamId: internalProviderResourceId !== undefined
+        ? producingSubstreamId : publicationSubstreamId };
     }
     const key = input.canvas ?? "";
     let home = homes.get(key);
@@ -353,16 +355,18 @@ export function createTerminalResourceBridge(
     },
     target: { parentId: string; substreamId: string },
   ) => {
-    const workstreamId = target.parentId;
-    await (workstreamId === context.workstreamId
-      ? attachResource({ workspaceId: context.workspaceId, workstreamId, ...input })
-      : attachWorkstreamRuntimeResource(env, {
-        workspaceId: context.workspaceId,
-        workstreamId,
-        substreamId: target.substreamId,
-        ...input,
-      }));
-    if (workstreamId === context.workstreamId) return;
+    // A background agent and its Canvas Chat share a parent ID. The local
+    // attacher writes to the producer, so use it only for that full address.
+    if (target.parentId === context.workstreamId && target.substreamId === producingSubstreamId) {
+      await attachResource({ workspaceId: context.workspaceId, workstreamId: target.parentId, ...input });
+      return;
+    }
+    await attachWorkstreamRuntimeResource(env, {
+      workspaceId: context.workspaceId,
+      workstreamId: target.parentId,
+      substreamId: target.substreamId,
+      ...input,
+    });
     await attachResource({
       workspaceId: context.workspaceId,
       workstreamId: context.workstreamId,
