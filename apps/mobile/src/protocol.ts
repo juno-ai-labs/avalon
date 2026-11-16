@@ -133,6 +133,14 @@ export const PreparedCanvasSchema = z.object({ canvasId: z.string(), resourceId:
 /** The native shell draws a pin's artifact picker. An older shell, which would
  * show only the preferred site, never declares it, so it is never sent the list. */
 export const ARTIFACT_PICKER_CAPABILITY = 'artifact-picker';
+/** The shell draws a Settings page's header, so Home may report `view: 'settings'`,
+ * which an older shell's snapshot schema would reject. */
+export const SETTINGS_CAPABILITY = 'settings';
+/** The shell opens `open-external` links itself. Its WebView creates no child
+ * window, so the browser's reserve-a-blank-tab pattern opens nothing there. */
+export const OPEN_EXTERNAL_CAPABILITY = 'open-external';
+/** What this shell declares to the browser host. */
+export const MOBILE_CAPABILITIES = [ARTIFACT_PICKER_CAPABILITY, SETTINGS_CAPABILITY, OPEN_EXTERNAL_CAPABILITY];
 export const MOBILE_CAPABILITIES_GLOBAL = '__RALLY_MOBILE_CAPABILITIES__';
 export type PreparedCanvas = z.infer<typeof PreparedCanvasSchema>;
 
@@ -155,6 +163,8 @@ export const MobileEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('artifact'), artifact: NativeArtifactSchema }),
   z.object({ type: z.literal('artifact-unavailable'), canvasId: z.string(), resourceId: z.string() }),
   z.object({ type: z.literal('open-canvas'), id: z.string().min(1) }),
+  /** A link the page would open in a new tab (checkout, a connector's sign-in). */
+  z.object({ type: z.literal('open-external'), url: HttpUrlSchema }),
   z.object({ type: z.literal('signed-out') }),
   z.object({ type: z.literal('snapshot'), snapshot: MobileSnapshotSchema }),
 ]);
