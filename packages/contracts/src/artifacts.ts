@@ -246,6 +246,14 @@ export const ArtifactManifestSchema = z.strictObject({
   socialPreview: ArtifactSocialPreviewSchema.optional(),
   totalBytes: z.number().int().nonnegative(),
   publishedAt: z.string().datetime({ offset: true }),
+  /**
+   * `"blobs"`: every file, the server module included, is stored once by its
+   * digest (`artifactBlobKey`) and shared by every version that has it. Absent
+   * on versions published before that, whose files live under the version's
+   * own prefix (`artifactAssetKey`). Read keys through `manifestAssetKey` and
+   * `manifestServerModuleKey`, never by building one.
+   */
+  assetStore: z.literal("blobs").optional(),
 });
 export type ArtifactManifest = z.infer<typeof ArtifactManifestSchema>;
 
@@ -262,6 +270,34 @@ export function artifactAssetKey(artifactId: string, version: number, path: stri
 
 export function artifactManifestKey(artifactId: string, version: number): string {
   return `artifact/${artifactId}/v${version}/manifest.json`;
+}
+
+/**
+ * Where one file's bytes live once, by digest, for every version of an
+ * artifact that holds them. Scoped to the artifact so its bytes stay its own.
+ */
+export function artifactBlobKey(artifactId: string, sha256: string): string {
+  return `artifact/${artifactId}/blobs/${sha256}`;
+}
+
+/** The stored key of one of a manifest's files. */
+export function manifestAssetKey(
+  manifest: Pick<ArtifactManifest, "artifactId" | "artifactVersion" | "assetStore">,
+  entry: Pick<ArtifactManifestEntry, "path" | "sha256">,
+): string {
+  return manifest.assetStore === "blobs"
+    ? artifactBlobKey(manifest.artifactId, entry.sha256)
+    : artifactAssetKey(manifest.artifactId, manifest.artifactVersion, entry.path);
+}
+
+/** The stored key of a manifest's server module, or null for a static version. */
+export function manifestServerModuleKey(
+  manifest: Pick<ArtifactManifest, "artifactId" | "artifactVersion" | "assetStore" | "serverModuleSha256" | "mode">,
+): string | null {
+  if (manifest.assetStore !== "blobs") {
+    return manifest.mode === "active" ? artifactAssetKey(manifest.artifactId, manifest.artifactVersion, "index.js") : null;
+  }
+  return manifest.serverModuleSha256 === null ? null : artifactBlobKey(manifest.artifactId, manifest.serverModuleSha256);
 }
 
 /**

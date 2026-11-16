@@ -19,8 +19,10 @@ import {
   asAutomationId,
   asSubstreamId,
   artifactAssetKey,
+  artifactBlobKey,
   type ArtifactManifest,
 } from "@rally/contracts";
+import type { SitePublishFile } from "../src/services/terminal/site-resource-bridge";
 import { sha256Hex } from "../src/lib/crypto";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
@@ -344,7 +346,7 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect((await visit(stub, "/episode-2.mp3")).status).toBe(404);
   });
 
-  it("carries a site's unchanged files into its next version from storage", async () => {
+  it("stores a site's files once by digest, streams new ones in, and serves every version from them", async () => {
     await runInDurableObject(
       env.SUBSTREAM_AGENTS.getByName(conversationObjectName(env.AVALON_REGION, workspaceId, CANVAS, "0")),
       (_instance, state) => seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: CANVAS, parentKind: "canvas" }),
@@ -361,33 +363,56 @@ describe("Canvas artifact access propagated to local serving", () => {
       const bytes = new TextEncoder().encode(text);
       return { path, bytes, sha256: await sha256Hex(bytes) };
     };
-    const episodeOne = await file("episodes/one.mp3", "episode one audio");
-    const first = await bridge.publishSiteResource(call(), { filePath: "feed" }, {
-      mode: "static", stateful: false, serverModuleSha256: null,
-      files: [await file("index.html", "<h1>Show</h1>"), episodeOne],
-    });
-    expect(await bridge.liveSiteFiles(call(), "feed")).toEqual({
-      artifactId: first.artifactId, version: 1,
-      files: expect.arrayContaining([{ path: "episodes/one.mp3", sha256: episodeOne.sha256, sizeBytes: 17 }]),
-    });
+    const streamed = async (path: string, text: string, sent = text) => {
+      const bytes = new TextEncoder().encode(text);
+      return { path, sha256: await sha256Hex(bytes), sizeBytes: bytes.byteLength,
+        open: async () => new Response(sent).body! };
+    };
+    const site = (files: SitePublishFile[]) => ({ mode: "static" as const, stateful: false, serverModuleSha256: null, files });
 
-    // The second episode's publish reads only the new episode and the page.
-    const second = await bridge.publishSiteResource(call(), { filePath: "feed" }, {
-      mode: "static", stateful: false, serverModuleSha256: null,
-      files: [
-        await file("index.html", "<h1>Show, two episodes</h1>"),
-        { path: "episodes/one.mp3", sha256: episodeOne.sha256, sizeBytes: 17,
-          carriedFrom: { artifactId: first.artifactId, version: 1 } },
-        await file("episodes/two.mp3", "episode two audio"),
-      ],
-    });
+    const one = await streamed("episodes/one.mp3", "episode one audio");
+    const first = await bridge.publishSiteResource(call(), { filePath: "feed" },
+      site([await file("index.html", "<h1>Show</h1>"), one]));
+    const blob = artifactBlobKey(first.artifactId, one.sha256);
+    expect(await (await env.PAYLOADS.get(blob))?.text()).toBe("episode one audio");
+    const live = await bridge.liveSiteFiles(call(), "feed");
+    expect(live?.files).toContainEqual({ path: "episodes/one.mp3", sha256: one.sha256, sizeBytes: 17, storedAt: blob });
+
+    // The next episode: the first is already stored, so nothing is written for it.
+    const before = (await env.PAYLOADS.head(blob))!.uploaded.getTime();
+    const second = await bridge.publishSiteResource(call(), { filePath: "feed" }, site([
+      await file("index.html", "<h1>Show, two episodes</h1>"),
+      { path: "episodes/one.mp3", sha256: one.sha256, sizeBytes: 17, storedAt: blob },
+      await streamed("episodes/two.mp3", "episode two audio"),
+    ]));
     expect(second.version).toBe(2);
-    const stored = await env.PAYLOADS.get(artifactAssetKey(first.artifactId, 2, "episodes/one.mp3"));
-    expect(await stored?.text()).toBe("episode one audio");
-    expect(await bridge.liveSiteFiles(call(), "feed")).toMatchObject({ version: 2, files: expect.arrayContaining([
-      { path: "episodes/one.mp3", sha256: episodeOne.sha256, sizeBytes: 17 },
-      { path: "episodes/two.mp3", sha256: expect.any(String), sizeBytes: 17 },
-    ]) });
+    expect((await env.PAYLOADS.head(blob))!.uploaded.getTime()).toBe(before);
+
+    // A file that changed after it was listed is refused, and the site keeps serving version 2.
+    await expect(bridge.publishSiteResource(call(), { filePath: "feed" }, site([
+      await file("index.html", "<h1>Show, three</h1>"),
+      await streamed("episodes/three.mp3", "episode three audio", "episode three AUDIO"),
+    ]))).rejects.toMatchObject({ code: "resource_publish_failed" });
+    expect((await bridge.liveSiteFiles(call(), "feed"))?.files.map((entry) => entry.path).sort())
+      .toEqual(expect.arrayContaining(["episodes/one.mp3", "episodes/two.mp3"]));
+
+    // A version stored before blobs is copied into one, once.
+    const legacyKey = artifactAssetKey(first.artifactId, 1, "episodes/legacy.mp3");
+    await env.PAYLOADS.put(legacyKey, "legacy audio");
+    const legacy = await sha256Hex(new TextEncoder().encode("legacy audio"));
+    await bridge.publishSiteResource(call(), { filePath: "feed" }, site([
+      await file("index.html", "<h1>Show, legacy</h1>"),
+      { path: "episodes/legacy.mp3", sha256: legacy, sizeBytes: 12, storedAt: legacyKey },
+    ]));
+    expect(await (await env.PAYLOADS.get(artifactBlobKey(first.artifactId, legacy)))?.text()).toBe("legacy audio");
+
+    // The serving Worker reads the blob through the manifest.
+    await share("public");
+    await sync(first.artifactId, first.resourceId);
+    const stub = new URL(first.url).hostname.split(".")[0]!.replace(/-g$/u, "");
+    const served = await visit(stub, "/episodes/legacy.mp3");
+    expect(served.status).toBe(200);
+    expect(await served.text()).toBe("legacy audio");
   });
 
   it("serves a byte range of a public file and a site's asset, as a player seeking asks for one", async () => {

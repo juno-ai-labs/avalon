@@ -23,7 +23,7 @@ import {
   ARTIFACT_MAX_ASSET_COUNT,
   ArtifactHostnameStubSchema,
   SITE_MANIFEST_MIME_TYPE,
-  artifactAssetKey,
+  artifactBlobKey,
   artifactManifestKey,
   asArtifactId,
   asWorkspaceId,
@@ -42,7 +42,11 @@ import { assetContentType } from "./site-publish";
 import { prepareSocialPreview } from "./site-social-preview";
 import { TerminalToolError } from "./tools";
 
-/** A file whose bytes this publish read and will store. */
+/**
+ * A file whose bytes this publish holds: the small files it reads anyway (a
+ * page, the server module, the preview image the page names), or every file
+ * for a caller with no stream (a Canvas seed).
+ */
 export interface ReadSiteFile {
   path: string;
   bytes: Uint8Array;
@@ -50,20 +54,30 @@ export interface ReadSiteFile {
 }
 
 /**
- * A file the live version already stores at the same path with the same
- * digest, copied from that version's key inside the bucket rather than read
- * from the sandbox again. It is what lets a site hold a feed's episodes: each
- * republish moves only what changed, so the per-publish byte limit and the
- * Worker's memory see one new episode, not every episode so far.
+ * A file whose bytes are already in storage at `storedAt`: one the live
+ * version holds. Nothing is written when that is already its blob; a version
+ * stored before blobs is copied into one once, as a stream.
  */
-export interface CarriedSiteFile {
+export interface StoredSiteFile {
   path: string;
   sha256: string;
   sizeBytes: number;
-  carriedFrom: { artifactId: string; version: number };
+  storedAt: string;
 }
 
-export type SitePublishFile = ReadSiteFile | CarriedSiteFile;
+/**
+ * A file streamed from where it is (the sandbox) straight into its blob, and
+ * opened only then, so the Worker never holds it. R2 checks the bytes against
+ * `sha256` and refuses a file that changed after it was listed.
+ */
+export interface StreamedSiteFile {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+  open(): Promise<ReadableStream<Uint8Array>>;
+}
+
+export type SitePublishFile = ReadSiteFile | StoredSiteFile | StreamedSiteFile;
 
 export function siteFileSize(file: SitePublishFile): number {
   return "bytes" in file ? file.bytes.byteLength : file.sizeBytes;
@@ -143,6 +157,7 @@ export async function writeArtifactVersion(
     socialPreview: preparedPreview.socialPreview,
     totalBytes: storedFiles.reduce((total, file) => total + siteFileSize(file), 0),
     publishedAt: nowIso(),
+    assetStore: "blobs",
   };
 
   try {
@@ -153,7 +168,8 @@ export async function writeArtifactVersion(
     // Transcribed 2026-09-12:
     // https://developers.cloudflare.com/workers/platform/limits/#simultaneous-open-connections
     const simultaneousConnections = 6;
-    const files = storedFiles.values();
+    // One write per digest: two paths with the same bytes share a blob.
+    const files = [...new Map(storedFiles.map((file) => [file.sha256, file])).values()].values();
     let uploadFailed = false;
     const uploads = Array.from({ length: Math.min(storedFiles.length, simultaneousConnections) }, async () => {
       for (const file of files) {
@@ -161,12 +177,19 @@ export async function writeArtifactVersion(
         // by sibling workers but do not start another asset after a failure.
         if (uploadFailed) return;
         try {
+          const key = artifactBlobKey(artifactId, file.sha256);
+          if ("storedAt" in file && file.storedAt === key) continue;
           await env.PAYLOADS.put(
-            artifactAssetKey(artifactId, input.version, file.path),
-            "bytes" in file ? file.bytes : await carriedBody(env, file),
+            key,
+            "bytes" in file ? file.bytes
+              : "storedAt" in file ? await storedBody(env, file)
+                : lengthKnown(await file.open(), file.sizeBytes),
             {
+              // A blob is shared by paths and versions, so its stored type is
+              // only a default: every reader serves the manifest entry's type.
               httpMetadata: { contentType: assetContentType(file.path) },
-              customMetadata: { source: "artifact", artifactId, version: String(input.version) },
+              customMetadata: { source: "artifact", artifactId },
+              sha256: file.sha256,
             },
           );
         } catch (error) {
@@ -212,16 +235,17 @@ export async function writeArtifactVersion(
   };
 }
 
-/**
- * A carried file's stored bytes as a stream of known length, so R2 copies it
- * without the Worker holding it. A copy that is gone fails the publish, which
- * leaves the site serving its previous version.
- */
-async function carriedBody(env: Pick<Env, "PAYLOADS">, file: CarriedSiteFile): Promise<ReadableStream> {
-  const source = await env.PAYLOADS.get(artifactAssetKey(file.carriedFrom.artifactId, file.carriedFrom.version, file.path));
-  if (!source) throw new Error("carried_site_file_missing");
-  const { readable, writable } = new FixedLengthStream(source.size);
-  void source.body.pipeTo(writable).catch(() => undefined);
+/** A stored file's bytes as a stream of known length, so R2 copies it without the Worker holding it. */
+async function storedBody(env: Pick<Env, "PAYLOADS">, file: StoredSiteFile): Promise<ReadableStream> {
+  const source = await env.PAYLOADS.get(file.storedAt);
+  if (!source) throw new Error("stored_site_file_missing");
+  return lengthKnown(source.body, source.size);
+}
+
+/** R2 accepts a stream only when its length is known. */
+function lengthKnown(body: ReadableStream<Uint8Array>, sizeBytes: number): ReadableStream {
+  const { readable, writable } = new FixedLengthStream(sizeBytes);
+  void body.pipeTo(writable).catch(() => undefined);
   return readable;
 }
 
@@ -337,9 +361,10 @@ export async function registerArtifact(
  * before any of its bytes are written, and answer the version taken.
  *
  * Two publishes of one site that start together read the same registry
- * version and would write the same version-immutable keys
- * (`artifactAssetKey`), each overwriting the other's files, so whichever
- * manifest won would serve a mix. The claim is a create-once R2 object
+ * version and would write the same version's manifest key, so whichever
+ * manifest won would name a version the other also thought it wrote. (Before
+ * blobs, they also overwrote each other's files; a blob is keyed by its bytes,
+ * so two writers of one key write the same thing.) The claim is a create-once R2 object
  * (`If-None-Match: *`, which R2 evaluates atomically with the write, so of
  * two concurrent claims at most one succeeds), and the version's keys are
  * written only by its claimant. Chosen over conditional puts on every asset,

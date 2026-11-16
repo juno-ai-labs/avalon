@@ -15,7 +15,7 @@
  *
  * See `docs/reactive-web-artifacts.md`.
  */
-import { artifactAssetKey, type ArtifactManifest } from "@rally/contracts";
+import { manifestAssetKey, manifestServerModuleKey, type ArtifactManifest } from "@rally/contracts";
 
 import type { Env } from "../../env";
 import { TerminalToolError } from "./tools";
@@ -34,24 +34,25 @@ import { TerminalToolError } from "./tools";
 export async function storedArtifactVersionPaths(
   env: Pick<Env, "PAYLOADS">,
   manifest: ArtifactManifest,
-): Promise<{ path: string; sizeBytes: number }[]> {
+): Promise<{ path: string; sizeBytes: number; key: string }[]> {
   const generatedPreviewPath = manifest.socialPreview?.image.generated
     ? manifest.socialPreview.image.path
     : null;
+  const moduleKey = manifestServerModuleKey(manifest);
   const wanted = [
     ...manifest.assets
-      .map((asset) => asset.path)
-      .filter((path) => path !== generatedPreviewPath),
-    ...(manifest.mode === "active" ? ["index.js"] : []),
+      .filter((asset) => asset.path !== generatedPreviewPath)
+      .map((asset) => ({ path: asset.path, key: manifestAssetKey(manifest, asset) })),
+    ...(moduleKey ? [{ path: "index.js", key: moduleKey }] : []),
   ];
-  const stored: { path: string; sizeBytes: number }[] = [];
-  for (const path of wanted) {
-    const object = await env.PAYLOADS.head(artifactAssetKey(manifest.artifactId, manifest.artifactVersion, path));
+  const stored: { path: string; sizeBytes: number; key: string }[] = [];
+  for (const { path, key } of wanted) {
+    const object = await env.PAYLOADS.head(key);
     // A version whose bytes are gone is not something to materialize
     // partially: a half tree republishes as a site missing files, under the
     // same identity, and nothing would say which ones went.
     if (!object) throw sourceUnavailable();
-    stored.push({ path, sizeBytes: object.size });
+    stored.push({ path, sizeBytes: object.size, key });
   }
   return stored;
 }
@@ -59,10 +60,9 @@ export async function storedArtifactVersionPaths(
 /** One file of an artifact version, as {@link storedArtifactVersionPaths} listed it. */
 export async function readArtifactVersionFile(
   env: Pick<Env, "PAYLOADS">,
-  manifest: ArtifactManifest,
-  path: string,
+  file: { key: string },
 ): Promise<Uint8Array> {
-  const object = await env.PAYLOADS.get(artifactAssetKey(manifest.artifactId, manifest.artifactVersion, path));
+  const object = await env.PAYLOADS.get(file.key);
   if (!object) throw sourceUnavailable();
   return new Uint8Array(await object.arrayBuffer());
 }

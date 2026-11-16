@@ -465,7 +465,7 @@ Rally serves a site's files in ways a page can rely on:
   or plays in the site's own directory.
 - **A site can hold a growing set of large files.** Republishing a site
   moves only the files that are new or changed since its live version;
-  unchanged ones are copied inside Rally's storage. The size a refused
+  Rally already stores the rest, whatever their size. The size a refused
   publish states applies to those new files alone, so one episode or
   report must fit under it, and a site can hold many. Two rules follow:
   - **Publish the whole directory every time.** A file missing from the
