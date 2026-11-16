@@ -63,8 +63,101 @@
   font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
 }
 
+/* "Start from this" and "More info" share the card's last row. */
+.market-card-actions {
+  margin-top: auto; padding-top: 10px; display: flex; flex-wrap: wrap; align-items: center;
+  justify-content: space-between; gap: 8px 16px;
+}
+
 .market-card .text-link {
-  color: var(--ink); margin-top: auto; padding-top: 8px;
+  color: var(--ink);
+}
+
+.market-card .market-more {
+  color: var(--muted);
+}
+
+/* Recommended connectors, each a link to how to connect it. */
+.market-connectors {
+  list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px;
+}
+
+.market-connectors a {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line);
+  border-radius: 20px; padding: 3px 10px; font-size: 11px; color: var(--green);
+  background: var(--sage); text-decoration: none;
+}
+
+/* The company's mark, as the app draws it: one colour, the chip's. */
+.connector-mark {
+  display: inline-flex; flex: none; width: 12px; height: 12px;
+}
+
+.connector-mark > svg {
+  width: 100%; height: 100%; pointer-events: none;
+}
+
+/* Slack and Granola ship no single-colour art, so their palette is repainted
+   in the chip's colour, as the app's `.connector-mark` rule does. Hollow
+   shapes (`fill="none"`) stay hollow. */
+.connector-mark svg [fill]:not([fill='none']) { fill: currentColor; }
+.connector-mark svg [stroke]:not([stroke='none']) { stroke: currentColor; }
+
+.market-connectors-large .connector-mark {
+  width: 15px; height: 15px;
+}
+
+.market-connectors a:hover {
+  text-decoration: underline;
+}
+
+.market-connectors-large a {
+  font-size: 13px; padding: 5px 14px;
+}
+
+/* A template's own page. */
+.market-template {
+  max-width: 760px; padding-block: 60px 80px;
+}
+
+.market-breadcrumbs {
+  font-size: 13px; color: var(--muted); margin-bottom: 28px;
+}
+
+.market-breadcrumbs a {
+  color: var(--ink);
+}
+
+.market-template h1 {
+  font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.035em;
+  font-size: clamp(44px, 6vw, 72px); line-height: 1.02; margin-top: 14px;
+}
+
+.market-template .market-lede {
+  margin-top: 20px;
+}
+
+.market-template-actions {
+  margin-top: 28px;
+}
+
+.market-template-section {
+  margin-top: 52px; display: flex; flex-direction: column; gap: 12px;
+}
+
+.market-template-section h2 {
+  font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.02em;
+  font-size: 32px;
+}
+
+.market-template-section > p {
+  color: var(--muted); font-size: 15px; line-height: 1.7;
+}
+
+.market-prompt {
+  margin: 4px 0 0; padding: 20px 24px; border-left: 3px solid #cfd7c2; background: var(--white);
+  border-radius: 0 12px 12px 0; display: flex; flex-direction: column; gap: 14px;
+  font-size: 15px; line-height: 1.75;
 }
 
 .market-empty {
@@ -91,5 +184,10 @@
 
   .market-lede {
     font-size: 15px;
+  }
+
+  /* The header wraps to two rows here, so clear it as the marketplace hero does. */
+  .market-template {
+    padding-block: 90px 60px;
   }
 }

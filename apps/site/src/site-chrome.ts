@@ -11,7 +11,7 @@ import { renderLoopFigure, renderPeopleFigure } from './explorable-figures';
 import { renderLiveCarousel } from './live-examples';
 import { renderHomeIllustration } from './home-illustrations';
 import { renderHomePricing } from './home-pricing';
-import { renderMarketplaceCards, renderMarketplaceFilters } from './marketplace-catalog';
+import { marketplaceTemplates, renderMarketHeader, renderMarketplaceCards, renderMarketplaceFilters, templatePagePath } from './marketplace-catalog';
 import { externalArrow } from './site-icons';
 
 /** Every rival, read from `content/compare/*.md` and sorted by `order`. */
@@ -134,6 +134,12 @@ export function renderLlmsTxt(): string {
 - [Sidekicks](${ORIGIN}/sidekicks/): shared AI agents that run on a schedule or when something happens
 - [Help Center](${ORIGIN}/help/): the Rally manual, from installing Rally to running an Organization. Its own index of every page, each published as Markdown: ${ORIGIN}/help/llms.txt
 
+## Marketplace
+
+Templates a Canvas can start from, the same ones Rally's in-app Marketplace offers. Each page says what the template builds and which connectors it works best with.
+
+${marketplaceTemplates().map(({ slug, name, description }) => `- [${name}](${ORIGIN}${templatePagePath(slug)}): ${description}`).join('\n')}
+
 ## Compared to
 
 Written by the Rally team, so biased, and dated on each page. Each page's Markdown source is published beside it at \`index.md\`, for example ${ORIGIN}/compare/${comparisons[0]?.slug ?? ''}/index.md.
@@ -182,6 +188,7 @@ const markers: Record<string, () => string> = {
   'people-figure': renderPeopleFigure,
   'site-footer': renderSiteFooter,
   'comparison-table': renderComparisonTable,
+  'market-header': renderMarketHeader,
   'marketplace-filters': renderMarketplaceFilters,
   'marketplace-cards': renderMarketplaceCards,
 };

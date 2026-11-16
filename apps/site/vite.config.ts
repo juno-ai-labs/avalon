@@ -2,7 +2,8 @@ import { renderAccessCopy } from './src/access-copy';
 import { helpCenter } from './build/help/plugin';
 import { renderBlogIndex, renderBlogPost } from './src/blog-pages';
 import { renderComparisonPage } from './src/comparison-pages';
-import { renderBlogCard, renderComparisonCard } from './src/social-cards';
+import { renderBlogCard, renderComparisonCard, renderTemplateCard } from './src/social-cards';
+import { audience, connectorNames, marketplaceTemplates, renderMarketplaceSitemap, renderTemplatePage, templatePagePath } from './src/marketplace-catalog';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from './src/site-chrome';
 import { defineConfig, type Plugin } from 'vite';
 import { fileURLToPath } from 'node:url';
@@ -17,11 +18,13 @@ const comparisonEntries = new Map(comparisons.map((comparison) => [
   `${projectRoot}compare/${comparison.slug}/index.html`, comparison,
 ]));
 // Every HTML page rendered from Markdown, by published path: the comparison
-// pages, the blog index, and each blog post from `content/blog/YYYY-MM-DD-<title>.md`.
+// pages, the blog index, each blog post from `content/blog/YYYY-MM-DD-<title>.md`,
+// and each marketplace template's page from `packages/skills/marketplace-skills/`.
 const renderedPages = new Map<string, () => string>([
   ...[...comparisonEntries].map(([path, comparison]) => [path, () => renderComparisonPage(comparison)] as const),
   [`${projectRoot}blog/index.html`, () => renderBlogIndex(blogPosts)],
   ...blogPosts.map((post) => [`${projectRoot}blog/${post.slug}/index.html`, () => renderBlogPost(post)] as const),
+  ...marketplaceTemplates().map((template) => [`${projectRoot}marketplace/${template.slug}/index.html`, () => renderTemplatePage(template)] as const),
 ]);
 // Everything else the comparison and blog data produce, by published path. The build
 // emits each one and the dev server answers for the same paths, so the two
@@ -39,6 +42,11 @@ const generatedFiles = new Map<string, { type: string; render: () => string | Pr
   ] as const),
   ['compare/sitemap.xml', { type: 'application/xml', render: renderComparisonSitemap }],
   ['blog/sitemap.xml', { type: 'application/xml', render: renderBlogSitemap }],
+  ...marketplaceTemplates().map(({ slug, name, description, tags, connectors }) => [
+    `marketplace/${slug}/social.png`,
+    { type: 'image/png', render: () => renderTemplateCard({ slug, name, description, audience: audience(tags), connectors: connectorNames(connectors) }) },
+  ] as const),
+  ['marketplace/sitemap.xml', { type: 'application/xml', render: renderMarketplaceSitemap }],
   ['llms.txt', { type: 'text/plain; charset=utf-8', render: renderLlmsTxt }],
 ]);
 /**
@@ -100,7 +108,7 @@ export default defineConfig({
           }, next);
         });
         server.middlewares.use((request, response, next) => {
-          const path = /^\/((?:compare|blog)\/(?:[a-z0-9-]+\/)?)(?:index\.html)?$/u.exec(request.url?.split('?')[0] ?? '')?.[1];
+          const path = /^\/((?:compare|blog|marketplace)\/(?:[a-z0-9-]+\/)?)(?:index\.html)?$/u.exec(request.url?.split('?')[0] ?? '')?.[1];
           const render = path ? renderedPages.get(`${projectRoot}${path}index.html`) : undefined;
           if (!render || !request.url) return next();
           server.transformIndexHtml(request.url, render()).then((html) => {
@@ -156,6 +164,7 @@ export default defineConfig({
         ...Object.fromEntries([...comparisonEntries].map(([path, { slug }]) => [`compare-${slug}`, path])),
         blog: `${projectRoot}blog/index.html`,
         ...Object.fromEntries(blogPosts.map(({ slug }) => [`blog-${slug}`, `${projectRoot}blog/${slug}/index.html`])),
+        ...Object.fromEntries(marketplaceTemplates().map(({ slug }) => [`marketplace-${slug}`, `${projectRoot}${templatePagePath(slug).slice(1)}index.html`])),
         trust: `${projectRoot}trust/index.html`,
         trustSecurity: `${projectRoot}trust/security/index.html`,
         trustTerms: `${projectRoot}trust/terms/index.html`,

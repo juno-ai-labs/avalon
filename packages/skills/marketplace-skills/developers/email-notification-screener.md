@@ -5,6 +5,10 @@ icon: "inbox"
 color: "orange"
 tags:
   - developers
+connectors:
+  - google-mail-and-calendar
+plugins:
+  - push-notifications
 ---
 
 Build an issue dashboard in this Canvas from notifications delivered to my email. Ask me only for missing details. “Which connected mailbox or label should I watch?” and “Which tools or senders produce the alerts you want screened?” Read the matching notifications and use their subjects and content to identify actionable issues.

@@ -1,4 +1,4 @@
-/** Build-time link previews for the pencil site's blog and manual. */
+/** Build-time link previews for the pencil site's blog, manual and marketplace. */
 import { readFileSync } from 'node:fs';
 import opentype from 'opentype.js';
 import sharp from 'sharp';
@@ -9,7 +9,7 @@ interface ReadingCard {
   title: string;
   description: string;
   address: string;
-  scene: 'sidekick' | 'together';
+  scene: 'canvas' | 'sidekick' | 'together';
 }
 
 const font = (name: string): opentype.Font =>
