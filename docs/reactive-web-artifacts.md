@@ -169,8 +169,11 @@ since ended — brings the files back first, through `import_resource`
 on the site's own resource id. The manifest is the index, and `index.js` is
 materialized alongside the assets even though a viewer's request for it 404s:
 "module, not asset" is a rule about the *serving* path, and a model that could
-not see its own server could not revise it. The version imported is the one the
-resource points at, so an edit starts from what viewers are being served rather
+not see its own server could not revise it. Each path is checked with a
+metadata read first, so a version missing a file is refused before anything is
+planned, then read and written to the sandbox one file at a time, so a site
+holding many large files is never in Worker memory at once. The version
+imported is the one the resource points at, so an edit starts from what viewers are being served rather
 than from whatever an earlier sandbox happened to hold.
 
 **A site import names its destination.** The deterministic placement that gives
@@ -835,8 +838,14 @@ facet that holds a stateful artifact's data. It does not own:
   outside the artifact), never by the page's own requests. The shape, not just
   the number, is the sleep guarantee, since compute per open is bounded by rate
   ceiling × lifetime: an abandoned page stops within a year of its last open. The open code lives 60
-  seconds. A publish carries at most 25,000,000 bytes, transcribed from the file
-  path's existing bound rather than chosen. A data page returns at most 200 rows.
+  seconds. A publish carries at most 25,000,000 new or changed bytes,
+  transcribed from the file path's existing bound rather than chosen. A file
+  the live version already stores at the same path with the same digest is
+  carried: copied from that version's key inside R2 as a stream of known
+  length, never read from the sandbox or held by the Worker, and counted
+  against nothing. HTML, the server module and the preview image the page
+  names are always read, because the publish reads their bytes. So a site can
+  hold a feed's episodes: each republish moves only the new one. A data page returns at most 200 rows.
 
 Canvas archive records one durable `canvas_archive_artifact` alarm entry per
 registered site in WorkspaceDO. Delivery writes `archived_canvases` in the artifact
@@ -963,20 +972,37 @@ shows its saved quote and image. The script and trust boundaries are owned by
 
 ## Changelog
 
-### 2026-11-16 — Stored bytes revalidate, and files answer at their own name
+### 2026-11-16 — Sites carry unchanged files; stored bytes revalidate; files answer at their own name
 
-**What changed:** A published file or a static site's stored asset is sent
+**What changed:** A site republish carries each file the live version already
+stores unchanged (`CarriedSiteFile`): the runtime asks the bridge for the live
+files (`liveSiteFiles`), skips reading the matches, and counts only new or
+changed bytes against the publish limit; `writeArtifactVersion` copies a
+carried file from the live version's key as a stream. A site import checks
+every path with `head`, then reads and writes one file at a time. A published file or a static site's stored asset is sent
 `private, no-cache` instead of `private, no-store`, and `storedObjectResponse`
 answers an `If-None-Match` naming the current `ETag` with `304`. A published
 file is also served at `/<its name>` when its title is a plain file name
 (`publishedFilePath`), and `publish_resource` returns that URL.
 
-**Why:** Every podcast app refresh and every replay downloaded the whole file
+**Why:** A feed's episodes belong in its own site, so the page can play them
+(its policy loads media only from its own origin) and the feed names them by
+its own URL. But each republish re-read every file and counted the whole
+directory against 25 MB, and each import held every file in memory, so one or
+two episodes filled a site. The team kept 25 MB per publish; carrying makes it
+mean new bytes per publish, which is what it bounds (memory and transfer).
+
+Every podcast app refresh and every replay downloaded the whole file
 again, through admission and R2, for bytes that had not changed. Some podcast
 apps and download managers read a file's type from its URL, and a URL ending in
 `/` gave them nothing to read.
 
-**Considered and rejected:** Caching at Cloudflare's edge while a Canvas is
+**Considered and rejected:** Letting a site page load media from other
+artifact hosts, so episodes could stay separate files; it changes the policy on
+a domain every artifact shares. Raising the directory limit, which still holds
+every file in memory on each publish and import. Content-addressed asset keys
+shared across versions, which would also avoid the copy but changes what a
+version owns and how it is deleted. Caching at Cloudflare's edge while a Canvas is
 public, which cuts requests as well as bytes but keeps serving after the Canvas
 goes private until the cache lifetime ends, unless the access queue purges it;
 that is a separate decision once load is real. Revalidating everything, which
@@ -984,7 +1010,11 @@ would let a browser keep an active site's personalized output; only stored
 bytes, which are the same for every viewer, get it. Serving a file at any name
 with its extension, which would let a link claim a name the file does not have.
 
-**Consequences:** Admission runs on every revalidation, so `no-cache` changes
+**Consequences:** Carrying trusts the sandbox listing's digest; a wrong one
+can only keep bytes the same path already served. A carried copy that has gone
+fails the publish, and the site keeps its previous version. A publish whose
+directory lacks a file removes it, so the skills tell agents to import the site
+before adding to it in a new sandbox. Admission runs on every revalidation, so `no-cache` changes
 bandwidth, not who can read. A path that serves stored bytes passes
 `revalidate: true` to `withSecurityHeaders`, which applies it only to a response
 with an `ETag`; a rewritten body has none and stays `no-store`.
@@ -1641,7 +1671,8 @@ no native preview or new site authorization layer is required.
 ### 2026-09-13 — The revision loop's import half is connected
 
 **What changed:** `import_resource` branches on `generated_site` and
-materializes the version's tree — `readArtifactVersionFiles` for the bytes, a
+materializes the version's tree — `storedArtifactVersionPaths` and
+`readArtifactVersionFile` for the bytes, a
 staged directory for the upload, `materializeTreeCommand` to move it into place,
 `importTreeFailure` for the exit codes. All four already existed in
 `site-import.ts`; nothing called them. The output reports `fileCount` beside the

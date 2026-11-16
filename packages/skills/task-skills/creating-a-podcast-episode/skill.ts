@@ -9,15 +9,20 @@ import type { HarnessSkill } from "../../types";
  * frames inside the MP3, and the rows the feed serves as a Podcasting 2.0
  * chapters file (`publishing-a-feed`, `reference/apple-podcasts.md`).
  *
- * It covers only the episode. Where the episode goes (a feed, its database,
- * its page, who can open it) is `publishing-a-feed`'s, and this skill ends by
- * handing over the record that skill stores.
+ * It covers only the episode, up to its files in the feed site's directory.
+ * Publishing that site, its database, its page and who can open it are
+ * `publishing-a-feed`'s, and this skill ends by handing over the record that
+ * skill stores. The files go in the site, never published on their own: the
+ * site's page can play only its own files.
  *
  * Most of its weight is the script. The speech model reads every character it
  * is given: a heading's hash, a bullet's asterisk, a bare URL and a table are
  * all spoken or stumbled over, so text that reads well on a screen sounds
  * broken. The cleanup rules are what turns a newsletter into something a
  * listener can follow.
+ *
+ * `generate_audio` takes text of any length, so a section is one call; the
+ * sections stay separate calls because the chapters are timed from them.
  *
  * `ownerPlugin` is the Terminal plugin: the recording is joined and encoded,
  * and the artwork resized, with ffmpeg in a sandbox. The speech and image
@@ -27,8 +32,9 @@ import type { HarnessSkill } from "../../types";
 const CREATING_A_PODCAST_EPISODE_BODY = `Make one episode: a script written for the ear, an AI-voiced recording of
 it, its chapters, its artwork, and the record a feed stores. Load
 \`rally_multimodal_generation\` for speech and images, and Terminal for
-ffmpeg and \`publish_resource\`; loading this skill activates neither. Where
-the episode is published is \`publishing-a-feed\`'s, not this skill's.
+ffmpeg and the files; loading this skill activates neither. The episode's
+files end up inside the feed's site; publishing that site is
+\`publishing-a-feed\`'s, not this skill's.
 
 Before recording, check that the sandbox has ffmpeg: run
 \`ffmpeg -version && ffprobe -version\`. Rally's sandbox ships both, but one
@@ -81,32 +87,31 @@ name; a fixed name would make every episode replace the last.
      "Reader questions". These become the episode's chapters. The opening
      is the first section.
 
-3. **Split the script at paragraph, then sentence, boundaries** into pieces
-   under the per-call limit the speech generator's schema states. Start
-   every section in a new piece, so each chapter begins exactly where a
-   piece does. Never cut a sentence in two, and never drop text to fit.
-
-4. **Keep one voice and one reading style.** Choose a voice and write short
+3. **Keep one voice and one reading style.** Choose a voice and write short
    \`instructions\` for how to read: for example, "A warm, clear narrator
    reading a newsletter aloud. Moderate pace. Brief pauses between
    sections. Neutral, not dramatic." Use the same voice and the same
-   instructions for every piece and every episode of the show, and store
+   instructions for every section and every episode of the show, and store
    them with the show (\`publishing-a-feed\`), or the episode changes voice
    halfway through. The instructions are about delivery only; never put
    script text in them.
 
-5. **Record every piece, and keep a ledger.** Generate one recording per
-   piece, in order. For each, keep its index, a hash of its text and the
-   resource id it returned, so a retry reuses the pieces it already has
-   and records only the missing ones.
+4. **Record one section per call, and keep a ledger.** Call
+   \`generate_audio\` once per section, in order, with that section's whole
+   text, whatever its length: Rally records long text in pieces and joins
+   them. For each section, keep its index, a hash of its text and the
+   resource id it returned, so a retry reuses the sections it already has
+   and records only the missing ones. One call per section, not one for the
+   whole script, is what lets each chapter start exactly where a section
+   does.
 
-6. **Join and finish the recording in Terminal.** Import every piece, list
-   them in order in a file, and join them in one ffmpeg command that also
-   evens out the loudness and encodes speech at a small size:
+5. **Join and finish the recording in Terminal.** Import every section,
+   list them in order in a file, and join them in one ffmpeg command that
+   also evens out the loudness and encodes speech at a small size:
 
    \`\`\`
-   printf "file '%s'\\n" part-*.mp3 > parts.txt
-   ffmpeg -y -f concat -safe 0 -i parts.txt \\
+   printf "file '%s'\\n" section-*.mp3 > sections.txt
+   ffmpeg -y -f concat -safe 0 -i sections.txt \\
      -af loudnorm=I=-16:TP=-1.5:LRA=11 -ac 1 -ar 44100 \\
      -codec:a libmp3lame -b:a 64k \\
      -metadata title="Episode title" -metadata artist="Show name" \\
@@ -114,21 +119,23 @@ name; a fixed name would make every episode replace the last.
    ffprobe -v error -show_entries format=duration -of csv=p=0 episode.mp3
    \`\`\`
 
-   Name the pieces with zero-padded numbers (\`part-001.mp3\`) so they sort
-   in order. Mono at 64 kbps is plenty for one voice. Loudness at -16 LUFS
-   is the common podcast level, so episodes play at the same volume.
+   Name the sections with zero-padded numbers (\`section-01.mp3\`) so they
+   sort in order. Mono at 64 kbps is plenty for one voice and keeps an
+   episode of about 50 minutes under the size one publish accepts; for a
+   longer one use \`-b:a 48k\`. Loudness at -16 LUFS is the common podcast
+   level, so episodes play at the same volume.
 
-7. **Check the length against the script.** Speech runs at about 150 words
+6. **Check the length against the script.** Speech runs at about 150 words
    a minute. If the recording is much shorter than the script's word count
-   suggests, a piece failed or was cut off: find it in the ledger and record
-   it again before going on.
+   suggests, a section failed or was cut off: find it in the ledger and
+   record it again before going on.
 
-8. **Add the chapters.** Give an episode with two or more sections one
+7. **Add the chapters.** Give an episode with two or more sections one
    chapter per section; an episode with one section gets none.
-   - **Time each chapter from the pieces.** Read each piece's length with
-     \`ffprobe\`. A section's start is the sum of the lengths of every piece
-     before its first one. Its end is the next section's start, and the
-     last one ends at the episode's length.
+   - **Time each chapter from the sections.** Read each section's length
+     with \`ffprobe\`. A section's start is the sum of the lengths of the
+     sections before it. Its end is the next section's start, and the last
+     one ends at the episode's length.
    - **Write them into the MP3**, in a second ffmpeg pass that copies the
      audio unchanged. Put the episode's own tags in the same file, since
      this pass replaces them:
@@ -159,9 +166,9 @@ name; a fixed name would make every episode replace the last.
      lists every chapter with its title and start. An episode with no
      chapters is renamed from \`episode.mp3\` to its own name instead.
    - **Keep the list** of each chapter's start in seconds and its title,
-     for the feed (step 12).
+     for the feed (step 11).
 
-9. **Make the episode's artwork.** Generate one image at size \`1024x1024\`
+8. **Make the episode's artwork.** Generate one image at size \`1024x1024\`
    about this episode's subject. Ask for an opaque, full-bleed scene with **no text and
    no logos**: Apple shows episode art beside the show's own cover, and text
    in generated images is often misspelled. Check it with \`view_image\`.
@@ -171,25 +178,29 @@ name; a fixed name would make every episode replace the last.
    ffmpeg -y -i art.png -vf "scale=3000:3000:flags=lanczos,format=rgb24" -q:v 3 2026-11-14-no-ai-slop.jpg
    \`\`\`
 
-10. **Publish the recording and the artwork as files**, under the episode's
-    name, with \`publish_resource\` into the feed's Canvas. In a Sidekick
-    run, name that Canvas in the \`canvas\` argument. Keep each result's
-    \`url\` and \`sizeBytes\`; a result with no \`url\` is a file no podcast
-    app can reach (\`building-live-sites\`, Media, downloads and feeds).
+9. **Put the recording and the artwork in the feed site's own directory**,
+   under the episode's name: \`episodes/2026-11-14-no-ai-slop.mp3\` and
+   \`episodes/2026-11-14-no-ai-slop.jpg\` inside the directory the feed's
+   site publishes from. **Never publish an episode's files on their own
+   with \`publish_resource\`**: the site's page can play only files in its
+   own directory, and the feed names them by the site's own URL.
+   Republishing the site is \`publishing-a-feed\`'s step 7; it moves only
+   the new files. Read each file's size in bytes with \`stat -c %s\` for
+   the record.
 
-11. **Write the show notes**: two or three sentences on what the episode
+10. **Write the show notes**: two or three sentences on what the episode
     covers, a link to the source, and one sentence saying the audio is an AI
     voice. Use simple HTML: paragraphs, links and lists.
 
-12. **Hand over the episode record.** The feed stores one row per episode
+11. **Hand over the episode record.** The feed stores one row per episode
     (\`publishing-a-feed\`, \`reference/apple-podcasts.md\`): the GUID from
     step 1, the title, the show notes, the publication date, the audio's
-    \`url\` and \`sizeBytes\`, its length in whole seconds, the artwork's
-    \`url\`, the next episode number, and one chapter row per chapter (its
-    start in seconds and its title). Write that row, or give it to
-    whoever writes the feed. Report what you made from the results you
-    have: never say an episode is in the feed until its row write
-    succeeded.
+    path in the site and its size in bytes, its length in whole seconds,
+    the artwork's path, the next episode number, and one chapter row per
+    chapter (its start in seconds and its title). Write that row once the
+    site with the new files is published, or give it to whoever does.
+    Report what you made from the results you have: never say an episode is
+    in the feed until its row write succeeded.
 
 ## Anti-patterns
 
@@ -198,22 +209,27 @@ name; a fixed name would make every episode replace the last.
 - **Summarizing to save time.** The person asked for the issue, not a
   digest. Do instead: keep every point, and say if any part could not be
   read.
-- **A new voice or style per piece.** The episode changes speaker
-  mid-sentence. Do instead: one voice and one set of instructions for the
-  whole show.
+- **A new voice or style per section.** The episode changes speaker
+  between chapters. Do instead: one voice and one set of instructions for
+  the whole show.
+- **Publishing the episode's files on their own.** The feed's page cannot
+  play them, and they live outside the site the feed describes. Do instead:
+  put them in the site's directory (step 9).
 - **Text in the episode art.** Generated lettering is often wrong, and
   Apple asks for none. Do instead: a scene with no text.
 - **Chapters timed by guesswork.** A chapter that starts mid-sentence sends
-  the listener to the wrong place. Do instead: start each section in a new
-  piece, and time it from the pieces' measured lengths (step 8).
+  the listener to the wrong place. Do instead: record one section per call,
+  and time it from the sections' measured lengths (step 7).
+- **Splitting a section to fit a limit.** \`generate_audio\` takes text of
+  any length. Do instead: send each section whole.
 - **Reporting a finished episode on the recording alone.** Check its
-  length (step 7) and confirm its row was written.
+  length (step 6) and confirm its row was written.
 `;
 
 export const CREATING_A_PODCAST_EPISODE_SKILL: HarnessSkill = {
   name: "creating-a-podcast-episode",
   description:
-    "How to make one podcast episode from a text source: rewrite it as a script for the ear, record it with an AI voice in pieces, join and level it, add chapters, make its artwork, and hand the feed its record.",
+    "How to make one podcast episode from a text source: rewrite it as a script for the ear, record it with an AI voice one section at a time, join and level it, add chapters, make its artwork, put its files in the feed's site, and hand the feed its record.",
   whenToUse:
     "When a newsletter, article, report or other text should become an episode of a podcast.",
   body: CREATING_A_PODCAST_EPISODE_BODY,
