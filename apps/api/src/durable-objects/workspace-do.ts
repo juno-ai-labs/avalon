@@ -5566,6 +5566,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The same, for several of this Organization's Canvases at once: what
+   * another Organization's list shows for this person, decided here every
+   * time, so nothing about a Canvas is kept outside its own Organization.
+   */
+  async canvasShareStates(input: { workspaceId: string; userId: string; canvasIds: readonly string[] }) {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    const report = canvasAppearanceReporter(this.env);
+    return input.canvasIds.map((canvasId) => ({
+      canvasId, state: canvasShareState(this.state.storage.sql, canvasId, input.userId, report),
+    }));
+  }
+
+  /**
    * Push a person's shared Canvases from their other Organizations to their
    * sockets here: their inbox changed, or their setting did. Nothing is kept
    * here; the inbox is read each time (`docs/canvas-share-federation.md`).
