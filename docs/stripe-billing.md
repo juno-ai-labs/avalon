@@ -783,6 +783,8 @@ metadata keys as empty when comparing fields that Stripe unsets with an empty
 value. Signed customer and subscription webhooks still reconcile payment details
 and subscription changes.
 
+PR: [#1642](https://github.com/juno-ai-labs/avalon/pull/1642).
+
 ### 2026-11-12 — Keep Billing visible across permissions and loading states
 
 Billing moved out of general Organization settings into its own child page. The
