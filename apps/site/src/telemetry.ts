@@ -353,6 +353,8 @@ export const SITE_ACTION_LINKS = {
   'download-linux-hero': { action: 'download', placement: 'hero' },
   'web-app-hero': { action: 'secondary_cta', placement: 'hero' },
   'web-app-offer': { action: 'primary_cta', placement: 'offer' },
+  // A marketplace card's "Start from this", which signs in or up, then starts that template.
+  'web-app-template': { action: 'primary_cta', placement: 'body' },
   'download-pricing-start': { action: 'download', placement: 'pricing', plan: 'start' },
   'download-pricing-grow': { action: 'download', placement: 'pricing', plan: 'grow' },
   'download-pricing-max': { action: 'download', placement: 'pricing', plan: 'max' },
@@ -363,7 +365,7 @@ export const SITE_ACTION_LINKS = {
 } satisfies Record<string, SiteActionLink>;
 
 // Links into the web app, each activation of which starts a signup flow.
-const WEB_ENTRY_LINKS = new Set(['web-app-hero', 'web-app-offer', 'sign-in-header']);
+const WEB_ENTRY_LINKS = new Set(['web-app-hero', 'web-app-offer', 'web-app-template', 'sign-in-header']);
 
 export function siteActionForLink(id: string | undefined): SiteActionLink | null {
   if (!id || !Object.hasOwn(SITE_ACTION_LINKS, id)) return null;

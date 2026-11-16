@@ -19,7 +19,7 @@ import { browserRequest, BrowserApiError, BrowserResponseError } from "./transpo
 import { scheduleSessionDeadline } from "./session-timer";
 import { acceptInvitation as acceptInvitationRequest, createOrganization as createOrganizationRequest, declineInvitation as declineInvitationRequest, listInvitations, type PendingInvitation } from "./organization-actions";
 
-import { RETIRED_LINK_MESSAGE, isRetiredLinkPath, parseLinkPathTarget } from "@rally/contracts/links";
+import { RETIRED_LINK_MESSAGE, isRetiredLinkPath, parseLinkPathTarget, parseTemplateLinkPath, templateRoute } from "@rally/contracts/links";
 
 import { UuidV7Schema } from "@rally/contracts/telemetry";
 import { OrganizationNameSuggestionSchema, WorkspaceIdSchema, parseArtifactSiteOpenPath } from "@rally/contracts";
@@ -154,6 +154,13 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
   // first time the signed-out screen shows.
   const [developmentAccount, setDevelopmentAccount] = useState(false);
   const developmentAccountAsked = useRef(false);
+  // A Marketplace template link names no Organization: the person signs in,
+  // picks one (or has only one), and the shell opens there at the route that
+  // starts the template. The hash is what carries it into the Organization.
+  const [templateHash] = useState(() => {
+    const slug = parseTemplateLinkPath(location.pathname);
+    return slug ? `#${templateRoute(slug)}` : "";
+  });
   // What a Canvas or Sidekick link opens, for the sign-in page to name it.
   const [linkKind] = useState(() => parseLinkPathTarget(location.pathname)?.kind ?? null);
   const [proof, setProof] = useState<Proof | null>(null);
@@ -196,14 +203,19 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
   const rememberedWorkspace = isMobileHost() && session && listed && !destination
     && !new URLSearchParams(location.search).has('chooseWorkspace') && location.pathname === '/'
     ? restoreMobileWorkspace(mobileStorage(), session.user.id, listed.workspaces) : null;
+  // A template link with one Organization to start it in skips the choice.
+  const templateWorkspace = templateHash && session && listed && !destination && !proof
+    && listed.workspaces.length === 1 && listed.invitations.length === 0 ? listed.workspaces[0] ?? null : null;
+  const enteringWorkspace = rememberedWorkspace ?? templateWorkspace;
   useLayoutEffect(() => {
-    if (rememberedWorkspace) enterWorkspace(rememberedWorkspace.region, rememberedWorkspace.id);
-  }, [rememberedWorkspace?.region, rememberedWorkspace?.id]);
+    if (enteringWorkspace) enterWorkspace(enteringWorkspace.region, enteringWorkspace.id);
+  }, [enteringWorkspace?.region, enteringWorkspace?.id]);
   function enterWorkspace(region: string, workspaceId: string) {
     const opened = { region, workspaceId };
     const url = new URL(location.href);
     url.pathname = `/app/workspaces/${encodeURIComponent(region)}/${encodeURIComponent(workspaceId)}`;
     url.searchParams.delete('chooseWorkspace');
+    if (templateHash) url.hash = templateHash;
     history.replaceState(history.state, '', url.href);
     destinationRef.current = opened;
     setError(null);
@@ -585,7 +597,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
     </div>;
   }
 
-  if ((checking && !session && !proof) || rememberedWorkspace) return <BrowserBoot />;
+  if ((checking && !session && !proof) || enteringWorkspace) return <BrowserBoot />;
   if (!proof && siteTarget && session) {
     return <SiteOpening key={session.user.id} region={siteTarget.region} hostnameStub={siteTarget.hostnameStub} returnPath={siteTarget.returnPath}
       openWorkspace={openWorkspace} onSignOut={signOutStable} />;
@@ -617,12 +629,13 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
         <h1>Your organizations</h1>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
         {retiredLink && <p className="entry-lead" role="status">{RETIRED_LINK_MESSAGE}</p>}
+        {templateHash && workspaces?.length ? <p className="entry-lead">Choose the organization to start this template in.</p> : null}
         {listed && listed.invitations.length > 0 && <InvitationChoices invitations={listed.invitations}
           onAccept={acceptInvitation} onDecline={declineInvitation} onChanged={relist} />}
         {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the link…" : "Loading your organizations…"}</p>
           : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) => {
             const count = activity?.userId === session.user.id ? activity.counts.get(`${workspace.region}:${workspace.id}`) ?? 0 : 0;
-            return <a aria-label={count > 0 ? `${workspace.name}, ${activityCountLabel(count)}` : undefined} className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`} onClick={(event) => {
+            return <a aria-label={count > 0 ? `${workspace.name}, ${activityCountLabel(count)}` : undefined} className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}${templateHash}`} onClick={(event) => {
               if (isMobileHost() && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
                 event.preventDefault(); enterWorkspace(workspace.region, workspace.id);
               }
@@ -636,7 +649,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
         <button className="text-button onboarding-signout" disabled={busy} onClick={() => { void signOut(); }} type="button">Sign out</button>
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
-        <p>{proof ? "Continue to what was shared with you." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : linkKind === "canvas" ? "Sign in to open this Canvas." : linkKind === "sidekick" ? "Sign in to open this Sidekick." : destination ? "Sign in to open this Organization." : siteTarget ? "Sign in to open this site." : retiredLink ? RETIRED_LINK_MESSAGE : "Your team, your work, and Rally. All in one place."}</p>
+        <p>{proof ? "Continue to what was shared with you." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : templateHash ? "Sign in or sign up to start this template." : linkKind === "canvas" ? "Sign in to open this Canvas." : linkKind === "sidekick" ? "Sign in to open this Sidekick." : destination ? "Sign in to open this Organization." : siteTarget ? "Sign in to open this site." : retiredLink ? RETIRED_LINK_MESSAGE : "Your team, your work, and Rally. All in one place."}</p>
         {!proof && !challenge && passwordChosen ? <PasswordSignInForm disabled={checking || busy}
           onSubmit={async (input) => {
             const current = await browserRequest(IDENTITY_REGION, "/password", BrowserSessionSchema, input);

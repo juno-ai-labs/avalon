@@ -179,11 +179,12 @@ describe('public Rally site', () => {
     const ids = (page: string) => [...page.matchAll(/data-site-action="([^"]+)"/gu)].map(([, id]) => id);
     const home = renderSiteChrome(readProjectFile('index.html'));
     const variant = renderSiteChrome(readProjectFile('start-fast/index.html'));
+    const marketplace = renderSiteChrome(readProjectFile('marketplace/index.html'));
     // A misspelled id is ignored at runtime, which would silently stop counting that link.
-    for (const id of [...ids(home), ...ids(variant)]) expect(siteActionForLink(id), id).not.toBeNull();
-    // A tag removed in a redesign is just as silent: every tracked link must still be on the home page.
-    // Checked against the home page alone, so a variant can't hide a tag the home page lost.
-    for (const id of Object.keys(SITE_ACTION_LINKS)) expect(ids(home), id).toContain(id);
+    for (const id of [...ids(home), ...ids(variant), ...ids(marketplace)]) expect(siteActionForLink(id), id).not.toBeNull();
+    // A tag removed in a redesign is just as silent: every tracked link must still be on the home page,
+    // or, for a template card's link, on the marketplace. Not the variant, so it can't hide a tag the home page lost.
+    for (const id of Object.keys(SITE_ACTION_LINKS)) expect([...ids(home), ...ids(marketplace)], id).toContain(id);
     // Each installer link carries its own id, so the dashboard can tell them apart.
     for (const link of `${home}${variant}`.match(/<a [^>]*Rally\.dmg[^>]*>/gu) ?? []) {
       expect(link).toMatch(/data-site-action="download-[a-z-]+"/u);
@@ -339,6 +340,8 @@ describe('public Rally site', () => {
       'Recruiting market map',
     ]);
     expect(cards).toContain('<li class="market-card" data-categories="developers"><div class="market-card-body"><p class="market-kind">For developers</p><h3>PR dashboard</h3>');
+    expect([...cards.matchAll(/href="([^"]+)"/gu)].map(([, href]) => href).slice(0, 2))
+      .toEqual(['https://app.rallywith.ai/app/templates/pr-dashboard', 'https://app.rallywith.ai/app/templates/email-notification-screener']);
     expect([...renderSiteChrome('<!-- rally:marketplace-filters -->').matchAll(/data-filter="([^"]+)"/gu)].map(([, tag]) => tag))
       .toEqual(['all', 'developers', 'product-managers', 'parents', 'recruiters']);
   });

@@ -42,11 +42,11 @@ function WorkspaceView(): React.JSX.Element {
   const allowed = useConversationAdmission();
   return <><div>Ordinary organization</div><output data-testid="admission">{allowed ? 'allowed' : 'blocked'}</output></>;
 }
-function show(onRecoveryReady?: () => void) {
+function show(onRecoveryReady?: () => void, route = '/onboarding') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   // The journey renders inside the app's HashRouter and leaves through it, so
   // the harness gives it a router and reports where it went.
-  render(<ErrorNoticeProvider><MemoryRouter initialEntries={['/onboarding']}><QueryClientProvider client={client}><AccountOnboardingGate {...(onRecoveryReady ? { onRecoveryReady } : {})}><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter></ErrorNoticeProvider>);
+  render(<ErrorNoticeProvider><MemoryRouter initialEntries={[route]}><QueryClientProvider client={client}><AccountOnboardingGate {...(onRecoveryReady ? { onRecoveryReady } : {})}><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter></ErrorNoticeProvider>);
   return client;
 }
 beforeEach(() => {
@@ -92,6 +92,16 @@ describe('new-account learning paths', () => {
     //
     // Anchored, because `toHaveTextContent` matches a string as a substring.
     await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent(/^REPLACE \/canvases$/u));
+  });
+  it('leaves a person on the Canvas they were opening when the journey covered it', async () => {
+    state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
+    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
+    show(undefined, '/canvases/00000000-0000-7000-8000-000000000c61');
+    await screen.findByRole('heading', { name: 'This is you in Rally' });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
+    await screen.findByText('Ordinary organization');
+    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'complete' });
+    expect(screen.getByTestId('route')).toHaveTextContent(/^POP \/canvases\/00000000-0000-7000-8000-000000000c61$/u);
   });
   it('starts personal setup on a random color when the account has no saved look', async () => {
     const random = vi.spyOn(Math, 'random').mockReturnValue(0.3);
