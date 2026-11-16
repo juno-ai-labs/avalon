@@ -85,7 +85,9 @@ export function createArtifactAudienceTool(env: Env, input: {
           audience: result.artifactVisibility,
           changed: true,
           ...(result.artifactVisibility !== args.audience
-            ? { note: "The Canvas's Chat is open to the whole Organization, so its artifacts cannot be narrower than that." } : {}),
+            ? { note: "The Canvas's Chat is open to the whole Organization, so its artifacts cannot be narrower than that. "
+              + "This Canvas can still be made narrower: ask the person to choose who can open it in its Share screen, "
+              + "then set the artifact audience again. Starting another Canvas is not needed." } : {}),
         },
         summary: `Artifacts open to ${words}`,
       };
