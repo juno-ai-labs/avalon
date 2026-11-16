@@ -5632,12 +5632,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.hostedCanvas(input.canvasId, input.workspaceId)).access(input);
   }
 
-  /** The Canvases whose notices reach this person, with their choice for each, for Settings. */
+  /** The Canvases that send notices this person gets or, as a member, could join to get, with their choice for each. */
   async canvasNoticeChoices(input: unknown): Promise<CanvasNoticeChoices> {
     await this.initialized;
-    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }), input, "canvas_notice_choices");
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema,
+      member: z.boolean() }), input, "canvas_notice_choices");
     this.assertWorkspace(request.workspaceId);
-    return { canvases: canvasNoticeChoicesFor(this.state.storage.sql, request.workspaceId, request.userId) };
+    return { canvases: canvasNoticeChoicesFor(this.state.storage.sql, request.workspaceId, request.userId, request.member) };
   }
 
   /** Choose one's channels for a Canvas's notices; see `HostedCanvas.setNoticeChoice`. */

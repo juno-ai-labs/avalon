@@ -27,7 +27,8 @@ follow the member across devices. Two kinds today:
   lives with the Canvas (`canvas_notification_choices`), not here, and
   `notificationAllows` reads it when given the Canvas. Settings shows the
   **Canvas notices** row as the default, with a row under it for each Canvas
-  whose notices reach the person, which follows the default until changed.
+  whose notices reach the person, which follows the default until changed,
+  and a greyed row for an Organization-wide Canvas they could join.
   In the client, each kind's picker offers **Push** (only where this
   deployment can push, though a stored `push` stays in a save) and **Email**,
   the same two for every kind (`NotificationChannelSettings`); a stored

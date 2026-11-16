@@ -182,6 +182,8 @@ export const CanvasNoticeChoiceRowSchema = z.object({
   canvasId: WorkstreamIdSchema,
   title: z.string(),
   purpose: z.string(),
+  /** On its list, so its notices reach them; `false` for an Organization-wide Canvas they could join. */
+  participant: z.boolean(),
   channels: z.array(z.enum(["push", "email"])).nullable(),
 });
 export type CanvasNoticeChoiceRow = z.infer<typeof CanvasNoticeChoiceRowSchema>;

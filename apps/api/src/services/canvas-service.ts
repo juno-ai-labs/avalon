@@ -194,7 +194,9 @@ export class CanvasService {
 
   /** The Canvases whose notices reach this person, with their choice for each. */
   async noticeChoices(): Promise<CanvasNoticeChoices> {
-    return (await this.workspace()).canvasNoticeChoices({ workspaceId: asWorkspaceId(this.auth.workspaceId), userId: this.auth.userId });
+    // A guest is never admitted by Organization visibility, so has nothing to join.
+    return (await this.workspace()).canvasNoticeChoices({ workspaceId: asWorkspaceId(this.auth.workspaceId), userId: this.auth.userId,
+      member: this.actor().actorRole !== null });
   }
 
   /** This person's channels for a Canvas's notices; see `HostedCanvas.setNoticeChoice`. */
