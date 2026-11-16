@@ -7025,14 +7025,14 @@ button.dashboard-card-link { background: none; border: 0; cursor: pointer; font:
   box-sizing: border-box;
   color: var(--av-sys-color-text-default);
   display: flex;
-  font-size: 10px;
+  font-size: 10px; /* type-scale: an initial drawn inside a fixed 18px badge tile */
   font-weight: 600;
   height: 100%;
   justify-content: center;
   width: 100%;
 }
 .canvas-card-organization { display: inline-flex; position: relative; z-index: 1; }
-.canvas-card-organization > .organization-badge-initial { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-sm); font-size: 11.5px; height: 22px; width: 22px; }
+.canvas-card-organization > .organization-badge-initial { background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-sm); font-size: 11.5px; /* type-scale: an initial drawn inside a fixed 22px badge tile */ height: 22px; width: 22px; }
 .sidekick-stack { align-items: center; display: inline-flex; }
 .sidekick-stack-item { display: inline-flex; height: 26px; width: 26px; }
 .sidekick-stack-item + .sidekick-stack-item, .sidekick-stack .sidekick-stack-overflow { margin-left: -6px; }
