@@ -189,7 +189,7 @@ this loop acts as" fails there.
 
 | Gate | Where | Offered to |
 | --- | --- | --- |
-| Source tools (`asksForSources`) | `integrations.ts` | Ask from a Chat, a wizard and their background agents (`actsForAPerson`), whatever started the turn, unless an agent message without `fromPersonTurn` did. Runs, their workers and self-reviews hold them and refuse by name ([`sidekick-sources.md`](sidekick-sources.md)). |
+| Source tools (`asksForSources`) | `integrations.ts` | Ask from a Chat, a wizard and their background agents (`actsForAPerson`), whatever started the turn, unless a message from a run, its worker or a wizard's agent did (`senderActsForAPerson`, by the sender's address). Runs, their workers and self-reviews hold them and refuse by name ([`sidekick-sources.md`](sidekick-sources.md)). |
 | Elicitation and connection cards | `integrations.ts` (`routesAnswersToAgent`) | Asked by every loop but background agents and a Sidekick turn with `agentExchange` (unless a person-started Canvas Chat turn sent it); those hold them and refuse with where to send the question. |
 | Authoring tools | `integrations.ts` (`actsAsSidekickWizard`) | Wizard turns (`sidekickWizard`) and their background agents. |
 | Conversation tools | `conversation-tools.ts` | Wizard (with `attach`) and runs (without), and each one's background agents. Not a Canvas's Chat. |

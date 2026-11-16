@@ -26,8 +26,7 @@ export function wizardTurnCanvasId(input: Pick<WorkstreamWorkflowInput, "sidekic
   if (input.sidekickWizard !== true) return null;
   // Answering a question the Chat drew continues in that Chat.
   if (input.wizardCanvasId) return input.wizardCanvasId;
-  // A message that acts for the Chat's person: not a host notice.
-  if (input.agentExchange?.fromPersonTurn !== true) return null;
+  if (!input.agentExchange) return null;
   const sender = agentAddressForId(input.agentExchange.senderAgentId);
   return sender.parentKind === "canvas" ? sender.parentId : null;
 }
