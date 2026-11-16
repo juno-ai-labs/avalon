@@ -1843,4 +1843,8 @@ h2 {
   *:after {
     transition: none !important;
   }
+
+  .canvas-example [data-new] {
+    animation: none !important;
+  }
 }
