@@ -5517,7 +5517,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  /** Record an artifact a publish attached to a Canvas; `noted: false` for an id that is no Canvas. See `HostedCanvas.noteArtifact`. */
+  /** Record the artifact a publish attached to a Canvas; `noted: false` for an id that is no Canvas or a second artifact it refused. See `HostedCanvas.noteArtifact`. */
   async canvasNoteArtifact(input: Parameters<HostedCanvas["noteArtifact"]>[0]) {
     const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
     if (!canvas) return { noted: false };
