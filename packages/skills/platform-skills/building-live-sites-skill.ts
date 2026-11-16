@@ -460,21 +460,28 @@ Rally serves a site's files in ways a page can rely on:
   downloading the whole file. Put the media file in the site's directory
   and reference it by relative path, as for any asset.
 - **A page loads media, images and scripts only from its own site.** Its
-  security policy refuses any other origin, and a file published on its
-  own (below) has an origin of its own. So a page plays only media in its
-  own directory, and links to anything else.
-- **Large or growing sets of files publish one by one.** One site publish
-  has a size cap, which a refused publish states, and one long recording
-  can fill it. For media too long to fit, or a set that grows (one file per
-  episode or report), publish each file with \`publish_resource\`. When it
-  lands in this Canvas, the result carries its \`url\` and \`sizeBytes\`.
-  Store those in a row, and link the file with an ordinary
-  \`<a href="…">\`: the browser opens it in its own player, which seeks.
-  Never point \`<audio src>\` or \`<img src>\` at that \`url\`; the policy
-  refuses it and the element stays empty. A result with no \`url\` means
-  the file stayed in this conversation, outside the Canvas, and nobody can
-  open it from the site: publish from the Canvas's Chat, or from a run
-  that names this Canvas.
+  security policy refuses any other origin, including a file published on
+  its own, which has an origin of its own. So keep every file a page shows
+  or plays in the site's own directory.
+- **A site can hold a growing set of large files.** Republishing a site
+  moves only the files that are new or changed since its live version;
+  unchanged ones are copied inside Rally's storage. The size a refused
+  publish states applies to those new files alone, so one episode or
+  report must fit under it, and a site can hold many. Two rules follow:
+  - **Publish the whole directory every time.** A file missing from the
+    directory is removed from the site. When the directory is not in the
+    sandbox (a new run, a new sandbox), bring it back with
+    \`import_resource\` and the site's resource id before adding to it.
+  - **Name each new file once and never reuse the name**, such as
+    \`episodes/2026-11-14-no-ai-slop.mp3\`, so an app that saved the old
+    file never gets new bytes under a name it already has.
+- **A file published on its own is for downloading, not for a page.**
+  \`publish_resource\` of a single file in a Canvas returns its \`url\`,
+  which ends in the file's name. Link it with \`<a href="…">\` when the
+  person wants a file to hand around; never point \`<audio src>\` or
+  \`<img src>\` at it. A result with no \`url\` stayed in this
+  conversation, outside the Canvas: publish from the Canvas's Chat, or
+  from a run that names this Canvas.
 - **An active site passes the visitor's request on.** End with
   \`env.ASSETS.fetch(request)\`, the request as it arrived: it carries a
   player's range, and a new \`Request\` built from the path drops it.
