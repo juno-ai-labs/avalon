@@ -112,9 +112,14 @@ reason; the lease then stays with the run until its next call releases it,
 the run yields, or the lease deadline passes. A claim that finds the row no longer
 describing the cached sandbox (the generation replaced, the sandbox stopped by
 the sweep or a policy change) runs readiness again under the lease. So a
-conversation and the agents it starts interleave at call granularity: a
-sibling's `sandbox_busy` is a wait of seconds, for the length of one call or
-one command, and the model is told to retry rather than to wait for a run.
+conversation and the agents it starts interleave at call granularity. A call
+that finds a sibling holding the lease waits for it inside the tool, trying
+again every 250 ms for up to `TERMINAL_BUSY_WAIT_MS` (5 s), and does its work
+as soon as a try succeeds. Only the first try recovers a yielded holder's
+operation, since that asks the provider to stop a command; the retries only ask
+for the lease. Past the wait the call answers `sandbox_busy` and the model is
+told to retry rather than to wait for a run. A long command outlasts the wait,
+so its siblings are still refused.
 The reads, `read_file` and `view_image`, take no lease at all: it needs the sandbox running and the
 authority fingerprint to be this caller's, both read from the row, and it
 neither waits on another run's call nor blocks one. The bargain is that a read
@@ -1497,6 +1502,34 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-16 — A busy lease is waited out inside the tool call
+
+**What changed:** `claimOperation` in `coordinator.ts` tries the lease again
+every 250 ms for up to five seconds (`TERMINAL_BUSY_WAIT_MS`) before it
+answers `sandbox_busy`, reading the row again on each try. Only the first try
+runs `recoverYieldedOperation`. `TerminalClock` gained `sleep`, so a test with
+a frozen clock waits no real time.
+
+**Why:** A Canvas's Chat started four background agents on one newsletter
+site. They shared the Canvas's Terminal, and five calls across three agents
+were refused `sandbox_busy` while a sibling's call ran. Each agent handled the
+refusal its own way: one retried by hand, one asked its siblings to stay out of
+the Terminal, and one skipped a feed test it never ran again. Every refusal was a wait of seconds that the tool could
+have waited out itself. The team set the wait at five seconds, the same delay
+the refusal already asks the model for.
+
+**Considered and rejected:** Retrying recovery on every try, which asks the
+provider to stop a yielded run's command up to twenty times in one wait, and
+takes the lease over when a stop that failed once later succeeds. Waking the
+waiter when the lease is released, which needs a signal from the Terminal
+object that it does not have; polling costs at most twenty object hops per
+waiting call. A queue of waiters, which no measurement here can justify.
+
+**Consequences:** A call that loses the race now takes up to five seconds
+longer to be refused. A publication build's lease is held until it expires,
+so an agent call waiting on one always waits the full five seconds. A change
+to the wait is a change to `TERMINAL_BUSY_WAIT_MS`, which the team sets.
 
 ### 2026-11-16 — Directory listings reuse their digests; site files stream; size refusals are logged
 
