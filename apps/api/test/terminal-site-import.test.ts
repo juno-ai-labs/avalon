@@ -12,6 +12,26 @@ function command(overwrite: boolean): string {
   return materializeTreeCommand({ destination: DESTINATION, staging: STAGING, overwrite });
 }
 
+describe("finding a site version's stored files", () => {
+  it("finds a blob-stored version's files and server module by digest", async () => {
+    const artifactId = asArtifactId("00000000-0000-7000-8000-0000000000b2");
+    const page = "a".repeat(64);
+    const module = "b".repeat(64);
+    const manifest: ArtifactManifest = {
+      version: 1, artifactId, artifactVersion: 7, mode: "active", stateful: true,
+      serverModuleSha256: module, assetStore: "blobs",
+      assets: [{ path: "index.html", contentType: "text/html", sizeBytes: 3, sha256: page }],
+      totalBytes: 9, publishedAt: "2026-11-16T00:00:00.000Z",
+    };
+    const head = vi.fn(async () => ({ size: 3 }));
+    const env = { PAYLOADS: createCloudflareTestBinding<R2Bucket>({ head }) } satisfies Pick<Env, "PAYLOADS">;
+    await expect(storedArtifactVersionPaths(env, manifest)).resolves.toEqual([
+      { path: "index.html", sizeBytes: 3, key: `artifact/${artifactId}/blobs/${page}` },
+      { path: "index.js", sizeBytes: 3, key: `artifact/${artifactId}/blobs/${module}` },
+    ]);
+  });
+});
+
 describe("writing a materialized site tree", () => {
   it("leaves Rally's generated preview behind when importing source", async () => {
     const artifactId = asArtifactId("00000000-0000-7000-8000-0000000000b1");

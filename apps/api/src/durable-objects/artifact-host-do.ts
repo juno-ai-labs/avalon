@@ -35,7 +35,6 @@ import { RegionSchema } from "@rally/contracts/regions";
 import {
   ArtifactManifestSchema,
   ArtifactSidekickAddressSchema,
-  manifestAssetKey,
   manifestServerModuleKey,
   artifactIsolateId,
   type ArtifactManifest,
@@ -1272,10 +1271,11 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
             props: {
               artifactId,
               version,
+              ...(manifest.assetStore ? { assetStore: manifest.assetStore } : {}),
               assets: manifest.assets.map((asset) => ({
                 path: asset.path,
                 contentType: asset.contentType,
-                key: manifestAssetKey(manifest, asset),
+                sha256: asset.sha256,
               })),
             },
           }),

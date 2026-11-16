@@ -145,10 +145,11 @@ export class TerminalProviderSessionTarget extends RpcTarget implements Terminal
   }
 
   openFile(idOrName: string, path: string, callbacks?: TerminalProviderRpcCallbacks) {
-    return terminalProviderRpcCall(async () => {
+    return terminalProviderRpcCall(() => withTerminalProviderRpcAbort(callbacks, async (signal) => {
+      // The caller reads the file whole on this code (`openSandboxFile`).
       if (!this.provider.openFile) throw new Error("terminal_provider_file_stream_unavailable");
-      return this.provider.openFile(idOrName, path);
-    }, callbacks);
+      return this.provider.openFile(idOrName, path, signal);
+    }), callbacks);
   }
 
   writeFile(
