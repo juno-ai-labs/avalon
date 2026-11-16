@@ -93,6 +93,7 @@ import {
   type RunHarnessInput,
   type StreamResult,
 } from "./index";
+import type { StructuredFailureDetail } from "@rally/contracts";
 import { normalizedPluginSearchText, renderPromptPluginCatalog } from "@rally/prompts/harness/plugin-catalog";
 import { renderPromptSkillCatalog } from "./skill-catalog";
 import { renderCompactionCheckpointContent } from "@rally/prompts/harness/compaction";
@@ -904,12 +905,72 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           || event.type === "tool_failed"
         ? "tool_receipt_persistence_failed"
         : "run_state_persistence_failed";
+      // A host handler runs several writes for one event; the step it names is
+      // the only record of which one failed, as in `requiredPort`.
+      if (error instanceof HarnessPortStepError) {
+        throw new FatalHarnessPortError(code, error.label, error.causeValue);
+      }
       throw new FatalHarnessPortError(
         code,
         "A required host persistence port failed",
         error,
       );
     }
+  };
+  /**
+   * A read whose result could not be saved becomes one failed call, so the
+   * batch finishes; a write stays fatal, since it may have landed. Returns the
+   * error to throw instead when recording that failure does not commit, naming
+   * both the original step and the one that refused.
+   */
+  const settleUnsavedReadResult = async (
+    error: unknown,
+    call: {
+      receiptId: string;
+      toolName: string;
+      pluginId: string;
+      policy: HarnessToolPolicyIdentity;
+      mode: "read" | "write";
+    },
+  ) => {
+    if (call.mode !== "read"
+      || !(error instanceof FatalHarnessPortError)
+      || error.code !== "tool_receipt_persistence_failed") return { rethrow: error };
+    const data: StructuredFailureDetail = {
+      code: "tool_result_not_saved",
+      details: {
+        // A fixed step label and a code-shaped cause: host shape, not the
+        // result, so both may reach the model and the receipt.
+        step: error.message,
+        ...(input.describeFailureCause ? { cause: input.describeFailureCause(error.causeValue) } : {}),
+      },
+    };
+    const message = "Rally ran this call but could not save its result. Run it again if you still need it.";
+    try {
+      await emit({
+        type: "tool_failed",
+        toolCallId: call.receiptId,
+        toolName: call.toolName,
+        pluginId: call.pluginId,
+        policy: call.policy,
+        error: message,
+        data,
+        phase: "execution",
+        outcome: "definitive_failure",
+      });
+      await requiredPort("tool_receipt_persistence_failed", "Tool failure checkpoint persistence failed", () =>
+        input.checkpointToolInvocation?.({ toolCallId: call.receiptId, state: "failed" }));
+    } catch (refusal) {
+      const refusedStep = refusal instanceof FatalHarnessPortError ? refusal.message : "Tool failure record failed";
+      return {
+        rethrow: new FatalHarnessPortError(
+          "tool_receipt_persistence_failed",
+          `${error.message}; recording it as failed then refused at: ${refusedStep}`,
+          error.causeValue,
+        ),
+      };
+    }
+    return { result: { success: false as const, kind: "system" as const, error: message, data } };
   };
 
   try {
@@ -1925,14 +1986,26 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             providerOperationId: toolResult.providerOperationId!,
           }));
         }
-        await emit({
-          type: "tool_completed",
-          toolCallId: receiptId,
-          toolName: toolCall.function.name,
-          pluginId: dispatched.pluginId,
-          policy,
-          result: persistedResult,
-        });
+        try {
+          await emit({
+            type: "tool_completed",
+            toolCallId: receiptId,
+            toolName: toolCall.function.name,
+            pluginId: dispatched.pluginId,
+            policy,
+            result: persistedResult,
+          });
+        } catch (error) {
+          const unsaved = await settleUnsavedReadResult(error, {
+            receiptId,
+            toolName: toolCall.function.name,
+            pluginId: dispatched.pluginId,
+            policy,
+            mode: dispatched.tool.definition.mode,
+          });
+          if ("rethrow" in unsaved) throw unsaved.rethrow;
+          return { toolMessage: toolResultMessage(toolCall.id, unsaved.result) };
+        }
         await requiredPort("tool_receipt_persistence_failed", "Tool completion checkpoint persistence failed", () => input.checkpointToolInvocation?.({
           toolCallId: receiptId,
           state: "completed",
