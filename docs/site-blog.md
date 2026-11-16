@@ -6,20 +6,19 @@ time. A new post is
 one Markdown file; nothing else needs editing for it to appear in the list, the
 footer, the sitemap, `llms.txt`, and the build.
 
-The blog reuses the machinery the comparison pages already have, described in
-[`landing-comparisons.md`](landing-comparisons.md): the same Vite plugin turns
-Markdown into pages, the same card renderer draws each post's link-preview
-image, and the same site-chrome markers supply the header and footer.
+A Vite plugin turns the Markdown into pages, the shared reading-card renderer
+draws each post's link-preview image, and the site-chrome markers described in
+[`site-chrome.md`](site-chrome.md) supply the header and footer.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
 | `apps/site/content/blog/YYYY-MM-DD-<title>.md` | One post. The file name gives the date; front matter gives `slug`, `title`, `description` and `author`; the rest is the body. |
-| `apps/site/src/blog-pages.ts` | Loads and validates posts; renders the changelog index and each post. |
+| `apps/site/src/blog-pages.ts` | Loads and validates posts; renders the changelog index, each post, and each post's card. |
 | `apps/site/src/reading.css`, `src/site-theme.css` | The pencil identity, `.changelog` index, `.blog` reading layout, and header/footer styles. |
 | `apps/site/src/site-chrome.ts` | `blogPosts`, the footer's Blog column, the blog sitemap, and the blog part of `llms.txt`. |
-| `apps/site/src/social-cards.ts`, `src/reading-card.ts` | `renderBlogCard` delegates to the shared paper-and-pencil card renderer. |
+| `apps/site/src/reading-card.ts` | `renderBlogCard` in `blog-pages.ts` delegates to the shared paper-and-pencil card renderer. |
 | `apps/site/vite.config.ts` | Registers the pages and emits each post's `social.png`, `index.md`, and `/blog/sitemap.xml`. |
 
 ## How it works
@@ -28,7 +27,7 @@ image, and the same site-chrome markers supply the header and footer.
 its name, validates its front matter (slug included), and sorts by date, newest
 first. The `rally-markdown-pages` plugin
 treats `blog/index.html` and each `blog/<slug>/index.html` as build inputs that
-exist only in memory, exactly as it does for the comparison pages, and the dev
+exist only in memory, and the dev
 server renders the same HTML for the same paths. A post's body goes through
 `marked` with its default GitHub-flavored Markdown. The `/blog/` index is a
 changelog: each date sits in a left column with a small sage dot beside the
@@ -64,8 +63,8 @@ post only, so it stays two links long however many posts accumulate.
 
 The module owns the blog pages, their cards, and the footer's Blog column. It
 does not own the header nav, the footer layout, or the marker plugin, which
-[`landing-comparisons.md`](landing-comparisons.md) owns. Site telemetry
-classifies blog pages as `landing`, like the comparison pages; see
+[`site-chrome.md`](site-chrome.md) owns. Site telemetry
+classifies blog pages as `landing`; see
 [`public-site-telemetry.md`](public-site-telemetry.md).
 
 ## Failure modes and limits

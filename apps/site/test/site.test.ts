@@ -8,13 +8,11 @@ import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
 import { handoffAppLink, handoffDevice, handoffHeading, handoffPlan } from '../src/link-handoff';
-import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
-import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
-import { renderComparisonCard, renderTemplateCard } from '../src/social-cards';
+import { blogPosts, renderBlogSitemap, renderSiteChrome } from '../src/site-chrome';
 import { renderConnectorMark, renderPluginGlyph } from '../src/connector-marks';
 import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS } from '../../../packages/skills/marketplace-skills/connectors';
-import { marketplaceTemplates, renderMarketplaceSitemap, renderTemplatePage } from '../src/marketplace-catalog';
+import { marketplaceTemplates, renderMarketplaceSitemap, renderTemplateCard, renderTemplatePage } from '../src/marketplace-catalog';
 import { parseCanvasTemplate } from '../../../packages/skills/marketplace-skills/catalog';
 import sharp from 'sharp';
 import { normalizedTelemetryPathname, SITE_ACTION_LINKS, siteActionForLink, sitePageForPath } from '../src/telemetry';
@@ -195,16 +193,13 @@ describe('public Rally site', () => {
     }
   });
 
-  it('lists every comparison and Trust Center page in the footer columns', () => {
+  it('lists every Trust Center page and the newest post in the footer columns, with no comparisons', () => {
     const footer = renderSiteChrome('<!-- rally:site-footer -->');
     const column = (title: string): string[] => {
       const nav = footer.match(new RegExp(`<h2[^>]*>${title}</h2><ul class="footer-links">(.*?)</ul>`, 'u'))?.[1] ?? '';
       return [...nav.matchAll(/href="([^"]+)"/gu)].flatMap(([, href]) => (href ? [href] : []));
     };
-    expect(column('Compared to')).toEqual([
-      '/compare/claude-tag/', '/compare/grok-bot/', '/compare/viktor/', '/compare/chatgpt/',
-      '/compare/slack/',
-    ]);
+    expect(footer).not.toContain('/compare/');
     expect(column('Trust Center')).toEqual([
       '/trust/', '/trust/security/', '/trust/privacy/', '/trust/terms/', '/trust/dpa/',
       '/trust/subprocessors/', '/trust/cookies/', '/trust/acceptable-use/',
@@ -212,58 +207,15 @@ describe('public Rally site', () => {
     expect(column('Blog')).toEqual(['/blog/', `/blog/${blogPosts[0]?.slug ?? ''}/`]);
   });
 
-  it('renders one comparison table row per rival and refuses an unknown marker', () => {
-    const table = renderSiteChrome('<!-- rally:comparison-table -->');
-    expect([...table.matchAll(/<th scope="row"><a class="compare-name" href="([^"]+)">([^<]+)</gu)]
-      .map(([, href, name]) => `${name} ${href}`)).toEqual(comparisons.map(({ name, slug }) => `${name} /compare/${slug}/`));
-    expect(() => renderSiteChrome('<!-- rally:nope -->')).toThrow('Unknown site chrome marker: nope');
-  });
-
-  it('renders a comparison page from GitHub-flavored Markdown', () => {
-    const source = [
-      '---', 'slug: acme', 'name: Acme', 'maker: Acme Inc', 'order: 1', 'title: "Rally vs Acme"',
-      'description: "Acme compared."', 'updated: 2026-10-01', 'kind: "A tool."', 'edge: "Rally is better."', '---',
-      '**Short answer:** Pick Rally.', '', '> Import a chat.', '',
-      '## Side by side', '', '| | Rally | Acme |', '| --- | --- | --- |', '| Pricing | $100 | Per seat |', '', '> Prices as of today.', '',
-      '## Where Rally wins', '', '### Together', '', 'Teams share it.', '', '> A pun.', '',
-    ].join('\n');
-    const page = renderComparisonPage(parseComparison(source, 'acme.md'));
-    expect(page).toContain('<p class="compare-answer"><strong>Short answer:</strong> Pick Rally.</p>');
-    expect(page).toContain('<tr><th scope="row">Pricing</th><td class="versus-rally" data-label="Rally">$100</td><td data-label="Acme">Per seat</td></tr>');
-    expect(page).toContain('<ul class="points"><li><h3>Together</h3><p>Teams share it.</p>\n</li></ul><div class="compare-aside"><p>A pun.</p>\n</div>');
-    expect(page).toContain('<p class="compare-answer"><strong>Short answer:</strong> Pick Rally.</p>\n<blockquote>\n<p>Import a chat.</p>\n</blockquote>');
-    expect(page).toContain('</tbody></table></div><blockquote>\n<p>Prices as of today.</p>\n</blockquote>');
-    expect(page).not.toContain('See Rally pricing');
-    expect(page).not.toContain('Compare Rally with other tools');
-    expect(page).toContain('<time datetime="2026-10-01">October 1, 2026</time>');
-    expect(page).toContain('<!-- rally:site-footer -->');
-    expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/compare/acme/social.png" />');
-    expect(page).toContain('<meta name="twitter:image:alt" content="Rally vs Acme: Rally is better." />');
-    expect(() => renderComparisonPage(parseComparison(`${source}\n## Odds and ends\n\nExtra.\n`, 'acme.md')))
-      .toThrow('Unknown comparison section "Odds and ends"');
-    expect(() => parseComparison(source.replace('maker: Acme Inc\n', ''), 'acme.md'))
-      .toThrow('acme.md: front matter is missing "maker"');
-    expect(() => renderComparisonPage(parseComparison(source.replace(/## Where Rally wins[\s\S]*/u, ''), 'acme.md')))
-      .toThrow('acme.md: missing "## Where Rally wins"');
-  });
-
-  it('draws a 1200 by 630 opaque PNG unfurl card for a comparison', async () => {
-    const card = await renderComparisonCard({ slug: 'acme', name: 'A very long product name indeed', edge: 'Rally is better. '.repeat(20) });
-    const { format, width, height, hasAlpha } = await sharp(card).metadata();
-    expect({ format, width, height, hasAlpha }).toEqual({ format: 'png', width: 1200, height: 630, hasAlpha: false });
-  });
-
-  it('derives every sitemap and llms.txt entry from the comparison files', () => {
-    expect([...renderComparisonSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc))
-      .toEqual(comparisons.map(({ slug }) => `https://rallywith.ai/compare/${slug}/`));
-    expect(renderLlmsTxt()).toContain('- [Rally vs Slack](https://rallywith.ai/compare/slack/): Team chat with other humans\n');
+  it('refuses an unknown marker', () => {
+    expect(() => renderSiteChrome('<!-- rally:comparison-table -->')).toThrow('Unknown site chrome marker: comparison-table');
   });
 
   it('lists the section links and the rolling sign-in button in the shared header, without Blog', () => {
     const nav = renderSiteChrome('<!-- rally:site-nav -->');
     const links = [...nav.matchAll(/<a [^>]*href="([^"]+)"([^>]*)>(.*?)<\/a>/gu)];
     expect(links.map(([, href, attrs, body]) => `${/aria-label="([^"]+)"/u.exec(attrs ?? '')?.[1] ?? body} ${href}`)).toEqual([
-      'Canvases /canvases/', 'Sidekicks /sidekicks/', 'Pricing /#pricing', 'Compare /#footer-compared',
+      'Canvases /canvases/', 'Sidekicks /sidekicks/', 'Pricing /#pricing',
       'Sign in to Rally or sign up for Rally https://app.rallywith.ai',
     ]);
     expect(nav).toContain('<span>Sign in to Rally</span><span>Sign up for Rally</span>');

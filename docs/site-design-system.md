@@ -7,7 +7,7 @@ owns their shared fonts and palette. The homepage keeps its own composition;
 `reading.css` provides the blog and Trust Center's reading layouts and shared
 chrome, and `help.css` provides the manual's navigation and reading interface.
 
-The product pages, `/start-fast/`, and comparison pages continue to use the
+The product pages and `/start-fast/` continue to use the
 earlier `landing.css` system described later in this document. The download,
 Slack, and 404 pages still load `styles.css`.
 
@@ -80,7 +80,7 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/site-theme.css` | Shared pencil-site fonts and paper, ink, sage tokens |
 | `apps/site/src/reading.css` | Blog layouts and reading-page header, footer and typography |
 | `apps/site/src/reading-card.ts` | Matching blog and manual social cards from local fonts and shared artwork |
-| `apps/site/src/landing.css` | The earlier product, start-fast and comparison system: tokens, chrome, demos, pricing and page layouts |
+| `apps/site/src/landing.css` | The earlier product and start-fast system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
 | `apps/site/marketplace/index.html`, `apps/site/src/marketplace-catalog.ts`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The marketplace and one page per template at `/marketplace/<slug>/`, rendered at build time from `packages/skills/marketplace-skills/` (`loadCanvasTemplates`), with a client-side category filter. Styles build on `home.css` |
@@ -119,8 +119,8 @@ set under `prefers-color-scheme: dark`; a rule never names a colour itself.
 | `--plate`, `--on-plate` | ink panel, paper type | paper panel, ink type | The inverted closing band and featured price |
 
 `--ink`, `--paper`, `--muted`, `--hairline`, `--green`, `--volt` and the other
-older names are aliases of these, kept so `trust.css` and the comparison pages
-resolve; new rules use the semantic names.
+older names are aliases of these, kept so `trust.css`
+resolves; new rules use the semantic names.
 
 Type is three faces: `--display-font` (Instrument Serif, roman and italic,
 tracking about -0.03em) for headlines; `--body-font` (Geist, variable) for
@@ -272,9 +272,7 @@ and nothing reveals or drifts.
 ## Boundary
 
 This system styles the marketing pages only. The help center keeps its own
-tokens, and the social cards drawn at build time (`social-cards.ts`) still
-set Barlow from the `@fontsource` packages: moving them to Instrument Serif and Geist means
-shipping WOFF copies of these faces, since `opentype.js` cannot read WOFF2.
+tokens.
 The download, Slack and 404 pages still use `styles.css`.
 
 ## Failure modes and limits
@@ -285,7 +283,7 @@ The download, Slack and 404 pages still use `styles.css`.
 - **The demo at mid widths.** Cursors are placed in percent of the demo body,
   so they drift off their targets as the body changes shape; below 1100px
   they are hidden and below 860px the demo stacks.
-- **Cross-page drift.** Blog, compare and trust markup is generated or
+- **Cross-page drift.** Blog and trust markup is generated or
   written separately; a class renamed here must be renamed there.
 
 ## Testing

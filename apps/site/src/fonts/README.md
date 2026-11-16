@@ -23,11 +23,6 @@ with the fonts. The licences are in `public/fonts/` (`OFL.txt` for Barlow,
 `OFL-instrument-serif.txt`, `OFL-geist.txt` and `OFL-geist-mono.txt`), so the build
 publishes them beside the site that serves the fonts.
 
-The earlier comparison cards (`src/social-cards.ts`) read Barlow from
-the `@fontsource/barlow` and `@fontsource/barlow-semi-condensed` dev
-dependencies instead, as WOFF rather than WOFF2, because `opentype.js` cannot
-decompress WOFF2. Keep those packages on the version in the table above.
-
 The pencil blog and help previews use `instrument-serif-regular.ttf`,
 `geist-regular.ttf`, and `geist-semibold.ttf` in `reading-card.ts`. These are
 build-only static derivatives of the local WOFF2 faces, retaining their OFL
