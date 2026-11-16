@@ -5,13 +5,14 @@ import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
-import { BrowserInvitationsSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, type BrowserWorkspaceAttention } from '@rally/contracts/browser-session';
+import { BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspacesSchema, type BrowserWorkspaceAttention } from '@rally/contracts/browser-session';
 import { canvasCanonicalUrl } from '@rally/contracts/links';
 import { SupportPeopleSchema, SupportWorkspacesSchema } from '@rally/contracts';
 import { z } from 'zod';
 import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
 import { IDENTITY_REGION, type Region } from '@rally/contracts/regions';
 import { BrowserBoot } from './entry';
+import { acceptInvitation, createOrganization, declineInvitation, listInvitations, organizationPath } from './organization-actions';
 // The native consumer does not need the desktop navigation and settings bundle.
 // eslint-disable-next-line rally/no-dynamic-import
 const WorkspaceApp = lazy(() => import('../../desktop/src/renderer/App').then((module) => ({ default: module.WorkspaceApp })));
@@ -139,7 +140,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     getOnboardingState: async () => {
       const [{ workspaces }, { invitations }] = await Promise.all([
         browserRequest(IDENTITY_REGION, '/workspaces', BrowserWorkspacesSchema),
-        browserRequest(IDENTITY_REGION, '/invitations', BrowserInvitationsSchema),
+        listInvitations().then((invitations) => ({ invitations })),
       ]);
       // The identity cookie reads every membership's attention, so each row
       // counts as holding a credential for the account menu's counts.
@@ -157,12 +158,10 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     activateWorkspace: async (target, workspaceId) => { location.assign(`/app/workspaces/${target}/${workspaceId}`); },
     // Joined on Global, then opened as switching Organization opens one here.
     acceptInvitation: async (target, invitationId, operationId) => {
-      const joined = await browserRequest(IDENTITY_REGION, `/invitations/${encodeURIComponent(invitationId)}/accept`,
-        BrowserWorkspaceCreatedSchema, { region: target, operationId: operationId ?? uuidV7() });
-      location.assign(`/app/workspaces/${joined.region}/${joined.workspaceId}`);
+      location.assign(organizationPath(await acceptInvitation(target, invitationId, operationId ?? uuidV7())));
     },
     declineInvitation: async (target, invitationId) => {
-      await browserRequest(IDENTITY_REGION, `/invitations/${encodeURIComponent(invitationId)}/decline`, z.undefined(), { region: target });
+      await declineInvitation(target, invitationId);
     },
     reconnectAccountIdentity: macAppOnly,
     abandonAccountSignIn: () => undefined,
@@ -174,7 +173,12 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     },
     createDevelopmentSession: macAppOnly,
     signInWithPassword: macAppOnly,
-    finishWorkspaceSetup: macAppOnly,
+    // Created on Global, as the entry creates one, then opened as switching
+    // Organization opens one here. Organizations are only created on Global.
+    finishWorkspaceSetup: async (name, target, operationId) => {
+      if (target !== IDENTITY_REGION) throw new Error('Organizations are created in Rally’s Global deployment.');
+      location.assign(organizationPath(await createOrganization(name, operationId ?? uuidV7())));
+    },
     refreshSession: async () => { onRevalidate(); return session; },
     getAccountOnboarding,
     getOrganizationNameSuggestion: () => identityApi.getOrganizationNameSuggestion(),

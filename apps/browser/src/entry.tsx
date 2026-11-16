@@ -14,9 +14,10 @@ import { ActivityCountBadge, Button, ConnectorMark, ErrorNotice, RallyMark, acti
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema, IDENTITY_REGION } from "@rally/contracts/regions";
-import { BrowserGoogleStartedSchema, BrowserInvitationsSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
+import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
 import { browserRequest, BrowserApiError, BrowserResponseError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
+import { acceptInvitation as acceptInvitationRequest, createOrganization as createOrganizationRequest, declineInvitation as declineInvitationRequest, listInvitations, type PendingInvitation } from "./organization-actions";
 
 import { RETIRED_LINK_MESSAGE, isRetiredLinkPath, parseLinkPathTarget } from "@rally/contracts/links";
 
@@ -56,7 +57,7 @@ async function openWorkspace(region: string, workspaceId: string): Promise<Brows
   return await select();
 }
 
-type Listed = { region: string; workspaces: ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"]; invitations: ReturnType<typeof BrowserInvitationsSchema.parse>["invitations"] };
+type Listed = { region: string; workspaces: ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"]; invitations: PendingInvitation[] };
 
 /**
  * The organizations the signed-in account belongs to and the invitations
@@ -67,7 +68,7 @@ type Listed = { region: string; workspaces: ReturnType<typeof BrowserWorkspacesS
 async function listOrganizations(region: string): Promise<Listed> {
   const [{ workspaces }, invitations] = await Promise.all([
     browserRequest(region, "/workspaces", BrowserWorkspacesSchema),
-    browserRequest(IDENTITY_REGION, "/invitations", BrowserInvitationsSchema).then((result) => result.invitations, () => []),
+    listInvitations().catch(() => []),
   ]);
   return { region, workspaces, invitations };
 }
@@ -482,7 +483,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
   async function createOrganization(name: string, operationId: string): Promise<void> {
     setCreatePending(true);
     let created;
-    try { created = await browserRequest(IDENTITY_REGION, "/workspace/create", BrowserWorkspaceCreatedSchema, { name: name.trim(), operationId }); }
+    try { created = await createOrganizationRequest(name, operationId); }
     catch (cause) { setCreatePending(false); throw cause; }
     // The new organization opens as any other does, and its setup continues
     // there, but in this document: navigating to it downloaded and booted the
@@ -503,13 +504,12 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
    * is; it then opens like one created here, in this document.
    */
   async function acceptInvitation(invitation: Listed["invitations"][number], operationId: string): Promise<void> {
-    const joined = await browserRequest(IDENTITY_REGION, `/invitations/${encodeURIComponent(invitation.id)}/accept`,
-      BrowserWorkspaceCreatedSchema, { region: invitation.region, operationId });
+    const joined = await acceptInvitationRequest(invitation.region, invitation.id, operationId);
     enterWorkspace(joined.region, joined.workspaceId);
     setListed(null);
   }
   async function declineInvitation(invitation: Listed["invitations"][number]): Promise<void> {
-    await browserRequest(IDENTITY_REGION, `/invitations/${encodeURIComponent(invitation.id)}/decline`, z.undefined(), { region: invitation.region });
+    await declineInvitationRequest(invitation.region, invitation.id);
   }
   async function relist(): Promise<void> {
     if (!listed) return;
