@@ -32,7 +32,9 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
 - **Illustrative actions:** The homepage's example Canvas is a chat beside one
   artifact, with no app sidebar. Its three examples (a Gmail pipeline dashboard,
   a Granola feature-request board with voting, a podcast feed) each draw their
-  own artifact in `index.html`; "Run the Sidekick" only swaps local markup to
+  own artifact in `index.html`. The GTM example's chat also shows the Sidekick's
+  delegation card, in the app's own words, with Theo and Priya allowing it to act
+  as them (Maya, its creator, is enrolled already); "Run the Sidekick" only swaps local markup to
   version 2 (`data-new` rows appear, `data-v2` text replaces the original).
   They do not run jobs or connect to tools. Preserve that distinction
   and the acquisition action IDs. The historical offer action is now an inline

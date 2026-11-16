@@ -17,8 +17,8 @@ const examples: Record<ExampleId, Example> = {
     prompt:
       "Pull the deal emails from Maya’s, Theo’s and Priya’s Gmail into one pipeline dashboard.",
     reply:
-      "Done. I read three inboxes and found 14 open deals. Want me to update it whenever a prospect writes back?",
-    followup: "Yes, any reply to any of us. And split the value by owner.",
+      "Done, from your inbox. To add Theo’s and Priya’s, each of them needs to let the Sidekick act as them.",
+    followup: "Allowed. Now it’s all three inboxes. Split the value by owner?",
     receipt:
       "Example run: Northwind replied to Priya → a new deal in version 2.",
   },
