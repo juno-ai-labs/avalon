@@ -71,7 +71,8 @@ change. Build it to stay current, not as a snapshot:
    site to stay up to date, skip the question and create it.
 4. **On yes, create the Sidekick from this Canvas.** Give its wizard what
    **Configure a Sidekick to refresh an existing site** lists for a site that
-   stores its own data, plus the newer-source rule from step 2, the columns
+   stores its own data, plus the newer-source rule from step 2, the
+   plain-text conversion from step 1 for any text the runs store, the columns
    runs must never write, the sources
    and accounts to watch, and what makes a record belong (for example, "a
    two-way conversation about piloting Rally"). Wait for the wizard's
@@ -140,8 +141,10 @@ run instructions:
 
 When the site stores its own data (an \`index.js\` with \`SiteData\`), a
 recurring refresh changes rows and publishes nothing: save the resource ID, the
-tables and columns, and the statement each run sends with
-\`write_artifact_data\`. Runs can overlap, and a row write is safe when they
+tables and columns, the statement each run sends with
+\`write_artifact_data\`, and how each run converts source text to the form the
+page shows before it writes the row (**Keep data from connected accounts
+live**, step 1): a run sees only what is saved. Runs can overlap, and a row write is safe when they
 do. The import, edit and publish steps below are for a site whose content is
 its files, for changing a site's code, and for a refresh that also adds files
 (a feed's episodes): save the claim and the sequence below for those too.
