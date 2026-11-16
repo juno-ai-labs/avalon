@@ -26,7 +26,7 @@ interface StripeSubscription {
   metadata: Record<string, string>; items: { data: { price: { id: string; unit_amount: number } }[] };
 }
 function stripeServer() {
-  const customers = new Map<string, { id: string; metadata: Record<string, string> }>();
+  const customers = new Map<string, { id: string; name: string | null; metadata: Record<string, string> }>();
   const subscriptions = new Map<string, StripeSubscription>();
   const values = new Map<string, Map<number, number>>();
   const identifiers = new Set<string>();
@@ -39,12 +39,13 @@ function stripeServer() {
     if (init?.method === 'POST') writes.push({ path, body });
     if (path === 'customers') {
       if (init?.method !== 'POST') return Response.json({ data: [...customers.values()], has_more: false });
-      const customer = { id: `cus_${customers.size + 1}`, metadata: metadata(body) }; customers.set(customer.id, customer); return Response.json(customer);
+      const customer = { id: `cus_${customers.size + 1}`, name: body.get('name'), metadata: metadata(body) }; customers.set(customer.id, customer); return Response.json(customer);
     }
     if (path === 'customers/search') return Response.json({ data: [...customers.values()] });
     if (path.startsWith('customers/')) {
       const customer = customers.get(path.slice('customers/'.length))!;
       if (init?.method === 'POST') {
+        if (body.has('name')) customer.name = body.get('name');
         for (const [key, value] of Object.entries(metadata(body))) {
           if (value === '') delete customer.metadata[key];
           else customer.metadata[key] = value;
@@ -220,6 +221,19 @@ it('synchronizes usage without writing Stripe customer metadata when usage count
   await settleBillingAccount(env, WORKSPACE);
 
   expect(server.writes.map(({ path }) => path)).toEqual(['billing/meter_events']);
+});
+
+it('propagates an Organization rename to Stripe once', async () => {
+  const { db, env, server } = fixture();
+  await settleBillingAccount(env, WORKSPACE);
+  expect(server.customers.get('cus_1')?.name).toBe('Test');
+  server.writes.length = 0;
+
+  db.prepare('UPDATE workspaces SET name = ? WHERE id = ?').run('Renamed Organization', WORKSPACE);
+  await settleBillingAccount(env, WORKSPACE);
+  await settleBillingAccount(env, WORKSPACE);
+
+  expect(server.writes.map(({ path, body }) => [path, body.get('name')])).toEqual([['customers/cus_1', 'Renamed Organization']]);
 });
 
 it('continues overage settlement when background Stripe usage synchronization fails', async () => {

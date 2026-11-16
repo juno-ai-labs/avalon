@@ -16,7 +16,11 @@ const HOUR = 3600;
 // Stripe's documented event-ingestion boundary, not a product retention limit.
 const STRIPE_HISTORY_SECONDS = 35 * 86400;
 const MetadataSchema = z.record(z.string(), z.string());
-const CustomerSchema = z.object({ id: z.string(), metadata: MetadataSchema });
+const CustomerSchema = z.object({
+  id: z.string(),
+  name: z.string().nullish(),
+  metadata: MetadataSchema,
+});
 const FreeSubscriptionSchema = z.object({
   id: z.string(),
   customer: z.string(),
@@ -355,6 +359,7 @@ export async function synchronizeStripeProfile(
   const customer = await stripe(env, `customers/${customerId}`, CustomerSchema);
   // Stripe unsets a metadata key when its submitted value is empty.
   if (
+    customer.name !== workspace.name ||
     Object.entries(metadata).some(
       ([key, value]) => (customer.metadata[key] ?? "") !== value,
     )
