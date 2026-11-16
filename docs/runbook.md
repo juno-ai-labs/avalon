@@ -413,15 +413,14 @@ lists all ten and what each serves.
 
 ### Turning on content-addressed site storage
 
-Site versions are written in the old per-version layout until
-`ARTIFACT_BLOB_STORE` is `on` ([reactive web artifacts](reactive-web-artifacts.md)).
-Turn it on only after a release that carries the blob readers has been promoted
-to every Worker, the artifacts serving Worker included: add
-`"ARTIFACT_BLOB_STORE": "on"` to `vars` in `apps/api/wrangler.global.jsonc` (the
-API Worker only) and deploy. From then on, rolling back past that reader release
-breaks every site published since, because the older release cannot parse
-their manifests. Until it is on, every site publish counts every file against
-the 25 MB budget.
+`ARTIFACT_BLOB_STORE` is `on` in `apps/api/wrangler.global.jsonc` (the API
+Worker only), set after `23f4f88`, the release carrying the blob readers, had
+been promoted to every Worker ([reactive web artifacts](reactive-web-artifacts.md)).
+**Never roll the API or the artifacts serving Worker back past `23f4f88`:** the
+older release cannot parse a blob-stored manifest, so every site published since
+would stop serving. To stop writing blobs, remove the var and deploy; versions
+already written stay readable by any release from `23f4f88` on, and new
+versions go back to the old per-version layout.
 
 ### The Rally rename cannot reach installed builds through the update feed
 
