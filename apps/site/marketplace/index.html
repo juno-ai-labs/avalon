@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fcfbf7" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="description" content="Start from an artifact other teams built on Rally: dashboards, micro-apps, podcast feeds, websites and team tools that react to the services you already use." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Rally" />
+    <meta property="og:title" content="Artifact marketplace · Rally" />
+    <meta property="og:description" content="Start from an artifact other teams built on Rally: dashboards, micro-apps, podcast feeds, websites and team tools that react to the services you already use." />
+    <meta property="og:url" content="https://rallywith.ai/marketplace/" />
+    <meta property="og:image" content="https://rallywith.ai/rally-pencil-social.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="canonical" href="https://rallywith.ai/marketplace/" />
+    <link rel="stylesheet" href="/src/marketplace.css" />
+    <script type="module" src="/src/marketplace.ts"></script>
+    <title>Artifact marketplace · Rally</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="home-header">
+      <a class="home-logo" href="/" aria-label="Rally home"
+        ><img src="/brand/rally-mark-ink.svg" width="32" height="32" alt="" />rally</a
+      >
+      <nav class="home-nav" aria-label="Primary">
+        <a href="/#canvases">Canvases</a><a href="/marketplace/" aria-current="page">Marketplace</a
+        ><a href="/#pricing">Pricing</a><a href="/help/">The manual</a>
+      </nav>
+      <a class="header-login" href="https://app.rallywith.ai">Open Rally <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></span></a>
+    </header>
+    <main id="content">
+      <section class="market-hero wrap" aria-labelledby="market-title">
+        <p class="eyebrow">The artifact marketplace</p>
+        <h1 id="market-title">
+          Start from something<br /><span class="pencil-underline">already reactive.</span>
+        </h1>
+        <p class="market-lede">
+          Teams have built these on Rally. Each one listens to the tools you
+          connect and updates itself when something happens. Pick one, and
+          Rally makes it yours in a Canvas your team can tweak and shape.
+        </p>
+      </section>
+      <section class="market-catalog wrap" aria-label="Artifacts">
+        <div class="market-filters" role="group" aria-label="Filter by kind">
+          <button type="button" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" data-filter="dashboards" aria-pressed="false">Dashboards</button>
+          <button type="button" data-filter="micro-apps" aria-pressed="false">Micro-apps</button>
+          <button type="button" data-filter="podcasts" aria-pressed="false">Podcast feeds</button>
+          <button type="button" data-filter="websites" aria-pressed="false">Websites</button>
+          <button type="button" data-filter="team-tools" aria-pressed="false">Team tools</button>
+        </div>
+        <ul class="market-grid">
+          <li class="market-card" data-kind="dashboards">
+            <div class="market-preview preview-dashboards" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="market-card-body">
+              <p class="market-kind">Dashboard</p>
+              <h3>Q4 pipeline</h3>
+              <p>Every deal in the team’s inboxes, by stage and owner. A new reply moves the numbers.</p>
+              <p class="market-tools">Reacts to Gmail</p>
+              <a class="text-link" href="https://app.rallywith.ai">Start from this <svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></a>
+            </div>
+          </li>
+          <li class="market-card" data-kind="micro-apps">
+            <div class="market-preview preview-micro-apps" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="market-card-body">
+              <p class="market-kind">Micro-app</p>
+              <h3>Feature request board</h3>
+              <p>Requests from user interviews, with a quote for each and team voting.</p>
+              <p class="market-tools">Reacts to Granola</p>
+              <a class="text-link" href="https://app.rallywith.ai">Start from this <svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></a>
+            </div>
+          </li>
+          <li class="market-card" data-kind="podcasts">
+            <div class="market-preview preview-podcasts" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="market-card-body">
+              <p class="market-kind">Podcast feed</p>
+              <h3>The Friday Brief</h3>
+              <p>The week’s shipped work, read aloud. A new episode every Friday.</p>
+              <p class="market-tools">Reacts to GitHub, Slack</p>
+              <a class="text-link" href="https://app.rallywith.ai">Start from this <svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></a>
+            </div>
+          </li>
+          <li class="market-card" data-kind="websites">
+            <div class="market-preview preview-websites" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="market-card-body">
+              <p class="market-kind">Website</p>
+              <h3>Launch status page</h3>
+              <p>A page for customers that moves when your Linear issues do.</p>
+              <p class="market-tools">Reacts to Linear</p>
+              <a class="text-link" href="https://app.rallywith.ai">Start from this <svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></a>
+            </div>
+          </li>
+          <li class="market-card" data-kind="team-tools">
+            <div class="market-preview preview-team-tools" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="market-card-body">
+              <p class="market-kind">Team tool</p>
+              <h3>Hiring tracker</h3>
+              <p>Candidates, stages and interview dates, kept current from your inbox and calendar.</p>
+              <p class="market-tools">Reacts to Gmail, Google Calendar</p>
+              <a class="text-link" href="https://app.rallywith.ai">Start from this <svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></a>
+            </div>
+          </li>
+          <li class="market-card" data-kind="podcasts">
+            <div class="market-preview preview-podcasts" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="market-card-body">
+              <p class="market-kind">Podcast feed</p>
+              <h3>What customers said</h3>
+              <p>Ten minutes of this week’s customer calls, with the best quotes.</p>
+              <p class="market-tools">Reacts to Fireflies</p>
+              <a class="text-link" href="https://app.rallywith.ai">Start from this <svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></a>
+            </div>
+          </li>
+          <li class="market-card" data-kind="websites">
+            <div class="market-preview preview-websites" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="market-card-body">
+              <p class="market-kind">Website</p>
+              <h3>Changelog</h3>
+              <p>Release notes written from merged pull requests, in your voice.</p>
+              <p class="market-tools">Reacts to GitHub</p>
+              <a class="text-link" href="https://app.rallywith.ai">Start from this <svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></a>
+            </div>
+          </li>
+          <li class="market-card" data-kind="team-tools">
+            <div class="market-preview preview-team-tools" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="market-card-body">
+              <p class="market-kind">Team tool</p>
+              <h3>Meeting follow-ups</h3>
+              <p>Next steps with an owner for each, after every meeting.</p>
+              <p class="market-tools">Reacts to Granola</p>
+              <a class="text-link" href="https://app.rallywith.ai">Start from this <svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></a>
+            </div>
+          </li>
+          <li class="market-card" data-kind="dashboards">
+            <div class="market-preview preview-dashboards" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="market-card-body">
+              <p class="market-kind">Dashboard</p>
+              <h3>Support pulse</h3>
+              <p>Questions in #support grouped by theme, with what is rising this week.</p>
+              <p class="market-tools">Reacts to Slack</p>
+              <a class="text-link" href="https://app.rallywith.ai">Start from this <svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></a>
+            </div>
+          </li>
+          <li class="market-card" data-kind="micro-apps">
+            <div class="market-preview preview-micro-apps" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="market-card-body">
+              <p class="market-kind">Micro-app</p>
+              <h3>Content calendar</h3>
+              <p>Posts planned, drafted and shipped, with a slot anyone can claim.</p>
+              <p class="market-tools">Reacts to Notion, X</p>
+              <a class="text-link" href="https://app.rallywith.ai">Start from this <svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></a>
+            </div>
+          </li>
+        </ul>
+        <p class="market-empty" hidden>Nothing here yet.</p>
+      </section>
+      <section class="market-closer wrap" aria-labelledby="market-closer-title">
+        <h2 id="market-closer-title">Have an idea that isn’t here?</h2>
+        <p>Describe it in a Canvas. Rally builds it, and your team takes it from there.</p>
+        <a class="button primary" data-site-action="web-app-offer" href="https://app.rallywith.ai"
+          >Get started for free <span aria-hidden="true"><svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg></span></a
+        >
+      </section>
+    </main>
+    <!-- rally:site-footer -->
+  </body>
+</html>
