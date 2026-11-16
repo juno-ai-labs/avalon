@@ -20,9 +20,6 @@ You do not need the app. Install it if you want one of the things below.
 - **Save a reply as an image or a PDF.** The web app has no buttons for this.
 - **Windows of its own.** Settings opens in its own window, **Open in a new
   window** opens a real window, and Rally remembers where you put them.
-- **Accepting Organization invitations.** For now, joining someone else's
-  Organization from an invitation happens in the app (see [Create or join an
-  Organization](../01-getting-started/02-create-or-join-an-organization.md#joining-with-an-invitation)).
 - **Canva.** Its connection can only be made from the app. Every other
   connection works in the browser.
 - **Lockdown mode,** which protects the saved sign-in on your computer

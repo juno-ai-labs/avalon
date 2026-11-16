@@ -1,12 +1,16 @@
 ---
 title: Keeping Rally up to date
-description: Rally updates itself; choose how quickly new versions arrive and when to restart.
+description: For the desktop app only. It updates itself; choose how quickly new versions arrive and when to restart.
 nav_title: Updates
 ---
 
-Rally is young and changes often. You never have to go and fetch a new version.
-Rally does that itself, and all it needs from you is a restart at a moment that
-suits you.
+This page is for the [desktop app](../08-rally-everywhere/04-the-desktop-app.md).
+The web app needs no updates: it is always the newest version, every time you
+load it.
+
+Rally is young and changes often. You never have to go and fetch a new version
+of the desktop app. It does that itself, and all it needs from you is a restart
+at a moment that suits you.
 
 ## How Rally updates itself
 
@@ -15,8 +19,8 @@ while it runs. When it finds one, it downloads it quietly in the background,
 without interrupting anything you are doing. The new version is installed the
 next time you restart or quit Rally.
 
-You can see each stage in the **Rally** menu at the top of the screen, where the
-update item changes as it goes:
+You can see each stage in the **Rally** menu at the top of a Mac's screen (the
+**File** menu on Linux), where the update item changes as it goes:
 
 | The menu says | What is happening |
 | --- | --- |
@@ -39,9 +43,13 @@ Once an update has downloaded, Rally gives you three ways to finish it:
   the sidebar's list. Hover over it to see the version number.
 - **Restart to Update** appears at the top of the account menu, which you open
   by clicking your avatar at the bottom left of the window.
-- **Rally → Restart to Update** in the menu bar.
+- **Rally → Restart to Update** in the Mac's menu bar, or **File → Restart to
+  Update** on Linux.
 
-Or do nothing, and the update installs the next time you quit Rally anyway.
+Or do nothing, and on a Mac the update installs the next time you quit Rally
+anyway. The Linux `.deb` app installs updates only when you choose **Restart to
+Update**, because replacing the package may ask for your administrator
+password.
 
 Rally does not restart behind your back. The one time it speaks up is when the
 version you are running is more than a week old and a newer one has already
@@ -59,7 +67,7 @@ advice.
 ## Stable or Faster
 
 **Settings → Application → Updates** has **Update channel**, which decides how
-quickly new versions reach this Mac:
+quickly new versions reach this computer:
 
 | Channel | What you get |
 | --- | --- |
@@ -91,7 +99,7 @@ download and checks again on the new channel.
 ## When updates are not available
 
 Automatic updates work in the Rally app you downloaded from rallywith.ai and
-installed in Applications. A few situations are different:
+installed. A few situations are different:
 
 - **A build that cannot update.** If you somehow run a copy that is not the
   normal installed app, **Check for Updates…** answers **Updates aren't
@@ -103,8 +111,9 @@ installed in Applications. A few situations are different:
   **Couldn't update automatically** with two buttons. **Download Latest** opens
   the newest installer in your browser; open it and replace the copy of Rally in
   your Applications folder, as you did when you
-  [first installed it](../01-getting-started/01-install-rally.md). **Later**
-  leaves things as they are for now.
+  [first installed it](../08-rally-everywhere/04-the-desktop-app.md#install-it).
+  On Linux, install the new `.deb` over the old one. **Later** leaves things as
+  they are for now. The web app keeps working in the meantime.
 
 If none of that helps, [contact support](../12-help-and-glossary/03-contact-support.md)
 and include the version number from **Settings → Application → About**.

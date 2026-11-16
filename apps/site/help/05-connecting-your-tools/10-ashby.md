@@ -53,7 +53,7 @@ Events can be about candidates and jobs that a person's own Ashby account would 
 
 ## Manage events
 
-Owners and administrators see a **Manage events** button on the Organization Ashby row in **Settings → Connections**. It opens a window showing:
+Owners and administrators see a **Manage events** button on the Organization Ashby row in **Settings → Connections**. It opens a dialog showing:
 
 - the connection's status, such as **Connected** or **Needs attention**
 - **Last event received**, or "None yet"

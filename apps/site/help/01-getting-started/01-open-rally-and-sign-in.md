@@ -55,8 +55,8 @@ On an iPhone or iPad, add Rally to your Home Screen (tap Share, then **Add to Ho
 
 Rally does not ask where in the world to keep your data. Every Organization you create lives in Rally's single Global deployment. For how your data is handled, see [What Rally shares, and with whom](../11-privacy-and-security/02-what-rally-shares.md).
 
-## There is also a Mac app
+## There is also a desktop app
 
-If you use a Mac with Apple silicon, you can also install Rally as an app. It shows the same Organizations and the same work as the browser, and adds a few things a browser tab cannot do, such as a built-in browser beside your Canvas. You do not need it to follow this book. [The Mac app](../08-rally-everywhere/04-the-mac-app.md) says what it adds and how to install it.
+If you use a Mac with Apple silicon or a Linux computer, you can also install Rally as an app. It shows the same Organizations and the same work as the browser, and adds a few things a browser tab cannot do, such as a built-in browser beside your Canvas. You do not need it to follow this book. [The desktop app](../08-rally-everywhere/04-the-desktop-app.md) says what it adds and how to install it.
 
 Once you are signed in, [create or join an Organization](02-create-or-join-an-organization.md).

@@ -46,8 +46,9 @@ app](../08-rally-everywhere/04-the-desktop-app.md) on a Mac, the menu bar shows
 those two added together.
 
 The number on **Activity** counts the Activity rows you have not seen, and in
-the desktop app on a Mac it is also the number on Rally's icon in the Dock. Opening the Canvas or Sidekick a row is
-about clears that row, and **Mark all seen** at the top of the Activity list clears the rest.
+the desktop app on a Mac it is also the number on Rally's icon in the Dock.
+Opening the Canvas or Sidekick a row is about clears that row, and **Mark all
+seen** at the top of the Activity list clears the rest.
 
 ## Inside a Sidekick's conversation
 

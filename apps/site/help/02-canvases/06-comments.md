@@ -41,7 +41,7 @@ comment or on its chip removes it.
 | PDFs and Word files | Passages of their text |
 | Spreadsheets | A cell, a range, a row, a column or a whole sheet |
 | Images | A rectangular area |
-| Websites | Any element on the page |
+| Websites | Any element on the page, in [the desktop app](../08-rally-everywhere/04-the-desktop-app.md), where the site shows inside Rally |
 
 ## What happens when you send
 
