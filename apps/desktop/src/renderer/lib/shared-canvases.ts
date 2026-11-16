@@ -15,7 +15,9 @@ import { useSocketOwnedList } from './sidebar-list-store';
 export type OtherOrganizationCanvas = SharedCanvas;
 
 export const SHARED_CANVASES_QUERY_KEY = ['shared-canvases'] as const;
-const SETTING_QUERY_KEY = ['shared-canvases-setting'] as const;
+/** The switch as last read or pushed; the socket's event writes it too, so another device's change shows here. */
+export const SHARED_CANVASES_SETTING_QUERY_KEY = ['shared-canvases-setting'] as const;
+const SETTING_QUERY_KEY = SHARED_CANVASES_SETTING_QUERY_KEY;
 const NONE: OtherOrganizationCanvas[] = [];
 
 /** The last push, newest first; empty before it arrives and while the setting is off. */
@@ -45,5 +47,11 @@ export function useSharedCanvasesSetting(api: Pick<RallyApi, 'getSharedCanvasesS
     onError: (_error, _enabled, context) => queryClient.setQueryData(SETTING_QUERY_KEY, context?.previous),
     onSuccess: (saved) => queryClient.setQueryData(SETTING_QUERY_KEY, saved),
   });
-  return { enabled: setting.data?.enabled, loading: setting.data === undefined, save };
+  return {
+    enabled: setting.data?.enabled,
+    loading: setting.data === undefined && !setting.isError,
+    error: setting.data === undefined && setting.isError ? setting.error : null,
+    retry: () => { void setting.refetch(); },
+    save,
+  };
 }
