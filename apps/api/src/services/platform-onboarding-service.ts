@@ -1414,21 +1414,22 @@ export class PlatformOnboardingService {
         preference,
       }),
       preference,
-      () => this.makeFirstCreatorEligible(identity.platformUserId, region, workspaceId),
+      () => this.makeFirstOrganizationEligible(identity.platformUserId, region, workspaceId),
     );
     return session;
   }
 
   /**
-   * Someone whose first organization this is sets it up as its creator, as a
-   * new Mac account does. An email sign-in starts ineligible, since most arrive
-   * as guests, and a guest relationship here does not exempt them. Runs only
+   * Someone whose first organization this is, by creating it or by accepting an
+   * invitation to it, goes through setup, as a new Mac account does. An email
+   * sign-in starts ineligible, since most arrive as guests, and a guest
+   * relationship here does not exempt them. Runs only
    * once the organization exists, so a failed create changes nothing. An
    * active binding in another deployment keeps the exemption: the binding
    * does not say member or guest, and an established member must not be sent
    * through setup again.
    */
-  private async makeFirstCreatorEligible(platformUserId: string, region: Region, workspaceId: string): Promise<void> {
+  private async makeFirstOrganizationEligible(platformUserId: string, region: Region, workspaceId: string): Promise<void> {
     await this.env.DB.prepare(
       `UPDATE users SET onboarding_eligible = 1 WHERE id = ? AND onboarding_eligible = 0
          AND NOT EXISTS (SELECT 1 FROM workspace_members WHERE user_id = users.id AND workspace_id <> ?
@@ -1507,6 +1508,11 @@ export class PlatformOnboardingService {
         preference,
       }),
       preference,
+      () => this.makeFirstOrganizationEligible(identity.platformUserId, region, operation.workspace_id),
+      // A guest of this organization already has an active route to it; the
+      // invitation must still be accepted, which the regional step does
+      // idempotently, or they stay a guest.
+      { actOnActiveBinding: true },
     );
   }
 
@@ -1635,6 +1641,7 @@ export class PlatformOnboardingService {
     preference: z.infer<typeof PreferenceProjectionSchema>,
     /** Runs beside the binding's activation once the regional action has committed. */
     committed?: () => Promise<void>,
+    options: { actOnActiveBinding?: boolean } = {},
   ): Promise<Session> {
     const reservation = await this.bindings.reserve(
       identity.platformUserId, region, workspaceId, placementAffinity, operationId,
@@ -1644,6 +1651,12 @@ export class PlatformOnboardingService {
     }
     if (reservation.placement_affinity !== placementAffinity) {
       throw new ApiError(409, "workspace_binding_conflict", "The workspace placement route conflicts with its binding");
+    }
+    if (reservation.status === "active" && options.actOnActiveBinding) {
+      const session = await action(operationId, preference);
+      this.assertRegionalSession(session, region, workspaceId);
+      await Promise.all([this.operations.complete(identity.platformUserId, operationId), committed?.()]);
+      return session;
     }
     if (reservation.status === "active") {
       // A replay of an action that committed: `committed` may not have run, or

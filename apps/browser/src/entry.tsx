@@ -512,8 +512,11 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
   }
   async function relist(): Promise<void> {
     if (!listed) return;
+    // Fenced like `restore` and `adopt`: another account signing in meanwhile
+    // must not get this account's list.
+    const read = sessionRead.current;
     const result = await listOrganizations(listed.region).catch(() => null);
-    if (result) setListed(result);
+    if (result && read === sessionRead.current) setListed(result);
   }
 
   async function continueWithProvider(provider: SignInProvider) {
