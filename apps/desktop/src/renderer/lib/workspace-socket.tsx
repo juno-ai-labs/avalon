@@ -1,4 +1,6 @@
 import { WorkspaceConversationViewEventSchema, type WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
+import { type WorkspaceSharedCanvasesEvent, WorkspaceSharedCanvasesEventSchema } from '@rally/contracts/canvas-share-federation';
+import { applySharedCanvasesEvent, SHARED_CANVASES_QUERY_KEY, SHARED_CANVASES_SETTING_QUERY_KEY } from './shared-canvases';
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -295,6 +297,8 @@ export function WorkspaceSocketProvider({
     const releaseData = retainQueryData(queryClient, [
       SIDEBAR_LIST_QUERY_KEYS.automations, SIDEBAR_LIST_QUERY_KEYS.canvases, SIDEBAR_LIST_QUERY_KEYS.activity,
       CLIENT_FEATURE_FLAGS_QUERY_KEY,
+      // Pushed only, like the flags: it must outlive the screens that read it.
+      SHARED_CANVASES_QUERY_KEY,
     ]);
     let stopped = false;
     let permanentlyClosed = false;
@@ -748,6 +752,16 @@ export function WorkspaceSocketProvider({
             applyVersionedSidebarList(queryClient, 'canvases', canvasList.data.waterline, canvasList.data.items);
             return;
           }
+          const sharedCanvases = safeParseSocketEvent(WorkspaceSharedCanvasesEventSchema, decoded);
+          if (sharedCanvases.success) {
+            // Built by the server from each Canvas's own Organization; it replaces the last one,
+            // keeping only what an Organization that could not answer last showed.
+            queryClient.setQueryData<WorkspaceSharedCanvasesEvent>(SHARED_CANVASES_QUERY_KEY,
+              (previous) => applySharedCanvasesEvent(previous, sharedCanvases.data));
+            // The switch, as the server last applied it: another device may have changed it.
+            queryClient.setQueryData(SHARED_CANVASES_SETTING_QUERY_KEY, { enabled: sharedCanvases.data.enabled });
+            return;
+          }
           const activityList = safeParseSocketEvent(WorkspaceActivityListEventSchema, decoded);
           if (activityList.success) {
             const previousActivity = queryClient.getQueryData<ActivityList>(SIDEBAR_LIST_QUERY_KEYS.activity);
@@ -817,6 +831,7 @@ export function WorkspaceSocketProvider({
               ['workspace_presence', 'presence', presence],
               ['workspace_feature_flags', 'feature flags', featureFlags],
               ['workspace_canvas_list', 'canvas list', canvasList],
+              ['workspace_shared_canvases', 'shared canvases', sharedCanvases],
               ['workspace_activity_list', 'activity list', activityList],
               ['workspace_sidebar_list', 'sidebar list', sidebarList],
               ['workspace_resource_versions', 'resource versions', resourceVersions],

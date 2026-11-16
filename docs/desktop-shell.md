@@ -204,7 +204,9 @@ Every row in the lists is one layout (`RowLayout`): an `IdentityTile`
 second line with the unread dot at its end. A row with nothing for the second
 line has none, and its dot sits after the time, so a row is as tall unread as
 read. A tile is a shape in the object's
-pastel pair with its glyph, and can carry small badges on its corner, each in
+pastel pair with its glyph, and can carry small badges on its lower-right
+corner (or, with `corner: 'top-right'`, its upper right, which a Canvas from
+another Organization uses for that Organization's mark), each in
 a ring painted the row's own background (`--tile-ring`) so it reads as cut out
 of the tile on a plain, hovered or selected row. A badge can carry one smaller
 badge on its own corner, for a chain of containers; the parent moves up and
@@ -216,7 +218,8 @@ ink and fill, or holds `content` the caller draws, such as an avatar; an
 `.avatar` is sized to the badge.
 
 Every row is a link, so a modified click opens it elsewhere (a new tab, in the
-web app). Each list draws placeholder rows until the socket has said what it
+web app). The one exception is a Canvas from another Organization: its row is a
+button, because opening it switches Organization first. Each list draws placeholder rows until the socket has said what it
 holds. A row that changes place travels to its new slot rather than
 reappearing there; [`list-motion.md`](list-motion.md) owns the motion.
 

@@ -1,5 +1,5 @@
 import { PALETTE_RING, type PaletteKey, type WorkstreamAppearance } from '@rally/contracts';
-import { IdentityTile } from '@rally/ui/components/identity-tile';
+import { IdentityTile, type TileBadge } from '@rally/ui/components/identity-tile';
 import { WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
 import { markColors } from '@rally/ui/lib/project-palette';
 import { PanelsTopLeft, type LucideIcon } from 'lucide-react';
@@ -41,11 +41,12 @@ export function canvasMark(id: string | undefined, appearance?: WorkstreamAppear
  * `markColors`, the mechanism a Sidekick's hexagon uses, so both appearances
  * are themed.
  */
-export function CanvasMark({ id, size, appearance }: {
+export function CanvasMark({ id, size, appearance, badges }: {
   id?: string;
   size?: number;
   appearance?: WorkstreamAppearance | undefined;
+  badges?: readonly TileBadge[] | undefined;
 }): React.JSX.Element {
   const { icon, ink, tint } = canvasMark(id, appearance);
-  return <IdentityTile icon={icon} ink={ink} shape="sheet" size={size} tint={tint} />;
+  return <IdentityTile badges={badges} icon={icon} ink={ink} shape="sheet" size={size} tint={tint} />;
 }

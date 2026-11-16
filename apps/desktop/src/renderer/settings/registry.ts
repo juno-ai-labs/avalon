@@ -26,6 +26,7 @@ export function defineSetting<const T extends SettingDefinition>(definition: T):
 }
 export const settings = {
   startupPage: defineSetting({ id: 'startupPage', section: 'preferences', label: 'On startup', kind: 'select', description: 'Choose what opens when you launch Rally on this device.', options: ['Canvas Homepage', 'Last Opened'], aliases: ['home', 'launch', 'restore', 'start page'] }),
+  sharedCanvasesInAllOrganizations: defineSetting({ id: 'sharedCanvasesInAllOrganizations', section: 'preferences', label: 'Show shared Canvases in every Organization', kind: 'toggle', description: "List the Canvases shared with you in Organizations where you're a guest alongside this one's, marked with the Organization they come from.", aliases: ['shared with me', 'other organizations', 'guest', 'cross organization'] }),
   personalMemories: defineSetting({ id: 'personalMemories', section: 'memories', label: 'What Rally remembers about you', kind: 'collection', description: 'Review and remove your personal memories in this Organization.', aliases: ['memory', 'forget'] }),
   mcpServer: defineSetting({ id: 'mcpServer', section: 'connection', connectionKind: 'custom_mcp_tools', label: 'Server authorization', kind: 'information', description: 'Inspect the connected server URL and authentication method.', options: ['Authorize again', 'OAuth', 'Request headers'] }),
   inviteEmail: defineSetting({ id: 'inviteEmail', section: 'members', label: "Email address", kind: 'custom', description: "Invite a teammate by email.", availability: 'admin' }),
