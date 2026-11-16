@@ -77,11 +77,10 @@ export function renderCasaBadge(): string {
   return `<svg class="casa-badge" viewBox="0 0 100 112" width="104" height="116" role="img" aria-label="${label}">`
     + `<polygon points="${hexagon(0)}" fill="currentColor" fill-opacity=".1" stroke="currentColor" stroke-width="2.5"/>`
     + `<polygon points="${hexagon(6)}" fill="none" stroke="currentColor" stroke-width=".8" stroke-opacity=".5"/>`
-    + shieldCheck(40, 17, 0.85)
+    + shieldCheck(40, 21, 0.85)
     + '<g fill="currentColor" text-anchor="middle" font-family="inherit">'
-    + '<text x="50" y="58" font-size="16" font-weight="650" letter-spacing=".5">CASA</text>'
-    + '<text x="50" y="76" font-size="14" font-weight="500" letter-spacing="1">AL1</text>'
-    + '<text x="50" y="91" font-size="6.2" letter-spacing="1.2">VALIDATED</text></g></svg>';
+    + '<text x="50" y="64" font-size="16" font-weight="650" letter-spacing=".5">CASA</text>'
+    + '<text x="50" y="83" font-size="14" font-weight="500" letter-spacing="1">AL1</text></g></svg>';
 }
 
 const footerColumn = (id: string, title: string, links: readonly string[]): string =>
