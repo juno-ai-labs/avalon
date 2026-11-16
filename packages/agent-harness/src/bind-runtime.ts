@@ -918,20 +918,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     }
   };
   /**
-   * A read whose result ran but could not be saved, settled as a failed call so
-   * the batch can finish.
-   *
-   * Failing the run here threw away every sibling in the same parallel batch:
-   * their results were already saved, and the model never saw them, because
-   * the run ended on the one call it could not record. A read has no external
-   * effect to account for, so the honest outcome is that this one call failed
-   * and the model may run it again. A write keeps the fatal path, because
-   * calling it failed when it may have landed invites a duplicate.
-   *
-   * Only when recording the failure itself commits. A receipt that already
-   * completed refuses it, and so does a lost lease; either way the original
-   * error stands, so this can only ever narrow a failure to one call, never
-   * hide one.
+   * A read whose result could not be saved becomes one failed call, so the
+   * batch finishes; a write stays fatal, since it may have landed. Returns the
+   * error to throw instead when recording that failure does not commit, naming
+   * both the original step and the one that refused.
    */
   const settleUnsavedReadResult = async (
     error: unknown,
@@ -942,15 +932,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       policy: HarnessToolPolicyIdentity;
       mode: "read" | "write";
     },
-  ): Promise<{ success: false; kind: "system"; error: string; data: StructuredFailureDetail } | null> => {
+  ) => {
     if (call.mode !== "read"
       || !(error instanceof FatalHarnessPortError)
-      || error.code !== "tool_receipt_persistence_failed") return null;
+      || error.code !== "tool_receipt_persistence_failed") return { rethrow: error };
     const data: StructuredFailureDetail = {
       code: "tool_result_not_saved",
       details: {
-        // A fixed step label and a code-shaped cause: both are host shape, not
-        // the result, so both may reach the model and the receipt.
+        // A fixed step label and a code-shaped cause: host shape, not the
+        // result, so both may reach the model and the receipt.
         step: error.message,
         ...(input.describeFailureCause ? { cause: input.describeFailureCause(error.causeValue) } : {}),
       },
@@ -968,11 +958,19 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         phase: "execution",
         outcome: "definitive_failure",
       });
-      await input.checkpointToolInvocation?.({ toolCallId: call.receiptId, state: "failed" });
-    } catch {
-      return null;
+      await requiredPort("tool_receipt_persistence_failed", "Tool failure checkpoint persistence failed", () =>
+        input.checkpointToolInvocation?.({ toolCallId: call.receiptId, state: "failed" }));
+    } catch (refusal) {
+      const refusedStep = refusal instanceof FatalHarnessPortError ? refusal.message : "Tool failure record failed";
+      return {
+        rethrow: new FatalHarnessPortError(
+          "tool_receipt_persistence_failed",
+          `${error.message}; recording it as failed then refused at: ${refusedStep}`,
+          error.causeValue,
+        ),
+      };
     }
-    return { success: false, kind: "system", error: message, data };
+    return { result: { success: false as const, kind: "system" as const, error: message, data } };
   };
 
   try {
@@ -2005,8 +2003,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             policy,
             mode: dispatched.tool.definition.mode,
           });
-          if (!unsaved) throw error;
-          return { toolMessage: toolResultMessage(toolCall.id, unsaved) };
+          if ("rethrow" in unsaved) throw unsaved.rethrow;
+          return { toolMessage: toolResultMessage(toolCall.id, unsaved.result) };
         }
         await requiredPort("tool_receipt_persistence_failed", "Tool completion checkpoint persistence failed", () => input.checkpointToolInvocation?.({
           toolCallId: receiptId,

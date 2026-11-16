@@ -4796,13 +4796,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       };
     }
     if (outcome.status === "failed" || outcome.status === "stopped") {
-      // A run that ends mid-batch leaves Bind owed a result for every call
-      // that had not returned, and the loop release inside the terminal
-      // commit refuses while it is owed. Left to that refusal, the failure
-      // reached the outer catch as `substream_loop_has_unsettled_tool_batch`
-      // and was recorded — and told to the owner — under that code instead
-      // of the harness's own. Settled here, under this attempt's lease, the
-      // run terminalizes on the first pass with the reason it actually had.
+      // Settle any open calls first: the terminal commit's loop release
+      // refuses while Bind is owed a result, and that refusal would replace
+      // the run's own failure code.
       await this.recoverInterruptedToolBatch(executionEnv, input, claim.lease)
         .catch((settleError: unknown) => logWarn(
           this.env,
