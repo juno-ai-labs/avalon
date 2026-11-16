@@ -731,8 +731,6 @@ h2 {
   display: block; max-width: 100%; width: 100%; height: auto;
 }
 
-.hero-art > .home-illustration,
-
 .home-closer > .home-illustration {
   transform: rotate(-2deg); margin-left: -20px; margin-top: -15px;
 }
@@ -926,8 +924,16 @@ h2 {
   display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 18px; gap: 2px;
 }
 
-.gtm-owners span {
-  flex: var(--w);
+.gtm-owners .maya {
+  flex: 44;
+}
+
+.gtm-owners .theo {
+  flex: 31;
+}
+
+.gtm-owners .priya {
+  flex: 25;
 }
 
 .gtm-owners .maya,
@@ -1092,15 +1098,11 @@ h2 {
 }
 
 .pod-wave {
-  display: flex; align-items: center; justify-content: space-between; height: 22px; margin-top: 5px;
+  display: block; width: 100%; height: 22px; margin-top: 5px; fill: #a9b49a;
 }
 
-.pod-wave i {
-  width: 3px; height: var(--h); background: #a9b49a; border-radius: 2px;
-}
-
-.pod-wave i:nth-child(-n + 15) {
-  background: #eeebe2;
+.pod-wave .played {
+  fill: #eeebe2;
 }
 
 .pod-time {
@@ -1551,7 +1553,9 @@ h2 {
     padding: 9px 12px; justify-content: center;
   }
 
-  .canvas-footnotes .text-link,
+  .canvas-footnotes .text-link {
+    font-size: 11px;
+  }
 
   .subtle-link,
   .possibilities-heading .eyebrow {
