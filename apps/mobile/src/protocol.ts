@@ -4,6 +4,7 @@ import { MobileCrashReportSchema, MobileCrashScopeSchema } from '@rally/contract
 import { z } from 'zod';
 import { parseArtifactHost, parseArtifactSiteOpenPath } from '@rally/contracts';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
+import { MOBILE_CONNECTOR_CALLBACK } from '@rally/contracts/connector-oauth-claim';
 import { CanvasFilterFactsSchema } from '@rally/contracts/canvas-filters';
 
 // Presentation capacity, from the approved Home + four tabs design. This is not
@@ -139,8 +140,13 @@ export const SETTINGS_CAPABILITY = 'settings';
 /** The shell opens `open-external` links itself. Its WebView creates no child
  * window, so the browser's reserve-a-blank-tab pattern opens nothing there. */
 export const OPEN_EXTERNAL_CAPABILITY = 'open-external';
+/** The shell runs a connector authorization in an auth session and hands its
+ * completion link back (`connector-complete`), so the page that started it can
+ * claim it (`docs/connectors.md`, "Claiming a connector authorization"). Safari
+ * holds no Rally session, so without this a mobile authorization cannot finish. */
+export const CONNECTOR_AUTH_SESSION_CAPABILITY = 'connector-auth-session';
 /** What this shell declares to the browser host. */
-export const MOBILE_CAPABILITIES = [ARTIFACT_PICKER_CAPABILITY, SETTINGS_CAPABILITY, OPEN_EXTERNAL_CAPABILITY];
+export const MOBILE_CAPABILITIES = [ARTIFACT_PICKER_CAPABILITY, SETTINGS_CAPABILITY, OPEN_EXTERNAL_CAPABILITY, CONNECTOR_AUTH_SESSION_CAPABILITY];
 export const MOBILE_CAPABILITIES_GLOBAL = '__RALLY_MOBILE_CAPABILITIES__';
 export type PreparedCanvas = z.infer<typeof PreparedCanvasSchema>;
 
@@ -165,6 +171,8 @@ export const MobileEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('open-canvas'), id: z.string().min(1) }),
   /** A link the page would open in a new tab (checkout, a connector's sign-in). */
   z.object({ type: z.literal('open-external'), url: HttpUrlSchema }),
+  /** A connector's sign-in page, which returns to the app's connector callback. */
+  z.object({ type: z.literal('connector-authorize'), url: HttpUrlSchema }),
   z.object({ type: z.literal('signed-out') }),
   z.object({ type: z.literal('snapshot'), snapshot: MobileSnapshotSchema }),
 ]);
@@ -195,6 +203,8 @@ export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('switch-workspace') }),
   z.object({ type: z.literal('open-prepared-artifact'), requestId: z.string(), userId: z.string(), workspaceId: z.string(), canvas: PreparedCanvasSchema }),
   z.object({ type: z.literal('reopen-artifact'), canvasId: z.string(), resourceId: z.string() }),
+  /** The connector callback a `connector-authorize` auth session returned to. */
+  z.object({ type: z.literal('connector-complete'), url: z.string().startsWith(MOBILE_CONNECTOR_CALLBACK) }),
 ]);
 export type MobileCommand = z.infer<typeof MobileCommandSchema>;
 

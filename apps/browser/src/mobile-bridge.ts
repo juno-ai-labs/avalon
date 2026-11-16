@@ -1,6 +1,7 @@
 import { installDynamicType } from './dynamic-type';
 import { MOBILE_SIGN_IN_PATH } from '../../mobile/src/auth-contract';
-import { MOBILE_CAPABILITIES_GLOBAL, MOBILE_CHANNEL, MOBILE_COMMAND_EVENT, OPEN_EXTERNAL_CAPABILITY, VISIBLE_PIN_COUNT, MobileCommandSchema, type MobileEvent } from '../../mobile/src/protocol';
+import { isMobileConnectorAuthorization } from '../../desktop/src/renderer/lib/mobile-connector-handoff';
+import { CONNECTOR_AUTH_SESSION_CAPABILITY, MOBILE_CAPABILITIES_GLOBAL, MOBILE_CHANNEL, MOBILE_COMMAND_EVENT, OPEN_EXTERNAL_CAPABILITY, VISIBLE_PIN_COUNT, MobileCommandSchema, type MobileEvent } from '../../mobile/src/protocol';
 
 let latest: MobileEvent | null = null;
 let screenReady = false;
@@ -18,7 +19,13 @@ export function mobileCapability(name: string): boolean {
 /** How a link leaves the page when the shell opens it in the system browser,
  * or null where the page opens its own tab. Asked at each click. */
 export function shellExternalLinkOpener(): ((url: string) => void) | null {
-  return mobileCapability(OPEN_EXTERNAL_CAPABILITY) ? (url) => postMobileEvent({ type: 'open-external', url }) : null;
+  if (!mobileCapability(OPEN_EXTERNAL_CAPABILITY)) return null;
+  const authSession = mobileCapability(CONNECTOR_AUTH_SESSION_CAPABILITY);
+  // A connector authorization this page started returns to the app, which
+  // hands its callback back here to claim (`connector-complete`).
+  return (url) => postMobileEvent(authSession && isMobileConnectorAuthorization(url)
+    ? { type: 'connector-authorize', url }
+    : { type: 'open-external', url });
 }
 
 export function isMobileHost(): boolean {

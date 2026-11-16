@@ -9,6 +9,7 @@ import { ArtifactLinkSchema } from '@rally/contracts/artifact-access';
 import { BillingStatusSchema, BillingUrlSchema, BillingCreditsSchema, BillingOveragePreferenceSchema } from '@rally/contracts/billing';
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
+import { ConnectorOAuthClaimSchema, type ConnectorOAuthClaim } from '@rally/contracts/connector-oauth-claim';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
 import {
   ElicitationSchema,
@@ -113,6 +114,7 @@ import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { localCacheScope } from './local-cache';
 import { ResourcePreviewCache } from './resource-preview-cache';
 import { isCookieSession, type CookieClientSession } from '@rally/contracts/client-session';
+import { browserConnectorHandoff, recordMobileConnectorAuthorization } from './mobile-connector-handoff';
 import { logDebug } from '../../common/logger';
 import { isSocketTicketRequestTimeoutError, requestSocketTicket } from './socket-ticket-request';
 import { fetchWithNetworkRecovery, networkRecoveryGeneration, reportNetworkTicket, waitForNetworkRecovery } from './network-recovery';
@@ -759,7 +761,7 @@ export class RallyApi {
    */
   private connectorHandoffQuery(): string {
     const cookie = isCookieSession(this.session);
-    return cookie ? 'handoff=browser' : 'desktopHandoffVersion=2';
+    return cookie ? `handoff=${browserConnectorHandoff()}` : 'desktopHandoffVersion=2';
   }
 
   private async request<T>(path: string, options: RequestOptions<T>): Promise<T>;
@@ -786,6 +788,12 @@ export class RallyApi {
         issues: parsed.error.issues,
         path,
       });
+    }
+    if (path.includes('handoff=mobile')) {
+      const started: unknown = parsed.data;
+      if (started && typeof started === 'object' && 'url' in started && typeof started.url === 'string') {
+        recordMobileConnectorAuthorization(started.url);
+      }
     }
     return parsed.data;
   }
@@ -2293,6 +2301,15 @@ export class RallyApi {
         schema: WireConnectorOAuthStartSchema,
       },
     );
+  }
+
+  /**
+   * Claim a connector authorization this session started and its provider
+   * has answered (`docs/connectors.md`, "Claiming a connector
+   * authorization"). Answers with the completion link the client then reads.
+   */
+  async claimConnectorOAuth(ticket: string): Promise<ConnectorOAuthClaim> {
+    return this.request('/connections/oauth/claim', { method: 'POST', body: { ticket }, schema: ConnectorOAuthClaimSchema });
   }
 
   async getConnectorOAuthAttempt(attemptId: string, signal?: AbortSignal): Promise<ConnectorOAuthAttempt> {

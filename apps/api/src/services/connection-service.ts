@@ -76,6 +76,7 @@ import {
   githubConnectorConfig,
   xConnectorConfig,
 } from "../lib/connector-registry";
+import { MOBILE_CONNECTOR_CALLBACK } from "@rally/contracts/connector-oauth-claim";
 import { encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import {
   compatibleDesktopDeepLink,
@@ -219,6 +220,21 @@ function connectorIngressRouteValues(
 }
 
 type OAuthConnectorProvider = Exclude<ConnectorOAuthProvider, "google" | "github">;
+
+/** What a provider's callback carried, sealed on its state until the starting client claims it. */
+const HeldConnectorCallbackSchema = z.strictObject({
+  code: z.string().min(1),
+  /** Google's picker returns the files the person chose beside the code. */
+  pickedResourceIds: z.array(z.string().min(1)).optional(),
+});
+export type HeldConnectorCallback = z.infer<typeof HeldConnectorCallbackSchema>;
+
+export interface ClaimedConnectorCallback {
+  provider: ConnectorOAuthProvider;
+  state: string;
+  purpose: string;
+  callback: HeldConnectorCallback;
+}
 
 /** What a custom MCP authorization carries from its start to its callback. */
 interface CustomMcpStartConfiguration {
@@ -2151,6 +2167,89 @@ export class ConnectionService {
     });
   }
 
+  /**
+   * Hold a provider's answer until the client that started the authorization
+   * claims it (`docs/connectors.md`, "Claiming a connector authorization").
+   *
+   * The callback is unauthenticated, and the state names only who *started*
+   * the authorization, never who consented: anyone can start one and send the
+   * provider's consent page to someone else. So nothing is exchanged or
+   * attached here. The ticket goes back only to the browser that consented,
+   * and `claimCallback` needs it and the starting session together.
+   */
+  async holdCallback(provider: ConnectorOAuthProvider, state: string, callback: HeldConnectorCallback): Promise<string> {
+    const ticket = randomToken(32);
+    const row = await this.env.DB.prepare(
+      `UPDATE oauth_states SET held_callback_encrypted = ?, claim_hash = ?
+       WHERE id = ? AND provider = ? AND region = ?
+         AND purpose IN ('connector', 'github_install', 'resource_authorization')
+         AND consumed_at IS NULL AND expires_at > ? AND claim_hash IS NULL
+       RETURNING workspace_id, return_uri, code_verifier_encrypted`,
+    ).bind(
+      await sealString(JSON.stringify(HeldConnectorCallbackSchema.parse(callback)), this.env.OAUTH_STATE_ENCRYPTION_KEY),
+      await sha256(ticket),
+      state,
+      provider,
+      this.env.AVALON_REGION,
+      nowIso(),
+    ).first<Record<string, unknown>>();
+    if (!row) throw new ApiError(401, "invalid_oauth_state", "The connector authorization is invalid or expired");
+    return this.connectorAttemptTarget({
+      provider,
+      status: "authorized",
+      ticket,
+      attemptId: await this.oauthAttemptIdFromState(row),
+      workspaceId: String(row.workspace_id),
+      returnUri: String(row.return_uri),
+    });
+  }
+
+  /**
+   * Admit a held callback for this session, or refuse it. A session that did
+   * not start the authorization is the attack the hold exists for, so its
+   * claim also burns the state: the provider's code is never exchanged, and
+   * the starter's attempt ends failed.
+   */
+  async claimCallback(ticket: string): Promise<ClaimedConnectorCallback> {
+    const auth = this.requireAuth();
+    const row = await this.env.DB.prepare(
+      `SELECT id, provider, purpose, user_id, workspace_id, held_callback_encrypted FROM oauth_states
+       WHERE claim_hash = ? AND region = ? AND consumed_at IS NULL AND expires_at > ?`,
+    ).bind(await sha256(ticket), this.env.AVALON_REGION, nowIso()).first<{
+      id: string; provider: string; purpose: string; user_id: string | null; workspace_id: string | null;
+      held_callback_encrypted: string | null;
+    }>();
+    if (!row?.held_callback_encrypted) {
+      throw new ApiError(401, "invalid_oauth_state", "The connector authorization is invalid or expired");
+    }
+    const provider = ConnectorOAuthProviderSchema.parse(row.provider);
+    if (row.user_id !== auth.userId || row.workspace_id !== auth.workspaceId) {
+      await this.env.DB.prepare("UPDATE oauth_states SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL")
+        .bind(nowIso(), row.id).run();
+      await this.failProviderAttempt(provider, row.id, "connector_oauth_account_mismatch");
+      throw new ApiError(
+        403,
+        "connector_oauth_account_mismatch",
+        "This authorization was started from a different Rally account. Start the connection again from your own account.",
+      );
+    }
+    const callback = HeldConnectorCallbackSchema.parse(
+      JSON.parse(await openString(row.held_callback_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY)),
+    );
+    return { provider, state: row.id, purpose: row.purpose, callback };
+  }
+
+  /** Finish a claimed callback exactly as the callback itself once did. */
+  completeClaimedCallback(claimed: ClaimedConnectorCallback): Promise<string> {
+    const { provider, state, purpose, callback } = claimed;
+    if (purpose === "resource_authorization") {
+      return this.completeResourceAuthorization(provider, callback.code, state, callback.pickedResourceIds ?? []);
+    }
+    if (provider === "github") return this.completeGitHub(callback.code, state);
+    if (provider === "google") return this.completeGoogle(callback.code, state);
+    return this.completeProvider(provider, callback.code, state);
+  }
+
   async getOAuthAttempt(attemptId: string): Promise<ConnectorOAuthAttempt> {
     const auth = this.requireAuth();
     // Lazy expiry and the read are one object transaction, member-scoped: the
@@ -4027,6 +4126,7 @@ export class ConnectionService {
 
   /** Where a started authorization returns: the desktop that asked, or the browser's completion page. */
   private connectorReturnUri(handoff: ConnectorHandoff, workspaceId: string): string {
+    if (handoff === "mobile") return MOBILE_CONNECTOR_CALLBACK;
     if (handoff === "browser") {
       const page = browserConnectorCompletionUrl(this.env);
       if (!page) throw new ApiError(503, "browser_configuration_required", "Browser access is not configured");

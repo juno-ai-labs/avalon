@@ -30,6 +30,7 @@ import { getAuth } from "../middleware/auth";
 import { noteChangedConnection } from "../middleware/workspace-realtime";
 import { ApiError } from "../lib/api-error";
 import { classifyConnectorOAuthCallbackFailure } from "../lib/connector-oauth-error";
+import { ConnectorOAuthClaimRequestSchema, ConnectorOAuthClaimSchema } from "@rally/contracts/connector-oauth-claim";
 import { desktopHandoffUrl, unknownConnectorAttemptFailureTarget, type ConnectorHandoff } from "../lib/desktop-handoff";
 import { logEvent } from "../observability/logger";
 import { ConnectionService } from "../services/connection-service";
@@ -204,11 +205,13 @@ async function bindConnectorTelemetry(
 
 /**
  * How this start returns to its client. The browser asks with
- * `?handoff=browser` and returns to its completion page; a desktop build sends
- * its deep-link version.
+ * `?handoff=browser` and returns to its completion page, the mobile app with
+ * `?handoff=mobile` to its auth session; a desktop build sends its deep-link
+ * version.
  */
 function desktopHandoffVersion(c: Context<HonoAppEnv>): ConnectorHandoff {
   if (c.req.query('handoff') === 'browser') return 'browser';
+  if (c.req.query('handoff') === 'mobile') return 'mobile';
   return c.req.query('desktopHandoffVersion') === '2' ? 2 : 1;
 }
 
@@ -365,6 +368,33 @@ connectionRoutes.post("/slack/link/preview", zValidator("json", slackLink), asyn
 connectionRoutes.post("/slack/link", zValidator("json", slackLink), async (c) =>
   c.json(SlackLinkedSchema.parse(await new SlackAgentService(c.env).linkUser(getAuth(c), c.req.valid("json").token))),
 );
+/**
+ * The second half of a connector authorization: the signed-in client that
+ * started it presents the ticket its callback handed back. A failure after the
+ * claim is admitted ends the attempt as the callback once did, and answers with
+ * that failure's link rather than an error.
+ */
+connectionRoutes.post("/oauth/claim", zValidator("json", ConnectorOAuthClaimRequestSchema), async (c) => {
+  const service = new ConnectionService(c.env, getAuth(c));
+  const claimed = await service.claimCallback(c.req.valid("json").ticket);
+  try {
+    return c.json(ConnectorOAuthClaimSchema.parse({ target: await service.completeClaimedCallback(claimed) }));
+  } catch (error) {
+    const failure = classifyConnectorOAuthCallbackFailure(error);
+    logEvent(c, failure.level, "connector_oauth_claim_failed", {
+      provider: claimed.provider,
+      code: failure.errorCode,
+      ...failure.diagnostics,
+    });
+    const target = await recoverConnectorCallback(
+      c,
+      claimed.provider,
+      failure.errorCode,
+      () => service.failProviderAttempt(claimed.provider, claimed.state, failure.errorCode),
+    );
+    return c.json(ConnectorOAuthClaimSchema.parse({ target }));
+  }
+});
 connectionRoutes.get("/oauth-attempts/:attemptId", zValidator("param", oauthAttemptParam), async (c) =>
   c.json(ConnectorOAuthAttemptSchema.parse(
     await new ConnectionService(c.env, getAuth(c)).getOAuthAttempt(c.req.valid("param").attemptId))),
@@ -444,18 +474,22 @@ async function recoverConnectorCallback(
   }
 }
 
+/**
+ * A provider's answer to an authorization. A denial attaches nothing and ends
+ * here; a code is only held, for the client that started the authorization to
+ * claim (`docs/connectors.md`, "Claiming a connector authorization").
+ */
 async function connectorCallback(
   c: CallbackContext,
   provider: ConnectorOAuthProvider,
   query: z.infer<typeof googleCallback>,
-  complete: (service: ConnectionService, code: string, state: string) => Promise<string>,
 ): Promise<Response> {
   const service = new ConnectionService(c.env);
   c.header("Cache-Control", "no-store");
   try {
     const target = query.error
       ? await service.completeProviderDenial(provider, query.state)
-      : await complete(service, query.code!, query.state);
+      : await service.holdCallback(provider, query.state, { code: query.code! });
     return c.redirect(desktopHandoffUrl(c.env, target), 302);
   } catch (error) {
     const failure = classifyConnectorOAuthCallbackFailure(error);
@@ -500,7 +534,7 @@ connectionCallbackRoutes.get("/github/setup", zValidator("query", githubSetup), 
 });
 connectionCallbackRoutes.get("/github/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  return connectorCallback(c, "github", query, (service, code, state) => service.completeGitHub(code, state));
+  return connectorCallback(c, "github", query);
 });
 connectionCallbackRoutes.get("/google/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
@@ -510,12 +544,10 @@ connectionCallbackRoutes.get("/google/callback", zValidator("query", googleCallb
     try {
       const target = query.error
         ? await service.completeResourceAuthorizationDenial("google", query.state)
-        : await service.completeResourceAuthorization(
-            "google",
-            query.code!,
-            query.state,
-            query.picked_file_ids?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
-          );
+        : await service.holdCallback("google", query.state, {
+            code: query.code!,
+            pickedResourceIds: query.picked_file_ids?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
+          });
       return c.redirect(desktopHandoffUrl(c.env, target), 302);
     } catch (error) {
       const failure = classifyConnectorOAuthCallbackFailure(error);
@@ -533,11 +565,11 @@ connectionCallbackRoutes.get("/google/callback", zValidator("query", googleCallb
       return c.redirect(desktopHandoffUrl(c.env, target), 302);
     }
   }
-  return connectorCallback(c, "google", query, (service, code, state) => service.completeGoogle(code, state));
+  return connectorCallback(c, "google", query);
 });
 connectionCallbackRoutes.get("/linear/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  return connectorCallback(c, "linear", query, (service, code, state) => service.completeProvider("linear", code, state));
+  return connectorCallback(c, "linear", query);
 });
 /**
  * Notion registers one redirect URI for the whole public connection, so this
@@ -549,8 +581,7 @@ connectionCallbackRoutes.get("/linear/callback", zValidator("query", googleCallb
 connectionCallbackRoutes.get("/notion/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
   if (!isSharedNotionIngress(c.env, c.req.url)) {
-    return connectorCallback(c, "notion", query, (service, code, state) =>
-      service.completeProvider("notion", code, state));
+    return connectorCallback(c, "notion", query);
   }
   const routing = new NotionRoutingService(c.env);
   c.header("Cache-Control", "no-store");
@@ -577,30 +608,29 @@ connectionCallbackRoutes.get("/notion/callback", zValidator("query", googleCallb
 });
 connectionCallbackRoutes.get("/custom-mcp/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  return connectorCallback(c, "custom_mcp", query, (service, code, state) =>
-    service.completeProvider("custom_mcp", code, state));
+  return connectorCallback(c, "custom_mcp", query);
 });
 connectionCallbackRoutes.get("/ashby/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  return connectorCallback(c, "ashby", query, (service, code, state) => service.completeProvider("ashby", code, state));
+  return connectorCallback(c, "ashby", query);
 });
 connectionCallbackRoutes.get("/canva/callback", zValidator("query", googleCallback), async (c) => {
-  return connectorCallback(c, "canva", c.req.valid("query"), (service, code, state) => service.completeProvider("canva", code, state));
+  return connectorCallback(c, "canva", c.req.valid("query"));
 });
 connectionCallbackRoutes.get("/apollo/callback", zValidator("query", googleCallback), async (c) => {
-  return connectorCallback(c, "apollo", c.req.valid("query"), (service, code, state) => service.completeProvider("apollo", code, state));
+  return connectorCallback(c, "apollo", c.req.valid("query"));
 });
 connectionCallbackRoutes.get("/fireflies/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  return connectorCallback(c, "fireflies", query, (service, code, state) => service.completeProvider("fireflies", code, state));
+  return connectorCallback(c, "fireflies", query);
 });
 connectionCallbackRoutes.get("/granola/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  return connectorCallback(c, "granola", query, (service, code, state) => service.completeProvider("granola", code, state));
+  return connectorCallback(c, "granola", query);
 });
 connectionCallbackRoutes.get("/slack/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  return connectorCallback(c, "slack", query, (service, code, state) => service.completeProvider("slack", code, state));
+  return connectorCallback(c, "slack", query);
 });
 
 export const webhookIngestionRoutes = new Hono<HonoAppEnv>();
