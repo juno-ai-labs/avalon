@@ -115,9 +115,11 @@ const systemClock: TerminalClock = {
 export const TERMINAL_BUSY_WAIT_MS = 5_000;
 
 /**
- * How often a waiting call tries the lease again: each try is one hop to the
- * conversation object, so this is at most twenty hops per waiting call. Chosen
- * here, not by the team; nothing else depends on it.
+ * How often a waiting call tries the lease again: twenty retries in a full
+ * wait. Each costs about three hops: re-reading the row and claiming it from
+ * the Terminal's object, and, for a holder in another conversation, asking
+ * that conversation whether it has yielded. Chosen here, not by the team;
+ * nothing else depends on it.
  */
 const TERMINAL_BUSY_RETRY_MS = 250;
 
@@ -462,7 +464,10 @@ export class TerminalSandboxCoordinator {
     // A `planned` import is a sibling's import in flight while the lease is
     // live: its call holds the lease and settles the row. A read may see its
     // files half copied, as it may see any file mid-write. Once the lease has
-    // lapsed, a `planned` import is left over and readiness cleans it up.
+    // lapsed, a `planned` import is left over and readiness cleans it up. The
+    // row names no run, so a leftover import also passes while an unrelated
+    // run holds the lease (one taken by `claimMutation`, or by a background
+    // agent that may not rebuild): those reads can see its half-copied files.
     const importInFlight = row.operationRunId !== null
       && (row.operationLeaseExpiresAt ?? 0) > this.clock.now().getTime();
     if (await this.hasRevokedImportedResource(context, row, importInFlight)) return null;
@@ -830,8 +835,11 @@ export class TerminalSandboxCoordinator {
     for (let waited = 0; ; waited += TERMINAL_BUSY_RETRY_MS) {
       const claimed = await this.tryClaimOperation(context, current, at, waited === 0);
       if (claimed) return claimed;
-      if (waited >= TERMINAL_BUSY_WAIT_MS || context.signal.aborted) break;
+      if (waited >= TERMINAL_BUSY_WAIT_MS) break;
       await this.clock.sleep(TERMINAL_BUSY_RETRY_MS, context.signal);
+      if (context.signal.aborted) {
+        throw new TerminalToolError("cancelled", "The Terminal operation was cancelled while it waited for the workspace lease.");
+      }
       current = await this.terminal(context).sandbox() ?? current;
       at = this.clock.now().getTime();
     }
