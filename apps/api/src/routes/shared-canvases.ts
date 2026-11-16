@@ -2,21 +2,22 @@ import { SharedCanvasesSettingSchema } from "@rally/contracts/canvas-share-feder
 import { Hono } from "hono";
 
 import type { HonoAppEnv } from "../env";
+import { requestDeferral } from "../lib/defer";
 import { getWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
+import { logWarn, diagnosticErrorCode } from "../observability/logger";
 import {
-  publishSharedCanvasesToOrganizations,
   readSharedCanvasesEnabled,
+  refreshSharedCanvasesEverywhere,
   writeSharedCanvasesEnabled,
-} from "../services/canvas-share-inbox";
+} from "../services/shared-canvases";
 
 /**
  * Settings › Account › Preferences: whether Canvases shared with this person
- * in their other Organizations join every Organization's list. Stored on their
- * inbox, so one switch covers every Organization in this deployment; a change
- * is pushed to all of them, this one included. Members and guests alike, with
- * a support session refused, since it spans the person's other Organizations.
- * `docs/canvas-share-federation.md`.
+ * as a guest elsewhere join every Organization's list. One switch for every
+ * Organization in this deployment; a change rebuilds all of them after the
+ * answer. Members and guests alike, with a support session refused, since it
+ * spans the person's other Organizations. `docs/canvas-share-federation.md`.
  */
 export const sharedCanvasesRoutes = new Hono<HonoAppEnv>();
 sharedCanvasesRoutes.get("/", async (c) =>
@@ -25,6 +26,7 @@ sharedCanvasesRoutes.put("/", zValidator("json", SharedCanvasesSettingSchema), a
   const { userId } = getWorkspaceAuth(c);
   const { enabled } = c.req.valid("json");
   await writeSharedCanvasesEnabled(c.env, userId, enabled);
-  await publishSharedCanvasesToOrganizations(c.env, userId, null);
+  requestDeferral(c)(refreshSharedCanvasesEverywhere(c.env, userId).catch((error: unknown) =>
+    logWarn(c.env, "shared_canvases_refresh_failed", { user_id: userId, code: diagnosticErrorCode(error, "shared_canvases_refresh_failed") })));
   return c.json(SharedCanvasesSettingSchema.parse({ enabled }));
 });

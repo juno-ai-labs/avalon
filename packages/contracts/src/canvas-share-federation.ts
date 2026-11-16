@@ -5,45 +5,36 @@ import { RegionSchema } from "./regions";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 
 /*
- * Canvases shared with a person, federated across their Organizations
- * (`docs/canvas-share-federation.md`). The Canvas's own Organization is the
- * authority and only publishes; the person's "Shared with me" inbox is a
- * per-person index in the regional D1; every other Organization the person
- * opens reads that inbox onto their socket.
+ * Canvases shared with a guest, shown in every other Organization they open
+ * (`docs/canvas-share-federation.md`). Nothing about a Canvas is stored outside
+ * its Organization: when a list is built, the Canvas's own Organization is
+ * asked, and it answers only for a guest of its own explicitly added to the
+ * Canvas. Changes there only invalidate; nothing is replicated.
  */
 
 /**
- * The outbox's activity-queue message: an address only. The consumer asks the
- * Canvas's Organization for this person's current state of it, so a removal
- * needs no record of whom it told, and a late delivery reads the latest state.
+ * The interactive-queue message that rebuilds one person's shared-Canvas
+ * lists. `others`: something changed for them in `workspaceId` (a share, an
+ * unshare, a rename, their relationship), so every other Organization they are
+ * in rebuilds. `this`: their socket in `workspaceId` just subscribed.
  */
-export const CanvasShareChangedMessageSchema = z.strictObject({
-  kind: z.literal("canvas_share_changed"),
+export const SharedCanvasesRefreshMessageSchema = z.strictObject({
+  kind: z.literal("shared_canvases_refresh"),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  canvasId: IdSchema,
   userId: UserIdSchema,
+  scope: z.enum(["others", "this"]),
 });
-export type CanvasShareChangedMessage = z.infer<typeof CanvasShareChangedMessageSchema>;
+export type SharedCanvasesRefreshMessage = z.infer<typeof SharedCanvasesRefreshMessageSchema>;
 
-/**
- * One person's state of one Canvas, as its Organization answers the consumer.
- * `revision` orders deliveries: the inbox keeps the highest it has seen. A
- * Canvas that no longer exists answers `gone`, which removes it whatever its
- * revision, since a deleted Canvas never comes back.
- */
-export const CanvasShareStateSchema = z.discriminatedUnion("state", [
-  z.strictObject({
-    state: z.literal("shared"),
-    revision: z.number().int().nonnegative(),
-    title: z.string().max(300),
-    appearance: WorkstreamAppearanceSchema.nullable(),
-    updatedAt: z.number().int().nonnegative(),
-  }),
-  z.strictObject({ state: z.literal("unshared"), revision: z.number().int().nonnegative() }),
-  z.strictObject({ state: z.literal("gone") }),
-]);
-export type CanvasShareState = z.infer<typeof CanvasShareStateSchema>;
+/** One Canvas as its own Organization answers for a guest it is shared with. */
+export const GuestSharedCanvasSchema = z.strictObject({
+  id: IdSchema,
+  title: z.string().max(300),
+  appearance: WorkstreamAppearanceSchema.nullable(),
+  updatedAt: z.number().int().nonnegative(),
+});
+export type GuestSharedCanvas = z.infer<typeof GuestSharedCanvasSchema>;
 
 /** A Canvas shared with this person in another of their Organizations, as their list shows it. */
 export const SharedCanvasSchema = z.strictObject({
@@ -59,8 +50,8 @@ export type SharedCanvas = z.infer<typeof SharedCanvasSchema>;
 
 /**
  * The workspace socket's push of a person's shared Canvases from their other
- * Organizations: after every subscribe, and whenever their inbox or their
- * setting changes. Its own event type, which a released client ignores.
+ * Organizations: after every subscribe, and whenever one of those Canvases or
+ * their setting changes. Its own event type, which a released client ignores.
  * `items` is empty while `enabled` is off.
  */
 export const WorkspaceSharedCanvasesEventSchema = z.strictObject({

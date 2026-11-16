@@ -425,8 +425,8 @@ Each regional Worker owns its workspace sessions, membership lifecycle, product
 objects, and attention projection. Electron owns only encrypted credentials,
 cached profiles, drafts, the active selection, and recency for one device. It
 never turns aggregate attention into a content cache, and background workspaces
-never acquire a product WebSocket. Canvases shared with the person in their
-other Organizations reach the active one from the server, on its own socket
+never acquire a product WebSocket. Canvases shared with the person as a guest
+in their other Organizations reach the active one from the server, on its own socket
 ([`canvas-share-federation.md`](canvas-share-federation.md)); no client reads
 another Organization for them.
 

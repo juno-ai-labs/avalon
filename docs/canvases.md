@@ -596,16 +596,17 @@ mount, which has to be decided before drag-to-reorder lands in the client.
 
 ### Shared from another Organization
 
-A Canvas shared with a person (`sharedWithMe`) also appears in the list of
-every other Organization they open, with that Organization's initial on its top
-right, unless they turned it off (Settings › Account › Preferences). The server
-sends these rows on the workspace socket (`workspace_shared_canvases`); how a
-share is published, held in the person's inbox and pushed is
-[`canvas-share-federation.md`](canvas-share-federation.md)'s. Here it costs a
-`share_revision` column, the outbox triggers on `canvas_participants` and
-`canvas_directory`, and three RPCs, one of which answers another Organization's
-list, for one person and only about Canvases shared with them. In the client a shared row has no menu, drag
-or pin and opens in its own Organization.
+A Canvas explicitly shared with a guest of this Organization (on its
+participant list) also appears in the list of every other Organization that
+guest opens, with this Organization's initial on its top right, unless they
+turned it off (Settings › Account › Preferences). Members of this Organization
+never have its Canvases shown elsewhere, nor does Organization-wide visibility
+or a writer Sidekick's audience federate anything. How it is built and pushed
+is [`canvas-share-federation.md`](canvas-share-federation.md)'s; here it costs
+triggers on `canvas_participants`, `canvas_directory` and
+`workspace_member_status` that queue a refresh, and one RPC that answers for a
+guest of its own. In the client a shared row has no menu, drag or pin and opens
+in its own Organization.
 
 ### Presence
 
@@ -1055,25 +1056,22 @@ why the refresh lease shares the owning object's transaction.
 
 ## Changelog
 
-### 2026-11-16 — Shared Canvases federate to every Organization a person opens
+### 2026-11-16 — A guest's shared Canvases show in their other Organizations
 
-**What changed:** Each Canvas publishes who it is shared with through an outbox
-(`share_revision` and triggers on `canvas_participants` and `canvas_directory`,
-WorkspaceDO migration 150), and answers `canvasShareState` for one person.
-Every other Organization the person opens lists those Canvases, badged with
-their Organization; [`canvas-share-federation.md`](canvas-share-federation.md)
-owns the mechanism.
+**What changed:** Triggers on `canvas_participants`, `canvas_directory` and
+`workspace_member_status` (WorkspaceDO migration 150) queue a refresh when a
+guest's view of a Canvas here may have changed, and `guestSharedCanvases`
+answers for a guest of this Organization; a guest's other Organizations list
+those Canvases ([`canvas-share-federation.md`](canvas-share-federation.md)).
 
-**Why:** A guest in a partner's Organization, or a member of several, had to
-switch Organization to find what was shared with them.
+**Why:** A guest of a partner's Organization had to switch Organization to find
+what was shared with them.
 
-**Considered and rejected:** Having each client read every other Organization's
-list, which this branch built first and removed: three clients each doing the
-work, and lists only as fresh as the last window focus.
+**Considered and rejected:** Federating every Canvas a person is on, members
+included: an Organization's Canvases stay inside it for its members.
 
-**Consequences:** Anything that adds a way to share a Canvas must write
-`canvas_participants`, or the share will not federate. A rename, re-icon or
-archive publishes to everyone it is shared with; activity alone does not.
+**Consequences:** Anything that adds a way to share a Canvas with a guest must
+write `canvas_participants`, or the share will not show elsewhere.
 
 ### 2026-11-15 — A person the Canvas admits can join its participant list
 
