@@ -77,7 +77,8 @@ function fixture() {
     createdAt: Date.parse("2026-08-13"),
   });
   let now = new Date("2026-08-13T12:00:00.000Z");
-  const clock: TerminalClock = { now: () => new Date(now) };
+  // The busy wait sleeps through this; a frozen clock makes each try answer the same.
+  const clock: TerminalClock = { now: () => new Date(now), sleep: async () => undefined };
   const provider: TerminalSandboxProvider = {
     createSandbox: vi.fn(async (input) => ({
       id: `sandbox-${input.generation}`,
@@ -1342,6 +1343,90 @@ describe("Terminal sandbox coordinator", () => {
       .resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
     expect(provider.createSandbox).toHaveBeenCalledOnce();
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
+  });
+
+  it("waits for a sibling's call to release the lease and then does the work", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const sibling = "00000000-0000-4000-8000-0000000000c1";
+    seedWorkstreamRun(objectStore, { id: sibling, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    const holder = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await holder.acquire(context());
+    const slept: number[] = [];
+    const waiting = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, {
+      now: clock.now,
+      // The holder's call ends during the second wait.
+      sleep: async (ms) => { slept.push(ms); if (slept.length === 2) await holder.release(context()); },
+    });
+    await expect(waiting.acquire({ ...context(), harnessRunId: sibling, toolCallId: "sibling-call" }))
+      .resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    expect(slept).toEqual([250, 250]);
+  });
+
+  it("counts the time each try takes against the five seconds", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const sibling = "00000000-0000-4000-8000-0000000000c6";
+    seedWorkstreamRun(objectStore, { id: sibling, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    const holder = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await holder.acquire(context());
+    // Every reading of the clock is a second later: slow object calls.
+    let elapsed = 0;
+    const slept: number[] = [];
+    const waiting = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, {
+      now: () => new Date(clock.now().getTime() + (elapsed += 1_000)),
+      sleep: async (ms) => { slept.push(ms); },
+    });
+    await expect(waiting.acquire({ ...context(), harnessRunId: sibling, toolCallId: "sibling-call" }))
+      .rejects.toMatchObject({ code: "sandbox_busy" });
+    expect(slept.length).toBeLessThan(5);
+  });
+
+  it("answers cancelled, not sandbox_busy, when the call is cancelled while it waits", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const sibling = "00000000-0000-4000-8000-0000000000c5";
+    seedWorkstreamRun(objectStore, { id: sibling, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    const holder = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await holder.acquire(context());
+    const cancel = new AbortController();
+    const waiting = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, {
+      now: clock.now, sleep: async () => { cancel.abort(); },
+    });
+    await expect(waiting.acquire({ ...context(), harnessRunId: sibling, toolCallId: "sibling-call", signal: cancel.signal }))
+      .rejects.toMatchObject({ code: "cancelled" });
+  });
+
+  it("lets a read pass over a sibling's import in flight but not one left over", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const sibling = "00000000-0000-4000-8000-0000000000c3";
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    // The holder's import has written its row and is still copying the files.
+    workstreamObjectRun(objectStore, `INSERT INTO terminal_imported_resources
+      (sandbox_generation, resource_id, destination_path, source_sha256, size_bytes, state, imported_at, updated_at)
+      VALUES (1, '00000000-0000-4000-8000-0000000000c4', 'art.png', 'digest', 1, 'planned', NULL, 1)`);
+    const read = { ...context(), harnessRunId: sibling, toolCallId: "sibling-read" };
+    await expect(coordinator.peekRunning(read)).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    // The holder is gone without settling it: the import is left over.
+    await coordinator.release(context());
+    await expect(coordinator.peekRunning(read)).resolves.toBeNull();
+  });
+
+  it("answers sandbox_busy after five seconds of a sibling holding the lease", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const sibling = "00000000-0000-4000-8000-0000000000c2";
+    seedWorkstreamRun(objectStore, { id: sibling, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    const holder = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await holder.acquire(context());
+    let slept = 0;
+    const waiting = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, {
+      now: clock.now, sleep: async (ms) => { slept += ms; },
+    });
+    await expect(waiting.acquire({ ...context(), harnessRunId: sibling, toolCallId: "sibling-call" }))
+      .rejects.toMatchObject({ code: "sandbox_busy" });
+    expect(slept).toBe(5_000);
   });
 
   it("holds a publication build's lease against an agent run until it expires, though no run backs it", async () => {
