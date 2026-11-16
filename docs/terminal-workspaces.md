@@ -1509,42 +1509,32 @@ update lag before changing the default.
 
 ### 2026-11-16 — A busy lease is waited out inside the tool call, and reads pass over an import in flight
 
-**What changed:** `claimOperation` in `coordinator.ts` tries the lease again
-every 250 ms for up to five seconds (`TERMINAL_BUSY_WAIT_MS`) before it
-answers `sandbox_busy`, reading the row again on each try. Only the first try
-runs `recoverYieldedOperation`. `TerminalClock` gained `sleep`, so a test with
-a frozen clock waits no real time.
+**What changed:** A call waits up to `TERMINAL_BUSY_WAIT_MS` for a sibling's
+lease before answering `sandbox_busy`, and `peekRunning` passes over a
+`planned` import while a lease is live (both described above).
 
 **Why:** A Canvas's Chat started four background agents on one newsletter
-site. They shared the Canvas's Terminal, and five calls across three agents
-were refused `sandbox_busy` while a sibling's call ran. Each agent handled the
-refusal its own way: one retried by hand, one asked its siblings to stay out of
-the Terminal, and one skipped a feed test it never ran again. Every refusal was a wait of seconds that the tool could
-have waited out itself. The team set the wait at five seconds, the same delay
-the refusal already asks the model for.
+site, sharing its Terminal. Five calls across three agents were refused
+`sandbox_busy` while a sibling's call ran: one agent retried by hand, one asked
+its siblings to stay out of the Terminal, and one skipped a feed test it never
+ran again. Each was a wait of seconds the tool could have waited out. One of
+the five was a `read_file`, which takes no lease: the artwork agent's import
+was still `planned`, `hasRevokedImportedResource` counted that as revoked, and
+the read fell back to readiness and the importer's lease. The team set the
+wait at five seconds, the delay the refusal already asks the model for.
 
-A read was refused `sandbox_busy` too, though reads take no lease. The
-artwork agent's `import_resource` had written its row as `planned` and was
-still uploading. `hasRevokedImportedResource` counted any import that was not
-`completed` as revoked, so `peekRunning` turned the read away, and the read's
-readiness hit the importing agent's lease. Now `peekRunning` passes over a
-`planned` import while a run holds a live lease, since that run will settle
-it.
+**Considered and rejected:** Recovering on every try, which asks the provider
+to stop a yielded run's command up to twenty times in one wait, and takes the
+lease over once a stop that failed later succeeds. A wake-up signal on
+release, which the Terminal object does not have. A queue of waiters, which no
+measurement here can justify.
 
-**Considered and rejected:** Retrying recovery on every try, which asks the
-provider to stop a yielded run's command up to twenty times in one wait, and
-takes the lease over when a stop that failed once later succeeds. Waking the
-waiter when the lease is released, which needs a signal from the Terminal
-object that it does not have; polling costs at most twenty object hops per
-waiting call. A queue of waiters, which no measurement here can justify.
-
-**Consequences:** A call that loses the race now takes up to five seconds
-longer to be refused. A read during a sibling's import can see its files half
-copied, the same risk it already took with any file mid-write. Readiness still
-counts a `planned` import as revoked, and only checks after it has the lease,
-so it sees only an import whose run ended without settling it. A publication build's lease is held until it expires,
-so an agent call waiting on one always waits the full five seconds. A change
-to the wait is a change to `TERMINAL_BUSY_WAIT_MS`, which the team sets.
+**Consequences:** Readiness still counts a `planned` import as revoked, and
+that is safe only because it checks after claiming the lease, when the only
+`planned` import it can see is one a crashed run left. A change that checks
+imports before the claim would make a primary run rebuild the sandbox over a
+sibling's import in flight. A `planned` import row names no run, so reads also
+pass over a leftover import while an unrelated run holds the lease.
 
 ### 2026-11-16 — Directory listings reuse their digests; site files stream; size refusals are logged
 
