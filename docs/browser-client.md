@@ -19,6 +19,7 @@ artifact serving remain release checks.
 | `apps/browser/src/mcp-consent.tsx` | The MCP consent page at `/app/oauth/authorize`: sign-in, then allow or deny an MCP client for one Organization ([`rally-mcp.md`](rally-mcp.md#consent)). |
 | `apps/browser/src/site-open.tsx` | The site-opening page a protected site sends a signed-out visitor to: finds the site's organization, opens it, opens the site and returns to the visitor's path. |
 | `apps/browser/src/source-decision.tsx`, `source-decision-words.ts` | The page an emailed Approve or Decline for a Sidekick source request opens: it posts the signed decision as it loads and says how the request stands. |
+| `apps/browser/src/organization-actions.ts` | Cookie requests to list, accept and decline invitations and to create an organization, shared by the entry and the shell. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/shell.tsx` | The signed-in application's loading boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
 | `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications, sets the installed app's icon badge, and opens their links on this origin. |
@@ -254,10 +255,11 @@ The shell reuses the desktop renderer rather than forking it. It builds an
 and `WorkspaceApp`: the workspace socket provider, the sidebar, the Canvases and Sidekicks
 screens, the right panel and the Settings route. The value carries
 `host: "browser"`. Account onboarding is identity-scoped, so it goes through the
-`_` workspace of the cookie adapter. Anything only the Mac app can do (the desktop sign-in and setup
-flows) rejects with
-"Available in the Mac app." Creating an organization is the entry's, not the
-shell's; see below. A browser tab cannot keep a window of its own, so the
+`_` workspace of the cookie adapter. Anything only the Mac app can do (desktop sign-in,
+password sign-in and reconnecting a stored per-organization credential, none of
+which a cookie session reaches) rejects with
+"Available in the Mac app." `finishWorkspaceSetup` creates an organization
+through the same route as the entry and reloads the tab into it; see below. A browser tab cannot keep a window of its own, so the
 surface the Mac app opens in one, Settings, is a route of the main window here
 (`#/settings`). `lib/window-surface.ts` lists it; on that route the shell takes
 the whole tab and hides the sidebar, which stays mounted so closing the surface
@@ -352,6 +354,14 @@ this entry, so it accepts the same way. In the shell, `getOnboardingState`
 carries the invitations, so the account menu's **Invitations** (behind the
 multiple-organizations flag) accepts and declines here too; accepting reloads
 the tab into the organization, as switching does.
+
+`apps/browser/src/organization-actions.ts` holds the cookie requests both the
+entry and the shell make to join or create an organization (list, accept and
+decline invitations, create), so the two cannot drift. The shell's
+`finishWorkspaceSetup` uses it too, which is what the account menu's create
+action calls; the shipped menu's compact presentation does not offer that
+action ([multiple workspaces](multiple-workspaces.md)), so today it is reached
+only by a surface that asks for it.
 
 A member can turn on Web Push for this browser, delivered as described in
 [push-notifications.md](push-notifications.md#web-push-for-browser-members).
@@ -753,7 +763,7 @@ workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
 
-### 2026-11-16 — Accept an organization invitation from the browser and Expo
+### 2026-11-16 — Join or create an organization from the browser and Expo
 
 **What changed:** `/browser/invitations` lists, accepts and declines workspace
 invitations over the cookie on Global. The entry lists them above the
@@ -768,6 +778,11 @@ app first. The earlier reason for leaving it out was that the onboarding routes
 answer with a bearer session a browser must not hold; creation had already
 solved that by revoking it on Global, and this reuses that answer rather than
 adding a cookie-issuing variant of acceptance.
+
+`finishWorkspaceSetup` in the shell, which also rejected with "Available in the
+Mac app.", now creates through `/browser/workspace/create`, so every
+organization action the shared shell can call works in a browser and the Expo
+app; the requests live in one module the entry and the shell share.
 
 **Consequences:** Acceptance by token, the desktop's deep-link prompt, stays the
 Mac app's: the browser finds invitations by the signed-in address, which an
