@@ -273,6 +273,19 @@ describe('CanvasScreen', () => {
     expect(await within(screen.getByRole('group', { name: 'Artifacts' })).findByText('Launch memo')).toBeInTheDocument();
   });
 
+  it('keeps the open Canvas when the menu’s read of a stale detail fails', async () => {
+    const client = renderCanvas();
+    await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(1));
+    getCanvas.mockRejectedValue(new ApiError('Unavailable', 503, 'service_unavailable'));
+    act(() => { client.getQueryCache().find({ queryKey: ['canvas', CANVAS] })?.invalidate(); });
+    await openMenu('Q4 revenue review');
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(screen.queryByText('This Canvas could not be opened.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Leave the Canvas' })).toBeInTheDocument();
+  });
+
   it('reads no detail on opening the menu of a Canvas still being created', async () => {
     renderCanvas(`/canvases/${CANVAS}`, (client) => {
       client.setQueryData(['canvas-creations', undefined, undefined, undefined], {
