@@ -381,13 +381,14 @@ describe("Terminal resource bridge", () => {
     }));
     expect(workstreamObjectGet(
       state.objectStore,
-      `SELECT destination_path, source_sha256, state, imported_at IS NOT NULL AS imported
+      `SELECT destination_path, source_sha256, state, imported_at IS NOT NULL AS imported, import_run_id
          FROM terminal_imported_resources`,
     )).toEqual({
       destination_path: ".rally-output/wedding-site",
       source_sha256: contentDigest,
       state: "completed",
       imported: 1,
+      import_run_id: R,
     });
   });
 
@@ -678,7 +679,7 @@ describe("Terminal resource bridge", () => {
     }));
     expect(workstreamObjectGet(
       objectStore,
-      `SELECT destination_path, source_sha256, size_bytes, state, imported_at IS NOT NULL AS imported
+      `SELECT destination_path, source_sha256, size_bytes, state, imported_at IS NOT NULL AS imported, import_run_id
          FROM terminal_imported_resources`,
     )).toEqual({
       destination_path: `.rally/resources/${RESOURCE}/resource`,
@@ -686,6 +687,7 @@ describe("Terminal resource bridge", () => {
       size_bytes: 14,
       state: "completed",
       imported: 1,
+      import_run_id: R,
     });
   });
 

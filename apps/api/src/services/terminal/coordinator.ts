@@ -469,16 +469,15 @@ export class TerminalSandboxCoordinator {
     // some run's preparation still in flight, and a read of a half-made
     // checkout is a read of the wrong files.
     if (repository && repository.bootstrappedSandboxGeneration !== row.generation) return null;
-    // A `planned` import is a sibling's import in flight while the lease is
-    // live: its call holds the lease and settles the row. A read may see its
-    // files half copied, as it may see any file mid-write. Once the lease has
-    // lapsed, a `planned` import is left over and readiness cleans it up. The
-    // row names no run, so a leftover import also passes while an unrelated
-    // run holds the lease (one taken by `claimMutation`, or by a background
-    // agent that may not rebuild): those reads can see its half-copied files.
-    const importInFlight = row.operationRunId !== null
-      && (row.operationLeaseExpiresAt ?? 0) > this.clock.now().getTime();
-    if (await this.hasRevokedImportedResource(context, row, importInFlight)) return null;
+    // A `planned` import whose run holds a live lease is that run's import in
+    // flight: its call holds the lease and settles the row. A read may see its
+    // files half copied, as it may see any file mid-write. Any other `planned`
+    // import is left over, whoever holds the lease now, and readiness cleans
+    // it up.
+    const leaseHolder = row.operationRunId !== null
+      && (row.operationLeaseExpiresAt ?? 0) > this.clock.now().getTime()
+      ? row.operationRunId : null;
+    if (await this.hasRevokedImportedResource(context, row, leaseHolder)) return null;
     if (
       observation
       && observation.generation === row.generation
@@ -1099,11 +1098,13 @@ export class TerminalSandboxCoordinator {
   private async hasRevokedImportedResource(
     context: HarnessToolContext,
     row: TerminalSandboxRecord,
-    /** Pass over `planned` imports: the caller knows a live lease holder will settle them. */
-    importInFlight = false,
+    /** The run holding a live lease: its own `planned` imports are in flight, not revoked. */
+    leaseHolderRunId: string | null = null,
   ): Promise<boolean> {
     const all = await this.terminal(context).importedResources(row.generation);
-    if (!importInFlight && all.some((candidate) => candidate.state !== "completed")) return true;
+    const inFlight = (candidate: { state: string; importRunId: string | null }) =>
+      leaseHolderRunId !== null && candidate.importRunId === leaseHolderRunId;
+    if (all.some((candidate) => candidate.state !== "completed" && !inFlight(candidate))) return true;
     const links = all.filter((candidate) => candidate.state === "completed");
     if (links.length === 0) return false;
     // Completed imports are retained Sidekick state, like its shared history.
