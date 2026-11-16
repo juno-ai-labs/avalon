@@ -11,7 +11,9 @@ import { workspaceDOName } from "../durable-objects/names";
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import { SidekickSourceService } from "./sidekick-source-service";
 import { refusingTool, toolRefusal } from "./tool-refusal";
+import { ApiError } from "../lib/api-error";
 import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
+import { loopAuthority } from "../lib/loop-authority";
 
 /**
  * The agent's side of a Sidekick's sources: see who lets events in, ask
@@ -32,7 +34,7 @@ const RequestSourceInputSchema = z.strictObject({
   connectorType: z.string().min(1)
     .describe("The connector whose events are asked for, as the Sidekick's trigger names it, for example google."),
   eventTypes: z.array(z.string().min(1)).min(1)
-    .describe("The event types asked for, as the connector declares them, for example email.received."),
+    .describe("The event types asked for, as the connector declares them, for example email.received. A source covers every such event on the person's whole account, such as all new mail in their mailbox; no resource is named, and the condition narrows it."),
   condition: z.string().trim().min(1).optional()
     .describe("The filter each person's events must meet, written as a claim about one event. Omit to ask for every event of these types. The person sees this text and approves exactly it."),
 });
@@ -69,8 +71,8 @@ export function sidekickSourceRequestCard(event: { pluginId?: string | undefined
 /** Why this turn may not ask for a source, and where to send the ask. */
 function sourceRefusal(input: WorkstreamWorkflowInput) {
   return toolRefusal(input.automationRun || input.automationDelegation ? "sidekick_source_request_from_run"
-    : input.backgroundAgent === true ? "sidekick_source_request_from_background_agent"
-      : input.reason === "sidekick_review" ? "sidekick_source_request_from_review" : "sidekick_source_request_from_agent_message");
+    : input.reason === "sidekick_review" || input.backgroundAgentRootReason === "sidekick_review" ? "sidekick_source_request_from_review"
+      : input.backgroundAgent === true ? "sidekick_source_request_from_background_agent" : "sidekick_tools_need_a_person");
 }
 
 function sidekickSourceRefusalTool(input: WorkstreamWorkflowInput, request: HarnessTool): HarnessTool {
@@ -91,18 +93,25 @@ const TEST_SAMPLE_EVENTS = 10;
  * (`sidekickSourceRefusalTool`). A tool is never withheld for who is asking:
  * `docs/agent-tools.md` rule 14.
  */
-export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, userId: UserId, room: boolean, asks = true): HarnessTool[] {
+export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, userId: UserId, room: boolean, asks = true,
+  turnIsSelfReview: () => Promise<boolean> = async () => false): HarnessTool[] {
   const service = new SidekickSourceService(env, input.workspaceId, userId);
   const name = (local: string) => room ? `sidekick_${local}` : local;
-  // The request's card is drawn in the conversation it was asked from: a
-  // Canvas's Chat or a Sidekick's shared conversation, never a run. A wizard
-  // turn a Canvas's Chat started was asked from that Chat, so its card is
-  // drawn there too (`askedFromCanvasId`).
-  const askedFromCanvasId = wizardTurnCanvasId(input);
-  const place = (input.substreamId ?? "0") !== "0" ? null
-    : askedFromCanvasId !== null ? { parentKind: "canvas" as const, parentId: askedFromCanvasId }
-    : input.parentKind === "canvas" ? { parentKind: "canvas" as const, parentId: input.parentId }
-    : input.parentKind === "automation" ? { parentKind: "automation" as const, parentId: input.parentId } : null;
+  // The card is drawn where the request was asked from (`place`). A turn that
+  // asks from somewhere the person does not read also posts it where they do:
+  // a wizard turn a Canvas started, and a Chat's background agent, into that
+  // Chat; a wizard's background agent into the Sidekick's shared conversation.
+  // An ask for one's own account sends no email or Activity row, so the card
+  // is the only prompt.
+  const authority = loopAuthority(input);
+  const background = input.backgroundAgent === true;
+  const askedFromCanvasId = wizardTurnCanvasId(input) ?? (background && authority?.kind === "canvas_chat" ? authority.canvasId : null);
+  const sidekickId = authority?.kind === "sidekick_wizard" ? authority.sidekickId : null;
+  const canvasId = askedFromCanvasId ?? (authority?.kind === "canvas_chat" ? authority.canvasId : null);
+  const place = canvasId !== null ? { parentKind: "canvas" as const, parentId: canvasId }
+    : sidekickId !== null ? { parentKind: "automation" as const, parentId: sidekickId } : null;
+  const postTo = askedFromCanvasId !== null ? { parentKind: "canvas" as const, id: askedFromCanvasId }
+    : background && sidekickId !== null ? { parentKind: "automation" as const, id: sidekickId } : null;
   const tools: HarnessTool[] = [{
     definition: {
       name: name("sources_list"),
@@ -146,9 +155,9 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
       // The wizard's own block draws the card here; the Chat that asked gets
       // a post of the Sidekick's that draws the same requests. Keyed on the
       // receipt, so a retried call posts once.
-      if (askedFromCanvasId !== null) {
+      if (postTo !== null) {
         const requestIds = asked.requests.map((request) => request.requestId);
-        await postWizardCard(env, input, askedFromCanvasId, `sidekick-source-card:${operationId}`, {
+        await postWizardCard(env, input, postTo, `sidekick-source-card:${operationId}`, {
           text: `Asked ${requestIds.length === 1 ? "one person" : `${requestIds.length} people`} to let their events start this Sidekick. Each person approves or declines their own request.`,
           card: { sourceRequests: { requestIds } }, sidekickId: asked.sidekickId,
         });
@@ -208,9 +217,19 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   // The ask is the one tool a loop may be refused, and it is refused by name rather than withheld.
   // Asking, and trying a filter on the acting person's own events, are refused by
   // name rather than withheld; the list of sources stays readable.
-  return asks ? tools : tools.map((tool) => tool.definition.capability === "rally.sidekick.sources.request"
+  if (!asks) return tools.map((tool) => tool.definition.capability === "rally.sidekick.sources.request"
     ? sidekickSourceRefusalTool(input, tool)
     : tool.definition.capability === "rally.sidekick.sources.test" ? refusingTool(tool, sourceRefusal(input)) : tool);
+  // A wizard turn a self-review's agent woke reads as an agent message, so the
+  // review is known only once the turn runs, as the notification tools find it.
+  const review = toolRefusal("sidekick_source_request_from_review");
+  return tools.map((tool) => tool.definition.capability === "rally.sidekick.sources.list" ? tool : {
+    ...tool,
+    execute: async (raw, context) => {
+      if (await turnIsSelfReview()) throw new ApiError(403, review.code, review.message);
+      return tool.execute(raw, context);
+    },
+  });
 }
 
 function requestOutput(request: { requestId: string; person: { userId: string; displayName: string }; connectorType: string;

@@ -62,6 +62,19 @@ export function canvasChatAuthority(input: LoopAuthorityInput): string | null {
 }
 
 /**
+ * Whether a loop acts for the person behind a Canvas's Chat or a Sidekick's
+ * wizard, and so may ask people for things in their name: the Chat, the
+ * wizard, or a background agent of either. Not a run or its worker, which are
+ * handed event content, and not a scheduled self-review or an agent it
+ * started, which read runs and which no person started.
+ */
+export function actsForAPerson(input: LoopAuthorityInput & { reason?: string | undefined; backgroundAgentRootReason?: string | undefined }): boolean {
+  const kind = loopAuthority(input)?.kind;
+  return (kind === "canvas_chat" || kind === "sidekick_wizard")
+    && input.reason !== "sidekick_review" && input.backgroundAgentRootReason !== "sidekick_review";
+}
+
+/**
  * Whether a loop holds a Sidekick's authoring tools: a turn of the Sidekick's
  * own conversation the claim routed to its wizard (`sidekickWizard`, given
  * only to a principal who manages the Sidekick), or an agent that turn started.

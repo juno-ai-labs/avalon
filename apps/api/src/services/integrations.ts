@@ -35,7 +35,7 @@ import { conversationParentStub, hostedParentStub } from "./conversation-parent-
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createNotificationsPlugin, NOTIFICATIONS_PLUGIN_ID } from "./notification-tools";
-import { actsAsSidekickWizard, canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
+import { actsAsSidekickWizard, actsForAPerson, canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -2265,7 +2265,7 @@ function createAvalonAutomationsPlugin(
     })), ...createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
       .flatMap((tool) => expandPages(tool, "sidekick", null)),
       ...(delegationUser ? [...sidekickDelegationTools(env, input, delegationUser, false),
-        ...sidekickSourceTools(env, input, delegationUser, false, asksForSources(input))] : [])],
+        ...sidekickSourceTools(env, input, delegationUser, false, asksForSources(input), () => turnIsSelfReview(env, input))] : [])],
     onActivate: async () => prepare(),
   };
 }
@@ -5282,23 +5282,9 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  * no Canvas, which is most of them, so their runs read no extra message.
  * `docs/automation-lifecycle.md#attached-conversations`.
  */
-/**
- * Whether a loop may ask people for a source (`sidekick_request_source` and
- * its two companions): a turn a person started, and a wizard turn a Canvas's
- * Chat started for them (`wizardTurnCanvasId`). An ask goes out in a person's
- * name with a filter the model wrote, and the people asked receive it by
- * email, so nothing a loop read may bring one about: not a run or its
- * workers, which are handed event content such as a stranger's email; not a
- * background agent, which reads runs and other content; and not a turn
- * another agent's message started, which includes a run asking its wizard
- * for a change, nor a scheduled self-review. A wake-up in a Chat or a wizard
- * continues its person's turn and may ask (`docs/agent-loop-types.md`).
- */
-function asksForSources(input: Pick<WorkstreamWorkflowInput,
-  "automationRun" | "automationDelegation" | "backgroundAgent" | "agentExchange" | "sidekickWizard" | "wizardCanvasId" | "reason">): boolean {
-  return !input.automationRun && !input.automationDelegation && input.backgroundAgent !== true
-    && input.reason !== "sidekick_review"
-    && (!input.agentExchange || wizardTurnCanvasId(input) !== null);
+/** Whether a loop may ask people for a source: `actsForAPerson`; `docs/sidekick-sources.md#agent-tools`. */
+function asksForSources(input: WorkstreamWorkflowInput): boolean {
+  return actsForAPerson(input);
 }
 
 /**
@@ -6048,7 +6034,7 @@ async function loadHarnessTools(
       tools: [...(readsRuns ? createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
         .flatMap((tool) => expandPages(tool, "sidekick", null)) : []),
       ...sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
-      ...sidekickSourceTools(env, input, input.executionPrincipal.userId, false, asksForSources(input))],
+      ...sidekickSourceTools(env, input, input.executionPrincipal.userId, false, asksForSources(input), () => turnIsSelfReview(env, input))],
     } : organizationSidekicksPlugin(env, input, readsRuns, (tool) => expandPages(tool, "sidekick", null));
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
@@ -8989,7 +8975,7 @@ async function openToolQuestion(
       now: Date.parse(at),
     });
   const mirrored = async () => {
-    if (askingCanvasId !== null) await postWizardCard(env, input, askingCanvasId, `sidekick-question-card:${id}`,
+    if (askingCanvasId !== null) await postWizardCard(env, input, { parentKind: "canvas", id: askingCanvasId }, `sidekick-question-card:${id}`,
       { text: question.prompt, card: { question: { elicitationId: id } } });
     return halted;
   };
