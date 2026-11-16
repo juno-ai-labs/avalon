@@ -64,6 +64,12 @@ export const HttpOrDesktopDeepLinkUrlSchema = urlSchema(
   "Expected an HTTP(S) URL or a rallywithai:/avalon: deep link",
 );
 
+/** Where a connector authorization completes: the browser's page, a desktop deep link, or the mobile app's callback. */
+export const ConnectorCompletionUrlSchema = urlSchema(
+  new Set([...HTTP_OR_DESKTOP_PROTOCOLS, "rally-mobile:"]),
+  "Expected an HTTP(S) URL, a rallywithai:/avalon: deep link or a rally-mobile: link",
+);
+
 export function httpUrlSchema(maxLength: number) {
   return urlSchema(HTTP_PROTOCOLS, "Expected an absolute HTTP(S) URL", maxLength);
 }

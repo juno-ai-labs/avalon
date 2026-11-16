@@ -12,6 +12,7 @@
     "./desktop-deep-link-intent": "./src/desktop-deep-link-intent.ts",
     "./deferred-zod-schema": "./src/deferred-zod-schema.ts",
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
+    "./connector-oauth-claim": "./src/connector-oauth-claim.ts",
     "./conversation-parent": "./src/conversation-parent.ts",
     "./canvases": "./src/canvases.ts",
     "./canvas-filters": "./src/canvas-filters.ts",
