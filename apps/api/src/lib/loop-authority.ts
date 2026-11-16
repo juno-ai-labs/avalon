@@ -1,5 +1,3 @@
-import { agentAddressForId, type AgentId } from "@rally/contracts";
-
 /**
  * Whose authority a loop acts with: a Canvas's Chat, a Sidekick's wizard, or a
  * Sidekick run. A background agent acts with the authority of the loop at its
@@ -74,19 +72,6 @@ export function actsForAPerson(input: LoopAuthorityInput & { reason?: string | u
   const kind = loopAuthority(input)?.kind;
   return (kind === "canvas_chat" || kind === "sidekick_wizard")
     && input.reason !== "sidekick_review" && input.backgroundAgentRootReason !== "sidekick_review";
-}
-
-/**
- * Whether a message from this agent may start a turn that asks people for
- * things in a person's name, read from its address alone: a Canvas's Chat or
- * any of its agents (`canvas/…`), or a Sidekick's wizard (`automation/…/0`).
- * Every other Sidekick address is a run, a run's worker or a wizard's agent,
- * which the address cannot tell apart, so none of them may: a run's change
- * request to its wizard carries what the run read.
- */
-export function senderActsForAPerson(senderAgentId: AgentId): boolean {
-  const sender = agentAddressForId(senderAgentId);
-  return sender.parentKind === "canvas" || (sender.parentKind === "automation" && sender.substreamId === "0");
 }
 
 /**

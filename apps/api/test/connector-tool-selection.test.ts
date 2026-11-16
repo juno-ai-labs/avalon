@@ -853,7 +853,7 @@ describe("connector tools selected for harness runs", () => {
     expect(await noticeTools({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" })).toEqual(neither);
   });
 
-  it("lets a Canvas's Chat, a Sidekick's wizard and their background agents ask for a source whatever started the turn, refuses a run, its worker, a self-review and a message from one of those by name, and gives neither a run nor its worker the tool that changes delegation", async () => {
+  it("lets a Canvas's Chat, a Sidekick's wizard and their background agents ask for a source whatever started the turn, refuses a run, its worker and a self-review by name, and gives neither a run nor its worker the tool that changes delegation", async () => {
     const runtimeEnv = env(new ToolSelectionDatabase([]));
     const sourcePlugin = async (input: WorkstreamWorkflowInput) =>
       (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
@@ -866,7 +866,7 @@ describe("connector tools selected for harness runs", () => {
       return tool.execute({}, {} as never).then(() => null, (error: { code?: string; message: string }) => ({ code: error.code, routes: error.message }));
     };
     const wizard = agentIdForAddress({ parentKind: "automation", parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") });
-    // Whether a message may lead to an ask is read from its sender's address.
+    // A turn another agent's message started.
     const message = (sender: AgentId) => ({ teamId: sender, senderAgentId: sender, messageId: "00000000-0000-7000-8000-00000000e001" });
     const canvasChat = agentIdForAddress({ parentKind: "canvas", parentId: "00000000-0000-7000-8000-00000000c001", substreamId: asSubstreamId("0") });
     const canvasAgent = agentIdForAddress({ parentKind: "canvas", parentId: "00000000-0000-7000-8000-00000000c001", substreamId: asSubstreamId(CHILD_HARNESS_RUN_ID) });
@@ -892,17 +892,14 @@ describe("connector tools selected for harness runs", () => {
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toEqual(refused);
     expect(await sourceTools({ ...automationConversationInput(), reason: "sidekick_review" })).toEqual(refused);
     expect(await sourceTools({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" })).toEqual(refused);
-    // A message from a run, its worker or a wizard's agent, which one Sidekick address cannot tell apart: a run's change
-    // request to its wizard among them.
-    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(run) })).toEqual(refused);
-    expect(await sourceTools({ ...workflowInput(), agentExchange: message(run) })).toEqual(refused);
+    // A turn any agent's message started asks, a run's change request to its wizard included: the owner's choice.
+    expect(await sourceTools({ ...automationConversationInput(), agentExchange: message(run) })).toEqual(all);
+    expect(await sourceTools({ ...workflowInput(), agentExchange: message(run) })).toEqual(all);
     // Each refusal says who can ask, and how to reach them.
     expect(await refusal({ ...automationConversationInput(), reason: "sidekick_review" })).toMatchObject({
       code: "sidekick_source_request_from_review", routes: expect.stringContaining("Name in your review") });
     expect(await refusal({ ...childWorkflowInput(automationConversationInput()), backgroundAgentRootReason: "sidekick_review" }))
       .toMatchObject({ code: "sidekick_source_request_from_review" });
-    expect(await refusal({ ...automationConversationInput(), agentExchange: message(run) })).toMatchObject({
-      code: "sidekick_source_request_from_agent_message", routes: expect.stringContaining("Say in your reply") });
     expect(await refusal({ ...childWorkflowInput(automationConversationInput()),
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } })).toMatchObject({
       code: "sidekick_source_request_from_run", routes: expect.stringContaining("Say in your result") });
