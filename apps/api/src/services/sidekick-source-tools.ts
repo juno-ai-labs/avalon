@@ -106,6 +106,13 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   const authority = loopAuthority(input);
   const askedFromCanvasId = wizardTurnCanvasId(input)
     ?? (input.backgroundAgent === true && authority?.kind === "canvas_chat" ? authority.canvasId : null);
+  // A wizard's background agent asks from its own conversation too: its card
+  // is posted in the Sidekick's shared conversation, where the wizard's are.
+  // An ask for the asker's own account sends no email or Activity row, so the
+  // card is the only place they find it.
+  const postTo = askedFromCanvasId !== null ? { parentKind: "canvas" as const, id: askedFromCanvasId }
+    : input.backgroundAgent === true && authority?.kind === "sidekick_wizard" ? { parentKind: "automation" as const, id: authority.sidekickId }
+    : null;
   const place = askedFromCanvasId !== null ? { parentKind: "canvas" as const, parentId: askedFromCanvasId }
     : authority?.kind === "canvas_chat" ? { parentKind: "canvas" as const, parentId: authority.canvasId }
     : authority?.kind === "sidekick_wizard" ? { parentKind: "automation" as const, parentId: authority.sidekickId } : null;
@@ -152,9 +159,9 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
       // The wizard's own block draws the card here; the Chat that asked gets
       // a post of the Sidekick's that draws the same requests. Keyed on the
       // receipt, so a retried call posts once.
-      if (askedFromCanvasId !== null) {
+      if (postTo !== null) {
         const requestIds = asked.requests.map((request) => request.requestId);
-        await postWizardCard(env, input, askedFromCanvasId, `sidekick-source-card:${operationId}`, {
+        await postWizardCard(env, input, postTo, `sidekick-source-card:${operationId}`, {
           text: `Asked ${requestIds.length === 1 ? "one person" : `${requestIds.length} people`} to let their events start this Sidekick. Each person approves or declines their own request.`,
           card: { sourceRequests: { requestIds } }, sidekickId: asked.sidekickId,
         });

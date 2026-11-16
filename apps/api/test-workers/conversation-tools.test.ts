@@ -1053,6 +1053,29 @@ describe("a Sidekick's source request asked from a Canvas's Chat", () => {
       .toEqual([{ automationId: AUTOMATION_ID, sourceRequests: { requestIds: [requestId] } }]);
   });
 
+  it("is drawn in the Sidekick's shared conversation when one of its wizard's background agents asks", async () => {
+    await seedSidekick("0");
+    await TEST_ENV.DB.exec("ALTER TABLE users ADD COLUMN presentation_json TEXT");
+    const agentSubstream = crypto.randomUUID();
+    // A background agent the wizard started, acting for the wizard's person.
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID, parentKind: "automation",
+      parentId: AUTOMATION_ID, substreamId: agentSubstream, loopId: `workstream:${AUTOMATION_ID}:substream:${agentSubstream}:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "agent_message",
+      backgroundAgent: true, backgroundAgentRootSubstreamId: "0" });
+    const tool = sidekickSourceTools(TEST_ENV, input, AUTHOR_ID, false).find((candidate) => candidate.definition.name === "request_source")!;
+    const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: input.harnessRunId,
+      effectIntentId: crypto.randomUUID(), toolCallId: "ask-from-wizard-agent", executionPrincipal: input.executionPrincipal,
+      signal: new AbortController().signal };
+    const requestId = ((await tool.execute({ sidekickId: AUTOMATION_ID, userIds: [COLLEAGUE_ID], connectorType: "google",
+      eventTypes: ["email.received"] }, context)).output as { requests: { requestId: string }[] }).requests[0]!.requestId;
+
+    const posts = await runInDurableObject(conversation(AUTOMATION_ID), (_instance, state) => state.storage.sql.exec<{ json: string }>(
+      "SELECT structured_content_json AS json FROM canonical_conversation_turn_details WHERE message_type = 'automation_activation'",
+    ).toArray().map((row) => JSON.parse(row.json) as { sourceRequests?: unknown }).filter((post) => post.sourceRequests));
+    expect(posts.map((post) => post.sourceRequests)).toEqual([{ requestIds: [requestId] }]);
+  });
+
   it("is drawn in the Chat when one of the Chat's background agents asks, since the person reads the Chat and not the agent", async () => {
     await seedSidekick("0");
     await TEST_ENV.DB.exec("ALTER TABLE users ADD COLUMN presentation_json TEXT");
