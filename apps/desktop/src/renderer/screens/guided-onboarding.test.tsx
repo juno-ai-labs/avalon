@@ -42,11 +42,12 @@ function WorkspaceView(): React.JSX.Element {
   const allowed = useConversationAdmission();
   return <><div>Ordinary organization</div><output data-testid="admission">{allowed ? 'allowed' : 'blocked'}</output></>;
 }
-function show(onRecoveryReady?: () => void) {
+function show(onRecoveryReady?: () => void, route = '/onboarding', seed?: (client: QueryClient) => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seed?.(client);
   // The journey renders inside the app's HashRouter and leaves through it, so
   // the harness gives it a router and reports where it went.
-  render(<ErrorNoticeProvider><MemoryRouter initialEntries={['/onboarding']}><QueryClientProvider client={client}><AccountOnboardingGate {...(onRecoveryReady ? { onRecoveryReady } : {})}><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter></ErrorNoticeProvider>);
+  render(<ErrorNoticeProvider><MemoryRouter initialEntries={[route]}><QueryClientProvider client={client}><AccountOnboardingGate {...(onRecoveryReady ? { onRecoveryReady } : {})}><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter></ErrorNoticeProvider>);
   return client;
 }
 beforeEach(() => {
@@ -91,6 +92,39 @@ describe('new-account learning paths', () => {
     // journey pushes instead of replacing, or never leaves at all.
     //
     // Anchored, because `toHaveTextContent` matches a string as a substring.
+    await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent(/^REPLACE \/canvases$/u));
+  });
+  it('leaves a person on the Canvas they were opening when the journey covered it', async () => {
+    state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
+    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
+    show(undefined, '/canvases/00000000-0000-7000-8000-000000000c61');
+    await screen.findByRole('heading', { name: 'This is you in Rally' });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
+    await screen.findByText('Ordinary organization');
+    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'complete' });
+    expect(screen.getByTestId('route')).toHaveTextContent(/^POP \/canvases\/00000000-0000-7000-8000-000000000c61$/u);
+  });
+  it('keeps a template route the journey covered before it could start, so the template still starts', async () => {
+    state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
+    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
+    // The journey is already known, so it covers the route from the first render.
+    show(undefined, '/marketplace/pr-dashboard', (client) => client.setQueryData(
+      ['onboarding-journey', workspace.region, workspace.id, workspace.currentUser.id],
+      { path: 'member', stage: 'profile', revision: 0, connectorIds: [] },
+    ));
+    await screen.findByRole('heading', { name: 'This is you in Rally' });
+    expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
+    await screen.findByText('Ordinary organization');
+    expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'complete' });
+    expect(screen.getByTestId('route')).toHaveTextContent(/^POP \/marketplace\/pr-dashboard$/u);
+  });
+  it('leaves /sidekicks/new for the Canvases home, since mounting it creates a Sidekick', async () => {
+    state.saveAccount.mockResolvedValue({ ...state.account, revision: 1, presentation: { color: 'rose', avatar: 'circle', revision: 1 } });
+    state.updateJourney.mockResolvedValue({ path: 'member', stage: 'complete', revision: 1, connectorIds: [] });
+    show(undefined, '/sidekicks/new');
+    await screen.findByRole('heading', { name: 'This is you in Rally' });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
     await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent(/^REPLACE \/canvases$/u));
   });
   it('starts personal setup on a random color when the account has no saved look', async () => {

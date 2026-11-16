@@ -236,6 +236,15 @@ function nextMessages(socket: WebSocket, count: number): Promise<MessageEvent[]>
   });
 }
 
+/**
+ * When the fixture event was received: this file's start, not a fixed date. A
+ * processed event is reaped once older than CONNECTOR_EVENT_BODY_RETENTION_MS
+ * (90 days), so a fixed receipt time turns the settlement test red once that
+ * much time passes, as 2026-08-18 did on 2026-11-16. One value for the file,
+ * so a test can compare a stored event with a freshly built fixture.
+ */
+const CONNECTOR_EVENT_RECEIVED_AT = new Date().toISOString();
+
 function connectorEvent(eventId = "00000000-0000-7000-8000-000000000301") {
   return {
     connectorType: "github",
@@ -254,7 +263,7 @@ function connectorEvent(eventId = "00000000-0000-7000-8000-000000000301") {
       actor: { displayName: "Ada" },
       subject: { number: 42 },
       occurredAt: "2026-08-18T20:00:00.000Z",
-      receivedAt: "2026-08-18T20:00:01.000Z",
+      receivedAt: CONNECTOR_EVENT_RECEIVED_AT,
       title: "Pull request edited",
       summary: "Ada edited the connector architecture",
       textSnippet: "Queue to WorkspaceDO to Workflow",

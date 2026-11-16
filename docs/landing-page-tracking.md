@@ -38,7 +38,7 @@ attributed while the pixel keeps firing.
 Two kinds of tracked click also send X a custom event, from the browser
 (`reportXIntent`): Mac installer links with action `download` send "Rally | Mac
 download intent" (`tw-rg7j5-rg7j6`), and every web-app entry link
-(`web-app-hero`, `web-app-offer`, `sign-in-header`) sends "Rally | Sign up
+(`web-app-hero`, `web-app-offer`, `web-app-template`, `sign-in-header`) sends "Rally | Sign up
 intent" (`tw-rg7j5-ri4zl`). The header button's label alternates between Sign in
 and Sign up, so that event also counts returning users signing in. The X Conversion
 API (server-side conversions) is not wired: nothing on the server confirms a
@@ -66,6 +66,7 @@ Tagged links on the landing page, by `data-site-action` id:
 | `sign-in-header` | Homepage Open Rally link; rolling sign-in button on the supporting pages | primary_cta · header |
 | `web-app-hero` | Homepage Get started for free and closing invitation (app.rallywith.ai); primary web entry in `/start-fast/` | secondary_cta · hero |
 | `web-app-offer` | Homepage inline browser-entry link under pricing; retains the historical offer action | primary_cta · offer |
+| `web-app-template` | Each `/marketplace/` card's Start from this, the template's link on the web app (`/app/templates/<slug>`) | primary_cta · body |
 | `download-hero` | Homepage macOS text link; desktop download button on `/start-fast/` | download · hero |
 | `download-linux-hero` | Homepage Linux (.deb) text link; desktop download button on `/start-fast/` | download · hero |
 | `download-pricing-start` / `-grow` / `-max` / `-ultra` | Start for free and paid-plan Start free trial buttons | download · pricing · plan |
@@ -79,7 +80,7 @@ Tagged links on the landing page, by `data-site-action` id:
 hero button on `/`: the value is kept so its history stays comparable, and
 `/start-fast/` shares the id. Its clicks cannot be split by device.
 
-Each activation of `web-app-hero`, `web-app-offer` or `sign-in-header` creates a fresh opaque
+Each activation of `web-app-hero`, `web-app-offer`, `web-app-template` or `sign-in-header` creates a fresh opaque
 `flowId`, reports it on the action, and sends it to the browser as `signupFlowId`.
 Copied links stay clean. Browser entry validates and retains it in tab-scoped
 session storage before removing the URL field, so refreshing before sign-in

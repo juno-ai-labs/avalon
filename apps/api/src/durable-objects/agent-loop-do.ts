@@ -4795,6 +4795,24 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         error: { code, message: "The Avalon harness could not complete this run" },
       };
     }
+    if (outcome.status === "failed" || outcome.status === "stopped") {
+      // Settle any open calls first: the terminal commit's loop release
+      // refuses while Bind is owed a result, and that refusal would replace
+      // the run's own failure code.
+      await this.recoverInterruptedToolBatch(executionEnv, input, claim.lease)
+        .catch((settleError: unknown) => logWarn(
+          this.env,
+          "substream_loop_terminal_tool_batch_settlement_failed",
+          {
+            workspace_id: input.workspaceId,
+            workstream_id: input.parentId,
+            substream_id: input.substreamId ?? "0",
+            harness_run_id: input.harnessRunId,
+            outcome_error_code: outcome.error?.code ?? null,
+            reason: diagnosticErrorCode(settleError, "tool_batch_settlement_failed"),
+          },
+        ));
+    }
     await terminalizeHarnessAttempt(
       runs,
       input,

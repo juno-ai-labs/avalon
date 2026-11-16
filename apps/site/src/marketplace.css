@@ -1,6 +1,6 @@
 @import "./home.css";
 
-/* The artifact marketplace. Header, footer, buttons and type come from the homepage. */
+/* The marketplace. Header, footer, buttons and type come from the homepage. */
 
 .home-nav a[aria-current="page"] {
   text-decoration: underline;
@@ -63,90 +63,8 @@
   font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
 }
 
-.market-card-body > p.market-tools {
-  font-size: 11px; color: var(--green); margin-top: auto; padding-top: 8px;
-}
-
 .market-card .text-link {
-  color: var(--ink);
-}
-
-/* Each kind gets a small drawing of its shape, made from the four empty <i> children. */
-.market-preview {
-  height: 120px; border-bottom: 1px solid var(--line); background: #f6f5ef; position: relative;
-  display: grid; gap: 8px; padding: 18px 20px;
-}
-
-.market-preview i {
-  display: block; border-radius: 4px; background: #e3e5d7;
-}
-
-.preview-dashboards {
-  grid-template-columns: repeat(3, 1fr); grid-template-rows: 34px 1fr;
-}
-
-.preview-dashboards i:nth-child(4) {
-  grid-column: 1 / -1;
-  background: linear-gradient(90deg, #e3b896 0 44%, #c3b3cf 44% 75%, #d9c27e 75%);
-  height: 10px; align-self: center;
-}
-
-.preview-micro-apps {
-  grid-template-columns: 26px 1fr; grid-auto-rows: 1fr;
-}
-
-.preview-micro-apps i:nth-child(odd) {
-  background: var(--sage);
-}
-
-.preview-micro-apps i:nth-child(even) {
-  background: #fff; border: 1px solid #e2e0d4;
-}
-
-.preview-podcasts {
-  background: #2c3227; grid-template-columns: 84px 1fr; grid-template-rows: 1fr 1fr;
-}
-
-.preview-podcasts i:nth-child(1) {
-  grid-row: 1 / -1; background: #d9c27e; border-radius: 6px;
-}
-
-.preview-podcasts i:nth-child(2) {
-  background: #ffffff1c; height: 10px; align-self: end;
-}
-
-.preview-podcasts i:nth-child(3) {
-  background: repeating-linear-gradient(90deg, #a9b49a 0 2px, transparent 2px 5px);
-  height: 22px;
-}
-
-.preview-podcasts i:nth-child(4) {
-  display: none;
-}
-
-.preview-websites {
-  grid-template-rows: 12px 1fr 14px; grid-template-columns: 1fr;
-}
-
-.preview-websites i:nth-child(2) {
-  background: #ede8f0;
-}
-
-.preview-websites i:nth-child(3) {
-  width: 40%;
-}
-
-.preview-websites i:nth-child(4) {
-  display: none;
-}
-
-.preview-team-tools {
-  grid-template-columns: repeat(4, 1fr);
-}
-
-.preview-team-tools i {
-  background: #fff; border: 1px solid #e2e0d4;
-  box-shadow: inset 0 14px 0 #eee0d0;
+  color: var(--ink); margin-top: auto; padding-top: 8px;
 }
 
 .market-empty {
