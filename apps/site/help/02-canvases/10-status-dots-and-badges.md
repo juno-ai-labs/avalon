@@ -41,11 +41,12 @@ someone to approve a tool. Rally does not ask anyone to approve its tool calls.
 The red number on the **Canvases** button counts the Canvases with something new
 for you. The number on **Sidekicks** counts the Sidekicks waiting for you: those
 that need input, and those with something new. Each Canvas or Sidekick counts
-once, however much has happened in it. The Mac menu bar shows those two added
-together.
+once, however much has happened in it. In [the desktop
+app](../08-rally-everywhere/04-the-desktop-app.md) on a Mac, the menu bar shows
+those two added together.
 
-The number on **Activity** counts the Activity rows you have not seen, and it
-is the number on Rally's icon in the Dock. Opening the Canvas or Sidekick a row is
+The number on **Activity** counts the Activity rows you have not seen, and in
+the desktop app on a Mac it is also the number on Rally's icon in the Dock. Opening the Canvas or Sidekick a row is
 about clears that row, and **Mark all seen** at the top of the Activity list clears the rest.
 
 ## Inside a Sidekick's conversation
@@ -80,6 +81,6 @@ a calendar rather than a stopwatch:
 - A short date, such as **Oct 30**, for anything older.
 
 They update themselves, so a time moves on without you doing anything. The
-format follows your Mac's language and region.
+format follows your computer's language and region.
 
 Next: finding things again, in [Search and links](11-search-and-links.md).

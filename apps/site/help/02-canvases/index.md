@@ -37,13 +37,13 @@ to catch them up.
 A new Canvas is private to whoever made it. You decide when to bring other
 people in: a few named teammates, a guest from outside your Organization, or
 everyone in the Organization at once. People who have the Canvas open show up
-at the top of the window and in the sidebar, so you can tell when somebody is
+at the top of the page and in the sidebar, so you can tell when somebody is
 looking at the draft you just asked Rally to rewrite.
 
 ## What this chapter covers
 
 The chapter opens with what a Canvas is and how the list of Canvases works.
-Then come the parts of the conversation, starting at the bottom of the window
+Then come the parts of the conversation, starting at the bottom of the page
 with the message box, then attachments, then the page people ask about most:
 what is going on while Rally works, how to steer it, and what to do when a run
 fails. Then reading Rally's answers, and leaving comments on what Rally made.

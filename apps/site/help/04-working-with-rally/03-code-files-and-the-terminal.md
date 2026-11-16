@@ -11,7 +11,7 @@ of its own to do that on. Rally calls it the **Terminal**.
 ## Rally's own computer
 
 The Terminal is a small Linux computer that Rally borrows while it works. It
-is a **sandbox**, which means it is sealed off: it is not your Mac, it cannot
+is a **sandbox**, which means it is sealed off: it is not your computer, it cannot
 see your files unless you give them to Rally, and nothing Rally does in it can
 touch your own computer. It is a workshop out the back, where Rally can make a
 mess and bring you the finished piece.
