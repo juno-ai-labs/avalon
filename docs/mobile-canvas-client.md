@@ -56,6 +56,17 @@ Home uses `#/canvases`; opening a canvas uses `#/canvases/:id`, just like deskto
 
 The dashboard consumes the current socket-owned Canvas directory. Each dashboard card wears its Canvas's appearance through the desktop's `canvasMark`, drawing its icon in that colour's ink on its tint, so a card matches its sidebar row and desktop card. The lead card deepens that tint toward the hue in a gradient. Opening a Canvas reads `GET /canvases/:id` and its published artifacts, preferring a site, then the newest file. Multiple resources expose an artifact picker. One mobile owner refreshes details when the matching directory row changes publication timestamp, artifact kind, title or visibility, or disappears. The first directory reconciles a detail read before it arrived; reconnects reconcile missed updates. Shared resource-head state advances existing artifact versions directly. Detail queries remain fresh between those events, and mounting a second observer does not repeat the read. Unrelated resource-topic, presence and pin updates do not refetch Canvas details. An empty canvas routes to chat and stays there while the user writes; View canvas explicitly returns to the artifact. Fetch failures show recovery rather than being mistaken for an empty canvas.
 
+The dashboard offers desktop's filters as a sideways row under the search. Home
+sends each Canvas's filter `facts` (`@rally/contracts/canvas-filters`) in its
+snapshot, and the native dashboard matches those, so a filter means the same on
+every client. A host that sends no facts gets no filter row.
+
+**Marketplace**, under the dashboard's title, sends Home
+`{ type: 'create', marketplace: true }`. Home opens its create flow on desktop's
+`CanvasMarketplace`; a template is sent as the new Canvas's first Chat message
+through the create form's own receipts. An older host drops the flag and opens
+the prompt form.
+
 Canvases shared with the person as a guest in their other Organizations
 ([`canvas-share-federation.md`](canvas-share-federation.md)), which the server
 pushes on Home's workspace socket, reach the shell
@@ -618,6 +629,26 @@ retention remain unmeasured. The full method, before/after table and limitations
 are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
+
+### 2026-11-16 — Dashboard filters and the Marketplace on mobile
+
+**What changed:** The native dashboard gained desktop's Canvas filters and a
+Marketplace button. The filter rules moved into `@rally/contracts/canvas-filters`
+for desktop, the browser host and the native shell; Home's snapshot carries each
+Canvas's facts. The Marketplace is Home's create flow showing desktop's
+`CanvasMarketplace`, kept at `view: 'create'`.
+
+**Why:** Phones had only search, and no way to start from a template.
+
+**Considered and rejected:** Sending whole Canvas rows to the shell, which would
+carry Sidekick and author fields it never draws on every directory change.
+Drawing the Marketplace natively, since Metro does not run the Vite plugin that
+compiles the Markdown catalog, and a native copy would update only by OTA. A new
+`view: 'marketplace'`, which an older shell's snapshot schema would reject.
+
+**What to respect:** a new filter goes in `canvas-filters.ts`, as a fact and a
+match, so every client gets it. Not yet seen on a device: facts arriving over
+the bridge, and the Marketplace page opening in the native shell.
 
 ### 2026-11-15 — The mobile host reads at iOS sizes and follows Dynamic Type
 

@@ -649,6 +649,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
     }
   }, [shownDirectory?.pins, open, sendHome, rememberedSite]);
   const createFromDashboard = useCallback(() => { setOpening('create'); sendHome({ type: 'create' }); }, [sendHome]);
+  const marketplaceFromDashboard = useCallback(() => { setOpening('create'); sendHome({ type: 'create', marketplace: true }); }, [sendHome]);
   // Home switches Organization and opens it there, as for a notification's link.
   const openElsewhereFromDashboard = useCallback((canvas: SharedElsewhereSummary) => {
     setOpening(canvas.id);
@@ -735,7 +736,7 @@ function CanvasScreen({ route, navigation, canvasId: assignedCanvasId, artifactI
             update it needs) as directoryError; the dashboard covers the page's
             own recovery, so it offers that retry itself. */}
         <Dashboard canvases={shownDirectory?.canvases ?? []} sharedElsewhere={shownDirectory?.sharedElsewhere ?? []} loading={!shownDirectory} failed={failed || Boolean(snapshot?.directoryError)} topInset={headerHeight + 12} bottomInset={0}
-          open={openFromDashboard} openElsewhere={openElsewhereFromDashboard} create={createFromDashboard} retry={() => { if (failed) { setFailed(false); web.current?.reload(); } else sendHome({ type: 'refresh' }); }} />
+          open={openFromDashboard} openElsewhere={openElsewhereFromDashboard} create={createFromDashboard} marketplace={marketplaceFromDashboard} retry={() => { if (failed) { setFailed(false); web.current?.reload(); } else sendHome({ type: 'refresh' }); }} />
       </View>}
       {!showDashboard && !optimistic && (opening !== null || !contentReady || failed) && <Loading failed={failed && opening === null} retry={() => { setFailed(false); web.current?.reload(); }} />}
     </KeyboardAvoidingView>
