@@ -58,14 +58,19 @@ import {
 import { WORKSPACE_LOCAL_TABLES } from "../src/services/workspace-runtime-database";
 import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
 
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000101");
-const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000102");
-const CHILD_SUBSTREAM_ID = asSubstreamId("00000000-0000-7000-8000-000000000103");
+// Fresh per case: `reset()` clears storage, but an alarm or socket an earlier
+// case left running can still land in an object of the same name in the next.
+let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000101");
+let WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000102");
+let CHILD_SUBSTREAM_ID = asSubstreamId("00000000-0000-7000-8000-000000000103");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000104");
 const SESSION_ID = "runtime-test-session";
 
 beforeEach(async () => {
   await reset();
+  WORKSPACE_ID = asWorkspaceId(crypto.randomUUID());
+  WORKSTREAM_ID = asWorkstreamId(crypto.randomUUID());
+  CHILD_SUBSTREAM_ID = asSubstreamId(crypto.randomUUID());
 });
 
 afterEach(() => {
