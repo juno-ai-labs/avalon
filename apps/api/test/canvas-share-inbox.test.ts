@@ -6,6 +6,7 @@ import type { Env } from "../src/env";
 import {
   applyCanvasShare,
   readSharedCanvases,
+  readSharedCanvasPointers,
   readSharedCanvasesEnabled,
   writeSharedCanvasesEnabled,
 } from "../src/services/canvas-share-inbox";
@@ -13,7 +14,9 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 // The inbox's queries against the checked-in D1 migrations: what a delivery
-// writes, which deliveries it refuses, and what one Organization's list reads.
+// writes, which deliveries it refuses, and which pointers one Organization's
+// list reads. Resolving a pointer into what a row shows is the origin
+// Organization's, proved in `test-workers/canvas-share-federation.test.ts`.
 const at = "2026-11-16T00:00:00.000Z";
 const READER = "00000000-0000-7000-8000-0000000bb001";
 const HOME = "00000000-0000-7000-8000-0000000bb101";
@@ -24,9 +27,10 @@ const ROADMAP = "00000000-0000-7000-8000-0000000bb202";
 let db: DatabaseSync;
 let env: Env;
 
-const shared = (revision: number, title: string, updatedAt = 1_000): CanvasShareState =>
-  ({ state: "shared", revision, title, appearance: null, updatedAt });
-const titles = async (from = HOME) => (await readSharedCanvases(env, READER, from)).items.map((item) => item.canvas.title);
+const shared = (revision: number, title: string): CanvasShareState =>
+  ({ state: "shared", revision, title, appearance: null, updatedAt: 1_000 });
+const pointed = async (from = HOME) => (await readSharedCanvasPointers(env, READER, from))
+  .map((group) => [group.organization.name, ...group.canvasIds]);
 
 beforeEach(() => {
   db = migratedSqliteDatabase();
@@ -44,31 +48,31 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 describe("the Shared with me inbox", () => {
-  it("lists a Canvas shared in another Organization, a guest one included, newest first, with that Organization's name", async () => {
-    await applyCanvasShare(env, { userId: READER, workspaceId: ACME, canvasId: PLAN }, shared(1, "Partner plan", 1_000));
-    await applyCanvasShare(env, { userId: READER, workspaceId: ACME, canvasId: ROADMAP }, shared(1, "Partner roadmap", 2_000));
-    const { enabled, items } = await readSharedCanvases(env, READER, HOME);
-    expect(enabled).toBe(true);
-    expect(items.map((item) => [item.organization.name, item.canvas.title, item.canvas.updatedAt])).toEqual([
-      ["Acme", "Partner roadmap", "1970-01-01T00:00:02.000Z"],
-      ["Acme", "Partner plan", "1970-01-01T00:00:01.000Z"],
+  it("keeps a pointer to a Canvas shared in another Organization, a guest one included, and nothing of the Canvas", async () => {
+    await applyCanvasShare(env, { userId: READER, workspaceId: ACME, canvasId: PLAN }, shared(1, "Partner plan"));
+    await applyCanvasShare(env, { userId: READER, workspaceId: ACME, canvasId: ROADMAP }, shared(1, "Partner roadmap"));
+    expect(await pointed()).toEqual([["Acme", PLAN, ROADMAP]]);
+    expect(db.prepare("SELECT * FROM canvas_share_inbox ORDER BY canvas_id").all()).toEqual([
+      { user_id: READER, workspace_id: ACME, canvas_id: PLAN, revision: 1, shared: 1 },
+      { user_id: READER, workspace_id: ACME, canvas_id: ROADMAP, revision: 1, shared: 1 },
     ]);
     // Acme's own list never repeats its own Canvases.
-    expect(await titles(ACME)).toEqual([]);
+    expect(await pointed(ACME)).toEqual([]);
   });
 
   it("refuses a delivery older than the one it holds, in either direction", async () => {
     const target = { userId: READER, workspaceId: ACME, canvasId: PLAN };
     await applyCanvasShare(env, target, shared(3, "Renamed"));
     expect(await applyCanvasShare(env, target, shared(2, "Old title"))).toBe(false);
-    expect(await titles()).toEqual(["Renamed"]);
-    await applyCanvasShare(env, target, { state: "unshared", revision: 4 });
-    expect(await titles()).toEqual([]);
+    // A rename bumps the revision, so it changes the inbox and is pushed.
+    expect(await applyCanvasShare(env, target, shared(4, "Renamed again"))).toBe(true);
+    await applyCanvasShare(env, target, { state: "unshared", revision: 5 });
+    expect(await pointed()).toEqual([]);
     // A share that left before the unshare arrives after it: still unshared.
-    expect(await applyCanvasShare(env, target, shared(3, "Renamed"))).toBe(false);
-    expect(await titles()).toEqual([]);
-    await applyCanvasShare(env, target, shared(5, "Shared again"));
-    expect(await titles()).toEqual(["Shared again"]);
+    expect(await applyCanvasShare(env, target, shared(4, "Renamed again"))).toBe(false);
+    expect(await pointed()).toEqual([]);
+    await applyCanvasShare(env, target, shared(6, "Shared again"));
+    expect(await pointed()).toEqual([["Acme", PLAN]]);
     // A deleted Canvas goes whatever its revision.
     await applyCanvasShare(env, target, { state: "gone" });
     expect(db.prepare("SELECT COUNT(*) AS n FROM canvas_share_inbox").get()).toEqual({ n: 0 });
@@ -76,7 +80,7 @@ describe("the Shared with me inbox", () => {
 
   it("leaves out an Organization the person is no longer active in", async () => {
     await applyCanvasShare(env, { userId: READER, workspaceId: LEFT, canvasId: PLAN }, shared(1, "From a suspended membership"));
-    expect(await titles()).toEqual([]);
+    expect(await pointed()).toEqual([]);
   });
 
   it("is on until the person turns it off, and lists nothing while off", async () => {
@@ -85,6 +89,6 @@ describe("the Shared with me inbox", () => {
     await writeSharedCanvasesEnabled(env, READER, false);
     expect(await readSharedCanvases(env, READER, HOME)).toEqual({ enabled: false, items: [] });
     await writeSharedCanvasesEnabled(env, READER, true);
-    expect(await titles()).toEqual(["Partner plan"]);
+    expect(await readSharedCanvasesEnabled(env, READER)).toBe(true);
   });
 });

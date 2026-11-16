@@ -138,6 +138,29 @@ describe("Canvas share federation", () => {
     home.close();
   });
 
+  it("asks the Canvas's Organization for what a row shows, and lists nothing it no longer shares", async () => {
+    await object(ORIGIN).canvasSetAudience({ workspaceId: ORIGIN, canvasId: CANVAS, actor: member(CREATOR),
+      update: { visibility: "participants", userIds: [READER] } });
+    await deliver();
+    // The inbox holds a pointer and nothing of the Canvas.
+    expect((await env.DB.prepare("SELECT * FROM canvas_share_inbox").all()).results)
+      .toEqual([{ user_id: READER, workspace_id: ORIGIN, canvas_id: CANVAS, revision: 1, shared: 1 }]);
+    // A rename shows on the next read, straight from the Canvas's Organization.
+    await runInDurableObject(object(ORIGIN), (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec("UPDATE canvas_directory SET title = 'Read from the origin' WHERE canvas_id = ?", CANVAS);
+    });
+    expect(await sharedTitles()).toEqual(["Read from the origin"]);
+    // Taken off the list before any delivery reaches the inbox: the origin
+    // answers for itself, so the stale pointer shows nothing.
+    await runInDurableObject(object(ORIGIN), (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec("DELETE FROM _internal_durable_alarms");
+      state.storage.sql.exec("DELETE FROM canvas_participants WHERE canvas_id = ? AND user_id = ?", CANVAS, READER);
+      state.storage.sql.exec("DELETE FROM _internal_durable_alarms");
+    });
+    expect((await env.DB.prepare("SELECT shared FROM canvas_share_inbox").all()).results).toEqual([{ shared: 1 }]);
+    expect(await sharedTitles()).toEqual([]);
+  });
+
   it("answers a person the Canvas is not shared with as unshared, and its creator too", async () => {
     await object(ORIGIN).canvasSetAudience({ workspaceId: ORIGIN, canvasId: CANVAS, actor: member(CREATOR),
       update: { visibility: "participants", userIds: [READER] } });

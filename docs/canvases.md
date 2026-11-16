@@ -603,7 +603,8 @@ sends these rows on the workspace socket (`workspace_shared_canvases`); how a
 share is published, held in the person's inbox and pushed is
 [`canvas-share-federation.md`](canvas-share-federation.md)'s. Here it costs a
 `share_revision` column, the outbox triggers on `canvas_participants` and
-`canvas_directory`, and two RPCs. In the client a shared row has no menu, drag
+`canvas_directory`, and three RPCs, one of which answers another Organization's
+list, for one person and only about Canvases shared with them. In the client a shared row has no menu, drag
 or pin and opens in its own Organization.
 
 ### Presence
