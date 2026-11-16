@@ -31,8 +31,8 @@ and routed before a WorkspaceDO can be addressed. The selected WorkspaceDO owns
 `connector_oauth_attempts`: the user-visible pending/succeeded/denied/failed
 receipt, telemetry correlation, and resulting connection pointer. Start writes
 the object receipt before advertising the D1 state; a failed D1 write removes
-the pending receipt best-effort, with expiry as the final orphan fence. Callback
-success commits the connection row and attempt's `connection_id` in one
+the pending receipt best-effort, with expiry as the final orphan fence. A
+completed claim commits the connection row and attempt's `connection_id` in one
 WorkspaceDO transaction; only the opaque D1 ingress-route synchronization is a
 recoverable post-commit edge.
 
@@ -45,6 +45,50 @@ connector caches. If the state cannot be resolved, the server emits an
 unaddressed failure because inventing a workspace would be less safe than asking
 the member to restart. This path is shared by Google, GitHub, Granola, Linear,
 Notion, and Slack; a provider-specific callback must not mint its own link shape.
+
+### Claiming a connector authorization
+
+A connector authorization completes in two requests, the way a desktop sign-in
+does. The provider's callback is unauthenticated, and its `state` says only who
+*started* the authorization, never who consented: anyone can start one and send
+the provider's consent page to someone else, whose account would then land in
+the starter's Organization. So the callback attaches nothing.
+
+1. **Hold.** The callback (`connectorCallback` in `routes/connections.ts`, and
+   the Notion bridge for the shared ingress) seals the provider's code, and
+   Google's picked files, onto the `oauth_states` row with the hash of a fresh
+   one-time ticket (`ConnectionService.holdCallback`, migration 0136). A state
+   holds one callback. It returns the ordinary completion link with
+   `status=authorized` and the ticket: in the query of a desktop or mobile deep
+   link, in the fragment of the browser page, which a server log never sees.
+2. **Claim.** The signed-in client that receives the link posts the ticket to
+   `POST /connections/oauth/claim`. `claimCallback` admits it only for the
+   session whose user and Organization started the state, then runs the same
+   completion the callback once ran (`completeClaimedCallback`). The answer is
+   `{ target }`, the completion link the callback used to redirect to, which the
+   client reads as it always did. A claim from another member of the starter's
+   Organization burns the state and fails the attempt with
+   `connector_oauth_account_mismatch`, so the provider's code is never
+   exchanged. A non-member's claim never reaches it: the Organization's API
+   refuses the session first, and the state expires unused.
+   If two claims of one ticket race, the loser's completion finds the state
+   consumed and answers `invalid_oauth_state` without touching the attempt; the
+   desktop then reads the attempt rather than reporting a failure, since the
+   site's handoff page can deliver one link twice.
+
+A denial still ends at the callback: it attaches nothing. The desktop receives
+`connector-claim` (`desktop-deep-link-intent.ts`) and claims through the
+deep link's Organization. The browser's `/connections/complete` page claims with
+its own cookie session. The mobile app opens the authorization in an auth
+session that returns to `rally-mobile://connections/complete` (`handoff=mobile`,
+the `connector-auth-session` capability), because Safari holds no Rally session;
+the shell hands the link to its web view, which claims it. A build that predates
+this cannot claim and has to update: offering the old one-request path to it
+would offer it to anyone. So a start must carry `claim=1`, and one without it
+is refused with `connector_client_update_required` before the provider's
+consent, rather than failing after it. The desktop's Canva loopback is exempt:
+it already completes in its own signed-in request. A repeated hit on a callback
+that already holds its state answers 409 and leaves the attempt to the claim.
 
 Connector start advertises `desktopHandoffVersion=2` as an additive query
 capability. The regional service persists the matching return URI with the OAuth
@@ -1650,6 +1694,30 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-16 — Only the session that started a connector authorization can complete it
+
+**What changed:** A provider callback no longer exchanges the code. It holds it
+on `oauth_states` and hands the consenting browser a one-time ticket, and
+`POST /connections/oauth/claim` completes it for the starting session alone
+(see [Claiming a connector authorization](#claiming-a-connector-authorization)).
+The desktop, browser and mobile clients claim the ticket; the mobile app now
+runs connector sign-in in an auth session.
+
+**Why:** A security review before open-sourcing found that every OAuth
+connector except the Canva loopback completed on `state` alone. Anyone could
+start a connection, send the provider's genuine consent page to someone else,
+and receive that person's Google, Slack or Notion grant in their own
+Organization. The Slack linking code already named the gap. Binding the
+callback to a cookie was rejected: the desktop's callback lands in a system
+browser that holds no Rally session. Keeping the old path for builds that do
+not claim was rejected too, since an attacker would simply start with it.
+
+**Consequences:** A new provider callback must hold rather than complete; the
+claim's dispatch in `completeClaimedCallback` is where its completion goes.
+Builds from before this cannot finish a connection until they update. The
+regional Notion bridge keeps its `completeNotion` RPC name so a Global Worker
+deployed first still reaches it, and now holds there.
 
 ### 2026-11-12 — A Google search tool tells the model its query ceiling
 

@@ -111,6 +111,8 @@ function connectionPublications(pathname: string): WorkspaceSyncPublication[] {
   // The Canva loopback runs the provider's OAuth completion, which publishes
   // the connection's topics to its audience itself, as every completion does.
   if (first === "canva" && second === "complete") return [];
+  // A claim runs the same completion, which publishes for itself.
+  if (first === "oauth" && second === "claim") return [];
   // Routes that only ever create an Organization connection.
   if ((first === "x" && second === undefined) || (second === "workspace" && (first === "ashby" || first === "granola"))) {
     return [{ topics: [...CONNECTION_SYNC_TOPICS], audience: ORGANIZATION }];

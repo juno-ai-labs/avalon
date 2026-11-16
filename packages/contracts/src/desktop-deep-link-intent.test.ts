@@ -89,6 +89,26 @@ describe('desktop deep-link intent grammar', () => {
     )).toMatchObject({ kind: 'connector-result', status: 'denied', target: null });
   });
 
+  it('reads a held connector authorization as a ticket to claim, never as a result', () => {
+    const TICKET = 'T'.repeat(43);
+    expect(parseDesktopDeepLinkIntent(
+      `rallywithai://workspace/enterprise/${WORKSPACE_ID}/auth/complete?provider=google&attempt=${ATTEMPT_ID}&status=authorized&ticket=${TICKET}`,
+    )).toEqual({
+      kind: 'connector-claim', provider: 'google', ticket: TICKET, attemptId: ATTEMPT_ID,
+      callbackRegion: 'enterprise', target: { region: 'enterprise', workspaceId: WORKSPACE_ID },
+    });
+    expect(parseDesktopDeepLinkIntent(
+      `rallywithai://auth/complete?provider=slack&region=global&status=authorized&ticket=${TICKET}`,
+    )).toMatchObject({ kind: 'connector-claim', provider: 'slack', callbackRegion: 'global', target: null });
+    // A held authorization has no connection yet, and no ticket is no claim.
+    expect(parseDesktopDeepLinkIntent(
+      `rallywithai://auth/complete?provider=slack&region=global&status=authorized&ticket=${TICKET}&connection=${RESOURCE_ID}`,
+    )).toBeNull();
+    expect(parseDesktopDeepLinkIntent(
+      `rallywithai://auth/complete?provider=slack&region=global&status=authorized`,
+    )).toBeNull();
+  });
+
   it.each([
     `rallywithai://workspace/enterprise/${WORKSPACE_ID}/settings/connections?extra=value`,
     `rallywithai://workspace/enterprise/${WORKSPACE_ID}/auth/complete?connection=${RESOURCE_ID}&status=connected&provider=unknown`,

@@ -31,7 +31,7 @@ import type {
 import { providerSignInError, rememberedSignInProvider, signInProviderOfCode } from './sign-in-provider';
 import { accountReconnectRequired, workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
-import { RallyApi } from './api';
+import { ApiError, RallyApi } from './api';
 import { CollaborationSessionProvider, shellCapabilities, type ConnectorSetupCapability, type PendingConnectorOAuth } from './collaboration-session';
 export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
@@ -1212,6 +1212,46 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           queryClient.invalidateQueries({ queryKey: ['workspace-onboarding'] }),
           queryClient.invalidateQueries({ queryKey: ['workspace-account-directory'] }),
         ]);
+        return;
+      }
+      if (intent.kind === 'connector-claim') {
+        // The claim answers with a `connector-result` link, handled below.
+        const claim = async (targetApi: RallyApi): Promise<void> => {
+          let target: string;
+          try {
+            target = (await targetApi.claimConnectorOAuth(intent.ticket)).target;
+          } catch (error: unknown) {
+            // The site's handoff page can deliver one link twice. A spent
+            // ticket whose attempt is done or still finishing is not a failure.
+            if (error instanceof ApiError && error.code === 'invalid_oauth_state' && intent.attemptId) {
+              const attempt = await targetApi.getConnectorOAuthAttempt(intent.attemptId).catch(() => null);
+              if (attempt?.status === 'succeeded' || attempt?.status === 'pending') {
+                await queryClient.invalidateQueries({ queryKey: ['connections'] });
+                return;
+              }
+            }
+            const pending = pendingConnectorOAuthRef.current;
+            if (pending?.provider === intent.provider && (intent.attemptId === null || pending.attemptId === intent.attemptId)) {
+              setPendingConnectorOAuth(null);
+            }
+            reportDeepLinkFailure(error instanceof Error
+              ? error.message
+              : `${connectorProviderNames[intent.provider]} could not be connected. Try again.`);
+            return;
+          }
+          await handleDeepLink({ ...navigation, url: target });
+        };
+        if (intent.target) {
+          await runInDeepLinkWorkspace(intent.target, claim);
+          return;
+        }
+        const activeSession = requireActiveWorkspace('Rally received an invalid connector completion link.');
+        if (!activeSession) return;
+        if (intent.callbackRegion !== activeSession.workspace!.region) {
+          reportDeepLinkFailure('Rally received an invalid connector completion link.');
+          return;
+        }
+        await claim(apiForSession(activeSession));
         return;
       }
       if (intent.kind === 'connector-result') {

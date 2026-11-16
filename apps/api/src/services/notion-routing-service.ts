@@ -316,7 +316,7 @@ export class NotionRoutingService {
 
   private async defaultCompleteInRegion(region: Region, code: string, state: string): Promise<string> {
     if (region === this.env.AVALON_REGION) {
-      return new ConnectionService(this.env).completeProvider("notion", code, state);
+      return new ConnectionService(this.env).holdCallback("notion", state, { code });
     }
     const bridge = regionalBindings(this.env, region).notion;
     if (this.env.AVALON_REGION === "global" && bridge) {

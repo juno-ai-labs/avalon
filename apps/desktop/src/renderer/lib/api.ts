@@ -9,6 +9,7 @@ import { ArtifactLinkSchema } from '@rally/contracts/artifact-access';
 import { BillingStatusSchema, BillingUrlSchema, BillingCreditsSchema, BillingOveragePreferenceSchema } from '@rally/contracts/billing';
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
+import { ConnectorOAuthClaimSchema, type ConnectorOAuthClaim } from '@rally/contracts/connector-oauth-claim';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
 import {
   ElicitationSchema,
@@ -113,6 +114,7 @@ import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { localCacheScope } from './local-cache';
 import { ResourcePreviewCache } from './resource-preview-cache';
 import { isCookieSession, type CookieClientSession } from '@rally/contracts/client-session';
+import { browserConnectorHandoff, recordMobileConnectorAuthorization } from './mobile-connector-handoff';
 import { logDebug } from '../../common/logger';
 import { isSocketTicketRequestTimeoutError, requestSocketTicket } from './socket-ticket-request';
 import { fetchWithNetworkRecovery, networkRecoveryGeneration, reportNetworkTicket, waitForNetworkRecovery } from './network-recovery';
@@ -757,9 +759,17 @@ export class RallyApi {
    * How a connector authorization this client starts comes back: a browser tab
    * returns to its completion page, the desktop to its versioned deep link.
    */
+  /** Starts a connector authorization; the mobile shell opens only pages started this way in its auth session. */
+  private async connectorStart<T extends { url: string | null }>(path: string, options: RequestOptions<T>): Promise<T> {
+    const started = await this.request(path, options);
+    if (started.url && isCookieSession(this.session) && browserConnectorHandoff() === 'mobile') recordMobileConnectorAuthorization(started.url);
+    return started;
+  }
+
   private connectorHandoffQuery(): string {
     const cookie = isCookieSession(this.session);
-    return cookie ? 'handoff=browser' : 'desktopHandoffVersion=2';
+    // `claim=1`: this client claims a held authorization (`docs/connectors.md`).
+    return `${cookie ? `handoff=${browserConnectorHandoff()}` : 'desktopHandoffVersion=2'}&claim=1`;
   }
 
   private async request<T>(path: string, options: RequestOptions<T>): Promise<T>;
@@ -2086,7 +2096,7 @@ export class RallyApi {
       capabilityCount: telemetryCountBucket(capabilities.length),
       operationId,
     });
-    return this.request(`/connections/${provider}/start?telemetryVersion=2&${this.connectorHandoffQuery()}`, {
+    return this.connectorStart(`/connections/${provider}/start?telemetryVersion=2&${this.connectorHandoffQuery()}`, {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
@@ -2133,7 +2143,7 @@ export class RallyApi {
       method: 'oauth', capabilityCount: telemetryCountBucket(1),
       operationId,
     });
-    return this.request(`/connections/custom-mcp/start?telemetryVersion=2&${this.connectorHandoffQuery()}`, {
+    return this.connectorStart(`/connections/custom-mcp/start?telemetryVersion=2&${this.connectorHandoffQuery()}`, {
       method: 'POST',
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
@@ -2285,7 +2295,7 @@ export class RallyApi {
         operationId,
       });
     }
-    return this.request(
+    return this.connectorStart(
       `/connections/${encodeURIComponent(id)}/reconnect?telemetryVersion=2&${this.connectorHandoffQuery()}`,
       {
         method: 'POST',
@@ -2293,6 +2303,15 @@ export class RallyApi {
         schema: WireConnectorOAuthStartSchema,
       },
     );
+  }
+
+  /**
+   * Claim a connector authorization this session started and its provider
+   * has answered (`docs/connectors.md`, "Claiming a connector
+   * authorization"). Answers with the completion link the client then reads.
+   */
+  async claimConnectorOAuth(ticket: string): Promise<ConnectorOAuthClaim> {
+    return this.request('/connections/oauth/claim', { method: 'POST', body: { ticket }, schema: ConnectorOAuthClaimSchema });
   }
 
   async getConnectorOAuthAttempt(attemptId: string, signal?: AbortSignal): Promise<ConnectorOAuthAttempt> {
@@ -2305,7 +2324,7 @@ export class RallyApi {
   async startConnectorResourceAuthorization(
     request: ConnectorResourceAuthorizationRequest,
   ): Promise<ConnectorResourceAuthorizationStart> {
-    return this.request(
+    return this.connectorStart(
       `/connections/${encodeURIComponent(request.connectionId)}/resource-authorizations/start?${this.connectorHandoffQuery()}`,
       {
         method: 'POST',
