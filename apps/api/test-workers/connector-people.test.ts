@@ -21,11 +21,19 @@ const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", WO
 const person = (index: number) => ({ provider: "google", providerTenantId: "account", providerUserId: null,
   handle: null, email: `guest${index}@example.com`, displayName: null, role: "recipient", sourceText: "meeting evidence ".repeat(30) });
 
+/**
+ * When the event was received: this file's start, not a fixed date. A
+ * processed event is reaped once older than CONNECTOR_EVENT_BODY_RETENTION_MS
+ * (90 days), so a fixed receipt time would delete the event a test settles once
+ * that much time passes. One value for the file, so stored and rebuilt events compare equal.
+ */
+const RECEIVED_AT = new Date().toISOString();
+
 function activity(people: number): NormalizedActivity {
   return { id: EVENT, workspaceId: WORKSPACE, region: "global", connectionId: CONNECTION, connectionScope: "workspace",
     connectionOwnerUserId: null, provider: "google", providerEventId: "large-meeting", eventType: "calendar.event_changed",
     resourceType: "calendar_event", providerResourceId: "large-event", actor: {}, subject: {},
-    occurredAt: "2026-10-19T00:00:00.000Z", receivedAt: "2026-10-19T00:00:01.000Z", title: "A large meeting",
+    occurredAt: "2026-10-19T00:00:00.000Z", receivedAt: RECEIVED_AT, title: "A large meeting",
     summary: "All invitees", textSnippet: "Meeting", payloadRef: null, visibility: { scope: "workspace" }, targetUserIds: [],
     entityKeys: [], dedupeKey: "large-meeting", rawContentHash: null, metadata: {},
     externalPeople: Array.from({ length: people }, (_, index) => person(index)),

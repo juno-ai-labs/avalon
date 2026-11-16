@@ -96,8 +96,9 @@ function detail(overrides: Partial<CanvasDetail> = {}): CanvasDetail {
   } as CanvasDetail;
 }
 
-function renderCanvas(entry: string | { pathname: string; state: unknown } = `/canvases/${CANVAS}`): QueryClient {
+function renderCanvas(entry: string | { pathname: string; state: unknown } = `/canvases/${CANVAS}`, seed?: (client: QueryClient) => void): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seed?.(client);
   render(<ErrorNoticeProvider><QueryClientProvider client={client}>
     <Tooltip.Provider><MemoryRouter initialEntries={[entry]}>
       <Routes>
@@ -241,8 +242,71 @@ describe('CanvasScreen', () => {
     expect(copy).not.toHaveTextContent('Launch tracker');
   });
 
+  it('lists its artifacts newest first between Change appearance and its Sidekicks, and opens an older one in the rail', async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [attached(TRACKER, 'Launch tracker')] }));
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
+    await openMenu('Q4 revenue review');
+    const group = await screen.findByRole('group', { name: 'Artifacts' });
+    expect(within(group).getAllByRole('menuitem').map((item) => item.querySelector('.title-menu-item-copy')?.textContent)).toEqual(['Board deck', 'Notes']);
+    const order = screen.getAllByRole('menuitem').map((item) => item.querySelector('.title-menu-item-copy')?.textContent ?? item.textContent.trim());
+    expect(order.slice(order.indexOf('Change appearance'), order.indexOf('Launch tracker') + 1)).toEqual([
+      'Change appearance', 'Board deck', 'Notes', 'Launch tracker',
+    ]);
+    fireEvent.click(within(group).getAllByRole('menuitem')[1]!);
+    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b1'));
+    expect(lastSurface().expanded).toBe(false);
+  });
+
+  it('reads a stale detail again on opening the menu, so an artifact made since reaches the Artifacts section', async () => {
+    const client = renderCanvas();
+    await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(1));
+    getCanvas.mockResolvedValue(detail({ artifacts: [
+      { resourceId: '00000000-0000-7000-8000-0000000000b3', title: 'Launch memo', mimeType: 'text/markdown', kind: 'file', version: 1, updatedAt: '2026-11-07T09:40:00.000Z' },
+      ...detail().artifacts,
+    ] }));
+    // Past its staleTime, with nothing else asking for it again.
+    act(() => { client.getQueryCache().find({ queryKey: ['canvas', CANVAS] })?.invalidate(); });
+    await openMenu('Q4 revenue review');
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(2));
+    expect(await within(screen.getByRole('group', { name: 'Artifacts' })).findByText('Launch memo')).toBeInTheDocument();
+  });
+
+  it('keeps the open Canvas when the menu’s read of a stale detail fails', async () => {
+    const client = renderCanvas();
+    await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(1));
+    getCanvas.mockRejectedValue(new ApiError('Unavailable', 503, 'service_unavailable'));
+    act(() => { client.getQueryCache().find({ queryKey: ['canvas', CANVAS] })?.invalidate(); });
+    await openMenu('Q4 revenue review');
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(screen.queryByText('This Canvas could not be opened.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Leave the Canvas' })).toBeInTheDocument();
+  });
+
+  it('reads no detail on opening the menu of a Canvas still being created', async () => {
+    renderCanvas(`/canvases/${CANVAS}`, (client) => {
+      client.setQueryData(['canvas-creations', undefined, undefined, undefined], {
+        [CANVAS]: { status: 'creating', error: null, retry: () => undefined, complete: () => undefined, createdAt: '2026-11-07T09:00:00.000Z', prompt: '' },
+      });
+    });
+    await openMenu('New Canvas');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(getCanvas).not.toHaveBeenCalled();
+  });
+
+  it('draws no Artifacts section for a Canvas with none', async () => {
+    getCanvas.mockResolvedValue(detail({ artifacts: [] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByRole('group', { name: 'Artifacts' })).toBeNull();
+  });
+
   it('lists the attached Sidekicks in its menu by name and state, between Change appearance and Archive canvas', async () => {
-    getCanvas.mockResolvedValue(detail({ sidekicks: [
+    getCanvas.mockResolvedValue(detail({ artifacts: [], sidekicks: [
       attached(TRACKER, 'Launch tracker'),
       attached(DIGEST, 'Weekly digest', { status: 'paused', madeHere: false }),
       attached('00000000-0000-7000-8000-0000000000d3', 'Unfinished', { status: 'draft' }),
