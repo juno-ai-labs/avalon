@@ -1,4 +1,5 @@
 import analyticsEvents from "../../../config/analytics-events-lakehouse.json";
+import engineeringAudit from "../../../config/engineering-mcp-audit-lakehouse.json";
 import inference from "../../../config/inference-lakehouse.json";
 import usage from "../../../config/usage-lakehouse.json";
 import { CloudflareQueryError, cloudflareResult } from "./cloudflare-api";
@@ -9,7 +10,7 @@ import { CloudflareQueryError, cloudflareResult } from "./cloudflare-api";
  * source of the bucket, namespace and table names.
  */
 export const LAKEHOUSES = Object.fromEntries(
-  [inference, analyticsEvents, usage].map((manifest) => [
+  [inference, analyticsEvents, usage, engineeringAudit].map((manifest) => [
     manifest.table,
     { bucket: manifest.regions.global.bucket, table: `${manifest.namespace}.${manifest.table}` },
   ]),

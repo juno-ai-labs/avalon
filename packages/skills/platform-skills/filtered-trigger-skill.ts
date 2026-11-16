@@ -1,4 +1,4 @@
-import type { HarnessSkill } from "../index";
+import type { HarnessSkill } from "../types";
 
 /**
  * Setting up a Sidekick that starts on several people's events, each person's

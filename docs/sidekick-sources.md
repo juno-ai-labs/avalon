@@ -40,7 +40,7 @@ notice are.
 | `apps/api/src/services/sidekick-source-service.ts`, `apps/api/src/routes/automations.ts` | The routes a signed-in person and an agent use. |
 | `apps/api/src/services/sidekick-source-tools.ts`, `apps/api/src/services/integrations.ts` (`asksForSources`, `builtInSkillsFor`) | The agent's tools (list, ask, and try a filter), which turns are offered them, and which turns list the skill. |
 | `apps/api/src/services/wizard-canvas-cards.ts` | `wizardTurnCanvasId` and `postWizardCard`: the card a wizard turn a Canvas's Chat started posts into that Chat. |
-| `packages/agent-harness/src/platform-skills/filtered-trigger-skill.ts` | `setting-up-a-filtered-trigger`, the wizard's procedure. |
+| `packages/skills/platform-skills/filtered-trigger-skill.ts` | `setting-up-a-filtered-trigger`, the wizard's procedure. |
 | `apps/api/src/services/sidekick-event-content.ts`, `packages/connectors/src/types.ts` (`readActivityContent`) | The host's read of what an admitted event is about, and the run's opening with it. |
 
 ## How it works

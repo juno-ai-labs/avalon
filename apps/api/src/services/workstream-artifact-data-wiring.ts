@@ -17,7 +17,7 @@ import { asArtifactId, asWorkspaceId, IdSchema, type ExecutionPrincipal } from "
 
 import { artifactHostDOName, workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
-import { isCanvasChat } from "../lib/canvas-chat";
+import { loopAuthority, type LoopAuthority, type LoopAuthorityInput } from "../lib/loop-authority";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
 import {
@@ -62,39 +62,16 @@ export function artifactDataReader(input: {
  *   same attached sites, and only those its person can open now, so it can
  *   check a write before the first real run makes one.
  *
- * Everyone else gets null: a background agent, a loop under Organization
- * authority, and any other parent kind. The
- * answer is host-derived from the loop input, in the style of
- * `conversationToolAccess`; no model argument reaches it.
+ * A background agent gets its root's answer (`loopAuthority`): a Chat's agent
+ * writes the Chat's sites, a wizard's the wizard's, and a run's worker the
+ * run's. Everyone else gets null: a loop under Organization authority outside
+ * a run, and any other parent kind. The answer is host-derived from the loop
+ * input; no model argument reaches it.
  */
-export type ArtifactDataWriteAccess =
-  | { kind: "canvas_chat" }
-  | { kind: "sidekick_run"; sidekickId: string; runId: string }
-  | { kind: "sidekick_wizard"; sidekickId: string };
+export type ArtifactDataWriteAccess = LoopAuthority;
 
-export function artifactDataWriteAccess(input: {
-  executionPrincipal: { type: string };
-  parentKind: string;
-  parentId?: string | undefined;
-  substreamId?: string | undefined;
-  automationRun?: { automationId: string; runId: string } | undefined;
-  automationDelegation?: unknown;
-  backgroundAgent?: boolean | undefined;
-}): ArtifactDataWriteAccess | null {
-  if (input.backgroundAgent === true || input.automationDelegation) return null;
-  // A run writes whoever it acts as, a person or the Sidekick itself: what it
-  // may write is its Sidekick's attachments, which the gate reads.
-  if (input.automationRun) {
-    return input.parentKind === "automation"
-      ? { kind: "sidekick_run", sidekickId: input.automationRun.automationId, runId: input.automationRun.runId }
-      : null;
-  }
-  // A Chat and a wizard write as the person typing into it.
-  if (input.executionPrincipal.type !== "user") return null;
-  if (input.parentKind === "automation" && (input.substreamId ?? "0") === "0" && input.parentId) {
-    return { kind: "sidekick_wizard", sidekickId: input.parentId };
-  }
-  return isCanvasChat(input) ? { kind: "canvas_chat" } : null;
+export function artifactDataWriteAccess(input: LoopAuthorityInput): ArtifactDataWriteAccess | null {
+  return loopAuthority(input);
 }
 
 export interface ArtifactDataWiringInput {

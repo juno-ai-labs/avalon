@@ -17,6 +17,7 @@ import {
   asUserId,
   asWorkspaceId,
   asAutomationId,
+  asSubstreamId,
   type ArtifactManifest,
 } from "@rally/contracts";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
@@ -37,6 +38,8 @@ import artifactWorker from "../src/artifacts/index";
 import { AuthorizationService } from "../src/services/authorization-service";
 import { ResourceService } from "../src/services/resource-service";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
+import { canvasArtifactNoter } from "../src/services/terminal/authority";
+import { createTerminalPortFactory } from "../src/services/terminal/object-port";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import {
   pointArtifactAtVersion,
@@ -309,6 +312,151 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect((await visit(fileRoute!.hostname_stub)).status).toBe(401);
   });
 
+  it("returns a published file's link, which serves the file to anyone once the Canvas is public", async () => {
+    await runInDurableObject(
+      env.SUBSTREAM_AGENTS.getByName(conversationObjectName(env.AVALON_REGION, workspaceId, CANVAS, "0")),
+      (_instance, state) => seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: CANVAS, parentKind: "canvas" }),
+    );
+    const bridge = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(env, workspaceId),
+      createTerminalPortFactory(env, undefined, "0"), undefined, null, null, null, "0",
+      canvasArtifactNoter(env, { workspaceId, parentKind: "canvas", parentId: CANVAS, substreamId: asSubstreamId("0") }));
+    const published = await bridge.publishResource({
+      workspaceId, workstreamId: CANVAS, harnessRunId: crypto.randomUUID(), toolCallId: crypto.randomUUID(),
+      effectIntentId: crypto.randomUUID(), executionPrincipal: { type: "user", userId: OWNER },
+      signal: new AbortController().signal,
+    }, { filePath: "episode-1.mp3" }, new TextEncoder().encode("episode one audio"));
+    expect(published.publishKind).toBe("file");
+    const url = new URL("url" in published && published.url ? published.url : "https://missing.invalid");
+    // The stub is the first label, ahead of the region suffix.
+    const stub = url.hostname.split(".")[0]!.replace(/-g$/u, "");
+    await share("public");
+    await sync(published.resourceId);
+    // A podcast app sends no cookie and no fetch metadata.
+    const response = await visit(stub);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("episode one audio");
+  });
+
+  it("serves a byte range of a public file and a site's asset, as a player seeking asks for one", async () => {
+    await share("public");
+    await sync(SITE_HOST, SITE);
+    await sync(FILE);
+    const fileStub = (await env.PLATFORM_DB.prepare("SELECT hostname_stub FROM artifact_hostname_routes WHERE artifact_id=?")
+      .bind(FILE).first<{ hostname_stub: string }>())!.hostname_stub;
+    // As an anonymous player sends it: no cookie, no fetch metadata.
+    const fetchFrom = async (stub: string, init: RequestInit) => {
+      const ctx = createExecutionContext();
+      const response = await artifactWorker.fetch(new Request(`https://${stub}-g.rallyusercontent.com/`, init), {
+        APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+        ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+        PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
+      }, ctx);
+      await waitOnExecutionContext(ctx);
+      return response;
+    };
+    const read = async (response: Response) => ({
+      status: response.status,
+      body: await response.text(),
+      length: response.headers.get("content-length"),
+      range: response.headers.get("content-range"),
+      accepts: response.headers.get("accept-ranges"),
+    });
+
+    // The stored file is "Published file", 14 bytes.
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=0-8" } })))
+      .toEqual({ status: 206, body: "Published", length: "9", range: "bytes 0-8/14", accepts: "bytes" });
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=-4" } })))
+      .toMatchObject({ status: 206, body: "file", range: "bytes 10-13/14" });
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=10-" } })))
+      .toMatchObject({ status: 206, body: "file", range: "bytes 10-13/14" });
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=14-" } })))
+      .toMatchObject({ status: 416, body: "", range: "bytes */14" });
+    // A range running past the end is cut to the end, as RFC 9110 says.
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=10-99" } })))
+      .toMatchObject({ status: 206, body: "file", length: "4", range: "bytes 10-13/14" });
+    expect(await read(await fetchFrom(fileStub, {})))
+      .toEqual({ status: 200, body: "Published file", length: "14", range: null, accepts: "bytes" });
+    expect(await read(await fetchFrom(fileStub, { method: "HEAD" })))
+      .toEqual({ status: 200, body: "", length: "14", range: null, accepts: "bytes" });
+    // A resumed download that holds another version gets the whole current one.
+    const etag = (await fetchFrom(fileStub, { method: "HEAD" })).headers.get("etag");
+    expect(etag).toBeTruthy();
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=0-8", "if-range": "\"another-version\"" } })))
+      .toMatchObject({ status: 200, body: "Published file" });
+    expect(await read(await fetchFrom(fileStub, { headers: { range: "bytes=0-8", "if-range": etag! } })))
+      .toMatchObject({ status: 206, body: "Published" });
+
+    // A static site's asset, "<h1>Website</h1>", answers a range the same way.
+    expect(await read(await fetchFrom("quiet-blue-river-garden", { headers: { range: "bytes=4-10" } })))
+      .toEqual({ status: 206, body: "Website", length: "7", range: "bytes 4-10/16", accepts: "bytes" });
+
+    // A range is no way around the audience: a private file refuses it whole.
+    await share("editors");
+    await sync(FILE);
+    expect((await fetchFrom(fileStub, { headers: { range: "bytes=0-8" } })).status).toBe(401);
+  });
+
+  it("sends an active site's page whole, with no stale length, when Rally injects into it", async () => {
+    // An active site that ends in the taught `env.ASSETS.fetch(request)`, with
+    // a share card Rally injects into its page on the way out.
+    const page = "<html><head><title>Board</title></head><body>Board</body></html>";
+    const activeResource = crypto.randomUUID();
+    const activeHost = asArtifactId(crypto.randomUUID());
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO resources(id,workspace_id,resource_type,provider,title,mime_type,content_ref,metadata_json,
+        attachment_status,publication_parent_id,revision_author_kind,revision_author_user_id,revision_cause,created_at,updated_at)
+        VALUES(?,?,'generated_site','avalon_generated','Board','application/vnd.rally.site-manifest+json','active-manifest','{}',
+        'attached',?,'member',?,'created','2026-11-11T12:00:00.000Z','2026-11-11T12:00:00.000Z')`,
+        activeResource, workspaceId, CANVAS, OWNER);
+      state.storage.sql.exec(
+        `INSERT INTO artifact_registry(artifact_id,workspace_id,workstream_id,resource_id,mode,stateful,current_version,
+        manifest_ref,created_at,updated_at,hostname_stub) VALUES(?,?,?,?,'active',0,1,'active-manifest',1,1,'calm-green-active-page')`,
+        activeHost, workspaceId, CANVAS, activeResource);
+    });
+    await env.PLATFORM_DB.prepare("INSERT INTO artifact_hostname_routes VALUES('calm-green-active-page','global',?,'2026-11-11T12:00:00Z')")
+      .bind(activeHost).run();
+    await env.PAYLOADS.put(`artifact/${activeHost}/v1/assets/index.js`,
+      "export default { async fetch(request, env) { return env.ASSETS.fetch(request); } };");
+    await env.PAYLOADS.put(`artifact/${activeHost}/v1/assets/index.html`, page);
+    await host(activeHost).recordPublish({
+      artifactId: activeHost, workspaceId, workstreamId: CANVAS, resourceId: activeResource, region: "global",
+      manifest: {
+        version: 1, artifactId: activeHost, artifactVersion: 1, mode: "active", stateful: false,
+        serverModuleSha256: "a".repeat(64), totalBytes: page.length, publishedAt: "2026-11-11T12:00:00.000Z",
+        assets: [{ path: "index.html", contentType: "text/html; charset=utf-8", sizeBytes: page.length, sha256: "b".repeat(64) }],
+        socialPreview: {
+          title: "Board", description: "The team's board",
+          image: { path: "social-preview.png", contentType: "image/png", width: 1200, height: 630, alt: "Board", generated: true },
+        },
+      },
+    });
+    await share("public");
+    await sync(activeHost, activeResource);
+    const loader = env.ARTIFACT_LOADER;
+    if (!loader) throw new Error("this test needs the worker_loaders binding");
+    const fetchPage = async (headers: Record<string, string>) => {
+      const ctx = createExecutionContext();
+      const response = await artifactWorker.fetch(new Request("https://calm-green-active-page-g.rallyusercontent.com/", { headers }), {
+        APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+        ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+        ARTIFACT_LOADER: loader, PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
+      }, ctx);
+      await waitOnExecutionContext(ctx);
+      const body = await response.text();
+      return { status: response.status, body, length: response.headers.get("content-length"), range: response.headers.get("content-range") };
+    };
+    for (const headers of [{}, { range: "bytes=0-9" }]) {
+      const served = await fetchPage(headers);
+      expect(served.status).toBe(200);
+      expect(served.range).toBeNull();
+      // Rally's card is in the page, and no header claims the stored page's shorter length.
+      expect(served.body).toContain('property="og:title"');
+      expect(served.body).toContain("<body>Board</body>");
+      expect(served.length === null || Number(served.length) === new TextEncoder().encode(served.body).length).toBe(true);
+    }
+  });
+
   it("artifact-only users can use artifacts but cannot read the conversation; old cookies lose access", async () => {
     await share("participants", [READER]);
     await sync(SITE_HOST, SITE);
@@ -344,6 +492,81 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect((await host(SITE_HOST).checkSession(session!.session)).ok).toBe(
       true,
     );
+  });
+
+  it("renews a viewer session for a year when a person opens the page, never on the page's own requests", async () => {
+    await share("participants", [READER]);
+    await sync(SITE_HOST, SITE);
+    const { code } = await host(SITE_HOST).openForViewer({
+      userId: READER,
+      displayName: "Reader",
+      appSessionId: "reader-session",
+    });
+    const viewer = await host(SITE_HOST).redeemCode(code);
+    const sessionExpiry = () => runInDurableObject(host(SITE_HOST), async (_instance, state) =>
+      state.storage.sql.exec<{ expires_at: number }>("SELECT expires_at FROM viewer_sessions WHERE redeemed_at IS NOT NULL").one().expires_at);
+    // A session a minute from expiry, as one last opened a year ago would be.
+    const soon = Date.now() + 60_000;
+    await runInDurableObject(host(SITE_HOST), async (_instance, state) => {
+      state.storage.sql.exec("UPDATE viewer_sessions SET expires_at=? WHERE redeemed_at IS NOT NULL", soon);
+    });
+    const poll = await visit("quiet-blue-river-garden", "/", viewer!.session);
+    expect(poll.status).toBe(200);
+    expect(poll.headers.get("set-cookie")).toBeNull();
+    expect(await sessionExpiry()).toBe(soon);
+
+    const navigate = async (site: string) => {
+      const ctx = createExecutionContext();
+      const response = await artifactWorker.fetch(
+        new Request("https://quiet-blue-river-garden-g.rallyusercontent.com/", {
+          headers: {
+            cookie: `__rally_artifact_session=${viewer!.session}`,
+            "sec-fetch-site": site, "sec-fetch-mode": "navigate", "sec-fetch-dest": "document",
+          },
+        }),
+        {
+          APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+          ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+          PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
+        },
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+      return response;
+    };
+    // The page reloading itself, or bouncing itself back through an outside
+    // redirect with no click, is a navigation too, but not an open.
+    for (const site of ["same-origin", "cross-site"]) {
+      const scripted = await navigate(site);
+      expect(scripted.status).toBe(200);
+      expect(scripted.headers.get("set-cookie")).toBeNull();
+      expect(await sessionExpiry()).toBe(soon);
+    }
+
+    const opened = await navigate("none");
+    expect(opened.status).toBe(200);
+    const yearSeconds = 365 * 24 * 60 * 60;
+    const maxAge = Number(/Max-Age=(\d+)/u.exec(opened.headers.get("set-cookie") ?? "")?.[1]);
+    expect(maxAge).toBeGreaterThan(yearSeconds - 60);
+    expect(maxAge).toBeLessThanOrEqual(yearSeconds);
+    expect(opened.headers.get("set-cookie")).toContain(`__rally_artifact_session=${viewer!.session}`);
+    expect(await sessionExpiry()).toBeGreaterThan(Date.now() + (yearSeconds - 60) * 1_000);
+  });
+
+  it("prunes an open code nobody redeemed once the code expires, not a year later", async () => {
+    await share("participants", [READER]);
+    await sync(SITE_HOST, SITE);
+    const viewer = { userId: READER, displayName: "Reader", appSessionId: "reader-session" };
+    await host(SITE_HOST).openForViewer(viewer);
+    const pending = () => runInDurableObject(host(SITE_HOST), async (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM viewer_sessions WHERE redeemed_at IS NULL").one().count);
+    expect(await pending()).toBe(1);
+    await runInDurableObject(host(SITE_HOST), async (_instance, state) => {
+      state.storage.sql.exec("UPDATE viewer_sessions SET code_expires_at=? WHERE redeemed_at IS NULL", Date.now() - 1);
+    });
+    // The next open prunes the dead code and leaves only its own.
+    await host(SITE_HOST).openForViewer(viewer);
+    expect(await pending()).toBe(1);
   });
 
   it("keeps source and administrative data editor-only for artifact users", async () => {
@@ -562,6 +785,16 @@ describe("Canvas artifact access propagated to local serving", () => {
       createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER })
         .execute({ audience: "public", personAsked: true }, {} as never),
     ).rejects.toMatchObject({ code: "canvas_not_found" });
+    await sync(SITE_HOST, SITE);
+    expect((await visit("quiet-blue-river-garden")).status).toBe(401);
+  });
+
+  it("never lets a background agent override the audience a manager chose, whatever it claims", async () => {
+    await share("editors");
+    // An agent's conversation has no person in it, so its "person asked" is a default.
+    const agentCall = await createArtifactAudienceTool(env, { workspaceId, canvasId: CANVAS, userId: OWNER, defaultOnly: true })
+      .execute({ audience: "public", personAsked: true }, {} as never);
+    expect(agentCall.output).toMatchObject({ audience: "editors", changed: false });
     await sync(SITE_HOST, SITE);
     expect((await visit("quiet-blue-river-garden")).status).toBe(401);
   });

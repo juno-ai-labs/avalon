@@ -31,7 +31,11 @@ const ArgumentsSchema = z.strictObject({
 
 const AUDIENCE_WORDS = { public: "anyone with the link", workspace: "the Organization", participants: "specific people", editors: "the Canvas's editors" } as const;
 
-export function createArtifactAudienceTool(env: Env, input: { workspaceId: string; canvasId: string; userId: string }): HarnessTool {
+export function createArtifactAudienceTool(env: Env, input: {
+  workspaceId: string; canvasId: string; userId: string;
+  /** For a loop no person types into: every call is a default (`personAsked: false`). */
+  defaultOnly?: boolean;
+}): HarnessTool {
   return {
     definition: {
       name: "set_artifact_audience",
@@ -51,7 +55,9 @@ export function createArtifactAudienceTool(env: Env, input: { workspaceId: strin
       const args = ArgumentsSchema.parse(raw);
       const workspaceId = asWorkspaceId(input.workspaceId);
       const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
-      const result = await workspace.canvasSetArtifactAudience({ ...input, artifactVisibility: args.audience, personAsked: args.personAsked });
+      const { defaultOnly, ...canvas } = input;
+      const result = await workspace.canvasSetArtifactAudience({ ...canvas, artifactVisibility: args.audience,
+        personAsked: defaultOnly ? false : args.personAsked });
       if (result.outcome === "not_manager") {
         const reason = "Only the Canvas's creator or an Organization owner or admin can change who opens its artifacts, from the Canvas's Share screen.";
         throw new ArtifactDataToolError("artifact_audience_not_manager",

@@ -34,8 +34,8 @@ import { renderGoogleMailCalendarSystemMessage } from "@rally/prompts/api/google
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
-import { isCanvasChat } from "../lib/canvas-chat";
 import { createNotificationsPlugin, NOTIFICATIONS_PLUGIN_ID } from "./notification-tools";
+import { actsAsSidekickWizard, canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -3048,7 +3048,7 @@ export async function runWorkstreamHarness(
   });
   // Independent reads begin while the lease heartbeat is checked. No prepared
   // value grants authority, and tool/prompt setup still waits for the heartbeat.
-  const runDefinitionPreparation = new Preparation(() => input.automationRun
+  const runDefinitionPreparation = new Preparation(() => loopAuthority(input)?.kind === "sidekick_run"
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null));
   const inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input));
   runDefinitionPreparation.get();
@@ -5351,10 +5351,12 @@ async function sidekickCanvasContextMessage(env: Env, input: WorkstreamWorkflowI
   // A run is told its Sidekick's attachments whoever it acts as; the wizard is
   // told what its person can open, and has one.
   const userId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
-  if (userId === null && !input.automationRun) return null;
+  const authority = loopAuthority(input);
+  const run = authority?.kind === "sidekick_run" ? authority : null;
+  if (userId === null && !run) return null;
   const canvases = await (await hostedParentStub(env, input.workspaceId)).sidekickCanvasContext({
     workspaceId: input.workspaceId, sidekickId: input.parentId, userId,
-    ...(input.automationRun ? { runId: input.automationRun.runId } : {}),
+    ...(run ? { runId: run.runId } : {}),
   });
   if (canvases.length === 0) return null;
   return modelDerivative({
@@ -5363,16 +5365,16 @@ async function sidekickCanvasContextMessage(env: Env, input: WorkstreamWorkflowI
       canvases: canvases.map((canvas) => ({
         canvasId: canvas.canvasId, title: canvas.title, artifacts: canvas.artifacts.map(agentCanvasArtifact),
       })),
-      updating: input.automationRun ? RUN_CANVAS_UPDATING : WIZARD_CANVAS_UPDATING,
+      updating: run ? RUN_CANVAS_UPDATING : WIZARD_CANVAS_UPDATING,
     }),
-  }, "sidekick_canvas_context", input.triggerMessageId ?? input.automationRun?.runId ?? input.harnessRunId);
+  }, "sidekick_canvas_context", input.triggerMessageId ?? run?.runId ?? input.harnessRunId);
 }
 
 async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
   workstream: { title: string; objective: string },
-  runDefinitionPreparation = new Preparation(() => input.automationRun
+  runDefinitionPreparation = new Preparation(() => loopAuthority(input)?.kind === "sidekick_run"
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null)),
 ): Promise<{
   systemPrompt: string;
@@ -5498,11 +5500,12 @@ async function loadRunPromptContext(
     const canvas = await canvasRunContextMessage(env, input);
     if (canvas) additionalMessages.push(canvas);
   }
-  // A run itself, or a wizard turn: the two that can act on it. A worker one
-  // of them started has neither the publish target nor the data write, so
-  // it is told nothing it could not do.
-  if (input.parentKind === "automation" && input.backgroundAgent !== true && !input.automationDelegation
-    && (input.automationRun || (input.substreamId ?? "0") === "0")) {
+  // A run or a wizard turn, and an agent either started, which acts with its
+  // root's authority (`loopAuthority`) and so can publish into and write the
+  // same Canvases' sites: each is told which those are.
+  const sidekickAuthority = loopAuthority(input);
+  if (input.parentKind === "automation"
+    && (sidekickAuthority?.kind === "sidekick_run" || sidekickAuthority?.kind === "sidekick_wizard")) {
     const attached = await sidekickCanvasContextMessage(env, input);
     if (attached) additionalMessages.push(attached);
   }
@@ -5878,7 +5881,7 @@ async function loadHarnessTools(
   input: WorkstreamWorkflowInput,
   runAuthoritySnapshot?: RunAuthoritySnapshot,
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
-  runDefinitionPreparation = new Preparation(() => input.automationRun
+  runDefinitionPreparation = new Preparation(() => loopAuthority(input)?.kind === "sidekick_run"
     ? readAutomationRunDefinition(env, input) : Promise.resolve(null)),
   inventoryPreparation = new Preparation(() => loadHarnessInventory(env, input)),
   paginationLease?: AttemptLease,
@@ -6025,9 +6028,9 @@ async function loadHarnessTools(
     ? await createCustomToolsPlugin(codeMode, runDefinition.definition.customTools, { loader: env.CODE_LOADER, input })
     : null;
   // In a Sidekick's shared conversation the authoring tools are the wizard's,
-  // and a turn there is the wizard's only once the Sidekick routed it so.
-  const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && input.parentKind === "automation"
-    && (input.substreamId ?? "0") === "0" && input.sidekickWizard === true
+  // and a turn there is the wizard's only once the Sidekick routed it so. An
+  // agent the wizard started acts with the wizard's authority and holds them too.
+  const automationsPlugin = actsAsSidekickWizard(input)
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages, codeMode)
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
@@ -6063,8 +6066,8 @@ async function loadHarnessTools(
     notificationsPlugin(env, input),
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input, () => turnIsSelfReview(env, input)),
       agentCoordinationRoleGuidance(input),
-      { sidekickRun: input.automationRun !== undefined,
-        canvasChat: isCanvasChat(input) && input.executionPrincipal.type === "user" }),
+      { sidekickRun: loopAuthority(input)?.kind === "sidekick_run",
+        canvasChat: canvasChatAuthority(input) !== null }),
     workstreamPlugin,
     webPlugin,
     terminalPlugin,
@@ -7319,19 +7322,24 @@ async function readAutomationRunDefinition(
   env: Env,
   input: WorkstreamWorkflowInput,
 ): Promise<AutomationRunDefinitionV1> {
+  // A run's worker reads its run's definition, so it holds the run's saved
+  // tools, default plugins and account bindings; its prompt still carries none
+  // of the run's instructions, which `loadRunPromptContext` reads only for the
+  // run itself.
+  const authority = loopAuthority(input);
+  if (authority?.kind !== "sidekick_run") throw new Error("sidekick_run_reference_missing");
   const run = input.automationRun;
-  if (!run) throw new Error("sidekick_run_reference_missing");
   const workspace = await hostedParentStub(env, input.workspaceId);
   return AutomationRunDefinitionV1Schema.parse(await workspace.sidekickReadRunDefinition({
     workspaceId: asWorkspaceId(input.workspaceId),
-    automationId: run.automationId,
-    runId: run.runId,
+    automationId: authority.sidekickId,
+    runId: authority.runId,
     // A continued run reads the revision accepted when it continued, not the
     // run row's own. Only a continuation names it: every other read keeps the
     // request shape an older SidekickDO's strict schema accepts, so a
     // mixed-version rollout refuses continuations at worst, never scheduled
     // runs.
-    ...(input.automationContinuation ? { definitionRevision: run.definitionRevision } : {}),
+    ...(input.automationContinuation && run ? { definitionRevision: run.definitionRevision } : {}),
   }));
 }
 
@@ -8590,14 +8598,18 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       workstreamId: input.parentId,
       principal: input.executionPrincipal,
       reader: artifactDataReader(input),
-      // Only a Canvas's Chat and a Sidekick run get `write_artifact_data`.
+      // A Canvas's Chat, a wizard, a run, and each one's agents (`loopAuthority`).
       write: artifactDataWriteAccess(input),
     })),
-    // A Canvas's Chat sets who opens its own artifacts, as its person; the
-    // object refuses anyone who does not manage the Canvas.
-    ...(artifactDataWriteAccess(input)?.kind === "canvas_chat" && input.executionPrincipal.type === "user"
+    // A Canvas's Chat, and any agent it started, sets who opens its own
+    // artifacts, as its person; the object refuses anyone who does not manage
+    // the Canvas.
+    ...(canvasChatAuthority(input) !== null && input.executionPrincipal.type === "user"
       ? [createArtifactAudienceTool(env, {
         workspaceId: input.workspaceId, canvasId: input.parentId, userId: input.executionPrincipal.userId,
+        // No person types into an agent's conversation, so it can set only a
+        // default, never override an audience someone chose.
+        ...(input.backgroundAgent === true ? { defaultOnly: true } : {}),
       })]
       : []),
     {

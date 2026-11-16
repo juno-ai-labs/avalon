@@ -18,8 +18,8 @@ product authority, and a capture failure does not change the inference outcome.
 | `apps/api/src/queues/inference-lakehouse-consumer.ts` | Validate the pointer and archived bytes, enforce the regional boundary, fit the row to Pipeline's per-record limit, and send it through `INFERENCE_LAKEHOUSE`. |
 | `config/inference-lakehouse.json` | Source of truth for the Global bucket, stream, pinned stream ID, sink, pipeline, namespace, table, and binding name. |
 | `config/inference-lakehouse-stream-schema.json` | Immutable structured-stream schema and analytical column contract. |
-| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | Locally materializes pinned bindings for application deploys; explicit modes check or reconcile every Global lakehouse (inference, analytics events and usage). |
-| `.github/workflows/deploy-api.yml` | Materializes pinned Wrangler configs locally and deploys them without a Pipelines management-plane preflight. |
+| `scripts/ensure-cloudflare-inference-lakehouse.mjs` | `--deploy-bindings` materializes pinned bindings locally in the pinned account, and reconciles and adopts stream IDs in any other; explicit modes check or reconcile every Global lakehouse (inference, analytics events, usage and the [engineering MCP audit table](engineering-mcp.md#tool-call-audit-log)). |
+| `.github/workflows/deploy-api.yml` | Runs `--deploy-bindings`: no Pipelines management-plane read in the pinned account. |
 
 ### Capture and archive
 
@@ -119,7 +119,9 @@ table when the first records arrive.
 The API deployment keeps application delivery independent from the Pipelines
 management API:
 
-Normal merges do not list, create, or verify Pipelines resources. The streams,
+Each manifest records `pinnedAccount`, the SHA-256 of the account id its
+stream IDs belong to. Normal merges to that account do not list, create, or
+verify Pipelines resources. The streams,
 sinks, and pipelines are immutable infrastructure, and a transient outage in
 their management plane must not prevent an unrelated Worker release. A missing
 or malformed pin fails local manifest validation, as does reusing one stream ID
@@ -128,6 +130,32 @@ stream no longer exists; regional health proves that the Worker exposes each
 binding, not that its remote stream accepts rows. That is why creation and
 replacement require explicit reconciliation, while failed ingestion remains
 visible through Queue retries and the dead-letter queues.
+
+A deploy to any other account (an open-source fork or a fresh deployment) cannot
+use those pins, so `--deploy-bindings` reconciles that account instead: it
+creates whatever is missing, adopts the account's stream IDs in place of the
+pinned ones, writes them and the account marker into that checkout's manifests,
+and materializes from them. Nothing is committed, so each deploy of a fork
+reconciles again; reconciliation is idempotent. Before adopting, it looks up
+each pinned stream ID in the account and fails if one exists: that means the
+marker is stale for this account, not that this is a fork, and adopting would
+re-point production's bindings.
+
+A manifest that lands with the all-zero stream ID and no `pinnedAccount` is a
+new lakehouse, not a fork. In the pinned account `--deploy-bindings`
+reconciles and adopts that manifest alone, writes its stream ID and marker into
+the checkout, and keeps the pinned ones off the control plane, so a new
+lakehouse works from its first deploy. It reconciles on every deploy until its
+ID and marker are committed, and the deploy log prints both values to commit
+together. A failure there fails the deploy only for an API Worker lakehouse,
+which must exist before the API Worker binds it. For another Worker's, the
+deploy warns and continues: the API release changed none of its own bindings,
+and that Worker deploys unbound and says how to fix it. Until then `--check` and `--reconcile` fail on it: before the first
+deploy its stream is missing, and after it the committed all-zero ID drifts
+from the real one. Only the API Worker's lakehouses are materialized
+into the regional configs: the engineering MCP's audit table is provisioned
+here but bound by that Worker's own deploy, which reads the checkout manifest
+later in the same job.
 
 Infrastructure work uses an explicit mode. `--check` reads every resource and
 fails on absence or drift without mutation. `--reconcile` may create missing
@@ -325,6 +353,50 @@ delivery alarm. `inference_lakehouse_delivered` includes only identifiers,
 source, event type, and whether the row used the oversized fallback.
 
 ## Changelog
+
+### 2026-11-15 — A new lakehouse provisions itself in the pinned account
+
+**What changed:** `--deploy-bindings` reconciles and adopts a manifest that
+still carries the all-zero stream ID even when every pinned manifest matches
+the account, and materializes only the API Worker's bindings. The engineering
+MCP's audit table is the first such manifest, and the first whose binding
+belongs to another Worker.
+
+**Why:** The fork path already provisioned a whole account on deploy, but a
+new lakehouse in the pinned account still needed someone to run `--reconcile`
+by hand and commit the stream ID before merge; until then the audit table's
+Worker refused every tool. Folding the new manifest into the fork path was
+rejected: its missing marker would have sent production into the stale-marker
+check, which fails when the pinned streams exist.
+
+**Consequences:** A new lakehouse's deploys call the Pipelines control plane
+until its stream ID and `pinnedAccount` are committed. Only a new API Worker
+lakehouse can fail the API deploy that way; another Worker's failure is a
+warning, so the 2026-09-01 rule still holds for the API Worker's own bindings. A lakehouse for a Worker
+other than the API stays out of `API_WORKER_BINDINGS` and is bound by that
+Worker's own deploy; added to the loader list alone, it is provisioned but
+bound nowhere.
+
+### 2026-11-15 — A deploy to a new account provisions its own lakehouses
+
+**What changed:** Manifests record `pinnedAccount`. The deploy runs
+`--deploy-bindings`: in the pinned account it materializes offline as before; in
+any other it reconciles with `adoptStreamIds`, then materializes from the
+account's own stream IDs.
+
+**Why:** Rally is to be open-sourced, and a fresh account had to run
+`--reconcile` by hand and commit the stream IDs it printed before any deploy
+could succeed. Calling the control plane on every deploy was rejected: the
+2026-09-01 entry below records why production deploys must not depend on it.
+The account is identified by a hash, not its id, so the public manifests do not
+name it.
+
+**Consequences:** A fork's deploys depend on the Pipelines control plane until
+it commits its own stream IDs and `pinnedAccount`. Adopting replaces the
+drift check only in a foreign account; `--reconcile` in the pinned account still
+refuses a stream ID that differs from the pin. Review found that a wrong marker
+alone would have made production adopt fresh streams, so the deploy first checks
+whether the pinned streams exist in the account and fails if they do.
 
 ### 2026-11-10 — Overflow at the Pipeline's 1 MB per-record limit, not the 5 MB request limit
 

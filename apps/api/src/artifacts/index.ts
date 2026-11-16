@@ -84,6 +84,7 @@ import {
   injectAnnotationScriptResponse,
 } from "./annotation-script";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
+import { storedObjectResponse } from "./stored-object-response";
 import {
   injectSocialPreviewIntoHtml,
   injectSocialPreviewResponse,
@@ -259,16 +260,7 @@ const artifactServer = {
       // requests. A partitioned `None` cookie is kept only for this artifact
       // under that one top-level site, so it is no wider than the frame.
       const framed = request.headers.get("sec-fetch-dest") === "iframe" && Boolean(env.BROWSER_APP_ORIGIN);
-      headers.append("set-cookie", [
-        `${SESSION_COOKIE}=${redeemed.session}`,
-        "Path=/",
-        "HttpOnly",
-        "Secure",
-        // `Lax` rather than `Strict` so the desktop's own top-level navigation
-        // to the artifact carries the cookie it just set.
-        ...(framed ? ["SameSite=None", "Partitioned"] : ["SameSite=Lax"]),
-        `Max-Age=${Math.max(0, Math.floor((redeemed.expiresAt - Date.now()) / 1_000))}`,
-      ].join("; "));
+      headers.append("set-cookie", sessionCookie(redeemed.session, redeemed.expiresAt, framed));
       return withSecurityHeaders(new Response(null, { status: 303, headers }));
     }
 
@@ -277,7 +269,13 @@ const artifactServer = {
     const verdict = classifyFetchMetadata(request, origin);
     const session = verdict === 'same_origin' || verdict === 'top_level' ? readCookie(request,SESSION_COOKIE) : null;
     let admission: Awaited<ReturnType<ArtifactHostDO['admitRequest']>>;
-    try { admission=await artifact.admitRequest({session}); }
+    // Only a person opening the page renews its session: a top-level navigation
+    // from the address bar or an app's WebView (`Sec-Fetch-Site: none`) or one a
+    // click started (`Sec-Fetch-User: ?1`). A page that bounces itself through an
+    // outside redirect on a timer sends neither, so it cannot keep itself alive.
+    const opened = verdict === 'top_level'
+      && (request.headers.get('sec-fetch-site') === 'none' || request.headers.get('sec-fetch-user') === '?1');
+    try { admission=await artifact.admitRequest({session, opened}); }
     catch(error) {
       logWarn({LOG_LEVEL:'info',AVALON_REGION:env.AVALON_REGION},'artifact_admission_failed',{
         artifact_id:artifactId,code:diagnosticErrorCode(error,'artifact_admission_failed'),
@@ -288,6 +286,25 @@ const artifactServer = {
       const target=admission.status===401 && isDocumentNavigation(request) ? signInUrl(env,host,url.pathname+url.search) : null;
       return target ? redirect(target) : html(neutralPage(),admission.status);
     }
+    const served = await serveAdmitted(env, ctx, artifact, artifactId, request, url, host, admission);
+    if (!session || admission.sessionExpiresAt === undefined) return served;
+    // The open renewed the session; the browser's copy of the cookie follows.
+    const renewed = new Response(served.body, served);
+    renewed.headers.append("set-cookie", sessionCookie(session, admission.sessionExpiresAt, false));
+    return renewed;
+  },
+};
+
+async function serveAdmitted(
+  env: ArtifactServingEnv,
+  ctx: ExecutionContext,
+  artifact: Parameters<typeof serveCurrent>[2],
+  artifactId: string,
+  request: Request,
+  url: URL,
+  host: NonNullable<ReturnType<typeof parseArtifactHost>>,
+  admission: Extract<Awaited<ReturnType<ArtifactHostDO['admitRequest']>>, { allowed: true }>,
+): Promise<Response> {
     if(admission.kind==='file') {
       if(request.method!=='GET' && request.method!=='HEAD') return html(neutralPage(),405);
       const mount=splitVersionMount(url.pathname);
@@ -296,11 +313,10 @@ const artifactServer = {
       if(mount.version!==null && mount.version!==latest && !admission.editor) return html(neutralPage(),403);
       const version=admission.file.versions.find(version=>version.version===(mount.version??latest));
       if(!version) return html(neutralPage(),404);
-      const object=await env.PAYLOADS.get(version.contentRef);
-      if(!object) return html(neutralPage(),503);
-      return withSecurityHeaders(new Response(request.method==='HEAD'?null:object.body,{
-        headers:{'content-type':version.mimeType,'content-length':String(object.size),'content-disposition':contentDisposition('inline',admission.file.title)},
-      }));
+      const served=await storedObjectResponse(env.PAYLOADS,version.contentRef,request,
+        {'content-type':version.mimeType,'content-disposition':contentDisposition('inline',admission.file.title)});
+      if(!served) return html(neutralPage(),503);
+      return withSecurityHeaders(served);
     }
     const admitted: Admitted = admission;
 
@@ -317,7 +333,7 @@ const artifactServer = {
       }
       const refusal = refuseUnsafeVersionRequest(request);
       if (refusal) return html(plainErrorPage(refusal), 405);
-      return servePriorVersion(env, artifactId, mount.version, mount.path, admitted);
+      return servePriorVersion(env, request, artifactId, mount.version, mount.path, admitted);
     }
 
     const response = await serveCurrent(env, ctx, artifact, artifactId, request, url, admitted);
@@ -330,8 +346,25 @@ const artifactServer = {
       if (target) return redirect(target);
     }
     return response;
-  },
-};
+}
+
+/** The viewer-session cookie, with a `Max-Age` that ends when the session does. */
+function sessionCookie(session: string, expiresAt: number, framed: boolean): string {
+  return [
+    `${SESSION_COOKIE}=${session}`,
+    "Path=/",
+    "HttpOnly",
+    "Secure",
+    // Redeemed inside the browser client's preview frame, the artifact is a
+    // cross-site frame, and a `Lax` cookie would never be sent with its
+    // requests. A partitioned `None` cookie is kept only for this artifact
+    // under that one top-level site, so it is no wider than the frame. `Lax`
+    // rather than `Strict` so the desktop's own top-level navigation carries
+    // the cookie it just set.
+    ...(framed ? ["SameSite=None", "Partitioned"] : ["SameSite=Lax"]),
+    `Max-Age=${Math.max(0, Math.floor((expiresAt - Date.now()) / 1_000))}`,
+  ].join("; ");
+}
 
 /**
  * The browser client's page that signs a person in and opens this site at
@@ -379,6 +412,7 @@ type Admitted = {
  */
 async function serveAsset(
   env: ArtifactServingEnv,
+  request: Request,
   artifactId: string,
   version: number,
   manifest: ArtifactManifest,
@@ -391,11 +425,14 @@ async function serveAsset(
   const resolved = resolveAssetPath(path, assetPaths);
   if (!resolved) return html(plainErrorPage("This page does not exist in the artifact."), 404);
   const asset = manifest.assets.find((entry) => entry.path === resolved)!;
-  const object = await env.PAYLOADS.get(`artifact/${artifactId}/v${version}/assets/${resolved}`);
-  if (!object) return html(plainErrorPage("This page is temporarily unavailable."), 503);
+  const key = `artifact/${artifactId}/v${version}/assets/${resolved}`;
   const htmlAsset = asset.contentType.toLowerCase().startsWith("text/html");
   const social = htmlAsset && socialPageUrl !== null && manifest.socialPreview !== undefined && resolved === "index.html";
   if (htmlAsset && (rewriteHtmlForVersion !== null || social || annotationScriptPath !== null)) {
+    // Rewritten HTML is a new body each time, so it is sent whole: a range of
+    // it would name bytes of a page no stored object holds.
+    const object = await env.PAYLOADS.get(key);
+    if (!object) return html(plainErrorPage("This page is temporarily unavailable."), 503);
     // Static HTML is bounded by the publish ceiling, so it is rewritten as
     // text. The annotation script goes in last so it ends up first in `<head>`.
     let source = await object.text();
@@ -412,10 +449,9 @@ async function serveAsset(
       headers: { "content-type": asset.contentType },
     }));
   }
-  return withSecurityHeaders(new Response(object.body, {
-    status: 200,
-    headers: { "content-type": asset.contentType },
-  }));
+  const served = await storedObjectResponse(env.PAYLOADS, key, request, { "content-type": asset.contentType });
+  if (!served) return html(plainErrorPage("This page is temporarily unavailable."), 503);
+  return withSecurityHeaders(served);
 }
 
 async function serveCurrent(
@@ -436,7 +472,7 @@ async function serveCurrent(
     parentOrigin: browserFrameAncestor(env.BROWSER_APP_ORIGIN),
   });
   if (manifest.mode === "static") {
-    return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null, url, annotationScriptPath);
+    return serveAsset(env, request, artifactId, manifest.artifactVersion, manifest, url.pathname, null, url, annotationScriptPath);
   }
   // A stateful site runs through the supervisor's facet and needs no loader
   // binding here. A stateless active site cannot safely fall back to assets:
@@ -455,7 +491,7 @@ async function serveCurrent(
     const rewritten = annotationScriptPath !== null
       ? injectAnnotationScriptResponse(withPreview, annotationScriptPath)
       : withPreview;
-    return withSecurityHeaders(rewritten);
+    return withSecurityHeaders(rewritten === response ? response : withoutStoredBodyHeaders(rewritten));
   } catch (error) {
     // The viewer never sees a stack trace. For an identified participant it
     // lands in the rail, where it can be pasted back into chat for the model.
@@ -475,8 +511,20 @@ async function serveCurrent(
   }
 }
 
+/**
+ * A rewritten page is a new body: the stored object's length, `ETag` and range
+ * support describe bytes it no longer has, so a client trusting them would
+ * truncate the page or splice it with another response.
+ */
+function withoutStoredBodyHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const name of ["content-length", "etag", "accept-ranges", "content-range"]) headers.delete(name);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 async function servePriorVersion(
   env: ArtifactServingEnv,
+  request: Request,
   artifactId: string,
   version: number,
   path: string,
@@ -494,7 +542,7 @@ async function servePriorVersion(
   // A prior *static* version serves its frozen assets exactly. A prior
   // stateless-active version would run its frozen module over its frozen
   // assets; until the loader binding exists, its assets are what render.
-  return serveAsset(env, artifactId, version, manifest, path, version, null, null);
+  return serveAsset(env, request, artifactId, version, manifest, path, version, null, null);
 }
 
 /**
