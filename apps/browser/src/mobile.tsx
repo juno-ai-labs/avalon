@@ -241,7 +241,7 @@ function MobileContent(): React.JSX.Element {
   }, [session, rows, summaries, sharedElsewhere, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, marketplace, conversation, descriptors]);
   return <main className="mobile-canvas-app">
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
-    <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={() => create()} openMarketplace={() => create(true)} userId={session?.user.id} /></section>
+    <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={() => create()} openMarketplace={session?.workspace?.accessClass === 'guest' ? undefined : () => create(true)} userId={session?.user.id} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
     {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Suspense></AppErrorBoundary></section>}
     {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas marketplace={marketplace} created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
@@ -268,7 +268,7 @@ function Dashboard({ rows, elsewhere, openElsewhere: openOther, loading, failed,
   elsewhere: OtherOrganizationCanvas[];
   openElsewhere: (item: OtherOrganizationCanvas) => void;
   loading: boolean; failed: boolean; retry: () => void; hasMore: boolean; more: () => void;
-  open: (id: string) => void; create: () => void; openMarketplace: () => void; userId: string | undefined;
+  open: (id: string) => void; create: () => void; openMarketplace: (() => void) | undefined; userId: string | undefined;
 }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<CanvasFilter>('all');
@@ -279,7 +279,7 @@ function Dashboard({ rows, elsewhere, openElsewhere: openOther, loading, failed,
       .sort((a, b) => b.row.updatedAt.localeCompare(a.row.updatedAt));
   const filtered = all.filter(({ row, facts }) => row.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()) && matchesCanvasFilter(facts, filter));
   const narrowed = query !== '' || filter !== 'all';
-  return <div className="mobile-dashboard"><div className="mobile-dashboard-heading"><h1>Your canvases</h1><button className="mobile-secondary" onClick={openMarketplace}><Store size={16} aria-hidden="true" />Marketplace</button></div>
+  return <div className="mobile-dashboard"><div className="mobile-dashboard-heading"><h1>Your canvases</h1>{openMarketplace && <button className="mobile-secondary" onClick={openMarketplace}><Store size={16} aria-hidden="true" />Marketplace</button>}</div>
     <label className="mobile-search"><Search size={19} /><input aria-label="Find a canvas" placeholder="Find a canvas" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
     {all.length > 0 && <div aria-label="Canvas filter" className="mobile-filters" role="group">
       {CANVAS_FILTERS.map(([value, label]) => <button aria-pressed={filter === value} key={value} onClick={() => setFilter(value)} type="button">{label}</button>)}
