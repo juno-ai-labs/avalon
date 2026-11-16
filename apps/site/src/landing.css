@@ -782,3 +782,7 @@ main{counter-reset:fig}
 .versus-table th,.versus-table td{padding:12px}
 .blog-body{font-size:17px}
 }
+
+/* The CASA link in the footer's legal row; reading.css and home.css hold the same rule for the other pages. */
+.footer-casa { color: inherit; text-decoration: none; }
+.footer-casa:hover { color: var(--green); }
