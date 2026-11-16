@@ -10,15 +10,16 @@ import { marked } from 'marked';
 // imports.
 import { loadCanvasTemplates, type CanvasTemplateData } from '../../../packages/skills/marketplace-skills/catalog';
 import { CANVAS_TEMPLATE_CATEGORIES } from '../../../packages/skills/marketplace-skills/categories';
-import { TEMPLATE_CONNECTORS, templateConnectorHelpPath, type TemplateConnectorId } from '../../../packages/skills/marketplace-skills/connectors';
+import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS, templateConnectorHelpPath, type TemplateConnectorId, type TemplatePluginId } from '../../../packages/skills/marketplace-skills/connectors';
 import { escapeHtml as escape } from './comparison-pages';
-import { renderConnectorMark } from './connector-marks';
+import { renderConnectorMark, renderPluginGlyph } from './connector-marks';
 
 const ORIGIN = 'https://rallywith.ai';
 const APP_ORIGIN = 'https://app.rallywith.ai';
 const arrow = '<svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg>';
 const CATEGORY_LABELS = new Map<string, string>(CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => [tag, label]));
 const CONNECTORS = new Map(TEMPLATE_CONNECTORS.map((connector) => [connector.id, connector]));
+const PLUGINS = new Map(TEMPLATE_PLUGINS.map((plugin) => [plugin.id, plugin]));
 
 /** Every template, in catalog order. Read on each call so the dev server serves the current files. */
 export const marketplaceTemplates = (): CanvasTemplateData[] => loadCanvasTemplates((file) => readFileSync(file, 'utf8'));
@@ -37,14 +38,22 @@ export const audience = (tags: readonly string[]): string =>
 const startLink = (className: string, link: string): string =>
   `<a class="${className}" data-site-action="web-app-template" href="${APP_ORIGIN}${link}">Start from this ${arrow}</a>`;
 
-/** The recommended connectors, each with its company's mark and a link to how to connect it; nothing when a template recommends none. */
-function connectorList(connectors: readonly TemplateConnectorId[], className: string): string {
-  if (connectors.length === 0) return '';
-  return `<ul class="${className}" aria-label="Recommended connectors">${connectors.map((id) => {
-    const { name, mark } = CONNECTORS.get(id)!;
-    return `<li><a href="${templateConnectorHelpPath(id)}">${renderConnectorMark(mark)}${escape(name)}</a></li>`;
-  }).join('')}</ul>`;
-}
+/** One chip: a mark or glyph and a name, linking to the help page that explains it. */
+const chip = (href: string, mark: string, name: string): string => `<li><a href="${href}">${mark}${escape(name)}</a></li>`;
+
+const connectorChips = (connectors: readonly TemplateConnectorId[]): string[] => connectors.map((id) => {
+  const { name, mark } = CONNECTORS.get(id)!;
+  return chip(templateConnectorHelpPath(id), renderConnectorMark(mark), name);
+});
+
+const pluginChips = (plugins: readonly TemplatePluginId[]): string[] => plugins.map((id) => {
+  const { name, glyph, helpPath } = PLUGINS.get(id)!;
+  return chip(helpPath, renderPluginGlyph(glyph), name);
+});
+
+/** A row of chips, or nothing when there are none. */
+const chipList = (chips: readonly string[], className: string, label: string): string =>
+  chips.length ? `<ul class="${className}" aria-label="${label}">${chips.join('')}</ul>` : '';
 
 /** The marketplace's header, the homepage's with Marketplace marked current. */
 export function renderMarketHeader(): string {
@@ -68,11 +77,11 @@ export function renderMarketplaceFilters(): string {
  * which opens the template's own page.
  */
 export function renderMarketplaceCards(): string {
-  const cards = marketplaceTemplates().map(({ name, description, tags, connectors, link, slug }) =>
+  const cards = marketplaceTemplates().map(({ name, description, tags, connectors, plugins, link, slug }) =>
     `<li class="market-card" data-categories="${tags.join(' ')}"><div class="market-card-body">`
     + `<p class="market-kind">${escape(audience(tags))}</p>`
     + `<h3>${escape(name)}</h3><p>${escape(description)}</p>`
-    + connectorList(connectors, 'market-connectors')
+    + chipList([...connectorChips(connectors), ...pluginChips(plugins)], 'market-connectors', 'What it works with')
     + `<div class="market-card-actions">${startLink('text-link', link)}`
     + `<a class="text-link market-more" href="${templatePagePath(slug)}" aria-label="More info about ${escape(name)}">More info</a></div>`
     + `</div></li>`);
@@ -84,12 +93,15 @@ export function renderMarketplaceCards(): string {
  * best with, and the prompt Rally starts from, which is the template itself.
  */
 export function renderTemplatePage(template: CanvasTemplateData): string {
-  const { name, description, tags, connectors, link, slug, prompt } = template;
+  const { name, description, tags, connectors, plugins, link, slug, prompt } = template;
   const path = templatePagePath(slug);
   const title = `${name} · Rally Marketplace`;
   const connectorSection = connectors.length
-    ? `<p>Connect these so Rally can read what it needs and keep the Canvas current:</p>${connectorList(connectors, 'market-connectors market-connectors-large')}`
-    : '<p>Nothing to connect. Rally builds it from what you tell it.</p>';
+    ? `<p>Connect these so Rally can read what it needs and keep the Canvas current:</p>${chipList(connectorChips(connectors), 'market-connectors market-connectors-large', 'Recommended connectors')}`
+    : plugins.length ? '<p>Nothing to connect.</p>' : '<p>Nothing to connect. Rally builds it from what you tell it.</p>';
+  const pluginSection = plugins.length
+    ? `<p>Built into Rally, so there is nothing to set up:</p>${chipList(pluginChips(plugins), 'market-connectors market-connectors-large', 'Rally plugins it uses')}`
+    : '';
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -127,7 +139,7 @@ export function renderTemplatePage(template: CanvasTemplateData): string {
         <h1 id="template-title">${escape(name)}</h1>
         <p class="market-lede">${escape(description)}</p>
         <div class="market-template-actions">${startLink('button primary', link)}</div>
-        <section class="market-template-section" aria-labelledby="template-connectors"><h2 id="template-connectors">Works best with</h2>${connectorSection}</section>
+        <section class="market-template-section" aria-labelledby="template-connectors"><h2 id="template-connectors">Works best with</h2>${connectorSection}${pluginSection}</section>
         <section class="market-template-section" aria-labelledby="template-prompt"><h2 id="template-prompt">What Rally builds</h2>
           <p>Starting this sends Rally these instructions as the Canvas’s first message. Rally asks for anything it needs, then builds it with you.</p>
           <blockquote class="market-prompt">${marked.parse(prompt, { async: false })}</blockquote>
