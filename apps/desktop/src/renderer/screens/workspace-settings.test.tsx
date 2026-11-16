@@ -185,6 +185,7 @@ function renderSettings(
   nextWorkspace: Workspace = workspace,
   client = createTestQueryClient(),
   standaloneWindow = false,
+  nativeShell = false,
 ): void {
   client.setQueryData(['account-onboarding', 'adam@example.com'], { eligible: false, introduced: true, revision: 1, presentation: null });
   render(
@@ -194,7 +195,7 @@ function renderSettings(
       <Tooltip.Provider>
         <QueryClientProvider client={client}>
           <CollaborationSessionProvider api={api as never} host={sessionHost.current} session={null}>
-            <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} /></AccountOnboardingGate>
+            <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} nativeShell={nativeShell} workspace={nextWorkspace} /></AccountOnboardingGate>
           </CollaborationSessionProvider>
         </QueryClientProvider>
       </Tooltip.Provider>
@@ -2746,6 +2747,25 @@ describe('Organization settings', () => {
     expect(refresh).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(refresh);
     expect(screen.queryByRole('dialog', { name: 'Refresh Canva · adam@example.com?' })).toBeNull();
+  });
+
+  it('leaves appearance, start page, device notifications and sign-out to a native shell', async () => {
+    sessionHost.current = 'browser';
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
+    renderSettings(workspace, createTestQueryClient(), false, true);
+
+    openSettingsSection('Account');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Appearance' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
+
+    openSettingsSection('Preferences');
+    expect(await screen.findByRole('heading', { name: 'Agent' })).toBeInTheDocument();
+    expect(screen.queryByText('On startup')).toBeNull();
+
+    openSettingsSection('Notifications');
+    expect(await screen.findByRole('heading', { name: 'Notify me about' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'In this browser' })).toBeNull();
   });
 
   it('offers browser notifications in a browser and says when this browser cannot show them', async () => {

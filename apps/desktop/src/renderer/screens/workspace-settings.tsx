@@ -60,7 +60,7 @@ import type {
   CustomMcpToolPolicy,
   MemoryReview,
 } from '@rally/contracts';
-import { parseDesktopSettingsSection } from '../../common/settings';
+import { GUEST_SETTINGS_SECTIONS, parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { parseDesktopReleaseChannel, type DesktopReleaseChannel } from '../../common/release-channels';
@@ -422,12 +422,6 @@ function fallbackConnectionIcon(connection: WorkstreamConnection): LucideIcon {
   return Plug;
 }
 
-/**
- * The sections a guest can open: their own profile, who is in the Organization,
- * and this app. Every other section configures the Organization or a member's
- * place in it, and its routes refuse a guest, so a guest sees it disabled.
- */
-const GUEST_SETTINGS_SECTIONS: ReadonlySet<SettingsSection> = new Set(['account', 'preferences', 'members', 'application']);
 const GUEST_SECTION_DISABLED_REASON = 'Only members of this organization can open this.';
 
 const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
@@ -641,8 +635,18 @@ function linkedSettingsSection(): SettingsSection | null {
 
 export function WorkspaceSettingsScreen({
   standaloneWindow = false,
+  nativeShell = false,
   workspace,
-}: { standaloneWindow?: boolean; workspace: Workspace }): React.JSX.Element {
+}: {
+  standaloneWindow?: boolean;
+  /**
+   * A native shell (the iPhone app) lists the sections and owns this device's
+   * appearance, start page, notifications and sign-out in its own settings, so
+   * the page leaves those to it rather than offer a second, disagreeing control.
+   */
+  nativeShell?: boolean;
+  workspace: Workspace;
+}): React.JSX.Element {
   const {
     api,
     session,
@@ -1573,7 +1577,8 @@ export function WorkspaceSettingsScreen({
             {activeSection === 'preferences' && (
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-list-card">
-                  <div className="settings-preference-row">
+                  {/* Which page this device opens to; the app always opens on Home. */}
+                  {!nativeShell && <div className="settings-preference-row">
                     <SettingCopy setting={settings.startupPage} />
                     <DropdownSelect ariaLabel={settings.startupPage.label}
                       onValueChange={(value) => {
@@ -1583,7 +1588,7 @@ export function WorkspaceSettingsScreen({
                       }}
                       options={[{ label: 'Canvas Homepage', value: 'canvas-homepage' }, { label: 'Last Opened', value: 'last-opened' }]}
                       value={startupPage} variant="secondary" />
-                  </div>
+                  </div>}
                   {/* A support session is refused the route: the switch spans the person's other Organizations. */}
                   {api && !session?.impersonator && <SharedCanvasesSetting api={api} />}
                 </div>
@@ -1675,10 +1680,12 @@ export function WorkspaceSettingsScreen({
                     support session is refused, since the list spans the
                     person's other Organizations. */}
                 {api && !session?.impersonator && <ConnectedAppsSetting api={api} key={workspace.id} workspaceId={workspace.id} />}
-                {browserHost && <>
+                {browserHost && !nativeShell && <>
                   <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2></div>
                   <ThemePicker setting={settings.accountAppearance} />
                 </>}
+                {/* A support session ends here on every host: no native shell has its own control for it. */}
+                {(!nativeShell || session?.impersonator) && <>
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
@@ -1693,10 +1700,11 @@ export function WorkspaceSettingsScreen({
                         </>}
                   </div>
                 </div>
+                </>}
               </section>
             )}
 
-            {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && browserHost && api && (
+            {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && browserHost && !nativeShell && api && (
               <BrowserNotificationsSetting api={api} />
             )}
             {activeSection === 'notifications' && featureFlags.data?.pushNotificationsEnabled && !browserHost && (

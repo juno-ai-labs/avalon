@@ -12,7 +12,7 @@ import { edgePullOpens } from './edge-swipe';
 
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
 interface Props {
-  diagnostics?: () => void;
+  openSettings?: () => void;
   visible: boolean;
   snapshot: MobileSnapshot;
   close: () => void;
@@ -30,7 +30,7 @@ const ROW_HEIGHT = 52;
 const AUTO_SCROLL_ROWS_PER_SECOND = 8;
 const OPEN_MS = 280;
 const CLOSE_MS = 220;
-export function Sidebar({ visible, snapshot, close, send, diagnostics, pull, ref }: Props) {
+export function Sidebar({ visible, snapshot, close, send, openSettings, pull, ref }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -263,7 +263,7 @@ export function Sidebar({ visible, snapshot, close, send, diagnostics, pull, ref
         <View style={[styles.footer, { borderTopColor: colors.line }]}>
           <View style={[styles.avatar, { backgroundColor: colors.tonal }]}><Text style={{ color: colors.text }}>{snapshot.userName.slice(0, 1).toUpperCase()}</Text></View>
           <Pressable accessibilityRole="button" accessibilityLabel="Switch organization" onPress={() => action({ type: 'switch-workspace' }, true)} style={{ flex: 1, minHeight: 48, justifyContent: 'center' }}><Text numberOfLines={1} style={{ color: colors.text, fontWeight: '600' }}>{snapshot.userName}</Text><Text numberOfLines={1} style={{ color: colors.muted, fontSize: 11, marginTop: 3 }}>{snapshot.workspaceName} · Switch</Text></Pressable>
-          {diagnostics && iconButton('settings-outline', 'Settings and diagnostics', () => { close(); diagnostics(); })}
+          {openSettings && iconButton('settings-outline', 'Settings', () => { close(); openSettings(); })}
           {iconButton('log-out-outline', 'Sign out', () => action({ type: 'sign-out' }, true))}
         </View>
       </Animated.View>
