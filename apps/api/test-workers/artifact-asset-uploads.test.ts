@@ -25,7 +25,11 @@ afterEach(() => { vi.restoreAllMocks(); });
 
 describe("artifact asset publication in real R2", () => {
   it("writes each file under its version's own prefix until blob writes are turned on", async () => {
-    const result = await writeArtifactVersion({ PAYLOADS: env.PAYLOADS }, input);
+    const streamedBytes = new TextEncoder().encode("episode audio");
+    const streamed = { path: "episodes/one.mp3", sha256: await sha256Hex(streamedBytes), sizeBytes: streamedBytes.byteLength,
+      open: async () => new Response(streamedBytes).body! };
+    const result = await writeArtifactVersion({ PAYLOADS: env.PAYLOADS }, { ...input, files: [...input.files, streamed] });
+    expect(await (await env.PAYLOADS.get(`artifact/${artifactId}/v3/assets/episodes/one.mp3`))?.text()).toBe("episode audio");
     expect(result.manifest).not.toHaveProperty("assetStore");
     for (const file of input.files) {
       expect(await (await env.PAYLOADS.get(manifestAssetKey(result.manifest, file)))?.text())
