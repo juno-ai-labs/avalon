@@ -8870,25 +8870,25 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 
 /* A Canvas's notices: the record in its Chat, its device line, and the join banner (components/canvas-notices.tsx). */
 .canvas-notices-record { border:1px solid var(--av-sys-color-border-default); border-radius:12px; padding:12px 14px; display:flex; flex-direction:column; gap:6px; margin:8px 0; background:var(--av-sys-color-surface-elevated); }
-.canvas-notices-record-heading { display:flex; align-items:center; gap:8px; font-size:13px; }
-.canvas-notices-record-purpose { margin:0; font-size:14px; line-height:20px; overflow-wrap:anywhere; }
-.canvas-notices-record-by { margin:0; font-size:12px; color:var(--av-sys-color-text-muted); }
+.canvas-notices-record-heading { display:flex; align-items:center; gap:8px; font-size:var(--av-sys-type-callout); }
+.canvas-notices-record-purpose { margin:0; font-size:var(--av-sys-type-body); line-height:calc(var(--av-sys-type-body) * 20 / 14); overflow-wrap:anywhere; }
+.canvas-notices-record-by { margin:0; font-size:var(--av-sys-type-subheadline); color:var(--av-sys-color-text-muted); }
 /* Settings → Notifications: each Canvas's row sits under the Canvas notices default. */
 .settings-preference-row-nested { padding-left: calc(var(--space-6) + 12px); }
 .settings-row-inline-action { display:block; margin-top:6px; }
 /* A Canvas the person is not on: its row is greyed, but its join button stays clear. */
 .settings-preference-row-nested.is-unjoined :is(strong, small, .channel-picker) { opacity:.55; }
 .canvas-notices-record.is-history { color:var(--av-sys-color-text-muted); }
-.canvas-notices-record-controls { display:flex; flex-direction:column; align-items:flex-start; gap:8px; font-size:13px; }
+.canvas-notices-record-controls { display:flex; flex-direction:column; align-items:flex-start; gap:8px; font-size:var(--av-sys-type-callout); }
 .canvas-notices-record-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.canvas-notices-device { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:13px; flex-wrap:wrap; }
+.canvas-notices-device { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:var(--av-sys-type-callout); flex-wrap:wrap; }
 .canvas-notices-device { border-top:1px solid var(--av-sys-color-border-default); padding-top:8px; }
 .canvas-notices-device-copy { display:flex; flex-direction:column; gap:2px; min-width:0; }
 .canvas-notices-device-copy small { color:var(--av-sys-color-text-muted); }
 /* The banner sits under the title, in a row of its own: the screen's grid otherwise puts it in the transcript's row. */
 .workstream-screen:has(> .title-pill-header):has(> .canvas-notices-banner) { grid-template-rows: 64px auto minmax(0, 1fr) auto; }
 .workstream-screen.is-starting:has(> .title-pill-header):has(> .canvas-notices-banner) { grid-template-rows: 64px auto minmax(0, 1fr) auto minmax(0, 1fr); }
-.canvas-notices-banner { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; box-sizing:border-box; width:calc(100% - 2 * var(--space-8)); max-width:var(--composer-width); margin:4px auto 0; padding:8px 12px; border:1px solid var(--av-sys-color-border-default); border-radius:12px; background:var(--av-sys-color-surface-elevated); font-size:13px; line-height:20px; }
+.canvas-notices-banner { display:flex; align-items:center; flex-wrap:wrap; gap:8px 10px; box-sizing:border-box; width:calc(100% - 2 * var(--space-8)); max-width:var(--composer-width); margin:4px auto 0; padding:8px 12px; border:1px solid var(--av-sys-color-border-default); border-radius:12px; background:var(--av-sys-color-surface-elevated); font-size:var(--av-sys-type-callout); line-height:calc(var(--av-sys-type-callout) * 20 / 13); }
 .canvas-notices-banner > svg { flex:none; }
 .canvas-notices-banner-copy { flex:1 1 220px; min-width:0; overflow-wrap:anywhere; }
 .canvas-notices-banner-actions { display:flex; gap:8px; flex:none; }
