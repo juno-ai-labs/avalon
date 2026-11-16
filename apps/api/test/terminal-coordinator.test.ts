@@ -1363,6 +1363,22 @@ describe("Terminal sandbox coordinator", () => {
     expect(slept).toEqual([250, 250]);
   });
 
+  it("lets a read pass over a sibling's import in flight but not one left over", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const sibling = "00000000-0000-4000-8000-0000000000c3";
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    // The holder's import has written its row and is still copying the files.
+    workstreamObjectRun(objectStore, `INSERT INTO terminal_imported_resources
+      (sandbox_generation, resource_id, destination_path, source_sha256, size_bytes, state, imported_at, updated_at)
+      VALUES (1, '00000000-0000-4000-8000-0000000000c4', 'art.png', 'digest', 1, 'planned', NULL, 1)`);
+    const read = { ...context(), harnessRunId: sibling, toolCallId: "sibling-read" };
+    await expect(coordinator.peekRunning(read)).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    // The holder is gone without settling it: the import is left over.
+    await coordinator.release(context());
+    await expect(coordinator.peekRunning(read)).resolves.toBeNull();
+  });
+
   it("answers sandbox_busy after five seconds of a sibling holding the lease", async () => {
     const { objectStore, env, provider, clock } = fixture();
     const sibling = "00000000-0000-4000-8000-0000000000c2";
