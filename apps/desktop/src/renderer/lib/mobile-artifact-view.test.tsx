@@ -7,6 +7,7 @@ import { ArtifactView } from '../../../../mobile/src/CanvasWebView';
 // at its callback boundary with the DOM harness's React instance.
 vi.mock('../../../../mobile/node_modules/react', async () => import('react'));
 vi.mock('../../../../mobile/node_modules/expo-crypto', () => ({ randomUUID: () => crypto.randomUUID() }));
+vi.mock('../../../../mobile/node_modules/expo-web-browser', () => ({ openAuthSessionAsync: async () => ({ type: 'cancel' }) }));
 vi.mock('../../../../mobile/src/theme', () => ({ useTheme: () => ({ colors: { text: '#000' } }) }));
 vi.mock('../../../../mobile/src/diagnostics', () => ({ recordFailure: () => undefined }));
 const native = vi.hoisted(() => ({

@@ -1096,6 +1096,47 @@ describe('single-platform desktop identity routing', () => {
     invalidate.mockRestore();
   });
 
+  it('claims a held connector authorization and applies the completion the claim returns', async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+    const ticket = 'T'.repeat(43);
+    const claim = vi.spyOn(RallyApi.prototype, 'claimConnectorOAuth').mockResolvedValue({
+      target: `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
+    });
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: '7d7a69ac-59ef-4fc2-a022-f9629e631878', name: 'Juno Labs', region: 'global', role: 'owner' },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+    await dispatchDeepLink(
+      `rallywithai://auth/complete?provider=linear&region=global&attempt=${'a'.repeat(43)}&status=authorized&ticket=${ticket}`,
+    );
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['connections'] }));
+    expect(claim).toHaveBeenCalledWith(ticket);
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+    invalidate.mockRestore();
+  });
+
+  it("shows the refusal when a held authorization was started from another account", async () => {
+    vi.spyOn(RallyApi.prototype, 'claimConnectorOAuth').mockRejectedValue(new Error(
+      'This authorization was started from a different Rally account. Start the connection again from your own account.',
+    ));
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: { id: '7d7a69ac-59ef-4fc2-a022-f9629e631878', name: 'Juno Labs', region: 'global', role: 'owner' },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+    await dispatchDeepLink(
+      `rallywithai://auth/complete?provider=google&region=global&status=authorized&ticket=${'T'.repeat(43)}`,
+    );
+
+    await waitFor(() => expect(lastDeepLinkFailure()).toBe(
+      'This authorization was started from a different Rally account. Start the connection again from your own account.',
+    ));
+  });
+
   it('activates the connector attempt organization before applying its completion', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000019';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
@@ -1726,7 +1767,7 @@ describe('single-platform desktop identity routing', () => {
     expect(previewUrl).toBe('https://enterprise.api.rallywith.ai/connections/slack/link/preview');
     expect(linkUrl).toBe('https://enterprise.api.rallywith.ai/connections/slack/link');
     expect(startUrl).toBe(
-      'https://enterprise.api.rallywith.ai/connections/slack/start?telemetryVersion=2&desktopHandoffVersion=2',
+      'https://enterprise.api.rallywith.ai/connections/slack/start?telemetryVersion=2&desktopHandoffVersion=2&claim=1',
     );
     expect(new Headers(previewInit?.headers).get('authorization')).toBe(`Bearer ${enterpriseSession.accessToken}`);
     expect(previewInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));

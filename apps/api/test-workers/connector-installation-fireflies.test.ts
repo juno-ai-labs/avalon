@@ -530,13 +530,13 @@ describe('the Fireflies workspace installation', () => {
 
   it('starts a personal authorization only for the personal scope', async () => {
     const f = await fixture();
-    expect((await f.request('/connections/fireflies/start', null, { scope: 'personal', capabilities: ['fireflies.personal.read'] })).status).toBe(401);
+    expect((await f.request('/connections/fireflies/start?claim=1', null, { scope: 'personal', capabilities: ['fireflies.personal.read'] })).status).toBe(401);
     for (const invalid of [
       { scope: 'workspace', capabilities: ['fireflies.workspace.read'] },
       { scope: 'personal', capabilities: [] },
       { scope: 'personal', capabilities: ['fireflies.workspace.read'] },
     ]) {
-      expect((await f.request('/connections/fireflies/start', f.owner, invalid)).status, JSON.stringify(invalid)).toBe(400);
+      expect((await f.request('/connections/fireflies/start?claim=1', f.owner, invalid)).status, JSON.stringify(invalid)).toBe(400);
     }
   });
 
@@ -571,7 +571,7 @@ describe('the Fireflies workspace installation', () => {
     const f = await fixture({ connectorEnabled: false });
     const catalog = await f.request('/connections/catalog', f.owner);
     expect(z.object({ availableConnectorTypes: z.array(z.string()) }).parse(catalog.body).availableConnectorTypes).not.toContain('fireflies');
-    const started = await f.request('/connections/fireflies/start', f.owner, {
+    const started = await f.request('/connections/fireflies/start?claim=1', f.owner, {
       scope: 'personal', capabilities: ['fireflies.personal.read'],
     });
     // The exact refusal, not merely "some failure": an unmapped throw is a 500,
