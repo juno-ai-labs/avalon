@@ -56,6 +56,27 @@ Home uses `#/canvases`; opening a canvas uses `#/canvases/:id`, just like deskto
 
 The dashboard consumes the current socket-owned Canvas directory. Each dashboard card wears its Canvas's appearance through the desktop's `canvasMark`, drawing its icon in that colour's ink on its tint, so a card matches its sidebar row and desktop card. The lead card deepens that tint toward the hue in a gradient. Opening a Canvas reads `GET /canvases/:id` and its published artifacts, preferring a site, then the newest file. Multiple resources expose an artifact picker. One mobile owner refreshes details when the matching directory row changes publication timestamp, artifact kind, title or visibility, or disappears. The first directory reconciles a detail read before it arrived; reconnects reconcile missed updates. Shared resource-head state advances existing artifact versions directly. Detail queries remain fresh between those events, and mounting a second observer does not repeat the read. Unrelated resource-topic, presence and pin updates do not refetch Canvas details. An empty canvas routes to chat and stays there while the user writes; View canvas explicitly returns to the artifact. Fetch failures show recovery rather than being mistaken for an empty canvas.
 
+The dashboard offers desktop's filters (All, Reactive, Data backed, Made by me,
+Shared with me) as one row under the search that scrolls sideways. They mean
+what they mean on desktop because both read `@rally/contracts/canvas-filters`:
+Home computes each Canvas's `facts` with `canvasFilterFacts` and sends them in
+its snapshot summary, and the native dashboard matches those facts rather than
+rows it does not have. A Canvas from another Organization keeps only All and
+Shared with me (`ELSEWHERE_CANVAS_FACTS`). A host older than the field sends no
+facts, and the dashboard then shows no filters rather than filters that empty
+the list. The facts are in `directoryKey`, so a Sidekick that starts waking on a
+schedule moves its Canvas into Reactive.
+
+**Marketplace** sits under the dashboard's title. It sends Home
+`{ type: 'create', marketplace: true }`, and Home opens its create flow on the
+template catalog: the same categories and `CanvasTemplateCard` desktop draws,
+from the same Markdown files. The snapshot keeps `view: 'create'`, titled
+"Marketplace", so the native shell treats it as the create flow it is. A tap
+sends the template's prompt as the new Canvas's first Chat message through the
+create form's own reservation and receipts, then opens that Chat. An older host
+drops the field and opens the prompt form. The page is the browser's, not
+native, so the catalog follows web deploys as it does on desktop and web.
+
 Canvases shared with the person as a guest in their other Organizations
 ([`canvas-share-federation.md`](canvas-share-federation.md)), which the server
 pushes on Home's workspace socket, reach the shell
@@ -618,6 +639,30 @@ retention remain unmeasured. The full method, before/after table and limitations
 are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
+
+### 2026-11-16 — Dashboard filters and the Marketplace on mobile
+
+**What changed:** The native dashboard gained desktop's five Canvas filters and
+a Marketplace button. The filter rules moved from the desktop Canvases screen
+into `@rally/contracts/canvas-filters`, which desktop, the browser host and the
+native shell now share. Home's snapshot carries each Canvas's filter facts. The
+Marketplace is Home's create flow opened on the template catalog.
+
+**Why:** Phones had only search, and no way to start from a template.
+
+**Considered and rejected:** Sending Canvas rows to the shell so it could run
+desktop's filter itself; the shell would hold Sidekick and author fields it never
+draws, and the snapshot is posted on every directory change. Drawing the
+Marketplace natively; the catalog is compiled from Markdown by a Vite plugin
+Metro does not run, and a native copy would ship templates only with an OTA
+update. A new `view: 'marketplace'`; an older shell's snapshot schema would
+reject it.
+
+**What to respect:** a new filter goes in `canvas-filters.ts`, as a fact and a
+match, and every client gets it. Native rendering of the filter row and the
+Marketplace button was not seen on a device or simulator in this change; the
+browser host's preview dashboard and Marketplace were driven at iPhone 14 size,
+including starting a Canvas from a template.
 
 ### 2026-11-15 — The mobile host reads at iOS sizes and follows Dynamic Type
 

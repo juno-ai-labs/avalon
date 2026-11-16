@@ -9,8 +9,9 @@ import { canvasNeedsConversation, mobileStorage, rememberMobileWorkspace } from 
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowUpRight, Plus, Search, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Plus, Search, Sparkles, Store } from 'lucide-react';
 import type { CanvasSidebarRow } from '@rally/contracts';
+import { CANVAS_FILTERS, ELSEWHERE_CANVAS_FACTS, canvasFilterFacts, matchesCanvasFilter, type CanvasFilter, type CanvasFilterFacts } from '@rally/contracts/canvas-filters';
 import { ARTIFACT_PICKER_CAPABILITY, MOBILE_COMMAND_EVENT, MobileCommandSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
@@ -62,7 +63,8 @@ function MobileContent(): React.JSX.Element {
   const rows = useMemo(() => directory ?? [], [directory]);
   const pinnedIds = useMemo<string[]>(() => rows.filter((row) => row.pinnedPosition !== null)
     .sort((a, b) => a.pinnedPosition! - b.pinnedPosition!).map((row) => row.id), [rows]);
-  const summaries = useMemo(() => rows.map((row) => ({ id: row.id, title: row.title || 'Untitled canvas', updatedAt: row.updatedAt, icon: row.appearance?.icon ?? null, color: row.appearance?.color ?? null })), [rows]);
+  const summaries = useMemo(() => rows.map((row) => ({ id: row.id, title: row.title || 'Untitled canvas', updatedAt: row.updatedAt, icon: row.appearance?.icon ?? null, color: row.appearance?.color ?? null,
+    facts: canvasFilterFacts(row, session?.user.id) })), [rows, session?.user.id]);
   const sharedElsewhere = useMemo(() => elsewhere.map(({ canvas, organization }) => ({ id: canvas.id, title: canvas.title || 'Untitled canvas', updatedAt: canvas.updatedAt,
     icon: canvas.appearance?.icon ?? null, color: canvas.appearance?.color ?? null, organization: { id: organization.id, name: organization.name, region: organization.region } })), [elsewhere]);
   const directoryError = directory === undefined && (socket.state === 'unavailable' || socket.state === 'reconnecting' || socket.state === 'update_required');
@@ -82,9 +84,12 @@ function MobileContent(): React.JSX.Element {
   useEffect(() => { if (conversation && canvasId) setLastConversation(canvasId); }, [conversation, canvasId]);
   const [creationSession, setCreationSession] = useState(false);
   const creating = location.pathname === CANVASES_ROUTE && location.state?.createCanvas === true;
+  // The Marketplace is the create flow opened on its templates, so a template
+  // starts a Canvas exactly as a typed prompt does.
+  const marketplace = creating && location.state?.marketplace === true;
   const currentCreating = useRef(creating);
   currentCreating.current = creating;
-  const create = () => { returnLocation.current = null; void navigate(CANVASES_ROUTE, { state: { createCanvas: true } }); };
+  const create = (fromMarketplace = false) => { returnLocation.current = null; void navigate(CANVASES_ROUTE, { state: { createCanvas: true, marketplace: fromMarketplace } }); };
   useEffect(() => { if (location.pathname === '/') void navigate(CANVASES_ROUTE, { replace: true }); }, [location.pathname, navigate]);
   useEffect(() => { if (creating) setCreationSession(true); }, [creating]);
   const tabId = canvasId && new URLSearchParams(location.search).get('tab') === '1' && pinnedIds.includes(canvasId) ? canvasId : null;
@@ -142,7 +147,7 @@ function MobileContent(): React.JSX.Element {
         void navigate(previous ? previous.pathname + previous.search : CANVASES_ROUTE, { replace: true, state: previous?.state });
         break;
       }
-      case 'create': create(); break;
+      case 'create': create(message.marketplace); break;
       case 'open': open(message.id, message.pinned); break;
       case 'open-elsewhere': {
         const region = ConfiguredRegionSchema.safeParse(message.region);
@@ -230,16 +235,16 @@ function MobileContent(): React.JSX.Element {
       pins: pinnedIds, hasMore: false, loading: directory === undefined,
       pinBusy, pinError: pinNotice, directoryError, canvasId, tabId, inlineChat: true,
       view: creating ? 'create' : conversation ? 'conversation' : canvasId ? descriptor?.view ?? 'artifact' : 'home',
-      title: creating ? 'New canvas' : canvasId ? descriptor?.title ?? rows.find((row) => row.id === canvasId)?.title ?? 'Canvas' : 'Your canvases',
+      title: marketplace ? 'Marketplace' : creating ? 'New canvas' : canvasId ? descriptor?.title ?? rows.find((row) => row.id === canvasId)?.title ?? 'Canvas' : 'Your canvases',
       artifactId: descriptor?.artifactId ?? null, artifactPicker: descriptor?.artifactPicker ?? false,
     } });
-  }, [session, rows, summaries, sharedElsewhere, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, conversation, descriptors]);
+  }, [session, rows, summaries, sharedElsewhere, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, marketplace, conversation, descriptors]);
   return <main className="mobile-canvas-app">
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
-    <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={create} /></section>
+    <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={() => create()} openMarketplace={() => create(true)} userId={session?.user.id} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
     {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Suspense></AppErrorBoundary></section>}
-    {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
+    {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas marketplace={marketplace} created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
   </main>;
 }
 
@@ -258,23 +263,29 @@ function openElsewhere(target: { region: Parameters<typeof canvasCanonicalUrl>[1
 }
 
 /** The browser preview's dashboard; a native shell draws its own from the snapshot. */
-function Dashboard({ rows, elsewhere, openElsewhere: openOther, loading, failed, retry, hasMore, more, open, create }: {
+function Dashboard({ rows, elsewhere, openElsewhere: openOther, loading, failed, retry, hasMore, more, open, create, openMarketplace, userId }: {
   rows: CanvasSidebarRow[];
   elsewhere: OtherOrganizationCanvas[];
   openElsewhere: (item: OtherOrganizationCanvas) => void;
   loading: boolean; failed: boolean; retry: () => void; hasMore: boolean; more: () => void;
-  open: (id: string) => void; create: () => void;
+  open: (id: string) => void; create: () => void; openMarketplace: () => void; userId: string | undefined;
 }) {
   const [query, setQuery] = useState('');
-  type Card = { row: OtherOrganizationCanvas['canvas']; organization?: OtherOrganizationCanvas['organization'] };
-  const all: Card[] = elsewhere.length === 0 ? rows.map((row) => ({ row }))
-    : [...rows.map((row): Card => ({ row })), ...elsewhere.map(({ canvas, organization }): Card => ({ row: canvas, organization }))]
+  const [filter, setFilter] = useState<CanvasFilter>('all');
+  type Card = { row: OtherOrganizationCanvas['canvas']; organization?: OtherOrganizationCanvas['organization']; facts: CanvasFilterFacts };
+  const own = rows.map((row): Card => ({ row, facts: canvasFilterFacts(row, userId) }));
+  const all: Card[] = elsewhere.length === 0 ? own
+    : [...own, ...elsewhere.map(({ canvas, organization }): Card => ({ row: canvas, organization, facts: ELSEWHERE_CANVAS_FACTS }))]
       .sort((a, b) => b.row.updatedAt.localeCompare(a.row.updatedAt));
-  const filtered = all.filter(({ row }) => row.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
-  return <div className="mobile-dashboard"><h1>Your canvases</h1>
+  const filtered = all.filter(({ row, facts }) => row.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()) && matchesCanvasFilter(facts, filter));
+  const narrowed = query !== '' || filter !== 'all';
+  return <div className="mobile-dashboard"><div className="mobile-dashboard-heading"><h1>Your canvases</h1><button className="mobile-secondary" onClick={openMarketplace}><Store size={16} aria-hidden="true" />Marketplace</button></div>
     <label className="mobile-search"><Search size={19} /><input aria-label="Find a canvas" placeholder="Find a canvas" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+    {all.length > 0 && <div aria-label="Canvas filter" className="mobile-filters" role="group">
+      {CANVAS_FILTERS.map(([value, label]) => <button aria-pressed={filter === value} key={value} onClick={() => setFilter(value)} type="button">{label}</button>)}
+    </div>}
     {failed ? <Recovery title="Your canvases couldn’t load" retry={retry} /> : loading ? <div role="status" className="mobile-skeleton">Loading your canvases…</div> : <>
-      <div className="mobile-section-heading"><h2>{query ? 'Search results' : 'Pick up where you left off'}</h2><span>{filtered.length} canvases</span></div>
+      <div className="mobile-section-heading"><h2>{narrowed ? 'Search results' : 'Pick up where you left off'}</h2><span>{filtered.length} {filtered.length === 1 ? 'canvas' : 'canvases'}</span></div>
       <div className="mobile-grid">{filtered.map(({ row, organization }, index) => {
         const { icon: Icon, ink, tint, color } = canvasMark(row.id, row.appearance);
         const style = { '--card-hue': `var(--av-sys-color-project-${color})`, '--card-tint': tint, '--card-ink': ink } as React.CSSProperties;
@@ -283,7 +294,7 @@ function Dashboard({ rows, elsewhere, openElsewhere: openOther, loading, failed,
           {organization && <span aria-hidden="true" className="mobile-card-organization organization-badge-initial">{organization.name.slice(0, 1).toLocaleUpperCase()}</span>}
           <div className="mobile-card-art" aria-hidden="true"><Icon size={index === 0 ? 50 : 32} strokeWidth={1.5} /></div><h3>{row.title || 'Untitled canvas'}</h3><p>{from ?? 'Open canvas'} <ArrowUpRight size={14} aria-hidden="true" /></p></button>;
       })}</div>
-      {!filtered.length && <div className="mobile-empty"><Sparkles size={32} /><h2>{query ? 'No canvases found' : 'Make room for an idea.'}</h2><p>{query ? 'Try another name, or load more canvases.' : 'Create a plan, a little tool, or something just for you.'}</p>{!query && <button className="mobile-primary" onClick={create}><Plus size={18} /> Create a canvas</button>}</div>}
+      {!filtered.length && <div className="mobile-empty"><Sparkles size={32} /><h2>{narrowed ? 'No canvases found' : 'Make room for an idea.'}</h2><p>{narrowed ? 'Try another name or filter.' : 'Create a plan, a little tool, or something just for you.'}</p>{!narrowed && <button className="mobile-primary" onClick={create}><Plus size={18} /> Create a canvas</button>}</div>}
       {hasMore && <button className="mobile-load" onClick={more}>Load more canvases</button>}
     </>}
   </div>;
