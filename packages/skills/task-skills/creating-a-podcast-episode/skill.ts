@@ -21,7 +21,7 @@ import type { HarnessSkill } from "../../types";
  * broken. The cleanup rules are what turns a newsletter into something a
  * listener can follow.
  *
- * `generate_audio` takes text of any length, so a section is one call; the
+ * `generate_audio` records a section longer than one request in pieces, so a section is one call; the
  * sections stay separate calls because the chapters are timed from them.
  *
  * `ownerPlugin` is the Terminal plugin: the recording is joined and encoded,
@@ -220,8 +220,9 @@ name; a fixed name would make every episode replace the last.
 - **Chapters timed by guesswork.** A chapter that starts mid-sentence sends
   the listener to the wrong place. Do instead: record one section per call,
   and time it from the sections' measured lengths (step 7).
-- **Splitting a section to fit a limit.** \`generate_audio\` takes text of
-  any length. Do instead: send each section whole.
+- **Splitting a section by hand to fit a request.** \`generate_audio\`
+  records a long section in pieces itself. Do instead: send each section
+  whole, and if one is refused for its size, split it at a natural break.
 - **Reporting a finished episode on the recording alone.** Check its
   length (step 6) and confirm its row was written.
 `;

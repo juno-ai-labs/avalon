@@ -1,5 +1,5 @@
 import { siteFileSize } from "../src/services/terminal/site-resource-bridge";
-import { SITE_MANIFEST_MIME_TYPE, asUserId } from "@rally/contracts";
+import { SITE_MANIFEST_MIME_TYPE, asArtifactId, asUserId, type ArtifactManifest } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -1528,11 +1528,16 @@ describe("Daytona Terminal runtime", () => {
     files.set("/workspace/.rally-output/feed/cover.png", art);
     files.set("/workspace/.rally-output/feed/episodes/two.mp3", next);
     provider.openFile = vi.fn(async (_id: string, path: string) => new Response(files.get(path)!.slice().buffer).body!);
-    vi.mocked(resources.liveSiteFiles).mockResolvedValueOnce({ files: [
-      // Stored under another name: matched by its bytes, not its path.
-      { path: "episodes/old-name.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength },
-      { path: "cover.png", sha256: await sha256Hex(art), sizeBytes: art.byteLength },
-    ] });
+    const live: ArtifactManifest = {
+      version: 1, artifactId: asArtifactId("00000000-0000-7000-8000-0000000000a1"), artifactVersion: 4,
+      mode: "static", stateful: false, serverModuleSha256: null, assetStore: "blobs",
+      totalBytes: 0, publishedAt: "2026-11-16T00:00:00.000Z", assets: [
+        // Stored under another name: matched by its bytes, not its path.
+        { path: "episodes/old-name.mp3", contentType: "audio/mpeg", sha256: await sha256Hex(big), sizeBytes: big.byteLength },
+        { path: "cover.png", contentType: "image/png", sha256: await sha256Hex(art), sizeBytes: art.byteLength },
+      ],
+    };
+    vi.mocked(resources.liveSiteFiles).mockResolvedValueOnce({ manifest: live });
     // 40 MB of episodes, but only the new 20 MB one moves and counts.
     await runtime.publishResource(context, { filePath: "feed" });
     const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
@@ -1552,6 +1557,8 @@ describe("Daytona Terminal runtime", () => {
       expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", `/workspace/.rally-output/feed/${path}`);
     }
     expect(resources.noteOversizedPublish).not.toHaveBeenCalled();
+    // The live manifest is handed on, so the writer does not read it again.
+    expect(site.live).toBe(live);
   });
 
   it("refuses a site publish whose new files stream more than its budget, and says so", async () => {
@@ -1580,7 +1587,7 @@ describe("Daytona Terminal runtime", () => {
     const { files, provider, resources, runtime } = fixture();
     files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode("<h1>Show</h1>"));
     files.set("/workspace/.rally-output/feed/episode.mp3", new TextEncoder().encode("audio"));
-    provider.openFile = vi.fn(async () => { throw new Error("terminal_provider_file_stream_unavailable"); });
+    provider.openFile = vi.fn(async () => { throw new Error('The RPC receiver does not implement the method "openFile".'); });
     await runtime.publishResource(context, { filePath: "feed" });
     const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
     const episode = site.files.find((file) => file.path === "episode.mp3") as { open(): Promise<ReadableStream> };

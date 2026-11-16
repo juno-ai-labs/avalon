@@ -1084,7 +1084,7 @@ export function createTerminalResourceBridge(
       // Nothing to find stored is always safe: every file is then streamed.
       const manifest = served ? await servedManifest(env, served) : null;
       if (!manifest) return null;
-      return { files: manifest.assets.map(({ path, sha256, sizeBytes }) => ({ path, sha256, sizeBytes })) };
+      return { manifest };
     },
 
     noteOversizedPublish(context, refused) {
@@ -1202,6 +1202,7 @@ export function createTerminalResourceBridge(
         mode: site.mode,
         stateful: site.stateful,
         files: site.files,
+        ...(site.live ? { live: site.live } : {}),
         fallbackTitle: title,
         serverModuleSha256: site.serverModuleSha256,
         recordResource: async ({ written: stored, version: claimed }) => {

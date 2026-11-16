@@ -230,26 +230,11 @@ export function assertKindTransitionAllowed(
 
 /**
  * The shell that lists every file beneath `$target` as `size sha256 path`,
- * hashing only files it has not hashed before.
- *
- * Every publish of a directory lists it, and hashing every file every time
- * made a publish cost the whole site: a feed with many episodes rehashed all
- * of them to add one. So each directory keeps a digest cache in the sandbox,
- * one line per file, keyed by inode, change time, size and path. The change
- * time (`%C@`) is the kernel's, moved by any write or rename and settable by
- * no user tool, unlike the modified time `touch` can restore, so a cached
- * digest is never reused for other bytes. The cache is only as trusted as the
- * listing already was: a "stored" file is decided by this digest, and a
- * streamed one is checked again by R2.
- *
- * A digest computed now is appended to the cache as it is computed, so a
- * listing too large to finish within its time still saves its progress, and
- * the next publish starts where it stopped. A listing that finishes replaces
- * the cache with exactly its own files, so deleted files drop out. Any failure
- * to keep the cache only costs rehashing; it never fails the listing.
- *
- * `%P` is the path relative to the target, which is the manifest's key space,
- * and NUL-free by the path rules the family already enforces.
+ * hashing only files its per-directory digest cache has not seen. Keyed by
+ * inode, change time (which no user tool sets, unlike `touch -r` on the
+ * modified time), size and path. New digests are appended as computed, so a
+ * timed-out listing keeps its progress; a finished one rewrites the cache. See
+ * `docs/terminal-workspaces.md` (2026-11-16) for why.
  */
 export function directoryListingCommands(cacheDirectory: string): string[] {
   return [

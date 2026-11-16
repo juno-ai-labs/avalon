@@ -46,11 +46,7 @@ import { prepareSocialPreview } from "./site-social-preview";
 import { TerminalToolError } from "./tools";
 import { diagnosticErrorCode, logWarn, type LogEnv } from "../../observability/logger";
 
-/**
- * A file whose bytes this publish holds: the small files it reads anyway (a
- * page, the server module, the preview image the page names), or every file
- * for a caller with no stream (a Canvas seed).
- */
+/** A file whose bytes this publish holds. */
 export interface ReadSiteFile {
   path: string;
   bytes: Uint8Array;
@@ -58,12 +54,8 @@ export interface ReadSiteFile {
 }
 
 /**
- * A file the live version already holds by digest: nothing is written when
- * that copy is already this artifact's blob. Where it is not (a version from
- * before blobs) it is copied into one, as a stream, and where the live copy is
- * missing it is streamed from the sandbox instead, so a retry can recover.
- * The writer finds the live copy itself, from the live manifest it was given;
- * no caller hands it a storage key.
+ * A file the live version already holds by digest. The writer finds that copy
+ * in the live manifest itself; `open` is the fallback when it is missing.
  */
 export interface StoredSiteFile {
   path: string;
@@ -73,11 +65,7 @@ export interface StoredSiteFile {
   open(): Promise<ReadableStream<Uint8Array>>;
 }
 
-/**
- * A file streamed from where it is (the sandbox) straight into its blob, and
- * opened only then, so the Worker never holds it. R2 checks the bytes against
- * `sha256` and refuses a file that changed after it was listed.
- */
+/** A file streamed from the sandbox into its blob; R2 checks it against `sha256`. */
 export interface StreamedSiteFile {
   path: string;
   sha256: string;
@@ -281,7 +269,9 @@ function lengthKnown(body: ReadableStream<Uint8Array>, sizeBytes: number, piped:
  * or a stream shorter or longer than listed) changed after it was listed: the
  * model waits for its producer, as for a file read whole. Anything else keeps
  * the code it arrived with, a provider's or the platform's, so a failure that
- * a retry cannot fix is not reported as one it can.
+ * a retry cannot fix is not reported as one it can. The "changed" match reads
+ * R2's and `FixedLengthStream`'s own wording, so a runtime that rewords them
+ * turns that case into `resource_publish_failed`; the workerd test catches it.
  */
 function siteFileStoreFailure(env: Partial<LogEnv>, error: unknown, file: SitePublishFile | null): TerminalToolError {
   const message = error instanceof Error ? error.message : "";
@@ -532,6 +522,8 @@ export async function publishSiteVersion(env: Env, workspace: D1Database, input:
   files: readonly SitePublishFile[];
   fallbackTitle: string;
   serverModuleSha256: string | null;
+  /** The served manifest the caller already read, reused when it is still `previous`. */
+  live?: ArtifactManifest;
   recordResource: (version: { written: SitePublishResult; version: number; hostnameStub: ArtifactHostnameStub }) => Promise<boolean>;
 }): Promise<{ landed: boolean; written: SitePublishResult; version: number; hostnameStub: ArtifactHostnameStub }> {
   // Reject an ownerless publication before claims, payload writes or resource mutation.
@@ -552,7 +544,11 @@ export async function publishSiteVersion(env: Env, workspace: D1Database, input:
     artifactId: previous?.artifactId ?? input.artifactId ?? null, resourceId: input.resourceId, version,
     mode: input.mode, stateful: input.stateful, files: input.files,
     fallbackTitle: input.fallbackTitle, serverModuleSha256: input.serverModuleSha256,
-    live: previous && input.files.some((file) => "stored" in file) ? await servedManifest(env, previous) : null,
+    live: previous && input.files.some((file) => "stored" in file)
+      ? input.live?.artifactId === previous.artifactId && input.live.artifactVersion === previous.version
+        ? input.live
+        : await servedManifest(env, previous)
+      : null,
   });
   // The public origin before the row. If D1 is unavailable after the row
   // moves, a retry sees equal content, and would otherwise answer with the
