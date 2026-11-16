@@ -390,6 +390,31 @@ describe("Sidekick sources", () => {
   });
 });
 
+describe("a wizard turn a self-review owns", () => {
+  it("asks nobody for a source, though the turn was started by an agent's message and holds the tool", async () => {
+    await watchingMail();
+    // A review that handed its reads to an agent is woken by the agent's reply: the turn reads as an agent message.
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId, parentKind: "automation", parentId: automationId,
+      substreamId: "0", loopId: substreamLoopId(automationId), harnessRunId: crypto.randomUUID(), triggerMessageId: null,
+      activityId: null, executionPrincipal: { type: "user", userId: creator }, reason: "agent_message", sidekickWizard: true });
+    const asking = (reviewOwnsTurn: boolean) => {
+      const tool = sidekickSourceTools(env, input, creator, false, true, async () => reviewOwnsTurn)
+        .find((candidate) => candidate.definition.name === "request_source")!;
+      return tool.execute({ sidekickId: automationId, userIds: [jane], connectorType: "google", eventTypes: [eventType] }, {
+        workspaceId, workstreamId: automationId, harnessRunId: input.harnessRunId, effectIntentId: crypto.randomUUID(),
+        toolCallId: "ask-jane", executionPrincipal: input.executionPrincipal, signal: new AbortController().signal });
+    };
+    const requests = () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      "SELECT count(*) AS count FROM sidekick_source_requests WHERE sidekick_id = ?", automationId).one().count);
+
+    await expect(asking(true)).rejects.toMatchObject({ code: "sidekick_source_request_from_review" });
+    expect(await requests()).toBe(0);
+    // The same turn, once the review no longer owns it, asks.
+    await asking(false);
+    expect(await requests()).toBe(1);
+  });
+});
+
 describe("trying a draft filter", () => {
   const sample = async (userId: string, limit: number) => (await stub().sidekickSourceSampleEvents({
     workspaceId, userId, connectorType: "google", eventType, limit,
