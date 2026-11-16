@@ -11,6 +11,7 @@ import { workspaceDOName } from "../durable-objects/names";
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import { SidekickSourceService } from "./sidekick-source-service";
 import { refusingTool, toolRefusal } from "./tool-refusal";
+import { ApiError } from "../lib/api-error";
 import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
 import { loopAuthority } from "../lib/loop-authority";
 
@@ -92,7 +93,8 @@ const TEST_SAMPLE_EVENTS = 10;
  * (`sidekickSourceRefusalTool`). A tool is never withheld for who is asking:
  * `docs/agent-tools.md` rule 14.
  */
-export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, userId: UserId, room: boolean, asks = true): HarnessTool[] {
+export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, userId: UserId, room: boolean, asks = true,
+  turnIsSelfReview: () => Promise<boolean> = async () => false): HarnessTool[] {
   const service = new SidekickSourceService(env, input.workspaceId, userId);
   const name = (local: string) => room ? `sidekick_${local}` : local;
   // The request's card is drawn in the conversation it was asked from: a
@@ -212,9 +214,19 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   // The ask is the one tool a loop may be refused, and it is refused by name rather than withheld.
   // Asking, and trying a filter on the acting person's own events, are refused by
   // name rather than withheld; the list of sources stays readable.
-  return asks ? tools : tools.map((tool) => tool.definition.capability === "rally.sidekick.sources.request"
+  if (!asks) return tools.map((tool) => tool.definition.capability === "rally.sidekick.sources.request"
     ? sidekickSourceRefusalTool(input, tool)
     : tool.definition.capability === "rally.sidekick.sources.test" ? refusingTool(tool, sourceRefusal(input)) : tool);
+  // A wizard turn a self-review's agent woke reads as an agent message, so the
+  // review is known only once the turn runs, as the notification tools find it.
+  const review = toolRefusal("sidekick_source_request_from_review");
+  return tools.map((tool) => tool.definition.capability === "rally.sidekick.sources.list" ? tool : {
+    ...tool,
+    execute: async (raw, context) => {
+      if (await turnIsSelfReview()) throw new ApiError(403, review.code, review.message);
+      return tool.execute(raw, context);
+    },
+  });
 }
 
 function requestOutput(request: { requestId: string; person: { userId: string; displayName: string }; connectorType: string;

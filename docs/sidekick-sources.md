@@ -385,7 +385,9 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
   - the wizard's scheduled self-review (`reason: "sidekick_review"`) and an
     agent it started (`backgroundAgentRootReason`), which read runs:
     `sidekick_source_request_from_review`, which says to name the ask in the
-    review;
+    review. A wizard turn the review's agent woke reads as an agent message,
+    so the two tools also ask `turnIsSelfReview` when they run, as the
+    notification tools do, and refuse the same way;
   - a background agent with no recorded root, which acts for nobody:
     `sidekick_source_request_from_background_agent`.
 
@@ -821,7 +823,8 @@ one as it is resolved; the resolution becomes a changelog entry.
 Canvas's Chat, a Sidekick's wizard and a background agent of either may ask,
 whatever started the turn, another agent's message included. A run, its
 workers, and a self-review and its agents are still refused; a self-review's
-agents by `backgroundAgentRootReason`. `fromPersonTurn` is no longer written
+agents by `backgroundAgentRootReason`, and a wizard turn its agent's reply
+woke by `turnIsSelfReview` when the tool runs. `fromPersonTurn` is no longer written
 or read, and the schema still accepts it for stored messages. A Chat's
 background agent's ask, and a wizard turn any Chat message started, are
 drawn in the Chat.
