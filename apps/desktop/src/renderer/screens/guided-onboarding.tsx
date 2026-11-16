@@ -189,8 +189,13 @@ function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfi
   </div>;
 }
 
-/** A route that opens one Canvas or one Sidekick, rather than a section home. */
-const OPENED_OBJECT = /^\/(?:canvases|sidekicks)\/[^/]+$/u;
+/**
+ * Routes finishing the journey keeps: one Canvas or Sidekick by its id, or a
+ * template link's route, which starts its Canvas once it mounts, so a journey
+ * that covered it before it could run still leads there. Not `/sidekicks/new`,
+ * which creates a Sidekick as it mounts (`restorableRoute` makes the same cut).
+ */
+const KEPT_ROUTE = /^\/(?:(?:canvases|sidekicks)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|marketplace\/[a-z0-9-]+)$/iu;
 
 export function WorkspaceOnboardingJourney({ workspace, children }: { workspace: Workspace | null; children: ReactNode }): React.JSX.Element {
   const account = useOnboardingAccount();
@@ -231,12 +236,12 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   const finishOnboarding = async (): Promise<void> => {
     await advance('complete');
     // A Canvas or Sidekick the person was already opening when the journey
-    // covered it (a shared link, or a template link that started a Canvas)
-    // is where they were going, so they stay there. Anyone else lands on the
-    // Canvases home, whose empty state offers "Start from a prompt". Through
-    // the hook, so the finished journey is replaced rather than left behind
-    // for Back.
-    if (!OPENED_OBJECT.test(location.pathname)) openLanding();
+    // covered it (a shared link, or a template that started or will start a
+    // Canvas) is where they were going, so they stay there. Anyone else lands
+    // on the Canvases home, whose empty state offers "Start from a prompt".
+    // Through the hook, so the finished journey is replaced rather than left
+    // behind for Back.
+    if (!KEPT_ROUTE.test(location.pathname)) openLanding();
   };
   if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally"><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
   const inviteAddresses = invite.addresses;
