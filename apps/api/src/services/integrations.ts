@@ -8945,9 +8945,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           const refusal = questionRefusal(input);
           throw new ApiError(403, refusal.code, `${card.email} is not a member of this Organization. ${refusal.message}`);
         }
-        const who = card.name ? `${card.name} (${card.email})` : card.email;
         return openToolQuestion(env, input, context, "offer_to_add_member", {
-          prompt: `Add ${who} to the Organization as a member?`,
+          prompt: `Add ${card.name ?? card.email} as a member?`,
           responseType: "radio",
           options: [...MEMBER_QUESTION_OPTIONS],
           minimumSelections: 1,

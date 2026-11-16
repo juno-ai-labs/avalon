@@ -40,21 +40,20 @@ export function MemberAddCard({ member, onAdded }: { member: MemberCardInput; on
     <div className="connector-connection-card-header">
       <span aria-hidden="true" className="provider-icon"><UserPlus size={22} /></span>
       <div className="connector-connection-card-body">
-        <strong>Add {who} to the Organization</strong>
-        <p>{member.name
-          ? `${member.email} becomes a member right away, with nothing to accept, and gets an email to sign in.`
-          : 'They become a member right away, with nothing to accept, and get an email to sign in.'}</p>
-        {!admin && <small>Only an Organization owner or administrator can add members.</small>}
+        {/* The question above it already asks "Add Nancy as a member?": the card only names who. */}
+        <strong>{who}</strong>
+        {member.name && <p>{member.email}</p>}
+        {!admin && <small>Only admins can add members.</small>}
       </div>
       <div className="connector-connection-card-controls">
         <Button
           className="connector-connection-card-action button-primary"
           disabled={!api || !admin || add.isPending || add.isSuccess}
           onClick={() => add.mutate()}
-          title={admin ? undefined : 'Only an Organization owner or administrator can add members.'}
+          title={admin ? undefined : 'Only admins can add members.'}
         >
           {add.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-          {add.isSuccess ? 'Added' : add.isPending ? 'Adding…' : 'Add as member'}
+          {add.isSuccess ? 'Added' : add.isPending ? 'Adding…' : 'Add'}
         </Button>
       </div>
     </div>
