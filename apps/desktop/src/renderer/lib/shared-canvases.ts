@@ -19,6 +19,24 @@ export const SHARED_CANVASES_QUERY_KEY = ['shared-canvases'] as const;
 export const SHARED_CANVASES_SETTING_QUERY_KEY = ['shared-canvases-setting'] as const;
 const SETTING_QUERY_KEY = SHARED_CANVASES_SETTING_QUERY_KEY;
 const NONE: OtherOrganizationCanvas[] = [];
+/** The event's own bound on `items` (`WorkspaceSharedCanvasesEventSchema`). */
+const LIST_LIMIT = 250;
+
+/**
+ * The list a push leaves on screen. It replaces the last one whole, except
+ * for the Organizations it names `unavailable`: those could not answer this
+ * build, so what was last shown from them stays until a complete build lands.
+ */
+export function applySharedCanvasesEvent(previous: WorkspaceSharedCanvasesEvent | undefined, event: WorkspaceSharedCanvasesEvent): WorkspaceSharedCanvasesEvent {
+  if (event.unavailable.length === 0 || !previous) return event;
+  const unavailable = new Set<string>(event.unavailable);
+  const kept = previous.items.filter((item) => unavailable.has(item.organization.id));
+  if (kept.length === 0) return event;
+  const items = [...event.items, ...kept]
+    .sort((a, b) => Date.parse(b.canvas.updatedAt) - Date.parse(a.canvas.updatedAt))
+    .slice(0, LIST_LIMIT);
+  return { ...event, items };
+}
 
 /** The last push, newest first; empty before it arrives and while the setting is off. */
 export function useOtherOrganizationCanvases(): OtherOrganizationCanvas[] {
@@ -39,12 +57,24 @@ export function useSharedCanvasesSetting(api: Pick<RallyApi, 'getSharedCanvasesS
   });
   const save = useMutation({
     mutationFn: (enabled: boolean) => api!.setSharedCanvasesSetting(enabled),
-    onMutate: (enabled) => {
-      const previous = queryClient.getQueryData(SETTING_QUERY_KEY);
+    onMutate: async (enabled) => {
+      // A read in flight would land over the switch's new position.
+      await queryClient.cancelQueries({ queryKey: SETTING_QUERY_KEY });
+      const previous = queryClient.getQueryData<{ enabled: boolean }>(SETTING_QUERY_KEY);
       queryClient.setQueryData(SETTING_QUERY_KEY, { enabled });
+      // Off hides the rows at once rather than when the server's empty list lands.
+      if (!enabled) {
+        queryClient.setQueryData<WorkspaceSharedCanvasesEvent>(SHARED_CANVASES_QUERY_KEY,
+          (list) => list && { ...list, enabled: false, items: [], unavailable: [] });
+      }
       return { previous };
     },
-    onError: (_error, _enabled, context) => queryClient.setQueryData(SETTING_QUERY_KEY, context?.previous),
+    // Put the switch back only if nothing newer, such as a push, moved it since.
+    onError: (_error, enabled, context) => {
+      if (queryClient.getQueryData<{ enabled: boolean }>(SETTING_QUERY_KEY)?.enabled === enabled) {
+        queryClient.setQueryData(SETTING_QUERY_KEY, context?.previous);
+      }
+    },
     onSuccess: (saved) => queryClient.setQueryData(SETTING_QUERY_KEY, saved),
   });
   return {

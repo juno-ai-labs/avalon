@@ -113,13 +113,13 @@ function CanvasCard({ canvas, hero = false, open }: { canvas: DashboardCanvas; h
       <Rect width={size.width} height={size.height} fill={`url(#lead-${canvas.id})`} />
     </Svg>}
     {/* The Organization's initial, on the upper right, as the web card draws it.
-        A touch screen has no hover, so its name is in the card's label. */}
+        A touch screen has no hover, so its name is in the card's footer too. */}
     {canvas.organization && <View accessible={false} style={[styles.organization, { backgroundColor: colors.background, borderColor: colors.tonal }]}>
       <Text style={[styles.organizationInitial, { color: colors.text }]}>{canvas.organization.name.slice(0, 1).toLocaleUpperCase()}</Text>
     </View>}
     <View style={[styles.art, hero && styles.heroArt]}><Icon size={hero ? 50 : 32} strokeWidth={1.5} color={ink} /></View>
     <Text numberOfLines={hero ? 3 : 4} style={[hero ? styles.heroTitle : styles.cardTitle, { color: ink }]}>{title}</Text>
-    <View style={[styles.cardFooter, { opacity: hero ? 1 : 0.75 }]}><Text style={[styles.cardHint, { color: ink }]}>Open canvas</Text><ArrowUpRight size={14} color={ink} /></View>
+    <View style={[styles.cardFooter, { opacity: hero ? 1 : 0.75 }]}><Text numberOfLines={1} style={[styles.cardHint, { color: ink, flexShrink: 1 }]}>{from ?? 'Open canvas'}</Text><ArrowUpRight size={14} color={ink} /></View>
   </Pressable>;
 }
 

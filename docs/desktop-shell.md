@@ -218,7 +218,8 @@ ink and fill, or holds `content` the caller draws, such as an avatar; an
 `.avatar` is sized to the badge.
 
 Every row is a link, so a modified click opens it elsewhere (a new tab, in the
-web app). Each list draws placeholder rows until the socket has said what it
+web app). The one exception is a Canvas from another Organization: its row is a
+button, because opening it switches Organization first. Each list draws placeholder rows until the socket has said what it
 holds. A row that changes place travels to its new slot rather than
 reappearing there; [`list-motion.md`](list-motion.md) owns the motion.
 

@@ -1,5 +1,7 @@
 import type { GuestSharedCanvas } from "@rally/contracts/canvas-share-federation";
 
+import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
+import { canvasReaderAllows, type CanvasAdmissionRow } from "./canvas-sidekick-admission";
 import type { InvalidCanvasAppearanceReport } from "./hosted-canvas";
 import { parsedAppearance } from "./sidekick-directory-sql";
 
@@ -56,18 +58,21 @@ export const CANVAS_SHARE_FEDERATION_STATEMENTS: readonly string[] = [
 
 /**
  * The Canvases here shared with this person, for their lists elsewhere: those
- * they are on the list of, did not make and that are not archived, newest
- * first. The caller answers for whether they are a guest; this reads only
- * this object's own rows.
+ * they are on the list of and did not make, newest first, each one the
+ * Canvas's own read rule still admits them to (`canvasReaderAllows`), so an
+ * archived Canvas never shows. At most the sidebar list's own bound: the
+ * merged list keeps no more. The caller answers for whether they are a guest.
  */
 export function guestSharedCanvases(sql: SqlStorage, userId: string, report: InvalidCanvasAppearanceReport): GuestSharedCanvas[] {
-  return sql.exec<{ canvas_id: string; title: string; appearance_json: string | null; updated_at: number }>(
-    `SELECT d.canvas_id, d.title, d.appearance_json, d.updated_at
+  return sql.exec<CanvasAdmissionRow & { title: string; appearance_json: string | null; updated_at: number } & Record<string, SqlStorageValue>>(
+    `SELECT d.canvas_id, d.created_by_user_id, d.writer_sidekick_id, d.visibility, d.archived_at,
+            d.title, d.appearance_json, d.updated_at
        FROM canvas_participants p JOIN canvas_directory d ON d.canvas_id = p.canvas_id
       WHERE p.user_id = ?1 AND d.created_by_user_id <> ?1 AND d.archived_at IS NULL
-      ORDER BY d.updated_at DESC, d.canvas_id`,
-    userId,
-  ).toArray().map((row) => ({
+      ORDER BY d.updated_at DESC, d.canvas_id
+      LIMIT ?2`,
+    userId, SIDEBAR_LIST_LIMIT,
+  ).toArray().filter((row) => canvasReaderAllows(row, { userId, actorRole: null }, sql)).map((row) => ({
     id: row.canvas_id,
     title: row.title,
     // A stored appearance that no longer parses is reported by field and reads as unchosen, as in the list.

@@ -390,6 +390,19 @@ sent only to the one person whose list moved: a row recorded for them, their
 read of a Canvas or a Sidekick, or their `activity_mark_all_seen` command,
 which the push answers. [`activity.md`](activity.md) owns it.
 
+A guest's Canvases from their other Organizations ride
+`workspace_shared_canvases` `{occurredAt, enabled, items, unavailable}`. It
+goes only to that person's own subscribed sockets, never a support session's,
+whose grant covers one Organization. It is not part of the subscribe answer and
+WorkspaceDO does not build it: after the answer the object queues a refresh,
+the Worker asks each Organization the person is a guest of, and this object
+only relays the frame it is handed. So it has no waterline either. Each build
+takes a ticket from this object before it reads anything, and each socket keeps
+the ticket of the last frame it was sent on its attachment, skipping one that
+is not newer. The frame skips `sidebar-list-store.ts`: the server already
+ordered it, so the client writes it straight to its query.
+[`canvas-share-federation.md`](canvas-share-federation.md) owns it.
+
 Neither list has a REST fetcher behind it for a socket-holding client.
 WorkspaceDO re-sends the affected list whole whenever it writes one of its
 rows, so the batch is the only load and the push is the only refresh, which is
@@ -864,6 +877,30 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive; there is no per-command parent RPC. See [the conversation objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-11-16 — One pushed list is ordered by the server, not by a waterline
+
+**What changed:** `workspace_shared_canvases` carries a guest's shared Canvases
+from their other Organizations. The Worker builds it after the subscribe answer
+and WorkspaceDO relays it. It has no waterline and does not go through
+`sidebar-list-store.ts`: each socket keeps a relay ticket on its attachment and
+drops a frame that is not newer.
+
+**Why:** The list is built from other Organizations' objects, so this object
+cannot advance a waterline inside the write that changed it, the way it does
+for its own lists. The ticket orders builds at the one place they all pass
+through.
+
+**Considered and rejected:** Building it inside WorkspaceDO and putting it in
+the subscribe answer, which would put reads of other Organizations into every
+subscribe here.
+
+**Consequences:** The rule above that every pushed list goes through one
+client receiver comparing waterlines now has one exception. A second frame
+sent through `relayToPerson` would share this frame's tickets.
+[`canvas-share-federation.md`](canvas-share-federation.md) has the rest.
+
+Shipped in #1625.
 
 ### 2026-11-12 — Four-plan client compatibility
 
