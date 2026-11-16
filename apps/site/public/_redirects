@@ -52,16 +52,16 @@
 # The /compare/ hub page and four rival pages were removed; the table lives
 # on the landing page. Exact paths only, so each remaining /compare/<slug>/
 # page still serves.
-/compare/  /#compare  301
-/compare  /#compare  301
-/compare/instinct/  /#compare  301
-/compare/instinct  /#compare  301
-/compare/notion-ai/  /#compare  301
-/compare/notion-ai  /#compare  301
-/compare/microsoft-teams/  /#compare  301
-/compare/microsoft-teams  /#compare  301
-/compare/claude-cowork/  /#compare  301
-/compare/claude-cowork  /#compare  301
+/compare/  /#footer-compared  301
+/compare  /#footer-compared  301
+/compare/instinct/  /#footer-compared  301
+/compare/instinct  /#footer-compared  301
+/compare/notion-ai/  /#footer-compared  301
+/compare/notion-ai  /#footer-compared  301
+/compare/microsoft-teams/  /#footer-compared  301
+/compare/microsoft-teams  /#footer-compared  301
+/compare/claude-cowork/  /#footer-compared  301
+/compare/claude-cowork  /#footer-compared  301
 
 # The manual was restructured around Canvases and Sidekicks when Channels,
 # Threads, Breakouts, the digest, email-started conversations and the iPhone

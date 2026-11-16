@@ -141,6 +141,7 @@ export default defineConfig({
         startFast: `${projectRoot}start-fast/index.html`,
         canvases: `${projectRoot}canvases/index.html`,
         sidekicks: `${projectRoot}sidekicks/index.html`,
+        marketplace: `${projectRoot}marketplace/index.html`,
         technology: `${projectRoot}src/technology.ts`,
         posthog: `${projectRoot}src/posthog.ts`,
         help: `${projectRoot}src/help.ts`,
