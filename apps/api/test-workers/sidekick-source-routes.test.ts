@@ -182,7 +182,7 @@ describe("the Sidekick source routes, for a signed-in person", () => {
       person: { userId: PERSON, displayName: "Robin", avatarUrl: null, presentation: null },
       connectorType: "google", eventTypes: ["email.received"], condition: CONDITION, state: "pending",
       // The asker and their name are the session's, read by the route: the body names neither.
-      requestedByName: "Avery", yours: false, connection: "connected", createdAt: expect.any(Number), decidedAt: null,
+      requestedByName: "Avery", yours: false, connection: "connected", connect: { scope: "personal", card: "google-mail-calendar" }, createdAt: expect.any(Number), decidedAt: null,
     }] });
     expect(await storedRequests()).toEqual([{ user_id: PERSON, state: "pending", requested_by_user_id: MANAGER }]);
     expect(await storedSources()).toEqual([]);
@@ -293,7 +293,7 @@ describe("the Sidekick source routes, for a signed-in person", () => {
     expect(asker.body).toEqual({ requests: [{
       requestId, sidekickId: SIDEKICK_ID, sidekickName: "Deals", person: { userId: PERSON, displayName: "Robin", avatarUrl: null, presentation: null },
       connectorType: "google", eventTypes: ["email.received"], condition: CONDITION, state: "pending", requestedByName: "Avery",
-      yours: false, connection: "connected", createdAt: expect.any(Number), decidedAt: null }] });
+      yours: false, connection: "connected", connect: { scope: "personal", card: "google-mail-calendar" }, createdAt: expect.any(Number), decidedAt: null }] });
 
     const person = await read(PERSON);
     expect(person.status, JSON.stringify(person.body)).toBe(200);
@@ -403,6 +403,14 @@ describe("the Sidekick source routes' refusals, by name", () => {
     expect(await read(OTHER)).toBe("connected");
     expect((await as(OTHER, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
     expect(await storedSources()).toEqual([{ user_id: OTHER, connection_id: lapsed, condition: CONDITION, requested: 1 }]);
+  });
+
+  it("says a connector whose events arrive only on the Organization's connection is the Organization's to connect", async () => {
+    const answer = await as(MANAGER, "POST", requests(), { userIds: [PERSON], connectorType: "granola", eventTypes: ["note.generated"] });
+    expect(answer.status, JSON.stringify(answer.body)).toBe(201);
+    // Robin's own Granola could never carry these events, so no card of theirs is offered.
+    expect((answer.body as { requests: Array<{ connection: string; connect: unknown }> }).requests[0])
+      .toMatchObject({ connection: "not_connected", connect: { scope: "workspace", card: null } });
   });
 
   it("asks the asker for their own account with none connected, so connecting it is part of answering", async () => {

@@ -98,9 +98,15 @@ function connectionToMake(request: SidekickSourceRequestView): 'not_connected' |
   return request.connection;
 }
 
+/** Whether that step is the Organization's: an administrator connects it in Settings, not the person asked. */
+function organizationsStep(request: SidekickSourceRequestView): boolean {
+  return request.connect?.scope === 'workspace';
+}
+
 /** What a reader who is not asked is told about that step: "Needs to reconnect Gmail". */
-function connectionWords(state: 'not_connected' | 'reconnect_required', connector: string): string {
-  return state === 'reconnect_required' ? `Needs to reconnect ${connector}` : `Needs to connect ${connector}`;
+function connectionWords(state: 'not_connected' | 'reconnect_required', connector: string, organization = false): string {
+  const verb = state === 'reconnect_required' ? 'reconnect' : 'connect';
+  return organization ? `Needs an admin to ${verb} ${connector}` : `Needs to ${verb} ${connector}`;
 }
 
 /**
@@ -143,7 +149,7 @@ export function SidekickSourceRequestCardView({ requests, words, live = true, on
   const { connector, events } = words(ask);
   const mark = connectorBrandMark(ask.connectorType, connector);
   // A reader whose own request waits on their account reads the whole card as that one step.
-  const mine = connectStep ? requests.find((request) => request.yours && connectionToMake(request)) : undefined;
+  const mine = connectStep ? requests.find((request) => request.yours && connectionToMake(request) && !organizationsStep(request)) : undefined;
   const mineToMake = mine ? connectionToMake(mine) : null;
   return <article aria-label={`Source request for ${ask.sidekickName}`} className="connector-connection-card source-request-card">
     <div className="connector-connection-card-header">
@@ -165,7 +171,7 @@ export function SidekickSourceRequestCardView({ requests, words, live = true, on
           <span className="source-request-person">
             {request.person.displayName}
             {request.yours && <small>You</small>}
-            {toMake && !request.yours && <small className="source-request-connection">{connectionWords(toMake, connector)}</small>}
+            {toMake && !request.yours && <small className="source-request-connection">{connectionWords(toMake, connector, organizationsStep(request))}</small>}
             <span className="sr-only">: {standing(request)}</span>
           </span>
           {request.state === 'cancelled'
@@ -244,7 +250,7 @@ export function SidekickSourcesList({ data, loading, words, onDecide, deciding =
               {toMake && <small>{request.yours
                 // Connecting happens on the request's card, in the conversation it was asked from.
                 ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} from the request in its conversation first`
-                : connectionWords(toMake, connector)}</small>}
+                : connectionWords(toMake, connector, organizationsStep(request))}</small>}
               {answerable && <SourceDecisionButtons
                 approveBlocked={toMake ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} first` : undefined}
                 deciding={deciding?.requestId === request.requestId ? deciding.decision : null}

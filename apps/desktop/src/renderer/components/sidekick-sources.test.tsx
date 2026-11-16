@@ -63,6 +63,7 @@ const pair = (name: string): Array<{ label: string | null; pressed: string | nul
 
 beforeEach(() => {
   for (const mock of Object.values(api)) mock.mockReset();
+  connection.start.mockReset();
 });
 
 describe('the source request card in a conversation', () => {
@@ -186,6 +187,17 @@ describe('the source request card in a conversation', () => {
     expect(api.decideSidekickSourceRequest).not.toHaveBeenCalled();
     await act(async () => connection.finish());
     await waitFor(() => expect(api.decideSidekickSourceRequest).toHaveBeenCalledWith(SIDEKICK, 'r-me', 'approve'));
+  });
+
+  it('leaves an Organization-only connector to an admin: no connect press, and Approve waits', async () => {
+    api.getConnections.mockResolvedValue([]);
+    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', {
+      connectorType: 'granola', eventTypes: ['note.generated'], connection: 'not_connected', connect: { scope: 'workspace', card: null } })]);
+    mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
+    expect(await screen.findByText('Needs an admin to connect Granola for the Organization in Settings')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /and approve/ })).toBeNull();
+    expect(screen.getByRole('article')).not.toHaveTextContent('Connect Granola and approve');
+    expect(connection.start).not.toHaveBeenCalled();
   });
 
   it('sends no approval when my account is connected some other way while the card is open', async () => {

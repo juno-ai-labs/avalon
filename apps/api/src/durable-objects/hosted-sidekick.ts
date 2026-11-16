@@ -32,7 +32,7 @@ import {
 import { canvasReaderAllows, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import {
-  SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourcesResultSchema,
+  SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourcesResultSchema, sourceConnectionCardId,
   type SidekickSource, type SidekickSourceRequest, type SidekickSourceRequestResult,
   type SidekickSourceConnectionState, type SidekickSourceRequestView, type SidekickSourcesResult,
 } from "@rally/contracts";
@@ -86,6 +86,7 @@ import type { Env } from "../env";
 import { ApiError, asApiError } from "../lib/api-error";
 import { connectorPluginBindingViews } from "../lib/connector-plugin-views";
 import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../lib/connector-activity-triggers";
+import { connectorActivitySupportsScope } from "@rally/connectors";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { sha256 } from "../lib/crypto";
 import { conversationMessageOpening } from "@rally/prompts/api/conversation-message-opening";
@@ -1030,6 +1031,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       person, connectorType: request.connectorType, eventTypes: request.eventTypes, condition: request.condition,
       state: request.state, requestedByName: request.requestedByName, yours: request.userId === viewerUserId,
       connection: this.sourceConnectionState(row.workspace_id, request.userId, request.connectorType, request.eventTypes),
+      connect: this.sourceConnect(request.connectorType, request.eventTypes),
       createdAt: request.createdAt, decidedAt: request.decidedAt,
     });
   }
@@ -1194,6 +1196,17 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       const carried = eventTypes.filter((eventType) => announced.has(eventType));
       return carried.length > 0 ? [{ id: connection.id, status: connection.status, eventTypes: carried }] : [];
     });
+  }
+
+  /**
+   * Which connection carries a request's events, and the card that makes it.
+   * A connector whose events arrive only on its Organization connection is
+   * made by an administrator in Settings, so no person's card can answer it.
+   */
+  private sourceConnect(connectorType: string, eventTypes: readonly string[]): SidekickSourceRequestView["connect"] {
+    const adapter = connectorRegistryForEnv(this.env).get(connectorType);
+    if (!connectorActivitySupportsScope(adapter, "personal")) return { scope: "workspace", card: null };
+    return { scope: "personal", card: sourceConnectionCardId(connectorType, eventTypes) };
   }
 
   /**
