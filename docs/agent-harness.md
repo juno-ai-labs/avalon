@@ -1916,9 +1916,10 @@ Xing, Info or VBRI length frame. A call needing several requests gets the
 `longRunning`: most calls are short, and the delegation hint would sit on every
 one.
 
-**Why:** An episode-length script took many calls, a ledger and an ffmpeg join
-in a sandbox, all steps an agent had to get right, and each call could drift in
-voice. One call now makes one recording.
+**Why:** An episode-length script had to be cut every 4,096 characters, with a
+ledger and an ffmpeg join for each cut, all steps an agent had to get right.
+One call now records any section whole. The podcast skill still makes one call
+per section and joins them, because its chapters are timed from the sections.
 
 **Considered and rejected:** Azure AI Speech batch synthesis, which takes a
 whole script in one job but needs its own Speech resource and key and delivers
@@ -1934,6 +1935,8 @@ the size refusal says to split it. Pieces run one after another, so a long
 script also runs into the deadline; running them in parallel is a latency win
 that needs Azure's rate limit in hand first. A retried call records every piece
 again; nothing caches a piece across calls.
+
+Shipped in #1626.
 
 ### 2026-11-15 — Recovery re-enters an interrupted Canvas notices write
 
