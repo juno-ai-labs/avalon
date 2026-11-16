@@ -70,8 +70,10 @@ Tagged links on the landing page, by `data-site-action` id:
 | `download-linux-hero` | Homepage Linux (.deb) text link; desktop download button on `/start-fast/` | download · hero |
 | `download-pricing-start` / `-grow` / `-max` / `-ultra` | Start for free and paid-plan Start free trial buttons | download · pricing · plan |
 | `contact-pricing-enterprise` | Pricing contact link (emails Katherine) | founder_contact · pricing · enterprise |
-| `demo-request` | Ask for a demo (emails Katherine and Alex), in the home page's Sidekicks band and the `/sidekicks/` hero | demo_request · sidekicks |
+| `demo-request` | Ask for a demo (emails Katherine and Alex), under the home page's closing invitation and in the `/sidekicks/` hero | demo_request · sidekicks |
 | `support-contact-footer` | Footer help@ email | support_contact · footer |
+
+`demo-request` still reports the `sidekicks` placement after the home page's Sidekicks band was removed, for the same reason.
 
 `web-app-hero` still reports `secondary_cta · hero`, though it is now the primary
 hero button on `/`: the value is kept so its history stays comparable, and

@@ -1,0 +1,177 @@
+@import "./home.css";
+
+/* The artifact marketplace. Header, footer, buttons and type come from the homepage. */
+
+.home-nav a[aria-current="page"] {
+  text-decoration: underline;
+}
+
+.market-hero {
+  padding-block: 70px 30px;
+}
+
+.market-hero h1 {
+  font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.035em;
+  font-size: clamp(52px, 7vw, 86px); line-height: 1; margin-top: 18px;
+}
+
+.market-lede {
+  max-width: 520px; color: var(--muted); font-size: 16px; line-height: 1.8; margin-top: 30px;
+}
+
+.market-filters {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px;
+}
+
+.market-filters button {
+  background: none; border: 1px solid var(--line); border-radius: 20px; padding: 6px 14px;
+  font-size: 12px; color: var(--muted);
+}
+
+.market-filters button[aria-pressed="true"] {
+  background: var(--sage); border-color: #cfd7c2; color: var(--green);
+}
+
+.market-grid {
+  list-style: none; margin: 26px 0 0; padding: 0; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px;
+}
+
+.market-card {
+  border: 1px solid #d4d9c8; border-radius: 12px; overflow: hidden; background: var(--white);
+  display: flex; flex-direction: column;
+}
+
+.market-card[hidden] {
+  display: none;
+}
+
+.market-card-body {
+  padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 6px; flex: 1;
+}
+
+.market-card h3 {
+  font-family: "Instrument Serif", Georgia, serif; font-weight: 400; font-size: 27px;
+  letter-spacing: -0.02em;
+}
+
+.market-card-body > p {
+  font-size: 13px; color: var(--muted); line-height: 1.6;
+}
+
+.market-card-body > p.market-kind {
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+}
+
+.market-card-body > p.market-tools {
+  font-size: 11px; color: var(--green); margin-top: auto; padding-top: 8px;
+}
+
+.market-card .text-link {
+  color: var(--ink);
+}
+
+/* Each kind gets a small drawing of its shape, made from the four empty <i> children. */
+.market-preview {
+  height: 120px; border-bottom: 1px solid var(--line); background: #f6f5ef; position: relative;
+  display: grid; gap: 8px; padding: 18px 20px;
+}
+
+.market-preview i {
+  display: block; border-radius: 4px; background: #e3e5d7;
+}
+
+.preview-dashboards {
+  grid-template-columns: repeat(3, 1fr); grid-template-rows: 34px 1fr;
+}
+
+.preview-dashboards i:nth-child(4) {
+  grid-column: 1 / -1;
+  background: linear-gradient(90deg, #e3b896 0 44%, #c3b3cf 44% 75%, #d9c27e 75%);
+  height: 10px; align-self: center;
+}
+
+.preview-micro-apps {
+  grid-template-columns: 26px 1fr; grid-auto-rows: 1fr;
+}
+
+.preview-micro-apps i:nth-child(odd) {
+  background: var(--sage);
+}
+
+.preview-micro-apps i:nth-child(even) {
+  background: #fff; border: 1px solid #e2e0d4;
+}
+
+.preview-podcasts {
+  background: #2c3227; grid-template-columns: 84px 1fr; grid-template-rows: 1fr 1fr;
+}
+
+.preview-podcasts i:nth-child(1) {
+  grid-row: 1 / -1; background: #d9c27e; border-radius: 6px;
+}
+
+.preview-podcasts i:nth-child(2) {
+  background: #ffffff1c; height: 10px; align-self: end;
+}
+
+.preview-podcasts i:nth-child(3) {
+  background: repeating-linear-gradient(90deg, #a9b49a 0 2px, transparent 2px 5px);
+  height: 22px;
+}
+
+.preview-podcasts i:nth-child(4) {
+  display: none;
+}
+
+.preview-websites {
+  grid-template-rows: 12px 1fr 14px; grid-template-columns: 1fr;
+}
+
+.preview-websites i:nth-child(2) {
+  background: #ede8f0;
+}
+
+.preview-websites i:nth-child(3) {
+  width: 40%;
+}
+
+.preview-websites i:nth-child(4) {
+  display: none;
+}
+
+.preview-team-tools {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.preview-team-tools i {
+  background: #fff; border: 1px solid #e2e0d4;
+  box-shadow: inset 0 14px 0 #eee0d0;
+}
+
+.market-empty {
+  margin-top: 26px; color: var(--muted);
+}
+
+.market-closer {
+  padding-block: 80px 70px; text-align: center; display: flex; flex-direction: column;
+  align-items: center; gap: 16px;
+}
+
+.market-closer h2 {
+  font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.035em;
+}
+
+.market-closer > p {
+  color: var(--muted);
+}
+
+@media (max-width: 650px) {
+  .market-hero {
+    padding-block: 90px 20px;
+  }
+
+  .market-lede {
+    font-size: 15px;
+  }
+}
