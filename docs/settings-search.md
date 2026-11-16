@@ -35,7 +35,7 @@ search catalogue.
 Account has a **Preferences** child page on web and desktop. **On startup**
 offers **Canvas Homepage** (default) and **Last Opened**, saved per device.
 **Show shared Canvases in every Organization** follows it, on by default and
-saved on the server for the account, not the device
+for Canvases shared with the person as a guest elsewhere, saved on the server for the account, not the device
 ([`canvas-share-federation.md`](canvas-share-federation.md)).
 The Agent section follows with **Show agent work** above **Personal system prompt**.
 **Privacy & diagnostics** sits at the bottom. Its Product analytics toggle saves

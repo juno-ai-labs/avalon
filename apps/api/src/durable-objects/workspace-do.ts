@@ -3,9 +3,7 @@ import { artifactSidekickBinding } from "./artifact-sidekick-bindings";
 import { ArtifactHostnameStubSchema } from '@rally/contracts';
 import { CANVAS_ARTIFACT_ACCESS_ALARM, CANVAS_ARTIFACT_ACCESS_STATEMENTS, canvasArtifactAccessSnapshot, canvasArtifactAccessForReader, canvasArtifactTargets, canvasArtifactFile } from './canvas-artifact-access';
 import { ArtifactAccessMessageSchema } from '@rally/contracts/artifact-access';
-import { CanvasShareChangedMessageSchema, WorkspaceSharedCanvasesEventSchema } from '@rally/contracts/canvas-share-federation';
-import { CANVAS_SHARE_FEDERATION_ALARM, CANVAS_SHARE_FEDERATION_STATEMENTS, canvasShareFederationKey, canvasShareState } from './canvas-share-federation';
-import { readSharedCanvases } from '../services/canvas-share-inbox';
+import { CANVAS_SHARE_FEDERATION_ALARM, CANVAS_SHARE_FEDERATION_STATEMENTS, guestSharedCanvases } from './canvas-share-federation';
 import {
   CHANNEL_COLOR_SYNC_MIGRATION,
   CHANNEL_MESSAGE_SEARCH_MIGRATION,
@@ -4501,9 +4499,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: CANVAS_NOTICES_SCHEMA_STATEMENTS,
 }, {
   version: 151,
-  description: "publish who each Canvas is shared with, for the people's inboxes in their other Organizations",
-  // See canvas-share-federation.ts and docs/canvas-share-federation.md. Also
-  // queues one delivery for every share made before it.
+  description: "tell a guest's other Organizations when a Canvas shared with them here changes",
+  // See canvas-share-federation.ts and docs/canvas-share-federation.md. No
+  // backfill: a list is built from the Canvases themselves whenever a socket
+  // subscribes, so nothing here has to catch up.
   statements: CANVAS_SHARE_FEDERATION_STATEMENTS,
 }];
 
@@ -5354,6 +5353,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * would hide the same change when it does.
    */
   private readonly writerSidekickReaders = new Map<string, string>();
+  /**
+   * Per (person, channel), when the newest relayed frame was built
+   * (`relayToPerson`). In memory: after an eviction the next build is newer
+   * than anything relayed before it.
+   */
+  private readonly lastRelayBuiltAt = new Map<string, number>();
   /** What each attached Sidekick's Canvases showed of it when this instance last saw its row; see `noteAttachedSidekickFace`. In memory, as above. */
   private readonly attachedSidekickFaces = new Map<string, string>();
   /** Set by a hosted Canvas write that moved a directory row; the Canvas list is published after it. */
@@ -5558,58 +5563,43 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.presentByCanvas(), SIDEBAR_LIST_LIMIT, canvasAppearanceReporter(this.env), input.titleQuery ?? null);
   }
 
-  /** One person's state of one Canvas here, for their inbox elsewhere (`canvas-share-federation.ts`). */
-  async canvasShareState(input: { workspaceId: string; canvasId: string; userId: string }) {
+  /**
+   * The Canvases here shared with this person, for their lists in their other
+   * Organizations (`docs/canvas-share-federation.md`): only for a guest of
+   * this Organization, and only the Canvases they were explicitly added to.
+   * Anyone else gets none, decided here every time a list is built.
+   */
+  async guestSharedCanvases(input: { workspaceId: string; userId: string }) {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);
-    return canvasShareState(this.state.storage.sql, input.canvasId, input.userId, canvasAppearanceReporter(this.env));
+    const relationship = await this.readRelationship(input.workspaceId, input.userId);
+    if (relationship?.accessClass !== "guest" || relationship.status !== "active") return [];
+    return guestSharedCanvases(this.state.storage.sql, input.userId, canvasAppearanceReporter(this.env));
   }
 
   /**
-   * The same, for several of this Organization's Canvases at once: what
-   * another Organization's list shows for this person, decided here every
-   * time, so nothing about a Canvas is kept outside its own Organization.
+   * Send a frame somebody else built to one person's subscribed sockets here,
+   * keeping nothing but ordering: per (person, channel), a frame built before
+   * the last one sent is dropped, so a slow build cannot land after a newer
+   * one. A support session's sockets are left out unless asked for: what is
+   * relayed may span Organizations its grant does not cover. Returns how many
+   * sockets it reached.
    */
-  async canvasShareStates(input: { workspaceId: string; userId: string; canvasIds: readonly string[] }) {
+  async relayToPerson(input: { workspaceId: string; userId: string; channel: string; builtAt: number; frame: string; supportSessions: boolean }): Promise<number> {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);
-    const report = canvasAppearanceReporter(this.env);
-    return input.canvasIds.map((canvasId) => ({
-      canvasId, state: canvasShareState(this.state.storage.sql, canvasId, input.userId, report),
-    }));
-  }
-
-  /**
-   * Push a person's shared Canvases from their other Organizations to their
-   * sockets here: their inbox changed, or their setting did. Nothing is kept
-   * here; the inbox is read each time (`docs/canvas-share-federation.md`).
-   */
-  async publishSharedCanvases(input: { workspaceId: string; userId: string }): Promise<void> {
-    await this.initialized;
-    this.assertWorkspace(input.workspaceId);
-    const sockets = this.state.getWebSockets().filter((socket) => {
+    const key = `${input.userId}:${input.channel}`;
+    if ((this.lastRelayBuiltAt.get(key) ?? -1) > input.builtAt) return 0;
+    this.lastRelayBuiltAt.set(key, input.builtAt);
+    let reached = 0;
+    for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
-      return attachment?.subscribed === true && attachment.userId === input.userId;
-    });
-    if (sockets.length > 0) await this.sendSharedCanvases(input.userId, sockets);
-  }
-
-  private async sendSharedCanvases(userId: string, sockets: readonly WebSocket[]): Promise<void> {
-    const workspaceId = this.workspaceId();
-    if (workspaceId === null) return;
-    let built: string;
-    try {
-      const shared = await readSharedCanvases(this.env, userId, workspaceId);
-      built = JSON.stringify(WorkspaceSharedCanvasesEventSchema.parse({
-        type: "workspace_shared_canvases", occurredAt: new Date().toISOString(), ...shared,
-      }));
-    } catch (error) {
-      logWarn(this.env, "workspace_shared_canvases_unpublished", {
-        workspace_id: workspaceId, user_id: userId, code: diagnosticErrorCode(error, "workspace_shared_canvases_unbuilt"),
-      });
-      return;
+      if (attachment?.subscribed !== true || attachment.userId !== input.userId) continue;
+      if (attachment.impersonatorUserId && !input.supportSessions) continue;
+      sendSidebarListFrame(socket, input.frame);
+      reached += 1;
     }
-    for (const socket of sockets) sendSidebarListFrame(socket, built);
+    return reached;
   }
 
   /** The Canvases a Sidekick writes that this viewer may open; see `canvasesWrittenBy`. */
@@ -7480,12 +7470,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           }));
           return;
         }
-        // An address only: the consumer reads the state back (`canvasShareState`).
+        // Invalidate only: the person's other Organizations rebuild their
+        // lists, asking this one again (`guestSharedCanvases`).
         if (alarm.kind === CANVAS_SHARE_FEDERATION_ALARM) {
-          const { canvasId, userId } = canvasShareFederationKey(alarm.key);
-          await this.env.ACTIVITY_QUEUE.send(CanvasShareChangedMessageSchema.parse({
-            kind: "canvas_share_changed", region: this.env.AVALON_REGION, workspaceId, canvasId, userId,
-          }));
+          await sendInteractive(this.env, {
+            kind: "shared_canvases_refresh", region: this.env.AVALON_REGION, workspaceId: asWorkspaceId(workspaceId),
+            userId: asUserId(alarm.key), scope: "others",
+          });
           return;
         }
         // Archive deliveries commit with the tombstone and retry independently.
@@ -12271,8 +12262,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       })));
     }
     this.logWorkspaceSocketHandshake(attachment, "sync_sent", diagnosticAttemptId);
-    // After the answer, never ahead of it: the inbox is a D1 read.
-    this.state.waitUntil(this.sendSharedCanvases(attachment.userId, [socket]));
+    // The person's Canvases from their other Organizations, built by the
+    // Worker and relayed back after this answer, never ahead of it. A support
+    // session asks for none: they may span Organizations its grant does not.
+    if (!attachment.impersonatorUserId) {
+      this.state.waitUntil(sendInteractive(this.env, {
+        kind: "shared_canvases_refresh", region: this.env.AVALON_REGION, workspaceId: asWorkspaceId(attachment.workspaceId),
+        userId: asUserId(attachment.userId), scope: "this",
+      }).catch((error: unknown) => logWarn(this.env, "shared_canvases_refresh_unsent", {
+        workspace_id: attachment.workspaceId, user_id: attachment.userId, code: diagnosticErrorCode(error, "shared_canvases_refresh_unsent"),
+      })));
+    }
     socket.serializeAttachment({
       ...attachment,
       subscribed: true,
