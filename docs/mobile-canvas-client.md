@@ -369,7 +369,13 @@ declares the `settings` capability, since desktop's own `openSettings` reaches
 the same route. Checkout and connector sign-in reserve a blank tab
 (`prepareExternalLink`), which a WebView never creates; to a shell declaring
 `open-external`, the page sends `{ type: 'open-external', url }` instead and
-the shell opens the http(s) URL in the system browser.
+the shell opens the http(s) URL in the system browser. A connector sign-in the
+page started is the exception for a shell declaring `connector-auth-session`:
+the page starts it with `handoff=mobile` and sends `connector-authorize`, the
+shell runs it in an auth session that returns to
+`rally-mobile://connections/complete`, and hands that link back as
+`connector-complete` for the page to claim
+([connectors.md](connectors.md#claiming-a-connector-authorization)).
 Notification permission is requested only through This device › Push
 notifications. The
 native installation ID is in SecureStore; APNs device tokens pass through the

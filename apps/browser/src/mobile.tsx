@@ -12,7 +12,7 @@ import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Plus, Search, Sparkles, Store } from 'lucide-react';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { CANVAS_FILTERS, ELSEWHERE_CANVAS_FACTS, canvasFilterFacts, matchesCanvasFilter, type CanvasFilter, type CanvasFilterFacts } from '@rally/contracts/canvas-filters';
-import { ARTIFACT_PICKER_CAPABILITY, MOBILE_COMMAND_EVENT, MOBILE_SETTINGS_SECTIONS, MOBILE_SETTINGS_TITLES, MobileCommandSchema, SETTINGS_CAPABILITY, MobileSettingsSectionSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
+import { ARTIFACT_PICKER_CAPABILITY, CONNECTOR_AUTH_SESSION_CAPABILITY, MOBILE_COMMAND_EVENT, MOBILE_SETTINGS_SECTIONS, MOBILE_SETTINGS_TITLES, MobileCommandSchema, SETTINGS_CAPABILITY, MobileSettingsSectionSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
 import { GUEST_SETTINGS_SECTIONS } from '../../desktop/src/common/settings';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
@@ -25,9 +25,14 @@ import { canvasMark } from '../../desktop/src/renderer/components/canvas-mark';
 import { useOtherOrganizationCanvases, type OtherOrganizationCanvas } from '../../desktop/src/renderer/lib/shared-canvases';
 import { mobileCapability, mobileScreenReady, postMobileEvent, shellExternalLinkOpener } from './mobile-bridge';
 import { setExternalLinkOpener } from '../../desktop/src/renderer/lib/platform';
+import { selectMobileConnectorHandoff } from '../../desktop/src/renderer/lib/mobile-connector-handoff';
+import { ConnectorOAuthClaimSchema, parseConnectorClaimLink } from '@rally/contracts/connector-oauth-claim';
+import { browserRequest } from './transport';
 
 // Checkout and connector sign-in open a new tab; in the app, the shell opens them.
 setExternalLinkOpener(shellExternalLinkOpener);
+// A shell with an auth session takes connector authorizations back itself.
+if (mobileCapability(CONNECTOR_AUTH_SESSION_CAPABILITY)) selectMobileConnectorHandoff();
 import './mobile.css';
 import { useMobileCanvasDetail, useMobileCanvasUpdates } from './mobile-canvas-detail';
 // Chat/composition and file previews are paid for only when those screens open.
@@ -221,6 +226,16 @@ function MobileContent(): React.JSX.Element {
         break;
       }
       case 'reopen-artifact': void queryClient.invalidateQueries({ queryKey: ['mobile-site-access', message.canvasId, message.resourceId] }); break;
+      case 'connector-complete': {
+        // Claim it as the session that started it; the pending connector
+        // card then reconciles from its attempt, as it does on the desktop.
+        const claim = parseConnectorClaimLink(message.url);
+        if (!claim) break;
+        void browserRequest(claim.region, `/api/${claim.workspaceId}/connections/oauth/claim`, ConnectorOAuthClaimSchema, { ticket: claim.ticket })
+          .catch(() => undefined)
+          .finally(() => { void queryClient.invalidateQueries({ queryKey: ['connections'] }); });
+        break;
+      }
       case 'pin':
       case 'reorder': {
         if (!api || pinInFlight.current) return;

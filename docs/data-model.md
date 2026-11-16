@@ -324,7 +324,11 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   what makes announcing the expiry exactly-once; see
   [`access-revocation.md`](access-revocation.md). `oauth_states`
   is the signed pre-workspace callback route/security receipt; the user-visible
-  `connector_oauth_attempts` status row lives in the selected WorkspaceDO.
+  `connector_oauth_attempts` status row lives in the selected WorkspaceDO. A
+  connector callback holds the provider's answer in `held_callback_encrypted`
+  under the `claim_hash` of a one-time ticket (migration 0136) until the
+  starting session claims it; see
+  [connectors.md](connectors.md#claiming-a-connector-authorization).
 
 - `browser_sessions` stores the hash of an opaque browser credential against an
   ordinary identity session. `browser_workspace_sessions` maps each browser and

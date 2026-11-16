@@ -1,4 +1,5 @@
 import type { ConnectorOAuthProvider } from "@rally/contracts";
+import { MOBILE_CONNECTOR_CALLBACK } from "@rally/contracts/connector-oauth-claim";
 import {
   COMPATIBLE_DESKTOP_DEEP_LINK_PROTOCOL,
   isDesktopDeepLinkProtocol,
@@ -28,10 +29,10 @@ export function compatibleDesktopDeepLink(
 
 /**
  * How a connector authorization returns to the client that started it: a
- * desktop deep link (version 1 or the workspace-addressed version 2), or the
- * browser's completion page.
+ * desktop deep link (version 1 or the workspace-addressed version 2), the
+ * browser's completion page, or the mobile app's auth-session callback.
  */
-export type ConnectorHandoff = 1 | 2 | "browser";
+export type ConnectorHandoff = 1 | 2 | "browser" | "mobile";
 
 /** The one page a browser connector authorization may return to. */
 export function browserConnectorCompletionUrl(env: Pick<Env, "BROWSER_APP_ORIGIN">): string | null {
@@ -49,6 +50,9 @@ export function desktopHandoffUrl(
   const parsed = new URL(target.toString());
   const completion = browserConnectorCompletionUrl(env);
   if (completion && `${parsed.origin}${parsed.pathname}` === completion) return parsed.toString();
+  // The mobile app's auth session waits for exactly this scheme; a page in
+  // between would leave it waiting.
+  if (`${parsed.protocol}//${parsed.host}${parsed.pathname}` === MOBILE_CONNECTOR_CALLBACK) return parsed.toString();
   const handoff = new URL("/auth/desktop/", env.PUBLIC_WEB_BASE_URL);
   handoff.hash = new URLSearchParams({ target: target.toString() }).toString();
   return handoff.toString();
@@ -60,8 +64,10 @@ export function normalizeConnectorOAuthErrorCode(value: string): string {
 }
 
 type ConnectorAttemptTargetResult =
-  | { status: "succeeded"; connectionId: string; errorCode?: never }
-  | { status: "denied" | "failed"; errorCode: string; connectionId?: never };
+  | { status: "succeeded"; connectionId: string; errorCode?: never; ticket?: never }
+  | { status: "denied" | "failed"; errorCode: string; connectionId?: never; ticket?: never }
+  /** Held for the starting client to claim (`docs/connectors.md`, "Claiming a connector authorization"). */
+  | { status: "authorized"; ticket: string; connectionId?: never; errorCode?: never };
 
 export type ConnectorAttemptTargetInput = {
   provider: ConnectorOAuthProvider;
@@ -76,7 +82,8 @@ export function connectorAttemptTarget(
 ): string {
   if (
     (input.status === "succeeded" && !input.connectionId)
-    || (input.status !== "succeeded" && (!input.errorCode || input.connectionId !== undefined))
+    || (input.status === "authorized" && !input.ticket)
+    || ((input.status === "denied" || input.status === "failed") && (!input.errorCode || input.connectionId !== undefined))
   ) {
     throw new Error("The connector callback result is invalid");
   }
@@ -100,11 +107,21 @@ export function connectorAttemptTarget(
     && !addressed.destination.search
     && !addressed.destination.hash;
   const exactBrowser = target.toString() === browserConnectorCompletionUrl(env);
-  if (!exactLegacy && !exactAddressed && !exactBrowser) throw new Error("The connector return URI is invalid");
+  const exactMobile = target.toString() === MOBILE_CONNECTOR_CALLBACK;
+  if (!exactLegacy && !exactAddressed && !exactBrowser && !exactMobile) throw new Error("The connector return URI is invalid");
   target.searchParams.set("provider", input.provider);
-  if (exactLegacy || exactBrowser) target.searchParams.set("region", env.AVALON_REGION);
+  if (exactLegacy || exactBrowser || exactMobile) target.searchParams.set("region", env.AVALON_REGION);
+  // The browser page and the mobile app claim through the Organization's own
+  // API, so they are told which one; a desktop link is already addressed.
+  if ((exactBrowser || exactMobile) && input.status === "authorized") target.searchParams.set("workspace", input.workspaceId);
   if (input.attemptId) target.searchParams.set("attempt", input.attemptId);
-  if (input.status === "succeeded") {
+  if (input.status === "authorized") {
+    target.searchParams.set("status", "authorized");
+    // A browser page's query reaches the server that serves it; its fragment
+    // does not. Deep links go straight to the app, like a sign-in ticket.
+    if (exactBrowser) target.hash = new URLSearchParams({ ticket: input.ticket }).toString();
+    else target.searchParams.set("ticket", input.ticket);
+  } else if (input.status === "succeeded") {
     target.searchParams.set("connection", input.connectionId);
     target.searchParams.set("status", "connected");
   } else {

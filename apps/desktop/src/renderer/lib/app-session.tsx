@@ -1214,6 +1214,40 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         ]);
         return;
       }
+      if (intent.kind === 'connector-claim') {
+        // The provider has answered and Rally is holding it for the session
+        // that started it (`docs/connectors.md`, "Claiming a connector
+        // authorization"). The claim answers with the completion link the
+        // callback used to send, which is handled below like any other.
+        const claim = async (targetApi: RallyApi): Promise<void> => {
+          let target: string;
+          try {
+            target = (await targetApi.claimConnectorOAuth(intent.ticket)).target;
+          } catch (error: unknown) {
+            const pending = pendingConnectorOAuthRef.current;
+            if (pending?.provider === intent.provider && (intent.attemptId === null || pending.attemptId === intent.attemptId)) {
+              setPendingConnectorOAuth(null);
+            }
+            reportDeepLinkFailure(error instanceof Error
+              ? error.message
+              : `${connectorProviderNames[intent.provider]} could not be connected. Try again.`);
+            return;
+          }
+          await handleDeepLink({ ...navigation, url: target });
+        };
+        if (intent.target) {
+          await runInDeepLinkWorkspace(intent.target, claim);
+          return;
+        }
+        const activeSession = requireActiveWorkspace('Rally received an invalid connector completion link.');
+        if (!activeSession) return;
+        if (intent.callbackRegion !== activeSession.workspace!.region) {
+          reportDeepLinkFailure('Rally received an invalid connector completion link.');
+          return;
+        }
+        await claim(apiForSession(activeSession));
+        return;
+      }
       if (intent.kind === 'connector-result') {
         const connectorName = intent.provider ? connectorProviderNames[intent.provider] : null;
         const applyConnectorResult = async (): Promise<void> => {

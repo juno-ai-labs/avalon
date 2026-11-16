@@ -2,6 +2,7 @@ import {
   ConnectorOAuthProviders,
   type ConnectorOAuthProviderValue as ConnectorOAuthProvider,
 } from "./connector-oauth-providers";
+import { CONNECTOR_CLAIM_TICKET_PATTERN } from "./connector-oauth-claim";
 import { isDesktopDeepLinkProtocol } from "./desktop-deep-link";
 import { parseMessageSearch } from "./links";
 import {
@@ -48,6 +49,19 @@ export type DesktopDeepLinkIntent =
       attemptId: string | null;
       errorCode: string | null;
       callbackRegion: WorkspaceTargetRegion | null;
+    } & Targeted)
+  /**
+   * A connector authorization the provider has answered and Rally is holding
+   * until this signed-in client claims `ticket` (`docs/connectors.md`,
+   * "Claiming a connector authorization"). The claim answers with the
+   * `connector-result` link the callback used to send.
+   */
+  | ({
+      kind: "connector-claim";
+      provider: ConnectorOAuthProvider;
+      ticket: string;
+      attemptId: string | null;
+      callbackRegion: WorkspaceTargetRegion;
     } & Targeted)
   | {
       kind: "identity-result";
@@ -96,12 +110,21 @@ function parseConnectorResult(
   }
 
   const provider = connectorProvider(providerValue);
-  if (!provider || (status !== "connected" && status !== "denied" && status !== "failed")) return null;
+  if (!provider || (status !== "connected" && status !== "denied" && status !== "failed" && status !== "authorized")) return null;
   const callbackRegion = target?.region ?? url.searchParams.get("region");
   if (!callbackRegion || !/^[a-z][a-z0-9-]*$/u.test(callbackRegion)) return null;
   const attemptId = url.searchParams.get("attempt");
   if (attemptId !== null && !ATTEMPT_PATTERN.test(attemptId)) return null;
   const routingKeys = target ? [] : ["region"];
+  if (status === "authorized") {
+    const ticket = url.searchParams.get("ticket");
+    return connectionId === null
+      && ticket !== null
+      && CONNECTOR_CLAIM_TICKET_PATTERN.test(ticket)
+      && exactKeys(url.searchParams, ["status", "ticket", "provider", ...routingKeys], ["attempt"])
+      ? { kind: "connector-claim", provider, ticket, attemptId, callbackRegion, target }
+      : null;
+  }
   if (status === "connected") {
     if (
       !connectionId
