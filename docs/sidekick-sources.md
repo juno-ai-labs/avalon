@@ -247,7 +247,12 @@ them at that conversation; the Activity row keeps its plain pair, and an
 Approve there before connecting is refused by name. Everyone else reads
 "Needs to connect Gmail" or "Needs to reconnect Gmail" in that person's row. A
 connector no card connects (a webhook, X, a custom server) points at Settings
-instead.
+instead. Each view also carries `connect`: the scope whose connection carries
+the events, and the card that makes a personal one. A connector whose events
+arrive only on its Organization connection (Granola, Fireflies and Ashby
+declare `activityConnectionScopes: ["workspace"]`) answers `scope: "workspace"`
+with no card, so its card says an administrator connects it in Settings and
+offers no personal "Connect and approve", which could never let its events in.
 
 `decideSourceRequest` refuses an approval with no such connection
 (`sidekick_source_connection_missing`), and one where every such connection

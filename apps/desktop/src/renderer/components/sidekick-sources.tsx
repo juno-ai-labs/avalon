@@ -83,9 +83,13 @@ function SourceConnectAndApprove({ request, onApprove, approving }: {
     enabled: Boolean(api),
     staleTime: 60_000,
   });
-  const connectorId = sourceConnectionCardId(request.connectorType, request.eventTypes);
+  // The server says which connection carries these events; an older view falls back to working it out here.
+  const connect = request.connect ?? { scope: 'personal' as const, card: sourceConnectionCardId(request.connectorType, request.eventTypes) };
   const verb = request.connection === 'reconnect_required' ? 'Reconnect' : 'Connect';
   const { connector } = sourceWords(request);
+  // Events that arrive only on the Organization's connection wait on an administrator, not on this press.
+  if (connect.scope === 'workspace') return <span className="source-request-connect-settings">Needs an admin to {verb.toLowerCase()} {connector} for the Organization in Settings</span>;
+  const connectorId = connect.card;
   if (!connectorId) return <span className="source-request-connect-settings">{verb} {connector} in Settings, then approve here</span>;
   return <ConnectorConnectionsProvider connections={connections.data}>
     <ConnectAndApproveButton approving={approving} connector={connector} connectorId={connectorId} onApprove={onApprove} request={request} verb={verb} />
