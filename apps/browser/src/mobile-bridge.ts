@@ -1,3 +1,4 @@
+import { installDynamicType } from './dynamic-type';
 import { MOBILE_SIGN_IN_PATH } from '../../mobile/src/auth-contract';
 import { MOBILE_CAPABILITIES_GLOBAL, MOBILE_CHANNEL, MOBILE_COMMAND_EVENT, VISIBLE_PIN_COUNT, MobileCommandSchema, type MobileEvent } from '../../mobile/src/protocol';
 
@@ -49,6 +50,11 @@ export function postMobileEvent(event: MobileEvent): void {
 export function installMobileBridge(): void {
   if (!isMobileHost()) return;
   document.documentElement.dataset.mobileHost = 'true';
+  // Before the first render, so no frame paints at desktop sizes, and on <html>
+  // so every phone screen and every dialog portaled to <body> reads at it.
+  // Artifact content resets itself to the default density.
+  document.documentElement.dataset.density = 'touch';
+  installDynamicType();
   // Native compares this with the deployed entry on resume, to reload a stale Home while it is hidden.
   const build = document.querySelector('script[type="module"][src^="/assets/"]')?.getAttribute('src') ?? undefined;
   const ready = () => { postMobileEvent({ type: 'ready', waitForContent: true, build }); if (screenReady) postMobileEvent({ type: 'screen-ready' }); if (latest) postMobileEvent(latest); if (latestArtifact) postMobileEvent(latestArtifact); for (const prepared of preparedCanvases.values()) postMobileEvent(prepared); };

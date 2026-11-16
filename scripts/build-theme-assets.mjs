@@ -33,6 +33,7 @@ import { isEntryPoint } from './entry-point.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const tokensDirectory = join(root, 'config', 'design-tokens');
 const themesDirectory = join(tokensDirectory, 'themes');
+const densitiesDirectory = join(tokensDirectory, 'densities');
 const desktopSource = join(root, 'apps', 'desktop', 'src');
 const sharedUiSource = join(root, 'packages', 'ui', 'src');
 const stylesheetPath = join(sharedUiSource, 'styles', 'themes.css');
@@ -87,7 +88,78 @@ export function readTokenSources() {
   // The default theme first: it is emitted as `:root` as well, so it has to be
   // the block every other theme's omissions fall through to.
   themes.sort((a, b) => (a.default ? -1 : b.default ? 1 : a.id.localeCompare(b.id)));
-  return { registry, base, themes };
+  const densities = readdirSync(densitiesDirectory)
+    .filter((entry) => entry.endsWith('.json'))
+    .map((entry) => readJson(join(densitiesDirectory, entry)))
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  checkDensities(densities);
+  return { registry, base, themes, densities };
+}
+
+/**
+ * What `density.schema.json` says, enforced: the schema is only an editor hint,
+ * and an id lands in a selector and a description in a comment. `default` is the
+ * reset block's name, and a second block under it would silently win over it.
+ */
+export function checkDensities(densities) {
+  const seen = new Set();
+  for (const density of densities) {
+    if (typeof density.id !== 'string' || !/^[a-z][a-z0-9-]*$/u.test(density.id)) throw new Error(`density id ${JSON.stringify(density.id)} must be lower-kebab-case`);
+    if (density.id === 'default') throw new Error('density id "default" is reserved for the reset block');
+    if (seen.has(density.id)) throw new Error(`density id "${density.id}" is used by two files`);
+    seen.add(density.id);
+    if (!density.tokens || typeof density.tokens !== 'object') throw new Error(`density "${density.id}" has no tokens`);
+    for (const field of ['name', 'description']) {
+      if (typeof density[field] !== 'string' || density[field].includes('*/')) throw new Error(`density "${density.id}": ${field} must be a string with no "*/"`);
+    }
+  }
+}
+
+/** The token paths a value names with `{a.b.c}`. */
+function referencesIn(value) {
+  return [...JSON.stringify(value).matchAll(/\{([a-z0-9.-]+)\}/giu)].map((match) => match[1]);
+}
+
+/**
+ * What a density re-declares: the base tokens it sets, and every base token
+ * that reaches one of them through an alias.
+ *
+ * A density is a subtree's choice (`data-density` on any element), so it meets
+ * the same trap the themes do: `--av-cmp-control-font-size: var(--av-sys-type-callout)`
+ * declared on `:root` is substituted there, and a subtree that redeclares
+ * `--av-sys-type-callout` would leave the alias at the root's value. Re-declaring
+ * the dependents beside the overrides makes the alias resolve on the density's
+ * own element. Only base tokens may be set: a density changes measurements, and
+ * an appearance token re-declared here would pin one appearance's value under
+ * every `data-theme`.
+ */
+export function densityTokens(density, base, registry, themes = []) {
+  for (const path of Object.keys(density.tokens)) {
+    if (!registry.tokens[path]) throw new Error(`${density.id}: sets unknown token ${path}`);
+    if (!(path in base.tokens)) throw new Error(`${density.id}: ${path} is not a base token; a density may set only base tokens`);
+  }
+  const values = { ...density.tokens };
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [path, value] of Object.entries(base.tokens)) {
+      if (path in values) continue;
+      if (referencesIn(value).some((reference) => reference in values)) {
+        values[path] = value;
+        grew = true;
+      }
+    }
+  }
+  // An appearance token that aliases one of these is substituted on its
+  // theme's element and never re-declared here, so it would keep the outer
+  // density's value inside a nested one. Refuse it rather than ship that.
+  for (const theme of themes) {
+    for (const [path, value] of Object.entries(theme.tokens)) {
+      const reached = referencesIn(value).find((reference) => reference in values);
+      if (reached) throw new Error(`${theme.id}: ${path} aliases ${reached}, which density "${density.id}" changes; an appearance token may not alias a measurement a density varies`);
+    }
+  }
+  return values;
 }
 
 /**
@@ -328,7 +400,7 @@ export function exportSyntaxPalette(themes, base) {
     });
 }
 
-export function generate({ registry, base, themes }) {
+export function generate({ registry, base, themes, densities = [] }) {
   const order = Object.keys(registry.tokens);
   // Every block declares every token, including the ones a theme was content to
   // inherit. Falling through to `:root` works only while `data-theme` is on the
@@ -366,6 +438,33 @@ export function generate({ registry, base, themes }) {
     ].join('\n');
   });
 
+  // After the themes, so a density on the same element as a `data-theme` wins
+  // at equal specificity. `default` restores the base values for a subtree
+  // nested inside another density, and declares exactly the tokens some
+  // density changes, so it is only as large as the densities make it.
+  const densityBlocks = [];
+  if (densities.length) {
+    const declared = (values, id) => order
+      .filter((path) => path in values)
+      .map((path) => `  ${customProperty(path)}: ${resolveValue(values[path], registry, { id }, path)};`);
+    const blocks = densities.map((density) => [density, densityTokens(density, base, registry, themes)]);
+    const changed = new Set(blocks.flatMap(([, values]) => Object.keys(values)));
+    densityBlocks.push([
+      '/* The base measurements, for a subtree inside another density. */',
+      `[data-density='default'] {`,
+      ...declared(Object.fromEntries([...changed].map((path) => [path, base.tokens[path]])), 'default'),
+      '}',
+    ].join('\n'));
+    for (const [density, values] of blocks) {
+      densityBlocks.push([
+        wrapComment(`${density.name} — ${density.description}`, ''),
+        `[data-density='${density.id}'] {`,
+        ...declared(values, density.id),
+        '}',
+      ].join('\n'));
+    }
+  }
+
   const faces = fontFaces(themes).map((font) => fontFaceRule(font, 'themes'));
 
   return [
@@ -381,6 +480,7 @@ export function generate({ registry, base, themes }) {
     '',
     ...(faces.length ? [...faces, ''] : []),
     ...blocks,
+    ...densityBlocks,
     '',
   ].join('\n');
 }

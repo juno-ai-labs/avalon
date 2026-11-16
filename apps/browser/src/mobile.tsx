@@ -330,7 +330,7 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
     {resource.kind === 'site'
       ? <HostedSite key={`${resource.resourceId}:${version}`} canvasId={id} resourceId={resource.resourceId} version={version ?? resource.version} title={resource.title} active={active} />
       : content.isError ? <Recovery title="This artifact couldn’t load" retry={() => void content.refetch()} /> : !content.data ? <div className="mobile-empty" role="status">Opening artifact…</div>
-      : <AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} /></Suspense></AppErrorBoundary>}
+      : <AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><div key="content" className="mobile-artifact-content" data-density="default"><InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} /></div></Suspense></AppErrorBoundary>}
   </>;
 }
 
