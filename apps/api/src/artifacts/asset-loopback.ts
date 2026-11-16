@@ -22,7 +22,6 @@
  */
 import { WorkerEntrypoint } from "cloudflare:workers";
 
-import { artifactAssetKey } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { resolveAssetPath } from "./serving-policy";
@@ -31,13 +30,13 @@ import { storedObjectResponse } from "./stored-object-response";
 export interface ArtifactAssetLoopbackProps {
   artifactId: string;
   version: number;
-  /** Every published file of this version, and the type it was stored as. */
-  assets: { path: string; contentType: string }[];
+  /** Every published file of this version, the type it was stored as, and its stored key. */
+  assets: { path: string; contentType: string; key: string }[];
 }
 
 export class ArtifactAssetLoopback extends WorkerEntrypoint<Env, ArtifactAssetLoopbackProps> {
   override async fetch(request: Request): Promise<Response> {
-    const { artifactId, version, assets } = this.ctx.props;
+    const { assets } = this.ctx.props;
     const paths = new Set(assets.map((asset) => asset.path));
     const resolved = resolveAssetPath(new URL(request.url).pathname, paths);
     if (!resolved) return new Response("Not found", { status: 404 });
@@ -47,7 +46,7 @@ export class ArtifactAssetLoopback extends WorkerEntrypoint<Env, ArtifactAssetLo
     // reaches the stored file through it as it does through a static site.
     // HTML comes back whole: the serving Worker may inject into it afterwards,
     // and nothing seeks within a page.
-    const served = await storedObjectResponse(this.env.PAYLOADS, artifactAssetKey(artifactId, version, resolved), request,
+    const served = await storedObjectResponse(this.env.PAYLOADS, asset.key, request,
       { "content-type": asset.contentType }, { ranges: !asset.contentType.toLowerCase().startsWith("text/html") });
     return served ?? new Response("Temporarily unavailable", { status: 503 });
   }

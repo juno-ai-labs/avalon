@@ -7,6 +7,7 @@ import {
   type ArtifactManifest,
   ArtifactManifestSchema,
   artifactManifestKey,
+  manifestAssetKey,
   type ArtifactHostnameStub,
   SITE_MANIFEST_MIME_TYPE,
   artifactOrigin,
@@ -509,7 +510,7 @@ export function createTerminalResourceBridge(
         await provider.writeFile(
           providerSandboxId,
           `${staging}/${file.path}`,
-          await readArtifactVersionFile(env, manifest, file.path),
+          await readArtifactVersionFile(env, file),
           context.signal,
         );
       }
@@ -1091,9 +1092,10 @@ export function createTerminalResourceBridge(
       const manifest = ArtifactManifestSchema.safeParse(parsed);
       if (!manifest.success) return null;
       return {
-        artifactId: served.artifactId,
-        version: served.version,
-        files: manifest.data.assets.map(({ path, sha256, sizeBytes }) => ({ path, sha256, sizeBytes })),
+        files: manifest.data.assets.map((entry) => ({
+          path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes,
+          storedAt: manifestAssetKey(manifest.data, entry),
+        })),
       };
     },
 

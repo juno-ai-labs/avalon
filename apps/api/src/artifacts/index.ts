@@ -47,6 +47,8 @@ import {
   artifactReturnPath,
   artifactSiteOpenPath,
   artifactManifestKey,
+  manifestAssetKey,
+  manifestServerModuleKey,
   asArtifactId,
   parseArtifactHost,
   type ArtifactManifest,
@@ -433,7 +435,7 @@ async function serveAsset(
   const resolved = resolveAssetPath(path, assetPaths);
   if (!resolved) return html(plainErrorPage("This page does not exist in the artifact."), 404);
   const asset = manifest.assets.find((entry) => entry.path === resolved)!;
-  const key = `artifact/${artifactId}/v${version}/assets/${resolved}`;
+  const key = manifestAssetKey(manifest, asset);
   const htmlAsset = asset.contentType.toLowerCase().startsWith("text/html");
   const social = htmlAsset && socialPageUrl !== null && manifest.socialPreview !== undefined && resolved === "index.html";
   if (htmlAsset && (rewriteHtmlForVersion !== null || social || annotationScriptPath !== null)) {
@@ -587,7 +589,8 @@ async function runArtifactModule(
   }
   const loader = env.ARTIFACT_LOADER!;
   const worker = loader.get(statelessLoaderId(artifactId, manifest.artifactVersion), async () => {
-    const module = await env.PAYLOADS.get(`artifact/${artifactId}/v${manifest.artifactVersion}/assets/index.js`);
+    const moduleKey = manifestServerModuleKey(manifest);
+    const module = moduleKey ? await env.PAYLOADS.get(moduleKey) : null;
     if (!module) throw new Error("artifact_server_module_missing");
     return {
       compatibilityDate: ARTIFACT_COMPATIBILITY_DATE,
@@ -646,6 +649,7 @@ function assetLoopback(ctx: ExecutionContext, artifactId: string, manifest: Arti
       assets: manifest.assets.map((asset) => ({
         path: asset.path,
         contentType: asset.contentType,
+        key: manifestAssetKey(manifest, asset),
       })),
     },
   });

@@ -103,7 +103,7 @@ An **archive** rides the ordinary document publish path unchanged: it is one
 file's bytes with a zip's mime type, so identity, replay, version capture, and
 the rail entry behave exactly as a document's do. A **site** takes its own path,
 because almost nothing is shared — its stored content is a manifest rather than
-the thing a viewer sees, its bytes go to version-immutable keys, and it has a
+the thing a viewer sees, its bytes go to blobs keyed by their digest, and it has a
 supervisor object to point at afterwards.
 
 Every new site version also gets a normalized social preview. Publish reads the
@@ -838,14 +838,13 @@ facet that holds a stateful artifact's data. It does not own:
   outside the artifact), never by the page's own requests. The shape, not just
   the number, is the sleep guarantee, since compute per open is bounded by rate
   ceiling × lifetime: an abandoned page stops within a year of its last open. The open code lives 60
-  seconds. A publish carries at most 25,000,000 new or changed bytes,
-  transcribed from the file path's existing bound rather than chosen. A file
-  the live version already stores at the same path with the same digest is
-  carried: copied from that version's key inside R2 as a stream of known
-  length, never read from the sandbox or held by the Worker, and counted
-  against nothing. HTML, the server module and the preview image the page
-  names are always read, because the publish reads their bytes. So a site can
-  hold a feed's episodes: each republish moves only the new one. A data page returns at most 200 rows.
+  seconds. A publish carries at most 25,000,000 new bytes, transcribed from
+  the file path's existing bound rather than chosen. Bytes the live version
+  already stores, at any path, are new to nobody: nothing is written for them
+  and they count against nothing. So a site can hold a feed's episodes, and
+  each republish moves only the new one. Since new files stream from the
+  sandbox, this number no longer guards Worker memory; it is the team's to
+  raise. A data page returns at most 200 rows.
 
 Canvas archive records one durable `canvas_archive_artifact` alarm entry per
 registered site in WorkspaceDO. Delivery writes `archived_canvases` in the artifact
@@ -917,7 +916,15 @@ Two traps:
 - The `"data"` facet, for stateful artifacts: the model's schema, in a database
   that rides the supervisor's storage envelope. Facet classes are dynamic and
   never appear in Wrangler migrations; only `ArtifactHostDO` does.
-- R2 `PAYLOADS`: `artifact/<id>/v<n>/assets/<path>` and `…/manifest.json`.
+- R2 `PAYLOADS`: `artifact/<id>/v<n>/manifest.json` for each version, and
+  `artifact/<id>/blobs/<sha256>` for every file of a version whose manifest
+  says `assetStore: "blobs"`, shared by every version that holds those bytes.
+  A version published before blobs keeps its files at
+  `artifact/<id>/v<n>/assets/<path>`. `manifestAssetKey` and
+  `manifestServerModuleKey` are the only way any reader turns an entry into a
+  key. Nothing deletes artifact bytes today, so a shared blob needs no
+  reference count; whatever prunes versions later must keep a blob any kept
+  manifest names.
   New manifests optionally carry a `socialPreview` descriptor; generated cards
   are ordinary versioned assets beneath that same prefix.
 
@@ -972,14 +979,21 @@ shows its saved quote and image. The script and trust boundaries are owned by
 
 ## Changelog
 
-### 2026-11-16 — Sites carry unchanged files; stored bytes revalidate; files answer at their own name
+### 2026-11-16 — Site files are stored once by digest and streamed in; stored bytes revalidate; files answer at their own name
 
-**What changed:** A site republish carries each file the live version already
-stores unchanged (`CarriedSiteFile`): the runtime asks the bridge for the live
-files (`liveSiteFiles`), skips reading the matches, and counts only new or
-changed bytes against the publish limit; `writeArtifactVersion` copies a
-carried file from the live version's key as a stream. A site import checks
-every path with `head`, then reads and writes one file at a time. A published file or a static site's stored asset is sent
+**What changed:** A new site version stores each file once, at
+`artifact/<id>/blobs/<sha256>`, and its manifest (`assetStore: "blobs"`) is
+the version: paths naming digests. The model still publishes a whole
+directory; the runtime settles each file. Bytes the live version already holds
+(by digest, at any path, from `liveSiteFiles`) are **stored**: nothing is
+written. Pages, the server module and the preview image the page names are
+**read**, because the publish needs their bytes. Everything else is
+**streamed** from the sandbox into its blob (`provider.openFile`, a Daytona
+signed download fetched by the provider Worker, returned across RPC as a
+stream) with R2 checking it against the listed digest. Only read and streamed
+bytes count against the publish limit. A version from before blobs has its
+files copied into blobs, once, as streams. A site import checks every path
+with `head`, then reads and writes one file at a time. A published file or a static site's stored asset is sent
 `private, no-cache` instead of `private, no-store`, and `storedObjectResponse`
 answers an `If-None-Match` naming the current `ETag` with `304`. A published
 file is also served at `/<its name>` when its title is a plain file name
@@ -987,10 +1001,13 @@ file is also served at `/<its name>` when its title is a plain file name
 
 **Why:** A feed's episodes belong in its own site, so the page can play them
 (its policy loads media only from its own origin) and the feed names them by
-its own URL. But each republish re-read every file and counted the whole
-directory against 25 MB, and each import held every file in memory, so one or
-two episodes filled a site. The team kept 25 MB per publish; carrying makes it
-mean new bytes per publish, which is what it bounds (memory and transfer).
+its own URL. But each version owned a full copy of every file: each republish
+re-read the whole directory from the sandbox, held it in memory and counted it
+against 25 MB, and each import held every file at once. A first fix copied
+unchanged files between version prefixes, which still cost a copy of the whole
+site in R2 per episode and storage per version. Keying bytes by digest makes a
+version cost a manifest and a publish cost its new bytes, and streaming makes
+a file's size a transfer cost rather than a memory one.
 
 Every podcast app refresh and every replay downloaded the whole file
 again, through admission and R2, for bytes that had not changed. Some podcast
@@ -1000,9 +1017,13 @@ apps and download managers read a file's type from its URL, and a URL ending in
 **Considered and rejected:** Letting a site page load media from other
 artifact hosts, so episodes could stay separate files; it changes the policy on
 a domain every artifact shares. Raising the directory limit, which still holds
-every file in memory on each publish and import. Content-addressed asset keys
-shared across versions, which would also avoid the copy but changes what a
-version owns and how it is deleted. Caching at Cloudflare's edge while a Canvas is
+every file in memory on each publish and import. A publish that takes a patch
+(add this, remove that) from the model, which would spare it importing the site
+first; the team kept the model's side to one whole-directory publish and the
+analysis on the platform. Blobs shared across a workspace's artifacts, which
+would deduplicate more but make one artifact's bytes reachable from another's
+key space. The Daytona SDK's own stream download, which refuses to run in a
+Worker. Caching at Cloudflare's edge while a Canvas is
 public, which cuts requests as well as bytes but keeps serving after the Canvas
 goes private until the cache lifetime ends, unless the access queue purges it;
 that is a separate decision once load is real. Revalidating everything, which
@@ -1010,9 +1031,11 @@ would let a browser keep an active site's personalized output; only stored
 bytes, which are the same for every viewer, get it. Serving a file at any name
 with its extension, which would let a link claim a name the file does not have.
 
-**Consequences:** Carrying trusts the sandbox listing's digest; a wrong one
-can only keep bytes the same path already served. A carried copy that has gone
-fails the publish, and the site keeps its previous version. A publish whose
+**Consequences:** "Stored" trusts the sandbox listing's digest; a wrong one
+can only put bytes this site already served at a path. A streamed file that
+changed after it was listed is refused by R2, which fails the publish and
+leaves the site on its previous version. Pruning versions, when it comes, must
+keep every blob a kept manifest names. A publish whose
 directory lacks a file removes it, so the skills tell agents to import the site
 before adding to it in a new sandbox. Admission runs on every revalidation, so `no-cache` changes
 bandwidth, not who can read. A path that serves stored bytes passes

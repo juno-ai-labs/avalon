@@ -52,6 +52,8 @@ interface DaytonaSandboxLike {
   delete?: (timeout?: number, wait?: boolean) => Promise<void>;
   updateNetworkSettings?: (settings: { domainAllowList?: string; networkBlockAll?: boolean }) => Promise<void>;
   updateSecrets?: (secrets: Record<string, string>) => Promise<void>;
+  /** A pre-signed URL a plain `fetch` downloads the file from. */
+  downloadUrl?(path: string, ttlSeconds?: number): Promise<string>;
   fs?: {
     downloadFile(path: string, timeout?: number): Promise<Uint8Array>;
     uploadFile(source: Uint8Array, path: string, timeout?: number): Promise<void>;
@@ -663,6 +665,21 @@ export function createDaytonaTerminalProvider(
         { bytes: (value) => value?.byteLength ?? 0 },
       ));
       return bytes;
+    },
+    async openFile(idOrName, path) {
+      // The SDK's own stream download refuses to run in a Worker, and its
+      // buffered one holds the whole file. A signed URL is an ordinary
+      // request whose body Workers stream. It never leaves this method, and
+      // it lives as long as the buffered download is allowed to take.
+      const sandbox = await load(idOrName);
+      if (!sandbox.downloadUrl) throw new Error("daytona_signed_download_unavailable");
+      const url = await measureRequest("file.sign_download", () => sandbox.downloadUrl!(path, 120));
+      const response = await measureRequest("file.stream", () => fetch(url));
+      if (!response.ok || !response.body) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error(`daytona_file_stream_http_${response.status}`);
+      }
+      return response.body;
     },
     async writeFile(idOrName, path, bytes, signal) {
       throwIfFileTransferCancelled(signal);

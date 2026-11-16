@@ -313,7 +313,7 @@ describe("Terminal Bind integration", () => {
       getSandbox: unexpected, recoverSandbox: unexpected, startSandbox: unexpected,
       stopSandbox: unexpected, archiveSandbox: unexpected, deleteSandbox: unexpected,
       updateNetworkPolicy: unexpected, configureGitHubReadAccess: unexpected, clearGitHubReadAccess: unexpected,
-      readFile: unexpected, writeFile: unexpected, runCommand: unexpected, cleanupCommand: unexpected,
+      readFile: unexpected, openFile: unexpected, writeFile: unexpected, runCommand: unexpected, cleanupCommand: unexpected,
     };
     const tools = await __integrationTesting.loadHarnessTools(createTestEnv({ ...env,
       TERMINAL_PROVIDER: { createSession: async () => session },

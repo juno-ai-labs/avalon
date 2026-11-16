@@ -173,6 +173,7 @@ export function createTerminalProviderRpcClient(
     configureGitHubReadAccess: (idOrName, input) => call((rpc) => rpc.configureGitHubReadAccess(idOrName, input, callbacks())),
     clearGitHubReadAccess: (idOrName) => call((rpc) => rpc.clearGitHubReadAccess(idOrName, callbacks())),
     readFile: (idOrName, path) => call((rpc) => rpc.readFile(idOrName, path, callbacks())),
+    openFile: (idOrName, path) => call((rpc) => rpc.openFile(idOrName, path, callbacks())),
     writeFile: (idOrName, path, bytes, signal) => call((rpc) => rpc.writeFile(idOrName, path, bytes, callbacks({ signal }))),
     runUtilityCommand: (idOrName, input) => {
       const { signal, ...rpcInput } = input;

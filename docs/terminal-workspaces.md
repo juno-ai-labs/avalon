@@ -294,6 +294,12 @@ name is a plain file name; the host's root serves the same file. It serves
 under the Canvas's artifact audience once that delivery lands, normally within
 seconds.
 
+A directory published as a site moves only bytes its live version does not
+already store, and streams each large new file from the sandbox into storage
+(`TerminalSandboxProvider.openFile`, a Daytona signed download the provider
+Worker fetches and returns across RPC as a stream), so the Worker never holds
+it; [reactive web artifacts](reactive-web-artifacts.md) has the storage.
+
 A publish refused for its size (`resource_limit_exceeded`) first logs
 `terminal_publish_over_size_limit` with the shape (file or directory), the
 extension, the size and the limit, never the path. The 25 MB limit was copied

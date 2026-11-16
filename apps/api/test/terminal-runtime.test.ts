@@ -1517,29 +1517,37 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/rsvp/index.js");
   });
 
-  it("carries a site's unchanged files instead of reading them, and counts only new bytes against the limit", async () => {
+  it("settles each site file as already stored, streamed, or read, and counts only new bytes against the limit", async () => {
     const { files, provider, resources, runtime } = fixture();
     const big = new Uint8Array(20_000_000).fill(7);
     const art = new Uint8Array(10).fill(3);
+    const next = new Uint8Array(20_000_000).fill(8);
     files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode('<meta property="og:image" content="cover.png">'));
     files.set("/workspace/.rally-output/feed/episodes/one.mp3", big);
     files.set("/workspace/.rally-output/feed/cover.png", art);
-    files.set("/workspace/.rally-output/feed/episodes/two.mp3", new Uint8Array(20_000_000).fill(8));
-    vi.mocked(resources.liveSiteFiles).mockResolvedValueOnce({ artifactId: "artifact-1", version: 4, files: [
-      { path: "episodes/one.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength },
-      { path: "cover.png", sha256: await sha256Hex(art), sizeBytes: art.byteLength },
+    files.set("/workspace/.rally-output/feed/episodes/two.mp3", next);
+    provider.openFile = vi.fn(async (_id: string, path: string) => new Response(files.get(path)!.slice().buffer).body!);
+    vi.mocked(resources.liveSiteFiles).mockResolvedValueOnce({ files: [
+      // Stored under another name: matched by its bytes, not its path.
+      { path: "episodes/old-name.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength, storedAt: "artifact/a/blobs/one" },
+      { path: "cover.png", sha256: await sha256Hex(art), sizeBytes: art.byteLength, storedAt: "artifact/a/blobs/art" },
     ] });
-    // 40 MB of episodes, but only the new 20 MB one is read and counted.
+    // 40 MB of episodes, but only the new 20 MB one moves and counts.
     await runtime.publishResource(context, { filePath: "feed" });
     const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
-    expect(site.files.find((file) => file.path === "episodes/one.mp3")).toEqual({
-      path: "episodes/one.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength,
-      carriedFrom: { artifactId: "artifact-1", version: 4 },
+    const named = (path: string) => site.files.find((file) => file.path === path)!;
+    expect(named("episodes/one.mp3")).toEqual({
+      path: "episodes/one.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength, storedAt: "artifact/a/blobs/one",
     });
+    const streamed = named("episodes/two.mp3");
+    expect(streamed).not.toHaveProperty("bytes");
+    expect(new Uint8Array(await new Response(await (streamed as { open(): Promise<ReadableStream> }).open()).arrayBuffer()))
+      .toEqual(next);
     expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/feed/episodes/one.mp3");
-    // The page and the preview image it names are always read.
-    expect(site.files.find((file) => file.path === "cover.png")).toHaveProperty("bytes");
-    expect(site.files.find((file) => file.path === "index.html")).toHaveProperty("bytes");
+    expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/feed/episodes/two.mp3");
+    // The page and the preview image it names are always read, even when stored.
+    expect(named("cover.png")).toHaveProperty("bytes");
+    expect(named("index.html")).toHaveProperty("bytes");
     expect(resources.noteOversizedPublish).not.toHaveBeenCalled();
   });
 
