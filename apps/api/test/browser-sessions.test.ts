@@ -300,6 +300,8 @@ it("lists, accepts and declines an organization invitation for the cookie's addr
     .toEqual({ role:"member",status:"active" });
   // The session the accept path minted is revoked; only the browser's identity session stays open.
   expect(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE revoked_at IS NULL").get()).toEqual({ n:1 });
+  // An email sign-in starts outside setup; joining a first organization brings them into it.
+  expect(db.prepare("SELECT onboarding_eligible FROM users WHERE id=?").get(entry.session.user.id)).toEqual({ onboarding_eligible:1 });
   // A retry of the same operation answers the same organization.
   const retry = await answer(joining.id,"accept",{ region:"global",operationId });
   expect(await retry.json()).toEqual({ region:"global",workspaceId:joining.workspaceId });
@@ -311,6 +313,34 @@ it("lists, accepts and declines an organization invitation for the cookie's addr
     .toEqual({ n:0 });
   expect((await request("invitations")).status).toBe(401);
   for (const database of workspaceObject.databases) database.close();
+});
+
+it("accepts an invitation for someone already a guest there, making them a member",async () => {
+  const entry = await login();
+  const now = new Date().toISOString();
+  const ownerId = crypto.randomUUID();
+  db.prepare("INSERT INTO users(id,email,name,created_at,updated_at) VALUES (?,?,?,?,?)").run(ownerId,"owner@example.test","Maya Owner",now,now);
+  const workspaceId = workspace(ownerId,"member");
+  // A Canvas shared with them first made them a guest of the same Organization.
+  db.prepare("INSERT INTO workspace_members(workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
+    .run(workspaceId,entry.session.user.id,now);
+  const invitationId = crypto.randomUUID();
+  db.prepare(`INSERT INTO workspace_invitations(id,workspace_id,email,invited_by_user_id,token_hash,role,expires_at,created_at)
+    VALUES (?,?,?,?,?,'member',?,?)`).run(invitationId,workspaceId,"guest@example.test",ownerId,crypto.randomUUID(),new Date(Date.now()+86_400_000).toISOString(),now);
+  const workspaceObject = creatingWorkspaceObjectBinding(db);
+  const env = { ...bindings(),WORKSPACE_DOS:workspaceObject.binding };
+  try {
+    // Opening the Organization as a guest first records the relationship Global keeps for it.
+    expect((await request("workspace/select",entry.cookie,{ workspaceId })).status).toBe(200);
+    expect((await request("invitations",entry.cookie)).status).toBe(200);
+    const accepted = await createApp().request(`${apiOrigin}/browser/invitations/${invitationId}/accept`,{ method:"POST",
+      headers:{ origin,"content-type":"application/json",cookie:entry.cookie },
+      body:JSON.stringify({ region:"global",operationId:"01920000-0000-7000-8000-000000000041" }) },env);
+    expect(accepted.status).toBe(200);
+    expect(db.prepare("SELECT access_class,role FROM workspace_members WHERE workspace_id=? AND user_id=?").get(workspaceId,entry.session.user.id))
+      .toEqual({ access_class:"member",role:"member" });
+    expect(db.prepare("SELECT accepted_at IS NOT NULL AS accepted FROM workspace_invitations WHERE id=?").get(invitationId)).toEqual({ accepted:1 });
+  } finally { for (const database of workspaceObject.databases) database.close(); }
 });
 
 it("leaves an account's setup exemption alone when the create fails or it belongs to an organization in another deployment",async () => {
