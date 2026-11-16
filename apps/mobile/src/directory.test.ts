@@ -22,6 +22,8 @@ it('sees a change the native shell shows', () => {
   expect(directoryKey(renamed)).not.toBe(directoryKey(snapshot));
   expect(directoryKey({ ...snapshot, pins: [] })).not.toBe(directoryKey(snapshot));
   expect(directoryKey({ ...snapshot, pinBusy: true })).not.toBe(directoryKey(snapshot));
+  // A guest made a member gains the Organization's Settings pages.
+  expect(directoryKey({ ...snapshot, settingsSections: ['account', 'workspace'] })).not.toBe(directoryKey({ ...snapshot, settingsSections: ['account'] }));
   expect(directoryKey(null)).toBe('');
   // A Sidekick starting to wake on a schedule moves the Canvas into Reactive.
   const facts = { reactive: false, dataBacked: false, mine: true, sharedWithMe: false };

@@ -1,17 +1,24 @@
 import { installDynamicType } from './dynamic-type';
 import { MOBILE_SIGN_IN_PATH } from '../../mobile/src/auth-contract';
-import { MOBILE_CAPABILITIES_GLOBAL, MOBILE_CHANNEL, MOBILE_COMMAND_EVENT, VISIBLE_PIN_COUNT, MobileCommandSchema, type MobileEvent } from '../../mobile/src/protocol';
+import { MOBILE_CAPABILITIES_GLOBAL, MOBILE_CHANNEL, MOBILE_COMMAND_EVENT, OPEN_EXTERNAL_CAPABILITY, VISIBLE_PIN_COUNT, MobileCommandSchema, type MobileEvent } from '../../mobile/src/protocol';
 
 let latest: MobileEvent | null = null;
 let screenReady = false;
 let latestArtifact: MobileEvent | null = null;
 const preparedCanvases = new Map<string, Extract<MobileEvent, { type: 'prepared-canvas' }>>();
-let preview: { token: string; origin: string } | null = null;
+let preview: { token: string; origin: string; capabilities: readonly string[] } | null = null;
 
-/** Whether the native shell declared a capability before this page loaded. */
+/** Whether the native shell declared a capability before this page loaded, or
+ * the browser preview declared it when it attached. */
 export function mobileCapability(name: string): boolean {
   const declared: unknown = typeof window === 'undefined' ? undefined : Reflect.get(window, MOBILE_CAPABILITIES_GLOBAL);
-  return Array.isArray(declared) && declared.includes(name);
+  return (Array.isArray(declared) && declared.includes(name)) || Boolean(preview?.capabilities.includes(name));
+}
+
+/** How a link leaves the page when the shell opens it in the system browser,
+ * or null where the page opens its own tab. Asked at each click. */
+export function shellExternalLinkOpener(): ((url: string) => void) | null {
+  return mobileCapability(OPEN_EXTERNAL_CAPABILITY) ? (url) => postMobileEvent({ type: 'open-external', url }) : null;
 }
 
 export function isMobileHost(): boolean {
@@ -71,7 +78,9 @@ export function installMobileBridge(): void {
     if (!configured || event.origin !== configured) return;
     if (typeof event.data.attach === 'string') {
       if (typeof event.data.topInset === 'number' && Number.isFinite(event.data.topInset) && event.data.topInset >= 0) document.documentElement.style.setProperty('--mobile-top-inset', `${event.data.topInset}px`);
-      preview = { token: event.data.attach, origin: event.origin }; ready(); return; }
+      const capabilities: unknown = event.data.capabilities;
+      preview = { token: event.data.attach, origin: event.origin, capabilities: Array.isArray(capabilities) ? capabilities.filter((name): name is string => typeof name === 'string') : [] };
+      ready(); return; }
     if (!preview || event.origin !== preview.origin || event.data.token !== preview.token) return;
     const parsed = MobileCommandSchema.safeParse(event.data.command);
     if (parsed.success) window.dispatchEvent(new CustomEvent(MOBILE_COMMAND_EVENT, { detail: parsed.data }));

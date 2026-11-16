@@ -61,6 +61,20 @@ export const SharedElsewhereSummarySchema = CanvasSummarySchema.extend({
 });
 export type SharedElsewhereSummary = z.infer<typeof SharedElsewhereSummarySchema>;
 
+/**
+ * The account and Organization settings pages Home can show in its mobile
+ * presentation: the shared Settings screen's sections, less the Mac app's own
+ * (`application`) and a single connection's page, which Connections opens.
+ */
+export const MOBILE_SETTINGS_SECTIONS = ['account', 'preferences', 'memories', 'notifications', 'workspace', 'members', 'billing', 'internet-access', 'connections'] as const;
+export const MobileSettingsSectionSchema = z.enum(MOBILE_SETTINGS_SECTIONS);
+export type MobileSettingsSection = z.infer<typeof MobileSettingsSectionSchema>;
+/** Each page's name, for the shell's row and Home's title alike. */
+export const MOBILE_SETTINGS_TITLES: Record<MobileSettingsSection, string> = {
+  account: 'Profile', preferences: 'Preferences', memories: 'Memories', notifications: 'Notifications',
+  workspace: 'Organization', members: 'Members', billing: 'Billing', 'internet-access': 'Security', connections: 'Connections',
+};
+
 export const MobileSnapshotSchema = z.object({
   userId: z.string(),
   userName: z.string(),
@@ -77,11 +91,18 @@ export const MobileSnapshotSchema = z.object({
   directoryError: z.boolean().default(false),
   canvasId: z.string().nullable(),
   tabId: z.string().nullable(),
-  view: z.enum(['home', 'artifact', 'conversation', 'create']),
+  view: z.enum(['home', 'artifact', 'conversation', 'create', 'settings']),
   title: z.string(),
   artifactId: z.string().nullable(),
   artifactPicker: z.boolean(),
   inlineChat: z.boolean().optional(),
+  /** The settings pages this person may open through `settings`. An older
+   * host omits it and can open none, so the shell offers none. It stays open
+   * to any string: a newer host's section would otherwise fail an older
+   * shell's whole snapshot. The shell keeps the sections it knows. */
+  settingsSections: z.array(z.string())
+    .transform((sections) => sections.filter((section): section is MobileSettingsSection => MobileSettingsSectionSchema.safeParse(section).success))
+    .optional(),
 });
 export type MobileSnapshot = z.infer<typeof MobileSnapshotSchema>;
 
@@ -112,6 +133,14 @@ export const PreparedCanvasSchema = z.object({ canvasId: z.string(), resourceId:
 /** The native shell draws a pin's artifact picker. An older shell, which would
  * show only the preferred site, never declares it, so it is never sent the list. */
 export const ARTIFACT_PICKER_CAPABILITY = 'artifact-picker';
+/** The shell draws a Settings page's header, so Home may report `view: 'settings'`,
+ * which an older shell's snapshot schema would reject. */
+export const SETTINGS_CAPABILITY = 'settings';
+/** The shell opens `open-external` links itself. Its WebView creates no child
+ * window, so the browser's reserve-a-blank-tab pattern opens nothing there. */
+export const OPEN_EXTERNAL_CAPABILITY = 'open-external';
+/** What this shell declares to the browser host. */
+export const MOBILE_CAPABILITIES = [ARTIFACT_PICKER_CAPABILITY, SETTINGS_CAPABILITY, OPEN_EXTERNAL_CAPABILITY];
 export const MOBILE_CAPABILITIES_GLOBAL = '__RALLY_MOBILE_CAPABILITIES__';
 export type PreparedCanvas = z.infer<typeof PreparedCanvasSchema>;
 
@@ -134,6 +163,8 @@ export const MobileEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('artifact'), artifact: NativeArtifactSchema }),
   z.object({ type: z.literal('artifact-unavailable'), canvasId: z.string(), resourceId: z.string() }),
   z.object({ type: z.literal('open-canvas'), id: z.string().min(1) }),
+  /** A link the page would open in a new tab (checkout, a connector's sign-in). */
+  z.object({ type: z.literal('open-external'), url: HttpUrlSchema }),
   z.object({ type: z.literal('signed-out') }),
   z.object({ type: z.literal('snapshot'), snapshot: MobileSnapshotSchema }),
 ]);
@@ -151,6 +182,8 @@ export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('create'), marketplace: z.boolean().optional() }),
   z.object({ type: z.literal('open-chat'), id: z.string().min(1) }),
   z.object({ type: z.literal('close-chat') }),
+  /** Show a shared Settings page in Home; `home` leaves it. */
+  z.object({ type: z.literal('settings'), section: MobileSettingsSectionSchema }),
   z.object({ type: z.literal('open'), id: z.string().min(1), pinned: z.boolean() }),
   /** Open a Canvas in another of this person's Organizations, switching to it. */
   z.object({ type: z.literal('open-elsewhere'), region: z.string().min(1), workspaceId: z.string().min(1), canvasId: z.string().min(1) }),

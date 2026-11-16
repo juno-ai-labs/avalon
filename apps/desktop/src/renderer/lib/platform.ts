@@ -752,8 +752,20 @@ const browserBridge: RallyDesktopBridge = {
   },
 };
 
+let externalLinkOpener: () => ((url: string) => void) | null = () => null;
+/**
+ * A host that opens links itself installs this: the iPhone app's WebView makes
+ * no child window, so the blank tab reserved below would never exist there.
+ * Asked at each click; null keeps the reserved tab.
+ */
+export function setExternalLinkOpener(provider: () => ((url: string) => void) | null): void { externalLinkOpener = provider; }
+
 /** Reserve a browser tab during the click, before an async URL request loses user activation. */
 export function prepareExternalLink() {
+  const opener = externalLinkOpener();
+  if (opener) {
+    return { async open(url: string) { opener(url); }, cancel() { /* Nothing was reserved. */ } };
+  }
   const desktop = window.rally;
   const tab = desktop ? null : window.open('', '_blank');
   if (!desktop && !tab) {

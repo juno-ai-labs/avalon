@@ -185,6 +185,7 @@ function renderSettings(
   nextWorkspace: Workspace = workspace,
   client = createTestQueryClient(),
   standaloneWindow = false,
+  nativeShell = false,
 ): void {
   client.setQueryData(['account-onboarding', 'adam@example.com'], { eligible: false, introduced: true, revision: 1, presentation: null });
   render(
@@ -194,7 +195,7 @@ function renderSettings(
       <Tooltip.Provider>
         <QueryClientProvider client={client}>
           <CollaborationSessionProvider api={api as never} host={sessionHost.current} session={null}>
-            <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} /></AccountOnboardingGate>
+            <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} nativeShell={nativeShell} workspace={nextWorkspace} /></AccountOnboardingGate>
           </CollaborationSessionProvider>
         </QueryClientProvider>
       </Tooltip.Provider>
@@ -1672,6 +1673,20 @@ describe('Organization settings', () => {
     expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43));
   });
 
+  it('gives a connection page in a native shell its name and the way back to Connections', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000010', connectorType: 'google', scope: 'you',
+      displayName: 'Google · adam@example.com', capabilities: ['drive.read'], status: 'connected',
+    }]);
+    renderSettings(workspace, createTestQueryClient(), false, true);
+    openSettingsSection('Connections');
+    await openConnection('Google · adam@example.com');
+    expect(screen.getByRole('heading', { level: 2, name: 'Google · adam@example.com' })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Connections' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Connections' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2, name: 'Google · adam@example.com' })).toBeNull();
+  });
+
   it('reconciles the server-owned reconnect attempt without a footer message', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',
@@ -2746,6 +2761,25 @@ describe('Organization settings', () => {
     expect(refresh).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(refresh);
     expect(screen.queryByRole('dialog', { name: 'Refresh Canva · adam@example.com?' })).toBeNull();
+  });
+
+  it('leaves appearance, start page, device notifications and sign-out to a native shell', async () => {
+    sessionHost.current = 'browser';
+    api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
+    renderSettings(workspace, createTestQueryClient(), false, true);
+
+    openSettingsSection('Account');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Appearance' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
+
+    openSettingsSection('Preferences');
+    expect(await screen.findByRole('heading', { name: 'Agent' })).toBeInTheDocument();
+    expect(screen.queryByText('On startup')).toBeNull();
+
+    openSettingsSection('Notifications');
+    expect(await screen.findByRole('heading', { name: 'Notify me about' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'In this browser' })).toBeNull();
   });
 
   it('offers browser notifications in a browser and says when this browser cannot show them', async () => {

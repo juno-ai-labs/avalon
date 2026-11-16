@@ -12,7 +12,8 @@ import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Plus, Search, Sparkles, Store } from 'lucide-react';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { CANVAS_FILTERS, ELSEWHERE_CANVAS_FACTS, canvasFilterFacts, matchesCanvasFilter, type CanvasFilter, type CanvasFilterFacts } from '@rally/contracts/canvas-filters';
-import { ARTIFACT_PICKER_CAPABILITY, MOBILE_COMMAND_EVENT, MobileCommandSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
+import { ARTIFACT_PICKER_CAPABILITY, MOBILE_COMMAND_EVENT, MOBILE_SETTINGS_SECTIONS, MOBILE_SETTINGS_TITLES, MobileCommandSchema, SETTINGS_CAPABILITY, MobileSettingsSectionSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
+import { GUEST_SETTINGS_SECTIONS } from '../../desktop/src/common/settings';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
 import { LocalCacheScopeProvider } from '../../desktop/src/renderer/lib/local-cache-scope';
@@ -22,7 +23,11 @@ import { CANVASES_ROUTE, canvasRoute, openCanvasId, useCanvasList } from '../../
 import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/speech-playback';
 import { canvasMark } from '../../desktop/src/renderer/components/canvas-mark';
 import { useOtherOrganizationCanvases, type OtherOrganizationCanvas } from '../../desktop/src/renderer/lib/shared-canvases';
-import { mobileCapability, mobileScreenReady, postMobileEvent } from './mobile-bridge';
+import { mobileCapability, mobileScreenReady, postMobileEvent, shellExternalLinkOpener } from './mobile-bridge';
+import { setExternalLinkOpener } from '../../desktop/src/renderer/lib/platform';
+
+// Checkout and connector sign-in open a new tab; in the app, the shell opens them.
+setExternalLinkOpener(shellExternalLinkOpener);
 import './mobile.css';
 import { useMobileCanvasDetail, useMobileCanvasUpdates } from './mobile-canvas-detail';
 // Chat/composition and file previews are paid for only when those screens open.
@@ -30,6 +35,8 @@ import { useMobileCanvasDetail, useMobileCanvasUpdates } from './mobile-canvas-d
 const MobileConversation = lazy(() => import('./mobile-conversation').then(module => ({ default: module.MobileConversation })));
 // eslint-disable-next-line rally/no-dynamic-import
 const CreateCanvas = lazy(() => import('./mobile-conversation').then(module => ({ default: module.CreateCanvas })));
+// eslint-disable-next-line rally/no-dynamic-import
+const MobileSettings = lazy(() => import('./mobile-settings').then(module => ({ default: module.MobileSettings })));
 // eslint-disable-next-line rally/no-dynamic-import
 const InspectorRail = lazy(() => import('../../desktop/src/renderer/components/inspector-rail').then(module => ({ default: module.InspectorRail })));
 const opening = <div className="mobile-empty" role="status">Opening…</div>;
@@ -92,6 +99,13 @@ function MobileContent(): React.JSX.Element {
   const create = (fromMarketplace = false) => { returnLocation.current = null; void navigate(CANVASES_ROUTE, { state: { createCanvas: true, marketplace: fromMarketplace } }); };
   useEffect(() => { if (location.pathname === '/') void navigate(CANVASES_ROUTE, { replace: true }); }, [location.pathname, navigate]);
   useEffect(() => { if (creating) setCreationSession(true); }, [creating]);
+  // A shared Settings page, which reads its section from the route once, so
+  // each request mounts it afresh (keyed by the navigation) on the section asked for.
+  // Only a shell that draws its header is shown one: an older shell would reject
+  // the view, and the route is also reached by desktop's own `openSettings`.
+  const settingsSection = location.pathname === SETTINGS_ROUTE && mobileCapability(SETTINGS_CAPABILITY) ? MobileSettingsSectionSchema.safeParse(new URLSearchParams(location.search).get('section')).data ?? null : null;
+  const guest = session?.workspace?.accessClass === 'guest';
+  const settingsSections = useMemo(() => MOBILE_SETTINGS_SECTIONS.filter((section) => !guest || GUEST_SETTINGS_SECTIONS.has(section)), [guest]);
   const tabId = canvasId && new URLSearchParams(location.search).get('tab') === '1' && pinnedIds.includes(canvasId) ? canvasId : null;
   const [visited, setVisited] = useState<string[]>([]);
   const [descriptors, setDescriptors] = useState<Record<string, Descriptor>>({});
@@ -148,6 +162,10 @@ function MobileContent(): React.JSX.Element {
         break;
       }
       case 'create': create(message.marketplace); break;
+      case 'settings':
+        returnLocation.current = null;
+        void navigate(`${SETTINGS_ROUTE}?section=${message.section}`);
+        break;
       case 'open': open(message.id, message.pinned); break;
       case 'open-elsewhere': {
         const region = ConfiguredRegionSchema.safeParse(message.region);
@@ -234,19 +252,23 @@ function MobileContent(): React.JSX.Element {
       canvases: summaries, sharedElsewhere,
       pins: pinnedIds, hasMore: false, loading: directory === undefined,
       pinBusy, pinError: pinNotice, directoryError, canvasId, tabId, inlineChat: true,
-      view: creating ? 'create' : conversation ? 'conversation' : canvasId ? descriptor?.view ?? 'artifact' : 'home',
-      title: marketplace ? 'Marketplace' : creating ? 'New canvas' : canvasId ? descriptor?.title ?? rows.find((row) => row.id === canvasId)?.title ?? 'Canvas' : 'Your canvases',
+      view: settingsSection ? 'settings' : creating ? 'create' : conversation ? 'conversation' : canvasId ? descriptor?.view ?? 'artifact' : 'home',
+      title: settingsSection ? MOBILE_SETTINGS_TITLES[settingsSection] : marketplace ? 'Marketplace' : creating ? 'New canvas' : canvasId ? descriptor?.title ?? rows.find((row) => row.id === canvasId)?.title ?? 'Canvas' : 'Your canvases',
       artifactId: descriptor?.artifactId ?? null, artifactPicker: descriptor?.artifactPicker ?? false,
+      settingsSections,
     } });
-  }, [session, rows, summaries, sharedElsewhere, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, marketplace, conversation, descriptors]);
+  }, [session, rows, summaries, sharedElsewhere, pinnedIds, directory, directoryError, pinBusy, pinNotice, canvasId, tabId, creating, marketplace, conversation, descriptors, settingsSection, settingsSections]);
   return <main className="mobile-canvas-app">
     {Reflect.get(window, 'ReactNativeWebView') && preparePins && pinnedIds.slice(0, VISIBLE_PIN_COUNT).map((id) => <PrepareCanvas key={id} id={id} />)}
-    <section hidden={Boolean(canvasId || creating)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={() => create()} openMarketplace={session?.workspace?.accessClass === 'guest' ? undefined : () => create(true)} userId={session?.user.id} /></section>
+    <section hidden={Boolean(canvasId || creating || settingsSection)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={() => create()} openMarketplace={session?.workspace?.accessClass === 'guest' ? undefined : () => create(true)} userId={session?.user.id} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
     {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Suspense></AppErrorBoundary></section>}
+    {settingsSection && <section key={location.key} className="mobile-page mobile-settings"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileSettings /></Suspense></AppErrorBoundary></section>}
     {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas marketplace={marketplace} created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
   </main>;
 }
+
+const SETTINGS_ROUTE = '/settings';
 
 /**
  * A Canvas in another of this person's Organizations: its canonical page, which

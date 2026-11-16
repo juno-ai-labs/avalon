@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { randomUUID } from 'expo-crypto';
-import { MOBILE_CHANNEL, parseMobileEvent } from './protocol';
+import { MOBILE_CAPABILITIES, MOBILE_CHANNEL, parseMobileEvent } from './protocol';
 import type { CanvasWebViewHandle, CanvasWebViewProps } from './CanvasWebView';
 
 /** Development preview only. Device builds use WKWebView / Android WebView. */
@@ -18,6 +18,7 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
     function receive(event: MessageEvent) {
       if (event.origin !== origin || event.source !== frame.current?.contentWindow) return;
       const parsed = parseMobileEvent(JSON.stringify(event.data), props.url, props.appUrl, token.current);
+      if (parsed?.type === 'open-external') { window.open(parsed.url, '_blank', 'noopener'); return; }
       if (parsed) props.onEvent(parsed);
     }
     window.addEventListener('message', receive);
@@ -26,7 +27,7 @@ export const CanvasWebView = forwardRef<CanvasWebViewHandle, CanvasWebViewProps>
   return <iframe ref={frame} src={frameUrl.href} title="Rally canvas content" style={{ flex: 1, width: '100%', height: '100%', border: 0, background: props.background }}
     onLoad={() => {
       props.onLoading();
-      frame.current?.contentWindow?.postMessage({ channel: MOBILE_CHANNEL, attach: token.current, topInset: props.topInset ?? 0 }, origin);
+      frame.current?.contentWindow?.postMessage({ channel: MOBILE_CHANNEL, attach: token.current, topInset: props.topInset ?? 0, capabilities: MOBILE_CAPABILITIES }, origin);
     }} onError={props.onError} />;
 });
 
