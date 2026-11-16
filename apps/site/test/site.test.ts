@@ -330,4 +330,16 @@ describe('public Rally site', () => {
       .toEqual(['https://rallywith.ai/blog/', ...blogPosts.map(({ slug }) => `https://rallywith.ai/blog/${slug}/`)]);
     expect(blogPosts.map(({ slug }) => slug)).toContain('blastoff');
   });
+  it('builds the marketplace from the app Marketplace templates, in catalog order', () => {
+    const cards = renderSiteChrome('<!-- rally:marketplace-cards -->');
+    expect([...cards.matchAll(/<h3>([^<]+)<\/h3>/gu)].map(([, name]) => name)).toEqual([
+      'PR dashboard', 'Email notification screener', 'Repository changes podcast',
+      'Granola feature requests', 'Competitor change monitor',
+      'School notifications and calendar', 'Shared grocery list', 'Family calendar feed',
+      'Recruiting market map',
+    ]);
+    expect(cards).toContain('<li class="market-card" data-categories="developers"><div class="market-card-body"><p class="market-kind">For developers</p><h3>PR dashboard</h3>');
+    expect([...renderSiteChrome('<!-- rally:marketplace-filters -->').matchAll(/data-filter="([^"]+)"/gu)].map(([, tag]) => tag))
+      .toEqual(['all', 'developers', 'product-managers', 'parents', 'recruiters']);
+  });
 });
