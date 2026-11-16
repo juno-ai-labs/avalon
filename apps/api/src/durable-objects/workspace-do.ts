@@ -5354,11 +5354,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    */
   private readonly writerSidekickReaders = new Map<string, string>();
   /**
-   * Per (person, channel), when the newest relayed frame was built
-   * (`relayToPerson`). In memory: after an eviction the next build is newer
-   * than anything relayed before it.
+   * Per (person, channel), the last relay ticket issued and the ticket of the
+   * last frame sent (`relayTicket`, `relayToPerson`). In memory: a ticket is
+   * floored at the clock, so one issued after an eviction is newer than any
+   * before it, and a frame from before the eviction is no longer compared.
    */
-  private readonly lastRelayBuiltAt = new Map<string, number>();
+  private readonly relayTicketsIssued = new Map<string, number>();
+  private readonly relayTicketsSent = new Map<string, number>();
   /** What each attached Sidekick's Canvases showed of it when this instance last saw its row; see `noteAttachedSidekickFace`. In memory, as above. */
   private readonly attachedSidekickFaces = new Map<string, string>();
   /** Set by a hosted Canvas write that moved a directory row; the Canvas list is published after it. */
@@ -5578,19 +5580,34 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Send a frame somebody else built to one person's subscribed sockets here,
-   * keeping nothing but ordering: per (person, channel), a frame built before
-   * the last one sent is dropped, so a slow build cannot land after a newer
-   * one. A support session's sockets are left out unless asked for: what is
-   * relayed may span Organizations its grant does not cover. Returns how many
-   * sockets it reached.
+   * A ticket for a frame about to be built for one person here, taken before
+   * the build reads anything. Tickets are strictly increasing per (person,
+   * channel), so two builds are always ordered, even ones started in the same
+   * millisecond.
    */
-  async relayToPerson(input: { workspaceId: string; userId: string; channel: string; builtAt: number; frame: string; supportSessions: boolean }): Promise<number> {
+  async relayTicket(input: { workspaceId: string; userId: string; channel: string }): Promise<number> {
     await this.initialized;
     this.assertWorkspace(input.workspaceId);
     const key = `${input.userId}:${input.channel}`;
-    if ((this.lastRelayBuiltAt.get(key) ?? -1) > input.builtAt) return 0;
-    this.lastRelayBuiltAt.set(key, input.builtAt);
+    const ticket = Math.max(Date.now(), (this.relayTicketsIssued.get(key) ?? 0) + 1);
+    this.relayTicketsIssued.set(key, ticket);
+    return ticket;
+  }
+
+  /**
+   * Send a frame somebody else built to one person's subscribed sockets here,
+   * keeping nothing but ordering: per (person, channel), a frame whose ticket
+   * (`relayTicket`) is not newer than the last one sent is dropped, so a slow
+   * build cannot land after a newer one. A support session's sockets are left
+   * out unless asked for: what is relayed may span Organizations its grant
+   * does not cover. Returns how many sockets it reached.
+   */
+  async relayToPerson(input: { workspaceId: string; userId: string; channel: string; ticket: number; frame: string; supportSessions: boolean }): Promise<number> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    const key = `${input.userId}:${input.channel}`;
+    if ((this.relayTicketsSent.get(key) ?? -1) >= input.ticket) return 0;
+    this.relayTicketsSent.set(key, input.ticket);
     let reached = 0;
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
