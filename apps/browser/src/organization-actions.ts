@@ -28,12 +28,10 @@ export async function declineInvitation(region: string, invitationId: string): P
 
 /** `operationId` makes a retry of the same name return the same organization rather than a second. */
 export function createOrganization(name: string, operationId: string): Promise<OrganizationDestination> {
-  const trimmed = name.trim();
-  if (trimmed.length < 2) return Promise.reject(new Error('Enter an organization name with at least two characters.'));
-  return browserRequest(IDENTITY_REGION, '/workspace/create', BrowserWorkspaceCreatedSchema, { name: trimmed, operationId });
+  return browserRequest(IDENTITY_REGION, '/workspace/create', BrowserWorkspaceCreatedSchema, { name: name.trim(), operationId });
 }
 
 /** The address the shell opens an organization at, as switching Organization does. */
-export function organizationPath(destination: OrganizationDestination): string {
+export function organizationPath(destination: { region: string; workspaceId: string }): string {
   return `/app/workspaces/${destination.region}/${destination.workspaceId}`;
 }
