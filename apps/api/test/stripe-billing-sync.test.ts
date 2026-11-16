@@ -367,7 +367,7 @@ it('archives the free subscription before foreign-currency checkout and preserve
 it('records awards on the customer without creating a conflicting free subscription when paid checkout came first', async () => {
   const { db, env, server } = fixture();
   await billingAccount(env, WORKSPACE);
-  server.customers.set('cus_eur', { id: 'cus_eur', metadata: {} });
+  server.customers.set('cus_eur', { id: 'cus_eur', name: null, metadata: {} });
   db.prepare("UPDATE billing_accounts SET customer_id = 'cus_eur', subscription_id = 'sub_eur', currency = 'eur', status = 'active'").run();
   await synchronizeStripeProfile(env, await billingAccount(env, WORKSPACE));
   expect(server.subscriptions.size).toBe(0);
