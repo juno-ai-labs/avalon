@@ -3531,6 +3531,12 @@ export async function runWorkstreamHarness(
       ? { activity: "sidekick_run", sidekickId: input.automationRun.automationId }
       : { activity: "agent_run" },
   });
+  const loadPlannedInvocationStep = (toolCallId: string) =>
+    namedPortStep("Tool execution plan lookup failed", async () => {
+      const planned = await loadToolInvocation(env, input, toolCallId);
+      if (!planned) throw new Error("tool_execution_plan_missing");
+      return planned;
+    });
   const ensureTranscriptToolParents = async (event: {
     toolCallId: string;
     pluginId: string;
@@ -4747,11 +4753,7 @@ export async function runWorkstreamHarness(
           if (transientSlackSearch) suppressInferenceRequestCapture = true;
           // Each write below is its own step so a failure names the one that
           // failed: the cause alone is usually a sentence the log must drop.
-          const plannedInvocation = await namedPortStep("Tool execution plan lookup failed", async () => {
-            const planned = await loadToolInvocation(env, input, event.toolCallId);
-            if (!planned) throw new Error("tool_execution_plan_missing");
-            return planned;
-          });
+          const plannedInvocation = await loadPlannedInvocationStep(event.toolCallId);
           await namedPortStep("Tool result save failed", () => settleRootHarnessToolCompletion(env, input, liveness.lease, {
             invocationId: plannedInvocation.id,
             toolCallId: event.toolCallId,
@@ -4880,11 +4882,7 @@ export async function runWorkstreamHarness(
             )));
             if (planAlreadyAmbiguous) ambiguousToolOutcome = true;
           } else {
-            invocationId = await namedPortStep("Tool execution plan lookup failed", async () => {
-              const planned = await loadToolInvocation(env, input, event.toolCallId);
-              if (!planned) throw new Error("tool_execution_plan_missing");
-              return planned.id;
-            });
+            invocationId = (await loadPlannedInvocationStep(event.toolCallId)).id;
           }
           if (!planAlreadyAmbiguous) {
             await namedPortStep("Tool failure save failed", () => settleRootHarnessToolFailure(
