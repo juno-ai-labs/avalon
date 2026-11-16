@@ -722,8 +722,7 @@ card grid with Sidekicks; the shared layout is described in
   Change appearance follow as rows, then the **Artifacts** section
   (`CanvasArtifactsSection`): one row per artifact, newest first, with its
   kind's mark, its title and when it last changed; a row opens that artifact
-  in the right rail. Opening the menu reads a stale detail again behind the
-  cached list, since the detail is not pushed. Then the **Sidekicks** section, then,
+  in the right rail. Then the **Sidekicks** section, then,
   while the Canvas sends notices, a **Notifications** section
   (`CanvasNoticesMenuSection`): **Get notifications** for a member not listed
   on an Organization-wide Canvas, else **Mute notifications**, or **Turn on
@@ -1077,10 +1076,10 @@ rail. Opening the menu refetches the Canvas detail when it is stale.
 **Why:** Open artifact reached only the newest artifact; a Canvas with several
 had no way back to an older one but scrolling the Chat for its card.
 
-**Considered and rejected:** Capping the rows shown: the menu already
-scrolls, and a cap is a number for the team to set. Pushing the detail over
-the socket to keep the list current: a refetch on open is enough for a list
-read only when the menu opens.
+**Considered and rejected:** Pushing the detail over the socket to keep the
+list current: a refetch on open is enough for a list read only when the menu
+opens. The refetch goes through the query client, not `canvas.refetch()`,
+which ignores `enabled` and would read a Canvas still being created.
 
 ### 2026-11-15 — A person the Canvas admits can join its participant list
 

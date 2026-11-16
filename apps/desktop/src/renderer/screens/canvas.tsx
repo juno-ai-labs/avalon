@@ -429,8 +429,10 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     menu: menuItems(panelOpen, openPanel),
     // The detail is not pushed, so an artifact the Chat made since it was
     // read would be missing from the Artifacts section: the cached list draws
-    // at once and a stale one is read again behind it.
-    onMenuOpen: () => { if (canvas.isStale) void canvas.refetch(); },
+    // at once and a stale one is read again behind it. Through the client, which
+    // reads staleness now and skips the query while it is disabled (no api, or
+    // the Canvas still being created); `canvas.refetch()` would ignore `enabled`.
+    onMenuOpen: () => { void queryClient.refetchQueries({ queryKey: canvasDetailQueryKey(id), type: 'active', stale: true }); },
     iconAction: creationBlocked ? undefined : appearancePicker,
   };
   const header = (presentUserIds: readonly string[], panelOpen: boolean, openPanel?: ConversationHeaderContext['openPanel']): React.JSX.Element => {
