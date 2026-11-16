@@ -12,10 +12,16 @@ import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:tes
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asUserId, asWorkspaceId } from "@rally/contracts";
-import { SharedCanvasesRefreshMessageSchema, type SharedCanvasesRefreshMessage } from "@rally/contracts/canvas-share-federation";
+import {
+  SharedCanvasesRefreshMessageSchema,
+  type SharedCanvasesRefreshMessage,
+  type WorkspaceSharedCanvasesEvent,
+  WorkspaceSharedCanvasesEventSchema,
+} from "@rally/contracts/canvas-share-federation";
 
 import settingsMigration from "../../../packages/db/migrations/0135_shared_canvases_settings.sql?raw";
 import { workspaceDOName } from "../src/durable-objects/names";
+import { consumeActivityQueue } from "../src/queues/activity-consumer";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { splitSqlStatements } from "../src/lib/sql-statements";
 import { refreshSharedCanvases } from "../src/services/shared-canvases";
@@ -38,7 +44,7 @@ const object = (workspaceId: string): DurableObjectStub<WorkspaceDO> =>
 let queued: { mock: { calls: unknown[][] }; mockClear: () => void };
 
 /**
- * Run what the interactive queue would: every refresh queued so far, and any
+ * Run what the activity queue would: every refresh queued so far, and any
  * those queue in turn, until none is left. Answering for a guest the first
  * time caches their relationship, which queues one more refresh of its own.
  */
@@ -63,7 +69,7 @@ async function drain(): Promise<SharedCanvasesRefreshMessage[]> {
 const refreshed = (messages: SharedCanvasesRefreshMessage[]) =>
   [...new Set(messages.map((message) => `${message.scope}:${message.workspaceId === HOME ? "home" : "origin"}:${message.userId}`))].sort();
 
-type Frame = { enabled: boolean; items: Array<{ organization: { name: string }; canvas: { title: string } }> };
+type Frame = WorkspaceSharedCanvasesEvent;
 
 /** A subscribed socket in the home Organization, keeping each shared-Canvas frame. */
 async function connect(userId: string, impersonatorId?: string): Promise<{ frames: Frame[]; close: () => void }> {
@@ -82,9 +88,10 @@ async function connect(userId: string, impersonatorId?: string): Promise<{ frame
   await new Promise<void>((resolve) => {
     socket.addEventListener("message", (event) => {
       if (String(event.data) === "pong") return;
-      const frame = JSON.parse(String(event.data)) as { type?: string } & Frame;
+      const frame = JSON.parse(String(event.data)) as { type?: string };
       if (frame.type === "workspace_sync") resolve();
-      if (frame.type === "workspace_shared_canvases") frames.push(frame);
+      // Parsed as the client parses it, so a frame the server builds wrong fails here.
+      if (frame.type === "workspace_shared_canvases") frames.push(WorkspaceSharedCanvasesEventSchema.parse(frame));
     });
     socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
   });
@@ -172,39 +179,104 @@ describe("Canvas share federation", () => {
     home.close();
   });
 
-  it("relays nothing and asks to be retried when an origin cannot answer, so a complete list stays", async () => {
+  it("still lands an unshare while another origin cannot answer, keeping that one's rows, and asks to be retried", async () => {
     const home = await connect(GUEST);
     await drain();
     expect(titles(home.frames)).toEqual(["Acme: Launch plan"]);
-    const before = home.frames.length;
     // A second Organization they are a guest of, whose object refuses: it was never set up.
+    const unreachable = asWorkspaceId(crypto.randomUUID());
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspaces(id, region, name) VALUES (?, 'global', 'Unreachable')`).bind(unreachable),
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at) VALUES (?, ?, 'active', NULL, 'guest', ?)`)
+        .bind(unreachable, GUEST, NOW),
+    ]);
+    await object(ORIGIN).canvasSetAudience({ workspaceId: ORIGIN, canvasId: CANVAS, actor: owner,
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    const before = home.frames.length;
+    await expect(refreshSharedCanvases(env, { kind: "shared_canvases_refresh", region: "global", workspaceId: HOME, userId: GUEST, scope: "this" }))
+      .rejects.toThrow("shared_canvases_origin_unread");
+    // The unshare reached the screen; the Organization that could not answer is named, for the client to keep its rows.
+    await vi.waitFor(() => expect(home.frames.length).toBe(before + 1));
+    expect(home.frames.at(-1)).toMatchObject({ items: [], unavailable: [unreachable] });
+    home.close();
+  });
+
+  it("retries a refresh that failed, with a delay, and acks one for another region", async () => {
+    const home = await connect(GUEST);
+    await drain();
     const unreachable = crypto.randomUUID();
     await env.DB.batch([
       env.DB.prepare(`INSERT INTO workspaces(id, region, name) VALUES (?, 'global', 'Unreachable')`).bind(unreachable),
       env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at) VALUES (?, ?, 'active', NULL, 'guest', ?)`)
         .bind(unreachable, GUEST, NOW),
     ]);
-    await expect(refreshSharedCanvases(env, { kind: "shared_canvases_refresh", region: "global", workspaceId: HOME, userId: GUEST, scope: "this" }))
-      .rejects.toThrow("shared_canvases_origin_unread");
-    expect(home.frames.length).toBe(before);
+    const delivery = (body: SharedCanvasesRefreshMessage) => ({ body, attempts: 1, ack: vi.fn(), retry: vi.fn() });
+    const failing = delivery({ kind: "shared_canvases_refresh", region: "global", workspaceId: HOME, userId: GUEST, scope: "this" });
+    const elsewhere = delivery({ kind: "shared_canvases_refresh", region: "eu", workspaceId: HOME, userId: GUEST, scope: "this" });
+    await consumeActivityQueue({ messages: [failing, elsewhere] } as unknown as MessageBatch<unknown>, env);
+    expect(failing.ack).not.toHaveBeenCalled();
+    expect(failing.retry).toHaveBeenCalledWith({ delaySeconds: 5 });
+    expect(elsewhere.ack).toHaveBeenCalledOnce();
     home.close();
+  });
+
+  it("answers nothing for a guest suspended in the Canvas's Organization", async () => {
+    await runInDurableObject(object(ORIGIN), (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO workspace_member_status (user_id, relationship_json, removed_incarnation, active, sequence, updated_at)
+         VALUES (?, ?, NULL, 1, 1, ?) ON CONFLICT (user_id) DO UPDATE SET relationship_json = excluded.relationship_json, sequence = 1`,
+        GUEST, JSON.stringify({ workspaceId: ORIGIN, userId: GUEST, accessClass: "guest", role: null, status: "suspended", incarnation: "suspended", revision: 2 }), Date.now(),
+      );
+    });
+    expect(await object(ORIGIN).guestSharedCanvases({ workspaceId: ORIGIN, userId: GUEST })).toEqual([]);
+  });
+
+  it("takes an archived Canvas off the guest's other lists", async () => {
+    const home = await connect(GUEST);
+    await drain();
+    expect(titles(home.frames)).toEqual(["Acme: Launch plan"]);
+    await object(ORIGIN).canvasArchive({ workspaceId: ORIGIN, canvasId: CANVAS, actor: owner });
+    expect(refreshed(await drain())).toContain(`others:origin:${GUEST}`);
+    await vi.waitFor(() => expect(titles(home.frames)).toEqual([]));
+    home.close();
+  });
+
+  it("builds nothing for an Organization where the person has no socket", async () => {
+    expect(await object(HOME).relayTicket({ workspaceId: HOME, userId: GUEST })).toBeNull();
+    // A guest Organization whose object refuses: reading it would fail the refresh.
+    const unreachable = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspaces(id, region, name) VALUES (?, 'global', 'Unreachable')`).bind(unreachable),
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at) VALUES (?, ?, 'active', NULL, 'guest', ?)`)
+        .bind(unreachable, GUEST, NOW),
+    ]);
+    // With no socket to send to, no origin is read, so the refresh succeeds.
+    await expect(refreshSharedCanvases(env, { kind: "shared_canvases_refresh", region: "global", workspaceId: HOME, userId: GUEST, scope: "this" }))
+      .resolves.toBeUndefined();
   });
 
   it("sends a support session nothing from the person's other Organizations", async () => {
     const supported = await connect(GUEST, "00000000-0000-7000-8000-0000000cc0ff");
     expect(await drain()).toEqual([]);
-    // Even a rebuild for the person does not reach it.
-    await refreshSharedCanvases(env, { kind: "shared_canvases_refresh", region: "global", workspaceId: HOME, userId: GUEST, scope: "this" });
+    // Even a rebuild for the person does not reach it, though it reaches their own socket.
+    const own = await connect(GUEST);
+    await drain();
+    await vi.waitFor(() => expect(titles(own.frames)).toEqual(["Acme: Launch plan"]));
     expect(supported.frames).toEqual([]);
     supported.close();
+    own.close();
   });
 
   it("orders builds by the ticket each took before reading, so a slow build cannot land last", async () => {
     const home = await connect(GUEST);
     await drain();
-    const frame = (title: string) => JSON.stringify({ type: "workspace_shared_canvases", occurredAt: NOW, enabled: true,
+    const frame = (title: string) => JSON.stringify({ type: "workspace_shared_canvases", occurredAt: NOW, enabled: true, unavailable: [],
       items: [{ organization: { id: ORIGIN, name: "Acme", region: "global" }, canvas: { id: CANVAS, title, updatedAt: NOW } }] });
-    const ticket = () => object(HOME).relayTicket({ workspaceId: HOME, userId: GUEST });
+    const ticket = async () => {
+      const issued = await object(HOME).relayTicket({ workspaceId: HOME, userId: GUEST });
+      if (issued === null) throw new Error("the guest's socket is subscribed here");
+      return issued;
+    };
     const relay = (ticket: number, title: string) => object(HOME).relayToPerson({ workspaceId: HOME, userId: GUEST, ticket, frame: frame(title) });
     // Two builds that start together are still ordered.
     const older = await ticket();
@@ -216,10 +288,11 @@ describe("Canvas share federation", () => {
     // A later build marks the end: everything relayed before it has arrived.
     await relay(await ticket(), "Last");
     await vi.waitFor(() => expect(home.frames.slice(before).map((frame) => frame.items[0]?.canvas.title)).toEqual(["Newer", "Last"]));
-    // The mark is on the socket, so it outlives the object's hibernation.
+    // The mark is kept on the socket's attachment, which survives hibernation.
     const marks = await runInDurableObject(object(HOME), (_instance: WorkspaceDO, state) => state.getWebSockets()
       .map((socket) => (socket.deserializeAttachment() as { sharedCanvasesTicket?: number }).sharedCanvasesTicket));
-    expect(marks.every((mark) => typeof mark === "number" && mark > newer)).toBe(true);
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).toBeGreaterThan(newer);
     home.close();
   });
 });

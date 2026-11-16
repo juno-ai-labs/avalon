@@ -186,10 +186,13 @@ function initialSidebarFrame() {
 }
 
 describe('WorkspaceSocketProvider', () => {
-  it("lists the Canvases shared from other Organizations that the socket pushes, replacing the last push whole", async () => {
+  it("lists the Canvases shared from other Organizations that the socket pushes, keeping only an unavailable Organization's last rows", async () => {
     const queryClient = new QueryClient();
-    const item = (title: string) => ({ organization: { id: '00000000-0000-7000-8000-0000000000f1', name: 'Acme', region: 'global' },
-      canvas: { id: '00000000-0000-7000-8000-0000000000d1', title, updatedAt: '2026-11-10T12:00:00.000Z' } });
+    const ACME = '00000000-0000-7000-8000-0000000000f1';
+    const GLOBEX = '00000000-0000-7000-8000-0000000000f2';
+    const item = (organization: string, canvas: string, title: string, updatedAt: string) => ({
+      organization: { id: organization, name: organization === ACME ? 'Acme' : 'Globex', region: 'global' },
+      canvas: { id: canvas, title, updatedAt } });
     function Probe(): JSX.Element {
       return <ul>{useOtherOrganizationCanvases().map((shared) => <li key={shared.canvas.id}>{shared.canvas.title}</li>)}</ul>;
     }
@@ -201,11 +204,19 @@ describe('WorkspaceSocketProvider', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances.at(-1)!;
     act(() => socket.open());
-    act(() => socket.message({ type: 'workspace_shared_canvases', occurredAt: '2026-11-10T12:01:00.000Z', enabled: true, items: [item('Partner roadmap')] }));
-    await waitFor(() => expect(screen.getAllByRole('listitem').map((row) => row.textContent)).toEqual(['Partner roadmap']));
+    const titles = () => screen.queryAllByRole('listitem').map((row) => row.textContent);
+    act(() => socket.message({ type: 'workspace_shared_canvases', occurredAt: '2026-11-10T12:01:00.000Z', enabled: true, unavailable: [], items: [
+      item(GLOBEX, '00000000-0000-7000-8000-0000000000d2', 'Globex plan', '2026-11-10T12:00:00.000Z'),
+      item(ACME, '00000000-0000-7000-8000-0000000000d1', 'Partner roadmap', '2026-11-10T11:00:00.000Z'),
+    ] }));
+    await waitFor(() => expect(titles()).toEqual(['Globex plan', 'Partner roadmap']));
+    // Acme could not answer this build and Globex unshared its Canvas: Acme's
+    // last row stays, Globex's goes.
+    act(() => socket.message({ type: 'workspace_shared_canvases', occurredAt: '2026-11-10T12:02:00.000Z', enabled: true, unavailable: [ACME], items: [] }));
+    await waitFor(() => expect(titles()).toEqual(['Partner roadmap']));
     // Turned off: the server sends an empty list, and nothing of the last one stays.
-    act(() => socket.message({ type: 'workspace_shared_canvases', occurredAt: '2026-11-10T12:02:00.000Z', enabled: false, items: [] }));
-    await waitFor(() => expect(screen.queryAllByRole('listitem')).toEqual([]));
+    act(() => socket.message({ type: 'workspace_shared_canvases', occurredAt: '2026-11-10T12:03:00.000Z', enabled: false, unavailable: [], items: [] }));
+    await waitFor(() => expect(titles()).toEqual([]));
     // Turned off on another device: the switch here shows it too.
     expect(queryClient.getQueryData(SHARED_CANVASES_SETTING_QUERY_KEY)).toEqual({ enabled: false });
   });

@@ -392,7 +392,11 @@ Composer dictation remains tied to its composer lifecycle.
   binding carry it.
 - The flag hides affordances but grants and revokes no authority.
 - Background workspaces expose aggregate attention only, never directory rows or
-  content, and open no sockets.
+  content, and open no sockets. One exception: a Canvas explicitly shared with
+  the person as a guest of another Organization reaches the active one's list,
+  built by the server from that Canvas's own Organization and sent on the
+  active socket. The client never reads another Organization for it
+  ([`canvas-share-federation.md`](canvas-share-federation.md)).
 - A late activation may be retained but cannot replace a newer selection.
 - An addressed link into a workspace that is not active always revalidates
   membership through platform activation; a locally stored credential is never
@@ -484,6 +488,27 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-11-16 — A guest's shared Canvases cross into the active Organization's list
+
+**What changed:** The invariant that background workspaces expose no directory
+rows gains one exception: a Canvas explicitly shared with the person as a guest
+of another Organization shows in the active Organization's list.
+
+**Why:** A guest of a partner's Organization had to switch to find what was
+shared with them. The rows come from the server, built from the Canvas's own
+Organization; the client still reads only the active one and opens no second
+socket.
+
+**Considered and rejected:** Letting the client fetch each background
+Organization's list, which is the cross-workspace read this document rules out.
+
+**Consequences:** This is not the merged sidebar or global inbox the design
+rejected: only Canvases explicitly shared with a guest cross, the person can
+turn it off, and nothing else from a background Organization does.
+[`canvas-share-federation.md`](canvas-share-federation.md) owns the rule.
+
+Shipped in #1625.
 
 ### 2026-10-21 — Initial members through shared Organization creation
 

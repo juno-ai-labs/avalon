@@ -643,7 +643,10 @@ card grid with Sidekicks; the shared layout is described in
   `useSocketOwnedList`; there is no list route. The home page keeps activity
   order and filters client-side from the row's own fields: Reactive uses the same
   active automatic-trigger rule as the **Reactive** badge, Data is `hasStoredData`,
-  Made by me `createdByUserId`, and Shared with me `sharedWithMe`. The second
+  Made by me `createdByUserId`, and Shared with me `sharedWithMe`. A guest's
+  Canvases from their other Organizations (`workspace_shared_canvases`) are
+  merged in by date and show only under All and Shared with me, since nothing
+  about their Reactive or Data state or their creator crosses. The second
   line of sidebar rows and home cards shows sharing with the Share panel's
   icons: a lock for **Only you** / **Only the creator**, people for **Specific
   people**, and a building for **Everyone in the Organization**. A writer
@@ -813,6 +816,11 @@ detached artifact window's **Copy link** adds the artifact's segment.
   the share's receipt.** Removing someone from the list removes their access
   even though the grant row that brought them stays. Nothing reads
   `parent_grants` to admit a Canvas reader.
+- **A guest's share elsewhere is seen through `canvas_participants`.** Their
+  other Organizations learn of a share, an unshare or a rename only from the
+  triggers on this table and `canvas_directory`. A new way to share a Canvas
+  with a guest must write `canvas_participants`, or add a trigger of its own
+  ([`canvas-share-federation.md`](canvas-share-federation.md)).
 - **Every `canvas_*` statement names `canvas_id`, and every hosted-conversation
   statement names the parent id.** Without it a write reaches every Canvas or
   every Sidekick in the Organization.
