@@ -29,7 +29,7 @@ for the person in the regional D1, so it covers every Organization and device.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/canvas-share-federation.ts` | The refresh message, the origin's answer, the shared row, the `workspace_shared_canvases` socket event and the setting. |
-| `apps/api/src/durable-objects/canvas-share-federation.ts` | The origin half: WorkspaceDO migration 150 (triggers only) and the query behind `guestSharedCanvases`. |
+| `apps/api/src/durable-objects/canvas-share-federation.ts` | The origin half: WorkspaceDO migration 151 (triggers only) and the query behind `guestSharedCanvases`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Hooks only: the alarm that queues a refresh, the subscribe that queues one, `guestSharedCanvases`, and `relayToPerson`, a generic relay of a frame to one person's sockets. |
 | `apps/api/src/services/shared-canvases.ts` | The Worker builder: which Organizations the person is in and a guest of, asking each origin, building each target's list and relaying it; the switch. |
 | `apps/api/src/services/interactive-queue.ts`, `queues/interactive-consumer.ts` | The `shared_canvases_refresh` kind and its handler ([`interactive-queue.md`](interactive-queue.md)). |
