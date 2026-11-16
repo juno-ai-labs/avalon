@@ -65,9 +65,11 @@ for the person in the regional D1, so it covers every Organization and device.
    with each Organization's name from D1, or an empty list while the switch is
    off.
 5. **The relay.** The target Organization's `relayToPerson` sends the frame to
-   the person's subscribed sockets, leaving out support sessions. Per (person,
-   channel) it keeps the build time of the last frame it sent and drops an
-   older one, so a slow build cannot land after a newer one.
+   the person's subscribed sockets, leaving out support sessions. Before
+   reading anything, the build takes a ticket from each target
+   (`relayTicket`), strictly increasing per (person, channel); the relay drops
+   a frame whose ticket is not newer than the last one sent, so a slow build
+   cannot land after a newer one, even one started in the same millisecond.
 6. **The switch.** `PUT` saves it and, after answering, rebuilds every
    Organization the person is in.
 7. **The clients** apply the event to one query and merge it into the home

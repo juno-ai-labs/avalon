@@ -25,6 +25,9 @@ it('sees a change the native shell shows', () => {
   expect(directoryKey(null)).toBe('');
   const shared = { id: 'c9', title: 'Partner roadmap', icon: null, color: null, updatedAt: '2026-11-15T10:00:00.000Z', organization: { id: 'w2', name: 'Acme', region: 'us' } };
   expect(directoryKey({ ...snapshot, sharedElsewhere: [shared] })).not.toBe(directoryKey(snapshot));
+  // Beside a shared Canvas, this Organization's own dates place cards too.
+  const touchedLocal = { ...snapshot, sharedElsewhere: [shared], canvases: [{ ...snapshot.canvases[0]!, updatedAt: '2026-11-15T12:00:00.000Z' }] };
+  expect(directoryKey(touchedLocal)).not.toBe(directoryKey({ ...snapshot, sharedElsewhere: [shared] }));
   // Its date places it among this Organization's Canvases, so a newer one moves it.
   expect(directoryKey({ ...snapshot, sharedElsewhere: [{ ...shared, updatedAt: '2026-11-15T11:00:00.000Z' }] }))
     .not.toBe(directoryKey({ ...snapshot, sharedElsewhere: [shared] }));
