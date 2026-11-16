@@ -30,9 +30,10 @@ Each document carries its own date, so you can tell when it last changed.
 
 A few things people often ask:
 
-- Certifications. Rally does not claim a security certification. The
-  Security page lists the controls that exist in the product today, and says it
-  will add independent assurance only once it is complete and current.
+- Independent assessment. Rally completed an App Defense Alliance CASA
+  security assessment at Assurance Level 1 (AL1). TAC Security, an
+  ADA-authorized lab, validated it in July 2026, and it renews every year. The
+  Security page also lists the controls that exist in the product today.
 - The public website. rallywith.ai uses no advertising trackers and sets no
   analytics cookie. It does keep its own simple count of page visits and
   downloads, which can store a random, anonymous identifier in your browser.

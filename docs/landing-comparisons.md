@@ -67,6 +67,13 @@ file, attribute values and JSON included. The plugin runs with `order: 'pre'`, b
 and telemetry plugins. An unknown marker throws. Both read `comparisons`,
 which is sorted by each file's `order`.
 
+The footer's legal row links to the security page with "ADA CASA AL1
+validated". The landing page uses `<!-- rally:site-footer-without-casa -->`
+instead, because it shows the full CASA badge (`<!-- rally:casa-badge -->`,
+drawn by `renderCasaBadge`) right below its footer. The badge, the security
+page and the FAQ each name July 2026; update all three when the yearly CASA
+validation renews.
+
 ### Social cards
 
 Every rival page sets `og:image` and `twitter:image` to
@@ -149,6 +156,25 @@ section, the footer, and one rival page at 1440px and 390px, and open
 `dist/compare/*/social.png`.
 
 ## Changelog
+
+### 2026-11-16: The footer and landing page carry the CASA AL1 validation
+
+**What changed:** The footer's legal row links "ADA CASA AL1 validated" to the
+security page. A `casa-badge` marker draws a hexagon badge, which the security
+page shows in its hero and the landing page shows below its footer. The landing
+page uses a `site-footer-without-casa` marker so the footer link doesn't repeat
+the badge right below it.
+
+**Why:** Rally completed an App Defense Alliance CASA assessment (Tier 2, now
+called AL1) in July 2026, and the site still said Rally claimed no
+certification. The product owner asked for the claim in the footer and for the
+footer link to leave the landing page. The badge is Rally's own design because
+neither ADA nor Google publishes one for AL1.
+
+**Consequences:** The validation renews every year. When it does, update the
+date in `renderCasaBadge`, the security page and the help center's privacy and
+security articles. If Rally moves to a new Google OAuth project, the validation
+does not carry over and the claim must come down.
 
 ### 2026-11-16: The landing page drops its comparison section
 
