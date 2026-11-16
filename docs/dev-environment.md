@@ -553,6 +553,9 @@ streams.
 `pnpm lint` and `pnpm typecheck` both cache, which is the difference between a
 warm run of a few seconds and a cold one of about a minute. Both caches are
 gitignored, and CI checks out fresh, so neither changes what CI proves.
+`pnpm lint` first runs `scripts/check-type-scale.mjs`, which refuses a literal
+font size (see [`theming.md`](theming.md#type-scale-and-densities)); it has no
+cache and takes under a second.
 
 | Gate | Cold | Warm | Cache |
 | --- | --- | --- | --- |

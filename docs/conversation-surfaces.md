@@ -224,7 +224,9 @@ reading "Replaced by a newer request".
 ## Message issue reports
 
 The shared action row offers **Oopsie** on sent user and assistant messages;
-[message issues](message-issues.md) owns its provider, modal, provenance and storage.
+[message issues](message-issues.md) owns its provider, modal, provenance and storage. On a touch screen the row's buttons are 44pt targets that extend downward only
+and stop where the next turn begins, so neither the turn's last line nor the
+next message loses a tap.
 
 ## Contract
 
@@ -918,8 +920,11 @@ selection and message protocol.
 ### 2026-11-15 — A turn's actions meet 44pt on touch
 
 **What changed:** Copy, Speak and Oopsie reach 44pt downward only, and the
-revealed `.virtual-message-row` rises above the next. The why, and the rule
-for every icon button, is in `theming.md`'s entry of the same date.
+hit area stops where the next turn begins, so it never takes a tap meant for
+the next message; the row wraps when the actions do not fit. This replaces
+the per-control `::before` guidance of the capsule-composer entry below with
+the shared `.icon-button` target. The why, and the rule for every icon button,
+is in `theming.md`'s entry of the same date.
 
 ### 2026-11-15 — The capsule composer's controls answer a 44pt touch
 

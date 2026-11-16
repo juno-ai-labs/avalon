@@ -20,7 +20,6 @@ import { CANVASES_ROUTE, canvasRoute, openCanvasId, useCanvasList } from '../../
 import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/speech-playback';
 import { canvasMark } from '../../desktop/src/renderer/components/canvas-mark';
 import { mobileCapability, mobileScreenReady, postMobileEvent } from './mobile-bridge';
-import { installDynamicType } from './dynamic-type';
 import './mobile.css';
 import { useMobileCanvasDetail, useMobileCanvasUpdates } from './mobile-canvas-detail';
 // Chat/composition and file previews are paid for only when those screens open.
@@ -36,14 +35,6 @@ export type Descriptor = Pick<MobileSnapshot, 'view' | 'title' | 'artifactId' | 
 
 /** Cookie-authenticated web content. The native shell never receives tokens. */
 export function MobileCanvasApp(): React.JSX.Element | null {
-  useEffect(() => {
-    // On <html> rather than this tree, so dialogs and lightboxes portaled to
-    // <body> read at the same density. Artifact content resets itself below.
-    const root = document.documentElement;
-    root.dataset.density = 'touch';
-    const uninstall = installDynamicType(root);
-    return () => { uninstall(); delete root.dataset.density; };
-  }, []);
   const { api, session, surrenderActiveWorkspace } = useAppSession();
   if (!api || !session?.workspace) return null;
   const scope = localCacheScope(session.user.id, session.workspace.region, session.workspace.id, session.workspace.accessClass ?? 'member');
@@ -339,7 +330,7 @@ function Canvas({ id, active, describe }: { id: string; active: boolean; describ
     {resource.kind === 'site'
       ? <HostedSite key={`${resource.resourceId}:${version}`} canvasId={id} resourceId={resource.resourceId} version={version ?? resource.version} title={resource.title} active={active} />
       : content.isError ? <Recovery title="This artifact couldn’t load" retry={() => void content.refetch()} /> : !content.data ? <div className="mobile-empty" role="status">Opening artifact…</div>
-      : <div className="mobile-artifact-content" data-density="default"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} /></Suspense></AppErrorBoundary></div>}
+      : <AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><div key="content" className="mobile-artifact-content" data-density="default"><InspectorRail resource={content.data} panel={{ resourceId: resource.resourceId, detached: true, onClose: () => undefined }} loadResourceContent={loadContent} loadOriginalResourceContent={loadOriginal} /></div></Suspense></AppErrorBoundary>}
   </>;
 }
 
