@@ -33,6 +33,8 @@ import {
   resolveDirectoryPublish,
   type DirectoryEntry,
 } from "./site-publish";
+import type { CarriedSiteFile, ReadSiteFile, SitePublishFile } from "./site-resource-bridge";
+import { socialPreviewSourcePaths } from "./site-social-preview";
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalTaskRecord } from "../../durable-objects/workstream-terminal-storage";
 import type { TerminalRepositorySelector } from "./repository-selection";
@@ -150,10 +152,20 @@ export interface TerminalResourceBridge {
     site: {
       mode: "static" | "active";
       stateful: boolean;
-      files: readonly { path: string; bytes: Uint8Array; sha256: string }[];
+      files: readonly SitePublishFile[];
       serverModuleSha256: string | null;
     },
   ): Promise<TerminalPublishedSiteOutput>;
+  /**
+   * The files the site at this path serves now, with the version that stores
+   * them, or `null` when the path has no site. A directory publish carries the
+   * ones it would only copy (`CarriedSiteFile`).
+   */
+  liveSiteFiles(
+    context: HarnessToolContext,
+    filePath: string,
+    input?: { canvas?: string | undefined; displayName?: string | undefined },
+  ): Promise<{ artifactId: string; version: number; files: readonly { path: string; sha256: string; sizeBytes: number }[] } | null>;
   /**
    * What this path already published as, or `null` if it never has.
    *
@@ -719,16 +731,7 @@ export function createDaytonaTerminalRuntime(
       resolved.kind,
     );
     const totalBytes = entries.reduce((total, entry) => total + entry.sizeBytes, 0);
-    if (totalBytes > MAXIMUM_PUBLISH_BYTES) {
-      resources.noteOversizedPublish(context, { shape: "directory", sizeBytes: totalBytes, limitBytes: MAXIMUM_PUBLISH_BYTES, filePath: input.filePath });
-      throw new TerminalToolError(
-        "resource_limit_exceeded",
-        `The directory holds ${totalBytes} bytes; publication allows at most ${MAXIMUM_PUBLISH_BYTES} bytes. Reduce or split it before retrying.`,
-        { field: "filePath", expected: `directory bytes at most ${MAXIMUM_PUBLISH_BYTES}` },
-      );
-    }
-    const files: { path: string; bytes: Uint8Array; sha256: string }[] = [];
-    for (const entry of entries) {
+    const readEntry = async (entry: DirectoryEntry): Promise<ReadSiteFile> => {
       let bytes: Uint8Array;
       try {
         bytes = await provider.readFile(sandbox.providerSandboxId, `${path}/${entry.path}`);
@@ -747,8 +750,46 @@ export function createDaytonaTerminalRuntime(
           { reason: "Wait for the producer to finish, then retry with the final stable directory." },
         );
       }
-      files.push({ path: entry.path, bytes, sha256: observed });
+      return { path: entry.path, bytes, sha256: observed };
+    };
+
+    // A site republish carries every file the live version already stores
+    // unchanged at the same path, so only new bytes are read and counted. Not
+    // carried: HTML, the server module, and the preview image the page names,
+    // whose bytes the publish itself reads. The listing's digest decides
+    // equality; a wrong one can only keep bytes this path already served.
+    const live = resolved.kind === "site" ? await resources.liveSiteFiles(context, input.filePath, input) : null;
+    const index = live ? entries.find((entry) => entry.path === "index.html") : undefined;
+    const readIndex = index ? await readEntry(index) : null;
+    const keepReading = new Set(readIndex
+      ? socialPreviewSourcePaths(new TextDecoder("utf-8", { fatal: false }).decode(readIndex.bytes))
+      : []);
+    const liveByPath = new Map((live?.files ?? []).map((file) => [file.path, file]));
+    const carry = (entry: DirectoryEntry): CarriedSiteFile | null => {
+      if (!live || /\.html?$/iu.test(entry.path) || keepReading.has(entry.path)) return null;
+      if (resolved.kind === "site" && resolved.mode === "active" && entry.path === resolved.entryPath) return null;
+      const stored = liveByPath.get(entry.path);
+      if (!stored || stored.sha256 !== entry.sha256 || stored.sizeBytes !== entry.sizeBytes) return null;
+      return { path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes, carriedFrom: { artifactId: live.artifactId, version: live.version } };
+    };
+    const carried = new Map(entries.flatMap((entry) => {
+      const file = carry(entry);
+      return file ? [[entry.path, file] as const] : [];
+    }));
+    const newBytes = entries.reduce((total, entry) => total + (carried.has(entry.path) ? 0 : entry.sizeBytes), 0);
+    if (newBytes > MAXIMUM_PUBLISH_BYTES) {
+      resources.noteOversizedPublish(context, { shape: "directory", sizeBytes: newBytes, limitBytes: MAXIMUM_PUBLISH_BYTES, filePath: input.filePath });
+      throw new TerminalToolError(
+        "resource_limit_exceeded",
+        `The directory has ${newBytes} bytes that are new or changed since the live version; one publication allows at most ${MAXIMUM_PUBLISH_BYTES}. Publish fewer new files at a time.`,
+        { field: "filePath", expected: `new or changed directory bytes at most ${MAXIMUM_PUBLISH_BYTES}` },
+      );
     }
+    const siteFiles: SitePublishFile[] = [];
+    for (const entry of entries) {
+      siteFiles.push(carried.get(entry.path) ?? (entry === index && readIndex ? readIndex : await readEntry(entry)));
+    }
+    const files = siteFiles.filter((file): file is ReadSiteFile => "bytes" in file);
 
     if (resolved.kind === "archive") {
       // The archive rides the ordinary document publish path unchanged: it is
@@ -779,7 +820,7 @@ export function createDaytonaTerminalRuntime(
       stateful: serverModule
         ? declaresStorageClass(new TextDecoder().decode(serverModule.bytes))
         : false,
-      files,
+      files: siteFiles,
       serverModuleSha256: serverModule?.sha256 ?? null,
     });
   }
