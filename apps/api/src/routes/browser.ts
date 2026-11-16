@@ -321,14 +321,16 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
     }
   });
   /**
-   * Invitations to join an organization, read on Global from every deployment
-   * as the Mac app's onboarding does. The browser lists them beside the
-   * organizations it already belongs to.
+   * Invitations to join an organization, read on Global from every deployment.
+   * Like `/workspaces`, a deployment that is down is logged by name and hides
+   * only its own.
    */
   routes.get("/invitations",async (c) => {
     if (c.env.AVALON_REGION !== IDENTITY_REGION) throw new ApiError(409,"global_identity_required","Read invitations through Rally's identity deployment");
     const auth = await new BrowserSessionService(c.env).read(credential(c));
-    return c.json(BrowserInvitationsSchema.parse({ invitations:await new PlatformOnboardingService(c.env,auth).invitations() }));
+    const { invitations,failed } = await new PlatformOnboardingService(c.env,auth).invitations();
+    if (failed.length > 0) logEvent(c,"warn","browser_invitation_discovery_failed",{ failed:failed.map((item) => `${item.region}:${item.code}`).join(",") });
+    return c.json(BrowserInvitationsSchema.parse({ invitations }));
   });
   /**
    * Accepts an invitation through the Mac app's idempotent path. Like creation,

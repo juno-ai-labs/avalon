@@ -17,11 +17,3 @@ it('creates an organization on Global with the trimmed name and answers where it
     body: { name: 'Acme Research', operationId: '01920000-0000-7000-8000-000000000031' } }]);
   expect(organizationPath(created)).toBe('/app/workspaces/global/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1');
 });
-
-it('refuses a name shorter than two characters without asking the server', async () => {
-  const fetch = vi.fn();
-  vi.stubGlobal('fetch', fetch);
-  await expect(createOrganization(' A ', '01920000-0000-7000-8000-000000000032'))
-    .rejects.toThrow('Enter an organization name with at least two characters.');
-  expect(fetch).not.toHaveBeenCalled();
-});

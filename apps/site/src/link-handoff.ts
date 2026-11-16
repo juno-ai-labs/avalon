@@ -1,14 +1,9 @@
 import { isRetiredLinkPath, linkCanonicalUrl, linkDeepLink, parseLinkPathTarget, parseMessageSearch, type LinkTarget } from '@rally/contracts/links';
 import { apiBaseUrl, reportDesktopHandoff, storageRead, storageWrite } from './telemetry';
+import { browserAppOrigin } from './browser-app-origin';
 
 export {};
 
-/** The web app, which opens every addressed path this page serves; the local one when this page is served locally. */
-function browserAppOrigin(): string {
-  return location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-    ? 'http://localhost:8794'
-    : 'https://app.rallywith.ai';
-}
 
 /** Which app this browser last chose for a shared link, so a web-only reader is not sent to an app they lack. */
 const OPEN_IN_KEY = 'rally.sharedLinks.openIn';
