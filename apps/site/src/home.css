@@ -1848,3 +1848,12 @@ h2 {
     animation: none !important;
   }
 }
+
+/* The CASA badge band between the closer and the footer. */
+.home-trust {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  margin-top: -40px; padding: 0 0 80px; text-align: center; color: var(--green);
+}
+.home-trust > a:first-child { color: inherit; line-height: 0; }
+.home-trust p { max-width: 430px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.home-trust .subtle-link { font-size: 11px; }
