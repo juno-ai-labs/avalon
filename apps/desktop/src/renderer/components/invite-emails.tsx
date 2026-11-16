@@ -77,28 +77,27 @@ export function InviteEmailField({ invite, disabled }: { invite: InviteEmails; d
   );
 }
 
-export type InviteMembersApi = Pick<RallyApi, 'createWorkspaceInvitation' | 'getWorkspaceInvitees' | 'getWorkspaceMembers'>;
+export type InviteMembersApi = Pick<RallyApi, 'addWorkspaceMember' | 'getWorkspaceMembers'>;
 
 /**
- * Invites each address as a member, one at a time, and reports which failed.
- * An address already pending or already an active member counts as invited
- * without a second email: a second invitation would revoke the first link.
- * Pending addresses come from `/workspace/invitees`, which lists every one;
- * `/workspace/invitations` stops at the newest 100 of any status.
+ * Adds each address as a member, one at a time, and reports which failed.
+ * Each is a member as soon as it is added, with nothing to accept. An address
+ * already a member counts as added without a second email. A guest, or an
+ * address an older invitation still waits for, is added: that makes them a
+ * member and retires the invitation.
  */
 export async function inviteMembers(
   api: InviteMembersApi,
   addresses: readonly string[],
   onInvited: (email: string) => void,
 ): Promise<{ failures: string[] }> {
-  const [pendingInvitees, currentMembers] = await Promise.all([api.getWorkspaceInvitees(), api.getWorkspaceMembers()]);
-  const alreadyInvited = new Set([
-    ...pendingInvitees.map((invitee) => invitee.email.toLowerCase()),
-    ...currentMembers.filter((member) => member.status === 'active').map((member) => member.email.toLowerCase()),
-  ]);
+  const currentMembers = await api.getWorkspaceMembers();
+  const alreadyMembers = new Set(currentMembers
+    .filter((member) => member.status === 'active' && member.accessClass !== 'guest')
+    .map((member) => member.email.toLowerCase()));
   const failures: string[] = [];
   for (const email of addresses) {
-    try { if (!alreadyInvited.has(email)) await api.createWorkspaceInvitation(email, 'member'); onInvited(email); }
+    try { if (!alreadyMembers.has(email)) await api.addWorkspaceMember(email, 'member'); onInvited(email); }
     catch { failures.push(email); }
   }
   return { failures };

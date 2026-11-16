@@ -20,7 +20,7 @@ the read-side authorization primitive that composes resource access belongs to
 | `packages/db/migrations/0001_initial.sql` | `workspace_members(workspace_id, user_id, role, status, …)` — one row per person per workspace, `role` constrained to `owner`/`admin`/`member`. Unchanged since the first migration. |
 | `packages/contracts/src/index.ts` | `MemberRoleSchema` (all three roles, as read) and `AssignableMemberRoleSchema` (`admin`/`member` — the roles an administrator may hand out). `WorkspaceInvitationRoleSchema` is the same schema, so an invitation and a promotion cannot drift. |
 | `apps/api/src/middleware/auth.ts` | Resolves `auth.role` from `workspace_members` on **every** request, and `requireWorkspaceAdmin` — the route-level gate. |
-| `apps/api/src/services/workspace-service.ts` | `setMemberRole` (the one write that changes a role), `createInvitation` (the role a future membership arrives with), `removeMember` and `leaveWorkspace` (the owner counts that keep a workspace owned), and the private `requireAdmin` every workspace-administration method starts with. |
+| `apps/api/src/services/workspace-service.ts` | `setMemberRole` (the one write that changes a role), `addMember` (the role someone added by address is a member with at once), `removeMember` and `leaveWorkspace` (the owner counts that keep a workspace owned), and the private `requireAdmin` every workspace-administration method starts with. |
 | `apps/api/src/routes/workspace.ts` | `PATCH /workspace/members/:userId/role`. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (promote/demote or make member, and suspend), and the invitation role selector. A guest sees the same list, without the row controls. |
 | `apps/desktop/src/renderer/lib/session-workspace.ts` | Why the role the desktop holds is a *presentation* input and never an authorization one. |
@@ -36,10 +36,19 @@ A membership acquires its role in one of three ways:
 
 - **Creation.** Whoever creates a workspace is inserted as `owner`
   (`auth-service.ts`, `platform-onboarding-service.ts`).
-- **Invitation.** `createInvitation` stores an `AssignableMemberRole` on the
-  invitation row, and acceptance copies it onto the new membership. Acceptance
-  never *lowers* a role that already exists: its `ON CONFLICT` clause keeps an
-  existing `owner` or `admin`.
+- **Adding.** `addMember` (`POST /workspace/members`) makes the address an
+  active member with an `AssignableMemberRole` at once. Someone who has never
+  signed in gets an account then, shaped as their first email sign-in would
+  make it: the address bound as verified and as their email login, so signing
+  in with it by email, Google or Apple reaches that account. A guest becomes a
+  member. It never *lowers* a role that already exists: its `ON CONFLICT`
+  clause keeps an existing `owner` or `admin`. It revokes any older invitation
+  still waiting for the address, and emails them that they were added; a failed
+  send leaves the membership and answers `emailDelivery: "failed"`. `POST
+  /workspace/invitations`, which builds from before this still call, does the
+  same and answers in the old invitation shape. Invitations sent before this
+  can still be accepted, which copies their role onto the membership the same
+  way.
 - **Assignment.** `WorkspaceService.setMemberRole` sets the role on a membership
   that already exists. This is the only way a workspace grows a second
   administrator after the fact, and it is what `PATCH
@@ -183,6 +192,27 @@ enforces. A test that seeds an owner can never reach the guard, and would have
 proved only that the owner was there.
 
 ## Changelog
+
+### 2026-11-16 — Adding someone makes them a member at once
+
+**What changed:** `createInvitation` is gone. `addMember` creates the account
+for an address that has none, inserts an active membership, dispatches the
+relationship change, and emails the person. The invitation route answers older
+builds by doing the same. The accept path stays for invitations already sent.
+
+**Why:** The owner removed the invitation step. Until someone accepted, they
+had no user id, so no agent could ask anything of them: a Sidekick meant to
+read Bob's and Nancy's mail could not ask Nancy, and nothing would ask her
+after she joined.
+
+**Considered and rejected:** A source request that waits on an invitation's
+address and turns into Nancy's request when she accepts: a second kind of
+pending person in every feature that names people, where membership at once
+gives every feature a user id to work with.
+
+**What a future change has to respect:** The account made for an address is
+bound to it as verified, so proving the address is what grants the account.
+Adding an address an existing account holds unverified adds that account.
 
 ### 2026-10-24 — Guests can see who is in the Organization
 

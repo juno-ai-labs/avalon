@@ -397,6 +397,19 @@ export const CreateWorkspaceInvitationResponseSchema = z.object({
   inviteUrl: HttpUrlSchema,
   emailDelivery: z.enum(["sent", "skipped"])
 });
+/**
+ * `POST /workspace/members`: an administrator adds someone by address, and
+ * they are a member at once. Someone who has never signed in gets their
+ * account then, bound to the address, so their first sign-in with it lands in
+ * the Organization. There is no invitation to accept.
+ */
+export const AddWorkspaceMemberRequestSchema = CreateWorkspaceInvitationRequestSchema;
+export const AddWorkspaceMemberResponseSchema = z.object({
+  member: z.object({ userId: IdSchema, email: z.string().email(), role: WorkspaceInvitationRoleSchema }),
+  /** Whether the email telling them was sent; the membership stands either way. */
+  emailDelivery: z.enum(["sent", "skipped", "failed"]),
+});
+export type AddWorkspaceMemberResponse = z.infer<typeof AddWorkspaceMemberResponseSchema>;
 export const AcceptWorkspaceInvitationRequestSchema = z.object({
   token: z.string().min(20).max(500)
 });

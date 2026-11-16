@@ -9,6 +9,8 @@ import {
   CreateWorkspaceInvitationRequestSchema,
   IdSchema,
   CreateWorkspaceInvitationResponseSchema,
+  AddWorkspaceMemberRequestSchema,
+  AddWorkspaceMemberResponseSchema,
   MemberPreferencesSchema,
   MemberPreferencesUpdateSchema,
   PersonalSystemPromptSchema,
@@ -276,10 +278,26 @@ workspaceRoutes.get("/invitees", async (c) =>
 workspaceRoutes.get("/invitations", async (c) =>
   c.json(InvitationPageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listInvitations() })),
 );
+workspaceRoutes.post("/members", zValidator("json", AddWorkspaceMemberRequestSchema), async (c) => {
+  const body = c.req.valid("json");
+  return c.json(AddWorkspaceMemberResponseSchema.parse(await new WorkspaceService(c.env, getAuth(c)).addMember(body.email, body.role)), 201);
+});
+/**
+ * What builds from before members were added at once still call. It adds the
+ * member as `/members` does, and answers in the shape those builds read: an
+ * invitation already accepted, whose link opens Rally. Nothing waits on it.
+ */
 workspaceRoutes.post("/invitations", zValidator("json", CreateWorkspaceInvitationRequestSchema), async (c) => {
   const body = c.req.valid("json");
-  return c.json(CreateWorkspaceInvitationResponseSchema.parse(
-    await new WorkspaceService(c.env, getAuth(c)).createInvitation(body.email, body.role)), 201);
+  const service = new WorkspaceService(c.env, getAuth(c));
+  const { member, emailDelivery } = await service.addMember(body.email, body.role);
+  const at = new Date().toISOString();
+  return c.json(CreateWorkspaceInvitationResponseSchema.parse({
+    invitation: { id: member.userId, email: member.email, role: member.role, status: "accepted",
+      invitedByName: "Rally", expiresAt: at, acceptedAt: at, createdAt: at },
+    inviteUrl: c.env.PUBLIC_WEB_BASE_URL,
+    emailDelivery: emailDelivery === "sent" ? "sent" : "skipped",
+  }), 201);
 });
 workspaceRoutes.delete("/invitations/:id", zValidator("param", invitationParam), async (c) => {
   await new WorkspaceService(c.env, getAuth(c)).revokeInvitation(c.req.valid("param").id);
