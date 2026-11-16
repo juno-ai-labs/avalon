@@ -86,7 +86,11 @@ export function renderCasaBadge(): string {
 const footerColumn = (id: string, title: string, links: readonly string[]): string =>
   `<nav class="footer-column" aria-labelledby="${id}"><h2 class="footer-heading" id="${id}">${title}</h2><ul class="footer-links">${links.map((link) => `<li>${link}</li>`).join('')}</ul></nav>`;
 
-export function renderSiteFooter(): string {
+/**
+ * The site footer. `casaLink: false` leaves out the legal row's CASA link, for a
+ * page that already shows the full CASA badge below the footer.
+ */
+export function renderSiteFooter({ casaLink = true }: { casaLink?: boolean } = {}): string {
   const compared = comparisons.map(({ slug, name }) => `<a href="/compare/${slug}/">${escape(name)}</a>`);
   const trust = trustPages.map(({ href, name }) => `<a href="${href}">${escape(name)}</a>`);
   const help = [
@@ -114,7 +118,7 @@ export function renderSiteFooter(): string {
     + footerColumn('footer-trust', 'Trust Center', trust)
     + footerColumn('footer-help', 'Help', help)
     + footerColumn('footer-blog', 'Blog', blog)
-    + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small><small><a class="footer-casa" href="/trust/security/#overview">ADA CASA AL1 validated</a></small><small>rallywith.ai</small></p>`
+    + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small>${casaLink ? '<small><a class="footer-casa" href="/trust/security/#overview">ADA CASA AL1 validated</a></small>' : ''}<small>rallywith.ai</small></p>`
     + `<p class="footer-mark" aria-hidden="true">rally</p></footer>`;
 }
 
@@ -206,7 +210,8 @@ const markers: Record<string, () => string> = {
   'live-carousel': renderLiveCarousel,
   'loop-figure': renderLoopFigure,
   'people-figure': renderPeopleFigure,
-  'site-footer': renderSiteFooter,
+  'site-footer': () => renderSiteFooter(),
+  'site-footer-without-casa': () => renderSiteFooter({ casaLink: false }),
   'casa-badge': renderCasaBadge,
   'comparison-table': renderComparisonTable,
   'marketplace-filters': renderMarketplaceFilters,
