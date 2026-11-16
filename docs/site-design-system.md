@@ -30,7 +30,7 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   browser and card code must not keep separate coordinates. Retain the distinct
   blue hexagonal Sidekick and compare the drawings as a set.
 - **Illustrative actions:** The homepage's example Canvas is a chat beside one
-  artifact, with no app sidebar. Its three examples (a Gmail pipeline dashboard,
+  artifact, with no app sidebar, window bar or artifact toolbar. Its three examples (a Gmail pipeline dashboard,
   a Granola feature-request board with voting, a podcast feed) each draw their
   own artifact in `index.html`. The GTM example's chat also shows the Sidekick's
   delegation card, in the app's own words, with Theo and Priya allowing it to act
