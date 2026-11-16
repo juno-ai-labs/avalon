@@ -71,7 +71,7 @@ export function sidekickSourceRequestCard(event: { pluginId?: string | undefined
 function sourceRefusal(input: WorkstreamWorkflowInput) {
   return toolRefusal(input.automationRun || input.automationDelegation ? "sidekick_source_request_from_run"
     : input.reason === "sidekick_review" || input.backgroundAgentRootReason === "sidekick_review" ? "sidekick_source_request_from_review"
-      : input.backgroundAgent === true ? "sidekick_source_request_from_background_agent" : "sidekick_source_request_from_agent_message");
+      : "sidekick_source_request_from_background_agent");
 }
 
 function sidekickSourceRefusalTool(input: WorkstreamWorkflowInput, request: HarnessTool): HarnessTool {

@@ -35,7 +35,7 @@ import { conversationParentStub, hostedParentStub } from "./conversation-parent-
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createNotificationsPlugin, NOTIFICATIONS_PLUGIN_ID } from "./notification-tools";
-import { actsAsSidekickWizard, actsForAPerson, canvasChatAuthority, loopAuthority, senderActsForAPerson } from "../lib/loop-authority";
+import { actsAsSidekickWizard, actsForAPerson, canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -5285,19 +5285,16 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
 /**
  * Whether a loop may ask people for a source (`sidekick_request_source` and
  * its two companions): a Canvas's Chat, a Sidekick's wizard, and a background
- * agent of either (`actsForAPerson`), whatever started the turn, unless it
- * was a message from a run, its worker or a wizard's agent (`senderActsForAPerson`).
- * That leaves out a Sidekick run and its workers, which are handed event
- * content such as a stranger's email, a run's change request to its wizard,
- * and a scheduled self-review and its agents, which read runs. Setting up a
- * Sidekick is a Chat handing work to background agents and the wizard and
- * hearing back, so a person's authority has to survive those hops: an earlier
- * rule that only a turn a person started could ask refused nearly every real
- * setup. `docs/sidekick-sources.md#agent-tools`.
+ * agent of either (`actsForAPerson`), whatever started the turn. A Sidekick
+ * run and its workers, which are handed event content such as a stranger's
+ * email, and a scheduled self-review and its agents, which read runs, may
+ * not. A turn another agent's message started is not refused, a run's change
+ * request to its wizard included: the owner chose a setup that works across
+ * hand-offs over that guard, since asking approves nobody.
+ * `docs/sidekick-sources.md#agent-tools`.
  */
 function asksForSources(input: WorkstreamWorkflowInput): boolean {
-  return actsForAPerson(input)
-    && (!input.agentExchange || senderActsForAPerson(input.agentExchange.senderAgentId) || Boolean(input.wizardCanvasId));
+  return actsForAPerson(input);
 }
 
 /**

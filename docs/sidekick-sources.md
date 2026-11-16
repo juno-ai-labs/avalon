@@ -374,12 +374,7 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
 - **Offered to every loop that acts for a person** (`asksForSources`,
   `actsForAPerson` in `lib/loop-authority.ts`): a Canvas's Chat, a Sidekick's
   wizard, and a background agent of either, whatever started the turn,
-  unless a message from a run, a run's worker or a wizard's agent started
-  it. That is read from the sender's address alone (`senderActsForAPerson`):
-  `canvas/…` (a Chat or any of its agents) and `automation/…/0` (the wizard)
-  may lead to an ask, and every other `automation/…` address may not, since
-  it cannot tell a run from a wizard's agent. A wizard's agent asks for
-  itself instead of through its wizard. Every other loop with the Sidekicks plugin is offered
+  another agent's message included. Every other loop with the Sidekicks plugin is offered
   the same three: `sources_list` reads as ever, and `request_source` and
   `test_source_condition` (which reads the acting person's own events) refuse
   by name with the route to a turn that may ask
@@ -392,17 +387,15 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
     `sidekick_source_request_from_review`, which says to name the ask in the
     review;
   - a background agent with no recorded root, which acts for nobody:
-    `sidekick_source_request_from_background_agent`;
-  - a turn a message from a run, its worker or a wizard's agent started, a
-    run's `request_sidekick_change` to its wizard among them:
-    `sidekick_source_request_from_agent_message`, which says to name the ask
-    in the reply.
+    `sidekick_source_request_from_background_agent`.
 
   An ask goes out in a person's name with a filter the model wrote, and the
   people asked get it by email. A run is handed event content, a stranger's
-  email among it, and a run's change request carries what the run read, so
-  neither may bring one about. A Chat's or a wizard's own agents may: they
-  do that person's setup, and the person approves nothing by being asked.
+  email among it, so it may not ask. A turn a run's message starts may: a
+  run's `request_sidekick_change` reaches its wizard as such a turn, so text
+  a run read can shape an ask the wizard then sends. The owner accepted that
+  on 2026-11-16 so that setup works across hand-offs; the person asked still
+  approves or declines it.
 - **Asking never waits, and approves nobody.** `sidekick_request_source`
   returns each request `pending`, the acting person's own included: the
   model wrote the ask and its filter, and they have not read it until the
@@ -731,10 +724,10 @@ some Sidekicks stopped ([operations](#operations)).
   Organization's connections and the Canvases the Sidekick is attached to. It
   cannot use any person's connection and cannot write the Organization's
   memory ([`automation-lifecycle.md`](automation-lifecycle.md#who-a-run-acts-as)).
-- **Nothing a run read can ask for a source.** A run, its delegation
-  workers, a self-review and its agents, and a turn one of their messages
-  started cannot ask; a Canvas's Chat, a Sidekick's wizard and their
-  background agents can, whatever started the turn. No loop can approve.
+- **A run cannot ask for a source.** A run, its delegation workers, and a
+  self-review and its agents cannot ask; a Canvas's Chat, a Sidekick's
+  wizard and their background agents can, whatever started the turn, a
+  run's message included. No loop can approve.
 - **A Sidekick run cannot change delegation, and neither can its background
   workers.** Each is offered `sidekick_delegates_list` and
   `sidekick_my_delegations_list` and not `sidekick_set_delegation`
@@ -822,38 +815,40 @@ one as it is resolved; the resolution becomes a changelog entry.
 
 ## Changelog
 
-### 2026-11-16 — A Chat's and a wizard's background agents, and their messages, ask for a source
+### 2026-11-16 — A Chat's and a wizard's turns ask for a source, whatever started them
 
-**What changed:** `asksForSources` asks `actsForAPerson`: a Canvas's Chat, a
-Sidekick's wizard and a background agent of either may ask, whatever started
-the turn, unless a message from a run, its worker or a wizard's agent did,
-which is read from the sender's address (`senderActsForAPerson`). The
-`fromPersonTurn` stamp is no longer written or read; the schema still
-accepts it for stored messages. A Chat's background agent's ask, and a wizard
-turn any Chat message started, are drawn in the Chat. A self-review's agents
-are refused by `backgroundAgentRootReason`.
+**What changed:** `asksForSources` asks `actsForAPerson` and nothing else: a
+Canvas's Chat, a Sidekick's wizard and a background agent of either may ask,
+whatever started the turn, another agent's message included. A run, its
+workers, and a self-review and its agents are still refused; a self-review's
+agents by `backgroundAgentRootReason`. `fromPersonTurn` is no longer written
+or read, and the schema still accepts it for stored messages. A Chat's
+background agent's ask, and a wizard turn any Chat message started, are
+drawn in the Chat.
 
 **Why:** In a real setup a person asked a Chat for a CRM fed by two
 mailboxes. The Chat started background agents and ended its turn; their reply
 started the next Chat turn, which created the Sidekick and messaged its
 wizard. That message carried no `fromPersonTurn`, so the wizard's
 `sidekick_request_source` refused, and the Chat told the person mailbox
-events were unavailable and asked how often to poll. A Chat hands setup to
-agents and hears back, so the person's authority has to survive those hops,
-and the owner asked for exactly this.
+events were unavailable and asked how often to poll. Setup is a Chat handing
+work to agents and hearing back, so every hop has to be able to ask, a
+wizard's agent handing an ask back to its wizard among them.
 
-**Considered and rejected:** Keeping the stamp, set by any sender that acts
-for a person: it works, but the owner judged a flag carried on every message
-more design than the rule needs, when the address says almost as much. The
-accepted risks: the wizard's background agents can read runs, which hold
-event content, and may now ask; and a self-review shares the wizard's
-address, so a turn its message starts may ask. An ask approves nobody.
+**Considered and rejected:** A flag on every message from a loop that acts
+for a person (`fromPersonTurn`, set by the sender): the owner judged it more
+design than the guard is worth. Reading the sender's address: a wizard's
+agent and a run have the same address shape, so a wizard's agent could not
+hand an ask back. Looking up the sender's record on each message: a lookup
+on every message. **Accepted risk:** a run's change request reaches its
+wizard as a turn that may ask, so a stranger's email a run read can shape a
+request sent in a person's name. The 2026-11-15 entry below closed exactly
+that; the owner reopened it because an ask approves nobody.
 
 **What a future change has to respect:** A loop that is handed event content
-(a run, its worker, a review) must not be offered the ask. A new loop that
-messages from a `canvas/…` or `automation/…/0` address is trusted by that
-address. The 2026-11-15 rule below is superseded where it refuses a Chat's or
-a wizard's agents.
+(a run, its worker, a review) must not be offered the ask itself. If the
+run-to-wizard path needs closing again, the run is the side that knows it
+read outside content, so the run marks its messages.
 
 ### 2026-11-15 — Only a person's turn, or a Canvas's wizard turn, asks for a source
 
