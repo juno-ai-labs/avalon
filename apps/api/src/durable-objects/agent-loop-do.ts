@@ -4795,6 +4795,28 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         error: { code, message: "The Avalon harness could not complete this run" },
       };
     }
+    if (outcome.status === "failed" || outcome.status === "stopped") {
+      // A run that ends mid-batch leaves Bind owed a result for every call
+      // that had not returned, and the loop release inside the terminal
+      // commit refuses while it is owed. Left to that refusal, the failure
+      // reached the outer catch as `substream_loop_has_unsettled_tool_batch`
+      // and was recorded — and told to the owner — under that code instead
+      // of the harness's own. Settled here, under this attempt's lease, the
+      // run terminalizes on the first pass with the reason it actually had.
+      await this.recoverInterruptedToolBatch(executionEnv, input, claim.lease)
+        .catch((settleError: unknown) => logWarn(
+          this.env,
+          "substream_loop_terminal_tool_batch_settlement_failed",
+          {
+            workspace_id: input.workspaceId,
+            workstream_id: input.parentId,
+            substream_id: input.substreamId ?? "0",
+            harness_run_id: input.harnessRunId,
+            outcome_error_code: outcome.error?.code ?? null,
+            reason: diagnosticErrorCode(settleError, "tool_batch_settlement_failed"),
+          },
+        ));
+    }
     await terminalizeHarnessAttempt(
       runs,
       input,

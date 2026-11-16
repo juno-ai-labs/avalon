@@ -4745,9 +4745,14 @@ export async function runWorkstreamHarness(
           }, harnessTools);
           const transientSlackSearch = receiptPolicy.definition.capability === "slack.search";
           if (transientSlackSearch) suppressInferenceRequestCapture = true;
-          const plannedInvocation = await loadToolInvocation(env, input, event.toolCallId);
-          if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
-          await settleRootHarnessToolCompletion(env, input, liveness.lease, {
+          // Each write below is its own step so a failure names the one that
+          // failed: the cause alone is usually a sentence the log must drop.
+          const plannedInvocation = await namedPortStep("Tool execution plan lookup failed", async () => {
+            const planned = await loadToolInvocation(env, input, event.toolCallId);
+            if (!planned) throw new Error("tool_execution_plan_missing");
+            return planned;
+          });
+          await namedPortStep("Tool result save failed", () => settleRootHarnessToolCompletion(env, input, liveness.lease, {
             invocationId: plannedInvocation.id,
             toolCallId: event.toolCallId,
             canonicalToolName: receiptPolicy.definition.name,
@@ -4763,12 +4768,12 @@ export async function runWorkstreamHarness(
               : {}),
             memberSafePayload: { toolName: event.toolName },
             ...outboundExternalBinding(input, event.result.externalConversation),
-          });
+          }));
           // The durable replay payload and fenced completed receipt now exist;
           // only after this awaited boundary may Bind observe the tool result.
-          const invocation = await loadToolInvocation(env, input, event.toolCallId);
+          const invocation = await namedPortStep("Tool receipt reload failed", () => loadToolInvocation(env, input, event.toolCallId));
           if (invocation) {
-            {
+            await namedPortStep("Tool transcript write failed", async () => {
               const position = transcriptToolPosition(event.toolCallId);
               const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
               const pluginActivityId = plugin.activityId;
@@ -4815,8 +4820,8 @@ export async function runWorkstreamHarness(
                 });
               }
               await settleTranscriptAssistantActivity(event.toolCallId, "complete");
-            }
-            await emit({ type: "tool_completed", invocation });
+            });
+            await namedPortStep("Tool completion event publish failed", () => emit({ type: "tool_completed", invocation }));
             runtimeDeferral(recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, "completed"));
             emitAgentToolTerminalTelemetry(env, {
               workspaceId: input.workspaceId,
@@ -4839,7 +4844,7 @@ export async function runWorkstreamHarness(
           let invocationId: string;
           let planAlreadyAmbiguous = false;
           if (event.phase === "validation") {
-            ({ invocationId, planAlreadyAmbiguous } = await resolveValidationFailureInvocation(
+            ({ invocationId, planAlreadyAmbiguous } = await namedPortStep("Tool validation failure plan save failed", () => resolveValidationFailureInvocation(
               event.toolCallId,
               toolEffectIntents.resolve,
               async () => {
@@ -4872,15 +4877,17 @@ export async function runWorkstreamHarness(
                   },
                 );
               },
-            ));
+            )));
             if (planAlreadyAmbiguous) ambiguousToolOutcome = true;
           } else {
-            const plannedInvocation = await loadToolInvocation(env, input, event.toolCallId);
-            if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
-            invocationId = plannedInvocation.id;
+            invocationId = await namedPortStep("Tool execution plan lookup failed", async () => {
+              const planned = await loadToolInvocation(env, input, event.toolCallId);
+              if (!planned) throw new Error("tool_execution_plan_missing");
+              return planned.id;
+            });
           }
           if (!planAlreadyAmbiguous) {
-            await settleRootHarnessToolFailure(
+            await namedPortStep("Tool failure save failed", () => settleRootHarnessToolFailure(
               createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
               liveness.lease,
               {
@@ -4895,10 +4902,10 @@ export async function runWorkstreamHarness(
                 },
                 memberSafePayload: { code: errorCode },
               },
-            );
+            ));
           }
-          const invocation = await loadToolInvocation(env, input, event.toolCallId);
-          {
+          const invocation = await namedPortStep("Tool receipt reload failed", () => loadToolInvocation(env, input, event.toolCallId));
+          await namedPortStep("Tool transcript write failed", async () => {
             const position = transcriptToolPosition(event.toolCallId);
             const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
             const pluginActivityId = plugin.activityId;
@@ -4964,9 +4971,9 @@ export async function runWorkstreamHarness(
               });
             }
             await settleTranscriptAssistantActivity(event.toolCallId, "fail");
-          }
+          });
           if (invocation) {
-            await emit({ type: "tool_failed", invocation });
+            await namedPortStep("Tool failure event publish failed", () => emit({ type: "tool_failed", invocation }));
             runtimeDeferral(recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, ambiguous ? "ambiguous" : "failed"));
             emitAgentToolTerminalTelemetry(env, {
               workspaceId: input.workspaceId,
@@ -9736,9 +9743,9 @@ export async function runBeforeModelChecks(checks: {
   await Promise.all([checks.renewLease(), namedPortStep("Run authority check failed", checks.runAuthority)]);
 }
 
-async function namedPortStep(label: string, check: () => Promise<void>): Promise<void> {
+async function namedPortStep<T>(label: string, check: () => Promise<T>): Promise<T> {
   try {
-    await check();
+    return await check();
   } catch (error) {
     throw error instanceof HarnessLimitError ? error : new HarnessPortStepError(label, error);
   }

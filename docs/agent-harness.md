@@ -914,7 +914,7 @@ Authored pageable tools use [receipt-owned page IDs](tool-pagination.md). Their
 first-call schema has no cursor; `_next` accepts only a page ID. Private executor
 continuations are removed before output reaches Bind or the result receipt.
 
-Each tool call receives a stable Rally receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. A tool that starts work outside Rally keys it to `HarnessToolContext.effectIntentId` instead, which the host resolves through `resolveToolEffectIntentId` after `tool_started` and which names the stored receipt row rather than the call: the row is created once and kept, so a resumed attempt reattaches to the effect it already started instead of starting a second one. The owning `AgentLoopDO` stores canonical inputs, immutable plan hashes, plugin/connection identity, mode, idempotency policy, optional provider key, and append-only progress in `tool_effects` and `tool_effect_checkpoints`; there is no D1 compatibility owner. Completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional conversation authority before Bind can observe it. A `code_execute` program's nested calls are receipts of their own at `<program toolCallId>:call:<index>`, planned, looked up and settled through the same host functions a direct call uses, with no transcript rows of their own ([`code-mode.md`](code-mode.md#nested-calls)).
+Each tool call receives a stable Rally receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. A tool that starts work outside Rally keys it to `HarnessToolContext.effectIntentId` instead, which the host resolves through `resolveToolEffectIntentId` after `tool_started` and which names the stored receipt row rather than the call: the row is created once and kept, so a resumed attempt reattaches to the effect it already started instead of starting a second one. The owning `AgentLoopDO` stores canonical inputs, immutable plan hashes, plugin/connection identity, mode, idempotency policy, optional provider key, and append-only progress in `tool_effects` and `tool_effect_checkpoints`; there is no D1 compatibility owner. Completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional conversation authority before Bind can observe it. If that save fails for a **read**, the call is recorded as failed with `tool_result_not_saved`, naming the host step that failed and its cause code, and the batch finishes: the model gets the saved siblings' real results and that failure, and may run the call again. A write, a platform-limit refusal, or a failure that cannot itself be recorded (a receipt that already completed, a lost lease) still ends the run. Each write the host makes for a `tool_completed` or `tool_failed` event is a named `HarnessPortStepError` step ("Tool result save failed", "Tool transcript write failed", and so on), and `emit` reports that label as the failure message. A run that ends `failed` or `stopped` with a batch still open settles that batch under its own lease before it terminalizes, so the run, its row and a background agent's failure notice keep the harness's code rather than the loop release's `substream_loop_has_unsettled_tool_batch`. A `code_execute` program's nested calls are receipts of their own at `<program toolCallId>:call:<index>`, planned, looked up and settled through the same host functions a direct call uses, with no transcript rows of their own ([`code-mode.md`](code-mode.md#nested-calls)).
 
 If the object is evicted after `assistant_accepted` but before every
 `tool_result_accepted`, Bind does not repair the protocol array. Before another
@@ -1803,7 +1803,7 @@ proof.
 | --- | --- |
 | `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, successful/failure/stop receipt settlement across a mid-batch lease deadline, residual settlement on every terminal status and the marker-driven repair of a directly-failed root that lost its settlement response, healing an occupied checkpoint index, bulk residual-receipt settlement for stop/steering, descendant receipt settlement during child reaping, attachment dependency ordering, and dependency/replan interleavings. |
 | `apps/api/test-workers/agent-run-dispatch-reliability.test.ts`, `agent-run-lifecycle.test.ts` | The real-workerd stable-loop state machine: singleton identity, pending-input FIFO and delivery mode, activation replay, alarm recovery after eviction, live-lease exclusion, expired-owner takeover, deferred retry on the same cycle and receipt, and exact execution fences through terminal settlement. |
-| `apps/api/test-workers/message-to-output-pipeline.test.ts` | The real-workerd product-to-provider path, including provider-failure reservation settlement into a canonical error pill, a scheduled activation-only input on an already-initialized Bind projection, exact provider-body inclusion, pre-execution launch replay after eviction, and terminal replay without a second source fact, execution receipt, provider boundary, or inference attempt. |
+| `apps/api/test-workers/message-to-output-pipeline.test.ts` | The real-workerd product-to-provider path, including a parallel batch whose one result cannot be saved (the model gets the saved result and a named failure; a platform refusal fails the run under its own code), provider-failure reservation settlement into a canonical error pill, a scheduled activation-only input on an already-initialized Bind projection, exact provider-body inclusion, pre-execution launch replay after eviction, and terminal replay without a second source fact, execution receipt, provider boundary, or inference attempt. |
 | `apps/api/test-workers/substream-message-queue.test.ts` | The real-workerd multi-input queue, including proof that a deliberately blocked external settlement does not prevent the next queued input from reaching the provider and that the independent settlement lane subsequently drains. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
@@ -1905,6 +1905,35 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-16 — A batch with one unsaved result finishes, and a failed run keeps its own code
+
+**What changed:** Three parts. A read whose result could not be saved is
+recorded as a failed call (`tool_result_not_saved`, with the step and cause
+code in its `data`), and the batch continues, so the model sees its siblings'
+saved results. `emit` reports a host `HarnessPortStepError` label as the
+failure message, and the API's `tool_completed` and `tool_failed` handlers name
+each of their writes as a step. `runAgentExecution` settles an open tool batch
+before terminalizing a `failed` or `stopped` run.
+
+**Why:** On 2026-11-16 a background agent ran two Gmail searches and
+`current_time` in parallel. Saving one search's result failed, logged only as
+`tool_receipt_persistence_failed` with cause `unclassified_cause`. The run
+ended, so the model never saw the two results that had saved. Its terminal
+commit then hit the loop-release guard, the outer catch recorded the guard's
+`substream_loop_has_unsettled_tool_batch`, and the owner's notice named that
+instead of the real failure. Nothing recorded which of the handler's writes had
+failed.
+
+**Considered and rejected:** Carrying the harness outcome into the outer catch
+so it could record that code after the refusal. The run would still fail,
+retry and settle in the slow order, for the same result. Narrowing writes as
+well: calling a write failed when it may have landed invites a duplicate.
+
+**What a future change has to respect:** The narrowing only applies when the
+failure record itself commits. A completed receipt refuses `fail` as
+`ownership_lost`, which is what keeps a saved result from being reported as
+failed. Step labels are fixed strings; they reach the model, logs and RPC.
 
 ### 2026-11-16 — `generate_audio` records text longer than one speech request
 
