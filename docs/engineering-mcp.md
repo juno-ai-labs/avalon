@@ -186,14 +186,21 @@ recorded: results, and calls the SDK rejects before a handler runs (an unknown
 tool or arguments that fail the input schema). `tasks/*` methods are not tool
 calls; a cancellation appears as a `cancelled` `task_finished` row.
 
-The API deploy provisions the table
+`config/engineering-mcp-audit-lakehouse.json` pins the stream and its account
+like the other lakehouses
 ([`inference-lakehouse.md`](inference-lakehouse.md#deployment-bindings-and-explicit-reconciliation)),
-and `apps/engineering-mcp/scripts/deploy.mjs`, later in the same job, binds
-the stream ID it adopted. A deploy run outside that job while the manifest is
-still unprovisioned binds nothing, and every tool refuses as
-`engineering_audit_unconfigured`. Retention is unset, so rows are kept until
-someone deletes them; the period is the team's to choose
+and `apps/engineering-mcp/scripts/deploy.mjs` binds that stream ID. In another
+account, the API deploy's `--deploy-bindings` step adopts that account's
+stream into the checkout first, so the MCP deploy later in the same job binds
+it; a deploy run outside that job there binds nothing, and every tool refuses
+as `engineering_audit_unconfigured`. Retention is unset, so rows are kept
+until someone deletes them; the period is the team's to choose
 ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
+
+To find who ran what, query the table by `tool`, `actor_email` or
+`actor_subject` and an `occurred_at` window, and join a call's two rows on
+`call_id`. Select `arguments` only for the calls you need: they hold
+production SQL bindings and message bodies.
 
 ### Deferred engineering tasks
 
