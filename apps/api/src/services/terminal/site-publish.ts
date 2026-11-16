@@ -242,12 +242,16 @@ export function directoryListingCommands(cacheDirectory: string): string[] {
     'cache="$cache_dir/$(printf %s "$target" | sha256sum | cut -c1-64)"',
     'mkdir -p -- "$cache_dir" 2>/dev/null; touch -- "$cache" 2>/dev/null || cache=/dev/null',
     'fresh=$(mktemp "$cache.XXXXXX" 2>/dev/null) || fresh=/dev/null',
+    // A listing stopped by its time limit leaves no temporary file behind.
+    'trap \'[ "$fresh" = /dev/null ] || rm -f -- "$fresh"\' EXIT',
     // Known digests first (the last line for a key wins), then the listing:
     // each file comes out as its cached digest or `-`, then its key and path.
     // (Read in `BEGIN`, not as awk's first file: an empty first file would
     // make `NR == FNR` hold for the listing too.)
     'find "$target" -type f -printf "%i %C@ %s %P\\n" | sort -k4 | RALLY_TARGET="$target" RALLY_CACHE="$cache" awk \'',
-    '  BEGIN { while ((getline line < ENVIRON["RALLY_CACHE"]) > 0) { tab = index(line, "\\t"); if (tab) known[substr(line, tab + 1)] = substr(line, 1, tab - 1) } }',
+    // Only a 64-hex digest is taken from the cache, so a damaged line costs a
+    // rehash and can never shift the size or path the listing prints.
+    '  BEGIN { while ((getline line < ENVIRON["RALLY_CACHE"]) > 0) { tab = index(line, "\\t"); digest = substr(line, 1, tab - 1); if (tab == 65 && digest ~ /^[0-9a-f]+$/) known[substr(line, tab + 1)] = digest } }',
     '  { match($0, /^[^ ]+ [^ ]+ [^ ]+ /); meta = substr($0, 1, RLENGTH - 1); rest = substr($0, RLENGTH + 1)',
     '    key = meta " " ENVIRON["RALLY_TARGET"] "/" rest',
     '    print ((key in known) ? known[key] : "-") " " meta " " rest }',

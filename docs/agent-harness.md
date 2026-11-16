@@ -643,8 +643,9 @@ Ordinary conversation runs with the main Azure inference credentials also
 register the deferred built-in `rally:multimodal-generation` plugin. It has no
 connection row and exposes three record-before-execute writes: create one image
 from a prompt, edit one currently visible image with an optional PNG mask, or
-turn bounded text into one AI-generated MP3 recording.
-Each tool has a five-minute ceiling and fixes the provider request to
+turn text into one AI-generated MP3 recording, in pieces when it is longer than
+one speech request. Each tool has a five-minute ceiling (the 1,050-second tool
+ceiling for speech that needs several requests) and fixes the provider request to
 `gpt-image-2` for images or `gpt-4o-mini-tts` for speech. Image moderation,
 quality, background and count are fixed to low, medium, automatic and one;
 speech output is fixed to MP3 and defaults to the `marin` voice.

@@ -12,8 +12,7 @@ import type { HarnessSkill } from "../../types";
  * It covers only the episode, up to its files in the feed site's directory.
  * Publishing that site, its database, its page and who can open it are
  * `publishing-a-feed`'s, and this skill ends by handing over the record that
- * skill stores. The files go in the site, never published on their own: the
- * site's page can play only its own files.
+ * skill stores.
  *
  * Most of its weight is the script. The speech model reads every character it
  * is given: a heading's hash, a bullet's asterisk, a bare URL and a table are
@@ -178,15 +177,12 @@ name; a fixed name would make every episode replace the last.
    ffmpeg -y -i art.png -vf "scale=3000:3000:flags=lanczos,format=rgb24" -q:v 3 2026-11-14-no-ai-slop.jpg
    \`\`\`
 
-9. **Put the recording and the artwork in the feed site's own directory**,
-   under the episode's name: \`episodes/2026-11-14-no-ai-slop.mp3\` and
-   \`episodes/2026-11-14-no-ai-slop.jpg\` inside the directory the feed's
-   site publishes from. **Never publish an episode's files on their own
-   with \`publish_resource\`**: the site's page can play only files in its
-   own directory, and the feed names them by the site's own URL.
-   Republishing the site is \`publishing-a-feed\`'s step 7; it moves only
-   the new files. Read each file's size in bytes with \`stat -c %s\` for
-   the record.
+9. **Put the recording and the artwork in the feed site's directory**, after
+   recovering the site there (\`publishing-a-feed\`, step 7.1; never before):
+   \`episodes/2026-11-14-no-ai-slop.mp3\` and
+   \`episodes/2026-11-14-no-ai-slop.jpg\`. They are never published on their
+   own, since the site's page plays only its own files. Read each file's size
+   in bytes with \`stat -c %s\` for the record.
 
 10. **Write the show notes**: two or three sentences on what the episode
     covers, a link to the source, and one sentence saying the audio is an AI
@@ -212,9 +208,6 @@ name; a fixed name would make every episode replace the last.
 - **A new voice or style per section.** The episode changes speaker
   between chapters. Do instead: one voice and one set of instructions for
   the whole show.
-- **Publishing the episode's files on their own.** The feed's page cannot
-  play them, and they live outside the site the feed describes. Do instead:
-  put them in the site's directory (step 9).
 - **Text in the episode art.** Generated lettering is often wrong, and
   Apple asks for none. Do instead: a scene with no text.
 - **Chapters timed by guesswork.** A chapter that starts mid-sentence sends

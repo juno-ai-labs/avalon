@@ -93,11 +93,14 @@ neither         → archive       (one downloadable zip)
 both — the module routes its own paths and falls through to the page — so the
 module's presence is the stronger signal rather than a tie.
 
-The path's shape is asked once, in one command that also enumerates the tree, and
-every file is then read and verified against the digest that listing reported. A
-file rewritten in between is a producer that has not finished, and publishing
-half of one version with half of another would be a site that renders
-inconsistently with nothing to point at.
+The path's shape is asked once, in one command that also enumerates the tree
+with each file's digest (from the sandbox's digest cache where the file has not
+changed; [terminal workspaces](terminal-workspaces.md)). A file the live version
+already holds is stored, a page, the server module or the preview image is read
+and checked against its digest, and every other file streams into storage, where
+R2 checks it. A file rewritten in between is a producer that has not finished,
+and publishing half of one version with half of another would be a site that
+renders inconsistently with nothing to point at.
 
 An **archive** rides the ordinary document publish path unchanged: it is one
 file's bytes with a zip's mime type, so identity, replay, version capture, and
@@ -300,12 +303,18 @@ admission. Each response carries `Accept-Ranges: bytes`, its `Content-Length`
 and the object's `ETag`. A `GET` with one range (`bytes=a-b`, `bytes=a-`,
 `bytes=-n`) gets `206` with `Content-Range`; a range past the end gets `416`;
 a request for several ranges, or an `If-Range` naming another version, gets
-the whole object with `200`. A `HEAD` reads only the object's metadata. HTML
+the whole object with `200`. A `HEAD` reads only the object's metadata. An
+`If-None-Match` naming the current `ETag` (weakly, in a list, or `*`) gets
+`304`; one that does not match leaves a `Range` beside it honoured. Stored
+bytes other than a page are `private, no-cache`, so the browser keeps them and
+asks again, admitted, on each use; pages stay `private, no-store`. A published
+file is served at `/`, `/index.html`, and any plain file name (`/<name>.<ext>`),
+so its link keeps working after a rename. HTML
 that Rally rewrites (the social tags, the annotation script, a prior
 version's base) is a new body each time and is always sent whole: a static
 site's rewritten page is built fresh, an `env.ASSETS` read of HTML ignores
 `Range` because the serving Worker may inject into an active site's response
-afterwards, and an injected response loses its `Content-Length`, `ETag`,
+afterwards (and is never answered `304`, for the same reason), and an injected response loses its `Content-Length`, `ETag`,
 `Accept-Ranges` and `Content-Range`, which `HTMLRewriter` would otherwise keep
 from the stored page.
 
@@ -1007,7 +1016,13 @@ publish, which the team declined so the model keeps one whole-directory call.
 Workspace-wide blobs, which let one artifact probe another's files. Edge
 caching, which keeps serving after a Canvas goes private.
 
-**Consequences:** Pruning versions must keep every blob a kept manifest names,
+**Consequences:** Blob writes are behind `ARTIFACT_BLOB_STORE=on`, off in this
+release: the serving Worker is promoted after the API, and the release before
+cannot parse a manifest with `assetStore`, so the readers ship one deploy before
+the writer. Once it is on, rolling back past this release breaks every site
+published since. A file the live version holds but not as this artifact's blob
+streams from the sandbox rather than being copied R2 to R2, which would need two
+connections per upload lane. Pruning versions must keep every blob a kept manifest names,
 with a grace window for a publish in flight. A directory missing a file removes
 it, so agents import a site before adding to it in a new sandbox, and import
 still reads and writes every file one at a time through the Worker: adding one
@@ -1667,8 +1682,7 @@ no native preview or new site authorization layer is required.
 ### 2026-09-13 — The revision loop's import half is connected
 
 **What changed:** `import_resource` branches on `generated_site` and
-materializes the version's tree — `storedArtifactVersionPaths` and
-`readArtifactVersionFile` for the bytes, a
+materializes the version's tree — `readArtifactVersionFiles` for the bytes, a
 staged directory for the upload, `materializeTreeCommand` to move it into place,
 `importTreeFailure` for the exit codes. All four already existed in
 `site-import.ts`; nothing called them. The output reports `fileCount` beside the

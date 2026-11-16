@@ -24,10 +24,9 @@ import {
   ArtifactHostnameStubSchema,
   ArtifactManifestSchema,
   SITE_MANIFEST_MIME_TYPE,
+  artifactAssetKey,
   artifactBlobKey,
   artifactManifestKey,
-  manifestAssetKey,
-  type ArtifactManifestEntry,
   asArtifactId,
   asWorkspaceId,
   type ArtifactManifest,
@@ -54,8 +53,9 @@ export interface ReadSiteFile {
 }
 
 /**
- * A file the live version already holds by digest. The writer finds that copy
- * in the live manifest itself; `open` is the fallback when it is missing.
+ * A file the live version already holds by digest: nothing is written when it
+ * is already this artifact's blob, and otherwise (a version from before blobs,
+ * or blobs not yet on) it streams from the sandbox through `open`.
  */
 export interface StoredSiteFile {
   path: string;
@@ -117,10 +117,15 @@ export interface SitePublishResult {
  * and the import tool is how the model reads it back.
  */
 export async function writeArtifactVersion(
-  env: Pick<Env, "PAYLOADS"> & Partial<LogEnv>,
+  env: Pick<Env, "PAYLOADS" | "ARTIFACT_BLOB_STORE"> & Partial<LogEnv>,
   input: SitePublishInput,
 ): Promise<SitePublishResult> {
   const artifactId = input.artifactId ?? newId();
+  // Blob writes wait for a deploy whose readers all understand them: the
+  // serving Worker is promoted after the API, and the release before this one
+  // cannot parse a manifest with `assetStore`. Until `ARTIFACT_BLOB_STORE` is
+  // `on`, a version is written as before, every file under its own prefix.
+  const blobs = env.ARTIFACT_BLOB_STORE === "on";
   const serverEntry = input.mode === "active" ? "index.js" : null;
   // The preview reads `index.html` and the image it names, which the runtime
   // never carries (`socialPreviewSourcePaths`).
@@ -155,7 +160,7 @@ export async function writeArtifactVersion(
     socialPreview: preparedPreview.socialPreview,
     totalBytes: storedFiles.reduce((total, file) => total + siteFileSize(file), 0),
     publishedAt: nowIso(),
-    assetStore: "blobs",
+    ...(blobs ? { assetStore: "blobs" as const } : {}),
   };
 
   try {
@@ -166,22 +171,28 @@ export async function writeArtifactVersion(
     // Transcribed 2026-09-12:
     // https://developers.cloudflare.com/workers/platform/limits/#simultaneous-open-connections
     const simultaneousConnections = 6;
-    // One write per digest: two paths with the same bytes share a blob.
-    const files = [...new Map(storedFiles.map((file) => [file.sha256, file])).values()].values();
-    const liveByDigest = new Map((input.live?.assets ?? []).map((entry) => [entry.sha256, entry]));
+    // With blobs, one write per digest: two paths with the same bytes share one.
+    const files = (blobs ? [...new Map(storedFiles.map((file) => [file.sha256, file])).values()] : storedFiles).values();
+    // Bytes already in this artifact's blobs, which a stored file needs no write for.
+    const live = input.live;
+    const liveBlobs = blobs && live?.assetStore === "blobs" && live.artifactId === artifactId
+      ? new Set(live.assets.map((entry) => entry.sha256))
+      : new Set<string>();
     let uploadFailed = false;
     const uploads = Array.from({ length: Math.min(storedFiles.length, simultaneousConnections) }, async () => {
       for (const file of files) {
         // A failed version will never publish, so drain writes already begun
         // by sibling workers but do not start another asset after a failure.
         if (uploadFailed) return;
-        // A source that fails mid-stream also leaves the stream short; its own
-        // error, kept here, is the cause to report.
-        const piped: { error?: unknown } = {};
         try {
-          const key = artifactBlobKey(artifactId, file.sha256);
-          const body = await blobBody(env, file, key, input.live ?? null, liveByDigest, piped);
-          if (body === null) continue;
+          if ("stored" in file && liveBlobs.has(file.sha256)) continue;
+          const key = blobs ? artifactBlobKey(artifactId, file.sha256) : artifactAssetKey(artifactId, input.version, file.path);
+          const body = "bytes" in file ? file.bytes
+            // An empty file has nothing to stream.
+            : file.sizeBytes === 0 ? new Uint8Array()
+              // Any other file not already a blob here, stored or not, streams
+              // from the sandbox: one connection per upload lane.
+              : lengthKnown(await file.open(), file.sizeBytes);
           await env.PAYLOADS.put(key, body, {
             // A blob is shared by paths and versions, so its stored type is
             // only a default: every reader serves the manifest entry's type.
@@ -191,7 +202,9 @@ export async function writeArtifactVersion(
           });
         } catch (error) {
           uploadFailed = true;
-          throw siteFileStoreFailure(env, piped.error ?? error, file);
+          // R2 rejects with a failed source's own error, so a download that
+          // breaks partway is named for itself, not as a changed file.
+          throw siteFileStoreFailure(env, error, file);
         }
       }
     });
@@ -229,37 +242,10 @@ export async function writeArtifactVersion(
   };
 }
 
-/**
- * What to write at `key` for one file, or null when the blob is already there:
- * a stored file whose live copy is this artifact's blob. An empty file is
- * written as empty bytes rather than opened, since there is nothing to stream.
- */
-async function blobBody(
-  env: Pick<Env, "PAYLOADS">,
-  file: SitePublishFile,
-  key: string,
-  live: ArtifactManifest | null,
-  liveByDigest: ReadonlyMap<string, ArtifactManifestEntry>,
-  piped: { error?: unknown },
-): Promise<Uint8Array | ReadableStream | null> {
-  if ("bytes" in file) return file.bytes;
-  if (file.sizeBytes === 0) return new Uint8Array();
-  if ("stored" in file && live) {
-    const entry = liveByDigest.get(file.sha256);
-    if (entry) {
-      const source = manifestAssetKey(live, entry);
-      if (source === key) return null;
-      const object = await env.PAYLOADS.get(source);
-      if (object) return lengthKnown(object.body, object.size, piped);
-    }
-  }
-  return lengthKnown(await file.open(), file.sizeBytes, piped);
-}
-
 /** R2 accepts a stream only when its length is known. */
-function lengthKnown(body: ReadableStream<Uint8Array>, sizeBytes: number, piped: { error?: unknown }): ReadableStream {
+function lengthKnown(body: ReadableStream<Uint8Array>, sizeBytes: number): ReadableStream {
   const { readable, writable } = new FixedLengthStream(sizeBytes);
-  void body.pipeTo(writable).catch((error: unknown) => { piped.error ??= error; });
+  void body.pipeTo(writable).catch(() => undefined);
   return readable;
 }
 
