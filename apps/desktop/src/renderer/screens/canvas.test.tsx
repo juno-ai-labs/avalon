@@ -241,8 +241,32 @@ describe('CanvasScreen', () => {
     expect(copy).not.toHaveTextContent('Launch tracker');
   });
 
+  it('lists its artifacts newest first between Change appearance and its Sidekicks, and opens an older one in the rail', async () => {
+    getCanvas.mockResolvedValue(detail({ sidekicks: [attached(TRACKER, 'Launch tracker')] }));
+    renderCanvas();
+    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
+    await openMenu('Q4 revenue review');
+    const group = await screen.findByRole('group', { name: 'Artifacts' });
+    expect(within(group).getAllByRole('menuitem').map((item) => item.querySelector('.title-menu-item-copy')?.textContent)).toEqual(['Board deck', 'Notes']);
+    const order = screen.getAllByRole('menuitem').map((item) => item.querySelector('.title-menu-item-copy')?.textContent ?? item.textContent.trim());
+    expect(order.slice(order.indexOf('Change appearance'), order.indexOf('Launch tracker') + 1)).toEqual([
+      'Change appearance', 'Board deck', 'Notes', 'Launch tracker',
+    ]);
+    fireEvent.click(within(group).getAllByRole('menuitem')[1]!);
+    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b1'));
+    expect(lastSurface().expanded).toBe(false);
+  });
+
+  it('draws no Artifacts section for a Canvas with none', async () => {
+    getCanvas.mockResolvedValue(detail({ artifacts: [] }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(screen.queryByRole('group', { name: 'Artifacts' })).toBeNull();
+  });
+
   it('lists the attached Sidekicks in its menu by name and state, between Change appearance and Archive canvas', async () => {
-    getCanvas.mockResolvedValue(detail({ sidekicks: [
+    getCanvas.mockResolvedValue(detail({ artifacts: [], sidekicks: [
       attached(TRACKER, 'Launch tracker'),
       attached(DIGEST, 'Weekly digest', { status: 'paused', madeHere: false }),
       attached('00000000-0000-7000-8000-0000000000d3', 'Unfinished', { status: 'draft' }),

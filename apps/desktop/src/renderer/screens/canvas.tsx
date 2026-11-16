@@ -17,6 +17,7 @@ import type { ArtifactAudienceControl } from '../components/artifact-card-tools'
 import { editorUserIds } from '../lib/canvas-sharing';
 import { CanvasTemplateStarters } from '../components/canvas-template-picker';
 import { CanvasNoticesJoinBanner, CanvasNoticesMenuSection } from '../components/canvas-notices';
+import { CanvasArtifactsSection } from '../components/canvas-artifacts-menu';
 import { CanvasSidekicksSection, madeSidekicksArchiveCopy } from '../components/canvas-sidekicks-menu';
 import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasCreation, useCanvasList, useCanvasNameSources, type CanvasCreation } from '../lib/canvases';
@@ -380,6 +381,13 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     }}>
       Change appearance
     </TitleMenuItem>
+    <CanvasArtifactsSection
+      artifacts={canvas.data?.artifacts ?? []}
+      onOpen={(artifact) => {
+        // Replace the entry, as Open artifact does, so Back leaves the Canvas.
+        void navigate(location.pathname, { replace: true, state: openResourceState(id, artifact.resourceId, { expanded: false }) });
+      }}
+    />
     <CanvasSidekicksSection
       onOpen={(sidekick) => {
         if (!openPanel) { void navigate(`/sidekicks/${encodeURIComponent(sidekick.id)}`); return; }
@@ -419,6 +427,10 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
     label: naming ? 'Canvas menu: Rally is choosing a name' : `Canvas menu: ${title}`,
     menu: menuItems(panelOpen, openPanel),
+    // The detail is not pushed, so an artifact the Chat made since it was
+    // read would be missing from the Artifacts section: the cached list draws
+    // at once and a stale one is read again behind it.
+    onMenuOpen: () => { if (canvas.isStale) void canvas.refetch(); },
     iconAction: creationBlocked ? undefined : appearancePicker,
   };
   const header = (presentUserIds: readonly string[], panelOpen: boolean, openPanel?: ConversationHeaderContext['openPanel']): React.JSX.Element => {
