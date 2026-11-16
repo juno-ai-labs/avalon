@@ -832,6 +832,53 @@ it('creates an organization from the empty shared-work screen and opens it in pl
   } finally { view.unmount(); }
 });
 
+it('lists invitations in place of Create, declines one, and opens the organization another joins', async () => {
+  const joinedId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
+  const expiresAt = new Date(Date.now() + 100_000).toISOString();
+  const invitation = (id: string, workspaceId: string, workspaceName: string, role: 'member' | 'admin') => ({ id, workspaceId, workspaceName,
+    region: 'global', email: user.email, role, expiresAt, invitedByName: 'Maya Owner' });
+  let invitations = [
+    invitation('11111111-1111-4111-8111-111111111111', joinedId, 'Acme Research', 'admin'),
+    invitation('22222222-2222-4222-8222-222222222222', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2', 'Other Org', 'member'),
+  ];
+  const answered: Array<{ path: string; body: unknown }> = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+    if (input === '/regional/global/browser/session') return Response.json({ user, workspace: null, expiresAt });
+    if (input === '/regional/global/browser/workspaces') return Response.json({ workspaces: [] });
+    if (input === '/regional/global/browser/invitations') return Response.json({ invitations });
+    if (input.endsWith('/decline')) {
+      answered.push({ path: input, body: JSON.parse(String(init?.body)) });
+      invitations = invitations.filter((item) => !input.includes(item.id));
+      return new Response(null, { status: 204 });
+    }
+    if (input.endsWith('/accept')) {
+      answered.push({ path: input, body: JSON.parse(String(init?.body)) });
+      return Response.json({ region: 'global', workspaceId: joinedId });
+    }
+    if (input === '/regional/global/browser/workspace/select') {
+      return Response.json({ user, workspace: { ...workspace, id: joinedId, name: 'Acme Research', accessClass: 'member', role: 'admin' }, expiresAt });
+    }
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const view = render(<BrowserEntry renderCollaboration={(region, session) => <output>{`${region}:${session.workspace?.name}`}</output>} />);
+  try {
+    expect(await screen.findByText('Invited by Maya Owner · Administrator')).toBeInTheDocument();
+    expect(screen.getByText('Invited by Maya Owner · Member')).toBeInTheDocument();
+    // A waiting invitation comes first: there is nothing to create yet.
+    expect(screen.queryByRole('button', { name: 'Create an organization' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Decline' })[1]!);
+    await waitFor(() => expect(screen.queryByText('Other Org')).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+    expect(await screen.findByText('global:Acme Research')).toBeInTheDocument();
+    expect(location.pathname).toBe(`/app/workspaces/global/${joinedId}`);
+    expect(answered).toEqual([
+      { path: '/regional/global/browser/invitations/22222222-2222-4222-8222-222222222222/decline', body: { region: 'global' } },
+      { path: '/regional/global/browser/invitations/11111111-1111-4111-8111-111111111111/accept',
+        body: { region: 'global', operationId: expect.stringMatching(/^[0-9a-f-]{14}7/u) } },
+    ]);
+  } finally { view.unmount(); }
+});
+
 it('does not offer Create again when a created organization fails to open', async () => {
   const createdId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef';
   const expiresAt = new Date(Date.now() + 100_000).toISOString();
