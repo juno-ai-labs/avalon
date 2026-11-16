@@ -926,7 +926,10 @@ Two traps:
   `manifestServerModuleKey` are the only way any reader turns an entry into a
   key. Nothing deletes artifact bytes today, so a shared blob needs no
   reference count; whatever prunes versions later must keep a blob any kept
-  manifest names.
+  manifest names. Whether a file is already stored is decided by the sandbox
+  listing's digest, so a wrong one can only alias bytes within its own site;
+  every streamed file is checked by R2, and one that changed after listing is
+  refused as `resource_not_ready` (`site_file_changed_after_listing`).
   New manifests optionally carry a `socialPreview` descriptor; generated cards
   are ordinary versioned assets beneath that same prefix.
 
@@ -981,85 +984,36 @@ shows its saved quote and image. The script and trust boundaries are owned by
 
 ## Changelog
 
-### 2026-11-16 — Site files are stored once by digest and streamed in; stored bytes revalidate; files answer at their own name
+### 2026-11-16 — Site files are stored once by digest; stored bytes revalidate; files answer at their own name
 
-**What changed:** A new site version stores each file once, at
-`artifact/<id>/blobs/<sha256>`, and its manifest (`assetStore: "blobs"`) is
-the version: paths naming digests. The model still publishes a whole
-directory; the runtime settles each file. Bytes the live version already holds
-(by digest, at any path, from `liveSiteFiles`) are **stored**: nothing is
-written. Pages, the server module and the preview image the page names are
-**read**, because the publish needs their bytes. Everything else is
-**streamed** from the sandbox into its blob (`provider.openFile`, a Daytona
-signed download fetched by the provider Worker, returned across RPC as a
-stream) with R2 checking it against the listed digest. Only read and streamed
-bytes count against the publish limit. A version from before blobs has its
-files copied into blobs, once, as streams. A site import checks every path
-with `head`, then reads and writes one file at a time. A published file or a static site's stored asset is sent
-`private, no-cache` instead of `private, no-store`, and `storedObjectResponse`
-answers an `If-None-Match` naming the current `ETag` with `304`. A published
-file is also served at `/<its name>` when its title is a plain file name
-(`publishedFilePath`), and `publish_resource` returns that URL.
+**What changed:** A site version is its manifest (`assetStore: "blobs"`): each
+file is stored once at `artifact/<id>/blobs/<sha256>` and shared by every
+version that holds it, and every reader resolves keys through
+`manifestAssetKey`. A republish writes only bytes the live version lacks,
+streamed from the sandbox, under two budgets: 25 MB read whole (memory) and
+`MAXIMUM_STREAMED_PUBLISH_BYTES` streamed (transfer, the team's to raise).
+Stored files and static assets are `private, no-cache` and answer
+`If-None-Match` with `304`; a published file is also served at `/<its name>`.
 
-**Why:** A feed's episodes belong in its own site, so the page can play them
-(its policy loads media only from its own origin) and the feed names them by
-its own URL. But each version owned a full copy of every file: each republish
-re-read the whole directory from the sandbox, held it in memory and counted it
-against 25 MB, and each import held every file at once. A first fix copied
-unchanged files between version prefixes, which still cost a copy of the whole
-site in R2 per episode and storage per version. Keying bytes by digest makes a
-version cost a manifest and a publish cost its new bytes, and streaming makes
-a file's size a transfer cost rather than a memory one.
+**Why:** A feed's episodes have to live in its own site, because a site page
+plays only its own origin's media. Each version used to own a full copy of
+every file, so every republish re-read and re-counted the whole site, and one or
+two episodes filled it. Podcast apps re-downloaded unchanged files on every
+refresh, and some read a file's type from a URL that ended in `/`.
 
-Every podcast app refresh and every replay downloaded the whole file
-again, through admission and R2, for bytes that had not changed. Some podcast
-apps and download managers read a file's type from its URL, and a URL ending in
-`/` gave them nothing to read.
+**Considered and rejected:** Copying unchanged files between version prefixes
+(the first fix here), which still cost a full-site copy per episode. A patch
+publish, which the team declined so the model keeps one whole-directory call.
+Workspace-wide blobs, which let one artifact probe another's files. Edge
+caching, which keeps serving after a Canvas goes private.
 
-**Considered and rejected:** Letting a site page load media from other
-artifact hosts, so episodes could stay separate files; it changes the policy on
-a domain every artifact shares. Raising the directory limit, which still holds
-every file in memory on each publish and import. A publish that takes a patch
-(add this, remove that) from the model, which would spare it importing the site
-first; the team kept the model's side to one whole-directory publish and the
-analysis on the platform. Blobs shared across a workspace's artifacts, which
-would deduplicate more but make one artifact's bytes reachable from another's
-key space. The Daytona SDK's own stream download, which refuses to run in a
-Worker. Caching at Cloudflare's edge while a Canvas is
-public, which cuts requests as well as bytes but keeps serving after the Canvas
-goes private until the cache lifetime ends, unless the access queue purges it;
-that is a separate decision once load is real. Revalidating everything, which
-would let a browser keep an active site's personalized output; only stored
-bytes, which are the same for every viewer, get it. Serving a file at any name
-with its extension, which would let a link claim a name the file does not have.
-
-**Consequences:** "Stored" trusts the sandbox listing's digest; a wrong one
-can only put bytes this site already served at a path, and two listed paths
-with one digest share one blob, so a lying listing can alias files within its
-own site and nowhere else. The writer resolves a stored file's live copy from
-the served manifest itself; no caller hands it a storage key. A stored file
-whose live copy is missing is streamed from the sandbox instead, so a retry
-recovers. An empty file is written without opening it. A file whose bytes no
-longer match its listing (R2's digest check, or a stream shorter or longer than
-listed) is refused as `resource_not_ready` with `site_file_changed_after_listing`;
-any other storage failure keeps its own code (a provider's
-`daytona_file_stream_http_<status>`, say) in the refusal and in the
-`site_file_store_failed` log, so a failure a retry cannot fix is not reported as
-one it can. Streams are cancelled with the tool call. A provider Worker without
-`openFile` (an older deploy) has each file read whole, so the two Workers deploy
-in either order. Listing hashes only files its sandbox digest cache has not seen
-([terminal workspaces](terminal-workspaces.md)); a listing that still runs out
-of time is refused as `resource_listing_timed_out`, keeps what it hashed, and
-the next publish continues from there. Pruning versions, when it comes, must keep every blob a
-kept manifest names, with a grace window for a publish in flight: a publish
-that found a file stored names a blob no manifest names until it lands.
-Nothing deletes `artifact/` keys today; the resource cleanup outbox deletes a
-site resource's own manifest copy under `resources/`, never these. A publish whose
-directory lacks a file removes it, so the skills tell agents to import the site
-before adding to it in a new sandbox. Admission runs on every revalidation, so `no-cache` changes
-bandwidth, not who can read. A path that serves stored bytes passes
-`revalidate: true` to `withSecurityHeaders`, which applies it only to a response
-with an `ETag`; a rewritten body has none and stays `no-store`.
+**Consequences:** Pruning versions must keep every blob a kept manifest names,
+with a grace window for a publish in flight. A directory missing a file removes
+it, so agents import a site before adding to it in a new sandbox, and import
+still reads and writes every file one at a time through the Worker: adding one
+episode in a fresh sandbox moves the whole back catalogue, which is the next
+limit on a show's size. Revalidation still goes through admission, so it saves
+bandwidth, not reads.
 
 ### 2026-11-15 — Stored files and assets answer byte ranges
 

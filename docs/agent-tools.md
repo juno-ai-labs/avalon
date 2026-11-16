@@ -977,7 +977,7 @@ longest tool deadline `ToolDefinitionSchema` allows (1,050 seconds).
 | --- | --- | --- |
 | `generate_image` | `{ prompt: string, title?: string, size?: "auto" \| "1024x1024" \| "1536x1024" \| "1024x1536" }` | One attached `generated_file` resource plus an ephemeral image part for the current model turn. |
 | `edit_image` | `{ resourceId: UUID, prompt: string, title?: string, size?: same enum, maskResourceId?: UUID }` | A new version of that same attached image resource, preserving its resource ID and history, plus an ephemeral image part. The source must be an attached PNG, JPEG, or WebP image; a mask must be an attached PNG. |
-| `generate_audio` | `{ text: string (non-empty, any length), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
+| `generate_audio` | `{ text: string (non-empty; longer than one request is recorded in pieces), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
 
 Both calls use Azure's `gpt-image-2` deployment. The caller controls only the
 prompt, title, and advertised size: moderation is fixed to `low`, quality to

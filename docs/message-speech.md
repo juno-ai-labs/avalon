@@ -108,6 +108,8 @@ decision.
   Rally API error; a later provider failure terminates the audio stream.
 - Azure's 4,096-character input limit applies per provider request, not per
   Rally message. Rally keeps splitting until it has covered the complete text.
+  The splitter (`splitSpeechText`, in `multimodal-generation/speech-pieces.ts`)
+  is shared with `generate_audio`, so a change to where text is cut changes both.
 - Stop may discard one already-prefetched Azure chunk. Prefetch is intentionally
   limited to one; this is the accepted cost of avoiding silence between chunks.
 - Azure's streaming response does not report usage or a price. Rally does not
@@ -175,18 +177,6 @@ later stops before hearing; prefetching the entire response was rejected because
 its abandoned cost grows with message length.
 
 ## Changelog
-
-### 2026-11-16 — The splitter moved to `speech-pieces.ts`
-
-**What changed:** `splitSpeechText` and `AZURE_SPEECH_INPUT_CHARACTERS` moved,
-unchanged, to `apps/api/src/services/multimodal-generation/speech-pieces.ts`;
-this service re-exports them.
-
-**Why:** `generate_audio` now records long text in pieces too, and two splitters
-would cut the same text in different places.
-
-**Consequences:** A change to how text is cut changes both read-aloud and
-generated recordings.
 
 ### 2026-10-17 — Speak reads a link's name and not its address
 
