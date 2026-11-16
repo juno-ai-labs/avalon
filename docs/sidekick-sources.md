@@ -189,21 +189,23 @@ A request names the conversation it was asked from (`place`), and its card is
 drawn there for everyone who can open that conversation: they see who was
 asked, for what, and where it stands. Only the person asked can act on it.
 An agent's ask takes its place from the loop, never from a tool argument: a
-Canvas's Chat or a Sidekick's shared conversation. A wizard turn that a
-Canvas's Chat or one of its background agents started by messaging the
-wizard (`wizardTurnCanvasId`) asks from that Chat, and so does a Chat's
-background agent itself, whose own conversation the person does not read. A
-wizard's background agent posts the same card into the Sidekick's shared
-conversation (`postWizardCard` with `parentKind: "automation"`): an ask for
-the asker's own account sends no email or Activity row, so a card left in
-the agent's own conversation would reach nobody. For a Chat's ask: the place is the Canvas, and besides its own block in the
-wizard's conversation the tool posts a Sidekick message into the Chat whose
-`automation_activation` carries `sourceRequests: { requestIds }`
-(`postWizardCard`, keyed `sidekick-source-card:<receipt>`). The client draws
-the same card under that post. Test, in
+Canvas's Chat or a Sidekick's shared conversation. A turn that asks from a
+conversation the person does not read also posts the card where they do,
+as a Sidekick message whose `automation_activation` carries
+`sourceRequests: { requestIds }` (`postWizardCard`, keyed
+`sidekick-source-card:<receipt>`):
+
+- a wizard turn a Canvas's Chat or one of its background agents started by
+  messaging the wizard (`wizardTurnCanvasId`), and a Chat's own background
+  agent, post into that Chat, and the place is the Canvas;
+- a wizard's background agent posts into the Sidekick's shared conversation.
+  An ask for the asker's own account sends no email or Activity row, so a
+  card left in the agent's own conversation would reach nobody.
+
+The client draws the same card under that post. Tests, in
 `apps/api/test-workers/conversation-tools.test.ts`: "is drawn in the Chat
-whose message started the wizard's turn, once per receipt" and "is drawn in
-the Chat when one of the Chat's background agents asks" and "is drawn in the
+whose message started the wizard's turn, once per receipt", "is drawn in the
+Chat when one of the Chat's background agents asks" and "is drawn in the
 Sidekick's shared conversation when one of its wizard's background agents
 asks".
 

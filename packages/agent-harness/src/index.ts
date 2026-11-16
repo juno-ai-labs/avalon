@@ -3138,12 +3138,8 @@ export function executeAutomationCreatorDiscoveryTool(
           // to read the relationships this tool lists — which it did not list,
           // so the model was sent to a projection that omitted the one field
           // the refusal was about.
-          // The relationships narrow a rule to one resource; they are not
-          // required. A setup agent read Gmail's `gmail_thread` here as "this
-          // event cannot cover a whole mailbox" and fell back to polling.
           ...(trigger.resourceRelationships?.length
-            ? { resourceRelationships: trigger.resourceRelationships,
-              resourceRelationshipsAreOptional: "A rule or source on this event with no resource covers every such event on the whole connected account." }
+            ? { resourceRelationships: trigger.resourceRelationships }
             : {}),
           ...(trigger.openFilterFields ? { openFilterFields: true } : {}),
         })),
@@ -3782,7 +3778,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "plugin_inspect",
-    description: "Inspect one authorized plugin's trusted system guidance and exact tool schemas before recommending it.",
+    description: "Inspect one authorized plugin's trusted system guidance and exact tool schemas before recommending it. An event's resourceRelationships are optional: a rule with no resource covers every such event on the whole account.",
     capability: "rally.sidekick.plugins.inspect",
     mode: "read",
     idempotency: "safe",

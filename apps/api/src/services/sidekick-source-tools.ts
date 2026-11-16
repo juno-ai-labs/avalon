@@ -72,7 +72,7 @@ export function sidekickSourceRequestCard(event: { pluginId?: string | undefined
 function sourceRefusal(input: WorkstreamWorkflowInput) {
   return toolRefusal(input.automationRun || input.automationDelegation ? "sidekick_source_request_from_run"
     : input.reason === "sidekick_review" || input.backgroundAgentRootReason === "sidekick_review" ? "sidekick_source_request_from_review"
-      : "sidekick_source_request_from_background_agent");
+      : input.backgroundAgent === true ? "sidekick_source_request_from_background_agent" : "sidekick_tools_need_a_person");
 }
 
 function sidekickSourceRefusalTool(input: WorkstreamWorkflowInput, request: HarnessTool): HarnessTool {
@@ -97,25 +97,21 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   turnIsSelfReview: () => Promise<boolean> = async () => false): HarnessTool[] {
   const service = new SidekickSourceService(env, input.workspaceId, userId);
   const name = (local: string) => room ? `sidekick_${local}` : local;
-  // The request's card is drawn in the conversation it was asked from: a
-  // Canvas's Chat or a Sidekick's shared conversation, never a run. A wizard
-  // turn a Canvas's Chat started was asked from that Chat, so its card is
-  // drawn there too (`askedFromCanvasId`).
-  // A Chat's background agent asks from its own conversation, which the
-  // person does not read, so its card is posted in the Chat as the wizard's is.
+  // The card is drawn where the request was asked from (`place`). A turn that
+  // asks from somewhere the person does not read also posts it where they do:
+  // a wizard turn a Canvas started, and a Chat's background agent, into that
+  // Chat; a wizard's background agent into the Sidekick's shared conversation.
+  // An ask for one's own account sends no email or Activity row, so the card
+  // is the only prompt.
   const authority = loopAuthority(input);
-  const askedFromCanvasId = wizardTurnCanvasId(input)
-    ?? (input.backgroundAgent === true && authority?.kind === "canvas_chat" ? authority.canvasId : null);
-  // A wizard's background agent asks from its own conversation too: its card
-  // is posted in the Sidekick's shared conversation, where the wizard's are.
-  // An ask for the asker's own account sends no email or Activity row, so the
-  // card is the only place they find it.
+  const background = input.backgroundAgent === true;
+  const askedFromCanvasId = wizardTurnCanvasId(input) ?? (background && authority?.kind === "canvas_chat" ? authority.canvasId : null);
+  const sidekickId = authority?.kind === "sidekick_wizard" ? authority.sidekickId : null;
+  const canvasId = askedFromCanvasId ?? (authority?.kind === "canvas_chat" ? authority.canvasId : null);
+  const place = canvasId !== null ? { parentKind: "canvas" as const, parentId: canvasId }
+    : sidekickId !== null ? { parentKind: "automation" as const, parentId: sidekickId } : null;
   const postTo = askedFromCanvasId !== null ? { parentKind: "canvas" as const, id: askedFromCanvasId }
-    : input.backgroundAgent === true && authority?.kind === "sidekick_wizard" ? { parentKind: "automation" as const, id: authority.sidekickId }
-    : null;
-  const place = askedFromCanvasId !== null ? { parentKind: "canvas" as const, parentId: askedFromCanvasId }
-    : authority?.kind === "canvas_chat" ? { parentKind: "canvas" as const, parentId: authority.canvasId }
-    : authority?.kind === "sidekick_wizard" ? { parentKind: "automation" as const, parentId: authority.sidekickId } : null;
+    : background && sidekickId !== null ? { parentKind: "automation" as const, id: sidekickId } : null;
   const tools: HarnessTool[] = [{
     definition: {
       name: name("sources_list"),
