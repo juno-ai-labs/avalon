@@ -10,9 +10,9 @@ If you went through [the guided setup](../01-getting-started/03-guided-setup.md)
 
 ## Opening it
 
-Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> (or **Rally → Settings…** in the menu bar) and click **Connections** in the list on the left. You can also type "connectors" or "integrations" into the Settings search box and it will take you there.
+Click your avatar at the bottom of the rail, choose **Settings**, and click **Connections** in the list on the left. In [the desktop app](../08-rally-everywhere/04-the-desktop-app.md) on a Mac, <kbd>⌘</kbd> <kbd>,</kbd> (or **Rally → Settings…** in the menu bar) opens Settings too. You can also type "connectors" or "integrations" into the Settings search box and it will take you there.
 
-You can manage connections in the Mac app or the browser version. The browser version can connect every tool except Canva, which you connect from the Mac app.
+Every tool connects from the web app except Canva, which you connect from [the desktop app](../08-rally-everywhere/04-the-desktop-app.md). In the browser its card is greyed out and says **Download the Mac app to connect this.** (on a phone, **Connect this from the Mac app.**). Once Canva is connected, you can use it from the browser like anything else.
 
 The page is headed **Your connections**. It has two halves. Each connection
 you have also gets a page of its own, listed under **Connections** in the
@@ -62,7 +62,9 @@ Most tools can have one personal connection per person and one Organization conn
 
 ### What happens when you click
 
-For most tools, your web browser opens on that tool's own sign-in page, where you approve Rally's access. Keep Rally open while you do this. When the browser says it worked, come back to Rally and the card says **Connected**, and the new connection appears in the table.
+For most tools, a new browser tab opens on that tool's own sign-in page, where you approve Rally's access. Keep Rally open in its own tab while you do this. When the new tab says it worked, come back to Rally and the card says **Connected**, and the new connection appears in the table. (In the desktop app, your usual web browser opens instead.)
+
+If your browser blocks the new tab, Rally says **Allow pop-ups for Rally in this browser, then try again.** Allow pop-ups for app.rallywith.ai in your browser's settings and click the button again.
 
 A few tools ask for a key or an address instead of a browser sign-in. Their pages walk you through it.
 
@@ -109,9 +111,9 @@ Your personal connection to a tool and the Organization's connection to the same
 
 You do not always have to come to this screen. If you ask for something that needs a tool you have not connected, Rally can drop a card into the conversation with a button such as **Connect Linear**, or **Reconnect** if the connection has broken. The card says whether it wants a **Personal connection** or an **Organization connection**.
 
-Click the button, finish signing in in your browser, and the card changes to **Connected** on its own. Then carry on where you were.
+Click the button, finish signing in in the tab that opens, and the card changes to **Connected** on its own. Then carry on where you were.
 
-The button says **Waiting…** while your browser is open, **Admin required** if the card asks for an Organization connection and you are not an owner or administrator, and **Unavailable** if the tool is not offered in your region. These cards work in the Mac app only.
+The button says **Waiting…** while you finish signing in, **Admin required** if the card asks for an Organization connection and you are not an owner or administrator, and **Unavailable** if the tool is not offered in your region. A card for Canva in the browser says **Download the Mac app to connect this.** instead of offering a button.
 
 A card that once said **Connected** keeps saying it, even if the tool later withdraws access. Settings → Connections is where you see the current state.
 
@@ -123,7 +125,7 @@ These are for reading at a glance. Clicking them does not do anything, and typin
 
 ## How your credentials are kept
 
-When you connect a tool, the key or sign-in that lets Rally in is encrypted and kept on Rally's servers in your Organization's region. The Mac app never receives keys or tokens back, and Rally does not show them to the AI.
+When you connect a tool, the key or sign-in that lets Rally in is encrypted and kept on Rally's servers in your Organization's region. Your browser and the desktop app never receive keys or tokens back, and Rally does not show them to the AI.
 
 Connecting is the permission, as the [chapter opener](index.md#rally-does-not-ask-before-each-action) says. If you want Rally to have less power, connect less: for example, set GitHub to read-only, or limit a custom MCP server to read-only tools, as described in [Keeping connected tools to reading only](14-custom-mcp-server.md#keeping-connected-tools-to-reading-only).
 

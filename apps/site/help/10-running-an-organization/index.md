@@ -4,7 +4,7 @@ description: "For owners and administrators: roles, invitations, Organization se
 ---
 
 Every Organization has an administrator, and few of them applied for the job.
-It usually goes like this: somebody installs Rally first, creates the
+It usually goes like this: somebody signs in to Rally first, creates the
 Organization to try it out, and a week later eleven colleagues are asking them
 how to get in. Congratulations. If that somebody is you, this chapter is yours.
 
@@ -65,5 +65,5 @@ it means their access ends while you are still closing the dialog. The last
 page of this chapter goes through that slowly.
 
 Most of what follows lives in one place: **Settings → Organization**, which you
-met in [The Settings window](../09-settings-and-shortcuts/01-the-settings-window.md).
-Open it with <kbd>⌘</kbd> <kbd>,</kbd> and keep it handy.
+met in [Settings](../09-settings-and-shortcuts/01-the-settings-window.md).
+Open it from your avatar at the bottom of the rail, and keep it handy.

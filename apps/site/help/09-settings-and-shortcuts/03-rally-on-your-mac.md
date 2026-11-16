@@ -1,10 +1,14 @@
 ---
 title: Rally on your Mac
-description: Keep Rally in the menu bar, start it at login, and understand its windows and menus.
+description: For the Mac app only. Keep Rally in the menu bar, start it at login, and understand its windows and menus.
 ---
 
-Rally is a Mac app, and it tries to behave like one. This page covers its Mac
-habits: an icon in the menu bar, starting when you log
+This page is for the [desktop app](../08-rally-everywhere/04-the-desktop-app.md)
+on a Mac. In the web app none of it applies: Rally is a tab, and closing the
+tab closes it. The Linux app has none of these habits either; closing its last
+window quits it.
+
+The Mac app tries to behave like a Mac app. This page covers its Mac habits: an icon in the menu bar, starting when you log
 in, staying open when you close its window, and the menus along the top of the
 screen. The settings for the first two are in **Settings → Application**.
 
@@ -92,15 +96,16 @@ display, and Rally remembers where you left it, including which display.
 
 | Window | How to open it |
 | --- | --- |
-| The main window | It is the one with your Canvases and Sidekicks in it. Settings opens here too. |
+| The main window | It is the one with your Canvases and Sidekicks in it. |
+| Settings | <kbd>⌘</kbd> <kbd>,</kbd>, **Rally → Settings…**, or **Settings** in the account menu. See [Settings](01-the-settings-window.md). |
 | An artifact in its own window | **Open in a new window** in an artifact's header. See [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md). |
 
 Pop-out artifact windows are especially handy on a second monitor: keep a
 document open on one screen while you discuss it on the other. Ones you leave
 open come back after you quit and reopen Rally.
 
-In Settings, <kbd>Esc</kbd> closes it, as long as no dialog is open and you are
-not in the middle of typing something.
+In the Settings window, <kbd>Esc</kbd> closes it, as long as no dialog is open
+and you are not in the middle of typing something.
 
 ## The menus at the top of the screen
 

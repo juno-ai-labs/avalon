@@ -1,38 +1,43 @@
 ---
 title: Light, dark and your own colour
-description: Choose light or dark, pick your personal colour, and give Rally a new icon in the Dock.
+description: Choose light or dark, pick your personal colour, and, in the Mac app, give Rally a new icon in the Dock.
 nav_title: Appearance
 ---
 
-Rally has three settings that change how it looks. Two of them are about this
-Mac: whether the app is light or dark, and which icon sits in your Dock. The
-third, your personal colour, belongs to you and travels with your account.
+Rally has two settings that change how it looks everywhere: whether it is
+light or dark, which belongs to the browser or computer you set it on, and your
+personal colour, which belongs to you and travels with your account. The Mac
+app adds a third, the icon in your Dock.
 
 ## Light or dark
 
-Open **Settings → Application** and find the heading **Appearance** ("Make
-Rally feel at home on this Mac"). The **Appearance** control has three choices:
+Open **Settings → Account** and find the **Appearance** block ("Follow this
+device or keep Rally light or dark"). In the
+[desktop app](../08-rally-everywhere/04-the-desktop-app.md) the same control is
+under **Settings → Application** instead, below the heading **Appearance**
+("Make Rally feel at home on this Mac").
+
+The control has three choices:
 
 | Choice | What it does |
 | --- | --- |
-| **System** | Follows the appearance this Mac is set to. This is the default. |
-| **Light** | Stays light, whatever this Mac is set to. |
-| **Dark** | Stays dark, whatever this Mac is set to. |
+| **System** | Follows the appearance your device is set to. This is the default. |
+| **Light** | Stays light, whatever your device is set to. |
+| **Dark** | Stays dark, whatever your device is set to. |
 
 Hover over a choice to see that description as a tooltip. The line underneath
 confirms what you picked: "Following this device, which is light right now."
 for System, or "Always light." or "Always dark." for the other two.
 
-The change happens at once, in every Rally window you have open, including
-Settings itself.
+The change happens at once, including in Settings itself.
 
-### System follows the Mac all day
+### System follows your device all day
 
 **System** is not a third look. It always comes out as light or dark, whichever
-your Mac is using at that moment. If you have set macOS to switch between light
-and dark automatically through the day (in the Mac's own **System Settings →
-Appearance**), Rally switches with it. Choose **System** once and you never have
-to think about it again, which is the best kind of setting.
+your computer or phone is using at that moment. If you have set it to switch
+between light and dark automatically through the day (on a Mac, in **System
+Settings → Appearance**), Rally switches with it. Choose **System** once and you
+never have to think about it again, which is the best kind of setting.
 
 ### There are no other themes
 
@@ -43,9 +48,8 @@ Settings search knows this too: type "theme" and it takes you to
 old choice has been turned into the matching light or dark setting.
 
 > [!NOTE]
-> Appearance is saved on this Mac only. If you use Rally on a second computer,
-> set it there as well. In a web browser, the same choice is in the
-> **Appearance** block of **Settings → Account**.
+> Appearance is saved in this browser, or in the desktop app on this computer,
+> and nowhere else. If you use Rally somewhere else as well, set it there too.
 
 ## Your personal colour
 
@@ -70,8 +74,8 @@ The effect is deliberately gentle. Lists, selected rows and hover highlights sta
 a neutral grey, so the app does not turn entirely fuchsia on you, however much
 you might want it to.
 
-Your colour is stored on your account, so it follows you to every computer you
-sign in on.
+Your colour is stored on your account, so it follows you everywhere you sign
+in.
 
 > [!NOTE]
 > If you chose a colour a while ago, you may have had teal, green, amber or
@@ -80,8 +84,11 @@ sign in on.
 
 ## The app icon
 
-Rally comes with seven icons for the Dock, Finder, Launchpad and Spotlight. Find
-them under **Settings → Application → App icon**:
+This one is for the [desktop app](../08-rally-everywhere/04-the-desktop-app.md)
+on a Mac. A browser tab has no Dock icon to change.
+
+The Mac app comes with seven icons for the Dock, Finder, Launchpad and
+Spotlight. Find them under **Settings → Application → App icon**:
 
 - **Light**
 - **Dark**
@@ -107,5 +114,5 @@ icons once you have chosen one.
 > If you run Rally on more than one Mac, giving each a different icon is an easy
 > way to tell, in a screen share, which one you are looking at.
 
-The icon picker is a Mac feature. Anywhere else, the section says "Custom app
-icons are available in the macOS app."
+On Linux, the section says "Custom app icons are available in the macOS
+app."

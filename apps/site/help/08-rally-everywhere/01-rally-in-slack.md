@@ -30,8 +30,15 @@ send the direct messages your Sidekicks write to you.
    its **Home** tab.
 2. Click the green **Connect Rally** button.
 3. A pop-up called **Connect Rally** appears. Click **Open Rally**.
-4. The Rally app opens on your Mac and finishes the link. You need to be signed
-   in to the Organization that installed Rally in Slack.
+4. Your browser opens a page headed **Continue in the Rally app**. Click
+   **Open Rally**, and the Rally desktop app opens and finishes the link. You
+   need to be signed in there to the Organization that installed Rally in
+   Slack.
+
+> [!IMPORTANT]
+> For now, this one step needs the [desktop app](04-the-desktop-app.md). The
+> web app cannot finish the link yet. You only do it once per Slack workspace,
+> and everything else on this page works in the browser.
 
 Rally may then carry straight on and ask you to approve your own Slack
 connection as well. That part is optional and is explained on the
@@ -112,7 +119,7 @@ Rally's **Home** tab in Slack is your own small corner of Rally in Slack.
   next run time.
 - Owners and administrators also see a **Workspace administration** card
   showing whether the Slack connection is healthy, with a **Manage** button that
-  opens **Settings → Connections** in the Mac app.
+  opens **Settings → Connections** in Rally.
 
 > [!NOTE]
 > The Home tab may still use the old word: an "automation" there is a
@@ -133,7 +140,7 @@ Rally in your Canvases, see and post in that channel.
 
 Work through this list:
 
-1. Open **Settings → Connections** in the Mac app and find the Slack row.
+1. Open **Settings → Connections** in Rally and find the Slack row.
 2. If its status says **Reconnect required**, ask an owner or administrator to
    click **Refresh** and approve Rally in Slack again.
 3. Open Rally's **Home** tab in Slack and check that your account is linked.
@@ -144,6 +151,6 @@ Work through this list:
 There is a public overview of all this at
 [rallywith.ai/slack](https://rallywith.ai/slack/). Send it to a Slack
 administrator who wants to know what they are agreeing to. Its **Open
-Connections in Rally** button opens the right screen in the Mac app.
+Connections in Rally** button opens the right screen in Rally.
 
 Next, [what Rally can read and do once it is in Slack](02-more-from-slack.md).

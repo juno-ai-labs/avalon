@@ -89,15 +89,21 @@ tests, saved with the Sidekick so every run can use it. See
 own database. The **Data** filter finds those Canvases. See
 [What a Canvas is](../02-canvases/01-what-a-canvas-is.md#the-home-page).
 
-**Deep link.** A link that opens the Rally app on your Mac at a particular
-place: an invitation, the end of signing in, the end of connecting a tool, a
-Canvas or a Sidekick. When Rally refuses one, it tells you why. See
+**Deep link.** A link that opens the Rally desktop app at a particular place:
+an invitation, the end of signing in, the end of connecting a tool, a Canvas
+or a Sidekick. When the app refuses one, it tells you why. See
 [When a link won't open](01-when-a-link-wont-open.md).
 
 **Delegation allowed.** The list of people a Sidekick may act as, using their
 current access, when its triggers start a run or one of them asks it for work.
 You add and remove yourself. See
 [Tools and delegation](../03-sidekicks/06-tools-and-delegation.md#delegation-allowed).
+
+**Desktop app.** Rally as an app you install, for Macs with Apple silicon and
+for Linux (a `.deb` package, tested on Ubuntu 24.04). It shows the same
+Organizations and work as the [web app](#w) and adds a few things a browser
+tab cannot do, such as a built-in browser beside your Canvas. You do not need
+it. See [The desktop app](../08-rally-everywhere/04-the-desktop-app.md).
 
 **Drafting assistant.** The part of a Sidekick that writes and changes its
 name, instructions and triggers while its managers describe what they want.
@@ -134,8 +140,8 @@ background agents. See
 
 **Live site.** The old name for a [Reactive site](#r).
 
-**Lockdown mode.** A setting on the Mac that protects your saved sign-in with
-your Mac's own keychain. See
+**Lockdown mode.** A desktop app setting that protects its saved sign-in with
+your Mac's keychain, or your system's password store on Linux. See
 [Signing in, signing out and Lockdown mode](../11-privacy-and-security/01-signing-in-and-out.md).
 
 ## M
@@ -304,9 +310,10 @@ tool, a webhook, an email, or starting it by hand. See
 
 ## U
 
-**Update channel.** How quickly new versions of the Mac app reach you:
+**Update channel.** How quickly new versions of the desktop app reach you:
 **Stable** (at most one release a day, the default) or **Faster** (every
-release). See [Keeping Rally up to date](../09-settings-and-shortcuts/04-updates.md).
+release). The web app has none: it is always the newest version. See
+[Keeping Rally up to date](../09-settings-and-shortcuts/04-updates.md).
 
 ## V
 
@@ -321,12 +328,24 @@ version each time it changes one, keeps every version and numbers them, so
 carry on with a job. See
 [Memory and coming back later](../04-working-with-rally/05-memory-and-coming-back-later.md).
 
-**Watch.** A switch, still to come in the Mac app, that will tell Rally to
+**Watch.** A switch, still to come, that will tell Rally to
 notice when a resource's original changes. See
 [Resources: things you bring in](../06-things-rally-makes/04-resources.md#bringing-things-in-yourself).
+
+**Web app.** Rally in your web browser, at
+[app.rallywith.ai](https://app.rallywith.ai). It is the main way to use Rally
+and the one this manual describes, on a computer, a tablet or a phone. See
+[Open Rally and sign in](../01-getting-started/01-open-rally-and-sign-in.md).
 
 **Work stream.** An old name for what later became a Thread. See [Canvas](#c).
 
 **Workspace.** The old name for an [Organization](#o). Slack also has
 workspaces of its own, so this manual says "Slack workspace" when it means
 Slack's.
+
+## Y
+
+**Your organizations.** The list the web app shows straight after you sign
+in: every Organization you belong to, with a count beside any that has
+something new for you. See
+[Create or join an Organization](../01-getting-started/02-create-or-join-an-organization.md).

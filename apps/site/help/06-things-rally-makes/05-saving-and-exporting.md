@@ -8,7 +8,9 @@ Sooner or later someone without Rally asks you to "send that over". Here are the
 
 ## Save a reply as an image or a PDF
 
-Under each of Rally's finished replies, next to **Copy** and **Speak**, are two buttons: **Image** and **PDF**. (You met the row in [Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md).) They turn that one reply into a tidy page and save it to your Mac.
+This is an extra in [the desktop app](../08-rally-everywhere/04-the-desktop-app.md). The web app does not have these buttons; there, use **Copy** (below) or your browser's own print-to-PDF.
+
+In the desktop app, under each of Rally's finished replies, next to **Copy** and **Speak**, are two buttons: **Image** and **PDF**. (You met the row in [Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md).) They turn that one reply into a tidy page and save it to your computer.
 
 The page looks like something you would be happy to send: a splash of colour as the backdrop, a rounded white sheet, the reply set as a proper document, and the Rally mark with **Saved from Rally** at the bottom.
 
@@ -22,7 +24,6 @@ Use it to pass an answer to someone who does not use Rally, to drop a reply into
 
 Before you rely on it:
 
-- The buttons are in the Mac app only. The web browser version does not have them.
 - A reply with no text has no buttons.
 - Saving can take a little while for a long reply, up to about a minute before Rally gives up.
 - If saving fails, the button reads **Image failed** or **PDF failed** until you move the pointer away. Try again, or try the other format.
@@ -36,7 +37,7 @@ Copying puts content on your clipboard, so it goes wherever you paste it next.
 - **Copy** under a reply copies its text.
 - Right-click inside a message for **Copy**, which keeps the formatting (headings, bold, lists and links) for pasting into an email or a document, and **Copy as markdown**, which copies the plain Markdown. If you have selected part of the message, **Copy** copies only the selection. Both are described in [Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md).
 - Code blocks have their own **Copy code** button.
-- On a Mac, the same right-click menu has **Share**, which hands the message's text to the Mac's own sharing menu.
+- In the desktop app on a Mac, the same right-click menu has **Share**, which hands the message's text to the Mac's own sharing menu.
 - For a reactive site that keeps data, **Copy as CSV** in the **Stored data** view copies a table for pasting into a spreadsheet (up to its first 200 rows). See [Reactive sites](03-reactive-sites.md#seeing-what-visitors-submitted).
 
 ## Downloading files
@@ -54,11 +55,11 @@ If you look after your team's data, or someone has asked exactly where their inf
 
 | Way out | What leaves | Who can receive it |
 | --- | --- | --- |
-| **Image** and **PDF** under a reply | One reply, as a file on your Mac | Whoever you give the file to |
+| **Image** and **PDF** under a reply (desktop app) | One reply, as a file on your computer | Whoever you give the file to |
 | **Copy**, **Copy as markdown**, **Copy code** | Text you copied | Wherever you paste it |
-| **Share** in a message's right-click menu (Mac) | The message's text | The app or person you share it with |
+| **Share** in a message's right-click menu (desktop app on a Mac) | The message's text | The app or person you share it with |
 | **Copy as CSV** on a reactive site's data | Up to 200 rows of a site's stored data | Wherever you paste it |
-| Download a file | The original file, on your Mac | Whoever you give the file to |
+| Download a file | The original file, on your computer | Whoever you give the file to |
 | **Copy link** in a Canvas's menu | A link only | Only people who can already see that place in Rally |
 | A reactive site's public link | The latest version of the site | Anyone who has the link |
 | Guests (see [Sharing with people outside your Organization](../02-canvases/09-sharing-with-guests.md)) | The conversation you shared | The person you invited |
@@ -68,4 +69,4 @@ Rally itself can also send content out when you ask it to, for example by postin
 > [!NOTE]
 > There is no button to export everything in your account or Organization at once. To ask for a copy of your data, or for it to be corrected or deleted, email [help@rallywith.ai](mailto:help@rallywith.ai). The Rally team will check that the request comes from you, and, for content that belongs to an Organization, that you have the authority to ask on its behalf. [What Rally keeps, and deleting your data](../11-privacy-and-security/03-what-rally-keeps.md) has more.
 
-The next chapter, [Rally outside the app](../08-rally-everywhere/index.md), takes Rally into Slack, your notifications and a web browser.
+The next chapter, [Rally outside the app](../08-rally-everywhere/index.md), takes Rally into Slack and your notifications, and covers the desktop app.
