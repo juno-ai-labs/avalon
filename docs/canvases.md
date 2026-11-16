@@ -419,44 +419,34 @@ Canvas's own work.
 
 ### One artifact
 
-A Canvas holds one artifact, its main artifact. A request that needs a
-reader, a feed and a page is one site with several routes, not three
-publishes. This is a product choice made after a Chat split one request
-between two background agents and each published its own site, and it can be
-lifted later; nothing in storage assumes it. `canvas_artifacts` keeps its
-`(canvas_id, resource_id)` key, and a Canvas converted from a Thread may still
-hold several until one replaces them.
+A Canvas holds one artifact, its main artifact: a request that needs a reader,
+a feed and a page is one site with several routes. `canvas_artifacts` keeps its
+`(canvas_id, resource_id)` key, so a Canvas converted from a Thread may hold
+several until one replaces them, and any listed one republishes.
 
-Two places hold the rule:
+- **`HostedCanvas.noteArtifact`** is the rule. A note for a resource the Canvas
+  lists, or for a Canvas holding none, is recorded. A note for any other
+  resource is refused, `{ noted: false, refused: "canvas_artifact_held" }`,
+  unless it carries `replace`, which deletes the Canvas's other
+  `canvas_artifacts` rows in the same transaction.
+- **The Terminal resource bridge** asks first, before a model's
+  `publish_resource` writes anything. It resolves the resource the publish
+  would update, as the publish does, and refuses with `canvas_artifact_held`
+  (naming the held artifact and the `filePath` that republishes it) when the
+  Canvas lists another and the call did not pass `replaceCanvasArtifact: true`.
+  Recovery of an interrupted publish (`reconcilePublishedResource`) notes with
+  the call's own `replaceCanvasArtifact`. Two publishes that pass the check at
+  once leave the second a resource of the Chat that the Canvas does not list,
+  logged `canvas_artifact_note_failed`.
 
-- **`HostedCanvas.noteArtifact`** is the rule. A note for the resource the
-  Canvas holds, or for a Canvas holding none, is recorded as before. A note
-  for a different resource is refused, `{ noted: false, refused:
-  "canvas_artifact_held" }`, unless it carries `replace`, which deletes every
-  other `canvas_artifacts` row for the Canvas in the same transaction.
-- **The Terminal resource bridge** asks first. Before a model's
-  `publish_resource` writes anything into a Canvas, it reads whether the
-  Canvas holds a resource under another identity and refuses with
-  `canvas_artifact_held`, naming that artifact's title, `resourceId` and the
-  `filePath` that republishes it, unless the call passed
-  `replaceCanvasArtifact: true`. A refusal here leaves no resource behind.
-  Two publishes can pass this check at once; the note then refuses the
-  second, which stays a resource of the Chat (logged
-  `canvas_artifact_note_failed` with that code) but not the Canvas's.
+A person's publish (`POST /canvases/:id/artifacts`) always replaces.
 
-A person's publish (`POST /canvases/:id/artifacts`) always replaces: the
-person is choosing what the Canvas shows. Seeded Canvases and the dev seed
-note one artifact and pass nothing.
-
-A replaced artifact keeps its resource, its versions, its `publication_parent_id`
-(the Canvas) and its `artifact_registry` row, so its URL still serves and the
-Canvas's readers can still open it. It leaves only `canvas_artifacts`, so the
-Canvas's detail, list row and agent context stop naming it, and a later note
-for it is refused like any other second artifact.
-
-The model learns the rule from `CANVAS CONTEXT`'s publishing guidance, the
-attached-Canvas guidance a Sidekick run reads, `publish_resource`'s
-description and its `replaceCanvasArtifact` argument, and the refusal itself.
+A replaced artifact keeps its resource, versions, `publication_parent_id` and
+`artifact_registry` row, so its URL still serves to the Canvas's readers; only
+the Canvas's detail, list row and agent context stop naming it. Its database
+keeps taking rows, so a Sidekick whose saved instructions name the old
+`resourceId` for `write_artifact_data` keeps writing to an artifact the Canvas
+no longer shows until its instructions change.
 
 ### From a Sidekick run
 
@@ -867,10 +857,7 @@ detached artifact window's **Copy link** adds the artifact's segment.
   with a guest must write `canvas_participants`, or add a trigger of its own
   ([`canvas-share-federation.md`](canvas-share-federation.md)).
 - **A Canvas holds one artifact.** `HostedCanvas.noteArtifact` adds a second
-  `canvas_artifacts` row only by replacing the first. Guards:
-  `test-workers/canvas-one-artifact.test.ts` for the note, and the
-  "holds one artifact" cases of `test/terminal-resource-bridge.test.ts` for
-  the refusal before anything is written.
+  `canvas_artifacts` row only by replacing the first.
 - **Every `canvas_*` statement names `canvas_id`, and every hosted-conversation
   statement names the parent id.** Without it a write reaches every Canvas or
   every Sidekick in the Organization.
@@ -1137,10 +1124,13 @@ nothing. A schema change making `canvas_id` unique in `canvas_artifacts`,
 which would need a table rebuild and a decision for every converted Canvas
 that already holds several; the rule is cheap to lift while it lives in code.
 
-**Consequences:** A replaced artifact keeps serving at its URL to the
-Canvas's readers; only the Canvas stops listing it. Two publishes racing past
-the bridge's check leave the second as a Chat resource the Canvas does not
-list, with a logged warning and no refusal to the model.
+**Consequences:** A Sidekick whose saved instructions publish a new file
+each run (a dated digest) is refused from its second run on. Its run guidance
+tells it to add each run's output to the one artifact, keeping earlier runs';
+a run that instead takes the refusal's `replaceCanvasArtifact` route drops
+earlier output from the Canvas, though each replaced file still serves at
+its URL. A race between two publishes is accepted: the second is not listed
+and the model is not told.
 
 ### 2026-11-15 — A person the Canvas admits can join its participant list
 

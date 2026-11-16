@@ -1326,16 +1326,17 @@ export function createTerminalResourceBridge(
     const target = await publicationAddress(context, input);
     if (target.substreamId !== "0") return;
     const identity = await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
-    // A path the Canvas already lists republishes, even beside others a
-    // Canvas converted from a Thread may hold.
+    // The resource this publish updates, found as the publish finds it
+    // (legacy identities included). One the Canvas already lists republishes,
+    // even beside others a Canvas converted from a Thread may hold.
+    const own = (await existingPublication(context, target, input.filePath, identity))?.id ?? null;
     const held = (await workspace.prepare(
       `SELECT resource.id, resource.title, resource.provider_resource_id
          FROM canvas_artifacts artifact JOIN resources resource ON resource.id = artifact.resource_id
-        WHERE artifact.canvas_id = ?1 AND resource.provider_resource_id IS NOT ?2
-          AND NOT EXISTS (SELECT 1 FROM canvas_artifacts listed JOIN resources own ON own.id = listed.resource_id
-                           WHERE listed.canvas_id = ?1 AND own.provider_resource_id = ?2)
+        WHERE artifact.canvas_id = ?1 AND resource.id IS NOT ?2
+          AND NOT EXISTS (SELECT 1 FROM canvas_artifacts listed WHERE listed.canvas_id = ?1 AND listed.resource_id = ?2)
         ORDER BY artifact.added_at, resource.id LIMIT 1`,
-    ).bind(target.parentId, identity).first<{ id: string; title: string; provider_resource_id: string | null }>());
+    ).bind(target.parentId, own).first<{ id: string; title: string; provider_resource_id: string | null }>());
     if (!held) return;
     const prefix = `terminal:${target.parentId}:`;
     const path = held.provider_resource_id?.startsWith(prefix) ? held.provider_resource_id.slice(prefix.length) : null;
