@@ -70,6 +70,10 @@ function organizationObject(env: Env, workspaceId: string) {
  */
 async function rebuild(env: Env, userId: string, organizations: readonly PersonOrganization[], targets: readonly string[]): Promise<void> {
   if (targets.length === 0) return;
+  // Each target's ticket before anything is read, so a build that reads later
+  // always relays after one that read earlier (`relayTicket`).
+  const tickets = await Promise.allSettled(targets.map(async (target) =>
+    (await organizationObject(env, target)).relayTicket({ workspaceId: target, userId, channel: RELAY_CHANNEL })));
   const builtAt = Date.now();
   const enabled = await readSharedCanvasesEnabled(env, userId);
   const origins = enabled ? organizations.filter((organization) => organization.guest) : [];
@@ -94,14 +98,16 @@ async function rebuild(env: Env, userId: string, organizations: readonly PersonO
       },
     })));
   });
-  const relayed = await Promise.allSettled(targets.map(async (target) => {
+  const relayed = await Promise.allSettled(targets.map(async (target, index) => {
+    const ticket = tickets[index]!;
+    if (ticket.status === "rejected") throw ticket.reason;
     const items = [...shared.entries()].filter(([origin]) => origin !== target).flatMap(([, canvases]) => canvases)
       .sort((a, b) => b.canvas.updatedAt.localeCompare(a.canvas.updatedAt)).slice(0, SIDEBAR_LIST_LIMIT);
     const frame = JSON.stringify(WorkspaceSharedCanvasesEventSchema.parse({
       type: "workspace_shared_canvases", occurredAt: new Date(builtAt).toISOString(), enabled, items,
     }));
     await (await organizationObject(env, target)).relayToPerson({
-      workspaceId: target, userId, channel: RELAY_CHANNEL, builtAt, frame, supportSessions: false,
+      workspaceId: target, userId, channel: RELAY_CHANNEL, ticket: ticket.value, frame, supportSessions: false,
     });
   }));
   relayed.forEach((result, index) => {
