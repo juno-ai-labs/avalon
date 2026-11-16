@@ -380,6 +380,13 @@ The plugin's contract: model id `rally_notifications`, wire prefix
 `notifications_`, preloaded, with its guidance in
 `packages/prompts/api/notifications-plugin.ts`. Both tools are `mode: "write"`,
 `record_before_execute`, serial and reenterable, keyed on the call's receipt.
+The system message carries the rules every turn needs; the judgment a run
+needs only when it is about to notify, or is setting up work that will, is the
+`sending-notifications` skill
+(`packages/skills/platform-skills/sending-notifications-skill.ts`), owned by
+`rally:notifications` so it is in the catalog wherever the plugin is: whether
+an outcome is worth a notice, one notice per outcome, how to word the title and
+body, when to turn notices on, and what to save in a Sidekick's instructions.
 
 | Tool | Input | Output |
 | --- | --- | --- |
@@ -831,6 +838,25 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-16 — A skill says when a notice is worth sending
+
+**What changed:** The `sending-notifications` platform skill, owned by
+`rally:notifications` ([above](#canvas-notices)).
+
+**Why:** Notices have no cooldown, by the owner's choice, so the model is the
+only limit on how often a phone buzzes. The system message says send for an
+outcome and not for progress, but not how to judge a run that found several
+things, a failure, a repeat across scheduled runs, or what a Sidekick's saved
+instructions must carry so its later runs hold the same bar.
+
+**Considered and rejected:** Growing the system message: it is paid on every
+turn of every loop, and this is needed only on the turns that notify or set up
+recurring work.
+
+**Consequences:** The skill restates the system message's two core rules
+(outcomes, not progress; turn on only when asked) so it reads whole; change
+both together. It names no tool, so a tool rename does not strand it.
 
 ### 2026-11-15 — Canvas notices: an agent tells a Canvas's people
 
