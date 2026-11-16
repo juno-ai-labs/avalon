@@ -1675,13 +1675,10 @@ owns the tool and the frame.
 
 ### Notices
 
-A run cannot see the wizard's conversation, so it has no bar of its own for
-when to tell a Canvas's people something happened. The guide's Notices section
-says only when to load `sending-notifications`; the skill's Sidekick setup
-section holds the procedure and an example of the Notices step to save, so the
-detail lives in one place and loads only when needed. Turning notices on is the
-wizard's, when a person asked; a run's `notifications_register` refuses
-([`push-notifications.md`](push-notifications.md#canvas-notices)).
+The guide's Notices section says when to load `sending-notifications`; its
+Sidekick setup section is the procedure for the Notices step a run follows. A
+scheduled self-review never adds or widens one. Why is in
+[the changelog](#2026-11-16--the-wizard-saves-when-a-run-sends-a-notice).
 
 ### Attached conversations
 
@@ -2448,7 +2445,10 @@ drift from the skill.
 
 **Consequences:** A Sidekick saved before this has no Notices step; its runs
 fall back on the notifications plugin's system message until a revision adds
-one.
+one. The step is saved only once notices are on for the Sidekick's one Canvas,
+so a refusal (notices off, no Canvas, several) reaches the person at setup
+instead of every run repeating it. A scheduled self-review may not add or
+widen the step: it reaches people's phones, and nobody asked.
 
 ### 2026-11-14 — A Canvas manages every Sidekick attached to it
 

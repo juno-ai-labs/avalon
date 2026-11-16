@@ -72,12 +72,16 @@ no memory of this conversation, so it knows the bar only from what you save.
 1. **Decide the bar with the person here.** From what they asked for, settle
    what counts as a result worth a notice (a new episode, a report, a value
    past a line they named) and what does not.
-2. **Turn notices on here** when a person asked to be told about results (step
-   4). A run cannot turn them on.
+2. **Turn notices on here** when step 4 allows it; a run cannot. Do it before
+   saving the step. When it is refused, for example because the Sidekick is
+   attached to no Canvas or to several, tell the person what the refusal says
+   and save no Notices step: every run would be refused the same way.
 3. **Load \`tracking-seen-or-done-items\`** when runs repeat, so a run can
    tell what is new since the last one, and save its procedure too.
-4. **Save a Notices step** in the instructions, as its own step after the work.
-   It names the result, the title, and when to stay quiet, for example:
+4. **Save a Notices step only once notices are on**, because you just turned
+   them on or turning them on reported nothing changed. Make it its own step
+   after the work. It names the result, the title, and when to stay quiet, for
+   example:
 
    > **Notices.** After publishing, send one notice when this run published at
    > least one new episode. Title: "New episode: <newsletter>, <date>", or "N
@@ -86,8 +90,10 @@ no memory of this conversation, so it knows the bar only from what you save.
    > If publishing failed only because a connection needs signing in again,
    > send one notice saying so; for any other failure, send none.
 
-5. **Save no Notices step when nobody would want one.** A run with no step
-   still has the plugin's own rules; do not add a step just in case.
+5. **Save no Notices step when notices stay off or nobody would want one.**
+   When notices stay off, offer to turn them on in your reply instead. A run
+   with no step still has the plugin's own rules; do not add a step just in
+   case.
 
 ## Anti-patterns
 
