@@ -1858,3 +1858,7 @@ h2 {
 .home-trust > div { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; max-width: 360px; }
 .home-trust p { color: var(--muted); font-size: 12px; line-height: 1.8; }
 .home-trust .subtle-link { font-size: 11px; }
+
+/* The CASA link in the footer's legal row. */
+.footer-casa { color: inherit; text-decoration: none; }
+.footer-casa:hover { color: var(--green); }

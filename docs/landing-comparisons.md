@@ -67,6 +67,13 @@ file, attribute values and JSON included. The plugin runs with `order: 'pre'`, b
 and telemetry plugins. An unknown marker throws. Both read `comparisons`,
 which is sorted by each file's `order`.
 
+The footer's legal row links to the security page with "ADA CASA AL1
+validated". The landing page uses `<!-- rally:site-footer-without-casa -->`
+instead, because it shows the full CASA badge (`<!-- rally:casa-badge -->`,
+drawn by `renderCasaBadge`) right below its footer. The badge, the security
+page and the FAQ each name July 2026; update all three when the yearly CASA
+validation renews.
+
 ### Social cards
 
 Every rival page sets `og:image` and `twitter:image` to
