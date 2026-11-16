@@ -388,9 +388,8 @@ attribution. See [push](push-notifications.md).
 
 ### 2026-11-16 — Marketplace templates get a link
 
-**What changed:** `/app/templates/<slug>` opens the web app, signs the person
-in or up, and starts that template in an Organization they pick, through the
-shell route `/marketplace/:slug`.
+**What changed:** Marketplace templates get a link, `/app/templates/<slug>`
+([Template links](#template-links)).
 
 **Why:** The public marketplace's "Start from this" opened the web app's front
 door, and the person then had to find the template again.
@@ -401,8 +400,7 @@ app's root: sign-in returns to a path only, so a query would be dropped.
 
 **Consequences:** A template's file name is its public address; renaming one
 breaks links already handed out, and two templates may not share a name
-(`loadCanvasTemplates` refuses it). The desktop app has no deep link for a
-template.
+(`loadCanvasTemplates` refuses it).
 
 ### 2026-11-09 — Canvases get a link form, and the Space, Channel, Breakout, Thread and iPhone forms go
 

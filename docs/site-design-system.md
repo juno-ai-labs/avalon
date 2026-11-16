@@ -83,7 +83,7 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/landing.css` | The earlier product, start-fast and comparison system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
-| `apps/site/marketplace/index.html`, `apps/site/src/marketplace-catalog.ts`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The marketplace: the app Marketplace's own templates and categories, rendered at build time through `loadCanvasTemplates` (`apps/desktop/canvas-template-catalog.ts`), a client-side category filter, and links into the web app. Linked from the homepage header. Styles build on `home.css` |
+| `apps/site/marketplace/index.html`, `apps/site/src/marketplace-catalog.ts`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The marketplace: the app Marketplace's own templates and categories, rendered at build time through `loadCanvasTemplates` (`packages/skills/marketplace-skills/catalog.ts`), a client-side category filter, and links into the web app. Linked from the homepage header. Styles build on `home.css` |
 | `apps/site/src/home-illustrations.ts` | Shared artwork geometry and accessible SVG views |
 | `apps/site/src/home-pricing.ts` | Homepage plan markup from the product catalog and weekly allocation function |
 | `apps/site/start-fast/index.html` | The earlier landing design, with copy from `access-copy.ts` and shared sections |
@@ -308,11 +308,10 @@ header links to the page.
 **Why:** The product owner asked that the public page show what the app
 actually offers. A second hand-kept list would drift from the app's.
 
-**Consequences:** Adding, removing or reordering a template in
-`canvas-template-catalog.ts` changes the public page on the next site build.
-Each card's "Start from this" is the template's link on the web app
-(`/app/templates/<slug>`, [`links.md`](links.md#template-links)), which signs
-the person in or up and starts that template.
+**Consequences:** The catalog lives in `packages/skills/marketplace-skills/`,
+which the site's deploy watches, so adding, removing or reordering a template
+redeploys the page. Each card opens the template's link
+([`links.md`](links.md#template-links)).
 
 ### 2026-11-16 — Reactive, multi-human artifacts on the homepage, and a marketplace
 
