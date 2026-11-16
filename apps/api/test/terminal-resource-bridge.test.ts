@@ -1259,6 +1259,17 @@ describe("Terminal resource bridge", () => {
       expect(put).toHaveBeenCalledOnce();
     });
 
+    it("republishes an artifact a converted Canvas lists beside others", async () => {
+      const { database, bridge } = canvasFixture();
+      const reader = await bridge.publishResource(context, { filePath: "reader.md" }, new TextEncoder().encode("# Reader\n"));
+      // A Canvas converted from a Thread lists another artifact first.
+      database.prepare(`INSERT INTO resources (id, workspace_id, resource_type, provider, provider_resource_id, title, metadata_json, created_at, updated_at)
+        VALUES (?, ?, 'generated_file', 'avalon_generated', ?, 'Thread notes', '{}', '2026-08-13', '2026-08-13')`).run(RESOURCE, W, `terminal:${S}:notes.md`);
+      database.prepare("INSERT INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, 0)").run(S, RESOURCE);
+      const revised = await bridge.publishResource(second, { filePath: "reader.md" }, new TextEncoder().encode("# Reader v2\n"));
+      expect(revised.resourceId).toBe(reader.resourceId);
+    });
+
     it("republishes the artifact it holds, and publishes a new path only as a replacement", async () => {
       const { database, bridge, notes } = canvasFixture();
       const reader = await bridge.publishResource(context, { filePath: "reader.md" }, new TextEncoder().encode("# Reader\n"));

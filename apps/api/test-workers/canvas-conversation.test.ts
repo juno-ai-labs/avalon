@@ -1166,6 +1166,19 @@ describe("a Canvas's artifacts", () => {
     expect(url).toContain(route!.hostname_stub);
   });
 
+  it("keeps a replacement's intent when it recovers a publish whose attempt died before the note", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const first = await publish(canvasId, "plan.md", "# Launch plan");
+    const attemptStartedAt = Date.now() - 1_000;
+    const context = toolContext(canvasId);
+    const input = { filePath: "budget.csv", replaceCanvasArtifact: true };
+    const replacement = await canvasBridge(canvasId, false).publishResource(context, input, new TextEncoder().encode("line,amount"));
+    const detail = () => workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" } });
+    expect((await detail()).artifacts.map((artifact) => artifact.resourceId)).toEqual([first.resourceId]);
+    expect((await canvasBridge(canvasId).reconcilePublishedResource({ ...context, attemptStartedAt }, input)).outcome).toBe("landed");
+    expect((await detail()).artifacts.map((artifact) => artifact.resourceId)).toEqual([replacement.resourceId]);
+  });
+
   it("makes the first publish version 1 by Rally, a republish of the path a new version, and another path its artifact only as a replacement", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     const detail = () => workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" } });
