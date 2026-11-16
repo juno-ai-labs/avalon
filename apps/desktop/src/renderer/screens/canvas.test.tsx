@@ -96,8 +96,9 @@ function detail(overrides: Partial<CanvasDetail> = {}): CanvasDetail {
   } as CanvasDetail;
 }
 
-function renderCanvas(entry: string | { pathname: string; state: unknown } = `/canvases/${CANVAS}`): QueryClient {
+function renderCanvas(entry: string | { pathname: string; state: unknown } = `/canvases/${CANVAS}`, seed?: (client: QueryClient) => void): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  seed?.(client);
   render(<ErrorNoticeProvider><QueryClientProvider client={client}>
     <Tooltip.Provider><MemoryRouter initialEntries={[entry]}>
       <Routes>
@@ -255,6 +256,32 @@ describe('CanvasScreen', () => {
     fireEvent.click(within(group).getAllByRole('menuitem')[1]!);
     await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b1'));
     expect(lastSurface().expanded).toBe(false);
+  });
+
+  it('reads a stale detail again on opening the menu, so an artifact made since reaches the Artifacts section', async () => {
+    const client = renderCanvas();
+    await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(1));
+    getCanvas.mockResolvedValue(detail({ artifacts: [
+      { resourceId: '00000000-0000-7000-8000-0000000000b3', title: 'Launch memo', mimeType: 'text/markdown', kind: 'file', version: 1, updatedAt: '2026-11-07T09:40:00.000Z' },
+      ...detail().artifacts,
+    ] }));
+    // Past its staleTime, with nothing else asking for it again.
+    act(() => { client.getQueryCache().find({ queryKey: ['canvas', CANVAS] })?.invalidate(); });
+    await openMenu('Q4 revenue review');
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(2));
+    expect(await within(screen.getByRole('group', { name: 'Artifacts' })).findByText('Launch memo')).toBeInTheDocument();
+  });
+
+  it('reads no detail on opening the menu of a Canvas still being created', async () => {
+    renderCanvas(`/canvases/${CANVAS}`, (client) => {
+      client.setQueryData(['canvas-creations', undefined, undefined, undefined], {
+        [CANVAS]: { status: 'creating', error: null, retry: () => undefined, complete: () => undefined, createdAt: '2026-11-07T09:00:00.000Z', prompt: '' },
+      });
+    });
+    await openMenu('New Canvas');
+    await screen.findByRole('menuitem', { name: 'Change appearance' });
+    expect(getCanvas).not.toHaveBeenCalled();
   });
 
   it('draws no Artifacts section for a Canvas with none', async () => {
