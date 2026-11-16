@@ -2429,8 +2429,8 @@ survive as described above.
 
 **What changed:** The wizard's guide gained a Notices section that says when
 to load `sending-notifications`, and the skill gained a Sidekick setup section:
-agree the bar with the person, turn notices on, and save a Notices step, with an
-example.
+decide the bar from the request without asking the person, turn notices on, and
+save a Notices step, with an example.
 
 **Why:** Canvas notices have no cooldown, and a run starts with no memory of
 the conversation that set it up. The `sending-notifications` skill gave a run
@@ -2446,8 +2446,8 @@ drift from the skill.
 **Consequences:** A Sidekick saved before this has no Notices step; its runs
 fall back on the notifications plugin's system message until a revision adds
 one. The step is saved only once notices are on for the Sidekick's one Canvas,
-so a refusal (notices off, no Canvas, several) reaches the person at setup
-instead of every run repeating it. A scheduled self-review may not add or
+so a refusal (notices off, no Canvas, several) is named once in the wizard's
+summary instead of every run repeating it. A scheduled self-review may not add or
 widen the step: it reaches people's phones, and nobody asked.
 
 PR: [#1624](https://github.com/juno-ai-labs/avalon/pull/1624).
