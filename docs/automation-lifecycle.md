@@ -1677,10 +1677,10 @@ owns the tool and the frame.
 
 A run cannot see the wizard's conversation, so it has no bar of its own for
 when to tell a Canvas's people something happened. The guide's Notices section
-has the wizard load `sending-notifications` and save a Notices step in the
-instructions: what counts as a result, what the title says, one notice per run
-for everything new, and none for nothing new or progress. Turning notices on is
-the wizard's, when a person asked; a run's `notifications_register` refuses
+says only when to load `sending-notifications`; the skill's Sidekick setup
+section holds the procedure and an example of the Notices step to save, so the
+detail lives in one place and loads only when needed. Turning notices on is the
+wizard's, when a person asked; a run's `notifications_register` refuses
 ([`push-notifications.md`](push-notifications.md#canvas-notices)).
 
 ### Attached conversations
@@ -2430,9 +2430,10 @@ survive as described above.
 
 ### 2026-11-16 — The wizard saves when a run sends a notice
 
-**What changed:** The wizard's guide gained a Notices section: for a Sidekick
-whose results people want while away, load `sending-notifications` and save a
-Notices step in the instructions.
+**What changed:** The wizard's guide gained a Notices section that says when
+to load `sending-notifications`, and the skill gained a Sidekick setup section:
+agree the bar with the person, turn notices on, and save a Notices step, with an
+example.
 
 **Why:** Canvas notices have no cooldown, and a run starts with no memory of
 the conversation that set it up. The `sending-notifications` skill gave a run
@@ -2441,7 +2442,9 @@ decide the bar alone. Saving the bar once at setup makes every run apply the
 same one.
 
 **Considered and rejected:** Relying on the run to load the skill: nothing
-ties its choice of what counts as a result to what the person asked for.
+ties its choice of what counts as a result to what the person asked for. The
+procedure in the guide itself: every wizard turn would pay for it, and it would
+drift from the skill.
 
 **Consequences:** A Sidekick saved before this has no Notices step; its runs
 fall back on the notifications plugin's system message until a revision adds
