@@ -5,6 +5,23 @@ html[data-mobile-host],html[data-mobile-host] body,html[data-mobile-host] #root 
 .mobile-page[hidden]{display:none}
 .mobile-dashboard{padding:calc(var(--mobile-top-inset) + 25px) 24px 36px;max-width:900px;margin:auto}
 .mobile-dashboard h1{font-size: var(--av-sys-type-large-title);font-weight:600;letter-spacing:-1.4px;margin:0 0 23px;overflow-wrap:anywhere}
+/* The title keeps its line at phone width; Marketplace sits under it. */
+.mobile-dashboard-heading h1{margin-bottom:12px}
+.mobile-secondary{display:inline-flex;align-items:center;gap:7px;border:0;border-radius:20px;min-height:40px;padding:8px 15px;margin-bottom:22px;background:var(--mobile-surface);color:var(--mobile-ink);font-size: var(--av-sys-type-footnote)}
+/* One row that scrolls sideways at phone width, so the cards keep their place below it. */
+.mobile-filters{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin:-12px -24px 24px;padding:0 24px}
+.mobile-filters button{flex-shrink:0;border:0;border-radius:18px;min-height:36px;padding:8px 14px;background:var(--mobile-surface);color:var(--mobile-muted);font-size: var(--av-sys-type-footnote)}
+.mobile-filters button[aria-pressed=true]{background:var(--mobile-ink);color:var(--mobile-bg)}
+.mobile-marketplace{max-width:900px;margin:auto;padding:calc(var(--mobile-top-inset) + 25px) 24px 36px}
+.mobile-marketplace h1{font-size: var(--av-sys-type-large-title);font-weight:600;letter-spacing:-1.4px;margin:0 0 10px}
+.mobile-marketplace>p{font-size: var(--av-sys-type-subheadline);line-height:1.6;color:var(--mobile-muted);margin:0 0 24px}
+/* Desktop's catalog (`CanvasMarketplace`), with its categories in the dashboard's sideways filter row. */
+.mobile-marketplace .canvas-marketplace{margin:0}
+.mobile-marketplace .canvas-template-categories{flex-wrap:nowrap;gap:8px;overflow-x:auto;scrollbar-width:none;margin:0 -24px 24px;padding:0 24px}
+.mobile-marketplace .canvas-template-categories button{flex-shrink:0;border-radius:18px;min-height:36px;padding:8px 14px;background:var(--mobile-surface);color:var(--mobile-muted);font-size: var(--av-sys-type-footnote)}
+.mobile-marketplace .canvas-template-categories button[aria-pressed=true]{background:var(--mobile-ink);color:var(--mobile-bg)}
+.mobile-marketplace .dashboard-grid{gap:13px}
+.mobile-marketplace .notice{margin-bottom:16px}
 .mobile-search{display:flex;align-items:center;gap:10px;background:var(--mobile-surface);border-radius:15px;padding:13px 15px;color:var(--mobile-muted);margin-bottom:28px}
 .mobile-search input{background:transparent;border:0;outline:none;width:100%;font-size: var(--av-sys-type-subheadline);color:var(--mobile-ink)}
 .mobile-section-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px;gap:12px}

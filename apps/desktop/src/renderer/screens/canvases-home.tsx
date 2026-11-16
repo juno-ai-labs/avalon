@@ -1,4 +1,5 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
+import { CANVAS_FILTERS, ELSEWHERE_CANVAS_FACTS, canvasFilterFacts, isReactiveCanvas, matchesCanvasFilter, type CanvasFilter } from '@rally/contracts/canvas-filters';
 import { IconBolt, IconDatabase, IconHexagon } from '@tabler/icons-react';
 import { SidekickStack } from '@rally/ui/components/sidekick-stack';
 import { ChevronLeft, Plus, Sparkles, Store } from 'lucide-react';
@@ -7,44 +8,17 @@ import { Link } from 'react-router-dom';
 
 import { canvasMark } from '../components/canvas-mark';
 import { OrganizationCardBadge, sharedFromLabel, useOpenOtherOrganizationCanvas } from '../components/other-organization-canvas';
-import { CanvasTemplateCard } from '../components/canvas-template-picker';
+import { CanvasMarketplace } from '../components/canvas-template-picker';
 import { CanvasSharingStatus } from '../components/canvas-sharing-status';
 import { AvatarStack, Button, EmptyState, TitleSkeleton } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
-import { CANVAS_TEMPLATE_CATEGORIES } from '../lib/canvas-template-categories';
-import { CANVAS_TEMPLATES } from '../lib/canvas-templates';
 import { canvasNaming, canvasRoute, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useDocumentTitle } from '../lib/document-title';
 import { formatSidebarActivityTime } from '../lib/format';
 import { useOtherOrganizationCanvases, type OtherOrganizationCanvas } from '../lib/shared-canvases';
-
-type CanvasFilter = 'all' | 'reactive' | 'data' | 'mine' | 'shared';
-
-const FILTERS: ReadonlyArray<readonly [CanvasFilter, string]> = [
-  ['all', 'All'],
-  ['reactive', 'Reactive'],
-  ['data', 'Data backed'],
-  ['mine', 'Made by me'],
-  ['shared', 'Shared with me'],
-];
-
-function isReactive(canvas: CanvasSidebarRow): boolean {
-  return canvas.sidekicks?.some((sidekick) => sidekick.status === 'active'
-    && sidekick.triggerKinds?.some((kind) => kind === 'schedule' || kind === 'external_event')) ?? false;
-}
-
-function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserId: string | undefined): boolean {
-  switch (filter) {
-    case 'all': return true;
-    case 'reactive': return isReactive(row);
-    case 'data': return row.hasStoredData === true;
-    case 'mine': return row.createdByUserId === currentUserId;
-    case 'shared': return row.sharedWithMe;
-  }
-}
 
 /** A card: one of this Organization's Canvases, or one shared from another. */
 type HomeCard = { kind: 'own'; row: CanvasSidebarRow } | { kind: 'shared'; item: OtherOrganizationCanvas };
@@ -86,9 +60,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     : [...rows.map((row): HomeCard => ({ kind: 'own', row })), ...elsewhere.map((item): HomeCard => ({ kind: 'shared', item }))]
       .sort((a, b) => cardDate(b).localeCompare(cardDate(a)));
   const hasCanvases = cards.length > 0;
-  // A Canvas from elsewhere was shared with this person, and its Reactive and
-  // Data facts stay in its Organization, so only All and Shared with me keep it.
-  const shown = cards.filter((card) => (card.kind === 'own' ? matchesFilter(card.row, filter, currentUserId) : filter === 'all' || filter === 'shared')
+  const shown = cards.filter((card) => matchesCanvasFilter(card.kind === 'own' ? canvasFilterFacts(card.row, currentUserId) : ELSEWHERE_CANVAS_FACTS, filter)
     && (needle === '' || cardTitle(card).toLocaleLowerCase().includes(needle)));
   const sharedCard = ({ canvas, organization }: OtherOrganizationCanvas): React.JSX.Element => {
     const key = `${organization.region}:${organization.id}:${canvas.id}`;
@@ -112,7 +84,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     });
     // A server older than attaching sends none.
     const attachedSidekicks = canvas.sidekicks ?? [];
-    const reactive = isReactive(canvas);
+    const reactive = isReactiveCanvas(canvas);
     const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.appearance);
     return <li className="dashboard-card" key={canvas.id}>
       <div aria-hidden="true" className="dashboard-card-preview" style={{ background: tint }}>
@@ -159,7 +131,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       <SidebarSearch aria-label="Search Canvases" mode="input" onChange={(event) => setSearch(event.target.value)} placeholder="Search Canvases" value={search} />
     </div>}
     {hasCanvases && !showMarketplace && <div aria-label="Canvas filter" className="sidekick-filters canvas-dashboard-filters" role="group">
-      {FILTERS.map(([value, label]) => <button aria-pressed={filter === value} key={value} onClick={() => setFilter(value)} type="button">{label}</button>)}
+      {CANVAS_FILTERS.map(([value, label]) => <button aria-pressed={filter === value} key={value} onClick={() => setFilter(value)} type="button">{label}</button>)}
     </div>}
     {showMarketplace ? <CanvasMarketplace onStart={create} />
       : rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
@@ -171,21 +143,6 @@ export function CanvasesHomeScreen(): React.JSX.Element {
             : <ul className="dashboard-grid">{shown.map((card) => card.kind === 'own' ? row(card.row) : sharedCard(card.item))}</ul>}
         </section>}
   </main>;
-}
-
-function CanvasMarketplace({ onStart }: { onStart: (prompt: string) => void }): React.JSX.Element {
-  const [category, setCategory] = useState<(typeof CANVAS_TEMPLATE_CATEGORIES)[number]['tag']>(CANVAS_TEMPLATE_CATEGORIES[0].tag);
-  const templates = CANVAS_TEMPLATES.filter((template) => template.tags.includes(category));
-  return <section aria-label="Canvas templates" className="canvas-marketplace">
-    <div aria-label="Template category" className="sidekick-filters canvas-template-categories" role="group">
-      {CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => <button aria-pressed={category === tag} key={tag} onClick={() => setCategory(tag)} type="button">{label}</button>)}
-    </div>
-    <ul className="dashboard-grid">
-      {templates.map((template) => <li key={template.name}>
-        <CanvasTemplateCard onStart={onStart} template={template} />
-      </li>)}
-    </ul>
-  </section>;
 }
 
 /**
