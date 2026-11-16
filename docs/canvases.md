@@ -594,6 +594,20 @@ viewer drops off their Pinned group; and a guest may pin a Canvas shared with
 them but not reorder the group, since the order route is on the member-only
 mount, which has to be decided before drag-to-reorder lands in the client.
 
+### Shared from another Organization
+
+A Canvas explicitly shared with a guest of this Organization (on its
+participant list) also appears in the list of every other Organization that
+guest opens, with this Organization's initial on its top right, unless they
+turned it off (Settings › Account › Preferences). Members of this Organization
+never have its Canvases shown elsewhere, nor does Organization-wide visibility
+or a writer Sidekick's audience federate anything. How it is built and pushed
+is [`canvas-share-federation.md`](canvas-share-federation.md)'s; here it costs
+triggers on `canvas_participants`, `canvas_directory` and
+`workspace_member_status` that queue a refresh, and one RPC that answers for a
+guest of its own. In the client a shared row has no menu, drag or pin and opens
+in its own Organization.
+
 ### Presence
 
 A Canvas id is a conversation-parent id, so `set_presence` already carries it
@@ -629,7 +643,10 @@ card grid with Sidekicks; the shared layout is described in
   `useSocketOwnedList`; there is no list route. The home page keeps activity
   order and filters client-side from the row's own fields: Reactive uses the same
   active automatic-trigger rule as the **Reactive** badge, Data is `hasStoredData`,
-  Made by me `createdByUserId`, and Shared with me `sharedWithMe`. The second
+  Made by me `createdByUserId`, and Shared with me `sharedWithMe`. A guest's
+  Canvases from their other Organizations (`workspace_shared_canvases`) are
+  merged in by date and show only under All and Shared with me, since nothing
+  about their Reactive or Data state or their creator crosses. The second
   line of sidebar rows and home cards shows sharing with the Share panel's
   icons: a lock for **Only you** / **Only the creator**, people for **Specific
   people**, and a building for **Everyone in the Organization**. A writer
@@ -799,6 +816,11 @@ detached artifact window's **Copy link** adds the artifact's segment.
   the share's receipt.** Removing someone from the list removes their access
   even though the grant row that brought them stays. Nothing reads
   `parent_grants` to admit a Canvas reader.
+- **A guest's share elsewhere is seen through `canvas_participants`.** Their
+  other Organizations learn of a share, an unshare or a rename only from the
+  triggers on this table and `canvas_directory`. A new way to share a Canvas
+  with a guest must write `canvas_participants`, or add a trigger of its own
+  ([`canvas-share-federation.md`](canvas-share-federation.md)).
 - **Every `canvas_*` statement names `canvas_id`, and every hosted-conversation
   statement names the parent id.** Without it a write reaches every Canvas or
   every Sidekick in the Organization.

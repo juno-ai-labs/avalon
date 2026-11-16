@@ -1,6 +1,6 @@
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
-import { mobileContentReady, type MobileSnapshot, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact, webBuildFromHtml } from './protocol';
+import { MobileCommandSchema, mobileContentReady, type MobileSnapshot, artifactAuthHandoff, artifactLoadFailure, artifactPreparationNavigation, commandScript, isAppUrl, MOBILE_CHANNEL, mobileUrl, movePin, parseMobileEvent, trustedArtifact, webBuildFromHtml } from './protocol';
 
 const app = 'https://app.rallywith.ai';
 const token = 'main-frame-capability';
@@ -131,4 +131,27 @@ it('names a web build by the entry script its HTML loads', () => {
   expect(webBuildFromHtml(html)).toBe('/assets/index-C7nZHIE4.js');
   expect(webBuildFromHtml('<html><script src="/assets/legacy.js"></script></html>')).toBeNull();
   expect(webBuildFromHtml('Rally is temporarily unavailable')).toBeNull();
+});
+
+describe('Canvases shared from other Organizations', () => {
+  const base = {
+    userId: 'u1', userName: 'Ada', workspaceId: 'w1', workspaceName: 'Labs', workspacePath: '/app/workspaces/global/w1',
+    canvases: [], pins: [], hasMore: false, loading: false, pinBusy: false, pinError: null, directoryError: false,
+    canvasId: null, tabId: null, view: 'home', title: 'Your canvases', artifactId: null, artifactPicker: false,
+  };
+  const event = (snapshot: object) => parseMobileEvent(JSON.stringify({ channel: MOBILE_CHANNEL, token, event: { type: 'snapshot', snapshot } }), app, app, token);
+  it('reads a snapshot from a host that sends none as having none', () => {
+    const parsed = event(base);
+    expect(parsed?.type === 'snapshot' && parsed.snapshot.sharedElsewhere).toEqual([]);
+  });
+  it('keeps the Organization each one comes from', () => {
+    const shared = { id: 'c9', title: 'Partner roadmap', updatedAt: '2026-11-15T10:00:00.000Z', organization: { id: 'w2', name: 'Acme', region: 'enterprise' } };
+    const parsed = event({ ...base, sharedElsewhere: [shared] });
+    expect(parsed?.type === 'snapshot' && parsed.snapshot.sharedElsewhere).toEqual([shared]);
+    expect(event({ ...base, sharedElsewhere: [{ ...shared, organization: undefined }] })).toBeNull();
+  });
+  it('accepts an open in another Organization only when it names the Organization and the Canvas', () => {
+    expect(MobileCommandSchema.safeParse({ type: 'open-elsewhere', region: 'enterprise', workspaceId: 'w2', canvasId: 'c9' }).success).toBe(true);
+    expect(MobileCommandSchema.safeParse({ type: 'open-elsewhere', region: 'enterprise', canvasId: 'c9' }).success).toBe(false);
+  });
 });

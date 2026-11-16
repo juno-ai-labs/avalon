@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { canvasMark } from '../components/canvas-mark';
+import { OrganizationCardBadge, sharedFromLabel, useOpenOtherOrganizationCanvas } from '../components/other-organization-canvas';
 import { CanvasTemplateCard } from '../components/canvas-template-picker';
 import { CanvasSharingStatus } from '../components/canvas-sharing-status';
 import { AvatarStack, Button, EmptyState, TitleSkeleton } from '../components/primitives';
@@ -18,6 +19,7 @@ import { canvasNaming, canvasRoute, othersPresent, useCanvasList, useCanvasNameS
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useDocumentTitle } from '../lib/document-title';
 import { formatSidebarActivityTime } from '../lib/format';
+import { useOtherOrganizationCanvases, type OtherOrganizationCanvas } from '../lib/shared-canvases';
 
 type CanvasFilter = 'all' | 'reactive' | 'data' | 'mine' | 'shared';
 
@@ -44,9 +46,22 @@ function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserI
   }
 }
 
+/** A card: one of this Organization's Canvases, or one shared from another. */
+type HomeCard = { kind: 'own'; row: CanvasSidebarRow } | { kind: 'shared'; item: OtherOrganizationCanvas };
+
+function cardDate(card: HomeCard): string {
+  return card.kind === 'own' ? card.row.updatedAt : card.item.canvas.updatedAt;
+}
+
+function cardTitle(card: HomeCard): string {
+  return card.kind === 'own' ? card.row.title : card.item.canvas.title;
+}
+
 /**
  * `/canvases`: every Canvas this person can open, the list the workspace
- * socket keeps (`workspace_canvas_list`), laid out as the Sidekicks library is.
+ * socket keeps (`workspace_canvas_list`), laid out as the Sidekicks library is,
+ * with the Canvases shared with them in their other Organizations among them
+ * (`workspace_shared_canvases`, `docs/canvas-share-federation.md`).
  * Canvases stay in activity order; Live and Data match their card badges.
  * Members can start a Canvas from the Marketplace even before their list arrives.
  */
@@ -55,6 +70,8 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const { guest } = useShellCapabilities();
   const currentUserId = session?.user.id;
   const rows = useCanvasList();
+  const elsewhere = useOtherOrganizationCanvases();
+  const openElsewhere = useOpenOtherOrganizationCanvas();
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const showMarketplace = !guest && marketplaceOpen;
   useDocumentTitle(showMarketplace ? 'Marketplace' : 'Canvases');
@@ -64,9 +81,30 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const [draftPrompt, setDraftPrompt] = useState('');
   const create = useCreateCanvas();
   const needle = search.trim().toLocaleLowerCase();
-  const hasCanvases = !!rows?.length;
-  const shown = (rows ?? []).filter((row) => matchesFilter(row, filter, currentUserId)
-    && (needle === '' || row.title.toLocaleLowerCase().includes(needle)));
+  // This Organization's list is already in activity order; another's Canvas goes in by date.
+  const cards: HomeCard[] = rows === undefined ? [] : elsewhere.length === 0 ? rows.map((row) => ({ kind: 'own', row }))
+    : [...rows.map((row): HomeCard => ({ kind: 'own', row })), ...elsewhere.map((item): HomeCard => ({ kind: 'shared', item }))]
+      .sort((a, b) => cardDate(b).localeCompare(cardDate(a)));
+  const hasCanvases = cards.length > 0;
+  // A Canvas from elsewhere was shared with this person, and its Reactive and
+  // Data facts stay in its Organization, so only All and Shared with me keep it.
+  const shown = cards.filter((card) => (card.kind === 'own' ? matchesFilter(card.row, filter, currentUserId) : filter === 'all' || filter === 'shared')
+    && (needle === '' || cardTitle(card).toLocaleLowerCase().includes(needle)));
+  const sharedCard = ({ canvas, organization }: OtherOrganizationCanvas): React.JSX.Element => {
+    const key = `${organization.region}:${organization.id}:${canvas.id}`;
+    const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.appearance);
+    return <li className="dashboard-card" key={key}>
+      <div aria-hidden="true" className="dashboard-card-preview" style={{ background: tint }}>
+        <Icon aria-hidden="true" color={ink} size={44} />
+        <span className="canvas-card-indicators"><OrganizationCardBadge id={`canvas-organization-${key}`} organization={organization} /></span>
+      </div>
+      <div className="canvas-card-body">
+        {/* It opens in its own Organization, so it is a button that switches first. */}
+        <h3><button aria-describedby={`canvas-organization-${key}`} className="dashboard-card-link" onClick={() => openElsewhere({ canvas, organization })} type="button">{canvas.title || 'Untitled canvas'}</button></h3>
+        <small><span className="canvas-sharing-status">{sharedFromLabel(organization)}</span><RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
+      </div>
+    </li>;
+  };
   const row = (canvas: CanvasSidebarRow): React.JSX.Element => {
     const present = othersPresent(canvas, currentUserId).flatMap((userId) => {
       const member = membersById.get(userId);
@@ -125,12 +163,12 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     </div>}
     {showMarketplace ? <CanvasMarketplace onStart={create} />
       : rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
-      : rows.length === 0 ? <CanvasesEmptyState guest={guest} onPromptChange={setDraftPrompt} onStart={create} prompt={draftPrompt} />
+      : cards.length === 0 ? <CanvasesEmptyState guest={guest} onPromptChange={setDraftPrompt} onStart={create} prompt={draftPrompt} />
         : <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
           <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${shown.length} ${shown.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
           {shown.length === 0
             ? <EmptyState description="Try a different search or filter." title="No matching Canvases" />
-            : <ul className="dashboard-grid">{shown.map(row)}</ul>}
+            : <ul className="dashboard-grid">{shown.map((card) => card.kind === 'own' ? row(card.row) : sharedCard(card.item))}</ul>}
         </section>}
   </main>;
 }

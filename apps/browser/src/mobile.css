@@ -18,6 +18,9 @@ html[data-mobile-host],html[data-mobile-host] body,html[data-mobile-host] #root 
 .mobile-card:first-child{grid-column:1/-1;min-height:220px;background:linear-gradient(145deg,var(--card-tint),color-mix(in oklab,var(--card-hue) 20%,var(--card-tint)))}
 .mobile-card:first-child p{opacity:1}
 .mobile-card-art{height:76px;display:flex;align-items:center;justify-content:center}
+/* A Canvas from another Organization carries its initial on the upper right (`.organization-badge-initial`, app.css). */
+.mobile-card{position:relative}
+.mobile-card-organization{position:absolute;top:12px;right:12px;width:22px;height:22px;border-radius:6px;background:var(--av-sys-color-surface-raised);font-size:11.5px; /* type-scale: an initial drawn inside a fixed 22px badge tile */}
 .mobile-card:first-child .mobile-card-art{height:107px}
 .mobile-card h3{font-size: var(--av-sys-type-callout);font-weight:550;line-height:1.35;overflow-wrap:anywhere;margin:12px 0 8px}
 .mobile-card:first-child h3{font: var(--av-sys-type-title-1)/1.15 Georgia,serif;letter-spacing:-.7px}

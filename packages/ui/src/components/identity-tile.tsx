@@ -46,6 +46,12 @@ interface BadgeBase {
   shape: TileShape;
   /** What the badge stands for, shown as a tooltip on hover. */
   label?: string | undefined;
+  /**
+   * The tile corner it sits on: the lower right unless it says otherwise. The
+   * upper right holds what the object comes from rather than who acted on it,
+   * such as the Organization a Canvas shared from elsewhere belongs to.
+   */
+  corner?: 'top-right' | undefined;
 }
 
 /** A symbol the tile draws, in an ink over a fill. */
@@ -82,11 +88,12 @@ export type NestedTileBadge = SymbolBadge | ContentBadge;
 export type TileBadge = NestedTileBadge & { badge?: NestedTileBadge | undefined };
 
 /** A badge in its ring, and the badge nested on its corner, if any. */
-function Badge({ badge, bottom, nested = false, right }: {
+function Badge({ badge, bottom, nested = false, right, top }: {
   badge: TileBadge | NestedTileBadge;
   bottom?: number | undefined;
   nested?: boolean;
   right: number;
+  top?: number | undefined;
 }): React.JSX.Element {
   // The tip sits on the fill, not the ring, so hovering a nested badge, which
   // is inside its parent's ring, opens only the nested badge's tip.
@@ -97,7 +104,7 @@ function Badge({ badge, bottom, nested = false, right }: {
     : <span className={clsx('identity-tile-badge-fill', `is-${badge.shape}`)}>{badge.content}</span>;
   return <span
     className={clsx('identity-tile-badge', `is-${badge.shape}`, nested && 'is-nested')}
-    style={{ bottom, right }}
+    style={{ bottom, right, top }}
   >
     {badge.label ? <Tip disableHoverableContent label={badge.label}>{fill}</Tip> : fill}
     {!nested && 'badge' in badge && badge.badge && <Badge
@@ -136,10 +143,16 @@ export function IdentityTile({ badges, className, icon: Icon, ink, shape, size =
     <span className={clsx('identity-tile-shape', `is-${shape}`)} style={{ background: tint, color: ink }}>
       <Icon size={Math.round(size * 0.47)} strokeWidth={1.8} />
     </span>
-    {badges?.slice(0, BADGE_ROOM).map((badge, index) => {
-      const inset = badge.badge ? NESTED_OVERHANG : 0;
-      return <Badge badge={badge} bottom={-5 + inset} key={badge.key} right={-6 + index * 14 + inset} />;
-    })}
+    {(['bottom-right', 'top-right'] as const).flatMap((corner) => (badges ?? [])
+      .filter((badge) => (badge.corner ?? 'bottom-right') === corner)
+      .slice(0, BADGE_ROOM)
+      .map((badge, index) => {
+        const inset = badge.badge ? NESTED_OVERHANG : 0;
+        const right = -6 + index * 14 + inset;
+        return corner === 'top-right'
+          ? <Badge badge={badge} key={badge.key} right={right} top={-5 + inset} />
+          : <Badge badge={badge} bottom={-5 + inset} key={badge.key} right={right} />;
+      }))}
   </span>;
 }
 

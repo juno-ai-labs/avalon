@@ -1,4 +1,5 @@
 import { readDevicePreferences, setDeviceStartupPage } from '../lib/device-preferences';
+import { useSharedCanvasesSetting } from '../lib/shared-canvases';
 import { BrowserProductAnalyticsSetting } from '../components/browser-product-analytics-setting';
 import { startConnectorAuthorization } from '../lib/start-connector-authorization';
 import { useDocumentTitle } from '../lib/document-title';
@@ -263,6 +264,27 @@ function MemoryReviewSection({ emptyCopy, forget, heading, queryKey, read }: {
     <div className="settings-list-card">
       <MemoryFactList {...memory} emptyCopy={emptyCopy} label={heading} />
     </div>
+  </>;
+}
+
+/**
+ * Settings → Account → Preferences: whether Canvases shared with this person
+ * as a guest in their other Organizations join every Organization's list.
+ * Stored on the server for the person, so it follows them to every device.
+ */
+function SharedCanvasesSetting({ api }: { api: RallyApi }): React.JSX.Element {
+  const { enabled, loading, error, retry, save } = useSharedCanvasesSetting(api);
+  return <>
+    <SettingToggle setting={settings.sharedCanvasesInAllOrganizations}
+      checked={enabled ?? true}
+      disabled={enabled === undefined || save.isPending}
+      onChange={(event) => save.mutate(event.currentTarget.checked)}
+      role="switch" />
+    {!loading && error && <>
+      <ErrorNotice occurrence={error}>The setting couldn’t be loaded.</ErrorNotice>
+      <div className="settings-preference-row"><span /><Button className="button-secondary" onClick={retry}>Load the setting again</Button></div>
+    </>}
+    {save.error && <ErrorNotice occurrence={save.error}>The setting couldn’t be saved. Try again.</ErrorNotice>}
   </>;
 }
 
@@ -1562,6 +1584,8 @@ export function WorkspaceSettingsScreen({
                       options={[{ label: 'Canvas Homepage', value: 'canvas-homepage' }, { label: 'Last Opened', value: 'last-opened' }]}
                       value={startupPage} variant="secondary" />
                   </div>
+                  {/* A support session is refused the route: the switch spans the person's other Organizations. */}
+                  {api && !session?.impersonator && <SharedCanvasesSetting api={api} />}
                 </div>
                 {!guest && api && <>
                   <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Agent</h2></div>

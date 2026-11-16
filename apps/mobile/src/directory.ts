@@ -8,6 +8,11 @@ import type { MobileSnapshot } from './protocol';
 export function directoryKey(snapshot: MobileSnapshot | null): string {
   if (!snapshot) return '';
   const { userId, userName, workspaceId, workspaceName, workspacePath, pins, hasMore, loading, pinBusy, pinError, directoryError, inlineChat } = snapshot;
-  const canvases = snapshot.canvases.map(({ id, title, icon, color }) => ({ id, title, icon, color }));
-  return JSON.stringify({ userId, userName, workspaceId, workspaceName, workspacePath, canvases, pins, hasMore, loading, pinBusy, pinError, directoryError, inlineChat });
+  // With Canvases from elsewhere, the dashboard sorts everything by date, so
+  // this Organization's dates move cards too; without them they do not.
+  const merged = snapshot.sharedElsewhere.length > 0;
+  const canvases = snapshot.canvases.map(({ id, title, icon, color, updatedAt }) => ({ id, title, icon, color, ...(merged ? { updatedAt } : {}) }));
+  // Their date places them among this Organization's Canvases, so it is shown.
+  const sharedElsewhere = snapshot.sharedElsewhere.map(({ id, title, icon, color, updatedAt, organization }) => ({ id, title, icon, color, updatedAt, organization }));
+  return JSON.stringify({ userId, userName, workspaceId, workspaceName, workspacePath, canvases, sharedElsewhere, pins, hasMore, loading, pinBusy, pinError, directoryError, inlineChat });
 }

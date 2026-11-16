@@ -19,7 +19,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/CanvasWebView.tsx` | Application WebView and isolated first-party reactive artifact WebViews. |
 | `apps/mobile/src/Dashboard.tsx` | Home's dashboard, drawn natively from the directory (the saved copy until Home answers) over Home's page. |
 | `apps/mobile/src/dashboard-visibility.ts` | When the native dashboard covers Home's page. |
-| `apps/mobile/src/directory.ts` | Compares Home snapshots on the fields the shell shows, so `updatedAt` ticks and Home's own navigation do not re-render every tab. |
+| `apps/mobile/src/directory.ts` | Compares Home snapshots on the fields the shell shows, so Home's own navigation does not re-render every tab, nor do `updatedAt` ticks while no Canvas from another Organization is listed. With one listed, the dashboard sorts both by date, so the dates count. |
 | `apps/mobile/src/artifact-access.ts` | The one data request the native shell makes itself: fresh access to a pinned artifact on the shared session cookie, so renewal never waits for Home. |
 | `apps/mobile/src/EdgePull.tsx`, `edge-swipe.ts` | iOS pull from the leading edge that drags the focused screen's sidebar open. |
 | `apps/mobile/src/FloatingHeader.tsx` | The sidebar and chat buttons drawn over a native artifact in place of the native header, in the artifact's tone. |
@@ -55,6 +55,24 @@ The app opens the browser host with `?mobile=1`. The browser keeps its cookie au
 Home uses `#/canvases`; opening a canvas uses `#/canvases/:id`, just like desktop. The conversation view adds `?view=chat` to that same canvas URL; canonical `?artifact=` links select the named artifact, and validated `?turn=&sequence=` links reveal the named message through the embedded conversation’s explicit scroll request. Canonical path rewrites preserve the mobile and preview host parameters. Creation is local form state on the dashboard, then navigates to the created canvas. There are no separate mobile dashboard, artifact, conversation, or creation paths.
 
 The dashboard consumes the current socket-owned Canvas directory. Each dashboard card wears its Canvas's appearance through the desktop's `canvasMark`, drawing its icon in that colour's ink on its tint, so a card matches its sidebar row and desktop card. The lead card deepens that tint toward the hue in a gradient. Opening a Canvas reads `GET /canvases/:id` and its published artifacts, preferring a site, then the newest file. Multiple resources expose an artifact picker. One mobile owner refreshes details when the matching directory row changes publication timestamp, artifact kind, title or visibility, or disappears. The first directory reconciles a detail read before it arrived; reconnects reconcile missed updates. Shared resource-head state advances existing artifact versions directly. Detail queries remain fresh between those events, and mounting a second observer does not repeat the read. Unrelated resource-topic, presence and pin updates do not refetch Canvas details. An empty canvas routes to chat and stays there while the user writes; View canvas explicitly returns to the artifact. Fetch failures show recovery rather than being mistaken for an empty canvas.
+
+Canvases shared with the person as a guest in their other Organizations
+([`canvas-share-federation.md`](canvas-share-federation.md)), which the server
+pushes on Home's workspace socket, reach the shell
+in the snapshot's own `sharedElsewhere` list, each with its Organization, never
+in `canvases`: that list feeds tabs, pins and the sidebar, which are this
+Organization's. The native dashboard places them among the Organization's own
+by `updatedAt`, draws the Organization's initial in a square on the card's upper
+right, and writes "Shared from Acme" on the card in place of its "Open canvas"
+footer, since a touch screen has no hover and two Organizations can share an
+initial. The card's label says the same ("Open Partner roadmap, Shared from
+Acme"). The browser preview's card does the same. A tap sends Home `open-elsewhere`
+(region, Organization, Canvas); Home loads that Canvas's canonical page with
+`mobile=1` (and the preview's `mobilePreviewOrigin`), which opens it in its
+Organization, as a notification's link from another Organization does. A shell
+older than the field drops it and shows only its own Canvases. The saved
+directory never holds them: they show once Home's live snapshot arrives. The browser
+preview's dashboard draws the same list and badge from the same socket event.
 
 During startup, the browser bridge announces `ready` with `waitForContent: true`.
 The native shell keeps its existing loading surface until a non-loading directory
