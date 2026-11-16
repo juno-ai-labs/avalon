@@ -112,6 +112,13 @@ try {
     || downloadedBytes.some((value, index) => value !== roundTripBytes[index])) {
     throw new Error("Daytona filesystem upload/download changed the provider probe bytes");
   }
+  // The streamed download a site publish uses for large files (a signed URL).
+  if (!provider.openFile) throw new Error("Daytona provider has no streamed file download");
+  const streamedBytes = new Uint8Array(await new Response(await provider.openFile(sandboxId, roundTripPath)).arrayBuffer());
+  if (streamedBytes.length !== roundTripBytes.length
+    || streamedBytes.some((value, index) => value !== roundTripBytes[index])) {
+    throw new Error("Daytona streamed download changed the provider probe bytes");
+  }
   await run(
     `expected=${shellQuote(roundTripPath)}; if [ ! -f "$expected" ]; then find /workspace -name provider-interface-round-trip.bin -print >&2; exit 44; fi; actual=$(stat -c %s "$expected"); if [ "$actual" -ne ${roundTripBytes.byteLength} ]; then printf 'size=%s\\n' "$actual" >&2; exit 45; fi`,
     "zero",
