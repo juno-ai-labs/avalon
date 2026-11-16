@@ -204,7 +204,9 @@ Every row in the lists is one layout (`RowLayout`): an `IdentityTile`
 second line with the unread dot at its end. A row with nothing for the second
 line has none, and its dot sits after the time, so a row is as tall unread as
 read. A tile is a shape in the object's
-pastel pair with its glyph, and can carry small badges on its corner, each in
+pastel pair with its glyph, and can carry small badges on its lower-right
+corner (or, with `corner: 'top-right'`, its upper right, which a Canvas from
+another Organization uses for that Organization's mark), each in
 a ring painted the row's own background (`--tile-ring`) so it reads as cut out
 of the tile on a plain, hovered or selected row. A badge can carry one smaller
 badge on its own corner, for a chain of containers; the parent moves up and

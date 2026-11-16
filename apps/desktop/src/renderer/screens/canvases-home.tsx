@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { canvasMark } from '../components/canvas-mark';
+import { OrganizationCardBadge, useOpenOtherOrganizationCanvas } from '../components/other-organization-canvas';
 import { CanvasTemplateCard } from '../components/canvas-template-picker';
 import { CanvasSharingStatus } from '../components/canvas-sharing-status';
 import { AvatarStack, Button, EmptyState, TitleSkeleton } from '../components/primitives';
@@ -18,6 +19,7 @@ import { canvasNaming, canvasRoute, othersPresent, useCanvasList, useCanvasNameS
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useDocumentTitle } from '../lib/document-title';
 import { formatSidebarActivityTime } from '../lib/format';
+import { useOtherOrganizationCanvases, type OtherOrganizationCanvas } from '../lib/shared-canvases';
 
 type CanvasFilter = 'all' | 'reactive' | 'data' | 'mine' | 'shared';
 
@@ -29,7 +31,7 @@ const FILTERS: ReadonlyArray<readonly [CanvasFilter, string]> = [
   ['shared', 'Shared with me'],
 ];
 
-function isReactive(canvas: CanvasSidebarRow): boolean {
+function reactive(canvas: CanvasSidebarRow): boolean {
   return canvas.sidekicks?.some((sidekick) => sidekick.status === 'active'
     && sidekick.triggerKinds?.some((kind) => kind === 'schedule' || kind === 'external_event')) ?? false;
 }
@@ -37,16 +39,21 @@ function isReactive(canvas: CanvasSidebarRow): boolean {
 function matchesFilter(row: CanvasSidebarRow, filter: CanvasFilter, currentUserId: string | undefined): boolean {
   switch (filter) {
     case 'all': return true;
-    case 'reactive': return isReactive(row);
+    case 'reactive': return reactive(row);
     case 'data': return row.hasStoredData === true;
     case 'mine': return row.createdByUserId === currentUserId;
     case 'shared': return row.sharedWithMe;
   }
 }
 
+/** A card's Canvas: one of this Organization's, or one shared from another. */
+type HomeCanvas = { row: CanvasSidebarRow; organization?: OtherOrganizationCanvas['organization'] };
+
 /**
  * `/canvases`: every Canvas this person can open, the list the workspace
- * socket keeps (`workspace_canvas_list`), laid out as the Sidekicks library is.
+ * socket keeps (`workspace_canvas_list`), laid out as the Sidekicks library is,
+ * with the Canvases shared with them in their other Organizations among them
+ * unless they turned that off (`useOtherOrganizationCanvases`).
  * Canvases stay in activity order; Live and Data match their card badges.
  * Members can start a Canvas from the Marketplace even before their list arrives.
  */
@@ -55,6 +62,8 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const { guest } = useShellCapabilities();
   const currentUserId = session?.user.id;
   const rows = useCanvasList();
+  const elsewhere = useOtherOrganizationCanvases();
+  const openElsewhere = useOpenOtherOrganizationCanvas();
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const showMarketplace = !guest && marketplaceOpen;
   useDocumentTitle(showMarketplace ? 'Marketplace' : 'Canvases');
@@ -64,34 +73,51 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const [draftPrompt, setDraftPrompt] = useState('');
   const create = useCreateCanvas();
   const needle = search.trim().toLocaleLowerCase();
-  const hasCanvases = !!rows?.length;
-  const shown = (rows ?? []).filter((row) => matchesFilter(row, filter, currentUserId)
+  // This Organization's list is already in activity order; another's Canvas
+  // goes in by the same date.
+  const all: HomeCanvas[] = rows === undefined ? [] : [...rows.map((row) => ({ row })), ...elsewhere]
+    .sort((a, b) => b.row.updatedAt.localeCompare(a.row.updatedAt));
+  const hasCanvases = all.length > 0;
+  const shown = all.filter(({ row }) => matchesFilter(row, filter, currentUserId)
     && (needle === '' || row.title.toLocaleLowerCase().includes(needle)));
-  const row = (canvas: CanvasSidebarRow): React.JSX.Element => {
+  const row = ({ row: canvas, organization }: HomeCanvas): React.JSX.Element => {
+    const key = organization ? `${organization.region}:${organization.id}:${canvas.id}` : canvas.id;
+    const describedBy = [organization ? `canvas-organization-${key}` : null, reactive(canvas) ? `canvas-reactive-${key}` : null,
+      canvas.hasStoredData ? `canvas-data-${key}` : null, (canvas.sidekicks ?? []).length > 0 ? `canvas-sidekicks-${key}` : null]
+      .filter(Boolean).join(' ') || undefined;
+    const title = canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title;
     const present = othersPresent(canvas, currentUserId).flatMap((userId) => {
       const member = membersById.get(userId);
       return member ? [member] : [];
     });
     // A server older than attaching sends none.
     const attachedSidekicks = canvas.sidekicks ?? [];
-    const reactive = isReactive(canvas);
+    const live = reactive(canvas);
     const { icon: Icon, ink, tint } = canvasMark(canvas.id, canvas.appearance);
-    return <li className="dashboard-card" key={canvas.id}>
+    return <li className="dashboard-card" key={key}>
       <div aria-hidden="true" className="dashboard-card-preview" style={{ background: tint }}>
         <Icon aria-hidden="true" color={ink} size={44} />
         {present.length > 0 && <span className="canvas-card-presence"><AvatarStack currentUserId={currentUserId} members={present} nameTooltip={false} presentUserIds={canvas.presentUserIds} showTooltip={false} /></span>}
         <span className="canvas-card-indicators">
-          {reactive && <span className="canvas-card-badge" id={`canvas-reactive-${canvas.id}`}><IconBolt aria-hidden="true" size={16} stroke={1.9} />Reactive</span>}
-          {canvas.hasStoredData && <span className="canvas-card-badge" id={`canvas-data-${canvas.id}`}><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data backed</span>}
-          {attachedSidekicks.length > 0 && <Link className="canvas-card-badge canvas-card-sidekicks" tabIndex={-1} to={canvasRoute(canvas.id)}>
-            <IconHexagon aria-hidden="true" size={16} stroke={1.9} />
-            <SidekickStack id={`canvas-sidekicks-${canvas.id}`} sidekicks={attachedSidekicks} />
-          </Link>}
+          {organization && <OrganizationCardBadge id={`canvas-organization-${key}`} organization={organization} />}
+          {live && <span className="canvas-card-badge" id={`canvas-reactive-${key}`}><IconBolt aria-hidden="true" size={16} stroke={1.9} />Reactive</span>}
+          {canvas.hasStoredData && <span className="canvas-card-badge" id={`canvas-data-${key}`}><IconDatabase aria-hidden="true" size={16} stroke={1.9} />Data backed</span>}
+          {attachedSidekicks.length > 0 && (organization
+            ? <span className="canvas-card-badge canvas-card-sidekicks">
+              <IconHexagon aria-hidden="true" size={16} stroke={1.9} />
+              <SidekickStack id={`canvas-sidekicks-${key}`} sidekicks={attachedSidekicks} />
+            </span>
+            : <Link className="canvas-card-badge canvas-card-sidekicks" tabIndex={-1} to={canvasRoute(canvas.id)}>
+              <IconHexagon aria-hidden="true" size={16} stroke={1.9} />
+              <SidekickStack id={`canvas-sidekicks-${key}`} sidekicks={attachedSidekicks} />
+            </Link>)}
         </span>
       </div>
       <div className="canvas-card-body">
-        <h3><Link aria-describedby={[reactive ? `canvas-reactive-${canvas.id}` : null, canvas.hasStoredData ? `canvas-data-${canvas.id}` : null,
-          attachedSidekicks.length > 0 ? `canvas-sidekicks-${canvas.id}` : null].filter(Boolean).join(' ') || undefined} className="dashboard-card-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
+        <h3>{organization
+          // Another Organization's Canvas opens there, so it is a button that switches first.
+          ? <button aria-describedby={describedBy} className="dashboard-card-link" onClick={() => openElsewhere({ row: canvas, organization })} type="button">{title}</button>
+          : <Link aria-describedby={describedBy} className="dashboard-card-link" to={canvasRoute(canvas.id)}>{title}</Link>}</h3>
         <small><CanvasSharingStatus canvas={canvas} currentUserId={currentUserId} /><RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
       </div>
     </li>;
@@ -125,7 +151,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     </div>}
     {showMarketplace ? <CanvasMarketplace onStart={create} />
       : rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
-      : rows.length === 0 ? <CanvasesEmptyState guest={guest} onPromptChange={setDraftPrompt} onStart={create} prompt={draftPrompt} />
+      : all.length === 0 ? <CanvasesEmptyState guest={guest} onPromptChange={setDraftPrompt} onStart={create} prompt={draftPrompt} />
         : <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
           <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${shown.length} ${shown.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
           {shown.length === 0

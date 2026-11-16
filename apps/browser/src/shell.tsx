@@ -5,7 +5,8 @@ import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
-import { BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspacesSchema, type BrowserWorkspaceAttention } from '@rally/contracts/browser-session';
+import { BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceSharedCanvasesSchema, BrowserWorkspacesSchema, type BrowserWorkspaceAttention, type BrowserWorkspaceSharedCanvases } from '@rally/contracts/browser-session';
+import { canvasCanonicalUrl } from '@rally/contracts/links';
 import { SupportPeopleSchema, SupportWorkspacesSchema } from '@rally/contracts';
 import { z } from 'zod';
 import { IDENTITY_REGION, type Region } from '@rally/contracts/regions';
@@ -55,6 +56,15 @@ function readBrowserAttention(): Promise<BrowserWorkspaceAttention> {
   attentionRead ??= browserRequest(IDENTITY_REGION, '/workspaces/attention', BrowserWorkspaceAttentionSchema)
     .finally(() => { attentionRead = null; });
   return attentionRead;
+}
+
+let sharedCanvasesRead: Promise<BrowserWorkspaceSharedCanvases> | null = null;
+
+/** One identity-cookie read answers every Organization's shared Canvases, as attention's does. */
+function readBrowserSharedCanvases(): Promise<BrowserWorkspaceSharedCanvases> {
+  sharedCanvasesRead ??= browserRequest(IDENTITY_REGION, '/workspaces/shared-canvases', BrowserWorkspaceSharedCanvasesSchema)
+    .finally(() => { sharedCanvasesRead = null; });
+  return sharedCanvasesRead;
 }
 
 /** The API for this session's Organization, kept stable across metadata refreshes. */
@@ -147,6 +157,15 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
       if (!found) throw new Error('Organization attention is unavailable right now.');
       return found.attention;
     },
+    getWorkspaceSharedCanvases: async ({ region: target, workspaceId }) => {
+      const { canvases } = await readBrowserSharedCanvases();
+      const found = canvases.find((row) => row.region === target && row.workspaceId === workspaceId);
+      // Left out of the answer: its read failed (`browser_workspace_shared_canvases_failed`).
+      if (!found) throw new Error('Shared Canvases are unavailable right now.');
+      return found.items;
+    },
+    // The canonical path, which the entry opens in its Organization (`session.ts`).
+    openWorkspaceCanvas: (target) => { location.assign(new URL(canvasCanonicalUrl(location.origin, target)).pathname); },
     activateWorkspace: async (target, workspaceId) => { location.assign(`/app/workspaces/${target}/${workspaceId}`); },
     acceptInvitation: macAppOnly,
     declineInvitation: macAppOnly,

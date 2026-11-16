@@ -9,9 +9,11 @@ import { canvasNaming, canvasRoute, RENAME_CANVAS_STATE, SHARE_CANVAS_STATE } fr
 import { copyLink } from '../lib/copy-link';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
+import { useOtherOrganizationCanvases, type OtherOrganizationCanvas } from '../lib/shared-canvases';
 import { useCanvasPinDrag } from './canvas-pin-drag';
 import { CanvasMark } from './canvas-mark';
 import { CanvasSharingStatus } from './canvas-sharing-status';
+import { OtherOrganizationCanvasRow } from './other-organization-canvas';
 import { DropdownSelect, ErrorNotice, TitleSkeleton } from './primitives';
 import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, usePinWrite, useSectionMotion } from './navigation-rows';
 import { SidebarListDown, usePushedListsDown } from './pushed-list-pending';
@@ -29,6 +31,8 @@ const CANVAS_ORDERS = [{ value: 'recent', label: 'Recent' }, { value: 'name', la
  * setting with the Share panel's icon; an unread row is bold
  * with a red dot. A row dragged into Pinned is pinned (`POST /canvases/:id/pin`);
  * its menu's Rename… opens the Canvas with its title pill being edited.
+ * Canvases shared with this person in their other Organizations sit among the
+ * rest, by the same order, with that Organization's mark on their tile.
  */
 export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const { api, session } = useCollaborationSession();
@@ -39,7 +43,14 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const { error: pinError, setPinned } = usePinWrite(api ? (id, next) => api.setCanvasPinned(id, next) : undefined, 'Canvas');
   useSectionMotion(scroll, undefined);
   const [order, setOrder] = useState<CanvasOrder>('recent');
-  const sorted = useMemo(() => order === 'name' ? [...rest].sort((a, b) => a.title.localeCompare(b.title)) : rest, [order, rest]);
+  const elsewhere = useOtherOrganizationCanvases();
+  // This Organization's rows keep the server's order; another's go in by date or name.
+  const sorted = useMemo<Array<CanvasSidebarRow | OtherOrganizationCanvas>>(() => {
+    const merged: Array<CanvasSidebarRow | OtherOrganizationCanvas> = [...rest, ...elsewhere];
+    const rowOf = (item: CanvasSidebarRow | OtherOrganizationCanvas): CanvasSidebarRow => 'organization' in item ? item.row : item;
+    if (order === 'name') return merged.sort((a, b) => rowOf(a).title.localeCompare(rowOf(b).title));
+    return elsewhere.length === 0 ? rest : merged.sort((a, b) => rowOf(b).updatedAt.localeCompare(rowOf(a).updatedAt));
+  }, [elsewhere, order, rest]);
   const navigate = useNavigate();
   const workspace = session?.workspace;
   const [linkError, setLinkError] = useState<Error | null>(null);
@@ -100,8 +111,10 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
         trailing={<DropdownSelect ariaLabel="Sort Canvases" icon={<ArrowDownUp aria-hidden="true" size={12} strokeWidth={1.8} />} onValueChange={(value) => setOrder(value === 'name' ? 'name' : 'recent')} options={CANVAS_ORDERS} value={order} variant="secondary" />}
       >All canvases</SectionHeading>
       {rows === undefined && (down ? <SidebarListDown noun="Canvases" /> : <SidebarSkeletonRows count={6} hint />)}
-      {rows !== undefined && rest.length === 0 && pinned.length === 0 && <p className="navigation-empty">No Canvases yet.</p>}
-      {sorted.map((canvas) => row(canvas))}
+      {rows !== undefined && rest.length === 0 && pinned.length === 0 && elsewhere.length === 0 && <p className="navigation-empty">No Canvases yet.</p>}
+      {sorted.map((item) => 'organization' in item
+        ? <OtherOrganizationCanvasRow currentUserId={currentUserId} item={item} key={`${item.organization.region}:${item.organization.id}:${item.row.id}`} />
+        : row(item))}
     </section>
   </>;
 }

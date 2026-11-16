@@ -2,7 +2,7 @@ import "../../../tests/isolated-region";
 import { asUserId } from "@rally/contracts";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
-import { BrowserWorkspaceAttentionSchema } from "@rally/contracts/browser-session";
+import { BrowserWorkspaceAttentionSchema, BrowserWorkspaceSharedCanvasesSchema } from "@rally/contracts/browser-session";
 import { createApp } from "../src/app";
 import type { Env } from "../src/env";
 import { BrowserSessionService, BrowserWorkspacesSchema } from "../src/services/browser-session-service";
@@ -35,6 +35,10 @@ function workspaceObjects(): Env["WORKSPACE_DOS"] {
       waitingForYou: 0, waitingReason: null, hasUnreadActivity: userId === enterpriseUserId,
       readerAttentionCount: userId === enterpriseUserId ? 3 : 0,
     }),
+    // The person's own list there: one Canvas someone shared with them, one they made.
+    canvasListFor: async ({ userId }: { userId: string }) => userId === enterpriseUserId
+      ? [canvasRow(sharedCanvasId, true), canvasRow(ownCanvasId, false)]
+      : [],
   };
   const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
     idFromName: (name: string) => createTestDurableObjectId(name),
@@ -42,6 +46,13 @@ function workspaceObjects(): Env["WORKSPACE_DOS"] {
     jurisdiction: (): Env["WORKSPACE_DOS"] => binding,
   });
   return binding;
+}
+const sharedCanvasId = "00000000-0000-7000-8000-00000000c001";
+const ownCanvasId = "00000000-0000-7000-8000-00000000c002";
+function canvasRow(id: string, sharedWithMe: boolean) {
+  return { id, title: sharedWithMe ? "Shared plan" : "My plan", createdByUserId: enterpriseUserId, createdAt: at, updatedAt: at,
+    lastEditor: null, writerSidekickId: null, visibility: "participants", artifactKind: null, unread: false,
+    presentUserIds: [], pinnedPosition: null, sharedWithMe };
 }
 const common = { APP_ENV: "development", RALLY_DEV_AUTH: "false", ALLOWED_ORIGINS: origin, PUBLIC_API_BASE_URL: apiOrigin,
   LOG_LEVEL: "error", SESSION_SIGNING_KEY: signingKey, BROWSER_APP_ORIGIN: origin } as const;
@@ -55,6 +66,7 @@ function bridge(): RegionalIdentityBridgeRpcBinding {
   return {
     discover: (identity) => serializeRegionalRpcResult(() => service().discover(identity)),
     attention: (identity) => serializeRegionalRpcResult(() => service().attention(identity)),
+    sharedCanvases: (identity) => serializeRegionalRpcResult(() => service().sharedCanvases(identity)),
     activate: (input) => serializeRegionalRpcResult(() => service().activate(input)),
     activateBrowser: (input) => serializeRegionalRpcResult(() => service().activateBrowser(input)),
     create: (input) => serializeRegionalRpcResult(() => service().create(input)),
@@ -117,6 +129,14 @@ it("reads another deployment's attention from Global under that deployment's own
   const { attention } = BrowserWorkspaceAttentionSchema.parse(await response.json());
   expect(attention.map((item) => [item.region, item.workspaceId, item.attention.readerAttentionCount]))
     .toEqual([["enterprise", enterpriseWorkspaceId, 3]]);
+});
+
+it("reads another deployment's shared Canvases from Global, leaving out the person's own", async () => {
+  const response = await request("workspaces/shared-canvases", await signedIn());
+  expect(response.status).toBe(200);
+  const { canvases } = BrowserWorkspaceSharedCanvasesSchema.parse(await response.json());
+  expect(canvases.map((item) => [item.region, item.workspaceId, item.items.map((row) => row.title)]))
+    .toEqual([["enterprise", enterpriseWorkspaceId, ["Shared plan"]]]);
 });
 
 it("reads attention without linking a person another deployment has not linked yet", async () => {
