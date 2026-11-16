@@ -310,8 +310,9 @@ actually offers. A second hand-kept list would drift from the app's.
 
 **Consequences:** Adding, removing or reordering a template in
 `canvas-template-catalog.ts` changes the public page on the next site build.
-Cards still open the web app rather than a chosen template: there is no link
-that starts a Canvas from one.
+Each card's "Start from this" is the template's link on the web app
+(`/app/templates/<slug>`, [`links.md`](links.md#template-links)), which signs
+the person in or up and starts that template.
 
 ### 2026-11-16 — Reactive, multi-human artifacts on the homepage, and a marketplace
 

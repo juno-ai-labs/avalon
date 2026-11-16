@@ -10,8 +10,10 @@ import {
   parseLinkPathTarget,
   parseLinkTarget,
   parseOrganizationShellTarget,
+  parseTemplateLinkPath,
   sidekickCanonicalUrl,
   sidekickDeepLink,
+  templateLinkPath,
 } from "./links";
 import { uuidFromBase58, uuidToBase58 } from "./uuid-base58";
 
@@ -206,5 +208,21 @@ describe("reading a shared link", () => {
     expect(isRetiredLinkPath(`/app/workspaces/enterprise/${WORKSPACE_ID}`)).toBe(false);
     expect(isRetiredLinkPath(`/app/workspaces/enterprise/${WORKSPACE_ID}/`)).toBe(false);
     expect(isRetiredLinkPath("/help/")).toBe(false);
+  });
+});
+
+describe("template links", () => {
+  it("round-trips a slug through its path, with or without the trailing slash", () => {
+    expect(templateLinkPath("pr-dashboard")).toBe("/app/templates/pr-dashboard");
+    expect(parseTemplateLinkPath("/app/templates/pr-dashboard")).toBe("pr-dashboard");
+    expect(parseTemplateLinkPath("/app/templates/pr-dashboard/")).toBe("pr-dashboard");
+  });
+  it("reads no other path as a template, and is neither a resource nor retired", () => {
+    expect(parseTemplateLinkPath("/app/templates/PR_dashboard")).toBeNull();
+    expect(parseTemplateLinkPath("/app/templates/pr-dashboard/extra")).toBeNull();
+    expect(parseTemplateLinkPath("/app/templates/")).toBeNull();
+    expect(parseLinkPathTarget("/app/templates/pr-dashboard")).toBeNull();
+    expect(isRetiredLinkPath("/app/templates/pr-dashboard")).toBe(false);
+    expect(() => templateLinkPath("../x")).toThrow();
   });
 });
