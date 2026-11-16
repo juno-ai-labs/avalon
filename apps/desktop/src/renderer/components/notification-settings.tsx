@@ -4,6 +4,7 @@ import {
   type NotificationChannel,
   type OfferedNotificationKind,
 } from '@rally/contracts';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, Mail } from 'lucide-react';
 
@@ -146,7 +147,17 @@ function CanvasNoticeRows({ api, workspaceId, defaults, options }: {
             <strong>{row.title}</strong>
             <small>You are not a participant, so these do not reach you. {row.purpose}</small>
             <span className="settings-row-inline-action">
-              <Button disabled={join.isPending} onClick={() => join.mutate(row.canvasId)}>Add as participant</Button>
+              <Tooltip.Root delayDuration={300}>
+                <Tooltip.Trigger asChild>
+                  <Button disabled={join.isPending} onClick={() => join.mutate(row.canvasId)}>Add as participant</Button>
+                </Tooltip.Trigger>
+                <Tooltip.Portal>
+                  <Tooltip.Content className="tooltip" side="top" sideOffset={6}>
+                    Join this Canvas to get its notices.
+                    <Tooltip.Arrow className="tooltip-arrow" />
+                  </Tooltip.Content>
+                </Tooltip.Portal>
+              </Tooltip.Root>
             </span>
           </span>
           <ChannelPicker disabled label={`How ${row.title} tells you`} none="Off" onToggle={() => undefined}

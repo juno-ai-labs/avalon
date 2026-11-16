@@ -1,4 +1,5 @@
 import { DEFAULT_MEMBER_PREFERENCES, MemberPreferencesSchema } from '@rally/contracts';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -15,9 +16,9 @@ describe('the Notifications settings pane', () => {
       joinCanvas: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}>
+    render(<QueryClientProvider client={client}><Tooltip.Provider>
       <NotificationChannelSettings api={api} email="you@example.test" pushAvailable workspaceId="org" />
-    </QueryClientProvider>);
+    </Tooltip.Provider></QueryClientProvider>);
 
     expect(screen.getByRole('heading', { name: 'Notify me about' })).toBeVisible();
     expect(screen.getByText('Mentions')).toBeVisible();
@@ -36,9 +37,9 @@ describe('the Notifications settings pane', () => {
       joinCanvas: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}>
+    render(<QueryClientProvider client={client}><Tooltip.Provider>
       <NotificationChannelSettings api={api} email="you@example.test" pushAvailable workspaceId="org" />
-    </QueryClientProvider>);
+    </Tooltip.Provider></QueryClientProvider>);
     await waitFor(() => expect(api.getMyPreferences).toHaveBeenCalled());
 
     const pickers = await screen.findAllByLabelText(/^How to tell you about /u);
@@ -86,9 +87,9 @@ describe('the Notifications settings pane', () => {
       joinCanvas: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}>
+    render(<QueryClientProvider client={client}><Tooltip.Provider>
       <NotificationChannelSettings api={api} email="you@example.test" pushAvailable workspaceId="org" />
-    </QueryClientProvider>);
+    </Tooltip.Provider></QueryClientProvider>);
     await waitFor(() => expect(api.getMyPreferences).toHaveBeenCalled());
 
     const pickers = await screen.findAllByLabelText(/^How to tell you about /u);
@@ -119,9 +120,9 @@ describe('the Notifications settings pane', () => {
       joinCanvas: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}>
+    render(<QueryClientProvider client={client}><Tooltip.Provider>
       <NotificationChannelSettings api={api} email="you@example.test" pushAvailable={false} workspaceId="org" />
-    </QueryClientProvider>);
+    </Tooltip.Provider></QueryClientProvider>);
     await waitFor(() => expect(api.getMyPreferences).toHaveBeenCalled());
 
     const pickers = await screen.findAllByLabelText(/^How to tell you about /u);
@@ -143,9 +144,9 @@ describe('the Notifications settings pane', () => {
       joinCanvas: vi.fn(),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}>
+    render(<QueryClientProvider client={client}><Tooltip.Provider>
       <NotificationChannelSettings api={api} email="you@example.test" pushAvailable workspaceId="org" />
-    </QueryClientProvider>);
+    </Tooltip.Provider></QueryClientProvider>);
 
     expect(await screen.findByText('Newsletter')).toBeVisible();
     expect(screen.getByText('Follows the default above. New episodes.')).toBeVisible();
@@ -168,9 +169,9 @@ describe('the Notifications settings pane', () => {
       joinCanvas: vi.fn().mockResolvedValue({ id: canvasId }),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}>
+    render(<QueryClientProvider client={client}><Tooltip.Provider>
       <NotificationChannelSettings api={api} email="you@example.test" pushAvailable workspaceId="org" />
-    </QueryClientProvider>);
+    </Tooltip.Provider></QueryClientProvider>);
 
     expect(await screen.findByText('You are not a participant, so these do not reach you. Checklist changes.')).toBeVisible();
     expect(screen.getByLabelText('How Launch plan tells you')).toBeDisabled();
