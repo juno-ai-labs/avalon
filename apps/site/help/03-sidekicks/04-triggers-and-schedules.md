@@ -55,7 +55,7 @@ A schedule is always read in a time zone. Rally picks it like this:
 
 You set your own default with the **Default timezone** setting in your
 account settings, and an owner or administrator sets the Organization's with
-the **Default timezone** setting in Organization settings. See [The Settings window](../09-settings-and-shortcuts/01-the-settings-window.md)
+the **Default timezone** setting in Organization settings. See [Settings](../09-settings-and-shortcuts/01-the-settings-window.md)
 and [Organization settings](../10-running-an-organization/03-organization-settings.md).
 
 > [!TIP]

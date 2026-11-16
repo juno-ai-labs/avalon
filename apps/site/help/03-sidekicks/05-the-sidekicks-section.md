@@ -3,7 +3,7 @@ title: The Sidekicks section
 description: Browse every Sidekick shared with you, see what each is doing, run it now, pause it, or archive it.
 ---
 
-Sidekicks have a section of their own in the main window, beside Canvases.
+Sidekicks have a section of their own in Rally, beside Canvases.
 Click **Sidekicks** in the rail and the sidebar lists every Sidekick shared
 with you, including drafts and paused ones. This is where you open a Sidekick
 to check on it, talk to it or change it.
@@ -51,7 +51,7 @@ nothing, it says **No matching Sidekicks**; try a different word or filter.
 Opening a Sidekick shows its shared conversation, covered in
 [Talking to a Sidekick](03-the-shared-conversation.md), beside a details
 column. The pill at the top names the Sidekick; click it for **Pin**, **Run
-now** and **Copy link**. When the window is narrow, the details column folds
+now** and **Copy link**. When the page is narrow, the details column folds
 away; the **Sidekick details** button on the pill brings it back.
 
 The details column shows:

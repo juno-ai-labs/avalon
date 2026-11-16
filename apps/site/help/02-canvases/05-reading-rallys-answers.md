@@ -28,7 +28,8 @@ The same formatting works in messages you and your teammates write. Your own
 messages also keep your line breaks exactly as you typed them. A long message
 from you is folded with **Show more**, and **Show less** folds it back.
 
-Web links open in your normal web browser, and show the website's little icon
+Web links open in a new browser tab (in the desktop app, in your usual web
+browser), and show the website's little icon
 beside them so you can see where you are headed.
 
 ### Copying code
@@ -65,7 +66,8 @@ so it folds along with it rather than on its own. Folding only changes what you
 see: copying and reading aloud always use the whole answer.
 
 Folding works in the conversation only. What Rally made, in the panel on the right,
-and answers you save as an image or PDF, always show everything.
+and answers you save as an image or PDF in the desktop app, always show
+everything.
 
 ## Where did that come from?
 
@@ -108,7 +110,8 @@ it:
 | **PDF** | Saves the answer as a PDF. |
 
 The actions stay hidden while Rally is still writing. **Image** and **PDF** are
-in the Mac app only, not in the web browser version. What they produce, and
+in [the desktop app](../08-rally-everywhere/04-the-desktop-app.md) only; the
+web app does not show them. What they produce, and
 how to share it, is in
 [Saving and sharing what Rally wrote](../06-things-rally-makes/05-saving-and-exporting.md).
 If a save fails, the button says **Image failed** or **PDF failed**.
@@ -124,12 +127,15 @@ Right-click any message, yours, a teammate's or Rally's, for:
 - **Copy as markdown** copies the plain Markdown, which is what you want for
   pasting into GitHub, Notion or another app that understands Markdown.
 - **Speak** reads the message aloud (**Stop speaking** ends it).
+**Speak** is hidden while a message is still being written.
+
+In [the desktop app](../08-rally-everywhere/04-the-desktop-app.md) on a Mac,
+the menu has two more items:
+
 - **Look Up** shows your Mac's dictionary entry for the word you selected. It is
   greyed out until you select something.
 - **Share** hands the text to your Mac's Share menu, for Messages, Mail, Notes
   and the like.
-
-**Speak** is hidden while a message is still being written.
 
 Right-click a cited file or a file attached to a message and you may get a menu
 with actions for that file instead.

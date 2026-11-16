@@ -11,7 +11,7 @@ it. This page covers each of those, and the list of Canvases in the sidebar.
 
 | Part | What it is |
 | --- | --- |
-| The conversation | Your messages, your teammates' and Rally's, in the middle of the window |
+| The conversation | Your messages, your teammates' and Rally's, in the middle of the page |
 | What Rally made | A document, spreadsheet, image, PDF, archive or website, in the panel on the right |
 | Versions | Every earlier state of what Rally made, kept and readable |
 | People | Who can open the Canvas, and who has it open right now |
