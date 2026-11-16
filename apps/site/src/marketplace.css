@@ -60,7 +60,7 @@
 }
 
 .market-card-body > p.market-kind {
-  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #90967f;
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
 }
 
 .market-card-body > p.market-tools {
