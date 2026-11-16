@@ -81,9 +81,45 @@ export const AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES = EXPIRE_DAYS * 24 
 
 export interface TerminalClock {
   now(): Date;
+  /** Wait this long, or less when the signal aborts; how a busy lease is waited out. */
+  sleep(ms: number, signal: AbortSignal): Promise<void>;
 }
 
-const systemClock: TerminalClock = { now: () => new Date() };
+const systemClock: TerminalClock = {
+  now: () => new Date(),
+  sleep: (ms, signal) => new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  }),
+};
+
+/**
+ * How long a tool call waits for another run's lease before it answers
+ * `sandbox_busy`.
+ *
+ * Bounds: the time one tool call spends waiting on a sibling's call.
+ * Without it: the first refusal goes to the model, which retries by hand,
+ *   skips the step, or ends its turn (a Canvas's four background agents lost
+ *   three calls and one test that way on 2026-11-16).
+ * Direction: upper bound on waiting; past it the call is refused as before.
+ * Trips: `sandbox_busy`, which tells the model to retry.
+ * Derive from: the team set five seconds, the same wait the refusal already
+ *   asks the model for (`retryAfterMs`). Most tool calls end inside it; a long
+ *   command does not, and is refused as before.
+ */
+export const TERMINAL_BUSY_WAIT_MS = 5_000;
+
+/**
+ * How often a waiting call tries the lease again: each try is one hop to the
+ * conversation object, so this is at most twenty hops per waiting call. Chosen
+ * here, not by the team; nothing else depends on it.
+ */
+const TERMINAL_BUSY_RETRY_MS = 250;
 
 /**
  * Removes every `http.<url>.extraheader` from the checkout's own Git config,
@@ -770,11 +806,42 @@ export class TerminalSandboxCoordinator {
     return this.terminalPort(context.workspaceId, context.workstreamId);
   }
 
+  /**
+   * Take the lease, waiting up to {@link TERMINAL_BUSY_WAIT_MS} for a sibling's
+   * call to release it. Each try reads the row again, so a generation another
+   * run replaced meanwhile is claimed as it now is; the callers already check
+   * the row they are handed. Only the first try recovers a yielded holder's
+   * operation, since that asks the provider to stop its command: the retries
+   * wait for a live sibling, which releases the lease itself.
+   */
   private async claimOperation(
     context: HarnessToolContext,
     row: TerminalSandboxRecord,
     now: number,
   ): Promise<TerminalSandboxRecord> {
+    let current = row;
+    let at = now;
+    for (let waited = 0; ; waited += TERMINAL_BUSY_RETRY_MS) {
+      const claimed = await this.tryClaimOperation(context, current, at, waited === 0);
+      if (claimed) return claimed;
+      if (waited >= TERMINAL_BUSY_WAIT_MS || context.signal.aborted) break;
+      await this.clock.sleep(TERMINAL_BUSY_RETRY_MS, context.signal);
+      current = await this.terminal(context).sandbox() ?? current;
+      at = this.clock.now().getTime();
+    }
+    throw new TerminalToolError(
+      "sandbox_busy",
+      "Another agent run is using this Terminal workspace right now. Retry the tool in a few seconds; do not repeat any earlier command.",
+      { retryAfterMs: 5_000, reason: "Retry in a few seconds; the workspace is released after each tool call." },
+    );
+  }
+
+  private async tryClaimOperation(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    now: number,
+    recover: boolean,
+  ): Promise<TerminalSandboxRecord | null> {
     const terminal = this.terminal(context);
     const leaseExpiresAt = this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS;
     const runSubstreamId = this.holderSubstreamId();
@@ -802,7 +869,7 @@ export class TerminalSandboxCoordinator {
         });
       }
     }
-    if (!claimed) {
+    if (!claimed && recover) {
       claimed = await this.recoverYieldedOperation(
         context,
         row,
@@ -810,14 +877,7 @@ export class TerminalSandboxCoordinator {
         yieldedForeignHolder,
       );
     }
-    if (!claimed) {
-      throw new TerminalToolError(
-        "sandbox_busy",
-        "Another agent run is using this Terminal workspace right now. Retry the tool in a few seconds; do not repeat any earlier command.",
-        { retryAfterMs: 5_000, reason: "Retry in a few seconds; the workspace is released after each tool call." },
-      );
-    }
-    return claimed;
+    return claimed ?? null;
   }
 
   /**

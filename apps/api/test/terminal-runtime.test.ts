@@ -316,7 +316,7 @@ function fixture(
     testTerminalPortFactory(objectStore),
     testResourcePortFactory(objectStore),
     provider,
-    clock,
+    { now: () => clock.now(), sleep: async () => undefined },
     undefined,
     false,
     acquisitionObserved,
