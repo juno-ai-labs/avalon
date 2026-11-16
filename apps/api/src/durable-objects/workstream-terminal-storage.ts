@@ -368,6 +368,12 @@ export interface TerminalImportedResourceRecord {
    * import's standing from that conversation's links.
    */
   attachedSubstreamId: string | null;
+  /**
+   * The harness run whose call wrote the row; `null` for a row written before
+   * runs were recorded. A read passes over a `planned` import only while this
+   * run holds the lease.
+   */
+  importRunId: string | null;
 }
 
 function first<T>(cursor: SqlStorageCursor<Record<string, SqlStorageValue>>): T | null {
@@ -1659,8 +1665,9 @@ export class WorkstreamTerminalStorage {
       destination_path: string;
       state: string;
       attached_substream_id: string | null;
+      import_run_id: string | null;
     }>(
-      `SELECT resource_id, destination_path, state, attached_substream_id
+      `SELECT resource_id, destination_path, state, attached_substream_id, import_run_id
          FROM terminal_imported_resources
         WHERE sandbox_generation = ?`,
       generation,
@@ -1669,6 +1676,7 @@ export class WorkstreamTerminalStorage {
       destinationPath: row.destination_path,
       state: row.state as "planned" | "completed",
       attachedSubstreamId: row.attached_substream_id,
+      importRunId: row.import_run_id,
     }));
   }
 
@@ -1682,18 +1690,21 @@ export class WorkstreamTerminalStorage {
     importedAt: number | null;
     /** The authorizing conversation when it is not this object's own; see the record. */
     attachedSubstreamId?: string | null;
+    /** The harness run making the import; see the record. */
+    importRunId?: string | null;
     now: number;
   }): void {
     this.sql.exec(
       `INSERT INTO terminal_imported_resources
          (sandbox_generation, resource_id, destination_path, source_sha256,
-          size_bytes, state, imported_at, attached_substream_id, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          size_bytes, state, imported_at, attached_substream_id, import_run_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(sandbox_generation, resource_id, destination_path)
        DO UPDATE SET source_sha256 = excluded.source_sha256,
          size_bytes = excluded.size_bytes, state = excluded.state,
          imported_at = excluded.imported_at,
          attached_substream_id = excluded.attached_substream_id,
+         import_run_id = excluded.import_run_id,
          updated_at = excluded.updated_at`,
       input.sandboxGeneration,
       input.resourceId,
@@ -1703,6 +1714,7 @@ export class WorkstreamTerminalStorage {
       input.state,
       input.importedAt,
       input.attachedSubstreamId ?? null,
+      input.importRunId ?? null,
       input.now,
     );
   }
