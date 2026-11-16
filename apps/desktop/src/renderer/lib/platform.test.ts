@@ -1,7 +1,7 @@
 import "../../../../../tests/isolated-region";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RallyDesktopBridge, DesktopSession } from '../../common/desktop';
-import { desktopBridge } from './platform';
+import { desktopBridge, setExternalLinkOpener } from './platform';
 
 const globalApiBaseUrl = 'http://127.0.0.1:8787';
 const enterpriseApiBaseUrl = 'https://enterprise.api.with-avalon.com';
@@ -73,6 +73,16 @@ describe('browser fallback single-platform identity boundary', () => {
     await expect(desktopBridge().openExternal('https://linear.app/oauth')).rejects.toThrow('Allow pop-ups for Rally in this browser, then try again.');
     expect(window.location.href).toBe(here);
     expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands an external page to a host that opens links itself, reserving no tab', async () => {
+    const opened: string[] = [];
+    setExternalLinkOpener(() => (url) => { opened.push(url); });
+    try {
+      await desktopBridge().openExternal('https://checkout.stripe.com/c/pay/cs_test');
+      expect(opened).toEqual(['https://checkout.stripe.com/c/pay/cs_test']);
+      expect(window.open).not.toHaveBeenCalled();
+    } finally { setExternalLinkOpener(() => null); }
   });
 
   it('prefers the hardened preload bridge for clipboard writes', async () => {

@@ -12,7 +12,7 @@ import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Plus, Search, Sparkles, Store } from 'lucide-react';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { CANVAS_FILTERS, ELSEWHERE_CANVAS_FACTS, canvasFilterFacts, matchesCanvasFilter, type CanvasFilter, type CanvasFilterFacts } from '@rally/contracts/canvas-filters';
-import { ARTIFACT_PICKER_CAPABILITY, MOBILE_COMMAND_EVENT, MOBILE_SETTINGS_SECTIONS, MOBILE_SETTINGS_TITLES, MobileCommandSchema, MobileSettingsSectionSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
+import { ARTIFACT_PICKER_CAPABILITY, MOBILE_COMMAND_EVENT, MOBILE_SETTINGS_SECTIONS, MOBILE_SETTINGS_TITLES, MobileCommandSchema, SETTINGS_CAPABILITY, MobileSettingsSectionSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
 import { GUEST_SETTINGS_SECTIONS } from '../../desktop/src/common/settings';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
@@ -23,7 +23,11 @@ import { CANVASES_ROUTE, canvasRoute, openCanvasId, useCanvasList } from '../../
 import { SpeechPlaybackProvider } from '../../desktop/src/renderer/components/speech-playback';
 import { canvasMark } from '../../desktop/src/renderer/components/canvas-mark';
 import { useOtherOrganizationCanvases, type OtherOrganizationCanvas } from '../../desktop/src/renderer/lib/shared-canvases';
-import { mobileCapability, mobileScreenReady, postMobileEvent } from './mobile-bridge';
+import { mobileCapability, mobileScreenReady, postMobileEvent, shellExternalLinkOpener } from './mobile-bridge';
+import { setExternalLinkOpener } from '../../desktop/src/renderer/lib/platform';
+
+// Checkout and connector sign-in open a new tab; in the app, the shell opens them.
+setExternalLinkOpener(shellExternalLinkOpener);
 import './mobile.css';
 import { useMobileCanvasDetail, useMobileCanvasUpdates } from './mobile-canvas-detail';
 // Chat/composition and file previews are paid for only when those screens open.
@@ -97,7 +101,9 @@ function MobileContent(): React.JSX.Element {
   useEffect(() => { if (creating) setCreationSession(true); }, [creating]);
   // A shared Settings page, which reads its section from the route once, so
   // each request mounts it afresh (keyed by the navigation) on the section asked for.
-  const settingsSection = location.pathname === SETTINGS_ROUTE ? MobileSettingsSectionSchema.safeParse(new URLSearchParams(location.search).get('section')).data ?? null : null;
+  // Only a shell that draws its header is shown one: an older shell would reject
+  // the view, and the route is also reached by desktop's own `openSettings`.
+  const settingsSection = location.pathname === SETTINGS_ROUTE && mobileCapability(SETTINGS_CAPABILITY) ? MobileSettingsSectionSchema.safeParse(new URLSearchParams(location.search).get('section')).data ?? null : null;
   const guest = session?.workspace?.accessClass === 'guest';
   const settingsSections = useMemo(() => MOBILE_SETTINGS_SECTIONS.filter((section) => !guest || GUEST_SETTINGS_SECTIONS.has(section)), [guest]);
   const tabId = canvasId && new URLSearchParams(location.search).get('tab') === '1' && pinnedIds.includes(canvasId) ? canvasId : null;
