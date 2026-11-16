@@ -39,7 +39,6 @@
   --mono: "Geist Mono", ui-monospace, monospace;
 }
 
-/* The CASA mark in the footer's legal row. */
-.footer-casa { display: inline-flex; align-items: center; gap: 6px; color: inherit; text-decoration: none; }
+/* The CASA link in the footer's legal row. */
+.footer-casa { color: inherit; text-decoration: none; }
 .footer-casa:hover { color: var(--green); }
-.casa-mark { flex: none; color: var(--green); }
