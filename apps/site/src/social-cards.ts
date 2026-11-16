@@ -115,6 +115,23 @@ export function renderComparisonCard({ slug, name, edge }: { slug: string; name:
   });
 }
 
+/**
+ * The card for one marketplace template, in the marketplace's pencil style:
+ * who it is for and the connectors it works with above its name and
+ * description, beside the Canvas drawing, since starting one makes a Canvas.
+ */
+export function renderTemplateCard({ slug, name, description, audience, connectors }: {
+  slug: string; name: string; description: string; audience: string; connectors: readonly string[];
+}): Promise<Buffer> {
+  return renderReadingCard({
+    eyebrow: ['Rally Marketplace', audience, ...(connectors.length ? [`Works with ${connectors.join(', ')}`] : [])].join(' · '),
+    title: name,
+    description,
+    address: `rallywith.ai/marketplace/${slug}`,
+    scene: 'canvas',
+  });
+}
+
 /** The card for one blog post. */
 export function renderBlogCard({ slug, title, description }: { slug: string; title: string; description: string }): Promise<Buffer> {
   return renderReadingCard({

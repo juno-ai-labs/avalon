@@ -18,6 +18,7 @@ import { templateLinkPath } from '../../contracts/src/links';
 import { PALETTE_RING } from '../../contracts/src/palette';
 import { describeZodIssues } from '../../contracts/src/zod-diagnostics';
 import { CANVAS_TEMPLATE_CATEGORIES } from './categories';
+import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS } from './connectors';
 
 /**
  * The catalog in order, relative to `marketplace-skills/`. The first template
@@ -46,6 +47,13 @@ const templateMetadata = z.object({
   icon: z.enum(PICKABLE_APPEARANCE_ICON_KEYS),
   color: z.enum(PALETTE_RING),
   tags: z.array(z.enum(CANVAS_TEMPLATE_CATEGORIES.map(({ tag }) => tag))).min(1),
+  // The connectors the template works best with, by `connectors.ts` id; the
+  // public marketplace lists them on its card and page. None for a template
+  // that needs no connected tool.
+  connectors: z.array(z.enum(TEMPLATE_CONNECTORS.map(({ id }) => id))).default([]),
+  // Rally's own plugins the template leans on, by `connectors.ts` id: built
+  // in, so listed apart from what a person connects.
+  plugins: z.array(z.enum(TEMPLATE_PLUGINS.map(({ id }) => id))).default([]),
 });
 
 /**

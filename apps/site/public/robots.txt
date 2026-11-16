@@ -5,3 +5,4 @@ Sitemap: https://rallywith.ai/sitemap.xml
 Sitemap: https://rallywith.ai/compare/sitemap.xml
 Sitemap: https://rallywith.ai/help/sitemap.xml
 Sitemap: https://rallywith.ai/blog/sitemap.xml
+Sitemap: https://rallywith.ai/marketplace/sitemap.xml

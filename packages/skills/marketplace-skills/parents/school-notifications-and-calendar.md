@@ -5,6 +5,10 @@ icon: "school"
 color: "amber"
 tags:
   - parents
+connectors:
+  - google-mail-and-calendar
+plugins:
+  - push-notifications
 ---
 
 Build a school notification list and calendar in this Canvas from messages sent to my email. Ask only for details you need. “Which connected mailbox or label should I watch?” and “Which schools, senders, or school mailing lists should count?” If the calendar time zone cannot be determined from the source or my profile, ask which time zone to use.
