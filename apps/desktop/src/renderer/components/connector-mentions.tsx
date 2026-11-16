@@ -257,33 +257,81 @@ export function ConnectorConnectionCard({ latchedConnected = false, onConnected,
   onNewlyConnected?: () => void;
   request: ConnectorConnectionCardInput;
 }): React.JSX.Element | null {
+  // A host that cannot connect accounts (the lite browser) draws nothing and asks the server nothing.
   const collaboration = useOptionalCollaborationSession();
-  const provider = connectorConnectionCardProvider(request);
-  if (!provider || !collaboration?.connectorSetup) return null;
+  if (!connectorConnectionCardProvider(request) || !collaboration?.connectorSetup) return null;
   return (
     <ResolvedConnectorConnectionCard
       latchedConnected={latchedConnected}
       onConnected={onConnected}
       onNewlyConnected={onNewlyConnected}
-      provider={provider}
       request={request}
-      collaboration={collaboration}
-      setup={collaboration.connectorSetup}
     />
   );
 }
 
-function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewlyConnected, provider, request, collaboration, setup }: {
-  latchedConnected: boolean;
-  onConnected?: (selectionKey: string) => void;
-  onNewlyConnected?: (() => void) | undefined;
+/** Any OAuth provider, for the hooks that run while a card cannot connect; never drawn. */
+const FALLBACK_PROVIDER = connectorProviders.find(isOAuthConnectorProvider)!;
+
+/**
+ * One connection's state and its connect or reconnect action, for whoever
+ * draws the control: the connection card below, and a card that makes the
+ * connection one step of something else (a Sidekick source request's
+ * "Connect Gmail and approve"). The OAuth attempt, the reconnect of an
+ * existing account and the choice between two accounts live here once.
+ */
+export interface ConnectorConnectionAction {
   provider: OAuthConnectorProviderCatalogEntry;
-  request: ConnectorConnectionCardInput;
-  collaboration: CollaborationSessionValue;
-  setup: ConnectorSetupCapability;
-}): React.JSX.Element | null {
-  const { api, session } = collaboration;
-  const { pendingConnectorOAuth, setPendingConnectorOAuth, openExternal } = setup;
+  adminRequired: boolean;
+  checkingAvailability: boolean;
+  connected: boolean;
+  status: ConnectorScopeStatus | undefined;
+  accountOptions: readonly WorkstreamConnection[] | undefined;
+  selectedAccountId: string;
+  selectAccount: (id: string) => void;
+  accountRequired: boolean;
+  error: string | undefined;
+  macAppOnly: boolean;
+  start: () => void;
+  pending: boolean;
+  reconnect: boolean;
+  unavailable: boolean;
+}
+
+/**
+ * The connection action for a card's request, or null where this client
+ * cannot make that connection (no setup capability, or no OAuth provider for
+ * it). Hooks run in a fixed order, so the null case still runs them.
+ */
+export function useConnectorConnectionAction(request: ConnectorConnectionCardInput, options: {
+  latchedConnected?: boolean;
+  onConnected?: ((selectionKey: string) => void) | undefined;
+  onNewlyConnected?: (() => void) | undefined;
+} = {}): ConnectorConnectionAction | null {
+  const collaboration = useOptionalCollaborationSession();
+  const provider = connectorConnectionCardProvider(request);
+  const action = useResolvedConnectorConnectionAction(request, provider, collaboration, options);
+  return provider && collaboration?.connectorSetup ? action : null;
+}
+
+function useResolvedConnectorConnectionAction(
+  request: ConnectorConnectionCardInput,
+  maybeProvider: OAuthConnectorProviderCatalogEntry | null,
+  collaboration: CollaborationSessionValue | null,
+  { latchedConnected = false, onConnected, onNewlyConnected }: {
+    latchedConnected?: boolean;
+    onConnected?: ((selectionKey: string) => void) | undefined;
+    onNewlyConnected?: (() => void) | undefined;
+  },
+): ConnectorConnectionAction {
+  // Stand-ins while the client cannot connect: every hook still runs, and the caller discards the result.
+  const provider = maybeProvider ?? FALLBACK_PROVIDER;
+  const api = collaboration?.api;
+  const session = collaboration?.session ?? null;
+  const setup: Partial<ConnectorSetupCapability> = collaboration?.connectorSetup ?? {};
+  const pendingConnectorOAuth = setup.pendingConnectorOAuth ?? null;
+  const setPendingConnectorOAuth = setup.setPendingConnectorOAuth ?? (() => undefined);
+  const openExternal = setup.openExternal ?? (async () => undefined);
   // The collaboration session, not `useAppSession`: this card is shared with the
   // lite browser, which mounts no `AppSessionProvider`. What matters for the
   // gate below is that the role comes from the *served* workspace rather than
@@ -306,7 +354,8 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewl
   const availability = useQuery({
     queryKey: ['connector-catalog'],
     queryFn: ({ signal }) => api!.getAvailableConnectorTypes(signal),
-    enabled: Boolean(api),
+    // No catalog read where this client cannot connect: the result is discarded there.
+    enabled: Boolean(api && maybeProvider && collaboration?.connectorSetup),
     staleTime: 30_000,
   });
   const selectionKey = connectorConnectionCardSelectionKey(request);
@@ -396,24 +445,51 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewl
   // token window — in the one flow this gate exists for. See `use-workspace.ts`.
   const adminRequired = request.scope === 'workspace' && !viewerIsAdmin;
   const providerAvailable = availability.data?.includes(provider.provider) ?? false;
+  return {
+    provider,
+    adminRequired,
+    checkingAvailability: availability.isLoading,
+    connected,
+    status: reconnect?.status ?? scopeState?.status,
+    accountOptions: matchingConnections.length > 1 ? matchingConnections : undefined,
+    selectedAccountId: reconnect?.id ?? '',
+    selectAccount: setSelectedConnectionId,
+    accountRequired,
+    error: connect.error?.message,
+    macAppOnly: !connectorStartsHere(session, provider.provider),
+    start: () => connect.mutate(),
+    pending,
+    reconnect: matchingConnections.length > 0,
+    unavailable: !api || connections === undefined || availability.isError || !providerAvailable,
+  };
+}
+
+function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewlyConnected, request }: {
+  latchedConnected: boolean;
+  onConnected?: ((selectionKey: string) => void) | undefined;
+  onNewlyConnected?: (() => void) | undefined;
+  request: ConnectorConnectionCardInput;
+}): React.JSX.Element | null {
+  const action = useConnectorConnectionAction(request, { latchedConnected, onConnected, onNewlyConnected });
+  if (!action) return null;
   return (
     <ConnectorConnectionCardView
-      adminRequired={adminRequired}
-      checkingAvailability={availability.isLoading}
-      connected={connected}
-      status={reconnect?.status ?? scopeState?.status}
-      accountOptions={matchingConnections.length > 1 ? matchingConnections : undefined}
-      selectedAccountId={reconnect?.id ?? ''}
-      onSelectAccount={setSelectedConnectionId}
-      accountRequired={accountRequired}
-      error={connect.error?.message}
-      macAppOnly={!connectorStartsHere(session, provider.provider)}
-      onConnect={() => connect.mutate()}
-      pending={pending}
-      provider={provider}
+      adminRequired={action.adminRequired}
+      checkingAvailability={action.checkingAvailability}
+      connected={action.connected}
+      status={action.status}
+      accountOptions={action.accountOptions}
+      selectedAccountId={action.selectedAccountId}
+      onSelectAccount={action.selectAccount}
+      accountRequired={action.accountRequired}
+      error={action.error}
+      macAppOnly={action.macAppOnly}
+      onConnect={action.start}
+      pending={action.pending}
+      provider={action.provider}
       request={request}
-      reconnect={matchingConnections.length > 0}
-      unavailable={!api || connections === undefined || availability.isError || !providerAvailable}
+      reconnect={action.reconnect}
+      unavailable={action.unavailable}
     />
   );
 }
