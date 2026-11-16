@@ -28,12 +28,17 @@ const MAYA = '00000000-0000-7000-8000-0000000000a3';
 const PRIYA = '00000000-0000-7000-8000-0000000000a4';
 const SIDEKICK = '00000000-0000-7000-8000-0000000000d1';
 vi.mock('../lib/collaboration-session', () => ({ useCollaborationSession: () => ({ api, session: { user: { id: ME, name: 'Me' } } }) }));
-// The connection card owns its OAuth flow and is tested with it; here it stands for itself and
-// reports what it was asked to connect, with a button that finishes as an OAuth callback would.
+// The connection action owns its OAuth flow and is tested with the connection card; here it records
+// what it was asked to connect, and the test finishes the sign-in as an OAuth callback would.
+const connection = vi.hoisted(() => ({ start: vi.fn(), request: null as unknown, finish: () => undefined as void }));
 vi.mock('./connector-mentions', () => ({
   ConnectorConnectionsProvider: ({ children }: { children: React.ReactNode }) => children,
-  ConnectorConnectionCard: ({ request, onConnected }: { request: { connectorId: string; scope: string }; onConnected?: (key: string) => void }) =>
-    <button onClick={() => onConnected?.(`${request.connectorId}:${request.scope}`)} type="button">Connect card {request.connectorId} {request.scope}</button>,
+  useConnectorConnectionAction: (request: unknown, options: { onNewlyConnected?: () => void }) => {
+    connection.request = request;
+    connection.finish = () => options.onNewlyConnected?.();
+    return { start: connection.start, pending: false, unavailable: false, accountRequired: false, macAppOnly: false,
+      accountOptions: undefined, selectedAccountId: '', selectAccount: () => undefined, error: undefined };
+  },
 }));
 
 function request(id: string, userId: string, displayName: string, overrides: Partial<SidekickSourceRequestView> = {}): SidekickSourceRequestView {
@@ -159,26 +164,40 @@ describe('the source request card in a conversation', () => {
     expect(pair('Me').map((button) => button.pressed)).toEqual(['false', 'false']);
   });
 
-  it('puts the connect step before Approve for my own request whose account lapsed, and re-reads it once connected', async () => {
+  it('makes my own lapsed request one press: Reconnect Gmail and approve, which approves once the sign-in finishes', async () => {
     api.getConnections.mockResolvedValue([]);
     api.readSidekickSourceRequests.mockResolvedValue([
       request('r-me', ME, 'Me', { connection: 'reconnect_required' }),
       request('r-maya', MAYA, 'Maya', { connection: 'not_connected' }),
     ]);
+    api.decideSidekickSourceRequest.mockResolvedValue(request('r-me', ME, 'Me', { state: 'approved', decidedAt: 5, connection: 'connected' }));
     mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me', 'r-maya'], asked: null }} />);
-    const step = await screen.findByRole('button', { name: 'Connect card google-mail-calendar personal' });
-    // Approve waits for the account; Decline never does.
-    const approve = screen.getByRole('button', { name: 'Approve your Gmail for Deals' });
-    expect([approve.hasAttribute('disabled'), approve.getAttribute('title')]).toEqual([true, 'Reconnect Gmail first']);
+    const both = await screen.findByRole('button', { name: 'Reconnect Gmail and approve your Gmail for Deals' });
+    // The card says the one thing left for me, and my row has no separate Approve.
+    expect(screen.getByRole('article')).toHaveTextContent('Reconnect Gmail and approve Deals');
+    expect(screen.queryByRole('button', { name: 'Approve your Gmail for Deals' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Decline your Gmail for Deals' })).toBeEnabled();
-    // Everyone else is told what is left for that person, and has no connect step of theirs.
+    expect(connection.request).toEqual({ connectorId: 'google-mail-calendar', scope: 'personal' });
+    // Everyone else is told what is left for that person.
     expect(row('Maya')).toHaveTextContent('Needs to connect Gmail');
-    expect(screen.getAllByRole('button', { name: /^Connect card/ })).toHaveLength(1);
 
-    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'connected' }), request('r-maya', MAYA, 'Maya', { connection: 'not_connected' })]);
-    fireEvent.click(step);
+    fireEvent.click(both);
+    expect(connection.start).toHaveBeenCalledTimes(1);
+    expect(api.decideSidekickSourceRequest).not.toHaveBeenCalled();
+    await act(async () => connection.finish());
+    await waitFor(() => expect(api.decideSidekickSourceRequest).toHaveBeenCalledWith(SIDEKICK, 'r-me', 'approve'));
+  });
+
+  it('sends no approval when my account is connected some other way while the card is open', async () => {
+    api.getConnections.mockResolvedValue([]);
+    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'not_connected' })]);
+    mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
+    await screen.findByRole('button', { name: 'Connect Gmail and approve your Gmail for Deals' });
+    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'connected' })]);
+    await act(async () => connection.finish());
+    // The ordinary Approve comes back, unpressed: connecting was not consent on its own.
     await waitFor(() => expect(screen.getByRole('button', { name: 'Approve your Gmail for Deals' })).toBeEnabled());
-    expect(screen.queryByRole('button', { name: /^Connect card/ })).toBeNull();
+    expect(api.decideSidekickSourceRequest).not.toHaveBeenCalled();
   });
 
   it('re-reads when the Sidekick\'s sources are invalidated, which is what the socket\'s pushes do', async () => {

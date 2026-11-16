@@ -7358,11 +7358,12 @@ button.dashboard-card-link { background: none; border: 0; cursor: pointer; font:
 .source-request-person { align-items: baseline; display: flex; flex: 1; font-size: var(--av-sys-type-callout); gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .source-request-person small { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-footnote); }
 .source-request-replaced, .source-request-card-status { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-subheadline); margin: 0; }
-/* The asked person's own connect step: the connection card on its own line under their name and buttons, so
-   connecting reads as the first of the two steps. */
-.source-request-people li.has-connect-step { flex-wrap: wrap; }
-.source-request-connect-step { flex-basis: 100%; min-width: 0; }
-.source-request-connect-step .connector-connection-card, .activity-row-actions .connector-connection-card { margin: 0; }
+/* "Connect Gmail and approve": one press in Approve's place, so connecting reads as part of approving. Filled, as
+   the one thing on the card left for this reader to do. */
+.source-connect-and-approve { align-items: center; display: inline-flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.source-decision .source-connect-and-approve-button.button { background: var(--av-sys-color-success-strong); border-color: var(--av-sys-color-success-strong); color: var(--av-sys-color-success-on); }
+.source-decision .source-connect-and-approve-button.button:disabled { cursor: default; opacity: 0.7; }
+.source-connect-and-approve select { font-size: var(--av-sys-type-footnote); max-width: 180px; }
 .source-request-connect-settings { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-footnote); margin: 0; }
 .settings-account-profile { display: grid; gap: 12px; }
 .settings-support-note { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-subheadline); margin: 0; padding: 0 8px; }
