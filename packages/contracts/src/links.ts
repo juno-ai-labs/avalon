@@ -357,3 +357,27 @@ export function isRetiredLinkPath(pathname: string): boolean {
     || /^\/app\/workstreams\/./u.test(pathname)
     || /^\/app\/[a-z][a-z0-9-]*\/[^/]+\/(?:s|i)\/[^/]+/u.test(pathname);
 }
+
+/**
+ * A Marketplace template's link: `/app/templates/<slug>`, on the web app.
+ * It names no Organization, because whoever opens it starts the template in
+ * one of their own. The web app keeps the path through sign-in, then opens the
+ * Organization the person picks at the in-app route `templateRoute` names.
+ */
+const TEMPLATE_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+
+export function templateLinkPath(slug: string): string {
+  if (!TEMPLATE_SLUG.test(slug)) throw new Error("A template slug is lowercase words joined by hyphens.");
+  return `${LINK_PATH_PREFIX}templates/${slug}`;
+}
+
+/** The slug a template link names, with or without its trailing slash; null for any other path. */
+export function parseTemplateLinkPath(pathname: string): string | null {
+  const slug = /^\/app\/templates\/([^/]+)\/?$/u.exec(pathname)?.[1];
+  return slug && TEMPLATE_SLUG.test(slug) ? slug : null;
+}
+
+/** The shell's hash route that starts a Canvas from a template. */
+export function templateRoute(slug: string): string {
+  return `/marketplace/${slug}`;
+}

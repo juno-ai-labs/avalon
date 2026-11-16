@@ -7,6 +7,7 @@ import { useOpenLanding } from '../lib/landing';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { PERSONAL_COLOR_KEYS, personalColorKey, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
 import { Button, ErrorNotice, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor, personalColorInk } from '../components/personal-avatar';
@@ -188,6 +189,14 @@ function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfi
   </div>;
 }
 
+/**
+ * Routes finishing the journey keeps: one Canvas or Sidekick by its id, or a
+ * template link's route, which starts its Canvas once it mounts, so a journey
+ * that covered it before it could run still leads there. Not `/sidekicks/new`,
+ * which creates a Sidekick as it mounts (`restorableRoute` makes the same cut).
+ */
+const KEPT_ROUTE = /^\/(?:(?:canvases|sidekicks)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|marketplace\/[a-z0-9-]+)$/iu;
+
 export function WorkspaceOnboardingJourney({ workspace, children }: { workspace: Workspace | null; children: ReactNode }): React.JSX.Element {
   const account = useOnboardingAccount();
   const { api } = useAppSession();
@@ -196,6 +205,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   const eligible = Boolean(account?.eligible) && !guest;
   const queryClient = useQueryClient();
   const openLanding = useOpenLanding();
+  const location = useLocation();
   const key = ['onboarding-journey', workspace?.region, workspace?.id, workspace?.currentUser.id];
   const journey = useQuery({ queryKey: key, queryFn: () => api!.getOnboardingJourney(), enabled: Boolean(api && workspace && eligible) });
   const [busy, setBusy] = useState(false);
@@ -225,10 +235,13 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   if (state.stage === 'complete') return content(true);
   const finishOnboarding = async (): Promise<void> => {
     await advance('complete');
-    // Everyone lands on the Canvases home, whose empty state offers "Start
-    // from a prompt". Through the hook, so the finished journey is replaced
-    // rather than left behind for Back.
-    openLanding();
+    // A Canvas or Sidekick the person was already opening when the journey
+    // covered it (a shared link, or a template that started or will start a
+    // Canvas) is where they were going, so they stay there. Anyone else lands
+    // on the Canvases home, whose empty state offers "Start from a prompt".
+    // Through the hook, so the finished journey is replaced rather than left
+    // behind for Back.
+    if (!KEPT_ROUTE.test(location.pathname)) openLanding();
   };
   if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally"><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
   const inviteAddresses = invite.addresses;

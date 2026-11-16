@@ -36,7 +36,9 @@ Skills can compose companion procedures instead of repeating them.
 Marketplace starters live in `packages/skills/marketplace-skills/`. Their YAML
 frontmatter supplies the card metadata (`name`, `description`, `icon`, `color`,
 `tags`), and selecting a starter sends its Markdown body as the first user
-message in a Canvas. The dashboard and an empty Canvas both offer them.
+message in a Canvas. The dashboard and an empty Canvas both offer them, and the
+public site's `/marketplace/` page lists them. A new starter is added to the
+list in `packages/skills/marketplace-skills/catalog.ts`.
 [Canvas Marketplace](desktop-shell.md#section-dashboards)
 
 ## The bar: a medium-sized model, at two moments
