@@ -245,7 +245,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   };
   if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally"><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
   const inviteAddresses = invite.addresses;
-  if (state.stage === 'people') return <OnboardingPage title="Invite your teammates" subtitle={["Rally is designed to be multi-human. Rally lets teammates work with AI in shared (cooperative) chat, so without your teammates it won't be as fun.", "Don't worry, you can start using it even before they accept the invite."]} footer={<>
+  if (state.stage === 'people') return <OnboardingPage title="Add your teammates" subtitle={["Rally is designed to be multi-human. Rally lets teammates work with AI in shared (cooperative) chat, so without your teammates it won't be as fun.", "They're members right away, so you can start working with them before they first sign in."]} footer={<>
     <Button className="button-primary" disabled={busy} onClick={() => {
       const problem = inviteEmailsProblem(invite);
       if (problem) {
@@ -257,11 +257,11 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
         invite.replace(addresses);
         const { failures } = await inviteMembers(api!, addresses, (email) => setSent((values) => [...values, email]));
         invite.replace(failures);
-        if (failures.length) throw new Error(`Could not invite: ${failures.join(', ')}. Check the addresses and retry.`);
+        if (failures.length) throw new Error(`Could not add: ${failures.join(', ')}. Check the addresses and retry.`);
         await finishOnboarding();
       });
-    }}>{busy ? 'Inviting…' : inviteAddresses.length ? `Invite ${inviteAddresses.length} ${inviteAddresses.length === 1 ? 'teammate' : 'teammates'}` : 'Invite teammates'}</Button>
-    <Button disabled={busy} onClick={() => void perform(finishOnboarding)}>{sent.length ? 'Continue' : 'Invite later'}</Button>
+    }}>{busy ? 'Adding…' : inviteAddresses.length ? `Add ${inviteAddresses.length} ${inviteAddresses.length === 1 ? 'teammate' : 'teammates'}` : 'Add teammates'}</Button>
+    <Button disabled={busy} onClick={() => void perform(finishOnboarding)}>{sent.length ? 'Continue' : 'Add later'}</Button>
   </>}>
     <InviteEmailField invite={invite} disabled={busy} />
     {sent.length > 0 && <p role="status">Invited: {sent.join(', ')}</p>}{error && <ErrorNotice occurrence={error}>{error.message}</ErrorNotice>}

@@ -10,6 +10,7 @@ import { BillingStatusSchema, BillingUrlSchema, BillingCreditsSchema, BillingOve
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
+import { AddWorkspaceMemberResponseSchema, type AddWorkspaceMemberResponse } from '@rally/contracts';
 import {
   ElicitationSchema,
   SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourcesResultSchema,
@@ -1102,18 +1103,12 @@ export class RallyApi {
     return page.items;
   }
 
-  async createWorkspaceInvitation(
-    email: string,
-    role: 'admin' | 'member',
-  ): Promise<{ invitation: WorkspaceInvitation; inviteUrl: string; emailDelivery: 'sent' | 'skipped' }> {
-    return this.request('/workspace/invitations', {
+  /** Add someone by address: a member at once, emailed a link to sign in. Nothing to accept. */
+  async addWorkspaceMember(email: string, role: 'admin' | 'member'): Promise<AddWorkspaceMemberResponse> {
+    return this.request('/workspace/members', {
       method: 'POST',
       body: { email, role },
-      schema: z.object({
-        invitation: WireWorkspaceInvitationSchema,
-        inviteUrl: HttpUrlSchema,
-        emailDelivery: z.enum(['sent', 'skipped']),
-      }),
+      schema: AddWorkspaceMemberResponseSchema,
     });
   }
 

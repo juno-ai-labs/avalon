@@ -5,7 +5,7 @@ import { startConnectorAuthorization } from '../lib/start-connector-authorizatio
 import { useDocumentTitle } from '../lib/document-title';
 import { AshbyWorkspaceSetup, ConnectorInstallationDetails, useWorkspaceInstallationRecovery } from '../components/connector-installation';
 import { ConnectorApiKeyField, ConnectorApiKeyIssuingLink } from '../components/connector-api-key-field';
-import { CopyButton, CopyField } from '../components/copy-button';
+import { CopyField } from '../components/copy-button';
 import { SupportAccessSetting } from '../components/support-access-setting';
 import { CanvasSharingDefaultsSetting } from '../components/canvas-sharing-defaults-setting';
 import { ConnectedAppsSetting } from '../components/connected-apps-setting';
@@ -56,6 +56,7 @@ import {
   type ReactNode,
 } from 'react';
 import { ConnectorEventConsoleProviders, ConnectorInstallationProviders, WorkspaceNameSchema, connectorApiKeyAcceptable } from '@rally/contracts';
+import type { AddWorkspaceMemberResponse } from '@rally/contracts';
 import type {
   ConnectorOAuthStart,
   CustomMcpToolPolicy,
@@ -707,8 +708,7 @@ export function WorkspaceSettingsScreen({
   const [githubRepositorySearch, setGitHubRepositorySearch] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
-  const [createdUrl, setCreatedUrl] = useState<string | null>(null);
-  const [createdDelivery, setCreatedDelivery] = useState<'sent' | 'skipped' | null>(null);
+  const [added, setAdded] = useState<AddWorkspaceMemberResponse | null>(null);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [terminalMode, setTerminalMode] = useState<'trusted_only' | 'full_internet'>('trusted_only');
   const [terminalDomains, setTerminalDomains] = useState('');
@@ -1062,12 +1062,12 @@ export function WorkspaceSettingsScreen({
     },
   });
   const createInvitation = useMutation({
-    mutationFn: () => api!.createWorkspaceInvitation(email.trim(), role),
+    mutationFn: () => api!.addWorkspaceMember(email.trim(), role),
     onSuccess: (result) => {
-      setCreatedUrl(result.inviteUrl);
-      setCreatedDelivery(result.emailDelivery);
+      setAdded(result);
       setEmail('');
       void queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] });
+      void queryClient.invalidateQueries({ queryKey: ['workspace-members'] });
     },
   });
   // Promotion and demotion are the same write, so they are the same mutation:
@@ -1917,8 +1917,8 @@ export function WorkspaceSettingsScreen({
                 {isSettingAvailable(settings.invitations, settingsContext) && (
                   <div className="settings-subsection">
                     <div className="settings-pane-heading settings-pane-heading-count">
-                      <div><h2><SettingLabel setting={settings.invitations} /></h2><p>Invite teammates by email. Links expire after seven days.</p></div>
-                      <span>{pendingInvitations.length} pending</span>
+                      <div><h2><SettingLabel setting={settings.invitations} /></h2><p>Add teammates by email. They're members right away, and get an email to sign in.</p></div>
+                      {pendingInvitations.length > 0 && <span>{pendingInvitations.length} older {pendingInvitations.length === 1 ? 'invitation' : 'invitations'} waiting</span>}
                     </div>
                     <form
                       className="invite-form"
@@ -1944,22 +1944,21 @@ export function WorkspaceSettingsScreen({
                       </Button>
                     </form>
                     {createInvitation.error && <ErrorNotice occurrence={createInvitation.error}>{createInvitation.error.message}</ErrorNotice>}
-                    {createdUrl && (
+                    {added && (
                       <div className="invite-link-result" role="status">
                         <div>
-                          <strong>{createdDelivery === 'sent' ? 'Invitation emailed' : 'Invite link ready'}</strong>
-                          <small>{createdDelivery === 'sent' ? 'It expires in seven days. You can also copy the one-time link.' : 'Email delivery is disabled outside production. Copy the one-time link to test the flow.'}</small>
+                          <strong>Added {added.member.email}</strong>
+                          <small>{added.emailDelivery === 'sent' ? 'They are a member now, and we emailed them a link to sign in.'
+                            : added.emailDelivery === 'failed' ? 'They are a member now, but the email to them could not be sent. Tell them to sign in with this address.'
+                              : 'They are a member now. Email is off outside production, so tell them to sign in with this address.'}</small>
                         </div>
-                        <CopyButton label="Copy invite link" size={15} value={createdUrl} />
                       </div>
                     )}
                     {revokeInvitation.error && <ErrorNotice occurrence={revokeInvitation.error}>{revokeInvitation.error.message}</ErrorNotice>}
                     <div className="invitation-list settings-list-card">
                       {invitations.isLoading ? (
                         <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading invitations…</div>
-                      ) : pendingInvitations.length === 0 ? (
-                        <EmptyState title="No pending invitations" description="New invitations appear here until they are accepted or revoked." />
-                      ) : pendingInvitations.map((invitation) => (
+                      ) : pendingInvitations.length === 0 ? null : pendingInvitations.map((invitation) => (
                         <div className="invitation-row" key={invitation.id}>
                           <span><strong>{invitation.email}</strong><small>{invitation.role === 'admin' ? 'Administrator' : 'Member'} · expires {new Date(invitation.expiresAt).toLocaleDateString()}</small></span>
                           <Badge>{invitationStatusLabel(invitation.status)}</Badge>
