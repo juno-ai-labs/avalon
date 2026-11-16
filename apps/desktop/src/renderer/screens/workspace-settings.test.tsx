@@ -1673,6 +1673,20 @@ describe('Organization settings', () => {
     expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43));
   });
 
+  it('gives a connection page in a native shell its name and the way back to Connections', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000010', connectorType: 'google', scope: 'you',
+      displayName: 'Google · adam@example.com', capabilities: ['drive.read'], status: 'connected',
+    }]);
+    renderSettings(workspace, createTestQueryClient(), false, true);
+    openSettingsSection('Connections');
+    await openConnection('Google · adam@example.com');
+    expect(screen.getByRole('heading', { level: 2, name: 'Google · adam@example.com' })).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Connections' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Connections' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2, name: 'Google · adam@example.com' })).toBeNull();
+  });
+
   it('reconciles the server-owned reconnect attempt without a footer message', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',

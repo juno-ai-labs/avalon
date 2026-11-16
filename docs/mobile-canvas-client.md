@@ -364,7 +364,12 @@ with `nativeShell` at `#/settings?section=` in a deferred chunk, as `view:
 page, device notifications and sign-out. Home lists the sections the person
 may open in `settingsSections`; a host that omits it gets no rows. That field
 is any string, filtered by the shell, so a newer host's section never fails an
-older shell's snapshot.
+older shell's snapshot. Home reports `view: 'settings'` only to a shell that
+declares the `settings` capability, since desktop's own `openSettings` reaches
+the same route. Checkout and connector sign-in reserve a blank tab
+(`prepareExternalLink`), which a WebView never creates; to a shell declaring
+`open-external`, the page sends `{ type: 'open-external', url }` instead and
+the shell opens the http(s) URL in the system browser.
 Notification permission is requested only through This device › Push
 notifications. The
 native installation ID is in SecureStore; APNs device tokens pass through the
@@ -479,7 +484,7 @@ platform's bundle first to catch resolution errors before device testing.
 - Home cannot be removed or reordered. Pin ordering preserves every server pin, including desktop overflow; `movePin` tests cover preservation and invalid moves. The fixed Home control is verified visually, with no automated guard.
 - A failed resource request cannot imply no artifact. Error recovery precedes fallback routing; `mobile-session.test.ts` checks the routing decision, and browser acceptance exercises the stale-cache and recovery paths.
 - Native makes exactly one data request of its own (`artifact-access.ts`): fresh access to a pinned artifact, on the browser transport's endpoint and the same HttpOnly session cookie the WebViews hold, with the app's `Origin`. It reads no token and stores nothing but the canonical URL. Any failure records its reason code in diagnostics and falls back to asking Home. Its only other request, `web-build.ts`'s `GET /` of the public app shell to read the deployed build, reads no account data. Adding another native data request is a decision, not a convenience.
-- Credentials remain in browser cookies. The bridge transmits display metadata, commands, short-lived artifact open URLs, APNs registration tokens, account-bound regional crash envelopes and the single-use sign-in redemption proof, never a password, access/refresh token or session cookie. Runtime schemas define this boundary.
+- Credentials remain in browser cookies. The bridge transmits display metadata, commands, short-lived artifact open URLs, http(s) links the page opens outside (`open-external`), APNs registration tokens, account-bound regional crash envelopes and the single-use sign-in redemption proof, never a password, access/refresh token or session cookie. Runtime schemas define this boundary.
 
 ## Boundary
 
@@ -661,7 +666,9 @@ WebView booting the browser at `#/settings`, which pays a full shell start each
 time; Home is already loaded. Hiding the duplicate controls by CSS alone,
 which would still mount them and run their reads, Web Push's among them.
 
-**What to respect:** `settingsSections` stays open to any string in the
+**What to respect:** a new snapshot value an older shell cannot parse goes
+behind a capability the shell declares, as `view: 'settings'` does.
+`settingsSections` stays open to any string in the
 snapshot schema. Adding to `MOBILE_SETTINGS_SECTIONS` is safe only because of
 that: a closed enum there would make every older shell drop the whole
 snapshot. A control the app owns natively belongs behind `nativeShell`.

@@ -30,6 +30,7 @@ import {
   MonitorCog,
   Bell,
   Brain,
+  ChevronLeft,
   ChevronRight,
   CreditCard,
   Ellipsis,
@@ -1574,6 +1575,17 @@ export function WorkspaceSettingsScreen({
             </button>
           </header>
           <div className="settings-content-scroll" inert={navigationSheetOpen}>
+            {/* A native shell hides this page's header and section list, and
+                titles itself by the section it opened, so a connection's own
+                page carries its name and the way back to Connections. */}
+            {nativeShell && activeSection === 'connection' && pageConnection && (
+              <div className="settings-native-back">
+                <button onClick={() => setActiveSection('connections')} type="button">
+                  <ChevronLeft aria-hidden="true" size={18} />Connections
+                </button>
+                <h2>{pageConnection.displayName}</h2>
+              </div>
+            )}
             {activeSection === 'preferences' && (
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-list-card">
