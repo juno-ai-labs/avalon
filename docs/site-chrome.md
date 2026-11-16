@@ -13,7 +13,7 @@ here.
 | `apps/site/src/site-chrome.ts` | `trustPages`, `blogPosts`, the header and footer renderers, the blog sitemap, `/llms.txt`, and the marker table. |
 | `apps/site/src/html.ts` | `escapeHtml` and `longDate`, shared by every page rendered at build time. |
 | `apps/site/vite.config.ts` | `rally-site-chrome` swaps markers for markup; `rally-markdown-pages` renders the blog, described in [`site-blog.md`](site-blog.md). |
-| `apps/site/src/landing.css` | Header, footer and breadcrumb styles, in the landing page's tokens. |
+| `apps/site/src/landing.css` | Header and footer styles, in the landing page's tokens. |
 
 ## How it works
 
@@ -84,8 +84,10 @@ makes claims about rivals has to be re-checked to stay true, and nobody would
 see it to notice it had gone stale.
 
 **Consequences:** Bringing comparisons back is a new decision and new code; the
-git history before this change has the renderer and the Markdown. The blog is
-now the only user of `rally-markdown-pages`.
+git history before this change has the renderer and the Markdown. The blog and
+the marketplace template pages are now the only users of `rally-markdown-pages`.
+
+Shipped in #1639.
 
 ### 2026-11-16: The footer and landing page carry the CASA AL1 validation
 

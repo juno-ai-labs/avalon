@@ -592,11 +592,6 @@ main{counter-reset:fig}
 @media(max-width:1100px){.footer-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.footer-brand{grid-column:1/-1}}
 @media(max-width:640px){.footer-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:32px 24px}.footer-legal{flex-direction:column}}
 
-/* ---------------------------------------------------------------- Breadcrumbs */
-.breadcrumbs ol{display:flex;flex-wrap:wrap;gap:8px;margin:0;padding:0;list-style:none;font-family:var(--mono);font-size:12px;color:var(--text-3)}
-.breadcrumbs li+li::before{content:'/';margin-right:8px;color:var(--text-4)}
-.breadcrumbs a:hover{color:var(--text)}
-
 /* ---------------------------------------------------------------- Blog */
 .blog{max-width:46rem;margin:auto;padding:48px var(--gutter) 64px}
 .blog-title{margin:36px 0 0;font-size:clamp(3rem,8vw,6.5rem);line-height:.92;text-align:left}
