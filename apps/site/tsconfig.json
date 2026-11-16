@@ -2,6 +2,8 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "allowImportingTsExtensions": true,
+    // The connector marks are the app's React components, rendered to SVG at build time.
+    "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node", "vitest/globals"]
   },

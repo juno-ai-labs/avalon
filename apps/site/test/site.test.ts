@@ -11,7 +11,9 @@ import { handoffAppLink, handoffDevice, handoffHeading, handoffPlan } from '../s
 import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
-import { renderComparisonCard } from '../src/social-cards';
+import { renderComparisonCard, renderTemplateCard } from '../src/social-cards';
+import { renderConnectorMark } from '../src/connector-marks';
+import { TEMPLATE_CONNECTORS } from '../../../packages/skills/marketplace-skills/connectors';
 import { marketplaceTemplates, renderMarketplaceSitemap, renderTemplatePage } from '../src/marketplace-catalog';
 import { parseCanvasTemplate } from '../../../packages/skills/marketplace-skills/catalog';
 import sharp from 'sharp';
@@ -340,13 +342,23 @@ describe('public Rally site', () => {
     expect(page).toContain('<link rel="canonical" href="https://rallywith.ai/marketplace/pr-dashboard/" />');
     expect(page).toContain('<p class="eyebrow">For developers</p>');
     expect(page).toContain('<h1 id="template-title">PR dashboard</h1>');
-    expect(page).toContain('<li><a href="/help/connecting-your-tools/github/">GitHub</a></li>');
+    expect(page).toMatch(/<li><a href="\/help\/connecting-your-tools\/github\/"><span class="connector-mark" aria-hidden="true"><svg [^>]*>[\s\S]*?<\/svg><\/span>GitHub<\/a><\/li>/u);
+    expect(page).toContain('<meta property="og:image" content="https://rallywith.ai/marketplace/pr-dashboard/social.png" />');
     expect(page).toContain('<blockquote class="market-prompt"><p>Build a live GitHub PR dashboard in this Canvas.');
     expect(page).toContain('<a class="button primary" data-site-action="web-app-template" href="https://app.rallywith.ai/app/templates/pr-dashboard">Start from this');
     expect(renderSiteChrome(renderTemplatePage(template('shared-grocery-list'))))
       .toContain('<p>Nothing to connect. Rally builds it from what you tell it.</p>');
     expect([...renderMarketplaceSitemap().matchAll(/<loc>([^<]+)<\/loc>/gu)].map(([, loc]) => loc).slice(0, 2))
       .toEqual(['https://rallywith.ai/marketplace/pr-dashboard/', 'https://rallywith.ai/marketplace/email-notification-screener/']);
+  });
+  it("draws every connector a template may recommend with the app's own mark, as static SVG", () => {
+    for (const { mark, name } of TEMPLATE_CONNECTORS) {
+      expect(renderConnectorMark(mark), name).toMatch(/^<span class="connector-mark" aria-hidden="true"><svg [^>]*viewBox="[^"]+"[^>]*>[\s\S]*<path [^>]*d="[Mm][\s\S]*<\/svg><\/span>$/u);
+    }
+  });
+  it('draws a link preview for a template at the size social sites ask for', async () => {
+    const png = await renderTemplateCard({ slug: 'pr-dashboard', name: 'PR dashboard', description: 'See open pull requests.', audience: 'For developers', connectors: ['GitHub'] });
+    expect(await sharp(png).metadata()).toMatchObject({ format: 'png', width: 1200, height: 630 });
   });
   it('refuses a template that recommends a connector Rally does not offer, naming the field', () => {
     const source = '---\nname: "X"\ndescription: "Y"\nicon: "map"\ncolor: "blue"\ntags:\n  - developers\nconnectors:\n  - jira\n---\n\nBuild it.\n';
@@ -362,7 +374,9 @@ describe('public Rally site', () => {
     ]);
     expect(cards).toContain('<li class="market-card" data-categories="developers"><div class="market-card-body"><p class="market-kind">For developers</p><h3>PR dashboard</h3>');
     // Each card's links: its recommended connectors' help pages, Start from this, then More info.
-    const links = (card: string) => [...card.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]+)/gu)].map(([, href, text]) => [href, text!.trim()]);
+    // A link's text without its markup: a connector's mark and an arrow are inline SVG.
+    const links = (card: string) => [...card.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gu)]
+      .map(([, href, inner]) => [href, inner!.replace(/<title>[\s\S]*?<\/title>/gu, '').replace(/<[^>]+>/gu, '').trim()]);
     const cardOf = (name: string) => {
       const at = cards.indexOf(`<h3>${name}</h3>`);
       const next = cards.indexOf('<li class="market-card"', at);
