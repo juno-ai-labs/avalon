@@ -1084,8 +1084,9 @@ describe("a Canvas's artifacts", () => {
   }
 
   /** Publish a file from the Canvas's Chat through the Terminal's resource bridge, as Rally's publish_resource does. */
-  async function publish(canvasId: string, filePath: string, text: string) {
-    return canvasBridge(canvasId).publishResource(toolContext(canvasId), { filePath }, new TextEncoder().encode(text));
+  async function publish(canvasId: string, filePath: string, text: string, replaceCanvasArtifact?: boolean) {
+    return canvasBridge(canvasId).publishResource(toolContext(canvasId),
+      { filePath, ...(replaceCanvasArtifact === undefined ? {} : { replaceCanvasArtifact }) }, new TextEncoder().encode(text));
   }
 
   it("pushes stored-data status from listed database-backed artifacts, independently of the newest artifact or presence", async () => {
@@ -1121,7 +1122,18 @@ describe("a Canvas's artifacts", () => {
     });
     await note(resourceId);
     await expect.poll(() => status().hasStoredData, { timeout: waitBudget() }).toBe(true);
-    await publish(canvasId, "notes.md", "# Tracker notes");
+    // A newer file beside it, as a Canvas converted from a Thread may hold;
+    // a Chat's publish can no longer add one. The site's note pushes the row.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const notesId = crypto.randomUUID();
+      const later = new Date(Date.parse(NOW) + 60_000).toISOString();
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'generated_file', 'avalon_generated', 'Tracker notes', 'text/markdown', '{}', 'attached', ?, ?)`,
+      notesId, WORKSPACE_ID, later, later);
+      state.storage.sql.exec(`INSERT INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, 1)`, canvasId, notesId);
+    });
+    await note(resourceId);
     await expect.poll(() => status(), { timeout: waitBudget() }).toMatchObject({ artifactKind: "file", hasStoredData: true, presentUserIds: [] });
 
     await runInDurableObject(workspace(), (_instance, state) => {
@@ -1154,7 +1166,7 @@ describe("a Canvas's artifacts", () => {
     expect(url).toContain(route!.hostname_stub);
   });
 
-  it("makes the first publish version 1 by Rally, a republish of the path a new version, and another path another artifact", async () => {
+  it("makes the first publish version 1 by Rally, a republish of the path a new version, and another path its artifact only as a replacement", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     const detail = () => workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" } });
     const first = await publish(canvasId, "plan.md", "# Launch plan");
@@ -1163,9 +1175,12 @@ describe("a Canvas's artifacts", () => {
     const again = await publish(canvasId, "plan.md", "# Launch plan, revised");
     expect(again.resourceId).toBe(first.resourceId);
     expect((await detail()).artifacts).toMatchObject([{ resourceId: first.resourceId, version: 2 }]);
-    const other = await publish(canvasId, "budget.csv", "line,amount");
-    expect((await detail()).artifacts.map((artifact) => artifact.resourceId).sort())
-      .toEqual([first.resourceId, other.resourceId].sort());
+    await expect(publish(canvasId, "budget.csv", "line,amount")).rejects.toMatchObject({ code: "canvas_artifact_held" });
+    expect((await detail()).artifacts.map((artifact) => artifact.resourceId)).toEqual([first.resourceId]);
+    const other = await publish(canvasId, "budget.csv", "line,amount", true);
+    expect((await detail()).artifacts.map((artifact) => artifact.resourceId)).toEqual([other.resourceId]);
+    // The replaced plan keeps its resource; it is no longer the Canvas's.
+    await expect(publish(canvasId, "plan.md", "# Launch plan, third")).rejects.toMatchObject({ code: "canvas_artifact_held" });
   });
 
   it("marks a Canvas unread to a viewer when somebody else makes a new version of its artifact, not to its publisher", async () => {
@@ -1223,12 +1238,12 @@ describe("a Canvas's artifacts", () => {
     const worker = { ...run, substreamId: asSubstreamId(crypto.randomUUID()), backgroundAgent: true,
       backgroundAgentRootSubstreamId: runIds[2]!, automationDelegation: { runId: runIds[2]!, stopGeneration: 0 } };
     expect(await resolveTerminalPublicationHome(TEST_ENV, worker, { title: "Digest" })).toEqual(home);
-    await canvasArtifactNoter(TEST_ENV, worker)!(home, resourceId);
+    await canvasArtifactNoter(TEST_ENV, worker)!(home, resourceId, false);
     expect(await lastWrittenBy()).toEqual({ sidekickId, runId: runIds[2], runNumber: 3, sidekickName: "Weekly digest" });
     // An agent the wizard started publishes nowhere, as the wizard.
     expect(await resolveTerminalPublicationHome(TEST_ENV, { ...run, substreamId: asSubstreamId(crypto.randomUUID()),
       backgroundAgent: true, backgroundAgentRootSubstreamId: "0" }, { title: "Digest" })).toBeNull();
-    await canvasArtifactNoter(TEST_ENV, run)!(home, resourceId);
+    await canvasArtifactNoter(TEST_ENV, run)!(home, resourceId, false);
     expect(await lastWrittenBy()).toEqual({ sidekickId, runId: runIds[2], runNumber: 3, sidekickName: "Weekly digest" });
     // A deleted Sidekick's run is no run to open.
     await runInDurableObject(workspace(), (_instance, state) => {
