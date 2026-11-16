@@ -1,4 +1,5 @@
 import { SlackIngressQueueMessageSchema } from "@rally/contracts";
+import { SharedCanvasesRefreshMessageSchema } from "@rally/contracts/canvas-share-federation";
 import { z } from "zod";
 
 import type { Env } from "../env";
@@ -14,6 +15,7 @@ import type { Env } from "../env";
  */
 export const InteractiveQueueMessageSchema = z.discriminatedUnion("kind", [
   SlackIngressQueueMessageSchema,
+  SharedCanvasesRefreshMessageSchema,
 ]);
 export type InteractiveQueueMessage = z.infer<typeof InteractiveQueueMessageSchema>;
 export type InteractiveKind = InteractiveQueueMessage["kind"];

@@ -20,8 +20,6 @@ import { projectAuthorization } from '../services/authorization-projection-servi
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
 import { projectConversationDisplay } from '../services/search-conversation-display';
 
-import { CanvasShareChangedMessageSchema } from "@rally/contracts/canvas-share-federation";
-import { consumeCanvasShareChanged } from "./canvas-share-consumer";
 import {
   ActivityQueueMessageSchema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
@@ -226,20 +224,6 @@ function searchSourceRevision(env: Env, reference: SearchSourceReference): (() =
 
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
-  const shareChange = CanvasShareChangedMessageSchema.safeParse(message.body);
-  if (shareChange.success) {
-    if (shareChange.data.region !== env.AVALON_REGION) { message.ack(); return; }
-    try {
-      await consumeCanvasShareChanged(env, shareChange.data);
-      message.ack();
-    } catch (error) {
-      logWarn(env, "canvas_share_changed_retry", { region: env.AVALON_REGION, workspace_id: shareChange.data.workspaceId,
-        canvas_id: shareChange.data.canvasId, user_id: shareChange.data.userId, queue_attempts: message.attempts,
-        error_code: diagnosticErrorCode(error, "canvas_share_changed_failed") });
-      message.retry();
-    }
-    return;
-  }
   const viewJob = ConversationViewJobSchema.safeParse(message.body);
   if (viewJob.success) {
     const job = viewJob.data;
