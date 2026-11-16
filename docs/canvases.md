@@ -1125,11 +1125,11 @@ which would need a table rebuild and a decision for every converted Canvas
 that already holds several; the rule is cheap to lift while it lives in code.
 
 **Consequences:** A Sidekick whose saved instructions publish a new file
-each run (a dated digest) is refused from its second run on. Its run guidance
-tells it to add each run's output to the one artifact, keeping earlier runs';
-a run that instead takes the refusal's `replaceCanvasArtifact` route drops
-earlier output from the Canvas, though each replaced file still serves at
-its URL. A race between two publishes is accepted: the second is not listed
+each run (a dated digest) is refused from its second run on unless it
+replaces. Replacing on every run is allowed, and each replaced file still
+serves at its URL. The run guidance and the refusal nudge toward adding the
+new file or entry inside the one artifact, and keep `replaceCanvasArtifact`
+for output meant to take the artifact's place. A race between two publishes is accepted: the second is not listed
 and the model is not told.
 
 ### 2026-11-15 — A person the Canvas admits can join its participant list
