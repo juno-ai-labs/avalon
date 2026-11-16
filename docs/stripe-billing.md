@@ -198,10 +198,11 @@ existing lifecycle. Before Checkout, the free subscription is canceled and retai
 as award history, releasing Stripe's active-subscription currency restriction. A durable
 marker prevents cron recreating it while Checkout is pending. If paid checkout happened
 before the free record existed, awards are recorded on the Stripe customer without
-creating a conflicting free subscription. Customer metadata shows the current plan, included allowance,
+creating a conflicting free subscription. The Stripe customer name follows the
+Organization name. Customer metadata shows the current plan, included allowance,
 weekly allocation, quota anchor, paid/free subscription IDs, available pilot
-coupon, meter IDs and pending/failed usage-hour counts. Metadata reflects the
-latest profile sync, so delivery counts may lag one scheduled tick.
+coupon and meter IDs. Use the Rally usage ledger for current delivery diagnostics.
+Older Stripe customers can still carry the last published usage-hour counts.
 
 Every accepted usage event atomically updates `billing_usage_hours` through a
 usage-database trigger. Separate Organization-paid and Rally-paid totals are
@@ -251,7 +252,7 @@ Stripe documents the ingestion window and asynchronous processing in
 - `billing_usage_hours` records the current total/revision, meter, last sent and
   confirmed revisions/times, and a diagnostic error code. Inspect rows whose
   confirmed revision differs from the current one, or whose meter differs from
-  the configured payer meter. Customer metadata summarizes pending/failed hours.
+  the configured payer meter. The row error codes identify failed hours.
 - An interrupted send is replayed automatically. A successful send awaiting
   aggregation is rechecked on later ticks. Provider failures remain pending and
   retry without preventing the next hour or Organization from synchronizing.
@@ -571,8 +572,9 @@ provider-free status reads and isolated settlement.
 restart recovery after an uncertain provider response, and signed webhook dispatch/tampering through Hono and the actor.
 `test/stripe-billing-sync.test.ts` covers profile recovery, awards, first-paid
 eligibility, hourly delivery, delayed aggregation, replay, concurrent updates,
-retention, terminal expiry, closed-account cleanup and settlement continuing
-through sync failures.
+retention, terminal expiry, closed-account cleanup, settlement continuing
+through sync failures, Organization renames, and usage reconciliation without
+customer metadata writes.
 `test/trial-months.test.ts` covers fixed fee-waiver deadlines, remaining pilot
 coverage, calendar-month clamping, uncertain writes, cancellation and billable
 overages during trials. The workerd operator suite covers its audited MCP bridge.
@@ -770,6 +772,23 @@ use Engineering MCP to change offers and promotions in the persisted catalog;
 landing-page prose must be kept aligned separately.
 
 ## Changelog
+
+### 2026-11-16 — Keep usage delivery diagnostics in Rally
+
+The five-minute billing sweep published pending and failed usage-hour counts as
+Stripe customer metadata. Asynchronous meter reconciliation changed those counts,
+so Stripe repeatedly sent `customer.updated` back to the same Organization's
+billing actor. Deliveries that overlapped an active billing operation returned
+`billing_busy` and Stripe retried them. The usage ledger now serves as the sole
+source for current delivery diagnostics. Filtering these events at ingress would
+still leave Stripe generating and delivering them. Keep volatile diagnostics out
+of customer metadata because each change generates a `customer.updated` event.
+The profile sync compares the Organization name explicitly so renames reach Stripe
+even when billing metadata is stable. It also treats omitted metadata keys as
+empty when comparing fields that Stripe unsets with an empty value. Signed customer
+and subscription webhooks still reconcile payment details and subscription changes.
+
+PR: [#1642](https://github.com/juno-ai-labs/avalon/pull/1642).
 
 ### 2026-11-12 — Keep Billing visible across permissions and loading states
 

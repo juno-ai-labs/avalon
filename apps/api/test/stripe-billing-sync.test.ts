@@ -26,7 +26,7 @@ interface StripeSubscription {
   metadata: Record<string, string>; items: { data: { price: { id: string; unit_amount: number } }[] };
 }
 function stripeServer() {
-  const customers = new Map<string, { id: string; metadata: Record<string, string> }>();
+  const customers = new Map<string, { id: string; name: string | null; metadata: Record<string, string> }>();
   const subscriptions = new Map<string, StripeSubscription>();
   const values = new Map<string, Map<number, number>>();
   const identifiers = new Set<string>();
@@ -39,12 +39,18 @@ function stripeServer() {
     if (init?.method === 'POST') writes.push({ path, body });
     if (path === 'customers') {
       if (init?.method !== 'POST') return Response.json({ data: [...customers.values()], has_more: false });
-      const customer = { id: `cus_${customers.size + 1}`, metadata: metadata(body) }; customers.set(customer.id, customer); return Response.json(customer);
+      const customer = { id: `cus_${customers.size + 1}`, name: body.get('name'), metadata: metadata(body) }; customers.set(customer.id, customer); return Response.json(customer);
     }
     if (path === 'customers/search') return Response.json({ data: [...customers.values()] });
     if (path.startsWith('customers/')) {
       const customer = customers.get(path.slice('customers/'.length))!;
-      if (init?.method === 'POST') Object.assign(customer.metadata, metadata(body));
+      if (init?.method === 'POST') {
+        if (body.has('name')) customer.name = body.get('name');
+        for (const [key, value] of Object.entries(metadata(body))) {
+          if (value === '') delete customer.metadata[key];
+          else customer.metadata[key] = value;
+        }
+      }
       return Response.json(customer);
     }
     if (path.startsWith('prices/')) return Response.json({ unit_amount: controls.freeAmount, billing_scheme: 'per_unit', recurring: { usage_type: 'licensed', interval: 'month', interval_count: 1 } });
@@ -198,6 +204,38 @@ it('records reconciliation as pending until Stripe aggregation catches up', asyn
   expect(usage.prepare('SELECT confirmed_revision, error_code FROM billing_usage_hours').get()).toEqual({ confirmed_revision: 1, error_code: null });
 });
 
+it('synchronizes usage without writing Stripe customer metadata when usage counters change', async () => {
+  const { env, usage, server, add } = fixture();
+  await settleBillingAccount(env, WORKSPACE);
+  const customer = server.customers.get('cus_1')!;
+  Object.assign(customer.metadata, { usage_pending_hours: '0', usage_failed_hours: '0' });
+  server.writes.length = 0;
+
+  await add('one');
+  server.controls.lag = true;
+  await settleBillingAccount(env, WORKSPACE);
+  expect(usage.prepare('SELECT error_code FROM billing_usage_hours').get()).toEqual({ error_code: 'billing_usage_unreconciled' });
+  server.controls.lag = false;
+  await settleBillingAccount(env, WORKSPACE);
+  expect(usage.prepare('SELECT confirmed_revision, error_code FROM billing_usage_hours').get()).toEqual({ confirmed_revision: 1, error_code: null });
+  await settleBillingAccount(env, WORKSPACE);
+
+  expect(server.writes.map(({ path }) => path)).toEqual(['billing/meter_events']);
+});
+
+it('propagates an Organization rename to Stripe once', async () => {
+  const { db, env, server } = fixture();
+  await settleBillingAccount(env, WORKSPACE);
+  expect(server.customers.get('cus_1')?.name).toBe('Test');
+  server.writes.length = 0;
+
+  db.prepare('UPDATE workspaces SET name = ? WHERE id = ?').run('Renamed Organization', WORKSPACE);
+  await settleBillingAccount(env, WORKSPACE);
+  await settleBillingAccount(env, WORKSPACE);
+
+  expect(server.writes.map(({ path, body }) => [path, body.get('name')])).toEqual([['customers/cus_1', 'Renamed Organization']]);
+});
+
 it('continues overage settlement when background Stripe usage synchronization fails', async () => {
   const { db, env, server, add } = fixture(); await add('overage', 50_000_000); await settleBillingAccount(env, WORKSPACE);
   db.prepare(`INSERT INTO billing_terms(subscription_id,workspace_id,customer_id,price_id,starts_at)
@@ -329,7 +367,7 @@ it('archives the free subscription before foreign-currency checkout and preserve
 it('records awards on the customer without creating a conflicting free subscription when paid checkout came first', async () => {
   const { db, env, server } = fixture();
   await billingAccount(env, WORKSPACE);
-  server.customers.set('cus_eur', { id: 'cus_eur', metadata: {} });
+  server.customers.set('cus_eur', { id: 'cus_eur', name: null, metadata: {} });
   db.prepare("UPDATE billing_accounts SET customer_id = 'cus_eur', subscription_id = 'sub_eur', currency = 'eur', status = 'active'").run();
   await synchronizeStripeProfile(env, await billingAccount(env, WORKSPACE));
   expect(server.subscriptions.size).toBe(0);
