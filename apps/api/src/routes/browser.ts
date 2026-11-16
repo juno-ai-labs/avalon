@@ -9,7 +9,7 @@ import { authBodyLimit } from "../middleware/auth-body-limit";
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { z } from "zod";
-import { MobileAuthStartSchema, MobileAuthExchangeSchema, MobileAuthTicketSchema, StartSupportSessionRequestSchema, SupportPeopleSchema, SupportWorkspacesSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { IdSchema, MobileAuthStartSchema, MobileAuthExchangeSchema, MobileAuthTicketSchema, StartSupportSessionRequestSchema, SupportPeopleSchema, SupportWorkspacesSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { SupportAccessService } from "../services/support-access";
 import { RALLY_HEADERS, rallyHeaderAliases } from "@rally/contracts/http-headers";
 import type { Env, HonoAppEnv } from "../env";
@@ -27,7 +27,7 @@ import { membershipAttention } from "../services/workspace-attention-service";
 import { resolveSiteForViewer } from "../services/artifact-site-resolution";
 import { IDENTITY_REGION, configuredRegions, type Region } from "@rally/contracts/regions";
 import { BrowserSessionService, BrowserSessionSchema, BrowserWorkspacesSchema } from "../services/browser-session-service";
-import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserSiteResolutionSchema, BrowserSiteResolveSchema, BrowserWorkspaceActivateSchema, BrowserWorkspaceAttentionSchema,
+import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserInvitationAcceptSchema, BrowserInvitationDeclineSchema, BrowserInvitationsSchema, BrowserSiteResolutionSchema, BrowserSiteResolveSchema, BrowserWorkspaceActivateSchema, BrowserWorkspaceAttentionSchema,
   BrowserWorkspaceCreateSchema, BrowserWorkspaceCreatedSchema, SourceDecisionLinkSchema, SourceDecisionResultSchema } from "@rally/contracts/browser-session";
 import { decideSourceRequestByLink } from "../services/sidekick-source-decision-link";
 import { startEmailLogin, deliverEmailLogin, redeemEmailLogin, EmailLoginStartSchema,
@@ -319,6 +319,46 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
       deferOnboardingOutcome(c,auth,null,"workspace_create_completed",region,telemetryId,onboardingFailureResult(error));
       throw error;
     }
+  });
+  /**
+   * Invitations to join an organization, read on Global from every deployment
+   * as the Mac app's onboarding does. The browser lists them beside the
+   * organizations it already belongs to.
+   */
+  routes.get("/invitations",async (c) => {
+    if (c.env.AVALON_REGION !== IDENTITY_REGION) throw new ApiError(409,"global_identity_required","Read invitations through Rally's identity deployment");
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    return c.json(BrowserInvitationsSchema.parse({ invitations:await new PlatformOnboardingService(c.env,auth).invitations() }));
+  });
+  /**
+   * Accepts an invitation through the Mac app's idempotent path. Like creation,
+   * that path ends in a bearer session a browser must never hold, so it is
+   * revoked unread and the browser opens the organization with
+   * `/workspace/select`. A session minted in another deployment cannot be
+   * revoked from here; it is never sent and lapses on its own.
+   */
+  routes.post("/invitations/:id/accept",zValidator("param",z.object({ id:IdSchema })),zValidator("json",BrowserInvitationAcceptSchema),async (c) => {
+    if (c.env.AVALON_REGION !== IDENTITY_REGION) throw new ApiError(409,"global_identity_required","Accept an invitation through Rally's identity deployment");
+    const { region,operationId } = c.req.valid("json");
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    observeSignupProgress(c.env, auth.userId, 'signup_organization_requested', 'existing_organization', 'browser');
+    const telemetryId = telemetryOperationId(operationId);
+    try {
+      const session = await new PlatformOnboardingService(c.env,auth).acceptInvitation(c.req.valid("param").id,region,operationId);
+      if (region === c.env.AVALON_REGION) await new AuthService(c.env).logout({ sessionId:(await verifyAccessToken(c.env,session.accessToken)).sessionId });
+      observeSignupProgress(c.env, auth.userId, 'signup_organization_ready', 'existing_organization', 'browser');
+      deferOnboardingOutcome(c,auth,session,"workspace_activation_completed",region,telemetryId,"success");
+      return c.json(BrowserWorkspaceCreatedSchema.parse({ region,workspaceId:session.workspace?.id }));
+    } catch (error) {
+      deferOnboardingOutcome(c,auth,null,"workspace_activation_completed",region,telemetryId,onboardingFailureResult(error));
+      throw error;
+    }
+  });
+  routes.post("/invitations/:id/decline",zValidator("param",z.object({ id:IdSchema })),zValidator("json",BrowserInvitationDeclineSchema),async (c) => {
+    if (c.env.AVALON_REGION !== IDENTITY_REGION) throw new ApiError(409,"global_identity_required","Decline an invitation through Rally's identity deployment");
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    await new PlatformOnboardingService(c.env,auth).declineInvitation(c.req.valid("param").id,c.req.valid("json").region);
+    return c.body(null,204);
   });
   routes.post("/workspace/select",zValidator("json",z.strictObject({ workspaceId:WorkspaceIdSchema })),async (c) => {
     const service = new BrowserSessionService(c.env);

@@ -1,6 +1,6 @@
 import { UuidV7Schema } from "./telemetry";
 import { z } from "zod";
-import { SessionSchema, WorkspaceAttentionSchema, WorkspaceIdSchema, WorkspaceSchema } from "./index";
+import { PendingWorkspaceInvitationSchema, SessionSchema, WorkspaceAttentionSchema, WorkspaceIdSchema, WorkspaceSchema } from "./index";
 import { ConfiguredRegionSchema } from "./regions";
 import { IdSchema } from "./identifiers";
 import { HttpsUrlSchema } from "./url-schemas";
@@ -34,6 +34,14 @@ export const BrowserWorkspaceCreateSchema = z.strictObject({
 });
 /** Where the browser opens the organization it just created. No credential crosses. */
 export const BrowserWorkspaceCreatedSchema = z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema });
+/** Invitations to join an organization waiting for the signed-in address, read on Global. */
+export const BrowserInvitationsSchema = z.object({ invitations: z.array(PendingWorkspaceInvitationSchema) });
+/**
+ * Accepts one of them. `operationId` makes a retry return the same membership,
+ * and the answer is `BrowserWorkspaceCreatedSchema`: where to open it.
+ */
+export const BrowserInvitationAcceptSchema = z.strictObject({ region: ConfiguredRegionSchema, operationId: IdSchema });
+export const BrowserInvitationDeclineSchema = z.strictObject({ region: ConfiguredRegionSchema });
 /** Starts Google sign-in for a browser; `returnPath` is a path on the browser host. */
 export const BrowserGoogleStartSchema = z.strictObject({ returnPath: z.string().optional(), signupFlowId: UuidV7Schema.optional() });
 export const BrowserGoogleStartedSchema = z.object({ url: HttpsUrlSchema });

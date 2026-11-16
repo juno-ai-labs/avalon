@@ -8,12 +8,13 @@ import { clearAllDrafts as clearAllDraftsOnly } from '../../desktop/src/renderer
 import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
 import { iosStandalone } from '../../desktop/src/renderer/lib/home-screen';
 import { CreateOrganizationCard, type CreateOrganizationOperation } from '../../desktop/src/renderer/screens/create-organization';
+import { InvitationChoices } from '../../desktop/src/renderer/screens/invitation-choices';
 import { Building2, ChevronRight, KeyRound, LoaderCircle, Mail } from "lucide-react";
 import { ActivityCountBadge, Button, ConnectorMark, ErrorNotice, RallyMark, activityCountLabel } from "@rally/ui/components/primitives";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema, IDENTITY_REGION } from "@rally/contracts/regions";
-import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
+import { BrowserGoogleStartedSchema, BrowserInvitationsSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, EmailLoginStartedSchema, EmailLoginRedeemSchema, type BrowserSession } from "@rally/contracts/browser-session";
 import { browserRequest, BrowserApiError, BrowserResponseError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
@@ -53,6 +54,22 @@ async function openWorkspace(region: string, workspaceId: string): Promise<Brows
   }
   await browserRequest(IDENTITY_REGION, "/workspace/activate", z.undefined(), { region, workspaceId });
   return await select();
+}
+
+type Listed = { region: string; workspaces: ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"]; invitations: ReturnType<typeof BrowserInvitationsSchema.parse>["invitations"] };
+
+/**
+ * The organizations the signed-in account belongs to and the invitations
+ * waiting for it, read together so an empty list never offers Create before
+ * the invitations have answered. Invitations are Global's to list; one that
+ * cannot be read leaves the organizations on screen.
+ */
+async function listOrganizations(region: string): Promise<Listed> {
+  const [{ workspaces }, invitations] = await Promise.all([
+    browserRequest(region, "/workspaces", BrowserWorkspacesSchema),
+    browserRequest(IDENTITY_REGION, "/invitations", BrowserInvitationsSchema).then((result) => result.invitations, () => []),
+  ]);
+  return { region, workspaces, invitations };
 }
 
 /** An account change wipes drafts and the transcript cache the shell keeps. */
@@ -144,7 +161,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
   // Null until the list has loaded, so a fresh sign-in never says nothing was
   // shared before the server has answered.
   // With the deployment it was read from, so its counts come from the same one.
-  const [listed, setListed] = useState<{ region: string; workspaces: ReturnType<typeof BrowserWorkspacesSchema.parse>["workspaces"] } | null>(null);
+  const [listed, setListed] = useState<Listed | null>(null);
   const workspaces = listed?.workspaces ?? null;
   // Each listed organization's activity count, by region and id, with the
   // account that read it, so another account's counts are never drawn.
@@ -281,8 +298,8 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
         setSession(current);
         setError(null);
         if (!opened) {
-          const result = await browserRequest(selected, "/workspaces", BrowserWorkspacesSchema);
-          if (active && read === sessionRead.current) setListed({ region: selected, workspaces: result.workspaces });
+          const result = await listOrganizations(selected);
+          if (active && read === sessionRead.current) setListed(result);
         }
       })().catch((cause: unknown) => {
         if (!active || read !== sessionRead.current) return;
@@ -426,8 +443,8 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
     setSessionAbsent(false);
     setSession(current);
     if (!destination) {
-      const result = await browserRequest(sessionRegion, "/workspaces", BrowserWorkspacesSchema);
-      if (read === sessionRead.current) setListed({ region: sessionRegion, workspaces: result.workspaces });
+      const result = await listOrganizations(sessionRegion);
+      if (read === sessionRead.current) setListed(result);
     }
   }
   async function useDevelopmentAccount() {
@@ -479,6 +496,25 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
     createOperation.current = null;
     setCreatePending(false);
     setCreating(false);
+  }
+
+  /**
+   * Accepting joins the organization on Global, which answers only where it
+   * is; it then opens like one created here, in this document.
+   */
+  async function acceptInvitation(invitation: Listed["invitations"][number], operationId: string): Promise<void> {
+    const joined = await browserRequest(IDENTITY_REGION, `/invitations/${encodeURIComponent(invitation.id)}/accept`,
+      BrowserWorkspaceCreatedSchema, { region: invitation.region, operationId });
+    enterWorkspace(joined.region, joined.workspaceId);
+    setListed(null);
+  }
+  async function declineInvitation(invitation: Listed["invitations"][number]): Promise<void> {
+    await browserRequest(IDENTITY_REGION, `/invitations/${encodeURIComponent(invitation.id)}/decline`, z.undefined(), { region: invitation.region });
+  }
+  async function relist(): Promise<void> {
+    if (!listed) return;
+    const result = await listOrganizations(listed.region).catch(() => null);
+    if (result) setListed(result);
   }
 
   async function continueWithProvider(provider: SignInProvider) {
@@ -579,6 +615,8 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
         <h1>Your organizations</h1>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
         {retiredLink && <p className="entry-lead" role="status">{RETIRED_LINK_MESSAGE}</p>}
+        {listed && listed.invitations.length > 0 && <InvitationChoices invitations={listed.invitations}
+          onAccept={acceptInvitation} onDecline={declineInvitation} onChanged={relist} />}
         {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the link…" : "Loading your organizations…"}</p>
           : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) => {
             const count = activity?.userId === session.user.id ? activity.counts.get(`${workspace.region}:${workspace.id}`) ?? 0 : 0;
@@ -588,7 +626,7 @@ export function BrowserEntry({ renderCollaboration, renderAuthenticated }: { ren
               }
             }}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ActivityCountBadge count={count} /><ChevronRight aria-hidden="true" size={16} /></a>;
           })}</nav>
-          : <>
+          : listed?.invitations.length ? null : <>
             <p className="entry-lead">{session.user.email} is not part of an organization, and nothing has been shared with it yet.</p>
             <p className="entry-lead">Ask a teammate to share a Canvas or a Sidekick with you, or create a new organization.</p>
             <Button className="button-primary signin-button" type="button" disabled={busy} onClick={() => { setError(null); setCreating(true); }}><Building2 aria-hidden="true" size={16} />Create an organization</Button>
