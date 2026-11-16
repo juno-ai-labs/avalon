@@ -17,6 +17,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceAttention, WorkspaceDepartureOutcome } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
+import { canvasDeepLink, type CanvasLinkTarget } from '@rally/contracts/links';
 import {
   workspaceTargetsEqual,
   type WorkspaceTarget,
@@ -137,6 +138,11 @@ export interface AppSessionValue {
    * identity cookie (`GET /browser/workspaces/attention`).
    */
   getWorkspaceAttention: (input: { region: Region; workspaceId: string }) => Promise<WorkspaceAttention>;
+  /**
+   * Opens a Canvas in any of this person's Organizations, switching to it
+   * first when it is not the one in front, as a link to it would.
+   */
+  openWorkspaceCanvas: (target: CanvasLinkTarget) => void;
   activateWorkspace: (
     region: Region,
     workspaceId: string,
@@ -493,6 +499,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     (input: { region: Region; workspaceId: string }) => bridge.getWorkspaceAttention(input),
     [bridge],
   );
+  // Set by the deep-link queue below, so an in-app open takes the same path,
+  // in the same order, as a link from outside the window.
+  const openDeepLinkRef = useRef<((navigation: DesktopDeepLinkNavigation) => void) | null>(null);
+  const openWorkspaceCanvas = useCallback((target: CanvasLinkTarget) => {
+    openDeepLinkRef.current?.({ url: canvasDeepLink(target), entrypoint: 'in_app_link' });
+  }, []);
 
   /**
    * Hand a sign-in's outcome to the action waiting on that attempt. A callback
@@ -1318,10 +1330,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }
       });
     };
-    const unsubscribe = bridge.onDeepLink((navigation) => {
+    const deliver = (navigation: DesktopDeepLinkNavigation): void => {
       if (pendingDrained) enqueue(navigation);
       else liveDeepLinks.push(navigation);
-    });
+    };
+    openDeepLinkRef.current = deliver;
+    const unsubscribe = bridge.onDeepLink(deliver);
     void bridge.consumePendingDeepLinks()
       .then((deepLinks) => {
         if (!active) return;
@@ -1336,6 +1350,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       });
     return () => {
       active = false;
+      if (openDeepLinkRef.current === deliver) openDeepLinkRef.current = null;
       unsubscribe();
     };
   }, [applySession, bridge, queryClient, reconnectAccountIdentity, runtime, settleAccountSignIn]);
@@ -1417,6 +1432,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       },
       getOnboardingState,
       getWorkspaceAttention,
+      openWorkspaceCanvas,
       activateWorkspace,
       acceptInvitation,
       declineInvitation,
@@ -1457,6 +1473,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       finishWorkspaceSetup,
       getOnboardingState,
       getWorkspaceAttention,
+      openWorkspaceCanvas,
       pendingInvitation,
       pendingAccessRequestId,
       pendingConnectorOAuth,
@@ -1501,6 +1518,11 @@ export function AppSessionValueProvider({ value, connectorSetup, children }: Pro
     <CollaborationSessionProvider api={value.api} host={value.host} session={value.session}
       connectorSetup={guest ? null : connectorSetup}>{children}</CollaborationSessionProvider>
   </AppSessionContext.Provider>;
+}
+
+/** The app session, or null where none is mounted (a screen rendered on its own, as in tests). */
+export function useOptionalAppSession(): AppSessionValue | null {
+  return useContext(AppSessionContext);
 }
 
 export function useAppSession(): AppSessionValue {

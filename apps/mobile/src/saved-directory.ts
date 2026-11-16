@@ -9,13 +9,19 @@ const file = () => new File(Paths.document, 'rally-directory.json');
 export function loadSavedDirectory(): MobileSnapshot | null {
   try {
     const parsed = MobileSnapshotSchema.safeParse(JSON.parse(file().textSync()));
-    return parsed.success ? parsed.data : null;
+    // A copy from before this rule may hold Canvases from other Organizations.
+    return parsed.success ? { ...parsed.data, sharedElsewhere: [] } : null;
   } catch { return null; }
 }
 
+/**
+ * Canvases shared from other Organizations are never written: nothing about a
+ * Canvas is kept outside its Organization (`docs/canvas-share-federation.md`),
+ * so they show once Home's live snapshot arrives.
+ */
 export function saveDirectory(snapshot: MobileSnapshot | null): void {
   try {
-    if (snapshot) file().write(JSON.stringify(snapshot));
+    if (snapshot) file().write(JSON.stringify({ ...snapshot, sharedElsewhere: [] }));
     else if (file().exists) file().delete();
   } catch { /* A missing copy only costs the next launch its head start. */ }
 }

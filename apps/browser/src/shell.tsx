@@ -6,6 +6,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useSt
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import { BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspacesSchema, type BrowserWorkspaceAttention } from '@rally/contracts/browser-session';
+import { canvasCanonicalUrl } from '@rally/contracts/links';
 import { SupportPeopleSchema, SupportWorkspacesSchema } from '@rally/contracts';
 import { z } from 'zod';
 import { IDENTITY_REGION, type Region } from '@rally/contracts/regions';
@@ -147,6 +148,8 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
       if (!found) throw new Error('Organization attention is unavailable right now.');
       return found.attention;
     },
+    // The canonical path, which the entry opens in its Organization (`session.ts`).
+    openWorkspaceCanvas: (target) => { location.assign(new URL(canvasCanonicalUrl(location.origin, target)).pathname); },
     activateWorkspace: async (target, workspaceId) => { location.assign(`/app/workspaces/${target}/${workspaceId}`); },
     acceptInvitation: macAppOnly,
     declineInvitation: macAppOnly,
