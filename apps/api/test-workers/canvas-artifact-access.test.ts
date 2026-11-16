@@ -18,8 +18,14 @@ import {
   asWorkspaceId,
   asAutomationId,
   asSubstreamId,
+  ArtifactManifestSchema,
+  artifactAssetKey,
+  artifactBlobKey,
+  artifactManifestKey,
   type ArtifactManifest,
 } from "@rally/contracts";
+import type { SitePublishFile } from "../src/services/terminal/site-resource-bridge";
+import { sha256Hex } from "../src/lib/crypto";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
 import { createArtifactAudienceTool } from "../src/services/canvas-artifact-audience-tool";
@@ -35,6 +41,7 @@ import {
   consumeAccessRevocationQueue,
 } from "../src/queues/access-revocation-consumer";
 import artifactWorker from "../src/artifacts/index";
+import { storedObjectResponse } from "../src/artifacts/stored-object-response";
 import { AuthorizationService } from "../src/services/authorization-service";
 import { ResourceService } from "../src/services/resource-service";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
@@ -331,10 +338,117 @@ describe("Canvas artifact access propagated to local serving", () => {
     const stub = url.hostname.split(".")[0]!.replace(/-g$/u, "");
     await share("public");
     await sync(published.resourceId);
+    // The link ends in the file's own name, which podcast apps read its type from.
+    expect(url.pathname).toBe("/episode-1.mp3");
     // A podcast app sends no cookie and no fetch metadata.
-    const response = await visit(stub);
+    const response = await visit(stub, url.pathname);
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("episode one audio");
+    // The bare host still serves it, and so does any plain name, so a link
+    // survives a rename; a path with folders does not.
+    expect(await (await visit(stub)).text()).toBe("episode one audio");
+    expect(await (await visit(stub, "/renamed-episode.mp3")).text()).toBe("episode one audio");
+    expect((await visit(stub, "/episodes/episode-1.mp3")).status).toBe(404);
+  });
+
+  it("stores a site's files once by digest, streams new ones in, and serves every version from them", async () => {
+    await runInDurableObject(
+      env.SUBSTREAM_AGENTS.getByName(conversationObjectName(env.AVALON_REGION, workspaceId, CANVAS, "0")),
+      (_instance, state) => seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: CANVAS, parentKind: "canvas" }),
+    );
+    const bridge = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(env, workspaceId),
+      createTerminalPortFactory(env, undefined, "0"), undefined, null, null, null, "0",
+      canvasArtifactNoter(env, { workspaceId, parentKind: "canvas", parentId: CANVAS, substreamId: asSubstreamId("0") }));
+    const call = () => ({
+      workspaceId, workstreamId: CANVAS, harnessRunId: crypto.randomUUID(), toolCallId: crypto.randomUUID(),
+      effectIntentId: crypto.randomUUID(), executionPrincipal: { type: "user" as const, userId: OWNER },
+      signal: new AbortController().signal,
+    });
+    const file = async (path: string, text: string) => {
+      const bytes = new TextEncoder().encode(text);
+      return { path, bytes, sha256: await sha256Hex(bytes) };
+    };
+    const streamed = async (path: string, text: string, sent: string | (() => Promise<ReadableStream>) = text) => {
+      const bytes = new TextEncoder().encode(text);
+      return { path, sha256: await sha256Hex(bytes), sizeBytes: bytes.byteLength,
+        open: typeof sent === "string" ? async () => new Response(sent).body! : sent };
+    };
+    const never = async (): Promise<ReadableStream> => { throw new Error("opened_a_file_that_needs_no_bytes"); };
+    const stored = async (path: string, text: string, storedIn: string) => {
+      const bytes = new TextEncoder().encode(text);
+      return { path, sha256: await sha256Hex(bytes), sizeBytes: bytes.byteLength, storedIn };
+    };
+    const site = (files: SitePublishFile[]) => ({ mode: "static" as const, stateful: false, serverModuleSha256: null, files });
+    const publish = (files: SitePublishFile[]) => bridge.publishSiteResource(call(), { filePath: "feed" }, site(files));
+
+    const one = await streamed("episodes/one.mp3", "episode one audio");
+    const first = await publish([await file("index.html", "<h1>Show</h1>"), one, await streamed("empty.txt", "", never)]);
+    const blob = artifactBlobKey(first.artifactId, one.sha256);
+    expect(await (await env.PAYLOADS.get(blob))?.text()).toBe("episode one audio");
+    // An empty file is stored without being opened.
+    expect((await env.PAYLOADS.head(artifactBlobKey(first.artifactId, await sha256Hex(new Uint8Array()))))?.size).toBe(0);
+    expect((await bridge.liveSiteFiles(call(), "feed"))?.manifest.assets)
+      .toContainEqual({ path: "episodes/one.mp3", contentType: "audio/mpeg", sha256: one.sha256, sizeBytes: 17 });
+
+    // The next episode: the first is already stored, so it is neither opened nor written,
+    // and a second path with the same bytes shares its blob.
+    const before = (await env.PAYLOADS.head(blob))!.uploaded.getTime();
+    const second = await publish([
+      await file("index.html", "<h1>Show, two episodes</h1>"),
+      await stored("episodes/one.mp3", "episode one audio", first.artifactId),
+      await stored("episodes/one-again.mp3", "episode one audio", first.artifactId),
+      await streamed("episodes/two.mp3", "episode two audio"),
+    ]);
+    expect(second.version).toBe(2);
+    expect((await env.PAYLOADS.head(blob))!.uploaded.getTime()).toBe(before);
+
+    // A file that changed after it was listed (other bytes, fewer, or more) is named as
+    // that, and the site keeps serving version 2. A provider's failure keeps its own code.
+    for (const sent of ["episode three AUDIO", "episode three", "episode three audio, longer"]) {
+      await expect(publish([await file("index.html", "<h1>Show, three</h1>"), await streamed("episodes/three.mp3", "episode three audio", sent)]))
+        .rejects.toMatchObject({ code: "resource_not_ready", details: { code: "site_file_changed_after_listing" } });
+    }
+    await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
+      await streamed("episodes/three.mp3", "episode three audio", async () => { throw new Error("daytona_file_stream_http_502"); })]))
+      .rejects.toMatchObject({ code: "resource_publish_failed", details: { code: "daytona_file_stream_http_502" } });
+    // A file gone from the sandbox changed too, and a retry after its producer finishes can succeed.
+    await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
+      await streamed("episodes/three.mp3", "episode three audio", async () => { throw new Error("daytona_file_stream_http_404"); })]))
+      .rejects.toMatchObject({ code: "resource_not_ready", details: { code: "site_file_changed_after_listing" } });
+    // A file said to be in another artifact's blobs is refused, never left unwritten.
+    await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
+      await stored("episodes/elsewhere.mp3", "elsewhere", "00000000-0000-7000-8000-00000000beef")]))
+      .rejects.toMatchObject({ code: "resource_publish_failed", details: { code: "site_file_stored_in_another_artifact" } });
+    // A download that breaks partway is named by its own error, not as a changed file.
+    const breaksPartway = async () => new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode("episode")); controller.error(new Error("daytona_download_reset")); },
+    });
+    await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
+      await streamed("episodes/three.mp3", "episode three audio", breaksPartway)]))
+      .rejects.toMatchObject({ code: "resource_publish_failed", details: { code: "daytona_download_reset" } });
+    expect((await bridge.liveSiteFiles(call(), "feed"))?.manifest.assets.map((entry) => entry.path))
+      .toEqual(expect.arrayContaining(["episodes/one.mp3", "episodes/two.mp3"]));
+
+    // A live version stored before blobs holds nothing a publish may leave
+    // unwritten, so the publish counts and streams every file.
+    const liveManifestKey = artifactManifestKey(first.artifactId, 2);
+    const liveManifest = ArtifactManifestSchema.parse(await (await env.PAYLOADS.get(liveManifestKey))!.json());
+    const legacyManifest = { ...liveManifest };
+    delete legacyManifest.assetStore;
+    await env.PAYLOADS.put(liveManifestKey, JSON.stringify(legacyManifest));
+    expect(await bridge.liveSiteFiles(call(), "feed")).toBeNull();
+    await env.PAYLOADS.put(liveManifestKey, JSON.stringify(liveManifest));
+
+    // The serving Worker reads the blob through the manifest.
+    await share("public");
+    await sync(first.artifactId, first.resourceId);
+    const stub = new URL(first.url).hostname.split(".")[0]!.replace(/-g$/u, "");
+    const served = await visit(stub, "/episodes/two.mp3");
+    expect(served.status).toBe(200);
+    expect(await served.text()).toBe("episode two audio");
+    // A site's stored file revalidates; its page does not.
+    expect(served.headers.get("cache-control")).toBe("private, no-cache");
+    expect((await visit(stub, "/")).headers.get("cache-control")).toBe("private, no-store");
   });
 
   it("serves a byte range of a public file and a site's asset, as a player seeking asks for one", async () => {
@@ -396,6 +510,57 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect((await fetchFrom(fileStub, { headers: { range: "bytes=0-8" } })).status).toBe(401);
   });
 
+  it("lets a browser keep a public file and revalidate it, and stops answering once the Canvas is private", async () => {
+    await share("public");
+    await sync(SITE_HOST, SITE);
+    await sync(FILE);
+    const fileStub = (await env.PLATFORM_DB.prepare("SELECT hostname_stub FROM artifact_hostname_routes WHERE artifact_id=?")
+      .bind(FILE).first<{ hostname_stub: string }>())!.hostname_stub;
+    const fetchFrom = async (stub: string, init: RequestInit) => {
+      const ctx = createExecutionContext();
+      const response = await artifactWorker.fetch(new Request(`https://${stub}-g.rallyusercontent.com/`, init), {
+        APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+        ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+        PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
+      }, ctx);
+      await waitOnExecutionContext(ctx);
+      return response;
+    };
+    const first = await fetchFrom(fileStub, {});
+    expect(first.headers.get("cache-control")).toBe("private, no-cache");
+    const etag = first.headers.get("etag")!;
+    const read = async (response: Response) => ({ status: response.status, body: await response.text() });
+    expect(await read(await fetchFrom(fileStub, { headers: { "if-none-match": etag } })))
+      .toEqual({ status: 304, body: "" });
+    expect((await fetchFrom(fileStub, { method: "HEAD", headers: { "if-none-match": etag } })).status).toBe(304);
+    expect(await read(await fetchFrom(fileStub, { headers: { "if-none-match": "\"another-version\"" } })))
+      .toEqual({ status: 200, body: "Published file" });
+    // Weak tags, lists and `*` match as RFC 9110 has `If-None-Match` compare.
+    expect((await fetchFrom(fileStub, { headers: { "if-none-match": `"other", W/${etag}` } })).status).toBe(304);
+    expect((await fetchFrom(fileStub, { headers: { "if-none-match": "*" } })).status).toBe(304);
+    // A stale tag beside a range is answered with the range, not the whole file.
+    expect((await fetchFrom(fileStub, { headers: { "if-none-match": "\"another-version\"", range: "bytes=0-8" } })).status)
+      .toBe(206);
+    // A caller whose HTML Rally may rewrite asks for exact bytes off, and gets neither a
+    // range nor a 304 from the stored page's tag.
+    const stored = (await env.PAYLOADS.head(`artifact/${SITE_HOST}/v1/assets/index.html`))!;
+    const whole = await storedObjectResponse(env.PAYLOADS, `artifact/${SITE_HOST}/v1/assets/index.html`,
+      new Request("https://x.invalid/", { headers: { "if-none-match": stored.httpEtag, range: "bytes=0-3" } }),
+      { "content-type": "text/html" }, { ranges: false });
+    expect(whole?.status).toBe(200);
+    // Nor is a file opened in a tab, whose back-forward copy the browser shows without asking.
+    expect((await fetchFrom(fileStub, { headers: { "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" } }))
+      .headers.get("cache-control")).toBe("private, no-store");
+    // A page is never kept: a private page would outlive its Canvas in the browser.
+    const page = await fetchFrom("quiet-blue-river-garden", {});
+    expect(page.headers.get("cache-control")).toBe("private, no-store");
+
+    // Every revalidation is admitted first, so a private Canvas refuses at once.
+    await share("editors");
+    await sync(FILE);
+    expect((await fetchFrom(fileStub, { headers: { "if-none-match": etag } })).status).toBe(401);
+  });
+
   it("sends an active site's page whole, with no stale length, when Rally injects into it", async () => {
     // An active site that ends in the taught `env.ASSETS.fetch(request)`, with
     // a share card Rally injects into its page on the way out.
@@ -455,6 +620,49 @@ describe("Canvas artifact access propagated to local serving", () => {
       expect(served.body).toContain("<body>Board</body>");
       expect(served.length === null || Number(served.length) === new TextEncoder().encode(served.body).length).toBe(true);
     }
+  });
+
+  it("serves a blob-stored active site: its module loads by digest and its assets by the manifest", async () => {
+    await runInDurableObject(
+      env.SUBSTREAM_AGENTS.getByName(conversationObjectName(env.AVALON_REGION, workspaceId, CANVAS, "0")),
+      (_instance, state) => seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: CANVAS, parentKind: "canvas" }),
+    );
+    const bridge = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(env, workspaceId),
+      createTerminalPortFactory(env, undefined, "0"), undefined, null, null, null, "0",
+      canvasArtifactNoter(env, { workspaceId, parentKind: "canvas", parentId: CANVAS, substreamId: asSubstreamId("0") }));
+    const file = async (path: string, text: string) => {
+      const bytes = new TextEncoder().encode(text);
+      return { path, bytes, sha256: await sha256Hex(bytes) };
+    };
+    const module = await file("index.js", "export default { async fetch(request, env) { return env.ASSETS.fetch(request); } };");
+    const published = await bridge.publishSiteResource({
+      workspaceId, workstreamId: CANVAS, harnessRunId: crypto.randomUUID(), toolCallId: crypto.randomUUID(),
+      effectIntentId: crypto.randomUUID(), executionPrincipal: { type: "user", userId: OWNER },
+      signal: new AbortController().signal,
+    }, { filePath: "board" }, {
+      mode: "active", stateful: false, serverModuleSha256: module.sha256,
+      files: [module, await file("index.html", "<h1>Board</h1>"), await file("data/rows.json", "[1,2,3]")],
+    });
+    // The module is a blob like every other file, and nothing is at the old path.
+    expect(await env.PAYLOADS.head(artifactBlobKey(published.artifactId, module.sha256))).not.toBeNull();
+    expect(await env.PAYLOADS.head(artifactAssetKey(published.artifactId, 1, "index.js"))).toBeNull();
+    await share("public");
+    await sync(published.artifactId, published.resourceId);
+    const loader = env.ARTIFACT_LOADER;
+    if (!loader) throw new Error("this test needs the worker_loaders binding");
+    const stub = new URL(published.url).hostname.split(".")[0]!.replace(/-g$/u, "");
+    const fetchPath = async (path: string) => {
+      const ctx = createExecutionContext();
+      const response = await artifactWorker.fetch(new Request(`https://${stub}-g.rallyusercontent.com${path}`), {
+        APP_ENV: "test", AVALON_REGION: "global", ARTIFACT_SERVING_DOMAIN: "rallyusercontent.com",
+        ARTIFACT_HOSTS: env.ARTIFACT_HOSTS, ARTIFACT_SIDEKICKS: ctx.exports.ArtifactSidekickDispatcher({ props: {} }),
+        ARTIFACT_LOADER: loader, PLATFORM_DB: env.PLATFORM_DB, PAYLOADS: env.PAYLOADS,
+      }, ctx);
+      await waitOnExecutionContext(ctx);
+      return { status: response.status, body: await response.text() };
+    };
+    expect(await fetchPath("/data/rows.json")).toEqual({ status: 200, body: "[1,2,3]" });
+    expect((await fetchPath("/")).body).toContain("<h1>Board</h1>");
   });
 
   it("artifact-only users can use artifacts but cannot read the conversation; old cookies lose access", async () => {

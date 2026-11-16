@@ -117,6 +117,7 @@ async function serve(path: string, init: RequestInit = {}): Promise<Response> {
           assets: site.assets.map((asset) => ({
             path: asset.path,
             contentType: asset.contentType,
+            sha256: asset.sha256,
           })),
         },
       }),

@@ -5,7 +5,14 @@ import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { asArtifactId, asUserId, asWorkspaceId } from "@rally/contracts";
+import { ArtifactManifestSchema, artifactManifestKey, asArtifactId, asUserId, asWorkspaceId, manifestAssetKey } from "@rally/contracts";
+
+/** A version's stored `index.html`, found through its manifest as every reader finds it. */
+async function storedPage(artifactId: string, version: number): Promise<string> {
+  const manifest = ArtifactManifestSchema.parse(await (await env.PAYLOADS.get(artifactManifestKey(artifactId, version)))!.json());
+  const index = manifest.assets.find((asset) => asset.path === "index.html")!;
+  return (await env.PAYLOADS.get(manifestAssetKey(manifest, index)))!.text();
+}
 
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { artifactHostDOName, workspaceDOName } from "../src/durable-objects/names";
@@ -246,7 +253,7 @@ describe("publishing into a Canvas", () => {
     // What was served is what the build made, not the source.
     const served = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ artifact_id: string; current_version: number }>(
       "SELECT artifact_id, current_version FROM artifact_registry WHERE resource_id = ?", first.resourceId).one());
-    expect(await (await env.PAYLOADS.get(`artifact/${served.artifact_id}/v${served.current_version}/assets/index.html`))!.text())
+    expect(await storedPage(served.artifact_id, served.current_version))
       .toBe(new TextDecoder().decode(builtPage));
 
     expect(await publisher.publish(canvasId, dashboard)).toMatchObject({ outcome: "unchanged", version: 1 });
@@ -309,7 +316,7 @@ describe("publishing into a Canvas", () => {
       state.storage.sql.exec<{ current_version: number }>("SELECT current_version FROM artifact_state WHERE id = 1").one().current_version);
     expect([registry.current_version, served]).toEqual([2, 2]);
     // The winner's version holds the winner's bytes, not the loser's written over them.
-    expect(await (await env.PAYLOADS.get(`artifact/${registry.artifact_id}/v2/assets/index.html`))!.text()).toBe("<h1>Winner</h1>");
+    expect(await storedPage(registry.artifact_id, 2)).toBe("<h1>Winner</h1>");
   });
 
   it("never moves the registry or the served version back when an unchanged retry overlaps a later publish", async () => {

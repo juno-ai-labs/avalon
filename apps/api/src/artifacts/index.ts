@@ -47,6 +47,8 @@ import {
   artifactReturnPath,
   artifactSiteOpenPath,
   artifactManifestKey,
+  manifestAssetKey,
+  manifestServerModuleKey,
   asArtifactId,
   parseArtifactHost,
   type ArtifactManifest,
@@ -85,6 +87,7 @@ import {
 } from "./annotation-script";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
 import { storedObjectResponse } from "./stored-object-response";
+import { isPublishedFileNamePath } from "@rally/contracts/artifact-access";
 import {
   injectSocialPreviewIntoHtml,
   injectSocialPreviewResponse,
@@ -120,7 +123,18 @@ export interface ArtifactServingEnv {
 
 type ArtifactSecurityHeaderOptions = Readonly<{
   referrerPolicy?: "same-origin";
+  revalidate?: boolean;
 }>;
+
+/**
+ * Whether stored bytes may stay in the browser and be revalidated. Not for a
+ * document navigation: a browser shows its back-forward and session-restore
+ * copies of those without asking, so a file opened in a tab would outlive its
+ * Canvas going private. A podcast app or an embedded load revalidates.
+ */
+function revalidatable(request: Request): boolean {
+  return request.headers.get("sec-fetch-dest") !== "document";
+}
 
 function withSecurityHeaders(
   response: Response,
@@ -130,6 +144,15 @@ function withSecurityHeaders(
   for (const [name, value] of Object.entries(artifactSecurityHeaders())) headers.set(name, value);
   if (options.referrerPolicy === "same-origin") {
     headers.set("referrer-policy", options.referrerPolicy);
+  }
+  // Stored bytes other than a page may stay in the browser and be asked about
+  // again on each use; every revalidation is admitted, and an unchanged file
+  // costs a `304`. A page stays `no-store`, as does whatever an active site's
+  // code returns: a private page left in the browser's cache or back-forward
+  // cache would still show after its Canvas went private.
+  if (options.revalidate && response.headers.has("etag")
+    && !(response.headers.get("content-type") ?? "").toLowerCase().startsWith("text/html")) {
+    headers.set("cache-control", "private, no-cache");
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
@@ -308,7 +331,7 @@ async function serveAdmitted(
     if(admission.kind==='file') {
       if(request.method!=='GET' && request.method!=='HEAD') return html(neutralPage(),405);
       const mount=splitVersionMount(url.pathname);
-      if(mount.path!=='/' && mount.path!=='/index.html') return html(neutralPage(),404);
+      if(mount.path!=='/' && mount.path!=='/index.html' && !isPublishedFileNamePath(mount.path)) return html(neutralPage(),404);
       const latest=Math.max(...admission.file.versions.map(version=>version.version));
       if(mount.version!==null && mount.version!==latest && !admission.editor) return html(neutralPage(),403);
       const version=admission.file.versions.find(version=>version.version===(mount.version??latest));
@@ -316,7 +339,7 @@ async function serveAdmitted(
       const served=await storedObjectResponse(env.PAYLOADS,version.contentRef,request,
         {'content-type':version.mimeType,'content-disposition':contentDisposition('inline',admission.file.title)});
       if(!served) return html(neutralPage(),503);
-      return withSecurityHeaders(served);
+      return withSecurityHeaders(served,{revalidate:revalidatable(request)});
     }
     const admitted: Admitted = admission;
 
@@ -425,7 +448,7 @@ async function serveAsset(
   const resolved = resolveAssetPath(path, assetPaths);
   if (!resolved) return html(plainErrorPage("This page does not exist in the artifact."), 404);
   const asset = manifest.assets.find((entry) => entry.path === resolved)!;
-  const key = `artifact/${artifactId}/v${version}/assets/${resolved}`;
+  const key = manifestAssetKey(manifest, asset);
   const htmlAsset = asset.contentType.toLowerCase().startsWith("text/html");
   const social = htmlAsset && socialPageUrl !== null && manifest.socialPreview !== undefined && resolved === "index.html";
   if (htmlAsset && (rewriteHtmlForVersion !== null || social || annotationScriptPath !== null)) {
@@ -451,7 +474,7 @@ async function serveAsset(
   }
   const served = await storedObjectResponse(env.PAYLOADS, key, request, { "content-type": asset.contentType });
   if (!served) return html(plainErrorPage("This page is temporarily unavailable."), 503);
-  return withSecurityHeaders(served);
+  return withSecurityHeaders(served, { revalidate: revalidatable(request) });
 }
 
 async function serveCurrent(
@@ -579,7 +602,8 @@ async function runArtifactModule(
   }
   const loader = env.ARTIFACT_LOADER!;
   const worker = loader.get(statelessLoaderId(artifactId, manifest.artifactVersion), async () => {
-    const module = await env.PAYLOADS.get(`artifact/${artifactId}/v${manifest.artifactVersion}/assets/index.js`);
+    const moduleKey = manifestServerModuleKey(manifest);
+    const module = moduleKey ? await env.PAYLOADS.get(moduleKey) : null;
     if (!module) throw new Error("artifact_server_module_missing");
     return {
       compatibilityDate: ARTIFACT_COMPATIBILITY_DATE,
@@ -635,9 +659,11 @@ function assetLoopback(ctx: ExecutionContext, artifactId: string, manifest: Arti
     props: {
       artifactId,
       version: manifest.artifactVersion,
+      ...(manifest.assetStore ? { assetStore: manifest.assetStore } : {}),
       assets: manifest.assets.map((asset) => ({
         path: asset.path,
         contentType: asset.contentType,
+        sha256: asset.sha256,
       })),
     },
   });

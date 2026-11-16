@@ -102,7 +102,7 @@ const RECORDED_DEBT: Record<string, number> = {
   granola: 0,
   linear: 0,
   memory: 0,
-  multimodal: 12,
+  multimodal: 11,
   notion: 0,
   rally: 0,
   slack: 0,

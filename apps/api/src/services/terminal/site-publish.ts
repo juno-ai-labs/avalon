@@ -227,3 +227,42 @@ export function assertKindTransitionAllowed(
     { field: "filePath", reason: "Restore the site entry file, or publish under a different path." },
   );
 }
+
+/**
+ * The shell that lists every file beneath `$target` as `size sha256 path`,
+ * hashing only files its per-directory digest cache has not seen. Keyed by
+ * inode, change time (which no user tool sets, unlike `touch -r` on the
+ * modified time), size and path. New digests are appended as computed, so a
+ * timed-out listing keeps its progress; a finished one rewrites the cache. See
+ * `docs/terminal-workspaces.md` (2026-11-16) for why.
+ */
+export function directoryListingCommands(cacheDirectory: string): string[] {
+  return [
+    `cache_dir='${cacheDirectory.replaceAll("'", `'"'"'`)}'`,
+    'cache="$cache_dir/$(printf %s "$target" | sha256sum | cut -c1-64)"',
+    'mkdir -p -- "$cache_dir" 2>/dev/null; touch -- "$cache" 2>/dev/null || cache=/dev/null',
+    'fresh=$(mktemp "$cache.XXXXXX" 2>/dev/null) || fresh=/dev/null',
+    // A listing stopped by its time limit leaves no temporary file behind.
+    'trap \'[ "$fresh" = /dev/null ] || rm -f -- "$fresh"\' EXIT',
+    // Known digests first (the last line for a key wins), then the listing:
+    // each file comes out as its cached digest or `-`, then its key and path.
+    // (Read in `BEGIN`, not as awk's first file: an empty first file would
+    // make `NR == FNR` hold for the listing too.)
+    'find "$target" -type f -printf "%i %C@ %s %P\\n" | sort -k4 | RALLY_TARGET="$target" RALLY_CACHE="$cache" awk \'',
+    // Only a 64-hex digest is taken from the cache, so a damaged line costs a
+    // rehash and can never shift the size or path the listing prints.
+    '  BEGIN { while ((getline line < ENVIRON["RALLY_CACHE"]) > 0) { tab = index(line, "\\t"); digest = substr(line, 1, tab - 1); if (tab == 65 && digest ~ /^[0-9a-f]+$/) known[substr(line, tab + 1)] = digest } }',
+    '  { match($0, /^[^ ]+ [^ ]+ [^ ]+ /); meta = substr($0, 1, RLENGTH - 1); rest = substr($0, RLENGTH + 1)',
+    '    key = meta " " ENVIRON["RALLY_TARGET"] "/" rest',
+    '    print ((key in known) ? known[key] : "-") " " meta " " rest }',
+    '\' | while read -r sha inode changed size rest; do',
+    '  if [ "$sha" = "-" ]; then',
+    '    sha=$(sha256sum -- "$target/$rest" | cut -d " " -f 1)',
+    '    [ ${#sha} -eq 64 ] && printf "%s\\t%s %s %s %s/%s\\n" "$sha" "$inode" "$changed" "$size" "$target" "$rest" >> "$cache"',
+    '  fi',
+    '  printf "%s %s %s\\n" "$size" "$sha" "$rest"',
+    '  [ ${#sha} -eq 64 ] && printf "%s\\t%s %s %s %s/%s\\n" "$sha" "$inode" "$changed" "$size" "$target" "$rest" >> "$fresh"',
+    'done',
+    '[ "$fresh" = /dev/null ] || [ "$cache" = /dev/null ] || mv -f -- "$fresh" "$cache" 2>/dev/null || :',
+  ];
+}

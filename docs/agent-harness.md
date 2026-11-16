@@ -643,8 +643,9 @@ Ordinary conversation runs with the main Azure inference credentials also
 register the deferred built-in `rally:multimodal-generation` plugin. It has no
 connection row and exposes three record-before-execute writes: create one image
 from a prompt, edit one currently visible image with an optional PNG mask, or
-turn bounded text into one AI-generated MP3 recording.
-Each tool has a five-minute ceiling and fixes the provider request to
+turn text into one AI-generated MP3 recording, in pieces when it is longer than
+one speech request. Each tool has a five-minute ceiling (the 1,050-second tool
+ceiling for speech that needs several requests) and fixes the provider request to
 `gpt-image-2` for images or `gpt-4o-mini-tts` for speech. Image moderation,
 quality, background and count are fixed to low, medium, automatic and one;
 speech output is fixed to MP3 and defaults to the `marin` voice.
@@ -1903,6 +1904,39 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-16 — `generate_audio` records text longer than one speech request
+
+**What changed:** `generate_audio` dropped its 4,096-character cap. Rally splits
+longer text with the splitter message read-aloud already used (moved to
+`speech-pieces.ts`), records each piece in order with the same voice and
+instructions, and joins the MP3s, removing each piece's ID3 tags and its
+Xing, Info or VBRI length frame. A call needing several requests gets the
+1,050-second tool ceiling through `resolveTimeoutMs`. The tool is not marked
+`longRunning`: most calls are short, and the delegation hint would sit on every
+one.
+
+**Why:** An episode-length script had to be cut every 4,096 characters, with a
+ledger and an ffmpeg join for each cut, all steps an agent had to get right.
+One call now records any section whole. The podcast skill still makes one call
+per section and joins them, because its chapters are timed from the sections.
+
+**Considered and rejected:** Azure AI Speech batch synthesis, which takes a
+whole script in one job but needs its own Speech resource and key and delivers
+the file later; it stays the option for episodes past what this timeout and the
+attachment limit allow. Leaving each piece's length frame in place, which makes
+players read the first piece's length as the whole file's. A new text cap: the
+existing attachment limit already bounds the result, and each piece is checked
+against what is left of it.
+
+**Consequences:** The attachment limit is found only after recording, piece by
+piece, so the tool and prompt ask for a long script one section per call, and
+the size refusal says to split it. Pieces run one after another, so a long
+script also runs into the deadline; running them in parallel is a latency win
+that needs Azure's rate limit in hand first. A retried call records every piece
+again; nothing caches a piece across calls.
+
+Shipped in #1626.
 
 ### 2026-11-15 — Recovery re-enters an interrupted Canvas notices write
 

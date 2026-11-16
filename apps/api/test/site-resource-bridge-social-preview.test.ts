@@ -1,4 +1,4 @@
-import { ARTIFACT_MAX_ASSET_COUNT, artifactAssetKey } from "@rally/contracts";
+import { ARTIFACT_MAX_ASSET_COUNT, manifestAssetKey } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
@@ -35,7 +35,8 @@ describe("site artifact social-preview storage", () => {
     const imagePath = written.manifest.socialPreview?.image.path;
     expect(imagePath).toMatch(/^\.rally\/social-preview-[0-9a-f]{12}\.png$/u);
     expect(written.manifest.assets.map((asset) => asset.path)).toEqual(["index.html", imagePath]);
-    expect(stored.get(artifactAssetKey(ARTIFACT, 3, imagePath!))?.subarray(0, 8)).toEqual(
+    const image = written.manifest.assets.find((asset) => asset.path === imagePath)!;
+    expect(stored.get(manifestAssetKey(written.manifest, image))?.subarray(0, 8)).toEqual(
       new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
     );
     expect(written.manifest.totalBytes).toBeGreaterThan(html.byteLength);

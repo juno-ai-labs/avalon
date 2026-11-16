@@ -49,6 +49,7 @@ import {
   type MultimodalAudioResourceStore,
   type PublishedMultimodalAudio,
 } from "./audio-resource-service";
+import { joinMp3Pieces, splitSpeechText } from "./speech-pieces";
 import {
   createMultimodalGenerationResourceStore,
   type MultimodalGenerationResourceStore,
@@ -83,10 +84,11 @@ export function createAvalonMultimodalGenerationPlugin(
     ?? createMultimodalGenerationResourceStore(env, inObjectResourceAttacher);
   const loadPricing = options.loadPricing
     ?? (() => loadAzureImageModelPricing(env, MULTIMODAL_GENERATION_PRICING_MODEL_ID));
+  const maximumAudioBytes = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
   const audioClient = options.audioClient ?? createAzureAudioClient({
     endpoint,
     apiKey,
-    maximumBytes: numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES),
+    maximumBytes: maximumAudioBytes,
   });
   const audioResources = options.audioResources
     ?? createMultimodalAudioResourceStore(env, inObjectResourceAttacher);
@@ -199,12 +201,33 @@ export function createAvalonMultimodalGenerationPlugin(
       await requireUsageAllowance(env, input.workspaceId);
       const pricing = await bestEffortAudioPricing(env, context, loadAudioPricing);
       const voice = arguments_.voice ?? MULTIMODAL_AUDIO_DEFAULT_VOICE;
-      const providerResult = await audioClient.generate({
-        text: arguments_.text,
-        voice,
-        ...(arguments_.instructions ? { instructions: arguments_.instructions } : {}),
-        signal: context.signal,
-      });
+      // One request per piece, in order, with the same voice and instructions,
+      // stopping at the piece that takes it past the attachment limit.
+      const pieces = splitSpeechText(arguments_.text);
+      const recorded: Uint8Array[] = [];
+      let recordedBytes = 0;
+      let providerOperationId: string | undefined;
+      for (const [index, text] of pieces.entries()) {
+        const piece = await audioClient.generate({
+          text,
+          voice,
+          ...(arguments_.instructions ? { instructions: arguments_.instructions } : {}),
+          signal: context.signal,
+        });
+        recorded.push(piece.bytes);
+        recordedBytes += piece.bytes.byteLength;
+        providerOperationId ??= piece.providerOperationId;
+        // Stop at the piece that takes the recording past the limit, naming
+        // the whole recording and how to split it.
+        if (recordedBytes > maximumAudioBytes) {
+          throw new MultimodalGenerationError(
+            "resource_limit_exceeded",
+            `The recording passed Rally's limit of ${maximumAudioBytes} bytes at piece ${index + 1} of ${pieces.length}. Split the text into sections, such as chapters or segments, and record each with its own call.`,
+            { field: "text", expected: `generated audio bytes at most ${maximumAudioBytes}` },
+          );
+        }
+      }
+      const providerResult = { bytes: joinMp3Pieces(recorded), ...(providerOperationId ? { providerOperationId } : {}) };
       const billing = calculateAudioBilling(env, context, pricing);
       const published = await audioResources.publish(resourceContext, {
         bytes: providerResult.bytes,

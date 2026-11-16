@@ -9,7 +9,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAzureImageClient } from "../src/services/multimodal-generation/azure-client";
-import { createAzureAudioClient } from "../src/services/multimodal-generation/azure-audio-client";
+import { createAzureAudioClient, type AzureAudioClient } from "../src/services/multimodal-generation/azure-audio-client";
 import {
   createMultimodalAudioResourceStore,
   type MultimodalAudioResourceStore,
@@ -20,6 +20,7 @@ import {
   MULTIMODAL_GENERATION_TIMEOUT_MS,
 } from "../src/services/multimodal-generation/contract";
 import { createAvalonMultimodalGenerationPlugin } from "../src/services/multimodal-generation/plugin";
+import { joinMp3Pieces } from "../src/services/multimodal-generation/speech-pieces";
 import {
   createMultimodalGenerationResourceStore,
   type MultimodalGenerationResourceStore,
@@ -109,7 +110,9 @@ describe("multimodal generation contract", () => {
       voice: "marin",
       instructions: "Speak warmly and clearly.",
     })).toBeNull();
-    expect(plugin.tools[2]!.validateInput?.({ text: "x".repeat(4_097) })).not.toBeNull();
+    // Longer than one speech request: recorded in pieces, not refused.
+    expect(plugin.tools[2]!.validateInput?.({ text: "x".repeat(4_097) })).toBeNull();
+    expect(plugin.tools[2]!.validateInput?.({ text: "   " })).not.toBeNull();
   });
 });
 
@@ -324,6 +327,92 @@ describe("multimodal generation runtime", () => {
       model: "gpt-4o-mini-tts",
       pricing_model_id: "openai/gpt-4o-mini-tts",
     }));
+  });
+
+  it("joins pieces by their audio frames whatever framing each carries", () => {
+    // MPEG-1 Layer III at 128 kbps, 44.1 kHz (417 bytes), and MPEG-2 at 64 kbps,
+    // 24 kHz (192 bytes), each filled with a byte naming its piece.
+    const mpeg1 = (fill: number, header?: string) => {
+      const bytes = new Uint8Array(417).fill(fill);
+      bytes.set([0xff, 0xfb, 0x90, 0x00]);
+      if (header) bytes.set(new TextEncoder().encode(header), 36);
+      return bytes;
+    };
+    const mpeg2 = (fill: number, header?: string) => {
+      const bytes = new Uint8Array(192).fill(fill);
+      bytes.set([0xff, 0xf3, 0x84, 0x00]);
+      if (header) bytes.set(new TextEncoder().encode(header), 21);
+      return bytes;
+    };
+    const id3v1 = new Uint8Array(128).fill(0x20);
+    id3v1.set(new TextEncoder().encode("TAG"));
+    const joined = joinMp3Pieces([
+      new Uint8Array([...mpeg1(1), ...mpeg1(1)]), // no length frame: kept whole
+      new Uint8Array([...mpeg2(2, "Xing"), ...mpeg2(2)]), // MPEG-2 length frame dropped
+      new Uint8Array([...mpeg1(3), ...id3v1]), // ID3v1 trailer dropped
+    ]);
+    expect(joined).toEqual(new Uint8Array([...mpeg1(1), ...mpeg1(1), ...mpeg2(2), ...mpeg1(3)]));
+  });
+
+  it("refuses a recording that passes the limit partway, naming the whole recording and how to split it", async () => {
+    // Each piece fits; together they pass a 60-byte limit at the second.
+    const generate = vi.fn<AzureAudioClient["generate"]>()
+      .mockResolvedValueOnce({ bytes: new Uint8Array(40) })
+      .mockResolvedValueOnce({ bytes: new Uint8Array(40) });
+    const plugin = createAvalonMultimodalGenerationPlugin({ ...runtimeEnv(), MAX_ATTACHMENT_BYTES: "60" }, workflowInput, undefined, {
+      audioResources: { findPublished: vi.fn(async () => null), publish: vi.fn() },
+      audioClient: { generate, streamPcm: vi.fn() },
+      loadAudioPricing: vi.fn(async () => { throw new Error("pricing record missing"); }),
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const tool = plugin!.tools.find((candidate) => candidate.definition.name === "generate_audio")!;
+    const text = `${"First part. ".repeat(250).trim()}\n\n${"Second part. ".repeat(250).trim()}`;
+    await expect(tool.execute({ text }, context)).rejects.toMatchObject({
+      code: "resource_limit_exceeded",
+      message: expect.stringContaining("at piece 2 of 2. Split the text into sections"),
+    });
+  });
+
+  it("records long text in pieces with one voice and reading style, and joins them into one MP3", async () => {
+    // One 417-byte MPEG-1 Layer III frame (128 kbps, 44.1 kHz), filled with a
+    // byte that names the piece it came from.
+    const frame = (fill: number, header?: string) => {
+      const bytes = new Uint8Array(417).fill(fill);
+      bytes.set([0xff, 0xfb, 0x90, 0x00]);
+      if (header) bytes.set(new TextEncoder().encode(header), 36);
+      return bytes;
+    };
+    const id3 = new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00]);
+    const piece = (fill: number) => new Uint8Array([...id3, ...frame(fill, "Info"), ...frame(fill), ...frame(fill)]);
+    const publish = vi.fn<MultimodalAudioResourceStore["publish"]>(async () => publishedAudio());
+    const generate = vi.fn<AzureAudioClient["generate"]>()
+      .mockResolvedValueOnce({ bytes: piece(1), providerOperationId: "audio-request-1" })
+      .mockResolvedValueOnce({ bytes: piece(2), providerOperationId: "audio-request-2" });
+    const plugin = createAvalonMultimodalGenerationPlugin(runtimeEnv(), workflowInput, undefined, {
+      audioResources: { findPublished: vi.fn(async () => null), publish },
+      audioClient: { generate, streamPcm: vi.fn() },
+      loadAudioPricing: vi.fn(async () => { throw new Error("pricing record missing"); }),
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const tool = plugin!.tools.find((candidate) => candidate.definition.name === "generate_audio")!;
+    const first = `${"The first section. ".repeat(150).trim()}`;
+    const second = `${"The second section. ".repeat(150).trim()}`;
+    const text = `${first}\n\n${second}`;
+    expect(tool.validateInput?.({ text })).toBeNull();
+    // Two requests' worth of text gets the longest deadline a tool may have.
+    expect(tool.resolveTimeoutMs?.({ text })).toBe(1_050_000);
+    expect(tool.resolveTimeoutMs?.({ text: "Short." })).toBeUndefined();
+
+    await tool.execute({ text, voice: "cedar", instructions: "Calm narrator." }, context);
+
+    expect(generate.mock.calls.map(([call]) => ({ text: call.text, voice: call.voice, instructions: call.instructions })))
+      .toEqual([
+        { text: first, voice: "cedar", instructions: "Calm narrator." },
+        { text: second, voice: "cedar", instructions: "Calm narrator." },
+      ]);
+    // Each piece's tag and length header are gone: four audio frames, in order.
+    expect(publish.mock.calls[0]![1].bytes).toEqual(new Uint8Array([...frame(1), ...frame(1), ...frame(2), ...frame(2)]));
   });
 
   it("continues without charging when cached pricing is unavailable and logs the pricing failure", async () => {
