@@ -236,6 +236,70 @@ decision 3 worried about, and it already shows.
 **Changes:** Decision 3, Rollout step 1 and Acceptance 6 (the joined person
 stays listed because the stale save is refused, not merged).
 
+### 2026-11-15 — An Organization-wide Canvas offers to join from a banner
+
+**Decided:** On an Organization-wide Canvas with notices on, a viewer who is
+not a participant sees a banner at the top of the Canvas offering to add them
+as a participant, so they get its notices. Joining from it is `canvasJoin`;
+dismissing it hides it for that Canvas on that device.
+
+**Why:** The owner's call. The record scrolls away and the menu item is easy
+to miss, and an Organization-wide Canvas is where most viewers are not
+listed.
+
+**Changes:** Adds to Product behavior. The record and the menu still offer
+the same join.
+
+### 2026-11-15 — Both channels on means push if a device is set up, else email
+
+**Decided:** Canvas notices default to both Push and Email chosen, and that
+pair means "push when a device is set up, otherwise email". One channel alone
+means that channel. The choice is made when the notice is queued, by
+whether a push can be queued for the person.
+
+**Why:** The stored preferences cannot tell a kind left at its default from
+one set to its default, and the consumer re-checks each queued channel
+against them. Reading "both" as the device-dependent default keeps both
+working unchanged, and the push queue already answers whether the person
+has a device that can receive it.
+
+**Changes:** Supersedes decision 4's send-time resolution and its `default`
+queue marker. A person who wants both push and email for every notice gets
+the device-dependent one instead; nobody has asked for that.
+
+### 2026-11-15 — "No" in the plugin table means offered and refusing
+
+**Decided:** Every loop is offered both tools. Where the table says No, the
+tool is a refusing copy (`refusingTool`) with a named code and a route:
+`notifications_register_from_run` for a run and its delegation worker,
+`notifications_not_for_self_review` for the self-review, a wizard turn it
+claims, and its background agents.
+
+**Why:** Rule 14 of [`agent-tools.md`](../../agent-tools.md) merged while
+this was built: a tool is never withheld for who started a turn, so the
+model can tell "not mine to do" from "does not exist" and hand the work on.
+
+**Changes:** The Plugin contract's "Preloaded for the loops the table below
+offers a tool to" is every loop, and Acceptance 8 reads "refuses" for
+"is offered neither".
+
+### 2026-11-15 — The record is a host-written system message
+
+**Decided:** `register` lands the record through a new
+`AgentLoopDO.appendHostRecord`: a system message in the Chat whose
+structured content is `canvas_notices_record`, keyed on the tool call's
+receipt, and which does not wake the agent. Only the record matching the
+current sentence draws controls. Its device line is hidden where push cannot
+work at all (`unavailable`, `unconfigured`): there is nothing to fix there.
+
+**Why:** A conversation post is a Sidekick's, and a Canvas's Chat registering
+for itself has no Sidekick to post as. A host record also needs no model
+turn to land.
+
+**Changes:** Plan step 6's "conversation post" is this record. A local
+`POST /dev/canvas-notices` (development only) registers and sends without a
+model, to drive the screens.
+
 ### 2026-11-15 — Only Organization visibility admits a join
 
 **Decided:** `canvasJoin` lists only a member an Organization-wide Canvas
@@ -298,6 +362,93 @@ means "the values you could have meant".
 `agent_message`, and those turns are the review's.
 
 **Changes:** Decision 11 and the plugin matrix's self-review row.
+
+### 2026-11-15 — Push else email also falls back when the push reaches no one
+
+**Decided:** With both channels chosen, the producer queues one push marked
+`emailFallback`, or only the email when no push can be queued. The consumer
+queues the email in the push's place when push is off for the person when
+the push is consumed, when they turned the push choice off since, or when the
+push settles having reached no device. Each logs
+`push_delivery_fell_back_to_email` with its reason.
+
+**Why:** The producer can only ask whether a live device exists. A device can
+turn out dead, every token refused, or the person can change their mind
+after the push is queued. Without the fallback those people got nothing, and
+"push else email" promised them the email.
+
+**Changes:** Extends the entry "Both channels on means push if a device is
+set up, else email": the choice is still made at enqueue, and the consumer
+corrects it only for what enqueue could not know.
+
+### 2026-11-15 — The registration is saved before the record
+
+**Decided:** `register` saves the registration first, as a new `revision`
+keyed on the call's operation (`canvas_notice_operations`), then appends the
+record to the Chat with `appendHostRecord`, which publishes it to open
+screens at once, then notes the record's message if that revision is still
+current. A retry of the same call finds what it wrote and lands the record;
+a retried call that a newer one replaced changes nothing (`changed: false`).
+A sentence whose record would be too long for a message is refused
+`canvas_notices_purpose_too_long` before anything is saved. The record's
+`recordedAt` is the registration's `updated_at`. The tool answers
+`{ purpose, changed }`.
+
+**Why:** The first version wrote the record first and held its send to open
+screens until the registration was saved (`publishPending`), and fenced a
+late registration by comparing message ids by time. It did not hold: the
+conversation's alarm flushes the same outbox, so the record could reach a
+screen before the registration existed, and the screen read notices as off.
+`publishPending` was dropped. Saving first needs no fence in the Chat, and
+the operation key makes a retry safe.
+
+**Changes:** Supersedes the entry "The record is a host-written system
+message" where they conflict: the registration is saved before the record,
+not after it. Corrects the Wire shapes' register
+success, which named `canvasId` and `recordMessageId`, and the send success,
+which named a `noticeId`; neither shipped.
+
+### 2026-11-15 — The several-Canvases refusal names every attached Canvas
+
+**Decided:** `notifications_sidekick_has_several_canvases` names every
+attached Canvas, by title only, in its sentence and in `data.details.available`,
+including ones the loop's person cannot open.
+
+**Why:** The owner's call. Filtering the list by the loop's reach would add a
+second access path to the refusal. The owner chose fewer code paths over
+hiding those titles from the Sidekick's own users.
+
+**Changes:** Narrows the entry "A refusal names Canvases in `available`" to
+titles only. Corrects the Failures table to the shipped codes and sentences:
+there is no `canvas_notices_empty_field` (an empty field fails the input
+schema), the access sentence reads "this turn acts for", and the register
+refusals are listed.
+
+### 2026-11-15 — The model-usability evaluations did not ship
+
+**Decided:** The evaluations on the medium fallback model listed under
+Model-usability acceptance were not built. Schema and contract tests cover
+the tool shapes.
+
+**Why:** Not recorded beyond the fact: the change shipped with schema and
+contract tests only. The refusal sentences carry each next step, which is
+part of what the evaluations would have checked.
+
+**Changes:** Cuts that half of Model-usability acceptance. To pick it up: an
+eval suite under `packages/agent-harness/evals` for the five listed cases
+(register when asked, no register unasked, one send after a publish, no
+progress notices, a run stopping on `canvas_notices_not_registered`).
+
+### 2026-11-15 — No `GET /canvases/:id/notifications`
+
+**Decided:** Only `PUT /canvases/:id/notifications` shipped. The viewer's
+view of a Canvas's notices rides on the Canvas's detail
+(`CanvasDetail.notices`).
+
+**Why:** Every screen that draws the controls already reads the detail, so a
+second read would add a request and a second copy to keep fresh.
+
+**Changes:** Narrows plan step 4's `GET`/`PUT` to `PUT`.
 
 ## Key design decisions
 
@@ -452,8 +603,9 @@ reads.
 - **Canonical id** `rally:notifications`, model id `rally_notifications`,
   wire prefix `notifications_`. The prefix stays because the local names are
   bare verbs ([`agent-tools.md`](../../agent-tools.md#the-shape-of-a-tool)).
-- **Preloaded** for the loops the table below offers a tool to. Loading reads
-  nothing and authorizes nothing; each call resolves the Canvas.
+- **Preloaded** for every loop; a No below is a tool that refuses by name
+  (decision log, 2026-11-15). Loading reads nothing and authorizes nothing;
+  each call resolves the Canvas.
 - **Which Canvas** is always the host's: the loop's own Canvas for a Canvas's
   Chat, the Sidekick's attached Canvas for a Sidekick's loops
   ([A Sidekick's Canvas](#a-sidekicks-canvas)).
@@ -517,11 +669,12 @@ reads.
 Success:
 
 ```json
-{ "canvasId": "…", "purpose": "…", "changed": true, "recordMessageId": "…" }
+{ "purpose": "…", "changed": true }
 ```
 
 `changed` is `false` when the Canvas was already registered with the same
-sentence; no new record is added.
+sentence, or when a retried call was replaced by a newer one; no new record
+is added (decision log, 2026-11-15).
 
 `notifications_send`, strict, unknown fields rejected:
 
@@ -539,7 +692,7 @@ characters.
 Success:
 
 ```json
-{ "canvasId": "…", "noticeId": "…", "recipients": 4 }
+{ "canvasId": "…", "recipients": 4 }
 ```
 
 `recipients` counts the people queued, after mutes; delivery is
@@ -553,18 +706,26 @@ later a run calls `notifications_send` after `publish_resource` succeeds.
 
 ### Failures
 
+As shipped (decision log, 2026-11-15). `<undone>` is "Notices were not
+turned on." for `register` and "No notice was sent." for `send`. `<next>` is
+"Continue, and say so in your result." in a run and "Tell the person you
+work for." elsewhere.
+
 | Code | Tool | Model-visible error | Next action |
 | --- | --- | --- | --- |
-| `canvas_notices_not_registered` | send | "Notices are not on for this Canvas. Turn them on with notifications_register, then send again." (A run is told instead: "Notices are not on for this Canvas, and a run cannot turn them on. Continue without sending a notice.") | Register, or stop |
-| `canvas_archived` | both | "This Canvas is archived, so it cannot send notices. Continue without sending a notice." | Stop |
-| `canvas_access_denied` | both | "The person this run acts for can no longer open this Canvas, so no notice was sent." | Stop |
-| `canvas_notices_empty_field` | both | "`<field>` is empty. Write it and call again." | Correct and retry |
-| `notifications_sidekick_has_several_canvases` | both | "This Sidekick is attached to several Canvases (`<titles>`), so it has no one Canvas to send notices from. No notice was sent." | Stop |
-| `notifications_sidekick_has_no_canvas` | both | "This Sidekick is not attached to a Canvas, so it has nowhere to send notices from. No notice was sent." | Stop |
+| `canvas_notices_not_registered` | send | "Notices are not on for this Canvas. If a person in this conversation asked to be told about new results, or asked for something that keeps producing them while they are away, turn them on with notifications_register and send again; otherwise continue without sending a notice." (A run is told instead: "Notices are not on for this Canvas, and a run cannot turn them on. No notice was sent. Say in your result that a person who manages this Sidekick should turn them on from its wizard.") | Register, or stop |
+| `canvas_archived` | both | "This Canvas is archived. `<undone>` Continue without one." | Stop |
+| `canvas_access_denied` | both | "The person this turn acts for can no longer open this Canvas. `<undone>` Continue without one." | Stop |
+| `notifications_sidekick_has_several_canvases` | both | "This Sidekick is attached to several Canvases (`<titles>`), so it has no one Canvas for notices. `<undone>` `<next>`" | Stop |
+| `notifications_sidekick_has_no_canvas` | both | "This Sidekick is not attached to a Canvas, so it has no Canvas for notices. `<undone>` `<next>`" | Stop |
+| `canvas_notices_purpose_too_long`, `append_host_record_invalid:<field>` | register | "The Chat did not take the record of that sentence. Shorten what notices are about and register again." | Correct and retry |
+| `notifications_register_from_run` | register | "A Sidekick run cannot turn on a Canvas's notices: it works from the event that started it, and turning them on changes the Canvas for everyone in it. Call notifications_send; if it says notices are off, say in your result (a background agent: tell the agent you work for with send_message) that a person who manages this Sidekick should turn them on from its wizard." | Send, or stop |
+| `notifications_not_for_self_review` | both | "A Sidekick's scheduled self-review does not send notices or turn them on: no person started it, and it reads runs, which hold content no person wrote. If you are a background agent, tell the agent you work for with send_message what the Canvas's people should hear; otherwise name it in your review, so a person who manages this Sidekick can decide." | Stop |
 
-The two Sidekick refusals carry the attached Canvases' ids and titles in
-`data.details.canvases`. A send that finds no recipients after mutes succeeds
-with `recipients: 0`.
+An empty `purpose`, `title` or `body` fails the input schema before the tool
+runs. The several-Canvases refusal carries every attached Canvas's title in
+`data.details.available`. A send that finds no recipients after mutes
+succeeds with `recipients: 0`.
 
 ### Model-usability acceptance
 
@@ -603,5 +764,25 @@ rewrites rows.
    `notifications_sidekick_has_several_canvases` naming both, and nobody is
    notified. A Sidekick attached to none gets
    `notifications_sidekick_has_no_canvas`.
-8. A self-review starts a background agent. That agent is offered neither
-   notice tool; an agent a manager's wizard turn started is offered both.
+8. A self-review starts a background agent. Both notice tools refuse it
+   (`notifications_not_for_self_review`); an agent a manager's wizard turn started is offered both.
+
+### 2026-11-15 — Settings lists each Canvas under the Canvas notices default
+
+**Decided:** Settings → Notifications keeps **Canvas notices** as the
+default for every Canvas, push and email on, and lists under it one row for
+each Canvas that sends notices and is not archived. Where its notices reach
+the person (they made it or are on its list), a row shows the default until
+changed there; a change is that Canvas's own choice, and **Use default** drops
+it. An Organization-wide Canvas a member is not on is listed greyed, with
+**Add as participant**. `GET /canvases/notice-choices` answers the rows.
+
+**Why:** The owner's call: every Canvas's choice should be visible in one
+place, not only on each Canvas's record, and a Canvas one could join should
+be offered there too.
+
+**Changes:** Adds to Product behavior's Settings row. A Canvas that sends no
+notices is not listed. Only an Organization-wide Canvas is offered to join,
+since a join is allowed only through Organization visibility (decision log,
+"Only Organization visibility admits a join").
+

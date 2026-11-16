@@ -1,4 +1,4 @@
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId, type CanvasNoticeChoices, type NotificationChannel } from "@rally/contracts";
 import type { AddCanvasSidekickRequest, AddedCanvasSidekick, CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CanvasUpdateRequest, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
@@ -190,6 +190,18 @@ export class CanvasService {
 
   async setAudience(canvasId: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
     return (await this.workspace()).canvasSetAudience({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), update });
+  }
+
+  /** The Canvases whose notices reach this person, with their choice for each. */
+  async noticeChoices(): Promise<CanvasNoticeChoices> {
+    // A guest is never admitted by Organization visibility, so has nothing to join.
+    return (await this.workspace()).canvasNoticeChoices({ workspaceId: asWorkspaceId(this.auth.workspaceId), userId: this.auth.userId,
+      member: this.actor().actorRole !== null });
+  }
+
+  /** This person's channels for a Canvas's notices; see `HostedCanvas.setNoticeChoice`. */
+  async setNoticeChoice(canvasId: string, channels: NotificationChannel[] | null): Promise<CanvasDetail> {
+    return (await this.workspace()).canvasSetNoticeChoice({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), channels });
   }
 
   /** Join a Canvas this person may open, so its notices reach them; see `HostedCanvas.join`. */

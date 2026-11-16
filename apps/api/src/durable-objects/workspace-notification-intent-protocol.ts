@@ -5,7 +5,7 @@ const NotificationIntentIdSchema = z.string().min(1).max(300);
 
 export const WorkspaceNotificationIntentKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished",
   "new_message", "artifact_updated", "access_request", "access_granted", "access_denied",
-  "source_request", "source_approved", "source_declined"]);
+  "source_request", "source_approved", "source_declined", "canvas_notice"]);
 
 /**
  * What a Sidekick source request asks for, as each of its three notices
@@ -97,6 +97,17 @@ export const ParentNoticeSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("source_approved"), ...SourceNoticeAskSchema, personName: z.string() }),
   /** The person the recipient asked declined. */
   z.strictObject({ kind: z.literal("source_declined"), ...SourceNoticeAskSchema, personName: z.string() }),
+  /** An agent working on a Canvas told its participants something happened (docs/PRDs/2026-11-14_canvas-notices). */
+  z.strictObject({
+    kind: z.literal("canvas_notice"),
+    parentId: z.string().min(1),
+    parentTitle: z.string(),
+    /** Rally, or the Sidekick that sent it. */
+    senderKind: z.enum(["rally", "sidekick"]),
+    senderName: z.string(),
+    title: z.string(),
+    body: z.string(),
+  }),
 ]);
 export type ParentNotice = z.infer<typeof ParentNoticeSchema>;
 export const WorkspaceNotificationIntentStateSchema = z.enum([

@@ -817,11 +817,13 @@ nothing, so it is `read` and safe to retry.
 
 `refusingTool` (`apps/api/src/services/tool-refusal.ts`) builds one from the
 tool itself: the same name and arguments, and a call that refuses. Every
-refusal's text is in one table there (`TOOL_REFUSALS`). Three uses:
+refusal's text is in one table there (`TOOL_REFUSALS`). Four uses:
 `sidekick_request_source` where a turn may not ask
 (`sidekickSourceRefusalTool`), every Sidekicks tool on a turn that acts for
 the Organization rather than a person (`organizationSidekicksPlugin`), and
-the two question tools where answers go to an agent (`questionRefusal`).
+the two question tools where answers go to an agent (`questionRefusal`),
+and the notice tools a run or the self-review may not use
+(`notificationToolsAllowed`, [`push-notifications.md`](push-notifications.md#canvas-notices)).
 A tool that has no target on a surface (archiving a Sidekick a Canvas made,
 outside a Canvas) is a different case, and the rule does not cover it.
 

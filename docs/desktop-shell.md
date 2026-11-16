@@ -324,13 +324,17 @@ levels; reduced motion turns that off.
 
 - **Canvas menu** (`screens/canvas.tsx`): the four action tiles, Rename… and
   Change appearance, then a **Sidekicks** section when the Canvas has any
-  attached (`CanvasSidekicksSection`), then Archive canvas for a manager. A
+  attached (`CanvasSidekicksSection`), then a **Notifications** section, then
+  Archive canvas for a manager. A
   Sidekick's row is its hexagon, name and state (Draft, Active, Paused). It
   opens the Sidekick in the Canvas's right panel only when `canOpen` admits
   it; for anyone else it stays focusable, opens nothing, and its tooltip says
   to ask in the Canvas's chat. The menu archives no Sidekick: one the
-  Canvas made is archived by asking its chat, or with the Canvas.
-  [`canvases.md`](canvases.md#in-the-client) owns the rest of that menu.
+  Canvas made is archived by asking its chat, or with the Canvas. A
+  **Notifications** section follows while the Canvas sends notices
+  (`CanvasNoticesMenuSection`): Get notifications, Mute notifications or Turn
+  on notifications. [`canvases.md`](canvases.md#in-the-client) owns the rest
+  of that menu.
 - **Artifact menu** (`InspectorRail`, shared by the side panel, expanded panel,
   and detached artifact windows): the root offers Download for available files,
   Rename and Copy link as tiles, plus More when archiving is available.

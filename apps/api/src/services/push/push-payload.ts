@@ -2,6 +2,8 @@ import { PUSH_BODY_PREVIEW_CHARACTERS, type PushNotificationData } from "@rally/
 
 // APNs regular alert payload ceiling, Apple Sending notification requests.
 export const APNS_PAYLOAD_BYTES = 4096;
+/** Kinds an installed Mac or iPhone app built before them would refuse to open. */
+const APNS_ROUTED_AS_MENTION: ReadonlySet<PushNotificationData["kind"]> = new Set(["new_message", "canvas_notice"]);
 /** The rendered alert for each transport; a device is sent the one it registered for. */
 export interface PushPayloads { apns: string; web: string }
 export function renderPushPayload(input: {
@@ -13,10 +15,10 @@ export function renderPushPayload(input: {
   const encode = (length: number) => JSON.stringify({
     aps: { alert: { title: title.slice(0, titleLength).join("") + (titleLength < title.length ? "…" : ""), body: characters.slice(0, length).join("") + (length < characters.length ? "…" : "") },
       badge: input.badge, "thread-id": input.threadKey, sound: "default" },
-    // Shipped native clients reject unknown kinds before opening the URL.
-    // This routing discriminator uses the existing message kind; wording,
-    // preferences, receipts, and collapse identity still use new_message.
-    rally: input.data.kind === "new_message" ? { ...input.data, kind: "mention" } : input.data,
+    // Shipped native clients reject unknown kinds before opening the URL, and
+    // route by the URL alone. A kind newer than them rides as `mention`;
+    // wording, preferences, receipts and collapse identity keep the real kind.
+    rally: APNS_ROUTED_AS_MENTION.has(input.data.kind) ? { ...input.data, kind: "mention" } : input.data,
   });
   let length = Math.min(characters.length, PUSH_BODY_PREVIEW_CHARACTERS);
   while (length > 0 && new TextEncoder().encode(encode(length)).byteLength > APNS_PAYLOAD_BYTES) length--;

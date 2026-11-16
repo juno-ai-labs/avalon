@@ -456,10 +456,13 @@ SQL joins.
   `workspace_pins` holds each person's Canvas and Sidekick pins
   ([`pinning.md`](pinning.md)).
 - Each person's Activity is `workspace_activity_items`, one row per mention,
-  add, Sidekick run notice and Sidekick source request or answer they were
-  sent, keyed by its notification intent's id, and `workspace_activity_seen`,
-  their Mark all seen, in `WorkspaceDO` (migration 140, rebuilt by 146 for
-  the source kinds; [`activity.md`](activity.md#data-model)).
+  add, Sidekick run notice, Sidekick source request or answer, and Canvas
+  notice they were sent, keyed by its notification intent's id, and
+  `workspace_activity_seen`, their Mark all seen, in `WorkspaceDO` (migration
+  140, rebuilt by 146 for the source kinds and again by 150, which dropped
+  the kind lists from its CHECK and from the notification intents' so the
+  contracts' Zod enums guard the kinds and the next kind needs no rebuild;
+  [`activity.md`](activity.md#data-model)).
 - The retired Thread, Channel and Breakout state is gone. Migration 64
   dropped the Project tables, 139 the Space ledgers, the Thread pins, order
   and access, and the batch dispatches, and 141 the directories and their

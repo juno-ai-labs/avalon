@@ -1,5 +1,5 @@
 import type { ActivityItem } from '@rally/contracts';
-import { IconAt, IconBolt, IconBoltOff, IconCircleCheck, IconFilePencil, IconLock, IconLockOpen, IconMessage, IconMessageQuestion, IconUserPlus } from '@tabler/icons-react';
+import { IconAt, IconBell, IconBolt, IconBoltOff, IconCircleCheck, IconFilePencil, IconLock, IconLockOpen, IconMessage, IconMessageQuestion, IconUserPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Fragment, type ReactNode, type RefObject } from 'react';
 import { Link, useLocation } from 'react-router-dom';
@@ -54,6 +54,8 @@ function rowParts(item: ActivityItem, who: string, where: string): RowPart[] {
     case 'source_request': return [actor, ` asked for your ${sourceAccount(item)} to start `, place];
     case 'source_approved': return [actor, ` approved their ${sourceAccount(item)} for `, place];
     case 'source_declined': return [actor, ` declined their ${sourceAccount(item)} for `, place];
+    // Who sent it and where; the preview carries the notice's title.
+    case 'canvas_notice': return [actor, ' in ', place];
   }
 }
 
@@ -83,6 +85,7 @@ const GLYPHS: Record<ActivityItem['kind'], ReactNode> = {
   source_request: <IconBolt aria-hidden="true" size={18} stroke={1.8} />,
   source_approved: <IconBolt aria-hidden="true" size={18} stroke={1.8} />,
   source_declined: <IconBoltOff aria-hidden="true" size={18} stroke={1.8} />,
+  canvas_notice: <IconBell aria-hidden="true" size={18} stroke={1.8} />,
 };
 
 /**
@@ -196,7 +199,9 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
         || 'Someone';
     }
     if (item.actor.kind === 'sidekick') {
-      return item.parentTitle ?? (item.actor.id ? sidekicksById.get(item.actor.id)?.name : undefined) ?? 'A Sidekick';
+      const named = item.actor.id ? sidekicksById.get(item.actor.id)?.name : undefined;
+      // A Sidekick's own row is parented by the Sidekick; a Canvas notice's by the Canvas, whose title is not the sender's.
+      return (item.parentKind === 'canvas' ? named : item.parentTitle ?? named) ?? 'A Sidekick';
     }
     return (item.actor.id ? membersById.get(item.actor.id)?.name : undefined) || 'Someone';
   };
