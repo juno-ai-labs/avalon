@@ -65,13 +65,17 @@ export function CreateCanvas({ created, marketplace = false }: { created: (id: s
     const result = await api.createCanvas({ canvasId: asWorkstreamId(attempt.current.workstreamId) });
     await api.sendConversationMessage(result.canvasId, {
       text, clientMessageId: attempt.current.clientMessageId, attachmentIds, confirmedParticipantUserIds: participantIds,
-      mentions: await api.messageMentionPayload(text, mentions, members),
+      // Undefined until the roster loads: the API then reads it itself, if the text mentions anyone.
+      mentions: await api.messageMentionPayload(text, mentions, roster.data),
     }, attempt.current.operationId);
     created(result.canvasId);
   };
   if (marketplace) {
-    return <MobileMarketplace disabled={blocked} failed={failed} onStart={async (prompt) => {
-      if (blocked) return;
+    // A guest makes no Canvas (`canvas_create_member_required`), as desktop's Marketplace knows.
+    if (guest) return <div className="mobile-marketplace"><h1>Marketplace</h1><p>Only members of this organization can start a Canvas.</p></div>;
+    // A template mentions no one, so it needs no roster: only a send in flight holds it.
+    return <MobileMarketplace disabled={sending} failed={failed} onStart={async (prompt) => {
+      if (sending) return;
       setSending(true); setFailed(false);
       try { await begin(prompt, [], [], []); } catch { setFailed(true); } finally { setSending(false); }
     }} />;
