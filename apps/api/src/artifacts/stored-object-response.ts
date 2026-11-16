@@ -43,26 +43,25 @@ export async function storedObjectResponse(
   headers: Record<string, string>,
   options: { ranges?: boolean } = {},
 ): Promise<Response | null> {
-  // A browser revalidating its copy sends the `ETag` it holds; an unchanged
-  // object answers `304` with no body. A range is not served alongside: RFC
-  // 9110 lets a server ignore `Range`, and a revalidation is a whole-file
-  // request in practice.
-  const held = request.method === "GET" || request.method === "HEAD" ? heldEtag(request.headers.get("if-none-match")) : null;
-  if (request.method === "HEAD") {
+  // A caller whose response may be rewritten after this returns (an active
+  // site's HTML, which Rally injects into) asks for `ranges: false`: no range,
+  // since a range of the stored page would be spliced into a page that is no
+  // longer those bytes, and no `304`, since the stored page's `ETag` says
+  // nothing about the page the browser was sent.
+  const exact = options.ranges !== false;
+  // A browser revalidating its copy sends the `ETag`s it holds, or `*`; one
+  // that matches (weakly, as RFC 9110 has `If-None-Match` compare) answers
+  // `304`. One that does not falls through, so a `Range` beside it is still
+  // honoured, as RFC 9110 evaluates them in that order.
+  const held = exact && (request.method === "GET" || request.method === "HEAD")
+    ? heldEtags(request.headers.get("if-none-match"))
+    : null;
+  if (held !== null || request.method === "HEAD") {
     const metadata = await bucket.head(key);
     if (!metadata) return null;
-    return held === metadata.etag ? notModified(metadata, headers) : new Response(null, { status: 200, headers: whole(metadata, headers) });
+    if (held !== null && (held === "*" || held.includes(metadata.etag))) return notModified(metadata, headers);
+    if (request.method === "HEAD") return new Response(null, { status: 200, headers: whole(metadata, headers) });
   }
-  if (held !== null) {
-    const object = await bucket.get(key, { onlyIf: { etagDoesNotMatch: held } });
-    if (!object) return null;
-    return "body" in object
-      ? new Response(object.body, { status: 200, headers: whole(object, headers) })
-      : notModified(object, headers);
-  }
-  // A caller whose response may be rewritten after this returns (an active
-  // site's HTML, which Rally injects into) asks for no ranges: a range of the
-  // stored page would be spliced into a page that is no longer those bytes.
   const range = request.method === "GET" && options.ranges !== false ? requestedRange(request.headers.get("range")) : null;
   if (range === null) {
     const object = await bucket.get(key);
@@ -135,10 +134,12 @@ function resolvedRange(range: R2Range, size: number): { offset: number; length: 
  * The one `ETag` an `If-None-Match` names, unquoted, or null for none, `*`, or
  * a list, which are answered in full: a browser sends the single tag it holds.
  */
-function heldEtag(header: string | null): string | null {
-  if (header === null) return null;
-  const match = /^(?:W\/)?"([^",]+)"$/u.exec(header.trim());
-  return match?.[1] ?? null;
+/** The opaque tags an `If-None-Match` lists, `"*"` for any, or null for none. */
+function heldEtags(header: string | null): string[] | "*" | null {
+  if (header === null || header.trim() === "") return null;
+  if (header.trim() === "*") return "*";
+  const tags = [...header.matchAll(/(?:W\/)?"([^"]*)"/gu)].map((match) => match[1]!);
+  return tags.length > 0 ? tags : null;
 }
 
 function notModified(object: R2Object, headers: Record<string, string>): Response {

@@ -41,7 +41,19 @@ export type PublishedArtifactFile = z.infer<typeof PublishedArtifactFileSchema>;
  * display title, say), which is served at `/` only.
  */
 export function publishedFilePath(title: string): string | null {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.[A-Za-z0-9]{1,10}$/u.test(title) ? `/${title}` : null;
+  return PLAIN_FILE_NAME.test(title) ? `/${title}` : null;
 }
+
+/**
+ * Whether a request path is a published file's own-name path. Any plain name
+ * is accepted, not only the current title: a file can be renamed after its
+ * link went into a feed or a message, and that link must keep working. Only
+ * the file itself is ever served on its host, so the name claims nothing.
+ */
+export function isPublishedFileNamePath(path: string): boolean {
+  return path.startsWith("/") && PLAIN_FILE_NAME.test(path.slice(1));
+}
+
+const PLAIN_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.[A-Za-z0-9]{1,10}$/u;
 
 export const ArtifactLinkSchema = z.strictObject({artifactId:IdSchema,canonicalUrl:HttpUrlSchema});

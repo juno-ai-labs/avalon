@@ -41,6 +41,7 @@ import {
   consumeAccessRevocationQueue,
 } from "../src/queues/access-revocation-consumer";
 import artifactWorker from "../src/artifacts/index";
+import { storedObjectResponse } from "../src/artifacts/stored-object-response";
 import { AuthorizationService } from "../src/services/authorization-service";
 import { ResourceService } from "../src/services/resource-service";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
@@ -343,9 +344,11 @@ describe("Canvas artifact access propagated to local serving", () => {
     const response = await visit(stub, url.pathname);
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("episode one audio");
-    // The bare host still serves it; any other name does not.
+    // The bare host still serves it, and so does any plain name, so a link
+    // survives a rename; a path with folders does not.
     expect(await (await visit(stub)).text()).toBe("episode one audio");
-    expect((await visit(stub, "/episode-2.mp3")).status).toBe(404);
+    expect(await (await visit(stub, "/renamed-episode.mp3")).text()).toBe("episode one audio");
+    expect((await visit(stub, "/episodes/episode-1.mp3")).status).toBe(404);
   });
 
   it("stores a site's files once by digest, streams new ones in, and serves every version from them", async () => {
@@ -405,29 +408,31 @@ describe("Canvas artifact access propagated to local serving", () => {
     await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
       await streamed("episodes/three.mp3", "episode three audio", async () => { throw new Error("daytona_file_stream_http_404"); })]))
       .rejects.toMatchObject({ code: "resource_publish_failed", details: { code: "daytona_file_stream_http_404" } });
+    // A download that breaks partway is named by its own error, not as a changed file.
+    const breaksPartway = async () => new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode("episode")); controller.error(new Error("daytona_download_reset")); },
+    });
+    await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
+      await streamed("episodes/three.mp3", "episode three audio", breaksPartway)]))
+      .rejects.toMatchObject({ code: "resource_publish_failed", details: { code: "daytona_download_reset" } });
     expect((await bridge.liveSiteFiles(call(), "feed"))?.manifest.assets.map((entry) => entry.path))
       .toEqual(expect.arrayContaining(["episodes/one.mp3", "episodes/two.mp3"]));
 
-    // A live version stored before blobs: its file is copied into a blob, once; and a
-    // file it names but no longer holds is streamed from the sandbox instead.
+    // A live version stored before blobs: a file it holds is streamed from the
+    // sandbox into a blob, once, rather than copied inside R2.
     const liveManifestKey = artifactManifestKey(first.artifactId, 2);
     const liveManifest = ArtifactManifestSchema.parse(await (await env.PAYLOADS.get(liveManifestKey))!.json());
     const legacyManifest = { ...liveManifest };
     delete legacyManifest.assetStore;
     const legacyText = "legacy audio";
     const legacy = await sha256Hex(new TextEncoder().encode(legacyText));
-    const gone = await sha256Hex(new TextEncoder().encode("gone audio"));
-    await env.PAYLOADS.put(artifactAssetKey(first.artifactId, 2, "episodes/legacy.mp3"), legacyText);
     await env.PAYLOADS.put(liveManifestKey, JSON.stringify({ ...legacyManifest, assets: [...legacyManifest.assets,
-      { path: "episodes/legacy.mp3", contentType: "audio/mpeg", sizeBytes: 12, sha256: legacy },
-      { path: "episodes/gone.mp3", contentType: "audio/mpeg", sizeBytes: 10, sha256: gone }] }));
+      { path: "episodes/legacy.mp3", contentType: "audio/mpeg", sizeBytes: 12, sha256: legacy }] }));
     await publish([
       await file("index.html", "<h1>Show, legacy</h1>"),
-      await stored("episodes/legacy.mp3", legacyText),
-      await stored("episodes/gone.mp3", "gone audio", async () => new Response("gone audio").body!),
+      await stored("episodes/legacy.mp3", legacyText, async () => new Response(legacyText).body!),
     ]);
     expect(await (await env.PAYLOADS.get(artifactBlobKey(first.artifactId, legacy)))?.text()).toBe(legacyText);
-    expect(await (await env.PAYLOADS.get(artifactBlobKey(first.artifactId, gone)))?.text()).toBe("gone audio");
 
     // The serving Worker reads the blob through the manifest.
     await share("public");
@@ -522,11 +527,22 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect((await fetchFrom(fileStub, { method: "HEAD", headers: { "if-none-match": etag } })).status).toBe(304);
     expect(await read(await fetchFrom(fileStub, { headers: { "if-none-match": "\"another-version\"" } })))
       .toEqual({ status: 200, body: "Published file" });
-    // A static site's stored asset revalidates the same way.
+    // Weak tags, lists and `*` match as RFC 9110 has `If-None-Match` compare.
+    expect((await fetchFrom(fileStub, { headers: { "if-none-match": `"other", W/${etag}` } })).status).toBe(304);
+    expect((await fetchFrom(fileStub, { headers: { "if-none-match": "*" } })).status).toBe(304);
+    // A stale tag beside a range is answered with the range, not the whole file.
+    expect((await fetchFrom(fileStub, { headers: { "if-none-match": "\"another-version\"", range: "bytes=0-8" } })).status)
+      .toBe(206);
+    // A caller whose HTML Rally may rewrite asks for exact bytes off, and gets neither a
+    // range nor a 304 from the stored page's tag.
+    const stored = (await env.PAYLOADS.head(`artifact/${SITE_HOST}/v1/assets/index.html`))!;
+    const whole = await storedObjectResponse(env.PAYLOADS, `artifact/${SITE_HOST}/v1/assets/index.html`,
+      new Request("https://x.invalid/", { headers: { "if-none-match": stored.httpEtag, range: "bytes=0-3" } }),
+      { "content-type": "text/html" }, { ranges: false });
+    expect(whole?.status).toBe(200);
+    // A page is never kept: a private page would outlive its Canvas in the browser.
     const page = await fetchFrom("quiet-blue-river-garden", {});
-    expect(page.headers.get("cache-control")).toBe("private, no-cache");
-    expect((await fetchFrom("quiet-blue-river-garden", { headers: { "if-none-match": page.headers.get("etag")! } })).status)
-      .toBe(304);
+    expect(page.headers.get("cache-control")).toBe("private, no-store");
 
     // Every revalidation is admitted first, so a private Canvas refuses at once.
     await share("editors");

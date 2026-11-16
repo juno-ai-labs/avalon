@@ -1583,17 +1583,6 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/feed/index.html");
   });
 
-  it("reads a file whole when the provider Worker cannot stream it yet", async () => {
-    const { files, provider, resources, runtime } = fixture();
-    files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode("<h1>Show</h1>"));
-    files.set("/workspace/.rally-output/feed/episode.mp3", new TextEncoder().encode("audio"));
-    provider.openFile = vi.fn(async () => { throw new Error('The RPC receiver does not implement the method "openFile".'); });
-    await runtime.publishResource(context, { filePath: "feed" });
-    const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
-    const episode = site.files.find((file) => file.path === "episode.mp3") as { open(): Promise<ReadableStream> };
-    expect(await new Response(await episode.open()).text()).toBe("audio");
-  });
-
   it("names a listing that timed out instead of calling the output unstable", async () => {
     const { files, provider, runtime } = fixture();
     files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode("<h1>Show</h1>"));

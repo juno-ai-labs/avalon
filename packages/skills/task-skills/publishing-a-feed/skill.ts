@@ -121,13 +121,16 @@ format, and for a podcast also \`reference/apple-podcasts.md\`.
    \`episodes/2026-11-14-no-ai-slop.mp3\`, never published on their own
    with \`publish_resource\`: the page can play only its own files, and the
    feed names them by the site's URL. Add an entry with media in this
-   order:
-   1. **Have the site's directory in the sandbox.** If it is not there (a
-      new run, a new sandbox), bring it back first with
-      \`import_resource\` and the site's resource id, to the path it
-      publishes from. Publishing a directory that is missing the earlier
-      episodes removes them from the site.
-   2. **Add the new files** to that directory.
+   order, which is \`building-live-sites\`' refresh sequence (take its
+   shared-output claim first in a Sidekick run):
+   1. **Recover the site before writing any file.** Import the published
+      site with \`import_resource\` and its resource id into
+      \`.rally-output/<its path>\`, with \`overwrite: true\`, even when a
+      directory is already there: a directory missing the earlier episodes
+      publishes as a site without them. If the import fails, say so and stop;
+      never publish the path without its current files.
+   2. **Add the new files** to that directory (\`creating-a-podcast-episode\`
+      makes an episode's).
    3. **Republish the whole directory** to the same path with
       \`publish_resource\`. Rally moves only what is new or changed since
       the live version, so the earlier episodes cost nothing, and the size a
@@ -196,12 +199,9 @@ Say this when it matters; do not build around it.
   copy the link from. Build the page with every feed.
 - **Asking who may open it before building.** The default is public; build,
   then say who can open it and ask.
-- **Publishing media on its own.** A file outside the site cannot play on
-  its page, and the feed points outside the site it describes. Do instead:
-  put it in the site's directory and republish (step 7).
-- **Republishing from a directory missing earlier episodes.** They vanish
-  from the site, and every app's copy of those episodes breaks. Do instead:
-  import the site first when the directory is not in the sandbox.
+- **Writing episode files before recovering the site.** The directory then
+  exists without the earlier episodes, and publishing it removes them. Do
+  instead: import the site first, every time (step 7).
 - **A viewer check on the feed or its media.** Every app gets 401. Answer
   the feed first, with no identity.
 - **A new id on every retry.** Subscribers get the entry twice. Derive it

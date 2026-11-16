@@ -70,7 +70,7 @@ export async function readArtifactVersionFile(
 function sourceUnavailable(): TerminalToolError {
   return new TerminalToolError(
     "resource_not_importable",
-    "Part of this site's source is temporarily unavailable. Retry the import; if it persists, the site can still be revised by publishing a fresh directory at its path.",
+    "Part of this site's source is temporarily unavailable. Retry the import. Do not publish the site's path without its current files: a directory missing them publishes as a site without them.",
     { reason: "Retry the import once; the site keeps serving its current version either way." },
   );
 }

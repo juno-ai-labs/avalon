@@ -208,13 +208,24 @@ export function createAvalonMultimodalGenerationPlugin(
       const recorded: Uint8Array[] = [];
       let recordedBytes = 0;
       let providerOperationId: string | undefined;
-      for (const text of pieces) {
+      for (const [index, text] of pieces.entries()) {
         const piece = await audioClient.generate({
           text,
           voice,
           ...(arguments_.instructions ? { instructions: arguments_.instructions } : {}),
           signal: context.signal,
           maximumBytes: maximumAudioBytes - recordedBytes,
+        }).catch((error: unknown) => {
+          // A later piece crossing the limit is the whole recording's size,
+          // not that piece's; say so, and how to split it.
+          if (pieces.length > 1 && error instanceof AzureAudioProviderError && error.code === "resource_limit_exceeded") {
+            throw new MultimodalGenerationError(
+              "resource_limit_exceeded",
+              `The recording passed Rally's limit of ${maximumAudioBytes} bytes at piece ${index + 1} of ${pieces.length}. Split the text into sections, such as chapters or segments, and record each with its own call.`,
+              { field: "text", expected: `generated audio bytes at most ${maximumAudioBytes}` },
+            );
+          }
+          throw error;
         });
         recorded.push(piece.bytes);
         recordedBytes += piece.bytes.byteLength;

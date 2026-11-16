@@ -24,6 +24,16 @@ beforeEach(async () => { await reset(); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("artifact asset publication in real R2", () => {
+  it("writes each file under its version's own prefix until blob writes are turned on", async () => {
+    const result = await writeArtifactVersion({ PAYLOADS: env.PAYLOADS }, input);
+    expect(result.manifest).not.toHaveProperty("assetStore");
+    for (const file of input.files) {
+      expect(await (await env.PAYLOADS.get(manifestAssetKey(result.manifest, file)))?.text())
+        .toBe(new TextDecoder().decode(file.bytes));
+      expect(manifestAssetKey(result.manifest, file)).toBe(`artifact/${artifactId}/v3/assets/${file.path}`);
+    }
+  });
+
   it("overlaps uploads and withholds the manifest until every asset is stored", async () => {
     const bucket = env.PAYLOADS;
     const put = bucket.put.bind(bucket);
@@ -45,7 +55,7 @@ describe("artifact asset publication in real R2", () => {
       activeAtManifest = active;
       return await put(...args);
     });
-    const publishing = writeArtifactVersion({ PAYLOADS: bucket }, input);
+    const publishing = writeArtifactVersion({ PAYLOADS: bucket, ARTIFACT_BLOB_STORE: "on" }, input);
     try {
       await expect.poll(() => started.length, { timeout: 5_000 }).toBe(6);
       expect(await bucket.get(artifactManifestKey(artifactId, 3))).toBeNull();
@@ -77,7 +87,7 @@ describe("artifact asset publication in real R2", () => {
       try { return await put(...args); }
       finally { active -= 1; }
     });
-    await expect(writeArtifactVersion({ PAYLOADS: bucket }, input)).rejects
+    await expect(writeArtifactVersion({ PAYLOADS: bucket, ARTIFACT_BLOB_STORE: "on" }, input)).rejects
       .toMatchObject({ code: "resource_publish_failed" });
     expect(active).toBe(0);
     expect(attemptedAssets).toHaveLength(6);

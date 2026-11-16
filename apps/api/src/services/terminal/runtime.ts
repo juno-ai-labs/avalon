@@ -406,22 +406,14 @@ export function createDaytonaTerminalRuntime(
   }
 
   /**
-   * One sandbox file as a stream, cancelled with the tool call. A provider
-   * without `openFile` (a test double), or a provider Worker deployed before
-   * it (an RPC method it does not have), is read whole instead, so the two
-   * Workers deploy in either order. The RPC branch can go once both Workers
-   * with `openFile` have deployed.
+   * One sandbox file as a stream, cancelled with the tool call. The provider
+   * Worker is promoted before the API (`deploy-api.yml`), so it always has
+   * `openFile`; a provider without it (a test double) is read whole.
    */
   async function openSandboxFile(sandbox: AcquiredTerminalSandbox, path: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
-    const whole = async () => new Response((await provider.readFile(sandbox.providerSandboxId, path)).slice().buffer).body!;
-    let stream: ReadableStream<Uint8Array>;
-    try {
-      stream = provider.openFile ? await provider.openFile(sandbox.providerSandboxId, path, signal) : await whole();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (!/does not implement/u.test(message)) throw error;
-      stream = await whole();
-    }
+    const stream = provider.openFile
+      ? await provider.openFile(sandbox.providerSandboxId, path, signal)
+      : new Response((await provider.readFile(sandbox.providerSandboxId, path)).slice().buffer).body!;
     // After the provider returns, cancelling the tool call cancels the stream,
     // which reaches the download across the RPC.
     return stream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>(), { signal });
@@ -697,11 +689,12 @@ export function createDaytonaTerminalRuntime(
       );
     }
     if (result.timedOut) {
-      // Not instability: listing and hashing this output took longer than the
-      // command may run, which a retry repeats.
+      // Not instability: hashing took longer than the listing may run. A
+      // directory keeps what it hashed (`directoryListingCommands`), so the
+      // same call again continues; one file hashes from the start each time.
       throw new TerminalToolError(
         "resource_listing_timed_out",
-        "Rally could not list and hash this output within the time one publish allows, so the publish did not start. It is too large to republish whole right now; tell the person, and do not retry the same publish.",
+        "Rally could not hash all of this output within the time one listing allows, so the publish did not start. For a directory, retry the same publish_resource call: each retry continues from the files already hashed. If a retry makes no progress, or this is a single very large file, tell the person it is too large to publish now.",
         { field: "filePath", reason: "Listing and hashing every file timed out." },
       );
     }

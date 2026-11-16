@@ -675,7 +675,8 @@ export function createDaytonaTerminalProvider(
       const sandbox = await load(idOrName);
       if (!sandbox.downloadUrl) throw new Error("daytona_signed_download_unavailable");
       const url = await measureRequest("file.sign_download", () => sandbox.downloadUrl!(path, 120));
-      const response = await measureRequest("file.stream", () => fetch(url, signal ? { signal } : {}));
+      // A signed file URL never redirects; following one would send the request elsewhere.
+      const response = await measureRequest("file.stream", () => fetch(url, { redirect: "error", ...(signal ? { signal } : {}) }));
       if (!response.ok || !response.body) {
         await response.body?.cancel().catch(() => undefined);
         throw new Error(`daytona_file_stream_http_${response.status}`);
