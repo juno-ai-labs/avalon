@@ -87,7 +87,7 @@ function fixture(answer: (input: { operation: string; command: string }) => { ex
     terminalPort: testTerminalPortFactory(objectStore),
     resourcePort: testResourcePortFactory(objectStore),
     runsPort: () => testHarnessRunPort(objectStore),
-    ...(clock ? { clock } : {}),
+    ...(clock ? { clock: { now: () => clock.now(), sleep: async () => undefined } } : {}),
   });
   return { service, provider, objectStore, written, leaseDuringBuild };
 }

@@ -81,9 +81,55 @@ export const AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES = EXPIRE_DAYS * 24 
 
 export interface TerminalClock {
   now(): Date;
+  /** Wait this long, or less when the signal aborts; how a busy lease is waited out. */
+  sleep(ms: number, signal: AbortSignal): Promise<void>;
 }
 
-const systemClock: TerminalClock = { now: () => new Date() };
+const systemClock: TerminalClock = {
+  now: () => new Date(),
+  sleep: (ms, signal) => new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  }),
+};
+
+/**
+ * How long a tool call waits for another run's lease before it answers
+ * `sandbox_busy`.
+ *
+ * Bounds: the time one tool call spends waiting on a sibling's call.
+ * Without it: the first refusal goes to the model, which retries by hand,
+ *   skips the step, or ends its turn (a Canvas's four background agents lost
+ *   three calls and one test that way on 2026-11-16).
+ * Direction: upper bound on waiting; past it the call is refused as before.
+ * Trips: `sandbox_busy`, which tells the model to retry.
+ * Derive from: the team set five seconds, the same wait the refusal already
+ *   asks the model for (`retryAfterMs`). Most tool calls end inside it; a long
+ *   command does not, and is refused as before.
+ */
+export const TERMINAL_BUSY_WAIT_MS = 5_000;
+
+/**
+ * How long a waiting call sleeps between tries for the lease.
+ *
+ * Bounds: the tries one waiting call makes, twenty in a full wait. Each costs
+ *   about three hops: re-reading the row and claiming it from the Terminal's
+ *   object, and, for a holder in another conversation, asking that
+ *   conversation whether it has yielded.
+ * Without it: the wait would retry as fast as the hops return, loading both
+ *   objects for the whole five seconds.
+ * Direction: a minimum interval; a lease released mid-sleep is taken up to
+ *   this much later.
+ * Trips: nothing. It only paces the wait {@link TERMINAL_BUSY_WAIT_MS} bounds.
+ * Derive from: the team set 250 ms, a delay short beside the five-second wait
+ *   that keeps a full wait to about sixty hops.
+ */
+const TERMINAL_BUSY_RETRY_MS = 250;
 
 /**
  * Removes every `http.<url>.extraheader` from the checkout's own Git config,
@@ -423,7 +469,16 @@ export class TerminalSandboxCoordinator {
     // some run's preparation still in flight, and a read of a half-made
     // checkout is a read of the wrong files.
     if (repository && repository.bootstrappedSandboxGeneration !== row.generation) return null;
-    if (await this.hasRevokedImportedResource(context, row)) return null;
+    // A `planned` import is a sibling's import in flight while the lease is
+    // live: its call holds the lease and settles the row. A read may see its
+    // files half copied, as it may see any file mid-write. Once the lease has
+    // lapsed, a `planned` import is left over and readiness cleans it up. The
+    // row names no run, so a leftover import also passes while an unrelated
+    // run holds the lease (one taken by `claimMutation`, or by a background
+    // agent that may not rebuild): those reads can see its half-copied files.
+    const importInFlight = row.operationRunId !== null
+      && (row.operationLeaseExpiresAt ?? 0) > this.clock.now().getTime();
+    if (await this.hasRevokedImportedResource(context, row, importInFlight)) return null;
     if (
       observation
       && observation.generation === row.generation
@@ -770,11 +825,51 @@ export class TerminalSandboxCoordinator {
     return this.terminalPort(context.workspaceId, context.workstreamId);
   }
 
+  /**
+   * Take the lease, waiting up to {@link TERMINAL_BUSY_WAIT_MS} for a sibling's
+   * call to release it. Each try reads the row again, so a generation another
+   * run replaced meanwhile is claimed as it now is; the callers already check
+   * the row they are handed. Only the first try recovers a yielded holder's
+   * operation, since that asks the provider to stop its command: the retries
+   * wait for a live sibling, which releases the lease itself.
+   */
   private async claimOperation(
     context: HarnessToolContext,
     row: TerminalSandboxRecord,
     now: number,
   ): Promise<TerminalSandboxRecord> {
+    let current = row;
+    let at = now;
+    // The wait ends on elapsed time, which counts each try's hops, or on the
+    // time slept, which ends it under a clock that does not move.
+    const deadline = this.clock.now().getTime() + TERMINAL_BUSY_WAIT_MS;
+    for (let slept = 0; ; ) {
+      const claimed = await this.tryClaimOperation(context, current, at, slept === 0);
+      if (claimed) return claimed;
+      const remaining = deadline - this.clock.now().getTime();
+      if (slept >= TERMINAL_BUSY_WAIT_MS || remaining <= 0) break;
+      const pause = Math.min(TERMINAL_BUSY_RETRY_MS, remaining);
+      await this.clock.sleep(pause, context.signal);
+      slept += pause;
+      if (context.signal.aborted) {
+        throw new TerminalToolError("cancelled", "The Terminal operation was cancelled while it waited for the workspace lease.");
+      }
+      current = await this.terminal(context).sandbox() ?? current;
+      at = this.clock.now().getTime();
+    }
+    throw new TerminalToolError(
+      "sandbox_busy",
+      "Another agent run is using this Terminal workspace right now. Retry the tool in a few seconds; do not repeat any earlier command.",
+      { retryAfterMs: 5_000, reason: "Retry in a few seconds; the workspace is released after each tool call." },
+    );
+  }
+
+  private async tryClaimOperation(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    now: number,
+    recover: boolean,
+  ): Promise<TerminalSandboxRecord | null> {
     const terminal = this.terminal(context);
     const leaseExpiresAt = this.clock.now().getTime() + TERMINAL_OPERATION_LEASE_MS;
     const runSubstreamId = this.holderSubstreamId();
@@ -802,7 +897,7 @@ export class TerminalSandboxCoordinator {
         });
       }
     }
-    if (!claimed) {
+    if (!claimed && recover) {
       claimed = await this.recoverYieldedOperation(
         context,
         row,
@@ -810,14 +905,7 @@ export class TerminalSandboxCoordinator {
         yieldedForeignHolder,
       );
     }
-    if (!claimed) {
-      throw new TerminalToolError(
-        "sandbox_busy",
-        "Another agent run is using this Terminal workspace right now. Retry the tool in a few seconds; do not repeat any earlier command.",
-        { retryAfterMs: 5_000, reason: "Retry in a few seconds; the workspace is released after each tool call." },
-      );
-    }
-    return claimed;
+    return claimed ?? null;
   }
 
   /**
@@ -1008,10 +1096,16 @@ export class TerminalSandboxCoordinator {
       : null;
   }
 
-  private async hasRevokedImportedResource(context: HarnessToolContext, row: TerminalSandboxRecord): Promise<boolean> {
-    const links = await this.terminal(context).importedResources(row.generation);
+  private async hasRevokedImportedResource(
+    context: HarnessToolContext,
+    row: TerminalSandboxRecord,
+    /** Pass over `planned` imports: the caller knows a live lease holder will settle them. */
+    importInFlight = false,
+  ): Promise<boolean> {
+    const all = await this.terminal(context).importedResources(row.generation);
+    if (!importInFlight && all.some((candidate) => candidate.state !== "completed")) return true;
+    const links = all.filter((candidate) => candidate.state === "completed");
     if (links.length === 0) return false;
-    if (links.some((candidate) => candidate.state !== "completed")) return true;
     // Completed imports are retained Sidekick state, like its shared history.
     // A new import still checks the selected user's current read access.
     if (this.scope.parentKind === "automation") return false;
