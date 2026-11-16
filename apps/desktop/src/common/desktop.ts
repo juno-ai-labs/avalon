@@ -6,7 +6,6 @@ import type { NetworkRecoveryState, NetworkTicketObservation } from './network-r
 import type {
   TelemetryEventProperties,
   WorkspaceAttention,
-  CanvasSidebarRow,
   WorkspaceDeparture,
   WorkspaceDepartureOutcome,
   AccountOnboarding,
@@ -479,8 +478,6 @@ export interface RallyDesktopBridge {
   getOrganizationNameSuggestion: () => Promise<OrganizationNameSuggestion>;
   getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
   getWorkspaceAttention: (input: { region: RallyRegion; workspaceId: string }) => Promise<WorkspaceAttention>;
-  /** The Canvases someone else shared with this person in another stored Organization, read with its own credential. */
-  getWorkspaceSharedCanvases: (input: { region: RallyRegion; workspaceId: string }) => Promise<CanvasSidebarRow[]>;
   leaveWorkspace: (input: {
     expectedOutcome: WorkspaceDepartureOutcome;
     region: RallyRegion;

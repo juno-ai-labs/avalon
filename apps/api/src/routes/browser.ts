@@ -24,11 +24,10 @@ import { telemetryOperationId } from "../telemetry/api-emitter";
 import { deferOnboardingOutcome, onboardingFailureResult } from "./onboarding";
 import { PlatformOnboardingService } from "../services/platform-onboarding-service";
 import { membershipAttention } from "../services/workspace-attention-service";
-import { membershipSharedCanvases } from "../services/shared-canvases-service";
 import { resolveSiteForViewer } from "../services/artifact-site-resolution";
 import { IDENTITY_REGION, configuredRegions, type Region } from "@rally/contracts/regions";
 import { BrowserSessionService, BrowserSessionSchema, BrowserWorkspacesSchema } from "../services/browser-session-service";
-import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserSiteResolutionSchema, BrowserSiteResolveSchema, BrowserWorkspaceActivateSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceSharedCanvasesSchema,
+import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserSiteResolutionSchema, BrowserSiteResolveSchema, BrowserWorkspaceActivateSchema, BrowserWorkspaceAttentionSchema,
   BrowserWorkspaceCreateSchema, BrowserWorkspaceCreatedSchema, SourceDecisionLinkSchema, SourceDecisionResultSchema } from "@rally/contracts/browser-session";
 import { decideSourceRequestByLink } from "../services/sidekick-source-decision-link";
 import { startEmailLogin, deliverEmailLogin, redeemEmailLogin, EmailLoginStartSchema,
@@ -266,24 +265,6 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
       .map((item) => [item.region,item.workspaceId,item.code].filter(Boolean).join(":"));
     if (failed.length > 0) logEvent(c,"warn","browser_workspace_attention_failed",{ failed:failed.join(",") });
     return c.json(BrowserWorkspaceAttentionSchema.parse({ attention:[...local.attention,...remote.attention] }));
-  });
-  /**
-   * The Canvases someone else shared with this person in each organization
-   * `/workspaces` lists, guests included, for the Canvas lists of every other
-   * organization (`docs/canvases.md`). Global answers for every deployment,
-   * as it does for attention.
-   */
-  routes.get("/workspaces/shared-canvases",async (c) => {
-    c.header("Cache-Control","no-store");
-    const auth = await new BrowserSessionService(c.env).read(credential(c));
-    const local = await membershipSharedCanvases(c.env,auth.userId,await new AuthService(c.env).listRegionalWorkspaces(auth.userId));
-    const remote = c.env.AVALON_REGION !== IDENTITY_REGION || configuredRegions.length < 2
-      ? { canvases:[],failed:[] }
-      : await new PlatformOnboardingService(c.env,auth).otherDeploymentSharedCanvases();
-    const failed = [...local.failed.map((item) => ({ region:c.env.AVALON_REGION,...item })),...remote.failed]
-      .map((item) => [item.region,item.workspaceId,item.code].filter(Boolean).join(":"));
-    if (failed.length > 0) logEvent(c,"warn","browser_workspace_shared_canvases_failed",{ failed:failed.join(",") });
-    return c.json(BrowserWorkspaceSharedCanvasesSchema.parse({ canvases:[...local.canvases,...remote.canvases] }));
   });
   /**
    * The organization and resource behind a site's hostname, for the

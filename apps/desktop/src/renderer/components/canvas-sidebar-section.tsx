@@ -47,9 +47,9 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
   // This Organization's rows keep the server's order; another's go in by date or name.
   const sorted = useMemo<Array<CanvasSidebarRow | OtherOrganizationCanvas>>(() => {
     const merged: Array<CanvasSidebarRow | OtherOrganizationCanvas> = [...rest, ...elsewhere];
-    const rowOf = (item: CanvasSidebarRow | OtherOrganizationCanvas): CanvasSidebarRow => 'organization' in item ? item.row : item;
-    if (order === 'name') return merged.sort((a, b) => rowOf(a).title.localeCompare(rowOf(b).title));
-    return elsewhere.length === 0 ? rest : merged.sort((a, b) => rowOf(b).updatedAt.localeCompare(rowOf(a).updatedAt));
+    const of = (item: CanvasSidebarRow | OtherOrganizationCanvas) => 'organization' in item ? item.canvas : item;
+    if (order === 'name') return merged.sort((a, b) => of(a).title.localeCompare(of(b).title));
+    return elsewhere.length === 0 ? rest : merged.sort((a, b) => of(b).updatedAt.localeCompare(of(a).updatedAt));
   }, [elsewhere, order, rest]);
   const navigate = useNavigate();
   const workspace = session?.workspace;
@@ -113,7 +113,7 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
       {rows === undefined && (down ? <SidebarListDown noun="Canvases" /> : <SidebarSkeletonRows count={6} hint />)}
       {rows !== undefined && rest.length === 0 && pinned.length === 0 && elsewhere.length === 0 && <p className="navigation-empty">No Canvases yet.</p>}
       {sorted.map((item) => 'organization' in item
-        ? <OtherOrganizationCanvasRow currentUserId={currentUserId} item={item} key={`${item.organization.region}:${item.organization.id}:${item.row.id}`} />
+        ? <OtherOrganizationCanvasRow item={item} key={`${item.organization.region}:${item.organization.id}:${item.canvas.id}`} />
         : row(item))}
     </section>
   </>;
