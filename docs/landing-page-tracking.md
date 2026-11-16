@@ -95,9 +95,7 @@ class `landing` with their own `$pathname`; they send people to sign up
 through the header button rather than a hero button of their own.
 
 The footer is rendered from `apps/site/src/site-chrome.ts`, so its help@ link and
-its id live there, not in `index.html`. The `/compare/` pages share the header
-(`sign-in-header`) and the footer, and count as page class `landing` with
-their own `$pathname`; see [`landing-comparisons.md`](landing-comparisons.md).
+its id live there, not in `index.html`; see [`site-chrome.md`](site-chrome.md).
 
 `/start-fast/` retains the earlier landing design and its sections in
 `apps/site/src/landing-sections.html`; the illustrated homepage has independent
