@@ -374,11 +374,12 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
 - **Offered to every loop that acts for a person** (`asksForSources`,
   `actsForAPerson` in `lib/loop-authority.ts`): a Canvas's Chat, a Sidekick's
   wizard, and a background agent of either, whatever started the turn,
-  unless another agent's message started it and that message carries no
-  `fromPersonTurn`. The sender sets `fromPersonTurn` when it acts for a
-  person, so a message between the Chat, the wizard and their agents keeps
-  the person's authority across hops, and one from a run, a run's worker or a
-  self-review does not. Every other loop with the Sidekicks plugin is offered
+  unless a message from a run, a run's worker or a wizard's agent started
+  it. That is read from the sender's address alone (`senderActsForAPerson`):
+  `canvas/…` (a Chat or any of its agents) and `automation/…/0` (the wizard)
+  may lead to an ask, and every other `automation/…` address may not, since
+  it cannot tell a run from a wizard's agent. A wizard's agent asks for
+  itself instead of through its wizard. Every other loop with the Sidekicks plugin is offered
   the same three: `sources_list` reads as ever, and `request_source` and
   `test_source_condition` (which reads the acting person's own events) refuse
   by name with the route to a turn that may ask
@@ -392,8 +393,8 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
     review;
   - a background agent with no recorded root, which acts for nobody:
     `sidekick_source_request_from_background_agent`;
-  - a turn a run's or a review's message started, a run's
-    `request_sidekick_change` to its wizard among them:
+  - a turn a message from a run, its worker or a wizard's agent started, a
+    run's `request_sidekick_change` to its wizard among them:
     `sidekick_source_request_from_agent_message`, which says to name the ask
     in the reply.
 
@@ -825,11 +826,12 @@ one as it is resolved; the resolution becomes a changelog entry.
 
 **What changed:** `asksForSources` asks `actsForAPerson`: a Canvas's Chat, a
 Sidekick's wizard and a background agent of either may ask, whatever started
-the turn, unless an unstamped agent message did. The sender stamps
-`fromPersonTurn` whenever it acts for a person, no longer only when a person
-started its turn. A Chat's background agent's ask, and a wizard turn its
-message started, are drawn in the Chat. A self-review's agents are refused by
-`backgroundAgentRootReason`.
+the turn, unless a message from a run, its worker or a wizard's agent did,
+which is read from the sender's address (`senderActsForAPerson`). The
+`fromPersonTurn` stamp is no longer written or read; the schema still
+accepts it for stored messages. A Chat's background agent's ask, and a wizard
+turn any Chat message started, are drawn in the Chat. A self-review's agents
+are refused by `backgroundAgentRootReason`.
 
 **Why:** In a real setup a person asked a Chat for a CRM fed by two
 mailboxes. The Chat started background agents and ended its turn; their reply
@@ -840,14 +842,17 @@ events were unavailable and asked how often to poll. A Chat hands setup to
 agents and hears back, so the person's authority has to survive those hops,
 and the owner asked for exactly this.
 
-**Considered and rejected:** Carrying the stamp only when the sender's own
-turn was stamped (transitive trust): more state for a case the owner judged
-not worth it. The accepted risk: the wizard's background agents can read
-runs, which hold event content, and may now ask. An ask approves nobody.
+**Considered and rejected:** Keeping the stamp, set by any sender that acts
+for a person: it works, but the owner judged a flag carried on every message
+more design than the rule needs, when the address says almost as much. The
+accepted risks: the wizard's background agents can read runs, which hold
+event content, and may now ask; and a self-review shares the wizard's
+address, so a turn its message starts may ask. An ask approves nobody.
 
 **What a future change has to respect:** A loop that is handed event content
-(a run, its worker, a review) must not stamp `fromPersonTurn` or be offered
-the ask. The 2026-11-15 rule below is superseded where it refuses a Chat's or
+(a run, its worker, a review) must not be offered the ask. A new loop that
+messages from a `canvas/…` or `automation/…/0` address is trusted by that
+address. The 2026-11-15 rule below is superseded where it refuses a Chat's or
 a wizard's agents.
 
 ### 2026-11-15 — Only a person's turn, or a Canvas's wizard turn, asks for a source

@@ -35,7 +35,7 @@ import { conversationParentStub, hostedParentStub } from "./conversation-parent-
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createNotificationsPlugin, NOTIFICATIONS_PLUGIN_ID } from "./notification-tools";
-import { actsAsSidekickWizard, actsForAPerson, canvasChatAuthority, loopAuthority } from "../lib/loop-authority";
+import { actsAsSidekickWizard, actsForAPerson, canvasChatAuthority, loopAuthority, senderActsForAPerson } from "../lib/loop-authority";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
@@ -5286,7 +5286,7 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  * Whether a loop may ask people for a source (`sidekick_request_source` and
  * its two companions): a Canvas's Chat, a Sidekick's wizard, and a background
  * agent of either (`actsForAPerson`), whatever started the turn, unless it
- * was another agent's message from a loop that does not act for a person.
+ * was a message from a run, its worker or a wizard's agent (`senderActsForAPerson`).
  * That leaves out a Sidekick run and its workers, which are handed event
  * content such as a stranger's email, a run's change request to its wizard,
  * and a scheduled self-review and its agents, which read runs. Setting up a
@@ -5297,7 +5297,7 @@ function agentCanvasArtifact(artifact: { resourceId: string; title: string; kind
  */
 function asksForSources(input: WorkstreamWorkflowInput): boolean {
   return actsForAPerson(input)
-    && (!input.agentExchange || input.agentExchange.fromPersonTurn === true || Boolean(input.wizardCanvasId));
+    && (!input.agentExchange || senderActsForAPerson(input.agentExchange.senderAgentId) || Boolean(input.wizardCanvasId));
 }
 
 /**
