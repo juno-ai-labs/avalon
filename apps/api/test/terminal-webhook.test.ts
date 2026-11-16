@@ -49,7 +49,7 @@ function fixture() {
     getSandbox, createSandbox: unexpected, prepareSandbox: unexpected, startSandbox: unexpected,
     recoverSandbox: unexpected, stopSandbox: unexpected, archiveSandbox: unexpected, deleteSandbox: unexpected,
     updateNetworkPolicy: unexpected, configureGitHubReadAccess: unexpected, clearGitHubReadAccess: unexpected,
-    readFile: unexpected, writeFile: unexpected, runUtilityCommand: unexpected, runCommand: unexpected,
+    readFile: unexpected, openFile: unexpected, writeFile: unexpected, runUtilityCommand: unexpected, runCommand: unexpected,
     cleanupCommand: unexpected,
   }) };
   // The main conversation's object under the work stream's own id; a side

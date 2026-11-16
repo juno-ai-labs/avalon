@@ -33,7 +33,7 @@ import {
   resolveDirectoryPublish,
   type DirectoryEntry,
 } from "./site-publish";
-import type { CarriedSiteFile, ReadSiteFile, SitePublishFile } from "./site-resource-bridge";
+import type { ReadSiteFile, SitePublishFile, StoredSiteFile, StreamedSiteFile } from "./site-resource-bridge";
 import { socialPreviewSourcePaths } from "./site-social-preview";
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalTaskRecord } from "../../durable-objects/workstream-terminal-storage";
@@ -157,15 +157,16 @@ export interface TerminalResourceBridge {
     },
   ): Promise<TerminalPublishedSiteOutput>;
   /**
-   * The files the site at this path serves now, with the version that stores
-   * them, or `null` when the path has no site. A directory publish carries the
-   * ones it would only copy (`CarriedSiteFile`).
+   * The files the site at this path serves now, each with the key that
+   * stores it, or `null` when the path has no site. A directory publish
+   * writes nothing for a file whose bytes are already among them
+   * (`StoredSiteFile`).
    */
   liveSiteFiles(
     context: HarnessToolContext,
     filePath: string,
     input?: { canvas?: string | undefined; displayName?: string | undefined },
-  ): Promise<{ artifactId: string; version: number; files: readonly { path: string; sha256: string; sizeBytes: number }[] } | null>;
+  ): Promise<{ files: readonly { path: string; sha256: string; sizeBytes: number; storedAt: string }[] } | null>;
   /**
    * What this path already published as, or `null` if it never has.
    *
@@ -753,30 +754,43 @@ export function createDaytonaTerminalRuntime(
       return { path: entry.path, bytes, sha256: observed };
     };
 
-    // A site republish carries every file the live version already stores
-    // unchanged at the same path, so only new bytes are read and counted. Not
-    // carried: HTML, the server module, and the preview image the page names,
-    // whose bytes the publish itself reads. The listing's digest decides
-    // equality; a wrong one can only keep bytes this path already served.
+    // Each file of a site is settled here, so the model only ever publishes a
+    // directory:
+    // - **stored**: the live version already holds these bytes (by digest, at
+    //   any path), so nothing moves and nothing counts against the limit;
+    // - **read**: pages, the server module and the preview image the page
+    //   names, whose bytes this publish reads itself;
+    // - **streamed**: everything else, from the sandbox into its blob, never
+    //   held by the Worker.
+    // The listing's digest decides "stored"; a wrong one can only keep bytes
+    // this site already served. A streamed file is checked by R2 against it.
     const live = resolved.kind === "site" ? await resources.liveSiteFiles(context, input.filePath, input) : null;
-    const index = live ? entries.find((entry) => entry.path === "index.html") : undefined;
+    const index = resolved.kind === "site" ? entries.find((entry) => entry.path === "index.html") : undefined;
     const readIndex = index ? await readEntry(index) : null;
-    const keepReading = new Set(readIndex
+    const previewSources = new Set(readIndex
       ? socialPreviewSourcePaths(new TextDecoder("utf-8", { fatal: false }).decode(readIndex.bytes))
       : []);
-    const liveByPath = new Map((live?.files ?? []).map((file) => [file.path, file]));
-    const carry = (entry: DirectoryEntry): CarriedSiteFile | null => {
-      if (!live || /\.html?$/iu.test(entry.path) || keepReading.has(entry.path)) return null;
-      if (resolved.kind === "site" && resolved.mode === "active" && entry.path === resolved.entryPath) return null;
-      const stored = liveByPath.get(entry.path);
-      if (!stored || stored.sha256 !== entry.sha256 || stored.sizeBytes !== entry.sizeBytes) return null;
-      return { path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes, carriedFrom: { artifactId: live.artifactId, version: live.version } };
+    const liveByDigest = new Map((live?.files ?? []).map((file) => [`${file.sha256}:${file.sizeBytes}`, file]));
+    const needsBytes = (entry: DirectoryEntry): boolean => resolved.kind !== "site"
+      || /\.html?$/iu.test(entry.path)
+      || previewSources.has(entry.path)
+      || (resolved.mode === "active" && entry.path === resolved.entryPath);
+    const settle = (entry: DirectoryEntry): StoredSiteFile | StreamedSiteFile | null => {
+      if (needsBytes(entry)) return null;
+      const stored = liveByDigest.get(`${entry.sha256}:${entry.sizeBytes}`);
+      if (stored) return { path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes, storedAt: stored.storedAt };
+      const openFile = provider.openFile;
+      if (!openFile) return null;
+      return {
+        path: entry.path, sha256: entry.sha256, sizeBytes: entry.sizeBytes,
+        open: () => openFile.call(provider, sandbox.providerSandboxId, `${path}/${entry.path}`),
+      };
     };
-    const carried = new Map(entries.flatMap((entry) => {
-      const file = carry(entry);
+    const settled = new Map(entries.flatMap((entry) => {
+      const file = settle(entry);
       return file ? [[entry.path, file] as const] : [];
     }));
-    const newBytes = entries.reduce((total, entry) => total + (carried.has(entry.path) ? 0 : entry.sizeBytes), 0);
+    const newBytes = entries.reduce((total, entry) => total + ("storedAt" in (settled.get(entry.path) ?? {}) ? 0 : entry.sizeBytes), 0);
     if (newBytes > MAXIMUM_PUBLISH_BYTES) {
       resources.noteOversizedPublish(context, { shape: "directory", sizeBytes: newBytes, limitBytes: MAXIMUM_PUBLISH_BYTES, filePath: input.filePath });
       throw new TerminalToolError(
@@ -787,7 +801,7 @@ export function createDaytonaTerminalRuntime(
     }
     const siteFiles: SitePublishFile[] = [];
     for (const entry of entries) {
-      siteFiles.push(carried.get(entry.path) ?? (entry === index && readIndex ? readIndex : await readEntry(entry)));
+      siteFiles.push(settled.get(entry.path) ?? (entry === index && readIndex ? readIndex : await readEntry(entry)));
     }
     const files = siteFiles.filter((file): file is ReadSiteFile => "bytes" in file);
 

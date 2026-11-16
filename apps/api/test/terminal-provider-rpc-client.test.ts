@@ -49,6 +49,7 @@ function rpcBinding(overrides: Partial<TerminalProviderRpcSession> = {}): Termin
     configureGitHubReadAccess: vi.fn(async () => success(undefined)),
     clearGitHubReadAccess: vi.fn(async () => success(undefined)),
     readFile: vi.fn(async () => success(new Uint8Array())),
+    openFile: vi.fn(async () => success(new Blob([]).stream())),
     writeFile: vi.fn(async () => success(undefined)),
     runUtilityCommand: vi.fn(async () => success({ exitCode: 0, stdout: "", stderr: "" })),
     runCommand: vi.fn(async () => success({ exitCode: 0, stdout: "", stderr: "" })),

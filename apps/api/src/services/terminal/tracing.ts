@@ -12,6 +12,8 @@ export type TerminalProviderRequestOperation =
   | "sandbox.update_network"
   | "sandbox.update_secrets"
   | "file.download"
+  | "file.sign_download"
+  | "file.stream"
   | "file.upload"
   | "process.execute_utility"
   | "process.session_get"

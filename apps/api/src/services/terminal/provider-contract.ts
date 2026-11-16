@@ -144,6 +144,12 @@ export interface TerminalSandboxProvider {
   }): Promise<void>;
   clearGitHubReadAccess(idOrName: string): Promise<void>;
   readFile(idOrName: string, path: string): Promise<Uint8Array>;
+  /**
+   * The file's bytes as a stream, never held whole: how a site publish moves a
+   * large file into storage. Optional, so a provider without one has every
+   * file read with {@link readFile} instead.
+   */
+  openFile?(idOrName: string, path: string): Promise<ReadableStream<Uint8Array>>;
   writeFile(idOrName: string, path: string, bytes: Uint8Array, signal: AbortSignal): Promise<void>;
   runUtilityCommand(idOrName: string, input: {
     operation: TerminalUtilityOperation;
