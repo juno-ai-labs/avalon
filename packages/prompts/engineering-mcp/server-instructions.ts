@@ -7,5 +7,6 @@ export const ENGINEERING_MCP_SERVER_INSTRUCTIONS = [
   "SQL tools can mutate production data. Use read-only queries for investigations; make changes only within the user's request. For creation and message sends, reuse the same operationId and arguments after an uncertain outcome rather than creating a second operation.",
   "For billing, inspect_org_billing and inspect_billing_catalog establish current resources and catalog revisions. Use the dedicated billing tools rather than SQL for financial changes. Reuse operationId and identical arguments after uncertainty; new IDs can issue additional refunds or credits. Catalog changes affect future signups, while existing subscription changes are explicit.",
   "Filter logs and analytical queries to the relevant time window and identifiers. Never expose credentials, OAuth codes, socket tickets or unrelated private content found in diagnostic data.",
+  "To find who ran a tool and with what arguments, query the engineering_mcp_audit lakehouse with query_data_lake, filtered by tool, actor and time.",
   "Separate verified durable state, observed tool results and inference from hypotheses, and distinguish a local change from a merged or deployed fix.",
 ].join("\n\n");
