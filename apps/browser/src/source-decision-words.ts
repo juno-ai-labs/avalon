@@ -80,7 +80,7 @@ export function sourceDecisionFailure(cause: unknown): SourceDecisionFailure {
     if (cause.code === "sidekick_source_connection_missing" || cause.code === "sidekick_source_connection_reconnect") {
       const reconnect = cause.code === "sidekick_source_connection_reconnect";
       return { title: reconnect ? "Reconnect your account first" : "Connect your account first",
-        message: `${cause.message} Open Rally: the request is waiting in Activity, where you can ${reconnect ? "reconnect" : "connect"} the account and approve.` };
+        message: `${cause.message} Open the request in Rally, in the conversation it was asked from, to ${reconnect ? "reconnect" : "connect"} the account and approve.` };
     }
     // Rally's own sentence says what to do, or that the Sidekick is gone.
     return { title: cause.status === 401 ? "This link is not valid" : "Not answered", message: cause.message };

@@ -124,14 +124,15 @@ refusal is an acknowledged popup in the contract's own words
 lapsed sign-in, names the account to connect or reconnect.
 
 A request whose person still has to connect (`connection` is not
-`connected`) takes a `connectStep` from the host: the card view and the
-Sources list draw it above that person's own pair, `SourceDecisionButtons`
-holds Approve with `approveBlocked` (its reason on hover) while Decline stays
-live, and every other reader's row says "Needs to connect" or "Needs to
-reconnect". The desktop's step is `ConnectorConnectionCard` under its own read
-of `['connections']`, the key the conversation uses; its `onConnected`
-re-reads the Sidekick's sources. The Activity row reads the request under the
-card's key to learn the same. A card's failed read is not a popup: it is a stored row,
+`connected`) takes a `connectStep` from the host on the conversation's card
+only: the card view draws it above that person's own pair. There and in the
+Sources list, `SourceDecisionButtons` holds Approve with `approveBlocked` (its
+reason on hover) while Decline stays live; the Sources list says to connect
+from the request in its conversation. Every other reader's row says "Needs to
+connect" or "Needs to reconnect". The desktop's step is
+`ConnectorConnectionCard` under its own read of `['connections']`, the key
+the conversation uses; its `onConnected` re-reads the Sidekick's sources. The
+Activity row is unchanged. A card's failed read is not a popup: it is a stored row,
 so it offers Details.
 
 The connector and events are worded by the host and handed in (`SourceWords`):
