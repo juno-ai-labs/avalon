@@ -1,12 +1,12 @@
 ---
-title: Research and the built-in browser
-description: Have Rally search the web and read pages, and open links in a browser right beside the conversation.
+title: Research and the web
+description: Have Rally search the web and read pages, and, in the desktop app, open links in a browser right beside the conversation.
 ---
 
 Rally knows a lot, but what it knows stops at some point in the past, and it
 knows nothing at all about your competitor's pricing page from this morning.
-For anything current or public, it goes and looks, and you can read what it
-found in a browser built into the Rally window.
+For anything current or public, it goes and looks, and you can open what it
+found to check it yourself.
 
 ## Asking Rally to look something up
 
@@ -51,11 +51,18 @@ sources and check them, as described in
 > from [How Rally works](01-how-rally-works.md#skills-know-how-for-tricky-jobs),
 > checking facts against each other and dating each one.
 
+## Opening the pages Rally found
+
+In the web app, a web link in a Canvas opens in a new browser tab, like any
+link on any site. Rally stays open in its own tab, so switch back when you are
+done reading.
+
 ## The built-in browser
 
-When you click a web link inside a Canvas, it does not throw you out to
-Safari or Chrome. It opens in a browser panel on the right of the Rally window,
-beside the conversation. You can read the page and the chat at the same time,
+This is an extra in [the desktop
+app](../08-rally-everywhere/04-the-desktop-app.md). There, when you click a web
+link inside a Canvas, it does not throw you out to Safari or Chrome. It opens
+in a browser panel on the right of the page, beside the conversation. You can read the page and the chat at the same time,
 and copy from one into the other without hunting for windows.
 
 This works for links in Rally's messages, its sources, search results, and
@@ -100,19 +107,18 @@ Some sign-ins will not work here. Sites that sign you in through a separate
 popup window that then hands back to the page do not work yet, and some sites
 block sign-in from anything they think is not a regular browser (with a
 CAPTCHA, for example). Signing in to Rally itself, and connecting an app in
-**Settings → Connections**, always use your Mac's normal browser instead.
+**Settings → Connections**, always use your computer's normal browser instead.
 
 > [!NOTE]
-> What you sign in to is stored on this Mac, for your Rally account. If someone
-> else signs in to Rally on the same Mac, they get their own, separate browser
+> What you sign in to is stored on this computer, for your Rally account. If
+> someone else signs in to the Rally app on the same computer, they get their own, separate browser
 > data and do not see your sites.
 
 ### Where it works, and where it does not
 
-- **Mac only.** In the web browser version, links open in a normal browser
-  tab.
+- **Desktop app only.** In the web app, links open in a new browser tab.
 - **Only in a Canvas.** Elsewhere in the app, including a Sidekick's
-  conversation, links open in your Mac's normal browser.
+  conversation, links open in your computer's normal browser.
 - **Only web addresses.** Links starting `http` or `https` open here. Anything
   else does not.
 - **It is your browser, not Rally's.** The agent cannot click around in it for
@@ -120,8 +126,8 @@ CAPTCHA, for example). Signing in to Rally itself, and connecting an app in
 
 ## Making the side panel wider
 
-The panel on the right holds what Rally made, the browser, file previews and
-details. When a
+The panel on the right holds what Rally made, file previews and details (and,
+in the desktop app, the built-in browser). When a
 page or document needs more room, make it wider.
 
 - **Drag** the thin divider on the panel's left edge. Its tooltip says **Drag
@@ -132,7 +138,7 @@ page or document needs more room, make it wider.
   is selected, to go back to the standard width.
 
 The panel has a minimum width, and how wide it can go depends on the size of
-your window. Rally remembers the width separately for each Canvas, so a
+your browser window. Rally remembers the width separately for each Canvas, so a
 spreadsheet Canvas can have a wide panel and a chatty one a narrow one.
 
 Next: [Code, data and the Terminal](03-code-files-and-the-terminal.md).

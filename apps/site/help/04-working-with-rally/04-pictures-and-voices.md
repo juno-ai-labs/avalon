@@ -94,7 +94,7 @@ behind. A voice recording is a file you keep, play again, download and share.
 
 Pictures and recordings are saved as files in the Canvas, the same as any
 other file Rally makes, so everyone in the Canvas can open them. To preview,
-keep one open beside the chat, or save it to your Mac, see
+keep one open beside the chat, or save it to your computer, see
 [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md).
 
 ## What Rally cannot make

@@ -118,7 +118,8 @@ question is open. Rally takes that message as your answer.
 Each choice has a small key badge beside it. Press its letter (<kbd>A</kbd>,
 <kbd>B</kbd>, <kbd>C</kbd>…) or its number (<kbd>1</kbd>, <kbd>2</kbd>,
 <kbd>3</kbd>…) to pick it. **Other** is the last one in the list. Press
-<kbd>⌘</kbd> <kbd>Return</kbd> to submit.
+<kbd>⌘</kbd> <kbd>Return</kbd> (<kbd>Ctrl</kbd> <kbd>Return</kbd> on Windows and
+Linux) to submit.
 
 The letter and number keys are ignored while you are typing in a text field, so
 you can write "B" in your answer without picking option B.
@@ -181,7 +182,7 @@ turns (roughly, 1,000 rounds of "think, then act"), which few requests come near
 
 ## Opening a Canvas, and catching up
 
-Rally opens a Canvas straight away from a copy kept on your Mac, then connects
+Rally opens a Canvas straight away from a copy kept on your computer, then connects
 to the live conversation. Until it is connected, a card says **Sending is
 available once Rally connects**. You can type and attach files in the meantime.
 Sending waits until the connection is live.

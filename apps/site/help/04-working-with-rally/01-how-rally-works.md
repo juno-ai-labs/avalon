@@ -180,4 +180,4 @@ A good request saves a round trip. These habits help:
 - **Steer, don't restart.** If the first answer is close, tell Rally what to
   change in the same Canvas. It remembers the rest.
 
-Next: [Research and the built-in browser](02-research-and-the-web.md).
+Next: [Research and the web](02-research-and-the-web.md).
