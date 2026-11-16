@@ -1,0 +1,19 @@
+{
+  "fields": [
+    { "name": "schema_version", "type": "int32", "required": true },
+    { "name": "event_id", "type": "string", "required": true },
+    { "name": "event", "type": "string", "required": true },
+    { "name": "occurred_at", "type": "timestamp", "required": true },
+    { "name": "tool", "type": "string", "required": true },
+    { "name": "actor_subject", "type": "string", "required": true },
+    { "name": "actor_email", "type": "string", "required": false },
+    { "name": "actor_audience", "type": "string", "required": true },
+    { "name": "worker_version", "type": "string", "required": false },
+    { "name": "call_id", "type": "string", "required": false },
+    { "name": "task_id", "type": "string", "required": false },
+    { "name": "arguments", "type": "json", "required": false },
+    { "name": "outcome", "type": "string", "required": false },
+    { "name": "error_code", "type": "string", "required": false },
+    { "name": "duration_ms", "type": "int64", "required": false }
+  ]
+}
