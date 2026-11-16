@@ -24,8 +24,6 @@ export class NotionRegionalBridge extends WorkerEntrypoint<Env> {
     return serializeNotionRpcResult(async () => {
       await requireWorkstreamIngress(this.env);
       const parsed = parseRpcInput(NotionCallbackInputSchema, input, "completeNotion");
-      // Held, not exchanged: the client that started it claims it here
-      // (`docs/connectors.md`, "Claiming a connector authorization").
       return new ConnectionService(this.env).holdCallback("notion", parsed.state, { code: parsed.code });
     });
   }

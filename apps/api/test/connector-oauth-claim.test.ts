@@ -24,6 +24,7 @@ const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; owner: AuthContext; other: AuthContext } {
@@ -79,7 +80,7 @@ function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; ow
 }
 
 /** Apollo's hosted MCP authorization server; records every code it is asked to exchange. */
-function stubApollo(): string[] {
+function stubApollo(tokenEndpoint: "ok" | "fails" = "ok"): string[] {
   const exchanged: string[] = [];
   vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
@@ -88,6 +89,7 @@ function stubApollo(): string[] {
     if (url.endsWith("/register")) return Response.json({ client_id: "apollo-fixture-client", token_endpoint_auth_method: "none" });
     if (url.endsWith("/token")) {
       exchanged.push(new URLSearchParams(String(init?.body ?? "")).get("code") ?? "");
+      if (tokenEndpoint === "fails") return Response.json({ error: "server_error" }, { status: 500 });
       return Response.json({ access_token: "apollo-access", refresh_token: "apollo-refresh", token_type: "Bearer", expires_in: 3600 });
     }
     throw new Error(`Unexpected provider request: ${url}`);
@@ -109,6 +111,15 @@ async function consent(env: Env, auth: AuthContext, code: string): Promise<{ att
   expect(response.status).toBe(302);
   const handoff = new URL(response.headers.get("location")!);
   return { attemptId: started.attemptId, target: new URL(new URLSearchParams(handoff.hash.slice(1)).get("target")!) };
+}
+
+/** The claim route, as the starting member's client calls it (development auth stands in for a session). */
+async function claimRoute(env: Env, auth: AuthContext, ticket: string): Promise<Response> {
+  return createApp().request("https://api.rallywith.ai/connections/oauth/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-rally-dev-user-id": auth.userId, "x-rally-dev-workspace-id": auth.workspaceId! },
+    body: JSON.stringify({ ticket }),
+  }, { ...env, APP_ENV: "development", RALLY_DEV_AUTH: "true" });
 }
 
 function connections(object: DatabaseSync): unknown[] {
@@ -153,6 +164,35 @@ describe("claiming a connector authorization", () => {
     expect(connections(object)).toEqual([]);
     expect(await new ConnectionService(env, owner).getOAuthAttempt(attemptId))
       .toMatchObject({ status: "failed", errorCode: "connector_oauth_account_mismatch" });
+  });
+
+  it("answers a failed exchange with its failure link and ends the attempt", async () => {
+    const { env, object, owner } = fixture();
+    stubApollo("fails");
+    const { attemptId, target } = await consent(env, owner, "owner-code");
+
+    const response = await claimRoute(env, owner, target.searchParams.get("ticket")!);
+    expect(response.status).toBe(200);
+    const completed = new URL((await response.json() as { target: string }).target);
+    expect(completed.searchParams.get("status")).toBe("failed");
+    expect(connections(object)).toEqual([]);
+    expect(await new ConnectionService(env, owner).getOAuthAttempt(attemptId)).toMatchObject({ status: "failed" });
+  });
+
+  it("leaves the attempt to a concurrent claim that consumed the state first", async () => {
+    const { env, object, owner, regional } = fixture();
+    stubApollo();
+    const { attemptId, target } = await consent(env, owner, "owner-code");
+    // Both claims passed the check; the other one has consumed the state and
+    // is still exchanging the code, so the attempt is pending.
+    const admitted = await new ConnectionService(env, owner).claimCallback(target.searchParams.get("ticket")!);
+    regional.prepare("UPDATE oauth_states SET consumed_at = ?").run(new Date().toISOString());
+    vi.spyOn(ConnectionService.prototype, "claimCallback").mockResolvedValue(admitted);
+
+    const response = await claimRoute(env, owner, target.searchParams.get("ticket")!);
+    expect(response.status).toBe(401);
+    expect(connections(object)).toEqual([]);
+    expect(await new ConnectionService(env, owner).getOAuthAttempt(attemptId)).toMatchObject({ status: "pending" });
   });
 
   it("holds a state's callback once", async () => {
