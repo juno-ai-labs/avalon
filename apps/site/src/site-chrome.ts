@@ -11,6 +11,7 @@ import { renderLoopFigure, renderPeopleFigure } from './explorable-figures';
 import { renderLiveCarousel } from './live-examples';
 import { renderHomeIllustration } from './home-illustrations';
 import { renderHomePricing } from './home-pricing';
+import { renderMarketplaceCards, renderMarketplaceFilters } from './marketplace-catalog';
 import { externalArrow } from './site-icons';
 
 /** Every rival, read from `content/compare/*.md` and sorted by `order`. */
@@ -181,6 +182,8 @@ const markers: Record<string, () => string> = {
   'people-figure': renderPeopleFigure,
   'site-footer': renderSiteFooter,
   'comparison-table': renderComparisonTable,
+  'marketplace-filters': renderMarketplaceFilters,
+  'marketplace-cards': renderMarketplaceCards,
 };
 
 /** Replaces each `<!-- rally:name -->` marker with its shared markup. */

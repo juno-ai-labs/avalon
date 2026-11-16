@@ -46,6 +46,7 @@ import { ActivityHomeScreen } from './screens/activity-home';
 import { AutomationScreen } from './screens/automation';
 import { CanvasScreen } from './screens/canvas';
 import { CanvasesHomeScreen } from './screens/canvases-home';
+import { TemplateStartScreen } from './screens/template-start';
 import { DeepLinkErrorScreen } from './screens/deep-link-error';
 import { LandingScreen } from './screens/landing';
 import { useOpenLanding } from './lib/landing';
@@ -403,6 +404,7 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
             <Route element={<ActivityHomeScreen />} path="/activity" />
             <Route element={<CanvasesHomeScreen />} path="/canvases" />
             <Route element={<CanvasScreen />} path="/canvases/:id" />
+            <Route element={<TemplateStartScreen />} path="/marketplace/:slug" />
             <Route element={<AutomationScreen />} path="/automations/:id" />
             <Route element={<SidekicksLibraryRoute />} path="/sidekicks" />
             {/* Creating a Sidekick is a member's. */}
