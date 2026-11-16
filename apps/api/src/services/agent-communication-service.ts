@@ -88,11 +88,21 @@ export class AgentCommunicationService {
     const attachmentIds = [...new Set(ids)];
     if (attachmentIds.length === 0) return attachmentIds;
     // Forwarding shares with another audience, so it requires an actual link
-    // in the sender's scope rather than the broader Sidekick read permission.
+    // in the sender's scope, or the sender's Canvas's own artifact, rather
+    // than the broader Sidekick read permission.
     const { links } = await createConversationResourceLinks(this.env, this.input.workspaceId, this.input.parentId,
       undefined, this.input.substreamId ?? "0", this.input.executionPrincipal).links({ resourceIds: attachmentIds }, { resolveReadable: false });
     const attached = new Set(links.map((link) => link.resource_id));
-    if (attachmentIds.some((resourceId) => !attached.has(resourceId))) {
+    const missing = attachmentIds.filter((resourceId) => !attached.has(resourceId));
+    if (missing.length === 0) return attachmentIds;
+    // A Canvas's artifact is the Chat's own work even when a background agent
+    // published it, which links it to that agent's conversation and not the
+    // Chat's. The Chat and its agents may share it like their own links.
+    const canvasId = this.canvasChatId();
+    const canvas = canvasId === null ? null
+      : await (await this.workspace()).canvasContext({ workspaceId: this.input.workspaceId, canvasId });
+    const held = new Set((canvas?.artifacts ?? []).map((artifact) => artifact.resourceId));
+    if (missing.some((resourceId) => !held.has(resourceId))) {
       throw new AgentCommunicationError(unavailableCode);
     }
     return attachmentIds;
