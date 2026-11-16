@@ -46,7 +46,9 @@ the identity migration, with no feature flag.
 The journey owns setup stage and revision. Creators proceed through personal
 appearance, then invitations; members finish after personal appearance.
 Finishing saves `complete` and then leaves for the Canvases home through
-`useOpenLanding`, replacing the journey's entry. No Canvas, conversation or
+`useOpenLanding`, replacing the journey's entry, unless the route under the
+journey already opens one Canvas or one Sidekick (a shared link, or a template
+link that started a Canvas): the person stays there. No Canvas, conversation or
 agent run is created by onboarding. The unshipped starter columns and removed first-task stages are not part of the schema.
 
 Joining an organization, as its creator or an invited member, seats the person
@@ -169,6 +171,19 @@ inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-r
 Onboarding no longer starts an agent run or a connector authorization.
 
 ## Changelog
+
+### 2026-11-16 — Finishing setup keeps the Canvas a link opened
+
+**What changed:** Finishing the journey leaves the person on the route under
+it when that route opens one Canvas or Sidekick, and opens the Canvases home
+otherwise.
+
+**Why:** A Marketplace template link signs a new person up and starts a
+Canvas before the journey covers it. Always opening the home sent them away
+from the Canvas they asked for, and the same was true of a shared link.
+
+**Consequences:** A section home (`/canvases`, `/sidekicks`, `/activity`) or
+`/` under the journey still leaves for the Canvases home.
 
 ### 2026-10-24 — Share the invite field with the account menu
 

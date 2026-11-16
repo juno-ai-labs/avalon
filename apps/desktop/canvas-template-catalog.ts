@@ -6,10 +6,12 @@
  * disagree about what the Marketplace offers.
  */
 import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
 import { PICKABLE_APPEARANCE_ICON_KEYS } from '../../packages/contracts/src/appearance-icons';
+import { parseTemplateLinkPath } from '../../packages/contracts/src/links';
 import { PALETTE_RING } from '../../packages/contracts/src/palette';
 import { describeZodIssues } from '../../packages/contracts/src/zod-diagnostics';
 import { CANVAS_TEMPLATE_CATEGORIES } from './src/renderer/lib/canvas-template-categories';
@@ -43,7 +45,12 @@ const templateMetadata = z.object({
   tags: z.array(z.enum(CANVAS_TEMPLATE_CATEGORIES.map(({ tag }) => tag))).min(1),
 });
 
-export type CanvasTemplateData = z.infer<typeof templateMetadata> & { prompt: string };
+/**
+ * `slug` is the file's name without `.md`: what a template link
+ * (`/app/templates/<slug>`) and the in-app route name it by, so a file is not
+ * renamed lightly once its link has been handed out.
+ */
+export type CanvasTemplateData = z.infer<typeof templateMetadata> & { slug: string; prompt: string };
 
 /** One template file: YAML front matter for its card, then the Markdown prompt it sends. */
 export function parseCanvasTemplate(source: string, file: string): CanvasTemplateData {
@@ -56,11 +63,19 @@ export function parseCanvasTemplate(source: string, file: string): CanvasTemplat
   const prompt = document[2]?.trim();
   if (!prompt) throw new Error(`${file}: expected a nonempty Markdown prompt.`);
 
-  return { ...metadata.data, prompt };
+  const slug = basename(file, '.md');
+  if (parseTemplateLinkPath(`/app/templates/${slug}`) !== slug) throw new Error(`${file}: a template's file name is lowercase words joined by hyphens.`);
+  return { ...metadata.data, slug, prompt };
 }
 
 /** Every template, in catalog order. Read on each call so a dev server serves the current files. */
 export function loadCanvasTemplates(): CanvasTemplateData[] {
-  return CANVAS_TEMPLATE_FILES.map((file) =>
+  const templates = CANVAS_TEMPLATE_FILES.map((file) =>
     parseCanvasTemplate(readFileSync(new URL(file, CANVAS_TEMPLATE_ROOT), 'utf8'), file));
+  const seen = new Set<string>();
+  for (const { slug } of templates) {
+    if (seen.has(slug)) throw new Error(`Two templates are named ${slug}.md; a template link needs each name once.`);
+    seen.add(slug);
+  }
+  return templates;
 }

@@ -4,6 +4,10 @@
  */
 import { loadCanvasTemplates } from '../../desktop/canvas-template-catalog';
 import { CANVAS_TEMPLATE_CATEGORIES } from '../../desktop/src/renderer/lib/canvas-template-categories';
+// By path, not `@rally/contracts/links`: the build config runs this in Node,
+// which loads a bare package import unbundled and cannot resolve its
+// extensionless imports.
+import { templateLinkPath } from '../../../packages/contracts/src/links';
 import { escapeHtml as escape } from './comparison-pages';
 
 const arrow = '<svg class="arrow-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M4 14L14 4M4 4h10v10" /></svg>';
@@ -16,13 +20,17 @@ export function renderMarketplaceFilters(): string {
     + `${CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => button(tag, label, false)).join('')}</div>`;
 }
 
-/** A card per template, in catalog order; each card lists its categories for the filter. */
+/**
+ * A card per template, in catalog order; each card lists its categories for
+ * the filter. "Start from this" is the template's link on the web app, which
+ * signs the person in or up and starts that template in their Organization.
+ */
 export function renderMarketplaceCards(): string {
   const labels = new Map<string, string>(CANVAS_TEMPLATE_CATEGORIES.map(({ tag, label }) => [tag, label]));
-  const cards = loadCanvasTemplates().map(({ name, description, tags }) =>
+  const cards = loadCanvasTemplates().map(({ name, description, tags, slug }) =>
     `<li class="market-card" data-categories="${tags.join(' ')}"><div class="market-card-body">`
     + `<p class="market-kind">For ${escape(tags.map((tag) => labels.get(tag) ?? tag).join(', ').toLocaleLowerCase())}</p>`
     + `<h3>${escape(name)}</h3><p>${escape(description)}</p>`
-    + `<a class="text-link" href="https://app.rallywith.ai">Start from this ${arrow}</a></div></li>`);
+    + `<a class="text-link" data-site-action="web-app-template" href="https://app.rallywith.ai${templateLinkPath(slug)}">Start from this ${arrow}</a></div></li>`);
   return `<ul class="market-grid">${cards.join('')}</ul>`;
 }

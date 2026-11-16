@@ -7,6 +7,7 @@ declare module 'virtual:rally-canvas-templates' {
     icon: PickableWorkstreamIconKey;
     color: (typeof PALETTE_RING)[number];
     tags: string[];
+    slug: string;
     prompt: string;
   }[];
   export default templates;
