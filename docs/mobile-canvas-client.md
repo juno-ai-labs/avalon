@@ -34,6 +34,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/mobile/src/CanvasWebView.web.tsx` | Development-only iframe preview of the native shell. |
 | `apps/mobile/src/background.ts`, `runtime.ts` | Top-level background update task and registration; downloads never interrupt an open canvas. |
 | `apps/mobile/src/notifications.ts`, `notification-target.ts` | Platform permission/token lifecycle and canonical notification routing. |
+| `apps/mobile/src/SettingsScreen.tsx`, `SettingsList.tsx` | Native Settings: an inset grouped list of the shared Settings pages Home can show, this device's notifications and updates, Diagnostics and sign-out. |
 | `apps/mobile/src/diagnostics.ts`, `DiagnosticsScreen.tsx`, `RecoveryBoundary.tsx` | Local content-free diagnostics, user-requested sharing and recovery. |
 | `apps/mobile/.eas/workflows/`, `.github/workflows/release-mobile.yml` | One-channel native-build/OTA releases and explicit store submission. |
 | `apps/mobile/store.config.json`, `apps/mobile/metadata/` | English store listing, TestFlight description, test instructions and review notes. Review credentials stay in App Store Connect. |
@@ -46,6 +47,7 @@ The native shell owns navigation and the Muse-inspired sidebar. The browser host
 | `apps/browser/src/dynamic-type.ts` | Reads the person's iOS text size and writes it over the touch type roles. |
 | `apps/browser/src/mobile.tsx`, `mobile.css` | Mobile dashboard, artifact selection and retained chat navigation. |
 | `apps/browser/src/mobile-conversation.tsx` | Deferred shared transcript, composer and creation form. |
+| `apps/browser/src/mobile-settings.tsx` | Deferred shared Settings page, desktop's `WorkspaceSettingsScreen` with `nativeShell`. |
 | `apps/browser/src/mobile-canvas-detail.ts` | One owner for publication/reconnect invalidation and shared event-driven detail queries. |
 
 ## How it works
@@ -354,8 +356,25 @@ A screen with a native artifact in front (a pinned site, or a site Home opened) 
 
 Opening a canvas from the dashboard is canonical-first. The shell remembers, per account, the site each canvas last presented and its canonical URL (`remembered-sites.ts`). A tap on a remembered canvas shows that site at once on its cookie while Home navigates behind it; Home's own view takes over when it reports one. Home's fresh access for the same site does not reload a view already on its cookie, unless it brings a newer version or answers a renewal the view asked for (`canonical-first.ts`). An expired cookie takes the existing renewal path. Nothing is started on touch-down: that would run a canvas's artifact before a tap was certain, and only the four tab-bar pins may run hidden.
 
-Settings and diagnostics is available from the sidebar's settings button.
-Notification permission is requested only through Enable notifications. The
+Settings opens from the sidebar's settings button as a native inset grouped
+list (`SettingsScreen.tsx`): the person and Organization, then Account
+(Profile, Preferences, Notifications, Memories) and Organization (Organization,
+Members, Billing, Security, Connections) pages, This device (push notifications,
+app updates), Support › Diagnostics, Sign out and the version. The Account and
+Organization rows are the desktop's own Settings sections: a row sends Home
+`{ type: 'settings', section }`, and Home shows desktop's
+`WorkspaceSettingsScreen` on that section in a deferred chunk at
+`#/settings?section=`, with `view: 'settings'`. The native header carries the
+page's title and a close back to the list. The page's own section list and
+header are hidden (`mobile.css`), and `nativeShell` drops what the app owns
+itself: Appearance (the app follows the device), On startup, the browser's
+device notifications and Sign out. A support session still ends there. Home
+lists the sections the person may open in `settingsSections` (a guest's are
+desktop's `GUEST_SETTINGS_SECTIONS`); a host that omits it gets no rows. Every
+change is the same write the desktop makes, through Home's cookie session, so
+the native shell still makes no account request of its own.
+Notification permission is requested only through This device › Push
+notifications. The
 native installation ID is in SecureStore; APNs device tokens pass through the
 trusted browser bridge to the existing authenticated registry. Registration is
 serialized and cancelled with the current account/organization view, including network-recovery retries. Token rotation,
@@ -629,6 +648,32 @@ retention remain unmeasured. The full method, before/after table and limitations
 are in [PR #1601](https://github.com/juno-ai-labs/avalon/pull/1601).
 
 ## Changelog
+
+### 2026-11-16 — Native Settings list, with the desktop's Settings pages
+
+**What changed:** The plain "Settings and diagnostics" page became an inset
+grouped list built from two primitives (`SettingsGroup`, `SettingsRow`), with
+Diagnostics on its own page. Account and Organization rows open desktop's
+Settings sections in Home through a new `settings` command and `view:
+'settings'`. `WorkspaceSettingsScreen` gained `nativeShell`, and
+`GUEST_SETTINGS_SECTIONS` moved to `common/settings.ts` so Home can filter
+without loading the Settings chunk.
+
+**Why:** Mobile had notifications, updates and a JSON dump but none of the
+settings the browser and desktop offer: profile, timezone, agent work,
+notification channels, memories, members, billing, connections.
+
+**Considered and rejected:** Native forms over the same API, which would break
+the one-native-request invariant and copy a 3,000-line screen. A second
+WebView booting the browser at `#/settings`, which pays a full shell start each
+time; Home is already loaded. Hiding the duplicate controls by CSS alone,
+which would still mount them and run their reads, Web Push's among them.
+
+**What to respect:** a new desktop Settings section reaches mobile only once
+it is added to `MOBILE_SETTINGS_SECTIONS` and a native row. A control the app
+owns natively belongs behind `nativeShell`. Not yet seen on a device: the
+native header title and close over a Settings page, and Android Back from one;
+the Expo web preview showed the list and pages.
 
 ### 2026-11-16 — Dashboard filters and the Marketplace on mobile
 
