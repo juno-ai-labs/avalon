@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { IdSchema, UserIdSchema } from "./identifiers";
 import { PersonalPresentationSchema } from "./onboarding";
+import { ConnectorConnectionCardIds } from "./connector-connection-card";
 
 /**
  * A Sidekick source: one person's permission for events they can see on one
@@ -98,6 +99,17 @@ export const SidekickSourceRequestViewSchema = z.object({
    * Absent only in a view an older server wrote into a transcript.
    */
   connection: SidekickSourceConnectionStateSchema.optional(),
+  /**
+   * The connection that carries these events, and so the one to make: the
+   * person's own, or the Organization's, for a connector whose events arrive
+   * only on its Organization connection (Granola, Fireflies, Ashby), which an
+   * administrator makes in Settings. `card` is the connection card that makes
+   * a personal one here, or null when none does. Absent from older views.
+   */
+  connect: z.object({
+    scope: z.enum(["personal", "workspace"]),
+    card: z.enum(ConnectorConnectionCardIds).nullable(),
+  }).optional(),
   createdAt: z.number().int().nonnegative(),
   decidedAt: z.number().int().nonnegative().nullable(),
 });
