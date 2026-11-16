@@ -143,7 +143,11 @@ joins this run's own readiness before it looks at the row, because the row is
 marked running before the checkout is prepared, and it takes the sandbox from
 the row only when the checks readiness makes also hold, the authority
 fingerprint, no revoked import, and a selected repository bootstrapped into
-this generation; otherwise it goes through readiness like a write.
+this generation; otherwise it goes through readiness like a write. An import
+still `planned` while a run holds a live lease is that run's import in flight,
+not a revoked one, and a read passes over it; once the lease has lapsed, a
+`planned` import is left over and the read goes through readiness, which
+cleans it up.
 
 Rally creates sandboxes from its own `rally-terminal-1` snapshot: Daytona's
 managed `daytonaio/sandbox:0.10.0` base with SQLite, `gh`, pnpm, and `tsx`
@@ -1503,7 +1507,7 @@ update lag before changing the default.
 
 ## Changelog
 
-### 2026-11-16 — A busy lease is waited out inside the tool call
+### 2026-11-16 — A busy lease is waited out inside the tool call, and reads pass over an import in flight
 
 **What changed:** `claimOperation` in `coordinator.ts` tries the lease again
 every 250 ms for up to five seconds (`TERMINAL_BUSY_WAIT_MS`) before it
@@ -1519,6 +1523,14 @@ the Terminal, and one skipped a feed test it never ran again. Every refusal was 
 have waited out itself. The team set the wait at five seconds, the same delay
 the refusal already asks the model for.
 
+A read was refused `sandbox_busy` too, though reads take no lease. The
+artwork agent's `import_resource` had written its row as `planned` and was
+still uploading. `hasRevokedImportedResource` counted any import that was not
+`completed` as revoked, so `peekRunning` turned the read away, and the read's
+readiness hit the importing agent's lease. Now `peekRunning` passes over a
+`planned` import while a run holds a live lease, since that run will settle
+it.
+
 **Considered and rejected:** Retrying recovery on every try, which asks the
 provider to stop a yielded run's command up to twenty times in one wait, and
 takes the lease over when a stop that failed once later succeeds. Waking the
@@ -1527,7 +1539,10 @@ object that it does not have; polling costs at most twenty object hops per
 waiting call. A queue of waiters, which no measurement here can justify.
 
 **Consequences:** A call that loses the race now takes up to five seconds
-longer to be refused. A publication build's lease is held until it expires,
+longer to be refused. A read during a sibling's import can see its files half
+copied, the same risk it already took with any file mid-write. Readiness still
+counts a `planned` import as revoked, and only checks after it has the lease,
+so it sees only an import whose run ended without settling it. A publication build's lease is held until it expires,
 so an agent call waiting on one always waits the full five seconds. A change
 to the wait is a change to `TERMINAL_BUSY_WAIT_MS`, which the team sets.
 
