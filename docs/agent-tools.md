@@ -166,6 +166,8 @@ model calls the tool again and gets the `userId`, so it can ask the new member
 things, such as a Sidekick source. Where answers go to an agent it still
 answers the check, and refuses only the card, with the question refusal's
 route (rule 14). It is a core tool and a loop control: a program cannot call it.
+The core plugin's system message tells the model to call it before asking
+someone named by email for anything, such as a Sidekick source.
 
 `check_resource_access` takes a connector and a resource link or id and asks
 every connection of that connector in the run how far it reaches the resource,
