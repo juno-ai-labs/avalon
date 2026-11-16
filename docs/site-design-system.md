@@ -83,7 +83,7 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/landing.css` | The earlier product, start-fast and comparison system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
-| `apps/site/marketplace/index.html`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The artifact marketplace: example artifacts by kind, a client-side kind filter, and links into the web app. Styles build on `home.css` |
+| `apps/site/marketplace/index.html`, `apps/site/src/marketplace-catalog.ts`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The marketplace: the app Marketplace's own templates and categories, rendered at build time through `loadCanvasTemplates` (`apps/desktop/canvas-template-catalog.ts`), a client-side category filter, and links into the web app. Linked from the homepage header. Styles build on `home.css` |
 | `apps/site/src/home-illustrations.ts` | Shared artwork geometry and accessible SVG views |
 | `apps/site/src/home-pricing.ts` | Homepage plan markup from the product catalog and weekly allocation function |
 | `apps/site/start-fast/index.html` | The earlier landing design, with copy from `access-copy.ts` and shared sections |
@@ -295,6 +295,23 @@ automated test: it is checked in a real browser at desktop and phone widths,
 in light and dark, before a change ships, as the repository's rule on visible changes requires.
 
 ## Changelog
+
+### 2026-11-16 — The marketplace page lists the app's Marketplace templates
+
+**What changed:** `/marketplace/` renders its cards and filters from the
+Canvas templates in `packages/skills/marketplace-skills/`, through the same
+loader the app's builds use, instead of hand-written example artifacts. The
+filters are the app's categories (Developers, Product managers, Parents,
+Recruiters), not artifact kinds, and the kind drawings are gone. The homepage
+header links to the page.
+
+**Why:** The product owner asked that the public page show what the app
+actually offers. A second hand-kept list would drift from the app's.
+
+**Consequences:** Adding, removing or reordering a template in
+`canvas-template-catalog.ts` changes the public page on the next site build.
+Cards still open the web app rather than a chosen template: there is no link
+that starts a Canvas from one.
 
 ### 2026-11-16 — Reactive, multi-human artifacts on the homepage, and a marketplace
 
