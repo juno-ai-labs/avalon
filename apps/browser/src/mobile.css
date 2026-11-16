@@ -84,6 +84,6 @@ html[data-mobile-host],html[data-mobile-host] body,html[data-mobile-host] #root 
 /* A shared Settings page. The native shell lists the sections and draws the
    header with its title and close, so the page keeps only its content. */
 .mobile-settings .workspace-settings-screen{height:100%;background:var(--mobile-bg)}
-.mobile-settings .settings-window{background:var(--mobile-bg)}
+.mobile-settings .settings-window{background:var(--mobile-bg);grid-template-columns:minmax(0,1fr)}
 .mobile-settings .settings-sidebar,.mobile-settings .settings-content-header{display:none}
 .mobile-settings .settings-content-scroll{padding:calc(var(--mobile-top-inset) + 8px) 16px 36px;scrollbar-gutter:auto}
