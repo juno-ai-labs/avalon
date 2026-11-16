@@ -151,6 +151,22 @@ carrying the card's selection and pauses the run in `needs_input` until a person
 connects it, chooses Continue, or declines
 ([`automation-lifecycle.md`](automation-lifecycle.md#a-run-a-missing-connection-or-grant-blocks)).
 
+`offer_to_add_member` takes an email address, and a name if the model knows
+one. It is the membership check as well as the offer: it reads the address's
+account (by its verified sign-in address, else its profile address) and its
+membership here, and a member comes back at once as `status: "member"` with
+their `userId`, with nothing shown. For anyone else, guests included, it opens
+a question (`Elicitation.member`, options Added and Not now, no typed answer,
+no Skip) and pauses the loop in `needs_input`. The question's panel draws
+`MemberAddCard`: an Organization owner's or administrator's press adds the
+address as a member at once (`POST /workspace/members`,
+[`workspace-member-roles.md`](workspace-member-roles.md#how-it-works)) and
+answers `added` for them; anyone else sees who can press it. On `added` the
+model calls the tool again and gets the `userId`, so it can ask the new member
+things, such as a Sidekick source. Where answers go to an agent it still
+answers the check, and refuses only the card, with the question refusal's
+route (rule 14). It is a core tool and a loop control: a program cannot call it.
+
 `check_resource_access` takes a connector and a resource link or id and asks
 every connection of that connector in the run how far it reaches the resource,
 in parallel: `edit`, `read` (with `editNeedsGrant` when Google's one-file grant
@@ -1329,6 +1345,24 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-11-16 — An agent can check membership and offer to add someone
+
+**What changed:** `offer_to_add_member` joins the core tools. It answers a
+member's `userId` at once, and otherwise asks a question whose card an
+administrator presses to add them.
+
+**Why:** A Canvas asked to follow two people's mail had no way to bring the
+second person in: they were not a member, so no source could be asked of them,
+and the agent could only tell the person to invite them somewhere else.
+
+**Considered and rejected:** Adding the member from the tool directly: it
+would grow the Organization from a model's choice, where an administrator's
+press is the decision. A separate lookup tool beside the card: the check is
+the first half of the offer, and one call keeps the model from skipping it.
+
+**What a future change has to respect:** The press, not the model, adds the
+person, and only an owner or administrator can press it.
 
 ### 2026-11-15 — A refused tool is offered, and refuses by name
 

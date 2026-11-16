@@ -33,7 +33,7 @@ export const CUSTOM_TOOLS_PLUGIN_MODEL_ID = "rally_custom_tools";
  * control signals rather than data. Everything else the run holds is callable.
  * A host constant rather than prose, so a refusal is auditable.
  */
-export const LOOP_CONTROL_TOOLS: ReadonlySet<string> = new Set(["load_plugin", "load_skill", "request_elicitation"]);
+export const LOOP_CONTROL_TOOLS: ReadonlySet<string> = new Set(["load_plugin", "load_skill", "request_elicitation", "offer_to_add_member"]);
 
 /**
  * A tool that itself runs a program: the wizard's `sidekick_tool_test`. Not
