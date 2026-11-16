@@ -356,23 +356,15 @@ A screen with a native artifact in front (a pinned site, or a site Home opened) 
 
 Opening a canvas from the dashboard is canonical-first. The shell remembers, per account, the site each canvas last presented and its canonical URL (`remembered-sites.ts`). A tap on a remembered canvas shows that site at once on its cookie while Home navigates behind it; Home's own view takes over when it reports one. Home's fresh access for the same site does not reload a view already on its cookie, unless it brings a newer version or answers a renewal the view asked for (`canonical-first.ts`). An expired cookie takes the existing renewal path. Nothing is started on touch-down: that would run a canvas's artifact before a tap was certain, and only the four tab-bar pins may run hidden.
 
-Settings opens from the sidebar's settings button as a native inset grouped
-list (`SettingsScreen.tsx`): the person and Organization, then Account
-(Profile, Preferences, Notifications, Memories) and Organization (Organization,
-Members, Billing, Security, Connections) pages, This device (push notifications,
-app updates), Support › Diagnostics, Sign out and the version. The Account and
-Organization rows are the desktop's own Settings sections: a row sends Home
-`{ type: 'settings', section }`, and Home shows desktop's
-`WorkspaceSettingsScreen` on that section in a deferred chunk at
-`#/settings?section=`, with `view: 'settings'`. The native header carries the
-page's title and a close back to the list. The page's own section list and
-header are hidden (`mobile.css`), and `nativeShell` drops what the app owns
-itself: Appearance (the app follows the device), On startup, the browser's
-device notifications and Sign out. A support session still ends there. Home
-lists the sections the person may open in `settingsSections` (a guest's are
-desktop's `GUEST_SETTINGS_SECTIONS`); a host that omits it gets no rows. Every
-change is the same write the desktop makes, through Home's cookie session, so
-the native shell still makes no account request of its own.
+Settings opens from the sidebar as a native list (`SettingsScreen.tsx`). Its
+account and Organization rows are desktop's own Settings sections: a row sends
+Home `{ type: 'settings', section }`, and Home shows `WorkspaceSettingsScreen`
+with `nativeShell` at `#/settings?section=` in a deferred chunk, as `view:
+'settings'`. `nativeShell` drops what the app owns itself: appearance, start
+page, device notifications and sign-out. Home lists the sections the person
+may open in `settingsSections`; a host that omits it gets no rows. That field
+is any string, filtered by the shell, so a newer host's section never fails an
+older shell's snapshot.
 Notification permission is requested only through This device › Push
 notifications. The
 native installation ID is in SecureStore; APNs device tokens pass through the
@@ -669,11 +661,10 @@ WebView booting the browser at `#/settings`, which pays a full shell start each
 time; Home is already loaded. Hiding the duplicate controls by CSS alone,
 which would still mount them and run their reads, Web Push's among them.
 
-**What to respect:** a new desktop Settings section reaches mobile only once
-it is added to `MOBILE_SETTINGS_SECTIONS` and a native row. A control the app
-owns natively belongs behind `nativeShell`. Not yet seen on a device: the
-native header title and close over a Settings page, and Android Back from one;
-the Expo web preview showed the list and pages.
+**What to respect:** `settingsSections` stays open to any string in the
+snapshot schema. Adding to `MOBILE_SETTINGS_SECTIONS` is safe only because of
+that: a closed enum there would make every older shell drop the whole
+snapshot. A control the app owns natively belongs behind `nativeShell`.
 
 ### 2026-11-16 — Dashboard filters and the Marketplace on mobile
 

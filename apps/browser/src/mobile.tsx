@@ -12,7 +12,7 @@ import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowUpRight, Plus, Search, Sparkles, Store } from 'lucide-react';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { CANVAS_FILTERS, ELSEWHERE_CANVAS_FACTS, canvasFilterFacts, matchesCanvasFilter, type CanvasFilter, type CanvasFilterFacts } from '@rally/contracts/canvas-filters';
-import { ARTIFACT_PICKER_CAPABILITY, MOBILE_COMMAND_EVENT, MOBILE_SETTINGS_SECTIONS, MobileCommandSchema, MobileSettingsSectionSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSettingsSection, type MobileSnapshot } from '../../mobile/src/protocol';
+import { ARTIFACT_PICKER_CAPABILITY, MOBILE_COMMAND_EVENT, MOBILE_SETTINGS_SECTIONS, MOBILE_SETTINGS_TITLES, MobileCommandSchema, MobileSettingsSectionSchema, VISIBLE_PIN_COUNT, type MobileCommand, type MobileSnapshot } from '../../mobile/src/protocol';
 import { GUEST_SETTINGS_SECTIONS } from '../../desktop/src/common/settings';
 import { useResourceHeads } from '../../desktop/src/renderer/lib/resource-heads';
 import { useAppSession } from '../../desktop/src/renderer/lib/app-session';
@@ -96,9 +96,8 @@ function MobileContent(): React.JSX.Element {
   useEffect(() => { if (location.pathname === '/') void navigate(CANVASES_ROUTE, { replace: true }); }, [location.pathname, navigate]);
   useEffect(() => { if (creating) setCreationSession(true); }, [creating]);
   // A shared Settings page, which reads its section from the route once, so
-  // each request mounts it afresh on the section asked for.
+  // each request mounts it afresh (keyed by the navigation) on the section asked for.
   const settingsSection = location.pathname === SETTINGS_ROUTE ? MobileSettingsSectionSchema.safeParse(new URLSearchParams(location.search).get('section')).data ?? null : null;
-  const settingsRequest = useRef(0);
   const guest = session?.workspace?.accessClass === 'guest';
   const settingsSections = useMemo(() => MOBILE_SETTINGS_SECTIONS.filter((section) => !guest || GUEST_SETTINGS_SECTIONS.has(section)), [guest]);
   const tabId = canvasId && new URLSearchParams(location.search).get('tab') === '1' && pinnedIds.includes(canvasId) ? canvasId : null;
@@ -159,8 +158,7 @@ function MobileContent(): React.JSX.Element {
       case 'create': create(message.marketplace); break;
       case 'settings':
         returnLocation.current = null;
-        settingsRequest.current += 1;
-        void navigate(`${SETTINGS_ROUTE}?section=${message.section}`, { state: { request: settingsRequest.current } });
+        void navigate(`${SETTINGS_ROUTE}?section=${message.section}`);
         break;
       case 'open': open(message.id, message.pinned); break;
       case 'open-elsewhere': {
@@ -249,7 +247,7 @@ function MobileContent(): React.JSX.Element {
       pins: pinnedIds, hasMore: false, loading: directory === undefined,
       pinBusy, pinError: pinNotice, directoryError, canvasId, tabId, inlineChat: true,
       view: settingsSection ? 'settings' : creating ? 'create' : conversation ? 'conversation' : canvasId ? descriptor?.view ?? 'artifact' : 'home',
-      title: settingsSection ? SETTINGS_TITLES[settingsSection] : marketplace ? 'Marketplace' : creating ? 'New canvas' : canvasId ? descriptor?.title ?? rows.find((row) => row.id === canvasId)?.title ?? 'Canvas' : 'Your canvases',
+      title: settingsSection ? MOBILE_SETTINGS_TITLES[settingsSection] : marketplace ? 'Marketplace' : creating ? 'New canvas' : canvasId ? descriptor?.title ?? rows.find((row) => row.id === canvasId)?.title ?? 'Canvas' : 'Your canvases',
       artifactId: descriptor?.artifactId ?? null, artifactPicker: descriptor?.artifactPicker ?? false,
       settingsSections,
     } });
@@ -259,17 +257,12 @@ function MobileContent(): React.JSX.Element {
     <section hidden={Boolean(canvasId || creating || settingsSection)} className="mobile-page"><Dashboard rows={rows} elsewhere={elsewhere} openElsewhere={(item) => { const region = ConfiguredRegionSchema.safeParse(item.organization.region); if (region.success) openElsewhere({ region: region.data, workspaceId: item.organization.id, canvasId: item.canvas.id }); }} loading={directory === undefined} failed={directoryError} retry={socket.retry} hasMore={false} more={() => undefined} open={(id) => { if (Reflect.get(window, 'ReactNativeWebView')) postMobileEvent({ type: 'open-canvas', id }); else open(id); }} create={() => create()} openMarketplace={session?.workspace?.accessClass === 'guest' ? undefined : () => create(true)} userId={session?.user.id} /></section>
     {visited.map((id) => <section key={id} hidden={id !== canvasId || conversation || creating} className="mobile-page mobile-artifact"><Canvas id={id} active={id === canvasId && !conversation} describe={describe} /></section>)}
     {(conversation ? canvasId : lastConversation) && <section hidden={!conversation} className="mobile-page mobile-conversation"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileConversation key={conversation ? canvasId : lastConversation} id={(conversation ? canvasId : lastConversation)!} active={conversation} describe={describe} /></Suspense></AppErrorBoundary></section>}
-    {settingsSection && <section key={`${settingsSection}:${String(location.state?.request ?? 0)}`} className="mobile-page mobile-settings"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileSettings /></Suspense></AppErrorBoundary></section>}
+    {settingsSection && <section key={location.key} className="mobile-page mobile-settings"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><MobileSettings /></Suspense></AppErrorBoundary></section>}
     {creationSession && <section hidden={!creating} className="mobile-page"><AppErrorBoundary onError={mobileScreenReady}><Suspense fallback={opening}><CreateCanvas marketplace={marketplace} created={(id) => { setCreationSession(false); socket.retry(); if (currentCreating.current) void navigate(`${canvasRoute(id)}?view=chat`); }} /></Suspense></AppErrorBoundary></section>}
   </main>;
 }
 
 const SETTINGS_ROUTE = '/settings';
-/** The shared Settings screen's names for its sections (`settingsNavigation`). */
-const SETTINGS_TITLES: Record<MobileSettingsSection, string> = {
-  account: 'Account', preferences: 'Preferences', memories: 'Memories', notifications: 'Notifications',
-  workspace: 'Organization', members: 'Members', billing: 'Billing', 'internet-access': 'Security', connections: 'Connections',
-};
 
 /**
  * A Canvas in another of this person's Organizations: its canonical page, which
