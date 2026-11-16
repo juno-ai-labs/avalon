@@ -289,8 +289,43 @@ preview route. A file that lands in a Canvas also returns its `url`: the publish
 reserves the file's host from the resource id, the same idempotent reservation
 the artifact access queue makes when it delivers the file, so the agent can link
 it (a feed's episode audio) without asking a person to copy it from the Share
-screen. It serves under the Canvas's artifact audience once that delivery lands,
-normally within seconds.
+screen. The URL ends in the file's name (`/2026-11-14-episode.mp3`) when its
+name is a plain file name; the host's root serves the same file. It serves
+under the Canvas's artifact audience once that delivery lands, normally within
+seconds.
+
+A directory publish lists every file with its digest. The sandbox keeps one
+digest cache per published directory, at
+`/workspace/.rally/publish-digests/<sha256 of the path>`, one line per file keyed
+by inode, change time, size and path, and hashes only files it has no line for.
+A digest is appended as it is computed, so a listing stopped by its time limit
+keeps its progress, and a finished listing rewrites the cache with its own
+files. A file whose bytes later disagree with its digest drops the cache. A tree
+just imported has new inodes and change times, so the first publish after an
+import hashes everything.
+
+A directory published as a site moves only bytes its live version does not
+already store as blobs, and streams each other non-page file from the sandbox
+into storage (`TerminalSandboxProvider.openFile`, a Daytona signed download the
+provider Worker fetches and returns across RPC as a stream), so the API Worker
+never holds it; [reactive web artifacts](reactive-web-artifacts.md) has the
+storage. The tool call's signal cancels the download before the stream returns
+and the stream after. The signed URL is fetched inside the provider Worker, so
+it appears in that Worker's own traces for the URL's 120-second life. The
+provider Worker must be promoted before the API, as `deploy-api.yml` does: an
+older provider Worker has no `openFile`. If streaming cannot start (a failed
+signing, a missing method), the file is read whole instead, which fits because
+a streamed file is within the streamed budget. A listing that times out
+is `resource_listing_timed_out`, not `resource_not_ready`. For a directory the
+same call again continues from the files already hashed, so the refusal asks
+for a retry; a single file hashes from the start each time.
+
+A publish refused for its size (`resource_limit_exceeded`) first logs
+`terminal_publish_over_size_limit` with the shape (file or directory), the
+extension, the size and the limit, never the path. The 25 MB limit was copied
+from uploads rather than chosen for audio or video, and these rows are how the
+team sees how often real work reaches it, and by how much, before picking
+another number.
 
 A published file's identity is the document's own coordinates — the conversation
 and the normalized published path, as `terminal:<workstream-id>:<path>` — so
@@ -1001,6 +1036,12 @@ network proxy, or a general GitHub administration surface.
 ## Testing
 
 The focused API suites are `apps/api/test/terminal-*.test.ts`; they use injected
+
+`test/terminal-directory-listing.test.ts` runs the listing's real shell over
+temporary files (Linux only; it is GNU `find`, as the sandbox is) and counts
+which files `sha256sum` hashed; `test/terminal-provider.test.ts` covers
+`openFile`'s signed fetch; `test-workers/terminal-provider-rpc-boundary.test.ts`
+reads a stream across a real service binding after the client is disposed.
 Daytona, GitHub, R2, clock, and D1 fakes and never require network access. The
 schema those fixtures are built on is proved by
 `packages/db/test/baseline-migration.test.ts`. Renderer states are covered by
@@ -1181,6 +1222,12 @@ credential identifier. It is sampled aggregate telemetry, never authority or a
 recovery ledger.
 
 ## Operations
+
+Publishing logs `terminal_publish_over_size_limit` (shape, extension, sizes,
+limit) before every size refusal, `site_file_store_failed` (artifact, code,
+extension, size, source) when a site file cannot be stored, and
+`site_served_manifest_unreadable` when a live manifest cannot be read, after
+which every file of that publish streams.
 
 A sandbox's warm-stop, archive, and expiry deadlines are workspace alarm
 entries derived from `next_terminal_action_at` in the workspace directory
@@ -1450,6 +1497,41 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-16 — Directory listings reuse their digests; site files stream; size refusals are logged
+
+**What changed:** `TerminalSandboxProvider.openFile` returns a sandbox file as a
+stream: the provider Worker signs a Daytona download URL and fetches it, since
+the SDK's own stream download refuses to run in a Worker and its buffered one
+holds the whole file. A directory publish's listing (`directoryListingCommands`,
+`site-publish.ts`) keeps a digest cache per directory under
+`/workspace/.rally/publish-digests/`, one line per file keyed by inode, change
+time, size and path, and hashes only files it has no line for. A digest is
+appended as it is computed, and a finished listing replaces the cache with its
+own files. Separately, `TerminalResourceBridge.noteOversizedPublish` logs
+`terminal_publish_over_size_limit` before each size refusal.
+
+**Why:** A site now holds a feed's episodes, and every publish hashed every
+file to add one, so a large feed's publish grew with the whole site and could
+run past the listing's time limit, where a retry would start over. The team also
+kept the 25 MB limit and asked to see how often media reaches it; a refusal
+reached only the model.
+
+**Considered and rejected:** Keying on the modified time, which `touch -r`
+restores after an edit; the change time moves on any write and no user tool
+sets it. Writing the cache only at the end, which loses a timed-out listing's
+work every time, so a site too large to hash in one listing never could be.
+Keeping the cache on Rally's side, which cannot see a file change in the
+sandbox. Logging the refused path, which is the participant's own naming.
+
+**Consequences:** The cache is trusted as the listing already was: it decides
+which files are already stored, and R2 still checks every streamed file. A
+damaged or unwritable cache only costs rehashing. On a real Daytona sandbox
+(2026-11-16) hashing ran at about 1.4 GB/s, so the cache matters for feeds of
+many gigabytes rather than for ordinary sites. A new size check on a publish
+path calls `noteOversizedPublish` before it throws.
+
+Shipped in #1626.
 
 ### 2026-11-15 — Canvas files return their URL, and the snapshot ships ffmpeg
 

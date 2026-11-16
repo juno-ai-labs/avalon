@@ -59,6 +59,11 @@ class ProviderSession extends RpcTarget {
     return { installed: this.#sessionObserve !== undefined, delivered: this.#sessionObservations };
   }
 
+  /** A file's bytes as a stream, as a sandbox download arrives. */
+  openFile(idOrName, path) {
+    return { ok: true, value: new Response(`${idOrName}:${path}:${"x".repeat(200_000)}`).body };
+  }
+
   startSandbox(idOrName, options) {
     return { ok: true, value: { idOrName, options: options ?? null } };
   }

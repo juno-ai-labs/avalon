@@ -93,17 +93,20 @@ neither         → archive       (one downloadable zip)
 both — the module routes its own paths and falls through to the page — so the
 module's presence is the stronger signal rather than a tie.
 
-The path's shape is asked once, in one command that also enumerates the tree, and
-every file is then read and verified against the digest that listing reported. A
-file rewritten in between is a producer that has not finished, and publishing
-half of one version with half of another would be a site that renders
-inconsistently with nothing to point at.
+The path's shape is asked once, in one command that also enumerates the tree
+with each file's digest (from the sandbox's digest cache where the file has not
+changed; [terminal workspaces](terminal-workspaces.md)). A file the live version
+already holds is stored, a page, the server module or the preview image is read
+and checked against its digest, and every other file streams into storage, where
+R2 checks it. A file rewritten in between is a producer that has not finished,
+and publishing half of one version with half of another would be a site that
+renders inconsistently with nothing to point at.
 
 An **archive** rides the ordinary document publish path unchanged: it is one
 file's bytes with a zip's mime type, so identity, replay, version capture, and
 the rail entry behave exactly as a document's do. A **site** takes its own path,
 because almost nothing is shared — its stored content is a manifest rather than
-the thing a viewer sees, its bytes go to version-immutable keys, and it has a
+the thing a viewer sees, its bytes go to blobs keyed by their digest, and it has a
 supervisor object to point at afterwards.
 
 Every new site version also gets a normalized social preview. Publish reads the
@@ -169,8 +172,11 @@ since ended — brings the files back first, through `import_resource`
 on the site's own resource id. The manifest is the index, and `index.js` is
 materialized alongside the assets even though a viewer's request for it 404s:
 "module, not asset" is a rule about the *serving* path, and a model that could
-not see its own server could not revise it. The version imported is the one the
-resource points at, so an edit starts from what viewers are being served rather
+not see its own server could not revise it. Each path is checked with a
+metadata read first, so a version missing a file is refused before anything is
+planned, then read and written to the sandbox one file at a time, so a site
+holding many large files is never in Worker memory at once. The version
+imported is the one the resource points at, so an edit starts from what viewers are being served rather
 than from whatever an earlier sandbox happened to hold.
 
 **A site import names its destination.** The deterministic placement that gives
@@ -297,12 +303,21 @@ admission. Each response carries `Accept-Ranges: bytes`, its `Content-Length`
 and the object's `ETag`. A `GET` with one range (`bytes=a-b`, `bytes=a-`,
 `bytes=-n`) gets `206` with `Content-Range`; a range past the end gets `416`;
 a request for several ranges, or an `If-Range` naming another version, gets
-the whole object with `200`. A `HEAD` reads only the object's metadata. HTML
+the whole object with `200`. A `HEAD` reads only the object's metadata. An
+`If-None-Match` naming the current `ETag` (weakly, in a list, or `*`) gets
+`304`; one that does not match leaves a `Range` beside it honoured. A
+published file or a static site's asset other than a page is `private,
+no-cache`, so the browser keeps it and asks again, admitted, on each use. A
+page, a file opened by a document navigation (whose back-forward copy a browser
+shows without asking), and anything an active site's code returns stay
+`private, no-store`. A published
+file is served at `/`, `/index.html`, and any plain file name (`/<name>.<ext>`),
+so its link keeps working after a rename. HTML
 that Rally rewrites (the social tags, the annotation script, a prior
 version's base) is a new body each time and is always sent whole: a static
 site's rewritten page is built fresh, an `env.ASSETS` read of HTML ignores
 `Range` because the serving Worker may inject into an active site's response
-afterwards, and an injected response loses its `Content-Length`, `ETag`,
+afterwards (and is never answered `304`, for the same reason), and an injected response loses its `Content-Length`, `ETag`,
 `Accept-Ranges` and `Content-Range`, which `HTMLRewriter` would otherwise keep
 from the stored page.
 
@@ -548,6 +563,21 @@ is the only place that can forward into it.
 ## Invariants
 
 - **The access bootstrap is the only response that may depart from
+
+- **Every storage key comes from the manifest.** `manifestAssetKey` and
+  `manifestServerModuleKey` are the only builders; a reader that builds a key
+  itself serves 404s for every blob-stored version. Guarded by
+  `canvas-artifact-access.test.ts` "serves a blob-stored active site…".
+- **A blob a kept manifest names is never deleted.** Nothing deletes
+  `artifact/` keys today; pruning, when it comes, must mark and sweep over kept
+  manifests with a grace window for a publish in flight. No automated guard.
+- **Pages and document navigations are never kept by the browser.** Only
+  non-page stored bytes are `no-cache`. Guarded by "lets a browser keep a public
+  file and revalidate it…".
+- **Nothing counts as stored unless it is this artifact's blob.** A publish
+  leaves a file unwritten only when blobs are on and the live version holds its
+  bytes as this artifact's blob; the writer refuses any other. Guarded by "stores
+  a site's files once by digest…".
   `Referrer-Policy: no-referrer`, and it may widen only to `same-origin`.** Its
   native same-origin form POST otherwise carries `Origin: null` and cannot pass
   the redeem fence. The exception must never reach model-authored content or a
@@ -786,6 +816,14 @@ facet that holds a stateful artifact's data. It does not own:
 
 ## Failure modes and limits
 
+
+A site file that cannot be stored is refused by cause: one whose bytes no
+longer match its listing, or that vanished, as `resource_not_ready` with
+`site_file_changed_after_listing`; anything else as `resource_publish_failed`
+keeping its own code (`daytona_file_stream_http_<status>`, say). Each logs
+`site_file_store_failed` with the artifact, code, extension, size and source
+(read, stored, streamed), never the path. An unreadable live manifest logs
+`site_served_manifest_unreadable` and the publish streams every file.
 - **The loader binding is absent.** A static artifact still serves. A stateless
   active artifact fails closed with 503 because its handler may be the access
   control protecting those same assets; serving the files as a fallback would
@@ -835,8 +873,19 @@ facet that holds a stateful artifact's data. It does not own:
   outside the artifact), never by the page's own requests. The shape, not just
   the number, is the sleep guarantee, since compute per open is bounded by rate
   ceiling × lifetime: an abandoned page stops within a year of its last open. The open code lives 60
-  seconds. A publish carries at most 25,000,000 bytes, transcribed from the file
-  path's existing bound rather than chosen. A data page returns at most 200 rows.
+  seconds. A site publish has two budgets. Bytes it reads whole (`index.html`,
+  the server module, the preview image the page names, or every file of an
+  archive) are at most 25,000,000, transcribed from the file path's bound; this
+  one guards Worker memory and the provider RPC's message size, and must not be
+  raised for media. Bytes it streams (new or changed files) are at most
+  `MAXIMUM_STREAMED_PUBLISH_BYTES`, also 25,000,000 today because the team kept
+  that number. It bounds transfer per publish, but not alone: importing a site
+  still reads each file whole across one RPC message, so a file larger than the
+  read-whole budget could be published and never imported again. Raise it with
+  import streaming, not before. With `ARTIFACT_BLOB_STORE=on`, bytes the live
+  version already stores as this artifact's blobs, at any path, count against
+  neither, so a site can hold a feed's episodes and each republish moves only
+  the new one. With it off (this release) every file counts, as before blobs. A data page returns at most 200 rows.
 
 Canvas archive records one durable `canvas_archive_artifact` alarm entry per
 registered site in WorkspaceDO. Delivery writes `archived_canvases` in the artifact
@@ -851,6 +900,12 @@ boundary ([Canvases](canvases.md#archiving)).
 
 ## Testing
 
+
+`wrangler.test.jsonc` sets `ARTIFACT_BLOB_STORE=on`, so the workerd suite runs
+the blob path that production does not run yet; the flag-off write path is
+covered by `artifact-asset-uploads.test.ts` "writes each file under its
+version's own prefix…". The blob, revalidation and file-name behavior is in
+`canvas-artifact-access.test.ts`.
 `test-workers/artifact-facet.test.ts` covers session and pending-code withdrawal
 and delayed publishes; `test-workers/canvas-publication.test.ts` covers delivery
 from a real Canvas archive to its published site.
@@ -908,9 +963,20 @@ Two traps:
 - The `"data"` facet, for stateful artifacts: the model's schema, in a database
   that rides the supervisor's storage envelope. Facet classes are dynamic and
   never appear in Wrangler migrations; only `ArtifactHostDO` does.
-- R2 `PAYLOADS`: `artifact/<id>/v<n>/assets/<path>` and `…/manifest.json`.
+- R2 `PAYLOADS`: `artifact/<id>/v<n>/manifest.json` for each version, and
+  `artifact/<id>/blobs/<sha256>` for every file of a version whose manifest
+  says `assetStore: "blobs"`, shared by every version that holds those bytes.
+  A version published before blobs keeps its files at
+  `artifact/<id>/v<n>/assets/<path>`. `manifestAssetKey` and
+  `manifestServerModuleKey` are the only way any reader turns an entry into a
+  key. Nothing deletes artifact bytes today, so a shared blob needs no
+  reference count; whatever prunes versions later must keep a blob any kept
+  manifest names. Whether a file is already stored is decided by the sandbox
+  listing's digest, so a wrong one can only alias bytes within its own site;
+  every streamed file is checked by R2, and one that changed after listing is
+  refused as `resource_not_ready` (`site_file_changed_after_listing`).
   New manifests optionally carry a `socialPreview` descriptor; generated cards
-  are ordinary versioned assets beneath that same prefix.
+  are ordinary assets of the version, stored like its other files.
 
 ## Security and trust model
 
@@ -962,6 +1028,47 @@ shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-16 — Site files are stored once by digest; stored bytes revalidate; files answer at their own name
+
+**What changed:** A site version is its manifest (`assetStore: "blobs"`): each
+file is stored once at `artifact/<id>/blobs/<sha256>` and shared by every
+version that holds it, and every reader resolves keys through
+`manifestAssetKey`. A republish writes only bytes the live version lacks,
+streamed from the sandbox, under two budgets: 25 MB read whole (memory) and
+`MAXIMUM_STREAMED_PUBLISH_BYTES` streamed (transfer, the team's to raise).
+Stored files and static assets are `private, no-cache` and answer
+`If-None-Match` with `304`; a published file is also served at `/<its name>`.
+
+**Why:** A feed's episodes have to live in its own site, because a site page
+plays only its own origin's media. Each version used to own a full copy of
+every file, so every republish re-read and re-counted the whole site, and one or
+two episodes filled it. Podcast apps re-downloaded unchanged files on every
+refresh, and some read a file's type from a URL that ended in `/`.
+
+**Considered and rejected:** Copying unchanged files between version prefixes
+(an earlier draft of this change), which still cost a full-site copy per episode. A patch
+publish, which the team declined so the model keeps one whole-directory call.
+Workspace-wide blobs, which let one artifact probe another's files. Edge
+caching, which keeps serving after a Canvas goes private.
+
+**Consequences:** A file counts as stored, unwritten and unbudgeted, only
+when blobs are on and the live version holds it as this artifact's blob; with
+blobs off every file streams and counts, as before. Blob writes are behind `ARTIFACT_BLOB_STORE=on`, off in this
+release: the serving Worker is promoted after the API, and the release before
+cannot parse a manifest with `assetStore`, so the readers ship one deploy before
+the writer. Once it is on, rolling back past this release breaks every site
+published since. A file the live version holds but not as this artifact's blob
+streams from the sandbox rather than being copied R2 to R2, which would need two
+connections per upload lane. Pruning versions must keep every blob a kept manifest names,
+with a grace window for a publish in flight. A directory missing a file removes
+it, so agents import a site before adding to it in a new sandbox, and import
+still reads and writes every file one at a time through the Worker: adding one
+episode in a fresh sandbox moves the whole back catalogue, which is the next
+limit on a show's size. Revalidation still goes through admission, so it saves
+bandwidth, not reads.
+
+Shipped in #1626.
 
 ### 2026-11-15 — Stored files and assets answer byte ranges
 

@@ -22,8 +22,10 @@ import type { Region } from "@rally/contracts/regions";
 import {
   ARTIFACT_MAX_ASSET_COUNT,
   ArtifactHostnameStubSchema,
+  ArtifactManifestSchema,
   SITE_MANIFEST_MIME_TYPE,
   artifactAssetKey,
+  artifactBlobKey,
   artifactManifestKey,
   asArtifactId,
   asWorkspaceId,
@@ -41,11 +43,41 @@ import { ensureArtifactHostname } from "../artifact-hostname";
 import { assetContentType } from "./site-publish";
 import { prepareSocialPreview } from "./site-social-preview";
 import { TerminalToolError } from "./tools";
+import { diagnosticErrorCode, logWarn, type LogEnv } from "../../observability/logger";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 
-export interface SitePublishFile {
+/** A file whose bytes this publish holds. */
+export interface ReadSiteFile {
   path: string;
   bytes: Uint8Array;
   sha256: string;
+}
+
+/**
+ * A file this artifact's live version already holds as a blob, so nothing is
+ * written for it. Only `liveSiteFiles` decides this, and only with blobs on
+ * and a blob-stored live version; nothing deletes a blob.
+ */
+export interface StoredSiteFile {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+  /** The artifact whose blobs hold it; nothing is written only when that is this one. */
+  storedIn: string;
+}
+
+/** A file streamed from the sandbox into its blob; R2 checks it against `sha256`. */
+export interface StreamedSiteFile {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+  open(): Promise<ReadableStream<Uint8Array>>;
+}
+
+export type SitePublishFile = ReadSiteFile | StoredSiteFile | StreamedSiteFile;
+
+export function siteFileSize(file: SitePublishFile): number {
+  return "bytes" in file ? file.bytes.byteLength : file.sizeBytes;
 }
 
 export interface SitePublishInput {
@@ -84,12 +116,20 @@ export interface SitePublishResult {
  * and the import tool is how the model reads it back.
  */
 export async function writeArtifactVersion(
-  env: Pick<Env, "PAYLOADS">,
+  env: Pick<Env, "PAYLOADS" | "ARTIFACT_BLOB_STORE"> & Partial<LogEnv>,
   input: SitePublishInput,
 ): Promise<SitePublishResult> {
   const artifactId = input.artifactId ?? newId();
+  // Blob writes wait for a deploy whose readers all understand them: the
+  // serving Worker is promoted after the API, and the release before this one
+  // cannot parse a manifest with `assetStore`. Until `ARTIFACT_BLOB_STORE` is
+  // `on`, a version is written as before, every file under its own prefix.
+  const blobs = env.ARTIFACT_BLOB_STORE === "on";
   const serverEntry = input.mode === "active" ? "index.js" : null;
-  const preparedPreview = await prepareSocialPreview(input.files, input.fallbackTitle);
+  // The preview reads `index.html` and the image it names, which the runtime
+  // never carries (`socialPreviewSourcePaths`).
+  const preparedPreview = await prepareSocialPreview(
+    input.files.filter((file): file is ReadSiteFile => "bytes" in file), input.fallbackTitle);
   const storedFiles = preparedPreview.generatedFile
     ? [...input.files, preparedPreview.generatedFile]
     : [...input.files];
@@ -98,7 +138,7 @@ export async function writeArtifactVersion(
     .map((file) => ({
       path: file.path,
       contentType: assetContentType(file.path),
-      sizeBytes: file.bytes.byteLength,
+      sizeBytes: siteFileSize(file),
       sha256: file.sha256,
     }));
   if (assets.length > ARTIFACT_MAX_ASSET_COUNT) {
@@ -117,8 +157,9 @@ export async function writeArtifactVersion(
     serverModuleSha256: input.serverModuleSha256,
     assets,
     socialPreview: preparedPreview.socialPreview,
-    totalBytes: storedFiles.reduce((total, file) => total + file.bytes.byteLength, 0),
+    totalBytes: storedFiles.reduce((total, file) => total + siteFileSize(file), 0),
     publishedAt: nowIso(),
+    ...(blobs ? { assetStore: "blobs" as const } : {}),
   };
 
   try {
@@ -129,7 +170,11 @@ export async function writeArtifactVersion(
     // Transcribed 2026-09-12:
     // https://developers.cloudflare.com/workers/platform/limits/#simultaneous-open-connections
     const simultaneousConnections = 6;
-    const files = storedFiles.values();
+    // With blobs, one write per digest: two paths with the same bytes share one.
+    // A file whose bytes are in hand wins over one that would stream them.
+    const files = (blobs
+      ? [...new Map([...storedFiles].sort((a, b) => Number("bytes" in a) - Number("bytes" in b)).map((file) => [file.sha256, file])).values()]
+      : storedFiles).values();
     let uploadFailed = false;
     const uploads = Array.from({ length: Math.min(storedFiles.length, simultaneousConnections) }, async () => {
       for (const file of files) {
@@ -137,17 +182,28 @@ export async function writeArtifactVersion(
         // by sibling workers but do not start another asset after a failure.
         if (uploadFailed) return;
         try {
-          await env.PAYLOADS.put(
-            artifactAssetKey(artifactId, input.version, file.path),
-            file.bytes,
-            {
-              httpMetadata: { contentType: assetContentType(file.path) },
-              customMetadata: { source: "artifact", artifactId, version: String(input.version) },
-            },
-          );
+          if ("storedIn" in file) {
+            if (file.storedIn === artifactId) continue;
+            throw new Error("site_file_stored_in_another_artifact");
+          }
+          const key = blobs ? artifactBlobKey(artifactId, file.sha256) : artifactAssetKey(artifactId, input.version, file.path);
+          const body = "bytes" in file ? file.bytes
+            // An empty file has nothing to stream.
+            : file.sizeBytes === 0 ? new Uint8Array()
+              // Anything else streams from the sandbox: one connection per lane.
+              : lengthKnown(await file.open(), file.sizeBytes);
+          await env.PAYLOADS.put(key, body, {
+            // A blob is shared by paths and versions, so its stored type is
+            // only a default: every reader serves the manifest entry's type.
+            httpMetadata: { contentType: assetContentType(file.path) },
+            customMetadata: { source: "artifact", artifactId },
+            sha256: file.sha256,
+          });
         } catch (error) {
           uploadFailed = true;
-          throw error;
+          // R2 rejects with a failed source's own error, so a download that
+          // breaks partway is named for itself, not as a changed file.
+          throw siteFileStoreFailure(env, error, file, artifactId);
         }
       }
     });
@@ -156,12 +212,9 @@ export async function writeArtifactVersion(
     const results = await Promise.allSettled(uploads);
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
-  } catch {
-    throw new TerminalToolError(
-      "resource_publish_failed",
-      "The site's files could not be stored. Retry publish_resource with the same directory.",
-      { reason: "Retry the same publish_resource call." },
-    );
+  } catch (error) {
+    if (error instanceof TerminalToolError) throw error;
+    throw siteFileStoreFailure(env, error, null, artifactId);
   }
 
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
@@ -186,6 +239,47 @@ export async function writeArtifactVersion(
     manifestSha256: await sha256Hex(manifestBytes),
     manifestRef,
   };
+}
+
+/** R2 accepts a stream only when its length is known. */
+function lengthKnown(body: ReadableStream<Uint8Array>, sizeBytes: number): ReadableStream {
+  const { readable, writable } = new FixedLengthStream(sizeBytes);
+  void body.pipeTo(writable).catch(() => undefined);
+  return readable;
+}
+
+/**
+ * The refusal for a file that could not be stored, named for its cause and
+ * logged. A file whose bytes no longer match its listing (R2's digest check,
+ * or a stream shorter or longer than listed) changed after it was listed: the
+ * model waits for its producer, as for a file read whole. Anything else keeps
+ * the code it arrived with, a provider's or the platform's, so a failure that
+ * a retry cannot fix is not reported as one it can. The "changed" match reads
+ * R2's and `FixedLengthStream`'s own wording, so a runtime that rewords them
+ * turns that case into `resource_publish_failed`; the workerd test catches it.
+ */
+function siteFileStoreFailure(env: Partial<LogEnv>, error: unknown, file: SitePublishFile | null, artifactId: string): TerminalToolError {
+  const message = error instanceof Error ? error.message : "";
+  // A file gone from the sandbox (`daytona_file_stream_http_404`) changed too.
+  const changed = /checksum you specified did not match|FixedLengthStream did not see all expected bytes|too many bytes through a FixedLengthStream|daytona_file_stream_http_404/u
+    .test(message);
+  const code = changed ? "site_file_changed_after_listing" : diagnosticErrorCode(error, "site_file_store_failed");
+  const extension = file ? /\.([A-Za-z0-9]{1,10})$/u.exec(file.path)?.[1]?.toLowerCase() ?? null : null;
+  logWarn(env as LogEnv, "site_file_store_failed", {
+    artifact_id: artifactId, code, extension, size_bytes: file ? siteFileSize(file) : null,
+    source: file === null ? null : "bytes" in file ? "read" : "storedIn" in file ? "stored" : "streamed",
+  });
+  return changed
+    ? new TerminalToolError(
+      "resource_not_ready",
+      `${file ? `\`${file.path}\`` : "A file in the directory"} changed or disappeared after Rally listed it. If a command is still writing it, wait for it to finish; then retry the same publish_resource call.`,
+      { reason: "Wait for the producer to finish, then retry with the final stable directory.", code },
+    )
+    : new TerminalToolError(
+      "resource_publish_failed",
+      `The site's files could not be stored (${code}). Retry the same publish_resource call once. If the same code returns, stop retrying and tell the person the site was not updated, naming the code; it keeps serving its current version.`,
+      { reason: "Retry the same publish_resource call once.", code },
+    );
 }
 
 /**
@@ -300,9 +394,10 @@ export async function registerArtifact(
  * before any of its bytes are written, and answer the version taken.
  *
  * Two publishes of one site that start together read the same registry
- * version and would write the same version-immutable keys
- * (`artifactAssetKey`), each overwriting the other's files, so whichever
- * manifest won would serve a mix. The claim is a create-once R2 object
+ * version and would write the same version's manifest key, so whichever
+ * manifest won would name a version the other also thought it wrote. (Before
+ * blobs, they also overwrote each other's files; a blob is keyed by its bytes,
+ * so two writers of one key write the same thing.) The claim is a create-once R2 object
  * (`If-None-Match: *`, which R2 evaluates atomically with the write, so of
  * two concurrent claims at most one succeeds), and the version's keys are
  * written only by its claimant. Chosen over conditional puts on every asset,
@@ -359,6 +454,30 @@ export async function existingArtifactForResource(
       ? null
       : ArtifactHostnameStubSchema.parse(row.hostname_stub),
   };
+}
+
+/**
+ * The manifest of the version a resource serves now, or null when it cannot
+ * be read: a publish then streams every file it would have found stored.
+ */
+export async function servedManifest(
+  env: Pick<Env, "PAYLOADS"> & Partial<LogEnv>,
+  served: { artifactId: string; version: number },
+): Promise<ArtifactManifest | null> {
+  const stored = await env.PAYLOADS.get(artifactManifestKey(served.artifactId, served.version));
+  if (!stored) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(await stored.text()); } catch { parsed = undefined; }
+  const manifest = ArtifactManifestSchema.safeParse(parsed);
+  if (manifest.success && manifest.data.artifactId === served.artifactId) return manifest.data;
+  // Unreadable or another artifact's: every file then streams, which is safe,
+  // but the cause is named rather than lost.
+  logWarn(env as LogEnv, "site_served_manifest_unreadable", {
+    artifact_id: served.artifactId,
+    version: served.version,
+    code: manifest.success ? "site_manifest_artifact_mismatch" : zodDiagnosticCode(manifest.error, "site_manifest") ?? "site_manifest_invalid",
+  });
+  return null;
 }
 
 /** The artifact a resource already serves, as {@link existingArtifactForResource} answers it. */

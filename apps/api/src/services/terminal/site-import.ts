@@ -15,56 +15,64 @@
  *
  * See `docs/reactive-web-artifacts.md`.
  */
-import { artifactAssetKey, type ArtifactManifest } from "@rally/contracts";
+import { manifestAssetKey, manifestServerModuleKey, type ArtifactManifest } from "@rally/contracts";
 
 import type { Env } from "../../env";
 import { TerminalToolError } from "./tools";
 
-export interface SiteFile {
-  /** Directory-relative, as it will be written beneath the destination root. */
-  path: string;
-  bytes: Uint8Array;
-}
-
 /**
- * Read every file of one artifact version out of the bucket.
+ * Every source path of one artifact version, after checking each is stored.
  *
  * The manifest is the index, and the server module is added to it here because
- * it is deliberately absent from `assets` — the one place the two views of a
- * published version differ, and the reason this function exists rather than the
- * caller looping over `manifest.assets` itself.
+ * it is deliberately absent from `assets`: the one place the two views of a
+ * published version differ. Each path is checked with a metadata read, never a
+ * body read, so a version whose bytes are gone is refused before anything is
+ * planned or written, and a site that holds a feed's episodes is never in
+ * memory at once: the caller reads and writes one file at a time
+ * ({@link readArtifactVersionFile}).
  */
-export async function readArtifactVersionFiles(
+export async function storedArtifactVersionPaths(
   env: Pick<Env, "PAYLOADS">,
   manifest: ArtifactManifest,
-): Promise<SiteFile[]> {
-  const artifactId = manifest.artifactId;
-  const version = manifest.artifactVersion;
+): Promise<{ path: string; sizeBytes: number; key: string }[]> {
   const generatedPreviewPath = manifest.socialPreview?.image.generated
     ? manifest.socialPreview.image.path
     : null;
+  const moduleKey = manifestServerModuleKey(manifest);
   const wanted = [
     ...manifest.assets
-      .map((asset) => asset.path)
-      .filter((path) => path !== generatedPreviewPath),
-    ...(manifest.mode === "active" ? ["index.js"] : []),
+      .filter((asset) => asset.path !== generatedPreviewPath)
+      .map((asset) => ({ path: asset.path, key: manifestAssetKey(manifest, asset) })),
+    ...(moduleKey ? [{ path: "index.js", key: moduleKey }] : []),
   ];
-  const files: SiteFile[] = [];
-  for (const path of wanted) {
-    const object = await env.PAYLOADS.get(artifactAssetKey(artifactId, version, path));
-    if (!object) {
-      // A version whose bytes are gone is not something to materialize
-      // partially: a half tree republishes as a site missing files, under the
-      // same identity, and nothing would say which ones went.
-      throw new TerminalToolError(
-        "resource_not_importable",
-        "Part of this site's source is temporarily unavailable. Retry the import; if it persists, the site can still be revised by publishing a fresh directory at its path.",
-        { reason: "Retry the import once; the site keeps serving its current version either way." },
-      );
-    }
-    files.push({ path, bytes: new Uint8Array(await object.arrayBuffer()) });
+  const stored: { path: string; sizeBytes: number; key: string }[] = [];
+  for (const { path, key } of wanted) {
+    const object = await env.PAYLOADS.head(key);
+    // A version whose bytes are gone is not something to materialize
+    // partially: a half tree republishes as a site missing files, under the
+    // same identity, and nothing would say which ones went.
+    if (!object) throw sourceUnavailable();
+    stored.push({ path, sizeBytes: object.size, key });
   }
-  return files;
+  return stored;
+}
+
+/** One file of an artifact version, as {@link storedArtifactVersionPaths} listed it. */
+export async function readArtifactVersionFile(
+  env: Pick<Env, "PAYLOADS">,
+  file: { key: string },
+): Promise<Uint8Array> {
+  const object = await env.PAYLOADS.get(file.key);
+  if (!object) throw sourceUnavailable();
+  return new Uint8Array(await object.arrayBuffer());
+}
+
+function sourceUnavailable(): TerminalToolError {
+  return new TerminalToolError(
+    "resource_not_importable",
+    "Part of this site's source is temporarily unavailable. Retry the import once; if it fails again, stop and tell the person the site could not be recovered. Do not publish the site's path without its current files: a directory missing them publishes as a site without them.",
+    { reason: "Retry the import once; the site keeps serving its current version either way." },
+  );
 }
 
 /**

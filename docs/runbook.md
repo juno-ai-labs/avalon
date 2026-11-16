@@ -411,6 +411,18 @@ The other nine Rally hostnames are single-label and covered by the Universal
 pack, so they need no certificate work. [`domain-migration.md`](domain-migration.md)
 lists all ten and what each serves.
 
+### Turning on content-addressed site storage
+
+Site versions are written in the old per-version layout until
+`ARTIFACT_BLOB_STORE` is `on` ([reactive web artifacts](reactive-web-artifacts.md)).
+Turn it on only after a release that carries the blob readers has been promoted
+to every Worker, the artifacts serving Worker included: add
+`"ARTIFACT_BLOB_STORE": "on"` to `vars` in `apps/api/wrangler.global.jsonc` (the
+API Worker only) and deploy. From then on, rolling back past that reader release
+breaks every site published since, because the older release cannot parse
+their manifests. Until it is on, every site publish counts every file against
+the 25 MB budget.
+
 ### The Rally rename cannot reach installed builds through the update feed
 
 **An installed `app.rally.desktop` build will not auto-update to

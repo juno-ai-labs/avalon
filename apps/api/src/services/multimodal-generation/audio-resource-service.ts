@@ -86,7 +86,7 @@ export function createMultimodalAudioResourceStore(
       if (input.bytes.byteLength > maximum) {
         throw new MultimodalGenerationError(
           "resource_limit_exceeded",
-          `The generated audio is ${input.bytes.byteLength} bytes; Rally accepts at most ${maximum} bytes. Shorten the text and try again.`,
+          `The generated audio is ${input.bytes.byteLength} bytes; Rally accepts at most ${maximum} bytes. Split the text into sections, such as chapters or segments, and record each with its own call.`,
           { field: "text", expected: `generated audio bytes at most ${maximum}` },
         );
       }

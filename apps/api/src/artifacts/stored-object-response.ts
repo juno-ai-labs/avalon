@@ -21,6 +21,11 @@
  * range on nearly every seek, so a metadata read in front of each would be paid
  * constantly for a check R2 already makes.
  *
+ * It also answers a browser's revalidation (`If-None-Match`) with `304`, which
+ * is what lets the serving Worker mark stored bytes `private, no-cache` rather
+ * than `no-store`: the browser keeps its copy, and every reuse is still
+ * admitted first.
+ *
  * Only `bytes=start-end`, `bytes=start-` and `bytes=-suffix` are honoured. A
  * request for several ranges gets the whole object with `200`, which RFC 9110
  * allows and every player handles; a multipart body is not worth its parser.
@@ -38,13 +43,25 @@ export async function storedObjectResponse(
   headers: Record<string, string>,
   options: { ranges?: boolean } = {},
 ): Promise<Response | null> {
-  if (request.method === "HEAD") {
-    const metadata = await bucket.head(key);
-    return metadata ? new Response(null, { status: 200, headers: whole(metadata, headers) }) : null;
-  }
   // A caller whose response may be rewritten after this returns (an active
-  // site's HTML, which Rally injects into) asks for no ranges: a range of the
-  // stored page would be spliced into a page that is no longer those bytes.
+  // site's HTML, which Rally injects into) asks for `ranges: false`: no range,
+  // since a range of the stored page would be spliced into a page that is no
+  // longer those bytes, and no `304`, since the stored page's `ETag` says
+  // nothing about the page the browser was sent.
+  const exact = options.ranges !== false;
+  // A browser revalidating its copy sends the `ETag`s it holds, or `*`; one
+  // that matches (weakly, as RFC 9110 has `If-None-Match` compare) answers
+  // `304`. One that does not falls through, so a `Range` beside it is still
+  // honoured, as RFC 9110 evaluates them in that order.
+  const held = exact && (request.method === "GET" || request.method === "HEAD")
+    ? heldEtags(request.headers.get("if-none-match"))
+    : null;
+  if (held !== null || request.method === "HEAD") {
+    const metadata = await bucket.head(key);
+    if (!metadata) return null;
+    if (held !== null && (held === "*" || held.includes(metadata.etag))) return notModified(metadata, headers);
+    if (request.method === "HEAD") return new Response(null, { status: 200, headers: whole(metadata, headers) });
+  }
   const range = request.method === "GET" && options.ranges !== false ? requestedRange(request.headers.get("range")) : null;
   if (range === null) {
     const object = await bucket.get(key);
@@ -111,6 +128,20 @@ function resolvedRange(range: R2Range, size: number): { offset: number; length: 
   }
   const offset = range.offset ?? 0;
   return { offset, length: Math.min(range.length ?? size - offset, size - offset) };
+}
+
+/** The opaque tags an `If-None-Match` lists, `"*"` for any, or null for none. */
+function heldEtags(header: string | null): string[] | "*" | null {
+  if (header === null || header.trim() === "") return null;
+  if (header.trim() === "*") return "*";
+  const tags = [...header.matchAll(/(?:W\/)?"([^"]*)"/gu)].map((match) => match[1]!);
+  return tags.length > 0 ? tags : null;
+}
+
+function notModified(object: R2Object, headers: Record<string, string>): Response {
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) if (name.toLowerCase() !== "content-type") kept[name] = value;
+  return new Response(null, { status: 304, headers: { ...kept, etag: object.httpEtag } });
 }
 
 async function unsatisfiable(bucket: R2Bucket, key: string, headers: Record<string, string>): Promise<Response | null> {

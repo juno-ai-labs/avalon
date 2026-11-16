@@ -35,7 +35,7 @@ import { RegionSchema } from "@rally/contracts/regions";
 import {
   ArtifactManifestSchema,
   ArtifactSidekickAddressSchema,
-  artifactAssetKey,
+  manifestServerModuleKey,
   artifactIsolateId,
   type ArtifactManifest,
 } from "@rally/contracts";
@@ -1239,9 +1239,8 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     return this.ctx.facets.get<ArtifactFacetHost>(FACET_NAME, async () => {
       const loader = env.ARTIFACT_LOADER;
       if (!loader) throw new Error("artifact_loader_binding_missing");
-      const module = await env.PAYLOADS.get(
-        artifactAssetKey(artifactId, version, "index.js"),
-      );
+      const moduleKey = manifestServerModuleKey(manifest);
+      const module = moduleKey ? await env.PAYLOADS.get(moduleKey) : null;
       if (!module) throw new Error("artifact_server_module_missing");
       // The revision keeps an isolate cached before a deploy, with older Rally
       // code, from answering for the new one.
@@ -1272,9 +1271,11 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
             props: {
               artifactId,
               version,
+              ...(manifest.assetStore ? { assetStore: manifest.assetStore } : {}),
               assets: manifest.assets.map((asset) => ({
                 path: asset.path,
                 contentType: asset.contentType,
+                sha256: asset.sha256,
               })),
             },
           }),

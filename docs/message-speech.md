@@ -15,7 +15,8 @@ stream finishes or the person stops it.
 | `apps/desktop/src/renderer/lib/pcm-speech-player.ts` | Incremental 24 kHz signed little-endian PCM decoding and gapless Web Audio scheduling. |
 | `apps/desktop/src/renderer/lib/api.ts` | Authenticated `POST /speech` fetch and response-format validation without body buffering. |
 | `apps/api/src/routes/speech.ts` | The protected regional streaming response and content-free operational events. |
-| `apps/api/src/services/message-speech-service.ts` | Markdown-to-speech text reduction, Azure-sized chunking, one-chunk prefetch, and provider-stream composition. |
+| `apps/api/src/services/message-speech-service.ts` | Markdown-to-speech text reduction, one-chunk prefetch, and provider-stream composition. |
+| `apps/api/src/services/multimodal-generation/speech-pieces.ts` | The Azure-sized splitter (`splitSpeechText`), shared with `generate_audio`, and the MP3 join. |
 | `apps/api/src/services/multimodal-generation/azure-audio-client.ts` | The shared `gpt-4o-mini-tts` Azure request boundary for streamed PCM and resource-producing MP3. |
 
 ## How it works
@@ -108,6 +109,8 @@ decision.
   Rally API error; a later provider failure terminates the audio stream.
 - Azure's 4,096-character input limit applies per provider request, not per
   Rally message. Rally keeps splitting until it has covered the complete text.
+  The splitter (`splitSpeechText`, in `multimodal-generation/speech-pieces.ts`)
+  is shared with `generate_audio`, so a change to where text is cut changes both.
 - Stop may discard one already-prefetched Azure chunk. Prefetch is intentionally
   limited to one; this is the accepted cost of avoiding silence between chunks.
 - Azure's streaming response does not report usage or a price. Rally does not

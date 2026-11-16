@@ -2,7 +2,7 @@ import { asArtifactId, type ArtifactManifest } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
-import { importTreeFailure, materializeTreeCommand, readArtifactVersionFiles } from "../src/services/terminal/site-import";
+import { importTreeFailure, materializeTreeCommand, storedArtifactVersionPaths } from "../src/services/terminal/site-import";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 
 const DESTINATION = "/workspace/.rally-output/offsite-rsvp";
@@ -11,6 +11,26 @@ const STAGING = "/workspace/.rally/tmp/tree-1";
 function command(overwrite: boolean): string {
   return materializeTreeCommand({ destination: DESTINATION, staging: STAGING, overwrite });
 }
+
+describe("finding a site version's stored files", () => {
+  it("finds a blob-stored version's files and server module by digest", async () => {
+    const artifactId = asArtifactId("00000000-0000-7000-8000-0000000000b2");
+    const page = "a".repeat(64);
+    const module = "b".repeat(64);
+    const manifest: ArtifactManifest = {
+      version: 1, artifactId, artifactVersion: 7, mode: "active", stateful: true,
+      serverModuleSha256: module, assetStore: "blobs",
+      assets: [{ path: "index.html", contentType: "text/html", sizeBytes: 3, sha256: page }],
+      totalBytes: 9, publishedAt: "2026-11-16T00:00:00.000Z",
+    };
+    const head = vi.fn(async () => ({ size: 3 }));
+    const env = { PAYLOADS: createCloudflareTestBinding<R2Bucket>({ head }) } satisfies Pick<Env, "PAYLOADS">;
+    await expect(storedArtifactVersionPaths(env, manifest)).resolves.toEqual([
+      { path: "index.html", sizeBytes: 3, key: `artifact/${artifactId}/blobs/${page}` },
+      { path: "index.js", sizeBytes: 3, key: `artifact/${artifactId}/blobs/${module}` },
+    ]);
+  });
+});
 
 describe("writing a materialized site tree", () => {
   it("leaves Rally's generated preview behind when importing source", async () => {
@@ -41,15 +61,15 @@ describe("writing a materialized site tree", () => {
       totalBytes: 2,
       publishedAt: "2026-09-02T00:00:00.000Z",
     };
-    const get = vi.fn(async () => ({ arrayBuffer: async () => new Uint8Array([1]).buffer }));
+    const head = vi.fn(async () => ({ size: 1 }));
     const env = {
-      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ get }),
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ head }),
     } satisfies Pick<Env, "PAYLOADS">;
 
-    await expect(readArtifactVersionFiles(env, manifest)).resolves.toEqual([
-      { path: "index.html", bytes: new Uint8Array([1]) },
+    await expect(storedArtifactVersionPaths(env, manifest)).resolves.toEqual([
+      { path: "index.html", sizeBytes: 1, key: `artifact/${artifactId}/v2/assets/index.html` },
     ]);
-    expect(get).toHaveBeenCalledOnce();
+    expect(head).toHaveBeenCalledOnce();
   });
 
   it("imports authored preview artwork as source", async () => {
@@ -80,16 +100,16 @@ describe("writing a materialized site tree", () => {
       totalBytes: 2,
       publishedAt: "2026-09-02T00:00:00.000Z",
     };
-    const get = vi.fn(async () => ({ arrayBuffer: async () => new Uint8Array([1]).buffer }));
+    const head = vi.fn(async () => ({ size: 1 }));
     const env = {
-      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ get }),
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ head }),
     } satisfies Pick<Env, "PAYLOADS">;
 
-    await expect(readArtifactVersionFiles(env, manifest)).resolves.toEqual([
-      { path: "index.html", bytes: new Uint8Array([1]) },
-      { path: "social-preview.png", bytes: new Uint8Array([1]) },
+    await expect(storedArtifactVersionPaths(env, manifest)).resolves.toEqual([
+      { path: "index.html", sizeBytes: 1, key: `artifact/${artifactId}/v2/assets/index.html` },
+      { path: "social-preview.png", sizeBytes: 1, key: `artifact/${artifactId}/v2/assets/social-preview.png` },
     ]);
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(head).toHaveBeenCalledTimes(2);
   });
 
   it("refuses a non-empty destination when no overwrite was asked for", () => {
