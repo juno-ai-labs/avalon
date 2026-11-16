@@ -4,6 +4,7 @@ import { MobileCrashReportSchema, MobileCrashScopeSchema } from '@rally/contract
 import { z } from 'zod';
 import { parseArtifactHost, parseArtifactSiteOpenPath } from '@rally/contracts';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
+import { CanvasFilterFactsSchema } from '@rally/contracts/canvas-filters';
 
 // Presentation capacity, from the approved Home + four tabs design. This is not
 // a server pin limit: pins made on desktop remain in the sidebar in full.
@@ -44,6 +45,9 @@ export const CanvasSummarySchema = z.object({
   icon: z.string().nullable().optional(),
   color: z.string().nullable().optional(),
   updatedAt: z.string(),
+  /** What the dashboard's filters read (`@rally/contracts/canvas-filters`).
+   * An older host sends none, and the dashboard then offers no filters. */
+  facts: CanvasFilterFactsSchema.optional(),
 });
 export type CanvasSummary = z.infer<typeof CanvasSummarySchema>;
 /**
@@ -142,7 +146,9 @@ export const MobileCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('push-device'), requestId: z.string().uuid(), userId: z.string(), workspaceId: z.string(), installationId: z.string().uuid(), registration: RegisterPushDeviceRequestSchema.nullable() }),
   z.object({ type: z.literal('open-notification'), url: HttpUrlSchema }),
   z.object({ type: z.literal('sign-in-complete'), proof: MobileAuthExchangeSchema }),
-  z.object({ type: z.literal('create') }),
+  // Marketplace opens the create flow on its templates; an older host drops
+  // the field and opens the prompt form instead.
+  z.object({ type: z.literal('create'), marketplace: z.boolean().optional() }),
   z.object({ type: z.literal('open-chat'), id: z.string().min(1) }),
   z.object({ type: z.literal('close-chat') }),
   z.object({ type: z.literal('open'), id: z.string().min(1), pinned: z.boolean() }),
