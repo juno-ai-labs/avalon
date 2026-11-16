@@ -49,6 +49,7 @@ import {
   type MultimodalAudioResourceStore,
   type PublishedMultimodalAudio,
 } from "./audio-resource-service";
+import { joinMp3Pieces, splitSpeechText } from "./speech-pieces";
 import {
   createMultimodalGenerationResourceStore,
   type MultimodalGenerationResourceStore,
@@ -83,10 +84,11 @@ export function createAvalonMultimodalGenerationPlugin(
     ?? createMultimodalGenerationResourceStore(env, inObjectResourceAttacher);
   const loadPricing = options.loadPricing
     ?? (() => loadAzureImageModelPricing(env, MULTIMODAL_GENERATION_PRICING_MODEL_ID));
+  const maximumAudioBytes = numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES);
   const audioClient = options.audioClient ?? createAzureAudioClient({
     endpoint,
     apiKey,
-    maximumBytes: numericEnv(env, "MAX_ATTACHMENT_BYTES", DEFAULT_MAX_ATTACHMENT_BYTES),
+    maximumBytes: maximumAudioBytes,
   });
   const audioResources = options.audioResources
     ?? createMultimodalAudioResourceStore(env, inObjectResourceAttacher);
@@ -199,12 +201,26 @@ export function createAvalonMultimodalGenerationPlugin(
       await requireUsageAllowance(env, input.workspaceId);
       const pricing = await bestEffortAudioPricing(env, context, loadAudioPricing);
       const voice = arguments_.voice ?? MULTIMODAL_AUDIO_DEFAULT_VOICE;
-      const providerResult = await audioClient.generate({
-        text: arguments_.text,
-        voice,
-        ...(arguments_.instructions ? { instructions: arguments_.instructions } : {}),
-        signal: context.signal,
-      });
+      // One request per piece, in order, with the same voice and instructions,
+      // each allowed only what is left of the attachment limit, so text too
+      // long to keep stops at the piece that crosses it.
+      const pieces = splitSpeechText(arguments_.text);
+      const recorded: Uint8Array[] = [];
+      let recordedBytes = 0;
+      let providerOperationId: string | undefined;
+      for (const text of pieces) {
+        const piece = await audioClient.generate({
+          text,
+          voice,
+          ...(arguments_.instructions ? { instructions: arguments_.instructions } : {}),
+          signal: context.signal,
+          maximumBytes: maximumAudioBytes - recordedBytes,
+        });
+        recorded.push(piece.bytes);
+        recordedBytes += piece.bytes.byteLength;
+        providerOperationId ??= piece.providerOperationId;
+      }
+      const providerResult = { bytes: joinMp3Pieces(recorded), ...(providerOperationId ? { providerOperationId } : {}) };
       const billing = calculateAudioBilling(env, context, pricing);
       const published = await audioResources.publish(resourceContext, {
         bytes: providerResult.bytes,
