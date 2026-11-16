@@ -137,6 +137,10 @@ function fixture(
       const bytes = objects.get(key);
       return bytes ? { arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) } : null;
     }),
+    head: vi.fn(async (key: string) => {
+      const bytes = objects.get(key);
+      return bytes ? { size: bytes.byteLength } : null;
+    }),
     delete: vi.fn(async (key: string) => { objects.delete(key); }),
   });
   // What the artifact host answers a publish with: whether its pointer moved.

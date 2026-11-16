@@ -1,3 +1,4 @@
+import { siteFileSize } from "../src/services/terminal/site-resource-bridge";
 import { SITE_MANIFEST_MIME_TYPE, asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { spawnSync } from "node:child_process";
@@ -277,6 +278,7 @@ function fixture(
     })),
     publishedKindForPath: vi.fn(async (): Promise<"site" | "archive" | "file" | null> => null),
     noteOversizedPublish: vi.fn(),
+    liveSiteFiles: vi.fn(async () => null),
     publishSiteResource: vi.fn(async (
       _context,
       input,
@@ -288,7 +290,7 @@ function fixture(
       url: `https://${"1".repeat(8)}-g.rallyusercontent.test`,
       mode: site.mode, stateful: site.stateful, version: 1,
       mimeType: SITE_MANIFEST_MIME_TYPE, fileCount: site.files.length,
-      totalBytes: site.files.reduce((total, file) => total + file.bytes.byteLength, 0),
+      totalBytes: site.files.reduce((total, file) => total + siteFileSize(file), 0),
       manifestSha256: "c".repeat(64), createdAt: "2026-08-13T12:00:00.000Z",
     })),
   };
@@ -1513,6 +1515,32 @@ describe("Daytona Terminal runtime", () => {
     expect(site.files.map((file) => file.path).sort()).toEqual(["index.html", "index.js", "style.css"]);
     expect(site.serverModuleSha256).toMatch(/^[0-9a-f]{64}$/u);
     expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/rsvp/index.js");
+  });
+
+  it("carries a site's unchanged files instead of reading them, and counts only new bytes against the limit", async () => {
+    const { files, provider, resources, runtime } = fixture();
+    const big = new Uint8Array(20_000_000).fill(7);
+    const art = new Uint8Array(10).fill(3);
+    files.set("/workspace/.rally-output/feed/index.html", new TextEncoder().encode('<meta property="og:image" content="cover.png">'));
+    files.set("/workspace/.rally-output/feed/episodes/one.mp3", big);
+    files.set("/workspace/.rally-output/feed/cover.png", art);
+    files.set("/workspace/.rally-output/feed/episodes/two.mp3", new Uint8Array(20_000_000).fill(8));
+    vi.mocked(resources.liveSiteFiles).mockResolvedValueOnce({ artifactId: "artifact-1", version: 4, files: [
+      { path: "episodes/one.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength },
+      { path: "cover.png", sha256: await sha256Hex(art), sizeBytes: art.byteLength },
+    ] });
+    // 40 MB of episodes, but only the new 20 MB one is read and counted.
+    await runtime.publishResource(context, { filePath: "feed" });
+    const [, , site] = vi.mocked(resources.publishSiteResource).mock.calls[0]!;
+    expect(site.files.find((file) => file.path === "episodes/one.mp3")).toEqual({
+      path: "episodes/one.mp3", sha256: await sha256Hex(big), sizeBytes: big.byteLength,
+      carriedFrom: { artifactId: "artifact-1", version: 4 },
+    });
+    expect(provider.readFile).not.toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/feed/episodes/one.mp3");
+    // The page and the preview image it names are always read.
+    expect(site.files.find((file) => file.path === "cover.png")).toHaveProperty("bytes");
+    expect(site.files.find((file) => file.path === "index.html")).toHaveProperty("bytes");
+    expect(resources.noteOversizedPublish).not.toHaveBeenCalled();
   });
 
   it("publishes a directory with only index.html as a static site with no database", async () => {

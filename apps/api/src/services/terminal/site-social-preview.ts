@@ -99,10 +99,13 @@ function limitUtf16WithoutSplitting(value: string, maximumCodeUnits: number): st
   return result;
 }
 
-function findAuthoredPreview(
-  source: string,
-  files: readonly PreviewFile[],
-): Omit<ArtifactSocialPreview["image"], "alt" | "generated"> | null {
+/**
+ * The paths, in order, a page's preview image may come from: what its
+ * `index.html` declares, then the conventional names. A directory publish
+ * reads these from the sandbox rather than carrying them from the live
+ * version, because the preview needs their bytes.
+ */
+export function socialPreviewSourcePaths(source: string): string[] {
   const declared = [
     htmlMetaContent(source, "property", "og:image"),
     htmlMetaContent(source, "name", "twitter:image"),
@@ -111,9 +114,16 @@ function findAuthoredPreview(
     "social-preview.png", "social-preview.jpg", "social-preview.jpeg", "social-preview.webp",
     "og-image.png", "og-image.jpg", "og.png",
   ];
-  for (const candidate of [...declared, ...conventional]) {
-    const path = candidate ? localAssetPath(candidate) : null;
-    if (!path) continue;
+  return [...declared, ...conventional]
+    .map((candidate) => candidate ? localAssetPath(candidate) : null)
+    .filter((path): path is string => path !== null);
+}
+
+function findAuthoredPreview(
+  source: string,
+  files: readonly PreviewFile[],
+): Omit<ArtifactSocialPreview["image"], "alt" | "generated"> | null {
+  for (const path of socialPreviewSourcePaths(source)) {
     const file = files.find((entry) => entry.path === path);
     if (!file) continue;
     const contentType = assetContentType(path);
