@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { IdSchema, UserIdSchema } from "@rally/contracts";
+import { CanvasNoticeChoicesSchema, IdSchema, UserIdSchema } from "@rally/contracts";
 import {
   CanvasAccessDecisionRequestSchema,
   CanvasAccessDecisionSchema,
@@ -11,6 +11,7 @@ import {
   CanvasAccessSchema,
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
+  CanvasNoticeChoiceUpdateSchema,
   AddCanvasSidekickRequestSchema,
   AddedCanvasSidekickSchema,
   CanvasListSchema,
@@ -60,6 +61,9 @@ canvasRoutes.put("/pinned-order", namedZValidator("canvas_pin_order", "Canvas pi
   await new CanvasService(c.env, getWorkspaceAuth(c)).reorderPins("canvas", c.req.valid("json").itemIds);
   return c.body(null, 204);
 });
+// Before `/:id`: the Canvases whose notices reach this person, for Settings.
+canvasRoutes.get("/notice-choices", async (c) =>
+  c.json(CanvasNoticeChoicesSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).noticeChoices())));
 canvasRoutes.get("/:id", canvasIdParam, async (c) => {
   c.header("Cache-Control", "no-store");
   return c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id)));
@@ -117,6 +121,11 @@ canvasRoutes.post("/:id/pin", canvasIdParam, zValidator("json", SidebarPinReques
   await new CanvasService(c.env, getWorkspaceAuth(c)).pin("canvas", c.req.valid("param").id, c.req.valid("json").pinned);
   return c.body(null, 204);
 });
+// This person's channels for a Canvas's notices: a list (empty mutes it), or null to follow Settings.
+canvasRoutes.put("/:id/notifications", canvasIdParam, namedZValidator("canvas_notice_choice",
+  "A notice choice is a list of push and email, or null")("json", CanvasNoticeChoiceUpdateSchema), async (c) =>
+  c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
+    .setNoticeChoice(c.req.valid("param").id, c.req.valid("json").channels))));
 // Join the participant list of a Canvas the person may already open.
 canvasRoutes.post("/:id/join", canvasIdParam, async (c) =>
   c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).join(c.req.valid("param").id))));

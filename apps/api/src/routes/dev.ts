@@ -453,3 +453,34 @@ devRoutes.post("/connector-events", zValidator("json", SyntheticConnectorEventBo
   });
   return c.json(SyntheticConnectorEventResultSchema.parse({ activityId, enqueued: true }), 202);
 });
+
+const DevCanvasNoticesBodySchema = z.strictObject({
+  workspaceId: z.string().min(1),
+  canvasId: z.string().min(1),
+  /** Who the Chat's agent acts for, as its loop would carry it. */
+  actingUserId: z.string().min(1),
+  action: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("register"), purpose: z.string().min(1), operationId: z.string().min(1) }),
+    z.strictObject({ kind: z.literal("send"), title: z.string().min(1), body: z.string().min(1), sourceId: z.string().min(1) }),
+  ]),
+});
+
+const DevCanvasNoticesResultSchema = z.looseObject({ outcome: z.enum(["registered", "sent", "refused"]) });
+
+/**
+ * Turn on, or send, a Canvas's notices as its Chat's agent would through
+ * `rally:notifications`, for a local stack with no model to call the tools
+ * (docs/PRDs/2026-11-14_canvas-notices). Development only.
+ */
+devRoutes.post("/canvas-notices", zValidator("json", DevCanvasNoticesBodySchema), async (c) => {
+  if (c.env.APP_ENV !== "development" || c.env.RALLY_DEV_AUTH !== "true") {
+    throw new ApiError(404, "not_found", "Development tooling is unavailable");
+  }
+  const body = c.req.valid("json");
+  const workspace = await hostedParentStub(c.env, body.workspaceId);
+  return c.json(DevCanvasNoticesResultSchema.parse(await workspace.canvasNotices({
+    workspaceId: body.workspaceId,
+    loop: { parentKind: "canvas", parentId: body.canvasId, actingUserId: body.actingUserId },
+    action: body.action,
+  })));
+});

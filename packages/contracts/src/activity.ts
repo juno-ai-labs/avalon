@@ -18,7 +18,7 @@ import { IdSchema, SubstreamIdSchema } from "./identifiers";
  * the person I asked approving or declining (`source_approved`,
  * `source_declined`).
  */
-export const ActivityKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished", "new_message", "artifact_updated", "access_request", "access_granted", "access_denied", "source_request", "source_approved", "source_declined"]);
+export const ActivityKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished", "new_message", "artifact_updated", "access_request", "access_granted", "access_denied", "source_request", "source_approved", "source_declined", "canvas_notice"]);
 export type ActivityKind = z.infer<typeof ActivityKindSchema>;
 
 /** Where it happened: a Canvas, or a Sidekick (`automation`, its storage name). */

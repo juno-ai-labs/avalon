@@ -16,6 +16,7 @@ import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import type { ArtifactAudienceControl } from '../components/artifact-card-tools';
 import { editorUserIds } from '../lib/canvas-sharing';
 import { CanvasTemplateStarters } from '../components/canvas-template-picker';
+import { CanvasNoticesJoinBanner, CanvasNoticesMenuSection } from '../components/canvas-notices';
 import { CanvasSidekicksSection, madeSidekicksArchiveCopy } from '../components/canvas-sidekicks-menu';
 import { AvatarStack, Button, EmptyState, ErrorNotice, Modal, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasCreation, useCanvasList, useCanvasNameSources, type CanvasCreation } from '../lib/canvases';
@@ -177,6 +178,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const sidekicks = row?.sidekicks ?? canvas.data?.sidekicks ?? [];
   const [choosingAppearance, setChoosingAppearance] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
+  const [noticeError, setNoticeError] = useState<Error | null>(null);
   const [linkError, setLinkError] = useState<Error | null>(null);
   const [audienceError, setAudienceError] = useState<Error | null>(null);
   const [renaming, setRenaming] = useState(() => canvasRenameRequested(location.state));
@@ -389,6 +391,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       }}
       sidekicks={sidekicks}
     />
+    <CanvasNoticesMenuSection canvas={canvas.data} disabled={!api} onError={setNoticeError} />
     {canvas.data?.canManage && <>
       <TitleMenuSeparator />
       <TitleMenuItem danger disabled={!api || archiving} icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
@@ -423,7 +426,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       const member = membersById.get(userId);
       return member ? [member] : [];
     });
-    return <TitlePillHeader
+    return <><TitlePillHeader
       current={level(panelOpen, openPanel)}
       trailing={<span className="canvas-header-trailing">
         {present.length > 0 && <span aria-label={`${present.length} ${present.length === 1 ? 'person' : 'people'} here`} className="canvas-header-present" role="group">
@@ -431,11 +434,13 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
         </span>}
         <Button className="canvas-share-button" disabled={!canvas.data} onClick={() => setSharing(true)}>Share</Button>
       </span>}
-    />;
+    />
+    <CanvasNoticesJoinBanner canvas={canvas.data} /></>;
   };
   const madeSidekicksCopy = madeSidekicksArchiveCopy(sidekicks);
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
+    {noticeError && <ErrorNotice occurrence={noticeError}>This Canvas's notifications could not be changed. Try again.</ErrorNotice>}
     {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
     {audienceError && <ErrorNotice occurrence={audienceError} title="Artifact access was not changed">{audienceError instanceof ApiError && audienceError.code === 'canvas_sharing_changed'
       ? 'Someone else changed this Canvas’s sharing first. Their change is shown now; choose again if you still want yours.'

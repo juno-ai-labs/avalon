@@ -133,7 +133,10 @@ function useBrowserPushReadiness(api: Parameters<typeof useDevicePushReadiness>[
   const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
   // The key Settings → Notifications reads, so a change in either shows in both.
-  const query = useQuery({ queryKey: ['web-push-state'], queryFn: () => webPushState(api!), enabled: api !== null, staleTime: 0 });
+  // Read once per session here: a fresh read re-registers the subscription, and
+  // a Chat remounts its rows as it scrolls. Settings reads its own fresh copy.
+  const query = useQuery({ queryKey: ['web-push-state'], queryFn: () => webPushState(api!), enabled: api !== null,
+    staleTime: Number.POSITIVE_INFINITY });
   if (api === null) return null;
   const state = browserPushState(query.data);
   return {

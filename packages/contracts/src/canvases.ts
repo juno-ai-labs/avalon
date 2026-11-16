@@ -155,6 +155,62 @@ export const CanvasSidekickSchema = z.object({
 });
 export type CanvasSidekick = z.infer<typeof CanvasSidekickSchema>;
 
+/**
+ * A Canvas's notices as one viewer sees them: what the Canvas said it will
+ * notify about, who turned them on, whether this viewer is a participant
+ * (so its notices reach them), and the channels they chose for this Canvas,
+ * `null` while they follow Settings. An empty list is muted.
+ * docs/PRDs/2026-11-14_canvas-notices.
+ */
+export const CanvasNoticesViewSchema = z.object({
+  purpose: z.string(),
+  registeredBy: z.object({ kind: z.enum(["rally", "sidekick"]), name: z.string() }),
+  participant: z.boolean(),
+  /** The values of `NotificationChannelSchema`, which this module cannot import without a cycle. */
+  channels: z.array(z.enum(["push", "email"])).nullable(),
+  /** When notices were last turned on or changed (ms). A client holding a record newer than this knows its copy is stale. */
+  updatedAt: z.number().int().nonnegative(),
+});
+export type CanvasNoticesView = z.infer<typeof CanvasNoticesViewSchema>;
+
+/**
+ * One Canvas whose notices reach this person, for Settings: its title, what
+ * its notices are about, and their own choice for it (`null` follows the
+ * Canvas notices default).
+ */
+export const CanvasNoticeChoiceRowSchema = z.object({
+  canvasId: WorkstreamIdSchema,
+  title: z.string(),
+  purpose: z.string(),
+  /** On its list, so its notices reach them; `false` for an Organization-wide Canvas they could join. */
+  participant: z.boolean(),
+  channels: z.array(z.enum(["push", "email"])).nullable(),
+});
+export type CanvasNoticeChoiceRow = z.infer<typeof CanvasNoticeChoiceRowSchema>;
+export const CanvasNoticeChoicesSchema = z.object({ canvases: z.array(CanvasNoticeChoiceRowSchema) });
+export type CanvasNoticeChoices = z.infer<typeof CanvasNoticeChoicesSchema>;
+
+/** A viewer's channels for one Canvas's notices: a list (empty mutes it), or `null` to follow Settings. */
+export const CanvasNoticeChoiceUpdateSchema = z.strictObject({
+  channels: z.array(z.enum(["push", "email"])).max(2).nullable(),
+});
+export type CanvasNoticeChoiceUpdate = z.infer<typeof CanvasNoticeChoiceUpdateSchema>;
+
+/**
+ * The record a Canvas's Chat shows when notices are turned on: a system
+ * message's structured content, drawn as a card with each viewer's own
+ * controls.
+ */
+export const CanvasNoticesRecordSchema = z.object({
+  kind: z.literal("canvas_notices_record"),
+  canvasId: WorkstreamIdSchema,
+  purpose: z.string().min(1),
+  registeredBy: z.object({ kind: z.enum(["rally", "sidekick"]), name: z.string() }),
+  /** When the record was written (ms), never after the registration it records. */
+  recordedAt: z.number().int().nonnegative(),
+});
+export type CanvasNoticesRecord = z.infer<typeof CanvasNoticesRecordSchema>;
+
 /** A Canvas as the person opening it sees it: its row, who it is shared with, and its artifacts newest first. */
 export const CanvasDetailSchema = CanvasSummarySchema.extend({
   /** Everyone on the participant list besides the creator, guests among them. */
@@ -178,6 +234,8 @@ export const CanvasDetailSchema = CanvasSummarySchema.extend({
     message: z.string().nullable(),
     requestedAt: TimestampSchema,
   })).optional(),
+  /** Its notices, when they are on; absent from a server older than Canvas notices. */
+  notices: CanvasNoticesViewSchema.nullable().optional(),
 });
 export type CanvasDetail = z.infer<typeof CanvasDetailSchema>;
 

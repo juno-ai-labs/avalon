@@ -70,6 +70,7 @@ import { sidekickSourceRequestCardFromToolEvent } from '../lib/sidekick-source-r
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { ApiError } from '../lib/api';
 import { SidekickSourceRequestCard } from './sidekick-sources';
+import { CanvasNoticesRecordCard } from './canvas-notices';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import { elicitationAnswerLabel } from '@rally/contracts/text';
@@ -3081,6 +3082,8 @@ export function MessageBlock({
   // label rather than showing a blank author.
   const automationName = message.automationActivation?.automationName;
   const automationAuthor = automationName ?? 'Sidekick';
+  // A Canvas's notices record is drawn as its card, for everyone, whatever the transcript hides.
+  if (message.canvasNoticesRecord) return <CanvasNoticesRecordCard record={message.canvasNoticesRecord} />;
   if (!automation && (message.authorType === 'system' || message.messageType === 'system')) {
     return <SystemMessageBlock disclosure={rowDisclosure} message={message} />;
   }
