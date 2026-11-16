@@ -289,8 +289,17 @@ preview route. A file that lands in a Canvas also returns its `url`: the publish
 reserves the file's host from the resource id, the same idempotent reservation
 the artifact access queue makes when it delivers the file, so the agent can link
 it (a feed's episode audio) without asking a person to copy it from the Share
-screen. It serves under the Canvas's artifact audience once that delivery lands,
-normally within seconds.
+screen. The URL ends in the file's name (`/2026-11-14-episode.mp3`) when its
+name is a plain file name; the host's root serves the same file. It serves
+under the Canvas's artifact audience once that delivery lands, normally within
+seconds.
+
+A publish refused for its size (`resource_limit_exceeded`) first logs
+`terminal_publish_over_size_limit` with the shape (file or directory), the
+extension, the size and the limit, never the path. The 25 MB limit was copied
+from uploads rather than chosen for audio or video, and these rows are how the
+team sees how often real work reaches it, and by how much, before picking
+another number.
 
 A published file's identity is the document's own coordinates — the conversation
 and the normalized published path, as `terminal:<workstream-id>:<path>` — so
@@ -1450,6 +1459,23 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-16 — Publishes refused for their size are logged
+
+**What changed:** `TerminalResourceBridge.noteOversizedPublish` logs
+`terminal_publish_over_size_limit` before each size refusal: the runtime's
+check on a file or a directory, and the bridge's own check on the bytes.
+
+**Why:** The team kept the 25 MB limit for now and asked to see how often
+episodes and other media reach it. A refusal reached only the model, so there
+was no record of it to count.
+
+**Considered and rejected:** Logging the path, which is the participant's own
+naming; the extension says what kind of file it was without saying what it was
+about. Raising the limit, which the team declined until these rows show a need.
+
+**Consequences:** A new size check on a publish path calls
+`noteOversizedPublish` before it throws, or its refusals go uncounted.
 
 ### 2026-11-15 — Canvas files return their URL, and the snapshot ships ffmpeg
 

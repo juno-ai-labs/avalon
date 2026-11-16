@@ -969,13 +969,15 @@ inference endpoint and key are both configured, and Bind exposes its tools as
 `generate_image` and
 `edit_image`, and
 `generate_audio`. All three are serial
-`record_before_execute` writes with a five-minute timeout.
+`record_before_execute` writes with a five-minute timeout, except that a
+`generate_audio` call whose text needs more than one speech request gets the
+longest tool deadline `ToolDefinitionSchema` allows (1,050 seconds).
 
 | Tool | Strict input | Successful `output` |
 | --- | --- | --- |
 | `generate_image` | `{ prompt: string, title?: string, size?: "auto" \| "1024x1024" \| "1536x1024" \| "1024x1536" }` | One attached `generated_file` resource plus an ephemeral image part for the current model turn. |
 | `edit_image` | `{ resourceId: UUID, prompt: string, title?: string, size?: same enum, maskResourceId?: UUID }` | A new version of that same attached image resource, preserving its resource ID and history, plus an ephemeral image part. The source must be an attached PNG, JPEG, or WebP image; a mask must be an attached PNG. |
-| `generate_audio` | `{ text: string (1–4096 characters), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
+| `generate_audio` | `{ text: string (non-empty, any length), voice?: "alloy" \| "ash" \| "ballad" \| "coral" \| "echo" \| "fable" \| "nova" \| "onyx" \| "sage" \| "shimmer" \| "verse" \| "marin" \| "cedar", instructions?: string, title?: string }` | One attached `generated_file` MP3 resource. The returned metadata identifies it as AI-generated audio; no audio bytes are copied into the model turn. |
 
 Both calls use Azure's `gpt-image-2` deployment. The caller controls only the
 prompt, title, and advertised size: moderation is fixed to `low`, quality to
@@ -986,7 +988,13 @@ R2 publication. Prompt text is never copied into resource metadata or logs.
 Audio calls use the main Azure `gpt-4o-mini-tts` deployment, whose live
 deployment version was `2025-12-15` when this contract was added. The response
 format and image count have no tool arguments: the response is exactly one MP3,
-and the voice defaults to `marin`. Text and optional speaking instructions are
+and the voice defaults to `marin`. Azure reads at most 4,096 characters per
+request, so longer text is split with message read-aloud's splitter
+(`speech-pieces.ts`), recorded piece by piece in order with the same voice and
+instructions, and joined into one MP3 without each piece's ID3 tags and length
+header. Each piece may use only what the earlier ones left of
+`MAX_ATTACHMENT_BYTES`, so text too long to keep stops at the piece that
+crosses it. Text and optional speaking instructions are
 sent to Azure but are not copied into the resource metadata, receipt, or logs.
 The plugin system message requires the final response to disclose that the
 recording uses an AI voice. Audio is a playable resource for people, not model
