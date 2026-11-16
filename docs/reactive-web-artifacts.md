@@ -963,6 +963,32 @@ shows its saved quote and image. The script and trust boundaries are owned by
 
 ## Changelog
 
+### 2026-11-16 — Stored bytes revalidate, and files answer at their own name
+
+**What changed:** A published file or a static site's stored asset is sent
+`private, no-cache` instead of `private, no-store`, and `storedObjectResponse`
+answers an `If-None-Match` naming the current `ETag` with `304`. A published
+file is also served at `/<its name>` when its title is a plain file name
+(`publishedFilePath`), and `publish_resource` returns that URL.
+
+**Why:** Every podcast app refresh and every replay downloaded the whole file
+again, through admission and R2, for bytes that had not changed. Some podcast
+apps and download managers read a file's type from its URL, and a URL ending in
+`/` gave them nothing to read.
+
+**Considered and rejected:** Caching at Cloudflare's edge while a Canvas is
+public, which cuts requests as well as bytes but keeps serving after the Canvas
+goes private until the cache lifetime ends, unless the access queue purges it;
+that is a separate decision once load is real. Revalidating everything, which
+would let a browser keep an active site's personalized output; only stored
+bytes, which are the same for every viewer, get it. Serving a file at any name
+with its extension, which would let a link claim a name the file does not have.
+
+**Consequences:** Admission runs on every revalidation, so `no-cache` changes
+bandwidth, not who can read. A path that serves stored bytes passes
+`revalidate: true` to `withSecurityHeaders`, which applies it only to a response
+with an `ETag`; a rewritten body has none and stays `no-store`.
+
 ### 2026-11-15 — Stored files and assets answer byte ranges
 
 **What changed:** Published files, static assets and `env.ASSETS` reads go
