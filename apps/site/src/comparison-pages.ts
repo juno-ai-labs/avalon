@@ -218,7 +218,7 @@ export function renderComparisonPage(comparison: Comparison): string {
 <main id="content">
 <article class="compare-page">
 <header class="compare-hero">
-<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a href="/">Rally</a></li><li><a href="/#compare">Compared to</a></li><li aria-current="page">Rally vs ${escapeHtml(name)}</li></ol></nav>
+<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a href="/">Rally</a></li><li><a href="/#footer-compared">Compared to</a></li><li aria-current="page">Rally vs ${escapeHtml(name)}</li></ol></nav>
 <h1 class="display compare-title">Rally <span class="compare-versus">vs</span> ${escapeHtml(name)}</h1>
 ${answer}
 <p class="compare-meta">Updated <time datetime="${updated}">${date}</time> · Written by the Rally team. Yes, we’re biased. We tried to keep it fair anyway.</p>
