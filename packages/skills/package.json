@@ -10,9 +10,12 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@rally/contracts": "workspace:*"
+    "@rally/contracts": "workspace:*",
+    "yaml": "^2.9.0",
+    "zod": "catalog:"
   },
   "devDependencies": {
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "@types/node": "26.4.0"
   }
 }
