@@ -88,7 +88,7 @@ export function renderSiteFooter(): string {
     + footerColumn('footer-trust', 'Trust Center', trust)
     + footerColumn('footer-help', 'Help', help)
     + footerColumn('footer-blog', 'Blog', blog)
-    + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small><small>rallywith.ai</small></p>`
+    + `</div><p class="footer-legal"><small>© 2026 Juno AI Labs · Rally</small><small>Assurance Level 2 certified</small><small>rallywith.ai</small></p>`
     + `<p class="footer-mark" aria-hidden="true">rally</p></footer>`;
 }
 
