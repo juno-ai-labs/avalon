@@ -29,8 +29,12 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   and raster preview crops. Update that geometry when replacing the master;
   browser and card code must not keep separate coordinates. Retain the distinct
   blue hexagonal Sidekick and compare the drawings as a set.
-- **Illustrative actions:** The homepage's Canvas/Sidekick examples change local
-  example data; they do not run jobs or connect to tools. Preserve that distinction
+- **Illustrative actions:** The homepage's example Canvas is a chat beside one
+  artifact, with no app sidebar. Its three examples (a Gmail pipeline dashboard,
+  a Granola feature-request board with voting, a podcast feed) each draw their
+  own artifact in `index.html`; "Run the Sidekick" only swaps local markup to
+  version 2 (`data-new` rows appear, `data-v2` text replaces the original).
+  They do not run jobs or connect to tools. Preserve that distinction
   and the acquisition action IDs. The historical offer action is now an inline
   browser-entry link; the timed offer card was removed.
 - **One plan catalog:** Homepage pricing reads `@rally/contracts/plans`, also
@@ -76,6 +80,7 @@ the page live in the pages and in `access-copy.ts`, not here.
 | `apps/site/src/landing.css` | The earlier product, start-fast and comparison system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
+| `apps/site/marketplace/index.html`, `apps/site/src/marketplace.css`, `apps/site/src/marketplace.ts` | The artifact marketplace: example artifacts by kind, a client-side kind filter, and links into the web app. Styles build on `home.css` |
 | `apps/site/src/home-illustrations.ts` | Shared artwork geometry and accessible SVG views |
 | `apps/site/src/home-pricing.ts` | Homepage plan markup from the product catalog and weekly allocation function |
 | `apps/site/start-fast/index.html` | The earlier landing design, with copy from `access-copy.ts` and shared sections |
@@ -287,6 +292,27 @@ automated test: it is checked in a real browser at desktop and phone widths,
 in light and dark, before a change ships, as the repository's rule on visible changes requires.
 
 ## Changelog
+
+### 2026-11-16 — Reactive, multi-human artifacts on the homepage, and a marketplace
+
+**What changed:** The hero now says Rally creates reactive, multi-human
+artifacts. The example Canvas dropped its app sidebar and shows three different
+artifacts (dashboard, voting micro-app, podcast feed) instead of three task
+lists. The Sidekicks band and the "See how Rally compares" block left the
+homepage. A static `/marketplace/` page lists example artifacts by kind.
+
+**Why:** The product owner repositioned the homepage around reactive artifacts
+that a team shapes together, and asked that the examples look different from
+one another. Three task lists in one template could not show that.
+
+**Considered and rejected:** Keeping one shared document template filled from
+data. It made every example look the same, which was the complaint.
+
+**Consequences:** Each example's artifact is its own markup, so a new example
+needs new markup and styles, not only data. The marketplace is illustrative:
+there is no marketplace in the product, and its cards open the web app. The
+`demo-request` link moved to the closing band and keeps its `sidekicks`
+placement so its history stays comparable.
 
 ### 2026-11-12 — A pencil identity for the homepage and reading pages
 
