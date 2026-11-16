@@ -1,12 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": []
+    "types": ["node"]
   },
   "include": [
     "index.ts",
     "types.ts",
     "platform-skills/**/*.ts",
-    "task-skills/**/*.ts"
+    "task-skills/**/*.ts",
+    "marketplace-skills/**/*.ts"
   ]
 }

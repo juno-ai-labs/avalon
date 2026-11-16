@@ -8,6 +8,7 @@ declare module 'virtual:rally-canvas-templates' {
     color: (typeof PALETTE_RING)[number];
     tags: string[];
     slug: string;
+    link: string;
     prompt: string;
   }[];
   export default templates;

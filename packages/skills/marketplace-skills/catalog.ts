@@ -1,20 +1,23 @@
 /**
- * The Marketplace's Canvas templates, read from the Markdown files in
- * `packages/skills/marketplace-skills/`. Node only: the app's builds compile
- * this into a virtual module (`canvas-template-plugin.ts`), and the public
- * site renders its `/marketplace/` page from the same list, so the two never
- * disagree about what the Marketplace offers.
+ * The Marketplace's Canvas templates, read from the Markdown files beside
+ * this module. The caller supplies the file reader, Node's `readFileSync` in
+ * both build-time callers: the app's builds compile this into a virtual module
+ * (`apps/desktop/canvas-template-plugin.ts`), and the public site renders its
+ * `/marketplace/` page from the same list, so the two never disagree about
+ * what the Marketplace offers. It lives here, beside the files, so a change to
+ * the catalog is a change under `packages/`, which the site's deploy watches.
  */
-import { readFileSync } from 'node:fs';
-import { basename } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
-import { PICKABLE_APPEARANCE_ICON_KEYS } from '../../packages/contracts/src/appearance-icons';
-import { parseTemplateLinkPath } from '../../packages/contracts/src/links';
-import { PALETTE_RING } from '../../packages/contracts/src/palette';
-import { describeZodIssues } from '../../packages/contracts/src/zod-diagnostics';
-import { CANVAS_TEMPLATE_CATEGORIES } from './src/renderer/lib/canvas-template-categories';
+// By path rather than `@rally/contracts`: build configs run this in Node,
+// which loads a bare package import unbundled and cannot resolve its
+// extensionless imports.
+import { PICKABLE_APPEARANCE_ICON_KEYS } from '../../contracts/src/appearance-icons';
+import { templateLinkPath } from '../../contracts/src/links';
+import { PALETTE_RING } from '../../contracts/src/palette';
+import { describeZodIssues } from '../../contracts/src/zod-diagnostics';
+import { CANVAS_TEMPLATE_CATEGORIES } from './categories';
 
 /**
  * The catalog in order, relative to `marketplace-skills/`. The first template
@@ -32,7 +35,7 @@ export const CANVAS_TEMPLATE_FILES = [
   'recruiters/recruiting-market-map.md',
 ] as const;
 
-export const CANVAS_TEMPLATE_ROOT = new URL('../../packages/skills/marketplace-skills/', import.meta.url);
+export const CANVAS_TEMPLATE_ROOT = new URL('./', import.meta.url);
 
 const templateMetadata = z.object({
   name: z.string().trim().min(1),
@@ -46,11 +49,11 @@ const templateMetadata = z.object({
 });
 
 /**
- * `slug` is the file's name without `.md`: what a template link
- * (`/app/templates/<slug>`) and the in-app route name it by, so a file is not
+ * `slug` is the file's name without `.md`, and `link` the web app path that
+ * starts it (`/app/templates/<slug>`, `templateLinkPath`), so a file is not
  * renamed lightly once its link has been handed out.
  */
-export type CanvasTemplateData = z.infer<typeof templateMetadata> & { slug: string; prompt: string };
+export type CanvasTemplateData = z.infer<typeof templateMetadata> & { slug: string; link: string; prompt: string };
 
 /** One template file: YAML front matter for its card, then the Markdown prompt it sends. */
 export function parseCanvasTemplate(source: string, file: string): CanvasTemplateData {
@@ -63,15 +66,20 @@ export function parseCanvasTemplate(source: string, file: string): CanvasTemplat
   const prompt = document[2]?.trim();
   if (!prompt) throw new Error(`${file}: expected a nonempty Markdown prompt.`);
 
-  const slug = basename(file, '.md');
-  if (parseTemplateLinkPath(`/app/templates/${slug}`) !== slug) throw new Error(`${file}: a template's file name is lowercase words joined by hyphens.`);
-  return { ...metadata.data, slug, prompt };
+  const slug = file.slice(file.lastIndexOf('/') + 1).replace(/\.md$/u, '');
+  let link: string;
+  try { link = templateLinkPath(slug); }
+  catch { throw new Error(`${file}: a template's file name is lowercase words joined by hyphens.`); }
+  return { ...metadata.data, slug, link, prompt };
 }
 
-/** Every template, in catalog order. Read on each call so a dev server serves the current files. */
-export function loadCanvasTemplates(): CanvasTemplateData[] {
+/**
+ * Every template, in catalog order, with `read` returning a file's text by its
+ * URL. Read on each call so a dev server serves the current files.
+ */
+export function loadCanvasTemplates(read: (file: URL) => string): CanvasTemplateData[] {
   const templates = CANVAS_TEMPLATE_FILES.map((file) =>
-    parseCanvasTemplate(readFileSync(new URL(file, CANVAS_TEMPLATE_ROOT), 'utf8'), file));
+    parseCanvasTemplate(read(new URL(file, CANVAS_TEMPLATE_ROOT)), file));
   const seen = new Set<string>();
   for (const { slug } of templates) {
     if (seen.has(slug)) throw new Error(`Two templates are named ${slug}.md; a template link needs each name once.`);
