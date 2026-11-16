@@ -267,6 +267,52 @@ it("creates an organization for an email-only account and opens it with the cook
   } finally { for (const database of workspaceObject.databases) database.close(); }
 });
 
+it("lists, accepts and declines an organization invitation for the cookie's address, holding no bearer",async () => {
+  const entry = await login();
+  const now = new Date().toISOString();
+  const later = new Date(Date.now()+86_400_000).toISOString();
+  const ownerId = crypto.randomUUID();
+  db.prepare("INSERT INTO users(id,email,name,created_at,updated_at) VALUES (?,?,?,?,?)").run(ownerId,"owner@example.test","Maya Owner",now,now);
+  const invite = (name:string) => {
+    const workspaceId = workspace(ownerId,"member");
+    db.prepare("UPDATE workspaces SET name=? WHERE id=?").run(name,workspaceId);
+    const id = crypto.randomUUID();
+    db.prepare(`INSERT INTO workspace_invitations(id,workspace_id,email,invited_by_user_id,token_hash,role,expires_at,created_at)
+      VALUES (?,?,?,?,?,'member',?,?)`).run(id,workspaceId,"guest@example.test",ownerId,crypto.randomUUID(),later,now);
+    return { id,workspaceId };
+  };
+  const workspaceObject = creatingWorkspaceObjectBinding(db);
+  const env = { ...bindings(),WORKSPACE_DOS:workspaceObject.binding };
+  const answer = (id:string, verb:"accept"|"decline", body:unknown) => createApp().request(`${apiOrigin}/browser/invitations/${id}/${verb}`,{ method:"POST",
+    headers:{ origin,"content-type":"application/json",cookie:entry.cookie },body:JSON.stringify(body) },env);
+  const joining = invite("Acme Research");
+  const turningDown = invite("Other Org");
+  const listed = await request("invitations",entry.cookie);
+  expect(listed.status).toBe(200);
+  const { invitations } = await listed.json() as { invitations:{ id:string; workspaceName:string; invitedByName:string; role:string }[] };
+  expect(invitations.map((item) => [item.workspaceName,item.invitedByName,item.role]).sort())
+    .toEqual([["Acme Research","Maya Owner","member"],["Other Org","Maya Owner","member"]]);
+  const operationId = "01920000-0000-7000-8000-000000000021";
+  const accepted = await answer(joining.id,"accept",{ region:"global",operationId });
+  expect(accepted.status).toBe(200);
+  expect(await accepted.json()).toEqual({ region:"global",workspaceId:joining.workspaceId });
+  expect(db.prepare("SELECT role,status FROM workspace_members WHERE workspace_id=? AND user_id=?").get(joining.workspaceId,entry.session.user.id))
+    .toEqual({ role:"member",status:"active" });
+  // The session the accept path minted is revoked; only the browser's identity session stays open.
+  expect(db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE revoked_at IS NULL").get()).toEqual({ n:1 });
+  // A retry of the same operation answers the same organization.
+  const retry = await answer(joining.id,"accept",{ region:"global",operationId });
+  expect(await retry.json()).toEqual({ region:"global",workspaceId:joining.workspaceId });
+  const selected = await request("workspace/select",entry.cookie,{ workspaceId:joining.workspaceId });
+  expect(await selected.json()).toMatchObject({ workspace:{ id:joining.workspaceId,name:"Acme Research",role:"member" } });
+  expect((await answer(turningDown.id,"decline",{ region:"global" })).status).toBe(204);
+  expect((await (await request("invitations",entry.cookie)).json())).toEqual({ invitations:[] });
+  expect(db.prepare("SELECT COUNT(*) AS n FROM workspace_members WHERE workspace_id=? AND user_id=?").get(turningDown.workspaceId,entry.session.user.id))
+    .toEqual({ n:0 });
+  expect((await request("invitations")).status).toBe(401);
+  for (const database of workspaceObject.databases) database.close();
+});
+
 it("leaves an account's setup exemption alone when the create fails or it belongs to an organization in another deployment",async () => {
   const eligible = (userId:string) => db.prepare("SELECT onboarding_eligible FROM users WHERE id=?").get(userId);
   const create = (cookie:string, env:ReturnType<typeof bindings>, operationId:string) => createApp().request(`${apiOrigin}/browser/workspace/create`,{ method:"POST",

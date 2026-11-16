@@ -2,6 +2,7 @@ import { isConfiguredRegion } from '@rally/contracts/regions';
 import { reportDesktopHandoff } from './telemetry';
 
 const button = document.querySelector<HTMLAnchorElement>('#open-rally');
+const browser = document.querySelector<HTMLAnchorElement>('#open-browser');
 const error = document.querySelector<HTMLElement>('#invite-error');
 const parameters = new URLSearchParams(window.location.hash.replace(/^#/u, ''));
 const entries = [...parameters.entries()];
@@ -29,8 +30,11 @@ if (button && valid && token && region) {
   button.href = deepLink.toString();
   button.removeAttribute('aria-disabled');
   button.addEventListener('click', () => reportDesktopHandoff('invite', 'manual', 'valid'));
+  // The web app finds the invitation by the signed-in address; the token stays here.
+  if (browser && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) browser.href = 'http://localhost:8794/';
 } else {
   reportDesktopHandoff('invite', 'presented', 'invalid');
   button?.setAttribute('hidden', '');
+  browser?.setAttribute('hidden', '');
   error?.removeAttribute('hidden');
 }

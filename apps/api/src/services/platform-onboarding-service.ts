@@ -1252,6 +1252,12 @@ export class PlatformOnboardingService {
     };
   }
 
+  /** Invitations waiting for this account's address in every deployment, without `state`'s binding reconciliation. */
+  async invitations(): Promise<WorkspaceOnboardingState["invitations"]> {
+    const discovery = await this.discover(await this.loadPlatformIdentity());
+    return discovery.flatMap((item) => item.invitations);
+  }
+
   async activate(region: Region, workspaceId: string, options: { guests?: boolean } = {}): Promise<Session> {
     const identity = await this.loadPlatformIdentity();
     const discovery = await this.discover(identity);

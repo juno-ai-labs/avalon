@@ -5,10 +5,11 @@ import { useEffect, useRef, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
 import { RallyMark, Button, ConnectorMark, ErrorNotice } from '../components/primitives';
 import { CreateOrganizationCard } from './create-organization';
+import { InvitationChoices } from './invitation-choices';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { rememberSignInProvider, type SignInProvider } from '../lib/sign-in-provider';
-import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
+import { uuidV7 } from '../lib/telemetry';
 import type { PendingWorkspaceInvitation } from '../lib/types';
 
 export type SignInDesktopBridge = Pick<
@@ -161,42 +162,6 @@ export function InvitationOnboarding({
   onChanged: () => Promise<unknown> | void;
 }): React.JSX.Element {
   const { acceptInvitation, declineInvitation, session, signOut } = useAppSession();
-  const [workingId, setWorkingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const accept = async (invitation: PendingWorkspaceInvitation): Promise<void> => {
-    const operationId = uuidV7();
-    reportTelemetryProductIntent({
-      kind: 'workspace_activation_requested',
-      selectedRegion: invitation.region,
-      entrypoint: 'invitation',
-      operationId,
-    });
-    setWorkingId(invitation.id);
-    setError(null);
-    try {
-      await acceptInvitation(invitation.region, invitation.id, operationId);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The invitation could not be accepted.');
-      await onChanged();
-    } finally {
-      setWorkingId(null);
-    }
-  };
-
-  const decline = async (invitation: PendingWorkspaceInvitation): Promise<void> => {
-    setWorkingId(invitation.id);
-    setError(null);
-    try {
-      await declineInvitation(invitation.region, invitation.id);
-      await onChanged();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The invitation could not be declined.');
-    } finally {
-      setWorkingId(null);
-    }
-  };
-
   return (
     <main className="onboarding-shell signin-shell window-drag">
       <section className="signin-card invitation-card window-no-drag" aria-labelledby="invitation-heading">
@@ -204,25 +169,9 @@ export function InvitationOnboarding({
         <p className="eyebrow">Organization invitations</p>
         <h1 id="invitation-heading">Choose where to join</h1>
         <p>Signed in as <strong>{session?.user.email}</strong>. Accept an invitation or decline it to continue.</p>
-        <div className="invitation-choice-list">
-          {invitations.map((invitation) => (
-            <article className="invitation-choice" key={invitation.id}>
-              <div>
-                <strong>{invitation.workspaceName}</strong>
-                <span>Invited by {invitation.invitedByName} · {invitation.role === 'admin' ? 'Administrator' : 'Member'}</span>
-
-              </div>
-              <div className="invitation-choice-actions">
-                <Button disabled={workingId !== null} onClick={() => void decline(invitation)}>Decline</Button>
-                <Button className="button-primary" disabled={workingId !== null} onClick={() => void accept(invitation)}>
-                  {workingId === invitation.id && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-                  Accept
-                </Button>
-              </div>
-            </article>
-          ))}
-        </div>
-        {error && <ErrorNotice>{error}</ErrorNotice>}
+        <InvitationChoices invitations={invitations} onChanged={onChanged}
+          onAccept={(invitation, operationId) => acceptInvitation(invitation.region, invitation.id, operationId)}
+          onDecline={(invitation) => declineInvitation(invitation.region, invitation.id)} />
         <button className="text-button onboarding-signout" onClick={() => void signOut()} type="button">Sign out</button>
       </section>
     </main>

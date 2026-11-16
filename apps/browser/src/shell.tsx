@@ -5,10 +5,11 @@ import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
-import { BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspacesSchema, type BrowserWorkspaceAttention } from '@rally/contracts/browser-session';
+import { BrowserInvitationsSchema, BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspaceCreatedSchema, BrowserWorkspacesSchema, type BrowserWorkspaceAttention } from '@rally/contracts/browser-session';
 import { canvasCanonicalUrl } from '@rally/contracts/links';
 import { SupportPeopleSchema, SupportWorkspacesSchema } from '@rally/contracts';
 import { z } from 'zod';
+import { uuidV7 } from '../../desktop/src/renderer/lib/telemetry';
 import { IDENTITY_REGION, type Region } from '@rally/contracts/regions';
 import { BrowserBoot } from './entry';
 // The native consumer does not need the desktop navigation and settings bundle.
@@ -136,10 +137,13 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     updateCurrentUserName: () => { void queryClient.invalidateQueries({ queryKey: ['workspace'] }); },
     clearPendingInvitation: () => undefined,
     getOnboardingState: async () => {
-      const { workspaces } = await browserRequest(IDENTITY_REGION, '/workspaces', BrowserWorkspacesSchema);
+      const [{ workspaces }, { invitations }] = await Promise.all([
+        browserRequest(IDENTITY_REGION, '/workspaces', BrowserWorkspacesSchema),
+        browserRequest(IDENTITY_REGION, '/invitations', BrowserInvitationsSchema),
+      ]);
       // The identity cookie reads every membership's attention, so each row
       // counts as holding a credential for the account menu's counts.
-      return { workspace: null, workspaces: workspaces.map((row) => ({ ...row, credentialStored: true })), invitations: [], identity: 'connected' as const };
+      return { workspace: null, workspaces: workspaces.map((row) => ({ ...row, credentialStored: true })), invitations, identity: 'connected' as const };
     },
     getWorkspaceAttention: async ({ region: target, workspaceId }) => {
       const { attention } = await readBrowserAttention();
@@ -151,8 +155,15 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     // The canonical path, which the entry opens in its Organization (`session.ts`).
     openWorkspaceCanvas: (target) => { location.assign(new URL(canvasCanonicalUrl(location.origin, target)).pathname); },
     activateWorkspace: async (target, workspaceId) => { location.assign(`/app/workspaces/${target}/${workspaceId}`); },
-    acceptInvitation: macAppOnly,
-    declineInvitation: macAppOnly,
+    // Joined on Global, then opened as switching Organization opens one here.
+    acceptInvitation: async (target, invitationId, operationId) => {
+      const joined = await browserRequest(IDENTITY_REGION, `/invitations/${encodeURIComponent(invitationId)}/accept`,
+        BrowserWorkspaceCreatedSchema, { region: target, operationId: operationId ?? uuidV7() });
+      location.assign(`/app/workspaces/${joined.region}/${joined.workspaceId}`);
+    },
+    declineInvitation: async (target, invitationId) => {
+      await browserRequest(IDENTITY_REGION, `/invitations/${encodeURIComponent(invitationId)}/decline`, z.undefined(), { region: target });
+    },
     reconnectAccountIdentity: macAppOnly,
     abandonAccountSignIn: () => undefined,
     leaveWorkspace: async (workspaceId, expectedOutcome) => {
