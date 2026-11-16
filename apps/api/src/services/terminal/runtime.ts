@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_ATTACHMENT_BYTES } from "@rally/contracts";
+import { DEFAULT_MAX_ATTACHMENT_BYTES, type ArtifactManifest } from "@rally/contracts";
 import type {
   HarnessToolContext,
   HarnessToolEffectReconciliation,
@@ -63,15 +63,9 @@ const PATH_OUTSIDE_ROOT_EXIT_CODE = 43;
 const MAXIMUM_PUBLISH_BYTES = DEFAULT_MAX_ATTACHMENT_BYTES;
 
 /**
- * The most new bytes one site publish may stream from the sandbox, beside the
- * {@link MAXIMUM_PUBLISH_BYTES} it may read into memory.
- *
- * Two budgets because they bound different things. The buffered one guards
- * the Worker's memory and the provider RPC's message size, and must not move
- * for media. This one bounds only transfer and storage per publish, so the
- * team can raise it for longer episodes without touching memory. Its value is
- * the team's: 25 MB, the number they chose to keep (and to watch through
- * `terminal_publish_over_size_limit`), not a memory figure.
+ * The most new bytes one site publish may stream. Unlike
+ * {@link MAXIMUM_PUBLISH_BYTES}, which guards memory, it bounds only transfer,
+ * so it can rise for media; 25 MB is the team's chosen number.
  */
 const MAXIMUM_STREAMED_PUBLISH_BYTES = DEFAULT_MAX_ATTACHMENT_BYTES;
 const BUFFERED_BYTES = "read whole (pages, the server module, the preview image, or an archive)";
@@ -169,6 +163,8 @@ export interface TerminalResourceBridge {
       stateful: boolean;
       files: readonly SitePublishFile[];
       serverModuleSha256: string | null;
+      /** The live manifest `liveSiteFiles` answered, so it is not read twice. */
+      live?: ArtifactManifest | null;
     },
   ): Promise<TerminalPublishedSiteOutput>;
   /**
@@ -180,7 +176,7 @@ export interface TerminalResourceBridge {
     context: HarnessToolContext,
     filePath: string,
     input?: { canvas?: string | undefined; displayName?: string | undefined },
-  ): Promise<{ files: readonly { path: string; sha256: string; sizeBytes: number }[] } | null>;
+  ): Promise<{ manifest: ArtifactManifest } | null>;
   /**
    * What this path already published as, or `null` if it never has.
    *
@@ -411,9 +407,10 @@ export function createDaytonaTerminalRuntime(
 
   /**
    * One sandbox file as a stream, cancelled with the tool call. A provider
-   * Worker deployed before streaming (`terminal_provider_file_stream_unavailable`,
-   * or an RPC method it does not have) is read whole instead, so a deploy in
-   * either order keeps publishing.
+   * without `openFile` (a test double), or a provider Worker deployed before
+   * it (an RPC method it does not have), is read whole instead, so the two
+   * Workers deploy in either order. The RPC branch can go once both Workers
+   * with `openFile` have deployed.
    */
   async function openSandboxFile(sandbox: AcquiredTerminalSandbox, path: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
     const whole = async () => new Response((await provider.readFile(sandbox.providerSandboxId, path)).slice().buffer).body!;
@@ -422,7 +419,7 @@ export function createDaytonaTerminalRuntime(
       stream = provider.openFile ? await provider.openFile(sandbox.providerSandboxId, path, signal) : await whole();
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (!/terminal_provider_file_stream_unavailable|does not implement/u.test(message)) throw error;
+      if (!/does not implement/u.test(message)) throw error;
       stream = await whole();
     }
     // After the provider returns, cancelling the tool call cancels the stream,
@@ -824,7 +821,7 @@ export function createDaytonaTerminalRuntime(
     const previewSources = new Set(readIndex
       ? socialPreviewSourcePaths(new TextDecoder("utf-8", { fatal: false }).decode(readIndex.bytes))
       : []);
-    const liveDigests = new Set((live?.files ?? []).map((file) => `${file.sha256}:${file.sizeBytes}`));
+    const liveDigests = new Set((live?.manifest.assets ?? []).map((file) => `${file.sha256}:${file.sizeBytes}`));
     const needsBytes = (entry: DirectoryEntry): boolean => resolved.kind !== "site"
       || entry.path === "index.html"
       || previewSources.has(entry.path)
@@ -887,6 +884,7 @@ export function createDaytonaTerminalRuntime(
         : false,
       files: siteFiles,
       serverModuleSha256: serverModule?.sha256 ?? null,
+      live: live?.manifest ?? null,
     });
   }
 

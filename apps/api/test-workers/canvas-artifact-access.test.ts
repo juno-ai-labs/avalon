@@ -381,8 +381,8 @@ describe("Canvas artifact access propagated to local serving", () => {
     expect(await (await env.PAYLOADS.get(blob))?.text()).toBe("episode one audio");
     // An empty file is stored without being opened.
     expect((await env.PAYLOADS.head(artifactBlobKey(first.artifactId, await sha256Hex(new Uint8Array()))))?.size).toBe(0);
-    expect((await bridge.liveSiteFiles(call(), "feed"))?.files)
-      .toContainEqual({ path: "episodes/one.mp3", sha256: one.sha256, sizeBytes: 17 });
+    expect((await bridge.liveSiteFiles(call(), "feed"))?.manifest.assets)
+      .toContainEqual({ path: "episodes/one.mp3", contentType: "audio/mpeg", sha256: one.sha256, sizeBytes: 17 });
 
     // The next episode: the first is already stored, so it is neither opened nor written,
     // and a second path with the same bytes shares its blob.
@@ -405,7 +405,7 @@ describe("Canvas artifact access propagated to local serving", () => {
     await expect(publish([await file("index.html", "<h1>Show, three</h1>"),
       await streamed("episodes/three.mp3", "episode three audio", async () => { throw new Error("daytona_file_stream_http_404"); })]))
       .rejects.toMatchObject({ code: "resource_publish_failed", details: { code: "daytona_file_stream_http_404" } });
-    expect((await bridge.liveSiteFiles(call(), "feed"))?.files.map((entry) => entry.path))
+    expect((await bridge.liveSiteFiles(call(), "feed"))?.manifest.assets.map((entry) => entry.path))
       .toEqual(expect.arrayContaining(["episodes/one.mp3", "episodes/two.mp3"]));
 
     // A live version stored before blobs: its file is copied into a blob, once; and a

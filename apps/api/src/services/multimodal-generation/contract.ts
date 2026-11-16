@@ -64,7 +64,7 @@ export const GenerateAudioArgumentsSchema = deferredZodSchema(() => z.strictObje
   // model accepts and joins them (`speech-pieces.ts`). The attachment byte
   // limit on the joined recording is what bounds it.
   text: z.string().trim().min(1).describe(
-    "The words to speak, of any length. Long text is recorded in pieces and joined into one MP3, so send a whole script in one call.",
+    "The words to speak. Text longer than one speech request is recorded in pieces and joined into one MP3; for a long script, record one section per call.",
   ),
   voice: AudioVoiceSchema.optional(),
   instructions: z.string().trim().min(1).optional(),
@@ -105,8 +105,7 @@ const definitions = memoizedValue(() => ({
   },
   generate_audio: {
     name: "generate_audio",
-    longRunning: true,
-    description: "Turn text of any length into one AI-generated MP3 voice recording, in one voice and reading style throughout, and attach it to the current conversation as a durable audio resource.",
+    description: "Turn text into one AI-generated MP3 voice recording, in one voice and reading style throughout, and attach it to the current conversation as a durable audio resource.",
     capability: "multimodal.generate",
     mode: "write",
     idempotency: "record_before_execute",

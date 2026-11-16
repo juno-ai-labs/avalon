@@ -35,6 +35,7 @@ type SupportedTerminalConfiguration = Extract<TerminalRegionConfiguration, { cap
 export type DaytonaTerminalProvider = TerminalSandboxProvider & {
   prepareSandbox: NonNullable<TerminalSandboxProvider["prepareSandbox"]>;
   cleanupCommand: NonNullable<TerminalSandboxProvider["cleanupCommand"]>;
+  openFile: NonNullable<TerminalSandboxProvider["openFile"]>;
 };
 
 interface DaytonaSandboxLike {
