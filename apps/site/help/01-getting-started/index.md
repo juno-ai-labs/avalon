@@ -1,11 +1,11 @@
 ---
 title: Getting started
-description: Install Rally, sign in, set up your Organization and start your first Canvas.
+description: Open Rally in your browser, sign in, set up your Organization and start your first Canvas.
 ---
 
 Most work ends in a thing. A plan, a budget, a deck, a report, a sign-up page. Getting there is usually a conversation spread across a chat app, an inbox and a few browser tabs nobody wants to close, and the thing itself lives somewhere else again. Rally puts the conversation and the thing side by side, with an AI agent in the conversation that does the making.
 
-Rally is a desktop app for the Mac. There is also a version that runs in a web browser, for people someone has shared a Canvas with and for the times you are away from your Mac. The Mac app is the one with everything in it, so that is where this chapter starts.
+Rally runs in your web browser, at [app.rallywith.ai](https://app.rallywith.ai), on a computer or a phone. There is nothing to install. There is also a desktop app for the Mac and Linux, which adds a few extras, but this book assumes the browser, and [The desktop app](../08-rally-everywhere/04-the-desktop-app.md) says what the app adds.
 
 The agent inside Rally is also called Rally. That sounds confusing for about a day. After that you will say "ask Rally" and mean the agent, and "open Rally" and mean the app, and nobody will be confused at all. Rally the agent reads, writes, searches the web, runs code, works in your other tools and makes files. It does this in the open, in a conversation the people you invite can see and join.
 
@@ -25,6 +25,6 @@ If you remember only one picture, make it this: Canvases are where you and Rally
 
 ## What this chapter covers
 
-This chapter has five short pages. You will install Rally and sign in, create or join an Organization, go through the guided setup, take a tour of the window, and then start your first Canvas and give Rally something to make. Allow about as long as it takes a kettle to boil, twice.
+This chapter has five short pages. You will open Rally and sign in, create or join an Organization, go through the guided setup, take a tour of the window, and then start your first Canvas and give Rally something to make. Allow about as long as it takes a kettle to boil, twice.
 
-Start with [Install Rally and sign in](01-install-rally.md).
+Start with [Open Rally and sign in](01-open-rally-and-sign-in.md).
