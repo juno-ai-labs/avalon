@@ -47,7 +47,13 @@ it("says how the request stands when the link changed nothing", () => {
 
 it("shows Rally's own sentence for a refusal, and a connection failure apart from it", () => {
   expect(sourceDecisionFailure(new BrowserApiError(409, "Connect that account first. There is nothing to allow until it is connected.", "sidekick_source_connection_missing")))
-    .toEqual({ title: "Not answered", message: "Connect that account first. There is nothing to allow until it is connected." });
+    .toEqual({ title: "Connect your account first", message: "Connect that account first. There is nothing to allow until it is connected. "
+      + "Open Rally: the request is waiting in Activity, where you can connect the account and approve." });
+  expect(sourceDecisionFailure(new BrowserApiError(409, "Reconnect that account first.", "sidekick_source_connection_reconnect")))
+    .toEqual({ title: "Reconnect your account first",
+      message: "Reconnect that account first. Open Rally: the request is waiting in Activity, where you can reconnect the account and approve." });
+  expect(sourceDecisionFailure(new BrowserApiError(409, "This request was already answered.", "sidekick_source_request_settled")))
+    .toEqual({ title: "Not answered", message: "This request was already answered." });
   expect(sourceDecisionFailure(new BrowserApiError(401, "This link is not valid. Open the request in Rally to answer it.", "sidekick_source_link_invalid")))
     .toEqual({ title: "This link is not valid", message: "This link is not valid. Open the request in Rally to answer it." });
   expect(sourceDecisionFailure(new TypeError("Failed to fetch")))

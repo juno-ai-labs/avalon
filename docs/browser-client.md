@@ -482,8 +482,11 @@ history, and posts it once to
 the fragment as an email sign-in's is. Then it says how the request stands
 (`sourceDecisionWords`): "Approved" with what was asked, "Declined", or, when
 the link changed nothing, that the request was already answered the other way
-or was replaced by a newer one. A refusal shows Rally's own sentence
-("Connect that account first…"); an address with no decision in it says to
+or was replaced by a newer one. A refusal shows Rally's own sentence. An
+Approve from a person whose account is not connected, or whose sign-in
+lapsed, is titled "Connect your account first" or "Reconnect your account
+first" and sends them to Activity, where the request connects it before they
+approve: a link cannot run an OAuth flow. An address with no decision in it says to
 open the button from the email again. The fragment is read by the page, never
 as the module loads, because every page of the client imports that module and
 an email sign-in's fragment is not its to drop.

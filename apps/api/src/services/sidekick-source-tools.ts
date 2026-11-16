@@ -137,7 +137,8 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   }, {
     definition: {
       name: name("request_source"),
-      description: "Ask Organization users to let events from one of their accounts start a Sidekick, optionally only events meeting a written filter. Each person gets a request only they can approve or decline, in Rally and by email; this returns each request's state and never waits for an answer. Nobody is approved by asking, the person you work for included. To change a filter, ask again with the new one.",
+      description: "Ask Organization users to let events from one of their accounts start a Sidekick, optionally only events meeting a written filter. Each person gets a request only they can approve or decline, in Rally and by email; this returns each request's state and never waits for an answer. Nobody is approved by asking, the person you work for included. To change a filter, ask again with the new one. "
+        + "Ask even when a person has not connected that account, or its sign-in has lapsed: their request connects or reconnects it before they approve, so do not tell anyone to connect it first. Each request's connection says which (connected, reconnect_required, not_connected); tell the person you work for who still has to connect or reconnect, and that the request walks them through it.",
       capability: "rally.sidekick.sources.request", mode: "write" as const, idempotency: "record_before_execute" as const,
       inputSchema: z.toJSONSchema(RequestSourceInputSchema),
     },
@@ -233,8 +234,8 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
 }
 
 function requestOutput(request: { requestId: string; person: { userId: string; displayName: string }; connectorType: string;
-  eventTypes: string[]; condition: string | null; state: string; requestedByName: string }) {
+  eventTypes: string[]; condition: string | null; state: string; requestedByName: string; connection?: string | undefined }) {
   return { requestId: request.requestId, userId: request.person.userId, name: request.person.displayName,
     connectorType: request.connectorType, eventTypes: request.eventTypes, condition: request.condition,
-    state: request.state, requestedByName: request.requestedByName };
+    state: request.state, requestedByName: request.requestedByName, connection: request.connection };
 }

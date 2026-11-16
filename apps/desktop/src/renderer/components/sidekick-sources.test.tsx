@@ -17,6 +17,7 @@ import { SidekickSourceRequestCard, SidekickSources } from './sidekick-sources';
 
 const api = vi.hoisted(() => ({
   getSidekickSources: vi.fn(),
+  getConnections: vi.fn(),
   readSidekickSourceRequests: vi.fn(),
   decideSidekickSourceRequest: vi.fn(),
   withdrawSidekickSource: vi.fn(),
@@ -27,6 +28,13 @@ const MAYA = '00000000-0000-7000-8000-0000000000a3';
 const PRIYA = '00000000-0000-7000-8000-0000000000a4';
 const SIDEKICK = '00000000-0000-7000-8000-0000000000d1';
 vi.mock('../lib/collaboration-session', () => ({ useCollaborationSession: () => ({ api, session: { user: { id: ME, name: 'Me' } } }) }));
+// The connection card owns its OAuth flow and is tested with it; here it stands for itself and
+// reports what it was asked to connect, with a button that finishes as an OAuth callback would.
+vi.mock('./connector-mentions', () => ({
+  ConnectorConnectionsProvider: ({ children }: { children: React.ReactNode }) => children,
+  ConnectorConnectionCard: ({ request, onConnected }: { request: { connectorId: string; scope: string }; onConnected?: (key: string) => void }) =>
+    <button onClick={() => onConnected?.(`${request.connectorId}:${request.scope}`)} type="button">Connect card {request.connectorId} {request.scope}</button>,
+}));
 
 function request(id: string, userId: string, displayName: string, overrides: Partial<SidekickSourceRequestView> = {}): SidekickSourceRequestView {
   return {
@@ -145,10 +153,32 @@ describe('the source request card in a conversation', () => {
     mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Approve your Gmail for Deals' }));
     const popup = await screen.findByRole('alertdialog', { name: 'The request could not be answered' });
-    expect(popup).toHaveTextContent('Connect your Gmail account in Settings first. There is nothing to allow until it is connected.');
+    expect(popup).toHaveTextContent('Connect your Gmail account first. There is nothing to allow until it is connected.');
     fireEvent.click(within(popup).getByRole('button', { name: 'OK' }));
     await waitFor(() => expect(pair('Me').map((button) => button.disabled)).toEqual([false, false]));
     expect(pair('Me').map((button) => button.pressed)).toEqual(['false', 'false']);
+  });
+
+  it('puts the connect step before Approve for my own request whose account lapsed, and re-reads it once connected', async () => {
+    api.getConnections.mockResolvedValue([]);
+    api.readSidekickSourceRequests.mockResolvedValue([
+      request('r-me', ME, 'Me', { connection: 'reconnect_required' }),
+      request('r-maya', MAYA, 'Maya', { connection: 'not_connected' }),
+    ]);
+    mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me', 'r-maya'], asked: null }} />);
+    const step = await screen.findByRole('button', { name: 'Connect card google-mail-calendar personal' });
+    // Approve waits for the account; Decline never does.
+    const approve = screen.getByRole('button', { name: 'Approve your Gmail for Deals' });
+    expect([approve.hasAttribute('disabled'), approve.getAttribute('title')]).toEqual([true, 'Reconnect Gmail first']);
+    expect(screen.getByRole('button', { name: 'Decline your Gmail for Deals' })).toBeEnabled();
+    // Everyone else is told what is left for that person, and has no connect step of theirs.
+    expect(row('Maya')).toHaveTextContent('Needs to connect Gmail');
+    expect(screen.getAllByRole('button', { name: /^Connect card/ })).toHaveLength(1);
+
+    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'connected' }), request('r-maya', MAYA, 'Maya', { connection: 'not_connected' })]);
+    fireEvent.click(step);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve your Gmail for Deals' })).toBeEnabled());
+    expect(screen.queryByRole('button', { name: /^Connect card/ })).toBeNull();
   });
 
   it('re-reads when the Sidekick\'s sources are invalidated, which is what the socket\'s pushes do', async () => {

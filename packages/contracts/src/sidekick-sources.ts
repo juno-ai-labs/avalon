@@ -71,6 +71,15 @@ const SourcePersonSchema = z.strictObject({
   presentation: PersonalPresentationSchema.nullable().optional(),
 });
 
+/**
+ * Whether the person asked has an account that carries the asked events: one
+ * that works, one whose sign-in lapsed (a changed password), or none yet.
+ * Connecting is part of answering, so a request is made either way and its
+ * card offers the connection before Approve.
+ */
+export const SidekickSourceConnectionStateSchema = z.enum(["connected", "reconnect_required", "not_connected"]);
+export type SidekickSourceConnectionState = z.infer<typeof SidekickSourceConnectionStateSchema>;
+
 /** What a person reads about one request: who is asked, for what, and where it stands. */
 export const SidekickSourceRequestViewSchema = z.object({
   requestId: IdSchema,
@@ -84,6 +93,11 @@ export const SidekickSourceRequestViewSchema = z.object({
   requestedByName: z.string(),
   /** Whether the reader is the person asked, the only one who may decide. */
   yours: z.boolean(),
+  /**
+   * The person asked's account for these events, read when the view is.
+   * Absent only in a view an older server wrote into a transcript.
+   */
+  connection: SidekickSourceConnectionStateSchema.optional(),
   createdAt: z.number().int().nonnegative(),
   decidedAt: z.number().int().nonnegative().nullable(),
 });
@@ -154,5 +168,6 @@ export const SIDEKICK_SOURCE_ERRORS = {
   sidekick_source_owner_must_approve:
     "A rule on another person's own account needs that person's approval for that event. Ask them with a source request, and save again once they approve.",
   sidekick_source_connection_missing: "Connect that account first. There is nothing to allow until it is connected.",
+  sidekick_source_connection_reconnect: "Reconnect that account first. Its sign-in has lapsed, so nothing could arrive from it.",
 } as const;
 export type SidekickSourceErrorCode = keyof typeof SIDEKICK_SOURCE_ERRORS;

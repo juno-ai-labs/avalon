@@ -76,7 +76,13 @@ export interface SourceDecisionFailure {
 /** What the page says when the link could not be posted or Rally refused it. */
 export function sourceDecisionFailure(cause: unknown): SourceDecisionFailure {
   if (cause instanceof BrowserApiError) {
-    // Rally's own sentence says what to do: connect the account first, or that the Sidekick is gone.
+    // An account to connect is the request's first step, which only Rally can take: the link cannot.
+    if (cause.code === "sidekick_source_connection_missing" || cause.code === "sidekick_source_connection_reconnect") {
+      const reconnect = cause.code === "sidekick_source_connection_reconnect";
+      return { title: reconnect ? "Reconnect your account first" : "Connect your account first",
+        message: `${cause.message} Open Rally: the request is waiting in Activity, where you can ${reconnect ? "reconnect" : "connect"} the account and approve.` };
+    }
+    // Rally's own sentence says what to do, or that the Sidekick is gone.
     return { title: cause.status === 401 ? "This link is not valid" : "Not answered", message: cause.message };
   }
   // A fetch that never reached Rally throws a TypeError with the browser's

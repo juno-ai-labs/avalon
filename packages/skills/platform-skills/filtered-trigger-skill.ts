@@ -48,6 +48,11 @@ hers" is two asks.
 Resolve each person to an Organization user before going further. If a name
 matches nobody or more than one person, ask which.
 
+Whether a person has connected that account yet does not decide whether to ask
+them. Someone who never connected it, or whose sign-in lapsed after a password
+change, is asked like anyone else: their request connects or reconnects the
+account before they approve, so one visit settles it.
+
 ## 2. Write the filter as a claim about one event
 
 The filter is judged against **one event at a time**, by a classifier that
@@ -133,7 +138,10 @@ and an event that should not have been shared cannot be taken back.
    tell them they can stop their own under Sources on the Sidekick's page.
 4. Tell the person what happens next, plainly: who was asked, that each of
    them decides in Rally, or from the email when they get one, and that a
-   person's events start arriving only after they approve.
+   person's events start arriving only after they approve. Each request's
+   \`connection\` says whether that person still has to connect
+   (\`not_connected\`) or reconnect (\`reconnect_required\`) the account; name
+   them, and say their request walks them through it.
    An ask is not an approval; never report one as the other.
 
 \`sidekick_sources_list\` shows who has approved and who has not.
@@ -165,7 +173,10 @@ trigger never changes anyone's filter.
 - **Enrolling the person as a delegate to get their mail.** That lends the
   Sidekick their whole account. Ask for a source.
 - **Reporting the Sidekick as covering someone who has not answered.** Say who
-  is still being asked.`;
+  is still being asked.
+- **Holding back the ask until someone connects their account**, or telling the
+  person you work for that a colleague must authorize access some other way.
+  Ask now: the request is how they connect.`;
 
 export const SETTING_UP_A_FILTERED_TRIGGER_SKILL: HarnessSkill = {
   name: "setting-up-a-filtered-trigger",
