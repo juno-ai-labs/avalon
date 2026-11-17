@@ -2,7 +2,7 @@ import { startConnectorAuthorization } from '../lib/start-connector-authorizatio
 import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, connectorStartsHere } from '../lib/browser-connectors';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
-  ConnectorConnectionCardCatalog,
+  ConnectorProductCatalog,
   ConnectorOAuthProviderSchema,
   connectorConnectionCardInputFromToolEvent,
   connectorResourceAuthorizationRequestFromToolEvent,
@@ -330,7 +330,7 @@ export function useConnectorConnectionAction(
   const connections = useConnectorConnections();
 
   const scope = request.scope === 'personal' ? 'you' : 'workspace';
-  const catalog = ConnectorConnectionCardCatalog[request.connectorId];
+  const catalog = ConnectorProductCatalog[request.connectorId];
   const scopeState = connections === undefined
     ? undefined
     : connectorScopeStates(provider.provider, connections, catalog.capabilityPrefixes)

@@ -1,81 +1,35 @@
 import { z } from "zod";
 
-export const ConnectorConnectionCardScopes = ["personal", "workspace"] as const;
-export type ConnectorConnectionCardScope = (typeof ConnectorConnectionCardScopes)[number];
+import {
+  ConnectorProductCatalog,
+  ConnectorProductIds,
+  ConnectorScopes,
+  ConnectorConnectionStateSchema,
+  ConnectorProductStateSchema,
+  connectorProductStateSummary,
+  type ConnectorProductId,
+  type ConnectorProductState,
+  type ConnectorScope,
+} from "./connector-catalog";
+
+export const ConnectorConnectionCardScopes = ConnectorScopes;
+export type ConnectorConnectionCardScope = ConnectorScope;
 
 /**
- * What kind of work a connector serves, so an agent asked for something can
- * find the connectors that would help with it, connected or not.
- *
- * A family names a job a person has, not a provider: Linear and GitHub both
- * track issues. Order here is the order `list_connectors` returns them in. A
- * family is added with its first connector; none is listed empty.
+ * The products a card in a conversation can connect: those with a card scope
+ * in `ConnectorProductCatalog`. The model-visible enum and the card's scope
+ * check derive from it; a product connected only in Settings has no card id.
  */
-export const ConnectorFamilyCatalog = {
-  email_calendar: { label: "Email and calendar" },
-  file_storage: { label: "File storage" },
-  documents_wikis: { label: "Documents and wikis" },
-  team_chat: { label: "Team chat" },
-  issue_tracking: { label: "Issue tracking and projects" },
-  code: { label: "Code" },
-  meeting_notes: { label: "Meeting notes" },
-  sales: { label: "Sales and prospecting" },
-  recruiting: { label: "Recruiting" },
-  design: { label: "Design" },
-} as const satisfies Record<string, { label: string }>;
+export type ConnectorConnectionCardId = {
+  [Id in ConnectorProductId]: (typeof ConnectorProductCatalog)[Id]["cardScopes"] extends readonly [] ? never : Id
+}[ConnectorProductId];
 
-export type ConnectorFamily = keyof typeof ConnectorFamilyCatalog;
-export const ConnectorFamilies = Object.keys(ConnectorFamilyCatalog) as [ConnectorFamily, ...ConnectorFamily[]];
+export const ConnectorConnectionCardIds = ConnectorProductIds.filter((id) =>
+  ConnectorProductCatalog[id].cardScopes.length > 0) as [ConnectorConnectionCardId, ...ConnectorConnectionCardId[]];
 
-/**
- * Stable catalog entries the agent may ask the main feed to present.
- *
- * These are product identities, not OAuth providers: Google has two cards with
- * different capability grants, while both authorize through the same provider.
- * Keeping valid scopes beside each identity makes this the one non-UI catalog
- * from which the model-visible enum and cross-field validation are derived.
- */
-export const ConnectorConnectionCardCatalog = {
-  "google-mail-calendar": {
-    label: "Gmail and Google Calendar",
-    families: ["email_calendar"],
-    capabilityPrefixes: ["gmail.", "calendar."],
-    iconName: "google",
-    providerType: "google",
-    scopes: ["personal"],
-  },
-  "google-drive": {
-    label: "Google Drive",
-    families: ["file_storage", "documents_wikis"],
-    capabilityPrefixes: ["drive.", "docs.", "sheets."],
-    iconName: "google-drive",
-    providerType: "google",
-    scopes: ["personal", "workspace"],
-  },
-  github: { label: "GitHub", families: ["code", "issue_tracking"], capabilityPrefixes: [], iconName: "github", providerType: "github", scopes: ["personal", "workspace"] },
-  apollo: { label: "Apollo", families: ["sales"], capabilityPrefixes: [], iconName: "apollo", providerType: "apollo", scopes: ["personal"] },
-  ashby: { label: "Ashby", families: ["recruiting"], capabilityPrefixes: [], iconName: "ashby", providerType: "ashby", scopes: ["personal"] },
-  canva: { label: "Canva", families: ["design"], capabilityPrefixes: [], iconName: "canva", providerType: "canva", scopes: ["personal"] },
-  // Personal only, like Ashby and Granola: the workspace scope is an
-  // administrator pasting a key into Settings, which is not something a card in
-  // a transcript can offer a participant.
-  fireflies: { label: "Fireflies", families: ["meeting_notes"], capabilityPrefixes: [], iconName: "fireflies", providerType: "fireflies", scopes: ["personal"] },
-  granola: { label: "Granola", families: ["meeting_notes"], capabilityPrefixes: [], iconName: "granola", providerType: "granola", scopes: ["personal"] },
-  linear: { label: "Linear", families: ["issue_tracking"], capabilityPrefixes: [], iconName: "linear", providerType: "linear", scopes: ["personal", "workspace"] },
-  slack: { label: "Slack", families: ["team_chat"], capabilityPrefixes: [], iconName: "slack", providerType: "slack", scopes: ["personal", "workspace"] },
-  notion: { label: "Notion", families: ["documents_wikis"], capabilityPrefixes: [], iconName: "notion", providerType: "notion", scopes: ["personal", "workspace"] },
-} as const satisfies Record<string, {
-  /** The name a question asking for this connection says, in product case. */
-  label: string;
-  /** What it is for, most fitting first; see `ConnectorFamilyCatalog`. */
-  families: readonly [ConnectorFamily, ...ConnectorFamily[]];
-  capabilityPrefixes: readonly string[];
-  iconName: string;
-  providerType: string;
-  scopes: readonly ConnectorConnectionCardScope[];
-}>;
-
-export type ConnectorConnectionCardId = keyof typeof ConnectorConnectionCardCatalog;
+function cardScopes(id: ConnectorConnectionCardId): readonly ConnectorScope[] {
+  return ConnectorProductCatalog[id].cardScopes;
+}
 
 /**
  * The answer to a question a connection answers (`Elicitation.connection`)
@@ -83,12 +37,6 @@ export type ConnectorConnectionCardId = keyof typeof ConnectorConnectionCardCata
  * person when the connection it shows becomes connected.
  */
 export const CONNECTION_QUESTION_CONTINUE_ANSWER = "continue";
-export type ConnectorConnectionCardIconName = (typeof ConnectorConnectionCardCatalog)[ConnectorConnectionCardId]["iconName"];
-
-export const ConnectorConnectionCardIds = Object.keys(ConnectorConnectionCardCatalog) as [
-  ConnectorConnectionCardId,
-  ...ConnectorConnectionCardId[],
-];
 
 /**
  * The grant a Google connection needs to carry one of its activity events.
@@ -109,20 +57,20 @@ export function googleActivityCapability(eventType: string): "gmail.read" | "cal
  */
 export function sourceConnectionCardId(connectorType: string, eventTypes: readonly string[]): ConnectorConnectionCardId | null {
   const cards = ConnectorConnectionCardIds.filter((connectorId) => {
-    const entry = ConnectorConnectionCardCatalog[connectorId];
-    return entry.providerType === connectorType && (entry.scopes as readonly string[]).includes("personal");
+    const entry = ConnectorProductCatalog[connectorId];
+    return entry.providerType === connectorType && (entry.cardScopes as readonly string[]).includes("personal");
   });
   if (connectorType !== "google") return cards.length === 1 ? cards[0]! : null;
   const prefixes = new Set(eventTypes.map((eventType) => googleActivityCapability(eventType).split(".")[0]! + "."));
   const covering = cards.filter((connectorId) =>
-    [...prefixes].every((prefix) => (ConnectorConnectionCardCatalog[connectorId].capabilityPrefixes as readonly string[]).includes(prefix)));
+    [...prefixes].every((prefix) => (ConnectorProductCatalog[connectorId].capabilityPrefixes as readonly string[]).includes(prefix)));
   return covering.length === 1 ? covering[0]! : null;
 }
 
 const personalOnlyConnectorIds = ConnectorConnectionCardIds.filter((connectorId) =>
-  !ConnectorConnectionCardCatalog[connectorId].scopes.includes("workspace" as never));
+  !cardScopes(connectorId).includes("workspace"));
 const personalOrWorkspaceConnectorIds = ConnectorConnectionCardIds.filter((connectorId) =>
-  ConnectorConnectionCardCatalog[connectorId].scopes.includes("workspace" as never));
+  cardScopes(connectorId).includes("workspace"));
 
 const ConnectorConnectionCardShape = z.strictObject({
   connectorId: z.enum(ConnectorConnectionCardIds).describe(
@@ -136,8 +84,7 @@ const ConnectorConnectionCardShape = z.strictObject({
 
 export const ConnectorConnectionCardInputSchema = ConnectorConnectionCardShape.superRefine(
   (input, context) => {
-    const supportedScopes: readonly ConnectorConnectionCardScope[] = ConnectorConnectionCardCatalog[input.connectorId].scopes;
-    if (supportedScopes.includes(input.scope)) return;
+    if (cardScopes(input.connectorId).includes(input.scope)) return;
     context.addIssue({
       code: "custom",
       path: ["scope"],
@@ -156,12 +103,6 @@ const StoredConnectorConnectionCardInputSchema = z.union([
     .transform((input): ConnectorConnectionCardInput => ({ connectorId: "google-drive", scope: input.scope })),
 ]);
 
-export const ConnectorConnectionStateSchema = z.enum([
-  "connected",
-  "reconnect_required",
-  "not_connected",
-  "unavailable",
-]);
 /**
  * What the state check accepts: the card's selection with the scope optional.
  *
@@ -192,76 +133,14 @@ export const ConnectorConnectionAccountSchema = z.strictObject({
 });
 export type ConnectorConnectionAccount = z.infer<typeof ConnectorConnectionAccountSchema>;
 
-export const ConnectorConnectionStateResultSchema = z.strictObject({
-  connectorId: z.enum(ConnectorConnectionCardIds),
-  /** The best state across `connections`: connected if any scope is. */
-  state: ConnectorConnectionStateSchema,
-  connections: z.array(z.strictObject({
-    scope: z.enum(ConnectorConnectionCardScopes),
-    state: ConnectorConnectionStateSchema,
-  })).min(1),
-  /** Every saved connection behind `connections`; a person may hold two Google accounts. */
-  accounts: z.array(ConnectorConnectionAccountSchema),
-});
-export type ConnectorConnectionStateResult = z.infer<typeof ConnectorConnectionStateResultSchema>;
-
 /** `list_connectors` takes nothing: the whole catalog is a dozen rows. */
 export const ConnectorListInputSchema = z.strictObject({});
 
-export const ConnectorListResultSchema = z.strictObject({
-  families: z.array(z.strictObject({
-    family: z.enum(ConnectorFamilies),
-    label: z.string(),
-    connectors: z.array(ConnectorConnectionStateResultSchema.extend({ label: z.string() })).min(1),
-  })),
-});
-export type ConnectorListResult = z.infer<typeof ConnectorListResultSchema>;
-
-/**
- * Group per-connector states by family, in catalog order. A connector in two
- * families appears in both, so a model reading one family sees all it needs.
- */
-export function groupConnectorsByFamily(states: readonly ConnectorConnectionStateResult[]): ConnectorListResult {
-  return {
-    families: ConnectorFamilies.flatMap((family) => {
-      const connectors = states
-        .filter((state) => (ConnectorConnectionCardCatalog[state.connectorId].families as readonly ConnectorFamily[]).includes(family))
-        .map((state) => ({ ...state, label: ConnectorConnectionCardCatalog[state.connectorId].label }));
-      return connectors.length === 0 ? [] : [{ family, label: ConnectorFamilyCatalog[family].label, connectors }];
-    }),
-  };
-}
-
-export function connectorListSummary(result: ConnectorListResult): string {
-  const connected = new Set(result.families.flatMap(({ connectors }) =>
-    connectors.filter(({ state }) => state === "connected").map(({ connectorId }) => connectorId)));
-  return `Listed connectors in ${result.families.length} families; connected: ${connected.size === 0 ? "none" : [...connected].join(", ")}`;
-}
-
-/**
- * Which account a saved connection is, from its name. Every connector names a
- * connection `<product> · <account>` (`Google Mail + Calendar · ada@example.com`,
- * `GitHub · octo-org`); one with no separator, such as `Canva`, names none.
- */
-export function connectorConnectionAccountLabel(displayName: string): string | null {
-  const separator = displayName.indexOf(" · ");
-  if (separator < 0) return null;
-  const account = displayName.slice(separator + 3).trim();
-  return account.length > 0 ? account : null;
-}
-
-const STATE_PRECEDENCE = ["connected", "reconnect_required", "not_connected", "unavailable"] as const;
-
-/** Fold per-scope states into the one a caller acts on first. */
-export function bestConnectorConnectionState(
-  states: readonly z.infer<typeof ConnectorConnectionStateSchema>[],
-): z.infer<typeof ConnectorConnectionStateSchema> {
-  return STATE_PRECEDENCE.find((state) => states.includes(state)) ?? "not_connected";
-}
-
-export function connectorConnectionStateSummary(result: ConnectorConnectionStateResult): string {
-  return `${result.connectorId}: ${result.connections.map(({ scope, state }) => `${scope} ${state}`).join(", ")}`;
-}
+/** The state check answers with the product's state, as each row of the connector list does. */
+export const ConnectorConnectionStateResultSchema = ConnectorProductStateSchema;
+export type ConnectorConnectionStateResult = ConnectorProductState;
+export const connectorConnectionStateSummary = connectorProductStateSummary;
+export { ConnectorConnectionStateSchema };
 
 /**
  * The canonical definition names, which are also the model-facing wire names:
@@ -335,11 +214,4 @@ export function connectorConnectionCardInputFromToolEvent(event: {
     }
   }
   return null;
-}
-
-/** Authorization availability is separate from the last background operation's health. */
-export function connectorAuthorizationStatus(status: string): "healthy" | "reconnect_required" | "disabled" {
-  if (status === "needs_reconnect") return "reconnect_required";
-  if (status === "disabled") return "disabled";
-  return "healthy";
 }

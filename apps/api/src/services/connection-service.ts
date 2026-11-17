@@ -2,7 +2,7 @@ import { runtimeDeferral } from "../lib/defer";
 import type { Region } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
-import { GOOGLE_MAIL_CALENDAR_CAPABILITIES, ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
+import { ConnectorProductCatalog, connectorConnectionAccount, connectorConnectionName, connectorProductsForConnection, GOOGLE_MAIL_CALENDAR_CAPABILITIES, ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/contracts/telemetry";
 import { AshbyEventSelectionSchema, slackInstallationId } from "@rally/connectors";
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
@@ -326,8 +326,9 @@ function workspaceInstallationDisplayName(providerName: string, credentials: Rec
   // half is whatever the provider returned, the reservation refuses anything
   // over 180 characters, and this string is rendered into the model's plugin
   // catalogue a line at a time.
-  return (account ? `${providerName} · ${account}` : `${providerName} workspace events`)
-    .replace(/\s+/gu, " ").trim().slice(0, 180);
+  return account
+    ? connectorConnectionName(providerName, account)
+    : `${providerName} workspace events`.replace(/\s+/gu, " ").trim().slice(0, 180);
 }
 
 const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, readonly string[]>> = {
@@ -1592,7 +1593,7 @@ export class ConnectionService {
     const encrypted = await encryptString(JSON.stringify(credentials), this.env.CONNECTOR_CREDENTIALS_KEY, connectionId);
     const at = nowIso();
     const providerAccountName = stringField(credentials, "providerAccountName") ?? `installation ${providerAccountId}`;
-    const displayName = `GitHub · ${providerAccountName}`.slice(0, 180);
+    const displayName = connectorConnectionName(ConnectorProductCatalog.github.name, providerAccountName);
     const modelPluginId = await this.allocateModelPluginId(
       String(row.workspace_id),
       "github",
@@ -1833,7 +1834,7 @@ export class ConnectionService {
       : null;
     const displayName = customMcp
       ? customMcp.displayName.slice(0, 180)
-      : provider === "canva" ? "Canva" : `${adapter.manifest.displayName} · ${label}`.slice(0, 180);
+      : provider === "canva" ? ConnectorProductCatalog.canva.name : connectorConnectionName(adapter.manifest.displayName, label);
     if (customMcp && providerAccountId !== customMcp.serverUrl) {
       throw new ApiError(
         409,
@@ -2481,7 +2482,7 @@ export class ConnectionService {
            WHERE id = ? AND workspace_id = ? AND connector_type = 'granola' AND scope = 'personal'`,
         ).bind(
           providerAccountId,
-          `Granola · ${displayLabel}`.slice(0, 180),
+          connectorConnectionName(ConnectorProductCatalog.granola.name, displayLabel),
           JSON.stringify({
             region: this.env.AVALON_REGION,
             ...verifiedIdentityConfig("granola", context.credentials, providerAccountId),
@@ -4671,24 +4672,19 @@ function reconcileGoogleAccount(
   return {
     credentials,
     providerAccountId,
-    displayName: `Google · ${label}`.slice(0, 180),
+    displayName: connectorConnectionName("Google", label),
   };
 }
 
+/**
+ * A Google connection is named after the product its grants serve, or Google
+ * Workspace when they serve both (`connectorProductsForConnection`).
+ */
 function googleConnectionDisplayName(capabilities: string[], accountDisplayName: string): string {
-  const accountLabel = accountDisplayName.replace(/^Google · /u, "");
-  const hasMailOrCalendar = capabilities.some((capability) =>
-    capability.startsWith("gmail.") || capability.startsWith("calendar.")
-  );
-  const hasWorkspaceFiles = capabilities.some((capability) =>
-    capability.startsWith("drive.") || capability.startsWith("docs.") || capability.startsWith("sheets.")
-  );
-  const product = hasMailOrCalendar && !hasWorkspaceFiles
-    ? "Google Mail + Calendar"
-    : hasWorkspaceFiles && !hasMailOrCalendar
-      ? "Google Drive + Docs + Sheets"
-      : "Google Workspace";
-  return `${product} · ${accountLabel}`.slice(0, 180);
+  const account = connectorConnectionAccount("account", accountDisplayName) ?? accountDisplayName;
+  const products = connectorProductsForConnection({ connectorType: "google", capabilities });
+  const product = products.length === 1 ? ConnectorProductCatalog[products[0]!].name : "Google Workspace";
+  return connectorConnectionName(product, account);
 }
 
 function googleProviderScopesForCapabilities(capabilities: string[]): string[] {

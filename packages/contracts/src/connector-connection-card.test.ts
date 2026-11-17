@@ -2,21 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   CONNECTOR_CONNECTION_CARD_WIRE_NAME,
   CONNECTOR_CONNECTION_STATE_WIRE_NAME,
-  ConnectorConnectionCardCatalog,
   ConnectorConnectionCardIds,
   ConnectorConnectionCardInputSchema,
   ConnectorConnectionCardScopes,
   ConnectorConnectionStateInputSchema,
-  ConnectorConnectionStateResultSchema,
-  ConnectorListResultSchema,
-  connectorConnectionAccountLabel,
-  connectorListSummary,
-  groupConnectorsByFamily,
-  bestConnectorConnectionState,
-  connectorAuthorizationStatus,
   sourceConnectionCardId,
   connectorConnectionCardSummary,
-  connectorConnectionStateSummary,
   connectorConnectionCardInputFromToolEvent,
   isConnectorConnectionCardWireName,
   LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME,
@@ -74,85 +65,11 @@ describe("connector connection card contract", () => {
     expect(CONNECTOR_CONNECTION_STATE_WIRE_NAME).toBe("get_connector_connection_state");
   });
 
-  it("accepts only closed connector connection states", () => {
-    expect(ConnectorConnectionStateResultSchema.parse({
-      connectorId: "slack",
-      state: "connected",
-      connections: [{ scope: "personal", state: "connected" }],
-      accounts: [{ scope: "personal", state: "connected", account: "Acme" }],
-    })).toEqual({
-      connectorId: "slack",
-      state: "connected",
-      connections: [{ scope: "personal", state: "connected" }],
-      accounts: [{ scope: "personal", state: "connected", account: "Acme" }],
-    });
-    expect(ConnectorConnectionStateResultSchema.safeParse({
-      connectorId: "slack",
-      state: "probably_connected",
-      connections: [{ scope: "personal", state: "connected" }],
-      accounts: [],
-    }).success).toBe(false);
-    expect(ConnectorConnectionStateResultSchema.safeParse({
-      connectorId: "slack",
-      state: "connected",
-      connections: [],
-      accounts: [],
-    }).success).toBe(false);
-  });
-
   it("lets the state check leave scope out, and accepts any scope it is sent", () => {
     expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "slack" })).toEqual({ connectorId: "slack" });
     // Ignored by the check, so a scope the connector lacks is no reason to fail the call.
     expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "granola", scope: "workspace" }))
       .toEqual({ connectorId: "granola", scope: "workspace" });
-  });
-
-  it("folds per-scope states to the best one and names each in the summary", () => {
-    expect(bestConnectorConnectionState(["not_connected", "connected"])).toBe("connected");
-    expect(bestConnectorConnectionState(["not_connected", "reconnect_required"])).toBe("reconnect_required");
-    expect(bestConnectorConnectionState(["unavailable"])).toBe("unavailable");
-    expect(connectorConnectionStateSummary({
-      connectorId: "slack",
-      state: "connected",
-      connections: [{ scope: "personal", state: "not_connected" }, { scope: "workspace", state: "connected" }],
-      accounts: [{ scope: "workspace", state: "connected", account: "Acme" }],
-    })).toBe("slack: personal not_connected, workspace connected");
-  });
-
-  it("reads the account from a connection's name, and none from a bare product name", () => {
-    expect(connectorConnectionAccountLabel("Google Mail + Calendar · ada@example.com")).toBe("ada@example.com");
-    expect(connectorConnectionAccountLabel("Linear · Ada · Acme")).toBe("Ada · Acme");
-    expect(connectorConnectionAccountLabel("Canva")).toBeNull();
-    expect(connectorConnectionAccountLabel("GitHub · ")).toBeNull();
-  });
-
-  it("groups connectors by family in catalog order, listing one in each of its families", () => {
-    const state = (connectorId: "github" | "linear" | "slack", connected: boolean) => ({
-      connectorId,
-      state: connected ? "connected" as const : "not_connected" as const,
-      connections: [{ scope: "personal" as const, state: connected ? "connected" as const : "not_connected" as const }],
-      accounts: connected ? [{ scope: "personal" as const, state: "connected" as const, account: "octo" }] : [],
-    });
-    const result = groupConnectorsByFamily([state("slack", false), state("linear", false), state("github", true)]);
-    expect(result.families.map(({ family, connectors }) => [family, connectors.map(({ connectorId }) => connectorId)]))
-      .toEqual([
-        ["team_chat", ["slack"]],
-        ["issue_tracking", ["linear", "github"]],
-        ["code", ["github"]],
-      ]);
-    expect(result.families[0]).toMatchObject({ label: "Team chat", connectors: [{ label: "Slack" }] });
-    expect(ConnectorListResultSchema.parse(result)).toEqual(result);
-    expect(connectorListSummary(result)).toBe("Listed connectors in 3 families; connected: github");
-  });
-
-  it("puts every catalog connector in at least one family", () => {
-    const listed = new Set(groupConnectorsByFamily(ConnectorConnectionCardIds.map((connectorId) => ({
-      connectorId,
-      state: "not_connected" as const,
-      connections: [{ scope: "personal" as const, state: "not_connected" as const }],
-      accounts: [],
-    }))).families.flatMap(({ connectors }) => connectors.map(({ connectorId }) => connectorId)));
-    expect([...listed].sort()).toEqual([...ConnectorConnectionCardIds].sort());
   });
 
   it("recovers durable card identity without accepting arbitrary summary prose", () => {
@@ -188,17 +105,21 @@ describe("connector connection card contract", () => {
     expect(isConnectorConnectionCardWireName(undefined)).toBe(false);
   });
 
-  it("derives every accepted id and scope from the shared non-UI catalog", () => {
-    expect(ConnectorConnectionCardIds).toEqual(Object.keys(ConnectorConnectionCardCatalog));
-    for (const [connectorId, entry] of Object.entries(ConnectorConnectionCardCatalog)) {
-      expect(entry.iconName).not.toBe("");
-      for (const scope of ConnectorConnectionCardScopes) {
-        const supported = (entry.scopes as readonly string[]).includes(scope);
-        expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId, scope }).success).toBe(supported);
-      }
+  it("offers a card for exactly the products a conversation can connect, in their card scopes", () => {
+    expect(ConnectorConnectionCardIds).toEqual([
+      "google-mail-calendar", "google-drive", "github", "apollo", "ashby", "canva",
+      "fireflies", "granola", "linear", "slack", "notion",
+    ]);
+    // Made in Settings only: an administrator's key, or a server somebody configures.
+    for (const connectorId of ["x", "custom-mcp", "generic-webhook"]) {
+      expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId, scope: "workspace" }).success).toBe(false);
+    }
+    expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "ashby", scope: "personal" }).success).toBe(true);
+    expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "ashby", scope: "workspace" }).success).toBe(false);
+    for (const scope of ConnectorConnectionCardScopes) {
+      expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "linear", scope }).success).toBe(true);
     }
   });
-
   it("rejects display data and unknown connectors from the model", () => {
     expect(ConnectorConnectionCardInputSchema.safeParse({
       connectorId: "slack",
@@ -213,15 +134,6 @@ describe("connector connection card contract", () => {
       connectorId: "granola",
       scope: "workspace",
     }).success).toBe(false);
-  });
-});
-
-describe("shared connector authorization status", () => {
-  it.each([
-    ["healthy", "healthy"], ["error", "healthy"],
-    ["needs_reconnect", "reconnect_required"], ["disabled", "disabled"],
-  ])("maps stored %s to %s for model and UI", (stored, expected) => {
-    expect(connectorAuthorizationStatus(stored)).toBe(expected);
   });
 });
 
