@@ -28,6 +28,7 @@ import {
   type ProviderWebhookIngestionResult,
 } from "./provider-webhook-service";
 import { MAX_CONNECTOR_EVENT_QUEUE_BYTES } from "./workspace-connector-event-ingress";
+import { queueRetryDelaySeconds } from "../queues/retry-backoff";
 
 export const DEFAULT_GITHUB_INGRESS_BASE_URL = "https://github.rallywith.ai";
 
@@ -542,8 +543,7 @@ export async function consumeGitHubDeliveryMessage(
  * bound is the Queue's own ceiling on a retry delay.
  */
 function githubDeliveryRetryDelaySeconds(queueAttempts: number, error?: unknown): number {
-  const attempts = Math.max(1, queueAttempts);
-  const exponentialDelay = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
+  const exponentialDelay = queueRetryDelaySeconds(queueAttempts);
   const providerDelay = Math.ceil((connectorRetryAfterMs(error) ?? 0) / 1_000);
   return Math.min(43_200, Math.max(exponentialDelay, providerDelay));
 }
