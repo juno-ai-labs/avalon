@@ -26,10 +26,12 @@ import { CanvasService, createCanvas } from "../src/services/canvas-service";
 import { conversationCanonicalUrl } from "../src/services/conversation-link-service";
 import { createAutomation } from "../src/services/automation-service";
 import { canvasArtifactNoter, resolveTerminalPublicationHome } from "../src/services/terminal/authority";
+import { sha256Hex } from "../src/lib/crypto";
 import { createTerminalPortFactory } from "../src/services/terminal/object-port";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { bootstrapWorkstreamRuntimeEnvironment } from "../src/services/workstream-runtime-database";
+import { createResourceObjectPort } from "../src/runtime/resource-port";
 import { createTranscriptObjectPort } from "../src/runtime/transcript-port";
 import { CANVAS_NAMING_ALARM_KIND } from "../src/durable-objects/canvas-schema";
 import { __integrationTesting } from "../src/services/integrations";
@@ -1088,6 +1090,87 @@ describe("a Canvas's artifacts", () => {
     return canvasBridge(canvasId).publishResource(toolContext(canvasId),
       { filePath, ...(replaceCanvasArtifact === undefined ? {} : { replaceCanvasArtifact }) }, new TextEncoder().encode(text));
   }
+
+  async function backgroundBridge(canvasId: string) {
+    const substreamId = asSubstreamId(crypto.randomUUID());
+    await workspace().reserveChild({
+      workspaceId: WORKSPACE_ID, parentId: canvasId, substreamId, kind: "child",
+      createdByUserId: CREATOR, authorityGeneration: 1,
+    });
+    const producer = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, canvasId, substreamId),
+    ));
+    expect((await producer.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: canvasId, substreamId, generation: 1,
+    })).status).toBe(200);
+
+    const bridge = createTerminalResourceBridge(
+      withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID),
+      createTerminalPortFactory(TEST_ENV, undefined, "0"),
+      async (input) => {
+        const result = await producer.attachRuntimeResource(input);
+        expect(result.status).toBe(200);
+      },
+      null, substreamId, null, "0",
+      canvasArtifactNoter(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: canvasId, substreamId }),
+    );
+    return {
+      bridge,
+      resources: createResourceObjectPort(TEST_ENV, WORKSPACE_ID, canvasId, undefined, substreamId),
+    };
+  }
+
+  it("makes a background agent's publication available in the Canvas Chat and to the producing agent", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const { bridge, resources } = await backgroundBridge(canvasId);
+    const published = await bridge.publishResource(toolContext(canvasId),
+      { filePath: "plan.md", displayName: "Background plan" }, new TextEncoder().encode("# Launch plan"));
+    const detail = await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId);
+    expect(detail.artifacts).toMatchObject([{ resourceId: published.resourceId, title: "Background plan" }]);
+    const conversations = new ConversationService(TEST_ENV, auth(CREATOR));
+    const chat = await conversations.client(canvasId, true);
+    expect((await chat.boot()).workstream.resources).toMatchObject([
+      { id: published.resourceId, title: "Background plan", direction: "artifact" },
+    ]);
+    expect(await resources.isAttached({ resourceId: published.resourceId })).toBe(true);
+  });
+
+  it.each(["file", "site"] as const)("links an identical %s publication to its second producer", async (kind) => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const first = await backgroundBridge(canvasId);
+    const second = await backgroundBridge(canvasId);
+    const bytes = new TextEncoder().encode("<h1>Launch plan</h1>");
+    const sha256 = await sha256Hex(bytes);
+    const publishFrom = (bridge: typeof first.bridge) => kind === "site"
+      ? bridge.publishSiteResource(toolContext(canvasId), { filePath: "launch" }, {
+        mode: "static", stateful: false, serverModuleSha256: null,
+        files: [{ path: "index.html", bytes, sha256 }],
+      })
+      : bridge.publishResource(toolContext(canvasId), { filePath: "launch.html" }, bytes);
+
+    const published = await publishFrom(first.bridge);
+    const retry = await publishFrom(second.bridge);
+    expect(retry.resourceId).toBe(published.resourceId);
+    expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).artifacts).toMatchObject([
+      { resourceId: published.resourceId, version: 1 },
+    ]);
+    expect(await second.resources.isAttached({ resourceId: published.resourceId })).toBe(true);
+  });
+
+  it("keeps a background agent's internal capture out of the Canvas Chat", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const { bridge, resources } = await backgroundBridge(canvasId);
+    const context = toolContext(canvasId);
+    const log = await bridge.publishResource(context, {
+      filePath: ".rally/logs/command.log",
+      providerResourceId: `terminal-command-log:${context.effectIntentId}`,
+    }, new TextEncoder().encode("Internal command output"));
+
+    const chat = await new ConversationService(TEST_ENV, auth(CREATOR)).client(canvasId, true);
+    expect((await chat.boot()).workstream.resources).toEqual([]);
+    expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).artifacts).toEqual([]);
+    expect(await resources.isAttached({ resourceId: log.resourceId })).toBe(true);
+  });
 
   it("pushes stored-data status from listed database-backed artifacts, independently of the newest artifact or presence", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });

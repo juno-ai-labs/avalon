@@ -19,7 +19,7 @@ import { mountAppStylesheet } from '../test/app-stylesheet';
 import type { ConnectedMcpApp } from '@rally/contracts/mcp-oauth';
 
 const api = vi.hoisted(() => ({
-  createWorkspaceInvitation: vi.fn(),
+  addWorkspaceMember: vi.fn(),
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getSupportAccess: vi.fn(),
@@ -165,7 +165,6 @@ const invitation: WorkspaceInvitation = {
   acceptedAt: null,
   createdAt: '2026-08-01T00:00:00.000Z',
 };
-const inviteUrl = 'https://rallywith.ai/invite/#region=enterprise&token=private-token-value-long-enough';
 
 function rememberedFact(factId: string, text: string, subjectKind: 'person' | 'organization', removable: boolean): MemoryReviewFact {
   return {
@@ -428,7 +427,7 @@ describe('Organization settings', () => {
       errorCode: null,
       expiresAt: '2026-08-08T00:00:00.000Z',
     });
-    api.createWorkspaceInvitation.mockResolvedValue({ invitation, inviteUrl, emailDelivery: 'sent' });
+    api.addWorkspaceMember.mockResolvedValue({ member: { userId: 'new-admin-id', email: 'new-admin@example.com', role: 'admin' }, emailDelivery: 'sent' });
     api.revokeWorkspaceInvitation.mockResolvedValue(undefined);
     leaveWorkspace.mockResolvedValue({ outcome: 'left' });
     api.getTerminalWorkspaceSettings.mockResolvedValue({
@@ -614,7 +613,7 @@ describe('Organization settings', () => {
       expect(rows.map((row) => row.textContent)).toEqual(['Adam', 'Sam', 'Gale', 'Vera']);
       expect(screen.getByText('vera@other.example')).toBeVisible();
       expect(screen.queryByRole('button', { name: /member actions/u })).toBeNull();
-      expect(screen.queryByRole('heading', { name: 'Invitations' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'Add members' })).toBeNull();
     } finally {
       window.location.hash = '';
     }
@@ -847,7 +846,7 @@ describe('Organization settings', () => {
     }
     expect(signOut).not.toHaveBeenCalled();
     expect(leaveWorkspace).not.toHaveBeenCalled();
-    expect(api.createWorkspaceInvitation).not.toHaveBeenCalled();
+    expect(api.addWorkspaceMember).not.toHaveBeenCalled();
     expect(api.startProviderConnection).not.toHaveBeenCalled();
     expect(api.applyTerminalNetworkPolicy).not.toHaveBeenCalled();
     expect(api.rotateWebhookSecret).not.toHaveBeenCalled();
@@ -1003,11 +1002,11 @@ describe('Organization settings', () => {
     expect(await screen.findByText('Organization preferences')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Leave this organization' })).toBeVisible();
     expect(screen.queryByText('Sam')).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Invitations' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Add members' })).not.toBeInTheDocument();
 
     openSettingsSection('Members');
     expect(await screen.findByText('Sam')).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Invitations' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Add members' })).toBeVisible();
     expect(screen.queryByText('Organization preferences')).not.toBeInTheDocument();
   });
 
@@ -2513,26 +2512,24 @@ describe('Organization settings', () => {
     expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeEnabled();
   });
 
-  it('lets an owner create, copy, and revoke an invite', async () => {
+  it('lets an owner add a member at once, and still revoke an older invitation', async () => {
     renderSettings();
     openSettingsSection('Members');
 
-    expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
     expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Email address' }), {
       target: { value: 'new-admin@example.com' },
     });
     fireEvent.change(screen.getByRole('combobox', { name: 'Role' }), { target: { value: 'admin' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add member' }));
 
     await waitFor(
-      () => expect(api.createWorkspaceInvitation).toHaveBeenCalledWith('new-admin@example.com', 'admin'),
+      () => expect(api.addWorkspaceMember).toHaveBeenCalledWith('new-admin@example.com', 'admin'),
       { timeout: 10_000 },
     );
-    expect(await screen.findByText('Invitation emailed', undefined, { timeout: 10_000 })).toBeVisible();
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy invite link' }, { timeout: 10_000 }));
-    await waitFor(() => expect(copyText).toHaveBeenCalledWith(inviteUrl), { timeout: 10_000 });
+    expect(await screen.findByText('Added new-admin@example.com', undefined, { timeout: 10_000 })).toBeVisible();
+    expect(screen.getByText('They are a member now, and we emailed them a link to sign in.')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: `Revoke invitation for ${invitation.email}` }));
     await waitFor(
@@ -2583,7 +2580,7 @@ describe('Organization settings', () => {
       { timeout: 10_000 },
     );
 
-    // The other half of the same change: inviting an administrator was the
+    // The other half of the same change: adding an administrator was the
     // owner's alone, and an administrator now has that option too.
     expect(within(screen.getByRole('combobox', { name: 'Role' })).getByRole('option', { name: 'Administrator' }))
       .toBeInTheDocument();
@@ -2659,7 +2656,7 @@ describe('Organization settings', () => {
     renderSettings({ ...workspace, currentUser: member });
     openSettingsSection('Members');
     expect(await screen.findByText('Adam')).toBeVisible();
-    expect(screen.queryByRole('heading', { name: 'Invitations' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Add members' })).not.toBeInTheDocument();
     expect(api.getWorkspaceInvitations).not.toHaveBeenCalled();
   });
 

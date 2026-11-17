@@ -123,7 +123,10 @@ export const sourceWords: SourceWords = ({ connectorType, eventTypes }: SourceAs
 export function sourceRefusal(error: Error, ask?: SourceAsk): string {
   const code = error instanceof ApiError ? error.code : undefined;
   if (code === 'sidekick_source_connection_missing' && ask) {
-    return `Connect your ${sourceWords(ask).connector} account in Settings first. There is nothing to allow until it is connected.`;
+    return `Connect your ${sourceWords(ask).connector} account first. There is nothing to allow until it is connected.`;
+  }
+  if (code === 'sidekick_source_connection_reconnect' && ask) {
+    return `Reconnect your ${sourceWords(ask).connector} account first. Its sign-in has lapsed, so nothing could arrive from it.`;
   }
   if (code !== undefined && code in SIDEKICK_SOURCE_ERRORS) return SIDEKICK_SOURCE_ERRORS[code as SidekickSourceErrorCode];
   return error.message;

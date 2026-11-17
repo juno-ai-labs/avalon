@@ -6,7 +6,6 @@ import type { ToolPaginationResult } from "@rally/contracts/tool-pagination";
 export { runRallyEvaluation, parseRallyCheckpoint, type RallyCheckpoint, type RallyCheckpointPort } from "./evaluation";
 import type {
   AddressingClassification,
-  AutomationPluginActivity,
   AutomationPluginIcon,
   ConnectorActivityTriggerDescriptor,
   ExecutionPrincipal,
@@ -22,6 +21,7 @@ import {
   withoutUnusableAutomationResourceIds,
   AutomationDraftSchema,
   ConnectorConnectionCardInputSchema,
+  MemberCardInputSchema,
   ConnectorConnectionStateInputSchema,
   PickedAppearanceSchema,
   PROJECT_COLOR_KEYS_STORABLE,
@@ -2867,111 +2867,6 @@ export interface AutomationCreatorPluginCatalogEntry {
   }>;
 }
 
-export type AutomationCompilerFailureCode =
-  | HarnessFailureCode
-  | "sidekick_draft_not_submitted";
-
-export class AutomationCompilerError extends Error {
-  constructor(
-    readonly code: AutomationCompilerFailureCode,
-    readonly kind: HarnessFailure["kind"] | "completion",
-    readonly retryable: boolean,
-    message: string,
-  ) {
-    super(message);
-    this.name = "AutomationCompilerError";
-  }
-}
-
-export interface TextDeltaBatcher {
-  push(delta: string): Promise<void>;
-  flush(): Promise<void>;
-  /** Drop pending text without publishing it. See the retraction rule below. */
-  discard(): void;
-}
-
-/**
- * Coalesce provider text fragments before they become frames on a wire.
- *
- * A model emits a token at a time, and every fragment that reaches a client
- * unbatched costs a frame, a schema parse, a state update, and — where the
- * receiver follows the transcript — a layout pass. The defaults match the
- * sequenced batcher on the work-stream socket path
- * (`createSequencedStreamDeltaBatcher` in `apps/api/src/services/integrations.ts`),
- * so both surfaces coalesce identically; that one stays separate because it
- * also has to keep turn and epoch sequencing, which this one has no concept of.
- *
- * **A retraction is never batched.** A caller with reset semantics settles
- * whatever is pending — `flush` when the retraction only clears part of the
- * receiver's buffer, `discard` when the retracting frame carries the whole
- * replacement — and publishes that frame on its own, so text can never arrive
- * coalesced behind the frame that was meant to replace it. Which of the two
- * applies depends on what the retraction means, so it lives with each caller
- * rather than in here.
- */
-export function createTextDeltaBatcher(
-  publish: (delta: string) => Promise<void>,
-  options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
-): TextDeltaBatcher {
-  const maxCharacters = options.maxCharacters ?? 2_048;
-  const maxDelayMs = options.maxDelayMs ?? 100;
-  const now = options.now ?? Date.now;
-  let pending = "";
-  let lastFlushAt = now();
-
-  const flush = async (): Promise<void> => {
-    if (!pending) return;
-    const delta = pending;
-    pending = "";
-    lastFlushAt = now();
-    await publish(delta);
-  };
-
-  return {
-    async push(delta: string): Promise<void> {
-      pending += delta;
-      if (pending.length >= maxCharacters || now() - lastFlushAt >= maxDelayMs) {
-        await flush();
-      }
-    },
-    flush,
-    discard(): void {
-      pending = "";
-      lastFlushAt = now();
-    },
-  };
-}
-
-export type AutomationCompilerStreamEvent =
-  | { type: "started" }
-  | {
-      /**
-       * A fragment of the architect's narration. `reset: true` replaces the
-       * composer's whole narration buffer with `delta` rather than appending.
-       */
-      type: "delta";
-      delta: string;
-      reset: boolean;
-    }
-  | {
-      type: "thinking";
-      inferenceRequestId: string;
-      status: "started" | "completed";
-      /** Cumulative model-inference time for this compiler turn. */
-      durationMs: number;
-    }
-  | {
-      type: "tool";
-      toolCallId: string;
-      name: string;
-      summary: string;
-      status: "started" | "completed" | "failed";
-      /** The single plugin that owns this tool, or null for Avalon-owned tools. */
-      plugin: AutomationPluginActivity | null;
-      durationMs?: number;
-    }
-  | { type: "completed" };
-
 const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
   started: string;
   completed: string;
@@ -3612,6 +3507,33 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   idempotency: "provider_key",
   get inputSchema() {
     return requestElicitationInputJsonSchema();
+  },
+} as const satisfies ToolDefinition;
+
+const memberCardInputJsonSchema = memoizedValue(
+  () => z.toJSONSchema(MemberCardInputSchema, { io: "input" }) as Record<string, unknown>,
+);
+
+/**
+ * Bring someone into the Organization from the conversation. It looks the
+ * address up first, so it doubles as the check: a member comes back at once
+ * with their userId, and only someone who is not one is shown the card.
+ */
+export const AVALON_OFFER_TO_ADD_MEMBER_TOOL_DEFINITION = {
+  name: "offer_to_add_member",
+  description: [
+    "Find someone the work needs as a member of this Organization by email address, and if they are not one, show a card that adds them.",
+    "A member comes back at once as status member with their userId, and nothing is shown: carry on and use that userId (for example, to ask them for a Sidekick source).",
+    "Anyone else, guests included, gets a card in this conversation that an Organization owner or administrator presses to add them as a member at once; they need not have signed in to Rally, and there is nothing for them to accept.",
+    "That pauses this run until someone answers; if the person you work for is not an owner or administrator, tell them one must press it. On the answer added, call this tool again with the same email: it returns their userId. On declined, carry on without them.",
+    "Use it only when the work needs that person to be a member of this Organization, such as a teammate to ask for a Sidekick source. Never use it for people the work only emails or reads mail from (customers, leads, vendors): adding them would open the Organization to them. Do not tell the person to invite a teammate some other way.",
+  ].join(" "),
+  capability: "workspace.members.offer",
+  mode: "write",
+  // The question's id derives from this receipt key, as request_elicitation's does.
+  idempotency: "provider_key",
+  get inputSchema() {
+    return memberCardInputJsonSchema();
   },
 } as const satisfies ToolDefinition;
 

@@ -18,6 +18,7 @@ import { AutomationLifecycleStateSchema,
   AutomationRunTriggerV1Schema,
   AutomationScopeSchema, SidekickAudienceSchema, StoredAutomationScopeSchema } from "./automation-agent";
 import { ConnectorConnectionCardInputSchema } from "./connector-connection-card";
+import { MemberCardInputSchema } from "./member-card";
 import { ConnectorInstallationSchema } from "./connector-installation";
 export * from "./conversation-attention";
 export * from "./conversation-source";
@@ -56,6 +57,7 @@ import {
 export * from "./automation-agent";
 export * from "./automation-evaluators";
 export * from "./connector-connection-card";
+export * from "./member-card";
 export * from "./conversation-effects";
 export * from "./conversation-parent";
 export * from "./canvases";
@@ -397,6 +399,19 @@ export const CreateWorkspaceInvitationResponseSchema = z.object({
   inviteUrl: HttpUrlSchema,
   emailDelivery: z.enum(["sent", "skipped"])
 });
+/**
+ * `POST /workspace/members`: an administrator adds someone by address, and
+ * they are a member at once. Someone who has never signed in gets their
+ * account then, bound to the address, so their first sign-in with it lands in
+ * the Organization. There is no invitation to accept.
+ */
+export const AddWorkspaceMemberRequestSchema = CreateWorkspaceInvitationRequestSchema;
+export const AddWorkspaceMemberResponseSchema = z.object({
+  member: z.object({ userId: IdSchema, email: z.string().email(), role: WorkspaceInvitationRoleSchema }),
+  /** Whether the email telling them was sent; the membership stands either way. */
+  emailDelivery: z.enum(["sent", "skipped", "failed"]),
+});
+export type AddWorkspaceMemberResponse = z.infer<typeof AddWorkspaceMemberResponseSchema>;
 export const AcceptWorkspaceInvitationRequestSchema = z.object({
   token: z.string().min(20).max(500)
 });
@@ -1044,6 +1059,12 @@ export const ElicitationSchema = z.object({
    * one (it strips the key) and a stored question without it still parses.
    */
   connection: ConnectorConnectionCardInputSchema.optional(),
+  /**
+   * A question adding someone to the Organization answers
+   * (`offer_to_add_member`): the panel shows the card that adds them, and its
+   * press answers `added`. Optional for the same reasons as `connection`.
+   */
+  member: MemberCardInputSchema.optional(),
   /**
    * Whether the panel offers a typed answer beside the options ("Other").
    * Absent reads as true; false means these options only, as the connection

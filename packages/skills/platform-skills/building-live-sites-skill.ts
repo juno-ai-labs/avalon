@@ -464,7 +464,9 @@ have not. Ask its entry-privacy question only when that skill requires it.
    original path. Same URL, same rail entry, new version — viewers see it on
    their next load. Publishing a renamed or copied directory mints a second
    site and strands the existing URL. Keep chat narration short and free of
-   the site's code, and announce a confirmed publication with an embed citation.
+   the site's code. If you are a background agent, hand the publication back
+   in your result message so your coordinator can present it. Otherwise,
+   announce the confirmed publication with an embed citation.
 
 ## Media, downloads and feeds
 

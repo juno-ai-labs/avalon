@@ -104,7 +104,7 @@ active plugins through the runtime view and refuses by name, with a reason
 code: a plugin not in the run, the two program plugins and the wizard's
 `sidekick_tool_test` (a program cannot run a program), a plugin outside a
 saved tool's `requiredPlugins`, a plugin not loaded, a loop control
-(`load_plugin`, `load_skill`, `request_elicitation`),
+(`load_plugin`, `load_skill`, `request_elicitation`, `offer_to_add_member`),
 a tool whose result is current-turn content (`yieldsContentParts`: `view_image`,
 `view_resource`, `browser_js`, the image generators), a tool whose result is
 transient and may not be stored (`TRANSIENT_RESULT_CAPABILITIES`: Slack's

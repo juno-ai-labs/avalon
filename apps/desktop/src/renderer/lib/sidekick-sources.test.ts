@@ -22,7 +22,12 @@ describe('why an answer was refused', () => {
 
   it('tells a person approving with nothing connected which account to connect', () => {
     expect(sourceRefusal(new ApiError('nothing connected', 409, 'sidekick_source_connection_missing'), ask))
-      .toBe('Connect your Gmail account in Settings first. There is nothing to allow until it is connected.');
+      .toBe('Connect your Gmail account first. There is nothing to allow until it is connected.');
+  });
+
+  it('tells a person approving with a lapsed sign-in which account to reconnect', () => {
+    expect(sourceRefusal(new ApiError('lapsed', 409, 'sidekick_source_connection_reconnect'), ask))
+      .toBe('Reconnect your Gmail account first. Its sign-in has lapsed, so nothing could arrive from it.');
   });
 
   it('says each refusal the contract names in the contract\'s words, and anything else in the server\'s', () => {

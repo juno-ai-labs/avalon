@@ -18,7 +18,7 @@ pnpm smoke:local
 ```
 
 The smoke check signs in through development-only authentication, verifies
-protected workspace routes and the invitation lifecycle, and reads the seeded
+protected workspace routes and adding a member by address, and reads the seeded
 fixtures from `packages/db/seed-product.json`: the Launch plan Canvas's
 artifact, the Q4 revenue review Chat's turns and reply, and the Weekly
 changelog Sidekick's shared conversation. It then makes a Canvas under an id
@@ -29,7 +29,10 @@ Canvas and that a message resent to its Chat
 a model its summary line says the reply was not checked. Last, it replays the
 seeded opening message over the Chat's conversation socket without duplicating
 it, receives its private command receipt, and rejects reuse of the single-use
-socket ticket. It does not create provider data or send email.
+socket ticket. It does not create provider data or send email. Adding a member
+leaves `regional-smoke-<region>@example.test` as a permanent account and
+active member of the smoke Organization; on a hosted run that member counts
+toward the team trial and shows in the roster.
 
 Set `AVALON_SMOKE_BASE_URL` to exercise another Worker. Local Workers use the development session endpoint; hosted production smoke tests must also set a short-lived `AVALON_SMOKE_ACCESS_TOKEN` because development authentication remains disabled in production. A hosted Worker serves the model its `agent-model-workstream` flag names, which can differ from the checked-in default; set `AVALON_SMOKE_EXPECTED_MODEL` to that model.
 
@@ -132,15 +135,15 @@ search (not an IME composition). Search `Tools Rally may use` before installing
 MCP and confirm the provider setup card is revealed without authorization.
 With two installed servers, search each name and verify the corresponding
 instance. Navigate away or focus another field while a read is pending: a late
-result must not steal focus. Search Send invitation with a populated
+result must not steal focus. Search Add member with a populated
 form and verify search does not submit it. These are renderer checks, not proof
 of backend authorization; [settings search](settings-search.md) owns the contract.
 
 2. During Google sign-in, confirm the system browser visits `/auth/desktop/`, its address bar is stripped of the fragment, and the **Open Rally** fallback returns the app to the correct regional session. Confirm the renderer never receives a Google code, token, or native PKCE verifier; relaunching the app before ticket redemption must require starting sign-in again.
 
-3. Open an invitation while signed out and confirm its workspace, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
+3. Legacy only, for an invitation sent before 2026-11-16: open it while signed out and confirm its workspace, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
 
-5. Open **Rally → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, the app version under **About**, immutable region, members, and role-appropriate invitation controls. Confirm **Security** sits at the top level between **Organization** and **Connections** and carries the Terminal outbound-access policy, and that **About** lists the version alone — no build, platform, API base URL, or realtime line.
+5. Open **Rally → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, the app version under **About**, immutable region, members, and role-appropriate Add members controls. Confirm **Security** sits at the top level between **Organization** and **Connections** and carries the Terminal outbound-access policy, and that **About** lists the version alone — no build, platform, API base URL, or realtime line.
 
 6. The Developer section is served by the `developer-settings` flag, whose
 targeting rule matches on the account's **email domain**. Start signed in as a
@@ -160,7 +163,7 @@ continue. Right-click a Canvas row, a Sidekick row and a note in the sidebar and
 
 8. Open **Notifications** and confirm **Notify me about** lists exactly Mentions, New messages, Being added, Sidekick runs, Pinned Canvas updates and Access requests, in that order, each with its channels, and no **Daily digest** section. Open the old `digest` settings deep link and confirm it lands on Notifications.
 
-9. Create an invite as an owner/admin and confirm the UI reports **Invitation emailed** only after Cloudflare accepts the request. Verify the message is from `Rally <invites@rallywith.ai>`, contains the correct workspace, role, region, seven-day expiry, and one-time link, then copy the same link from Settings as a fallback.
+9. Add a member by email as an owner/admin and confirm the UI reports **Added** and that they are a member now. Verify the "you were added" message is from `Rally <invites@rallywith.ai>`, names the workspace and role, and opens Rally. Force the send to fail and confirm the UI says to tell them to sign in with that address.
 
 10. Install a workspace Google Drive connection, open a new Canvas as another active member, and confirm Drive search plus every granted Docs/Sheets read and write tool is offered without attaching a resource. Confirm another member’s personal Google connection remains unavailable and a workspace automation still receives only its explicitly bound capabilities.
 
@@ -168,16 +171,16 @@ continue. Right-click a Canvas row, a Sidekick row and a note in the sidebar and
 
 12. For each OAuth connector, confirm the provider returns to `/auth/desktop/`, the page reports success or cancellation and offers **Open Rally**, and Settings reaches the same terminal result when automatic app opening is blocked. Close Rally before a successful callback, reopen it, and confirm the persisted connection appears without repeating authorization.
 
-13. Accept the emailed invitation with the matching Google identity, confirm it cannot be reused, then create another invitation and revoke it before opening the email. Confirm the revoked link fails and a non-admin cannot create or revoke invitations. Sign out from Settings and confirm both application surfaces return to onboarding.
+13. Sign in as the added address with the matching Google identity and confirm it lands in the Organization, through personal setup if it is their first. Confirm a non-admin cannot add members. Sign out from Settings and confirm both application surfaces return to onboarding.
 
 ### Multiple workspaces
 
 Use two disposable accounts with pre-provisioned configured deployments memberships. Enable
 `multiple-workspaces-enabled` except where a step says otherwise.
 
-1. Have account A invite B. While B is already signed in to another workspace,
-   open the emailed link, confirm the modal names the workspace, inviter, and
-   role, choose **Join**, and confirm B lands in it with both workspaces retained.
+1. Have account A add B by address. While B is already signed in to another
+   workspace, confirm B sees the new workspace after discovery, with no
+   invitation to accept, and that B keeps both workspaces.
 
 3. Leave unsent text and attachments in composers in two workspaces, switch both
    directions, and confirm each restores only its own draft. Leave one workspace
@@ -237,7 +240,8 @@ Use two disposable accounts with pre-provisioned configured deployments membersh
     remains usable. Open the account with an older desktop build and confirm the
     singular compatibility workspace opens instead of onboarding failing.
 
-15. Open an invitation addressed to another email while signed in. Confirm the
+15. Legacy only, for an invitation sent before 2026-11-16: open one addressed
+    to another email while signed in. Confirm the
     modal names the exact required address, signing in with the current account
     cannot consume it, and changing to the matching account can accept it.
 
