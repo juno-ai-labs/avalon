@@ -75,7 +75,6 @@ import {
   type RequestElicitationInput,
   classifyMessageAdmission,
   canonicalToolInputHash,
-  createTextDeltaBatcher,
   memberSafeHarnessFailureMessage,
   rememberAutomationPeopleSearchResult,
   rememberAutomationResourceSearchResult,
@@ -2732,6 +2731,11 @@ interface SequencedStreamDeltaBatcher {
   flush(): Promise<void>;
 }
 
+/**
+ * Coalesce model text into one socket frame per `maxDelayMs`. Held text always
+ * leaves within `maxDelayMs`: a trailing timer sends it when no later delta
+ * arrives to carry it.
+ */
 function createSequencedStreamDeltaBatcher(
   publish: (event: Extract<HarnessEvent, { type: "stream_delta" }>) => Promise<void>,
   options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
@@ -2741,8 +2745,22 @@ function createSequencedStreamDeltaBatcher(
   const now = options.now ?? Date.now;
   let pending: Extract<HarnessEvent, { type: "stream_delta" }> | null = null;
   let lastFlushAt = now();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  // Every publish runs on this chain, so a timer flush can never reorder a
+  // frame against a push, a reset, or the caller's own flush before an event.
+  let queue: Promise<void> = Promise.resolve();
 
-  const flush = async () => {
+  const enqueue = (task: () => Promise<void>): Promise<void> => {
+    const run = queue.then(task);
+    queue = run.catch(() => undefined);
+    return run;
+  };
+
+  const sendPending = async () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
     if (!pending) return;
     const event = pending;
     pending = null;
@@ -2750,25 +2768,33 @@ function createSequencedStreamDeltaBatcher(
     await publish(event);
   };
 
+  const flush = () => enqueue(sendPending);
+
   return {
-    async push(event) {
-      // A reset is an epoch boundary and must reach the client on its own. It
-      // may never be coalesced behind text from the abandoned route.
-      if (event.reset) {
-        await flush();
-        await publish(event);
-        lastFlushAt = now();
-        return;
-      }
-      if (pending && (pending.turnId !== event.turnId || pending.epoch !== event.epoch)) {
-        await flush();
-      }
-      pending = pending
-        ? { ...event, delta: pending.delta + event.delta }
-        : event;
-      if (pending.delta.length >= maxCharacters || now() - lastFlushAt >= maxDelayMs) {
-        await flush();
-      }
+    push(event) {
+      return enqueue(async () => {
+        // A reset is an epoch boundary and must reach the client on its own. It
+        // may never be coalesced behind text from the abandoned route.
+        if (event.reset) {
+          await sendPending();
+          await publish(event);
+          lastFlushAt = now();
+          return;
+        }
+        if (pending && (pending.turnId !== event.turnId || pending.epoch !== event.epoch)) {
+          await sendPending();
+        }
+        pending = pending
+          ? { ...event, delta: pending.delta + event.delta }
+          : event;
+        const waited = now() - lastFlushAt;
+        if (pending.delta.length >= maxCharacters || waited >= maxDelayMs) {
+          await sendPending();
+        } else if (!timer) {
+          // `publish` is best-effort and reports its own drops.
+          timer = setTimeout(() => { flush().catch(() => undefined); }, maxDelayMs - waited);
+        }
+      });
     },
     flush,
   };
@@ -9639,6 +9665,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  createSequencedStreamDeltaBatcher,
   turnIsSelfReview,
   builtInSkillsFor,
   principalSystemSectionFor,
@@ -9686,7 +9713,6 @@ export const __integrationTesting = {
   pluginAuthorizationFromHealth,
   builtinPluginAuthorization,
   reauthorizeFrozenPlugin,
-  createTextDeltaBatcher,
   classifyHarnessToolFailure,
   resolveValidationFailureInvocation,
   createConnectorToolContext,
