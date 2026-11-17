@@ -8607,6 +8607,12 @@ async function readConnectorProductStates(
   })), registered);
 }
 
+/** The connector connection tools as this turn's principal may use them: as they are, or refusing by name. */
+function connectorConnectionToolsFor(input: WorkstreamWorkflowInput, tools: HarnessTool[]): HarnessTool[] {
+  if (input.executionPrincipal.type === "user") return tools;
+  return tools.map((tool) => refusingTool(tool, toolRefusal("connections_need_a_person")));
+}
+
 /** What the access check needs from the run that holds it. */
 type ResourceAccessPort = {
   /** Connector types whose adapter can answer a probe in this deployment. */
@@ -8664,8 +8670,11 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
     },
     // A Sidekick run holds these too, since 2026-11-08: a run a missing
     // connection blocks asks for it and waits (`needs_input`) rather than
-    // finishing with the work undone. Its card is the question.
-    ...(input.executionPrincipal.type === "user" ? [
+    // finishing with the work undone. Its card is the question. A turn that
+    // acts for the Organization has no person whose connections these read
+    // or ask for, so it is offered them refusing by name (rule 14 of
+    // docs/agent-tools.md) rather than not at all.
+    ...connectorConnectionToolsFor(input, [
       {
         definition: AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
         validateInput: (raw: unknown) => {
@@ -8720,7 +8729,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           return { output: card, summary };
         },
       } satisfies HarnessTool,
-    ] : []),
+    ]),
     {
       definition: {
         name: "schedule_wakeup",

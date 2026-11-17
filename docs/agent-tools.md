@@ -132,7 +132,10 @@ are the initial annotated tools.
 
 `get_connector_connection_state` and `show_connector_connection` are the
 recovery pair for a run with a user principal: a Canvas's Chat, a Sidekick's
-conversation, and a Sidekick run. Both accept only a trusted connector catalog
+conversation, and a Sidekick run. A turn acting for the Organization (a
+workspace principal) is offered both, and `list_connectors`, refusing with
+`connections_need_a_person`: it has no person whose connections to read, and
+uses only the connections bound to its Sidekick. Both accept only a trusted connector catalog
 id and a `personal`/`workspace` scope. The read always checks every scope the
 connector offers in one query; a `scope` it is sent is accepted and ignored, so
 older calls still validate. It returns each scope's state, `connected`, `reconnect_required`, or `not_connected`,
@@ -863,13 +866,15 @@ nothing, so it is `read` and safe to retry.
 
 `refusingTool` (`apps/api/src/services/tool-refusal.ts`) builds one from the
 tool itself: the same name and arguments, and a call that refuses. Every
-refusal's text is in one table there (`TOOL_REFUSALS`). Four uses:
+refusal's text is in one table there (`TOOL_REFUSALS`). Its uses:
 `sidekick_request_source` where a turn may not ask
 (`sidekickSourceRefusalTool`), every Sidekicks tool on a turn that acts for
 the Organization rather than a person (`organizationSidekicksPlugin`), and
 the two question tools where answers go to an agent (`questionRefusal`),
-and the notice tools a run or the self-review may not use
-(`notificationToolsAllowed`, [`push-notifications.md`](push-notifications.md#canvas-notices)).
+the notice tools a run or the self-review may not use
+(`notificationToolsAllowed`, [`push-notifications.md`](push-notifications.md#canvas-notices)),
+and the three connector connection tools on a turn that acts for the
+Organization (`connectorConnectionToolsFor`).
 A tool that has no target on a surface (archiving a Sidekick a Canvas made,
 outside a Canvas) is a different case, and the rule does not cover it.
 
@@ -1379,7 +1384,9 @@ future agent tool or plugin, not just this family.
 ### 2026-11-17 — An agent can list connectors by family, and see each account
 
 **What changed:** `list_connectors` joins the core plugin, held wherever
-`get_connector_connection_state` is (any loop with a user principal). Both
+`get_connector_connection_state` is (any loop with a user principal). A turn
+acting for the Organization, which had neither connector tool, is now offered
+all three refusing by name, per rule 14. Both
 return the same product state, now with name, description, `connectIn` per
 scope, and `accounts`. `show_connector_connection` may be called for a
 connection that would clearly improve the asked-for work, not only one that
