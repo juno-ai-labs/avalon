@@ -1,4 +1,5 @@
 import { renderAccessCopy } from './src/access-copy';
+import { addPageCard, pageCardFile, pageCardFor, pageCards, renderPageCard } from './src/page-cards';
 import { helpCenter } from './build/help/plugin';
 import { renderBlogCard, renderBlogIndex, renderBlogPost } from './src/blog-pages';
 import { audience, connectorNames, marketplaceTemplates, renderMarketplaceSitemap, renderTemplateCard, renderTemplatePage, templatePagePath } from './src/marketplace-catalog';
@@ -33,6 +34,8 @@ const generatedFiles = new Map<string, { type: string; render: () => string | Pr
   ] as const),
   ['marketplace/sitemap.xml', { type: 'application/xml', render: renderMarketplaceSitemap }],
   ['llms.txt', { type: 'text/plain; charset=utf-8', render: renderLlmsTxt }],
+  // The hand-written pages' link previews, from `src/page-cards.ts`.
+  ...pageCards.map((card) => [pageCardFile(card), { type: 'image/png', render: () => renderPageCard(card) }] as const),
 ]);
 /**
  * A plugin that rewrites `attribute="/src/<file>"` in built HTML to the hashed
@@ -75,6 +78,14 @@ export default defineConfig({
       entryMeta: [{ name: 'rally-posthog-src', entryName: 'posthog', entrySource: '/src/posthog.ts' }],
     }),
     { name: 'rally-access-copy', transformIndexHtml: renderAccessCopy },
+    // After access copy, so /start-fast/'s headline is filled in before its card's title is checked against it.
+    {
+      name: 'rally-page-cards',
+      transformIndexHtml: (html, context) => {
+        const card = pageCardFor(context.path);
+        return card ? addPageCard(html, card) : html;
+      },
+    },
     { name: 'rally-site-chrome', transformIndexHtml: { order: 'pre', handler: renderSiteChrome } },
     {
       name: 'rally-markdown-pages',

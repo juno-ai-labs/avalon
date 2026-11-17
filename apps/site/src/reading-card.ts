@@ -1,10 +1,10 @@
-/** Build-time link previews for the pencil site's blog, manual and marketplace. */
+/** Build-time link previews for every page of the pencil site: see docs/site-design-system.md. */
 import { readFileSync } from 'node:fs';
 import opentype from 'opentype.js';
 import sharp from 'sharp';
 import { getIllustration } from './home-illustrations';
 
-interface ReadingCard {
+export interface ReadingCard {
   eyebrow: string;
   title: string;
   description: string;
@@ -27,6 +27,9 @@ function illustration(scene: ReadingCard['scene']): Promise<Buffer> {
     .extract(crop)
     .resize(420, 315).png().toBuffer();
 }
+
+/** The line every card ends on, set flush right; the product's own words from the landing page. */
+const SIGN_OFF = 'Reactive artifacts, shared with your team.';
 
 const graphemes = new Intl.Segmenter('en', { granularity: 'grapheme' });
 
@@ -65,9 +68,11 @@ const text = (face: opentype.Font, value: string, x: number, y: number, size: nu
   `<path fill="${color}" d="${face.getPath(value, x, y, size).toPathData(1)}"/>`;
 
 export async function renderReadingCard(card: ReadingCard): Promise<Buffer> {
+  // A line break in the title is kept, so a card can break a headline where its page does.
+  const wrapTitle = (size: number) => card.title.split('\n').flatMap((line) => wrap(line, display, size, 625));
   let size = 82;
-  while (wrap(card.title, display, size, 625).length > 3 && size > 48) size -= 2;
-  const lines = clamp(wrap(card.title, display, size, 625), display, size, 625);
+  while (wrapTitle(size).length > 3 && size > 48) size -= 2;
+  const lines = clamp(wrapTitle(size), display, size, 625);
   const bodyY = Math.min(464, 240 + (lines.length - 1) * size * 1.03 + 60);
   const bodyLines = clamp(wrap(card.description, body, 22, 620), body, 22, 620);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630">
@@ -79,7 +84,7 @@ export async function renderReadingCard(card: ReadingCard): Promise<Buffer> {
     ${bodyLines.map((line, index) => text(body, line, 64, bodyY + index * 31, 22, '#646b5b')).join('')}
     <path d="M64 571H1136" stroke="#e4e4d8"/>
     ${text(body, card.address, 64, 604, 15, '#646b5b')}
-    ${text(body, 'A little help. A lot more possible.', 884, 604, 15, '#646b5b')}
+    ${text(body, SIGN_OFF, 1136 - body.getAdvanceWidth(SIGN_OFF, 15), 604, 15, '#646b5b')}
   </svg>`;
   return sharp(Buffer.from(svg))
     .composite([{ input: await illustration(card.scene), left: 742, top: 165 }])

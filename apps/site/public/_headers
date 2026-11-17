@@ -68,22 +68,15 @@
 /site.webmanifest
   Cache-Control: public, max-age=86400
 
-/blog/*/social.png
+# Link previews drawn at build time beside their pages, under unhashed names.
+# A splat matches across slashes, so one rule covers every depth.
+/social.png
   Cache-Control: public, max-age=86400
 
-/rally-social-v01.jpg
-  Cache-Control: public, max-age=86400
-
-/rally-pencil-social.png
+/*/social.png
   Cache-Control: public, max-age=86400
 
 /illustrations/*
-  Cache-Control: public, max-age=86400
-
-/rally-social.jpg
-  Cache-Control: public, max-age=86400
-
-/og-2026.jpg
   Cache-Control: public, max-age=86400
 
 /concepts/biomes/*
