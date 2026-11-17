@@ -418,8 +418,9 @@ by the sender is not evidence of a load by the recipient. Required execution
 steps belong in durable run instructions as well as the handoff.
 Background agents are explicitly told
 to execute their assignment directly and delegate further only when splitting
-work would materially help. They attach a published artifact to their result
-message and include its returned URL so their coordinator can present it.
+work would materially help. They are told to attach a published artifact to
+their result message and include its returned URL so their coordinator can
+present it.
 A run ending without a message to its coordinator is reported as finished
 without replying. Every role is told
 how to wait for a delegate: keep working on what does not depend on the result
