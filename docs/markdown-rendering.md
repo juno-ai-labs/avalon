@@ -997,6 +997,38 @@ restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ## Changelog
 
+### 2026-11-17 — A refused branding response names its field
+
+**What changed:** The favicon route's `firecrawl_parse_200` now names the
+rejected path and issue (`favicon_unavailable:firecrawl_branding_invalid:…`)
+through `zodDiagnosticCode`, and `scrapeBranding` validates only `url`,
+`sourceURL` and `statusCode` in Firecrawl's metadata rather than the whole
+shared scrape metadata schema.
+
+**Why:** A scheduled log review on 2026-11-17 found 22 error-level
+`favicon_unavailable:firecrawl_parse_200` 502s in twelve hours for one fully
+typed Rally reactive-site host
+(`*.rallyusercontent.com`), plus earlier ones for another reactive site. The
+page serves 200 directly, so Firecrawl answered and our schema refused the
+answer — but the code did not say which field, which is the generic code
+CLAUDE.md's "Naming a schema failure" calls a defect. A parse failure is not
+negative-cached, so every view of that link paid for a fresh scrape. The likely
+culprit is a metadata field the branding call never reads (Firecrawl reports a
+page's own tags there, and a repeated tag can arrive as an array), but the
+review could not see the response to confirm it; the named code will.
+
+**Considered and rejected:** Caching a parse failure as a 30-day miss. It
+would stop the repeat scrapes, but a schema defect on our side would then hide
+real icons for a month; naming the field first lets the next review decide.
+
+**Consequences:** A favicon parse failure is still not negative-cached, so a
+host whose branding response we refuse keeps costing a scrape per view until the
+named field is fixed. `scrapeBranding` must keep its metadata schema to the
+fields it returns; a field added to `FirecrawlBrandingOutput` has to be added to
+the pick as well.
+
+PR: #1647
+
 ### 2026-11-12 — An artifact card opens, copies and shares from the feed
 
 **What changed:** A generated artifact's embed card gains an audience pill, a
@@ -1023,30 +1055,6 @@ for visible controls.
 refused, not merged, when someone else saved first; the Canvas detail is then
 refetched. A host that cannot open a browser or read a link should omit
 `artifact` rather than offer a dead button.
-
-### 2026-11-17 — A refused branding response names its field
-
-**What changed:** The favicon route's `firecrawl_parse_200` now names the
-rejected path and issue (`favicon_unavailable:firecrawl_branding_invalid:…`)
-through `zodDiagnosticCode`, and `scrapeBranding` validates only `url`,
-`sourceURL` and `statusCode` in Firecrawl's metadata rather than the whole
-shared scrape metadata schema.
-
-**Why:** A scheduled log review on 2026-11-17 found 22 error-level
-`favicon_unavailable:firecrawl_parse_200` 502s in twelve hours for one fully
-typed Rally reactive-site host
-(`*.rallyusercontent.com`), plus earlier ones for another reactive site. The
-page serves 200 directly, so Firecrawl answered and our schema refused the
-answer — but the code did not say which field, which is the generic code
-CLAUDE.md's "Naming a schema failure" calls a defect. A parse failure is not
-negative-cached, so every view of that link paid for a fresh scrape. The likely
-culprit is a metadata field the branding call never reads (Firecrawl reports a
-page's own tags there, and a repeated tag can arrive as an array), but the
-review could not see the response to confirm it; the named code will.
-
-**Considered and rejected:** Caching a parse failure as a 30-day miss. It
-would stop the repeat scrapes, but a schema defect on our side would then hide
-real icons for a month; naming the field first lets the next review decide.
 
 ### 2026-11-11 — A link still being typed asks for no favicon
 
