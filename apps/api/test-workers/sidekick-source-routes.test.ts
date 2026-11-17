@@ -365,7 +365,7 @@ describe("the Sidekick source routes' refusals, by name", () => {
 
   it("refuses with 409 an approval by a person with no such account connected, and keeps the request waiting for when they have", async () => {
     // Pat's Drive is the same connector type and carries none of the mail, so it is not the account asked for.
-    const patsDrive = await connectGoogle(OTHER, "pat@example.com", { grants: DRIVE_GRANTS });
+    await connectGoogle(OTHER, "pat@example.com", { grants: DRIVE_GRANTS });
     const requestId = await asked(OTHER);
     const card = async () => ((await as(OTHER, "POST", READ, { requestIds: [requestId] })).body as { requests: Array<{ connection: string }> }).requests[0]!.connection;
     expect(await card()).toBe("not_connected");
@@ -381,7 +381,6 @@ describe("the Sidekick source routes' refusals, by name", () => {
     expect((await as(OTHER, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
     // The mail lands on the mail connection alone.
     expect(await storedSources()).toEqual([{ user_id: OTHER, connection_id: patsMail, condition: CONDITION, requested: 1 }]);
-    expect(patsDrive).not.toBe(patsMail);
   });
 
   it("refuses with 409 an approval whose only such account needs reconnecting, says so on the card, and approves once it is reconnected", async () => {

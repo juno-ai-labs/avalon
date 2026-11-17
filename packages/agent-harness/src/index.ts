@@ -3632,7 +3632,7 @@ export const AVALON_OFFER_TO_ADD_MEMBER_TOOL_DEFINITION = {
     "A member comes back at once as status member with their userId, and nothing is shown: carry on and use that userId (for example, to ask them for a Sidekick source).",
     "Anyone else, guests included, gets a card in this conversation that an Organization owner or administrator presses to add them as a member at once; they need not have signed in to Rally, and there is nothing for them to accept.",
     "That pauses this run until someone answers. On the answer added, call this tool again with the same email: it returns their userId. On declined, carry on without them.",
-    "Use it when the work names a person by email who should be in the Organization. Do not tell the person to invite them some other way.",
+    "Use it only when the work needs that person to be a user of this Organization, such as a teammate to ask for a Sidekick source. Never use it for people the work only emails or reads mail from (customers, leads, vendors): adding them would open the Organization to them. Do not tell the person to invite a teammate some other way.",
   ].join(" "),
   capability: "workspace.members.offer",
   mode: "write",
