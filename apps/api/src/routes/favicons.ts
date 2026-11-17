@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -27,7 +28,7 @@ faviconRoutes.get("/:hostname", zValidator("param", FaviconParamsSchema), async 
     // would otherwise reach (CLAUDE.md, "Naming a schema failure").
     const reason = faviconFailureReason(error);
     if (reason === null) throw error;
-    throw new ApiError(502, `favicon_unavailable:${reason}`, "The site's icon could not be fetched");
+    throw new ApiError(502, codeShaped(`favicon_unavailable:${reason}`), "The site's icon could not be fetched");
   });
   if (!favicon) {
     return c.body(null, 404, { "Cache-Control": "private, no-cache" });

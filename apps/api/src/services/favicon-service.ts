@@ -1,3 +1,4 @@
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { parse as parseDomain } from "tldts";
 import { FirecrawlError, type FirecrawlClient } from "../lib/firecrawl";
 import { createDeadline } from "../lib/deadline";
@@ -90,8 +91,11 @@ function transientFailure(hostname: string, phase: "branding" | "image", cause?:
  */
 export function faviconFailureReason(error: unknown): string | null {
   if (error instanceof FaviconFetchError) return `${error.phase}_fetch_failed`;
-  if (error instanceof FirecrawlError) return error.kind === "network" ? "firecrawl_network" : `firecrawl_${error.kind}_${error.status}`;
-  return null;
+  if (!(error instanceof FirecrawlError)) return null;
+  if (error.kind === "network") return "firecrawl_network";
+  // A response Firecrawl answered but the schema refused names the field it
+  // refused: `firecrawl_parse_200` alone was all a week of these 502s said.
+  return zodDiagnosticCode(error.cause, "firecrawl_branding") ?? `firecrawl_${error.kind}_${error.status}`;
 }
 
 async function fetchImage(

@@ -52,13 +52,16 @@ const scrapeResponseSchema = z.object({
   }),
 });
 
+// Only the three metadata fields `scrapeBranding` reads. Firecrawl reports a
+// page's own tags here (`title`, and any other field it fills from markup), and
+// a field this call never reads must not be able to refuse the favicon.
 const brandingResponseSchema = z.object({
   success: z.literal(true),
   data: z.object({
     branding: z.object({
       images: z.object({ favicon: z.string().nullish() }).nullish(),
     }).nullish(),
-    metadata: scrapeMetadataSchema,
+    metadata: scrapeMetadataSchema.pick({ sourceURL: true, url: true, statusCode: true }),
   }),
 });
 
@@ -296,6 +299,8 @@ export class FirecrawlClient {
           `Firecrawl returned invalid fields: ${describeZodIssues(parsed.error)}`,
           undefined,
           parsed.error.issues,
+          undefined,
+          { cause: parsed.error },
         );
       }
       return parsed.data;
