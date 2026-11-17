@@ -1661,6 +1661,9 @@ h2 {
 
   .home-header {
     width: calc(100% - 40px); gap: 15px; flex-wrap: wrap; position: relative; border: 0; height: 77px;
+    /* The nav hangs below the header into the hero's top padding; without this the
+       later, positioned hero paints over it and takes every tap. */
+    z-index: 1;
   }
 
   .home-nav {

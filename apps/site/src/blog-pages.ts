@@ -26,8 +26,6 @@ export interface BlogPost {
 }
 
 const ORIGIN = 'https://rallywith.ai';
-/** The index shares the home page's card; each post has its own, drawn at build time. */
-const HOME_IMAGE = `${ORIGIN}/rally-pencil-social.png`;
 const FIELDS = ['slug', 'title', 'description', 'author'] as const;
 
 /**
@@ -80,7 +78,7 @@ export function loadBlogPosts(directory: URL): BlogPost[] {
 
 /** The document both blog pages share: head, site header, and footer. */
 function page({ path, title, description, type, image, extraHead, main }: {
-  path: string; title: string; description: string; type: 'website' | 'article'; image: string; extraHead: string; main: string;
+  path: string; title: string; description: string; type: 'website' | 'article'; image?: string; extraHead: string; main: string;
 }): string {
   return `<!doctype html>
 <html lang="en">
@@ -100,13 +98,13 @@ function page({ path, title, description, type, image, extraHead, main }: {
     <meta property="og:title" content="${escapeHtml(title)}" />
     <meta property="og:description" content="${escapeHtml(description)}" />
     <meta property="og:url" content="${ORIGIN}${path}" />
-    <meta property="og:image" content="${image}" />
+${image ? `    <meta property="og:image" content="${image}" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="${escapeHtml(title)}" />
-    <meta name="twitter:description" content="${escapeHtml(description)}" />
     <meta name="twitter:image" content="${image}" />
+` : ''}    <meta name="twitter:title" content="${escapeHtml(title)}" />
+    <meta name="twitter:description" content="${escapeHtml(description)}" />
 ${extraHead}    <link rel="stylesheet" href="/src/reading.css" />
   </head>
 <body class="paper-site">
@@ -153,7 +151,7 @@ export function renderBlogIndex(posts: readonly BlogPost[]): string {
       + `<div class="changelog-content"><h2 class="changelog-title"><a href="${href}">${escapeHtml(title)}</a></h2>${content}</div></article>`;
   }).join('\n');
   return page({
-    path: '/blog/', title: 'Blog · Rally', description: 'News and writing from the team building Rally.', type: 'website', image: HOME_IMAGE, extraHead: '',
+    path: '/blog/', title: 'Blog · Rally', description: 'News and writing from the team building Rally.', type: 'website', extraHead: '',
     main: `<div class="changelog"><header class="reading-hero">
       <div><p class="eyebrow">The Rally blog</p><h1 class="changelog-heading">A few notes<br>from Rally.</h1><p class="lede">News and writing from the people building Rally. A little of what we’re making, learning, and thinking about along the way.</p></div>
       <figure class="pencil-vignette">${renderHomeIllustration('together')}<figcaption>Good things are worth sharing.</figcaption></figure>
