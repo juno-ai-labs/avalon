@@ -157,7 +157,7 @@ Register each by hand and store its credentials as Worker secrets:
   relay senders.
 - The GitHub App, Linear OAuth app, Slack app and Notion connection, from the
   manifests in `config/provider-apps/` (`pnpm notion:webhook:prepare` prepares
-  Notion's webhook URL). Canva, Apollo, Ashby and Fireflies need registration
+  Notion's webhook URL). Apollo, Ashby and Fireflies need registration
   but no server secret.
 - Stripe: products, prices, tax settings and the webhook.
 - API keys for OpenRouter, Typesafe, Turbopuffer, Firecrawl, twitterapi.io,

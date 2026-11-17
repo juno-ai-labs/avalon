@@ -56,7 +56,7 @@ describe("connector connection tool guidance", () => {
     const connectorIds = schema.properties?.connectorId?.description ?? "";
     expect(connectorIds).toBe(
       "Connector to check or show."
-      + " Personal only: google-mail-calendar, apollo, ashby, canva, fireflies, granola."
+      + " Personal only: google-mail-calendar, apollo, ashby, fireflies, granola."
       + " Personal or workspace: google-drive, github, linear, slack, notion."
       + " google-drive is Google Drive, Docs and Sheets.",
     );

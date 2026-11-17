@@ -17,7 +17,7 @@ import {
 } from "./connector-catalog";
 
 const everyProvider = new Set([
-  "google", "github", "apollo", "ashby", "canva", "fireflies", "granola", "linear", "slack", "notion", "x",
+  "google", "github", "apollo", "ashby", "fireflies", "granola", "linear", "slack", "notion", "x",
   "custom_mcp", "generic_webhook",
 ]);
 
@@ -48,7 +48,7 @@ describe("connector product catalog", () => {
     expect(name).toBe("Google Mail + Calendar · ada@example.com");
     expect(connectorConnectionAccount("account", name)).toBe("ada@example.com");
     expect(connectorConnectionAccount("account", "Linear · Ada · Acme")).toBe("Ada · Acme");
-    expect(connectorConnectionAccount("account", "Canva")).toBeNull();
+    expect(connectorConnectionAccount("account", "Ashby")).toBeNull();
     expect(connectorConnectionAccount("account", "Ashby workspace events")).toBeNull();
     // A custom server's name is the one a person typed, separator or not.
     expect(connectorConnectionAccount("name", "Acme CRM · prod")).toBe("Acme CRM · prod");

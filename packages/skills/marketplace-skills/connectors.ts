@@ -15,7 +15,6 @@ export const TEMPLATE_CONNECTORS = [
   { id: 'granola', name: 'Granola', mark: 'granola' },
   { id: 'fireflies', name: 'Fireflies', mark: 'fireflies' },
   { id: 'ashby', name: 'Ashby', mark: 'ashby' },
-  { id: 'canva', name: 'Canva', mark: 'canva' },
   { id: 'x', name: 'X', mark: 'x' },
 ] as const;
 

@@ -2,7 +2,6 @@ import { ConnectorProductCatalog, GOOGLE_DRIVE_CAPABILITIES, GOOGLE_MAIL_CALENDA
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
 import { Webhook } from 'lucide-react';
-export const CANVA_CONNECTION_DISCLOSURE = 'Connecting lets Rally read and change your Canva designs, folders, assets and brand kit. Canva receives a brief description of each requested operation. Watches are off until you enable them.';
 export const PERSONAL_CONNECT_LABEL = 'Connect for me';
 
 type ProductId = keyof typeof ConnectorProductCatalog;
@@ -24,7 +23,6 @@ function fromCatalog<Id extends ProductId>(id: Id) {
     name: product.name as Product<Id>['name'],
     description: product.description as Product<Id>['description'],
     scopes: product.scopes.map((scope): DesktopScope => (scope === 'personal' ? 'you' : 'workspace')) as readonly DesktopScope[],
-    ...('desktopOnly' in product ? { desktopOnly: true as const } : {}),
   };
 }
 
@@ -45,7 +43,6 @@ export const connectorProviders = [
   },
   { ...withMark('apollo'), capabilities: ['apollo.personal.mcp'] },
   { ...withMark('ashby'), personalCapabilities: ['ashby.personal.mcp'], capabilities: ['ashby.workspace.events'] },
-  { ...withMark('canva'), capabilities: ['canva.personal.mcp'] },
   { ...withMark('fireflies'), capabilities: ['fireflies.personal.read'] },
   { ...withMark('granola'), personalCapabilities: ['granola.personal.read'], capabilities: ['granola.workspace.read'] },
   {
@@ -93,9 +90,4 @@ export function isOAuthConnectorProvider(
   return provider.provider !== 'custom_mcp'
     && provider.provider !== 'generic_webhook'
     && provider.provider !== 'x';
-}
-
-/** Whether connecting `connectorType` needs the Mac app; a browser tab cannot start or refresh it. */
-export function isDesktopOnlyConnector(connectorType: string): boolean {
-  return connectorProviders.some((provider) => provider.provider === connectorType && 'desktopOnly' in provider);
 }

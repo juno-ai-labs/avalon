@@ -105,7 +105,7 @@ describe("connector connection card contract", () => {
 
   it("offers a card for exactly the products a conversation can connect, in their card scopes", () => {
     expect(ConnectorConnectionCardIds).toEqual([
-      "google-mail-calendar", "google-drive", "github", "apollo", "ashby", "canva",
+      "google-mail-calendar", "google-drive", "github", "apollo", "ashby",
       "fireflies", "granola", "linear", "slack", "notion",
     ]);
     // Made in Settings only: an administrator's key, or a server somebody configures.

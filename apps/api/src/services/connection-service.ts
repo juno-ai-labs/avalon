@@ -147,8 +147,8 @@ const capabilityScopes: Record<string, readonly string[]> = {
  * which from the connection's row).
  *
  * Only for a change no `/connections` request's middleware publishes: an OAuth
- * completion (a provider's redirect, with no session; the Canva loopback
- * shares its code) and background discovery. A request's own write is
+ * completion (a provider's redirect, with no session) and background
+ * discovery. A request's own write is
  * published once, after its response, by `workspaceRealtimeInvalidation`.
  */
 async function publishConnectorWorkspaceSync(env: Env, workspaceId: string, connectionId: string): Promise<void> {
@@ -339,7 +339,6 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
   // metadata, and Rally asks for exactly those. There is no Rally-authored
   // scope vocabulary to map a capability onto here.
   apollo: { "apollo.personal.mcp": [] },
-  canva: { "canva.personal.mcp": [] },
   ashby: { "ashby.personal.mcp": [] },
   custom_mcp: {
     [CustomMcpCapabilities.tools]: [],
@@ -1331,7 +1330,6 @@ export class ConnectionService {
        * than the one the person approved.
        */
       customMcp?: CustomMcpStartConfiguration;
-      loopbackRedirectUri?: string | undefined;
     },
   ): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
@@ -1391,7 +1389,6 @@ export class ConnectionService {
       connectionScope: input.scope,
       scopes: capabilities.flatMap((capability) => providerCapabilityScopes[provider][capability] ?? []),
       ...(input.customMcp ? { serverUrl: input.customMcp.serverUrl } : {}),
-      ...(provider === "canva" && input.loopbackRedirectUri ? { redirectUri: input.loopbackRedirectUri } : {}),
     });
     if (!authorization) throw new ApiError(503, "connector_oauth_unavailable", `${adapter.manifest.displayName} authorization is unavailable`);
     const statePayload = await sealString(JSON.stringify({
@@ -1686,24 +1683,6 @@ export class ConnectionService {
     });
   }
 
-  async completeCanvaLoopback(code: string | null, state: string): Promise<void> {
-    const auth = this.requireAuth();
-    const attempt = await this.env.DB.prepare(
-      "SELECT user_id, workspace_id, code_verifier_encrypted FROM oauth_states WHERE id = ? AND provider = 'canva' AND purpose = 'connector' AND consumed_at IS NULL AND expires_at > ?",
-    ).bind(state, nowIso()).first<{ user_id: string; workspace_id: string; code_verifier_encrypted: string }>();
-    if (!attempt || attempt.user_id !== auth.userId || attempt.workspace_id !== auth.workspaceId) {
-      throw new ApiError(401, "invalid_oauth_state", "This Canva authorization does not belong to your session.");
-    }
-    const sealed = z.object({ authorizationState: z.object({ redirectUri: z.string() }) }).parse(
-      JSON.parse(await openString(attempt.code_verifier_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY)),
-    );
-    if (!sealed.authorizationState?.redirectUri?.startsWith("http://127.0.0.1:")) {
-      throw new ApiError(401, "invalid_oauth_state", "This Canva authorization is not a desktop handoff.");
-    }
-    if (code) await this.completeProvider("canva", code, state);
-    else await this.completeProviderDenial("canva", state);
-  }
-
   async completeProvider(provider: OAuthConnectorProvider, code: string, state: string): Promise<string> {
     const row = await this.consumeProviderState(provider, state, "connector");
     const stateData = JSON.parse(
@@ -1768,7 +1747,7 @@ export class ConnectionService {
         throw new ApiError(409, "connector_account_mismatch", `Reconnect the same ${adapter.manifest.displayName} account`);
       }
       existingCredentials = (await this.context(existing)).credentials;
-    } else if (provider === "apollo" || provider === "ashby" || provider === "canva") {
+    } else if (provider === "apollo" || provider === "ashby") {
       existing = await this.env.DB.prepare("SELECT * FROM connector_connections WHERE workspace_id = ? AND owner_user_id = ? AND connector_type = ? AND scope = 'personal' AND status <> 'disabled'")
         .bind(row.workspace_id, row.user_id, provider).first<StoredConnection>();
       if (existing) { connectionId = existing.id; existingCredentials = (await this.context(existing)).credentials; }
@@ -1837,13 +1816,10 @@ export class ConnectionService {
       : null;
     const displayName = customMcp
       ? customMcp.displayName.slice(0, 180)
-      : provider === "canva"
-        // Canva returns no account a person would recognize, so the name carries none.
-        ? ConnectorProductCatalog.canva.name
-        : connectorConnectionName(
-          connectorConnectionProductName({ connectorType: provider, capabilities: grantedCapabilities }, adapter.manifest.displayName),
-          label,
-        );
+      : connectorConnectionName(
+        connectorConnectionProductName({ connectorType: provider, capabilities: grantedCapabilities }, adapter.manifest.displayName),
+        label,
+      );
     if (customMcp && providerAccountId !== customMcp.serverUrl) {
       throw new ApiError(
         409,
@@ -2325,7 +2301,6 @@ export class ConnectionService {
       || connection.connector_type === "slack"
       || (connection.connector_type === "ashby" && connection.scope === "personal")
       || connection.connector_type === "apollo"
-      || connection.connector_type === "canva"
       || (connection.connector_type === "fireflies" && connection.scope === "personal")
       || (connection.connector_type === "granola" && connection.scope === "personal")
     ) {
@@ -4157,22 +4132,6 @@ export class ConnectionService {
   }
 
   private async consumeProviderState(provider: string, state: string, purpose: string): Promise<Record<string, unknown>> {
-    if (provider === "canva") {
-      const pending = await this.env.DB.prepare(
-        "SELECT user_id, workspace_id, code_verifier_encrypted FROM oauth_states WHERE id = ? AND provider = 'canva' AND purpose = ? AND region = ? AND consumed_at IS NULL AND expires_at > ?",
-      ).bind(state, purpose, this.env.AVALON_REGION, nowIso()).first<{ user_id: string; workspace_id: string; code_verifier_encrypted: string }>();
-      if (!pending) throw new ApiError(401, "invalid_oauth_state", "The connector authorization is invalid or expired");
-      const sealed = z.object({ authorizationState: z.object({ redirectUri: z.string() }) }).parse(
-        JSON.parse(await openString(pending.code_verifier_encrypted, this.env.OAUTH_STATE_ENCRYPTION_KEY)),
-      );
-      // A public provider callback must never consume a desktop handoff, including denial.
-      if (sealed.authorizationState.redirectUri.startsWith("http://127.0.0.1:")) {
-        const auth = this.requireAuth();
-        if (auth.userId !== pending.user_id || auth.workspaceId !== pending.workspace_id) {
-          throw new ApiError(401, "invalid_oauth_state", "This Canva authorization does not belong to your session.");
-        }
-      }
-    }
     const row = await this.env.DB.prepare(
       `UPDATE oauth_states SET consumed_at = ? WHERE id = ? AND provider = ? AND purpose = ? AND region = ?
        AND consumed_at IS NULL AND expires_at > ? RETURNING *`,
@@ -4625,7 +4584,7 @@ function verifiedIdentityConfig(
   // same reason: the authorization publishes no user identity, so there is none
   // to join on. Falling through would split the URL on its scheme colon and
   // record every Fireflies member's tenant as "https".
-  if (provider === "apollo" || provider === "fireflies" || provider === "canva") return {
+  if (provider === "apollo" || provider === "fireflies") return {
     providerTenantId: providerAccountId,
     providerUserId: null,
     handle: null,

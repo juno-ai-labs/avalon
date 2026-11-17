@@ -1,6 +1,6 @@
 import type { SVGProps } from 'react';
 
-/** Apollo.io's catalog mark, without the background tile, as with Canva. */
+/** Apollo.io's catalog mark, without the background tile. */
 export default function Apollo(props: SVGProps<SVGSVGElement>) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="16 16 96 96" fill="none" {...props}>

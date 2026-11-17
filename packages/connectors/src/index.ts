@@ -1,5 +1,3 @@
-export { CANVA_POLL_SECONDS } from "./canva-polling";
-export { parseCanvaDesignReference } from "./canva-resource";
 export {
   readConnectorDocument,
   type ConnectorDocumentConnection,
@@ -7,8 +5,6 @@ export {
   type ConnectorDocumentReader,
   type ConnectorFile,
 } from "./documents";
-import { createCanvaConnector, type CanvaConnectorConfig } from "./canva";
-export { createCanvaConnector, CanvaCapabilities, CanvaAgentPluginDescriptor, type CanvaConnectorConfig } from "./canva";
 import { RegionSchema } from "@rally/contracts/regions";
 import { ConnectorProductCatalog, ConnectorProductIds, connectorConnectionServesProduct } from "@rally/contracts";
 import { paginatedResult } from "./tool-pagination";
@@ -5828,7 +5824,6 @@ export function createConnectorRegistry(input: {
   customMcp?: CustomMcpConnectorConfig;
   apollo?: ApolloConnectorConfig;
   ashby?: AshbyConnectorConfig;
-  canva?: CanvaConnectorConfig;
   fireflies?: FirefliesConnectorConfig;
   granola?: GranolaConnectorConfig;
   google?: GoogleConnectorConfig;
@@ -5861,7 +5856,6 @@ export function createConnectorRegistry(input: {
     ...input.apollo,
     fetch: instrumentConnectorFetch("apollo", input.apollo.fetch ?? globalThis.fetch, input.observer),
   }));
-  if (input.canva) adapters.push(createCanvaConnector(input.canva));
   if (input.fireflies) adapters.push(createFirefliesConnector({
     ...input.fireflies,
     fetch: instrumentConnectorFetch(

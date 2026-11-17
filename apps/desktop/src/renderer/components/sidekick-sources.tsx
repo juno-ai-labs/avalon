@@ -9,7 +9,6 @@ import {
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { MAC_APP_CONNECT_NOTE, connectorStartsHere } from '../lib/browser-connectors';
 import type { OAuthConnectorProviderCatalogEntry } from '../lib/connector-catalog';
 import { connectorConnectionCardProvider, useConnectorConnectionAction } from './connector-mentions';
 import { useCollaborationSession, type CollaborationSessionValue } from '../lib/collaboration-session';
@@ -81,7 +80,6 @@ function connectPlan(request: SidekickSourceRequestView, collaboration: Collabor
   if (!connect.card || !collaboration.connectorSetup) return inSettings;
   const provider = connectorConnectionCardProvider({ connectorId: connect.card, scope: 'personal' });
   if (!provider) return inSettings;
-  if (!connectorStartsHere(collaboration.session, provider.provider)) return { kind: 'note', text: MAC_APP_CONNECT_NOTE };
   return { kind: 'button', connectorId: connect.card, provider, verb, connector };
 }
 

@@ -1,5 +1,4 @@
 import { startConnectorAuthorization } from '../lib/start-connector-authorization';
-import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, connectorStartsHere } from '../lib/browser-connectors';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ConnectorProductCatalog,
@@ -17,7 +16,6 @@ import { useOptionalCollaborationSession, type ConnectorSetupCapability } from '
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
 import {
-  CANVA_CONNECTION_DISCLOSURE,
   connectorProviderById,
   isOAuthConnectorProvider,
   type OAuthConnectorProviderCatalogEntry,
@@ -288,7 +286,6 @@ export interface ConnectorConnectionAction {
   selectAccount: (id: string) => void;
   accountRequired: boolean;
   error: string | undefined;
-  macAppOnly: boolean;
   /** Starts the sign-in; resolves with its attempt id once the browser is opened, rejects if it could not start. */
   start: () => Promise<string>;
   pending: boolean;
@@ -396,7 +393,7 @@ export function useConnectorConnectionAction(
     mutationFn: async () => {
       if (!api || !session?.workspace) throw new Error('Rally is not ready to connect this account.');
       if (accountRequired) throw new Error('Choose an account to reconnect.');
-      if (reconnect && provider.provider !== 'canva') {
+      if (reconnect) {
         const authorization = await api.reconnectConnection(
           reconnect.id,
           provider.provider === 'granola' ? undefined : provider.provider,
@@ -442,7 +439,6 @@ export function useConnectorConnectionAction(
     selectAccount: setSelectedConnectionId,
     accountRequired,
     error: connect.error?.message,
-    macAppOnly: !connectorStartsHere(session, provider.provider),
     start: async () => (await connect.mutateAsync()).authorization.attemptId,
     pending,
     attemptId: awaiting && pendingConnectorOAuth ? pendingConnectorOAuth.attemptId : null,
@@ -470,7 +466,6 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewl
       onSelectAccount={action.selectAccount}
       accountRequired={action.accountRequired}
       error={action.error}
-      macAppOnly={action.macAppOnly}
       onConnect={() => { void action.start().catch(() => undefined); }}
       pending={action.pending}
       provider={action.provider}
@@ -491,7 +486,6 @@ export function ConnectorConnectionCardView({
   checkingAvailability,
   connected,
   error,
-  macAppOnly = false,
   onConnect,
   pending,
   provider,
@@ -509,8 +503,6 @@ export function ConnectorConnectionCardView({
   connected: boolean;
   status?: ConnectorScopeStatus;
   error?: string;
-  /** This client cannot start this connection; point at the Mac app instead of a button. */
-  macAppOnly?: boolean;
   onConnect: () => void;
   pending: boolean;
   provider: OAuthConnectorProviderCatalogEntry;
@@ -541,7 +533,6 @@ export function ConnectorConnectionCardView({
         <div className="connector-connection-card-body">
           <strong>{provider.name}</strong>
           <p>{provider.description}</p>
-          {provider.provider === 'canva' && <p>{CANVA_CONNECTION_DISCLOSURE}</p>}
           <small>{request.scope === 'personal' ? 'Personal connection' : 'Organization connection'}</small>
           {accountOptions ? (
             <label className="form-field connector-connection-card-account">
@@ -558,21 +549,15 @@ export function ConnectorConnectionCardView({
             {displayStatus ? <StatusGlyph status={displayStatus} /> : checkingAvailability ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <Minus aria-hidden="true" size={14} />}
             {statusLabel}
           </span>
-          {macAppOnly ? (
-            MAC_APP_DOWNLOADABLE
-              ? <a className="connector-connection-card-status" href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a>
-              : <span className="connector-connection-card-status">{MAC_APP_CONNECT_NOTE}</span>
-          ) : (
-            <Button
-              className="connector-connection-card-action button-primary"
-              disabled={adminRequired || accountRequired || unavailable || pending}
-              onClick={onConnect}
-              title={adminRequired ? 'Only an organization owner or admin can connect an organization account.' : undefined}
-            >
-              {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
-              {buttonLabel}
-            </Button>
-          )}
+          <Button
+            className="connector-connection-card-action button-primary"
+            disabled={adminRequired || accountRequired || unavailable || pending}
+            onClick={onConnect}
+            title={adminRequired ? 'Only an organization owner or admin can connect an organization account.' : undefined}
+          >
+            {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
+            {buttonLabel}
+          </Button>
         </div>
       </div>
       {error ? <ErrorNotice>{error}</ErrorNotice> : null}

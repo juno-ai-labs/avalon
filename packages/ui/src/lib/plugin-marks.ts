@@ -1,5 +1,4 @@
 import Apple from '@thesvg/react/apple';
-import Canva from './brand-marks/canva';
 import Cloudflare from '@thesvg/react/cloudflare';
 import Github from '@thesvg/react/github';
 import Google from '@thesvg/react/google';
@@ -56,12 +55,11 @@ export type PluginBrandMarkComponent =
  * is what a custom MCP server wears when its name spells out no company here.
  */
 export const PLUGIN_BRAND_MARKS: Record<
-  'apollo' | 'apple' | 'ashby' | 'canva' | 'cloudflare' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
+  'apollo' | 'apple' | 'ashby' | 'cloudflare' | 'fireflies' | 'github' | 'google' | 'google-drive' | 'granola' | 'linear' | 'model-context-protocol' | 'notion' | 'slack' | 'x',
   PluginBrandMarkComponent
 > = {
   apollo: { Mark: Apollo, mono: true },
   apple: { Mark: Apple, mono: true },
-  canva: { Mark: Canva, mono: true },
   cloudflare: { Mark: Cloudflare, mono: true },
   ashby: { Mark: Ashby, mono: true },
   fireflies: { Mark: Fireflies, mono: true },
@@ -112,7 +110,6 @@ export function connectorBrandMark(
   switch (connectorType) {
     case 'apollo': return 'apollo';
     case 'ashby': return 'ashby';
-    case 'canva': return 'canva';
     case 'fireflies': return 'fireflies';
     case 'github': return 'github';
     case 'google': return displayName?.includes('Drive') ? 'google-drive' : 'google';
