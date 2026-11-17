@@ -107,9 +107,7 @@ transcript, and nothing else. It does not decide what arrives —
 `apps/api/src/services/integrations.ts` is the one batcher on the conversation
 socket path and owns the wire cadence
 ([`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) says why frames
-are batched at all; `createTextDeltaBatcher` in `packages/agent-harness`
-batches the automation compiler's narration on a different surface, with
-defaults deliberately kept in step) — does not order or de-duplicate frames
+are batched at all) — does not order or de-duplicate frames
 (that stays in `applyStreamingSocketEvent`'s cursor logic), does not scroll
 (the follow in [`transcript-scrolling.md`](transcript-scrolling.md) reacts to
 the commits this produces), and does not render (the streaming markdown path
