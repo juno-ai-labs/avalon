@@ -60,7 +60,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 89;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 90;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3892,6 +3892,16 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     // is a row written before this version; a `planned` one counts as left
     // over. Nothing is backfilled.
     statements: [`ALTER TABLE terminal_imported_resources ADD COLUMN import_run_id TEXT`],
+  },
+  {
+    version: 90,
+    description: "record that a Terminal import's own call failed",
+    // When the call that wrote a `planned` row failed. The row stays
+    // `planned`, so readiness still counts it as revoked and rebuilds over
+    // what the failed call left; this only stops a read passing over it while
+    // the same run holds the lease for another call. NULL is a row whose call
+    // has not failed, or one written before this version.
+    statements: [`ALTER TABLE terminal_imported_resources ADD COLUMN failed_at INTEGER`],
   },
 ];
 

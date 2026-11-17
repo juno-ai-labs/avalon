@@ -523,38 +523,46 @@ export function createTerminalResourceBridge(
         now: plannedAt,
       });
     try {
-      // One file in memory at a time: a site can hold a feed's episodes.
-      for (const file of files) {
-        await provider.writeFile(
-          providerSandboxId,
-          `${staging}/${file.path}`,
-          await readArtifactVersionFile(env, file),
-          context.signal,
+      try {
+        // One file in memory at a time: a site can hold a feed's episodes.
+        for (const file of files) {
+          await provider.writeFile(
+            providerSandboxId,
+            `${staging}/${file.path}`,
+            await readArtifactVersionFile(env, file),
+            context.signal,
+          );
+        }
+      } catch (error) {
+        await cleanupStaging();
+        throw error;
+      }
+      const materialized = await provider.runUtilityCommand(providerSandboxId, {
+        operation: "resource.import.finalize",
+        command: materializeTreeCommand({ destination: absolute, staging, overwrite }),
+        cwd: "/workspace",
+        timeoutMs: 60_000,
+      });
+      const failure = importTreeFailure(materialized.exitCode);
+      if (failure) {
+        await cleanupStaging();
+        throw failure;
+      }
+      const written = Number(materialized.stdout.trim());
+      if (!Number.isSafeInteger(written) || written !== files.length) {
+        await cleanupStaging();
+        throw new TerminalToolError(
+          "resource_import_failed",
+          "Daytona did not confirm every file of the site's source. Retry the import before editing, so a partial tree is not republished as a version.",
+          { reason: "Retry the import before editing the site." },
         );
       }
     } catch (error) {
-      await cleanupStaging();
+      // The row stays `planned` for readiness; a read must not pass over it.
+      await terminalPort(context.workspaceId, context.workstreamId)
+        .failImportedResource({ sandboxGeneration, resourceId: row.id, destinationPath: destination, sourceSha256: digest, now: Date.now() })
+        .catch(() => undefined);
       throw error;
-    }
-    const materialized = await provider.runUtilityCommand(providerSandboxId, {
-      operation: "resource.import.finalize",
-      command: materializeTreeCommand({ destination: absolute, staging, overwrite }),
-      cwd: "/workspace",
-      timeoutMs: 60_000,
-    });
-    const failure = importTreeFailure(materialized.exitCode);
-    if (failure) {
-      await cleanupStaging();
-      throw failure;
-    }
-    const written = Number(materialized.stdout.trim());
-    if (!Number.isSafeInteger(written) || written !== files.length) {
-      await cleanupStaging();
-      throw new TerminalToolError(
-        "resource_import_failed",
-        "Daytona did not confirm every file of the site's source. Retry the import before editing, so a partial tree is not republished as a version.",
-        { reason: "Retry the import before editing the site." },
-      );
     }
     const importedAt = Date.now();
     await terminalPort(context.workspaceId, context.workstreamId)
@@ -794,41 +802,49 @@ export function createTerminalResourceBridge(
           importRunId: context.harnessRunId,
           now: plannedAt,
         });
-      const parent = absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));
-      const temporary = `/workspace/.rally/tmp/${newId()}`;
-      await provider.writeFile(providerSandboxId, temporary, bytes, context.signal);
-      let verified: Awaited<ReturnType<TerminalSandboxProvider["runUtilityCommand"]>>;
       try {
-        verified = await provider.runUtilityCommand(providerSandboxId, {
-          operation: "resource.import.finalize",
-          command: [
-            `target='${absolute.replace(/'/gu, `'"'"'`)}'`,
-            `temporary='${temporary.replace(/'/gu, `'"'"'`)}'`,
-            'trap \'rm -f -- "$temporary"\' EXIT',
-            `mkdir -p -- '${parent.replace(/'/gu, `'"'"'`)}' || exit 46`,
-            'mv -- "$temporary" "$target" || exit 46',
-            "trap - EXIT",
-            'printf "%s %s\\n" "$(stat -c %s -- "$target")" "$(sha256sum -- "$target" | cut -d " " -f 1)"',
-          ].join("\n"),
-          cwd: "/workspace",
-          timeoutMs: 30_000,
-        });
+        const parent = absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));
+        const temporary = `/workspace/.rally/tmp/${newId()}`;
+        await provider.writeFile(providerSandboxId, temporary, bytes, context.signal);
+        let verified: Awaited<ReturnType<TerminalSandboxProvider["runUtilityCommand"]>>;
+        try {
+          verified = await provider.runUtilityCommand(providerSandboxId, {
+            operation: "resource.import.finalize",
+            command: [
+              `target='${absolute.replace(/'/gu, `'"'"'`)}'`,
+              `temporary='${temporary.replace(/'/gu, `'"'"'`)}'`,
+              'trap \'rm -f -- "$temporary"\' EXIT',
+              `mkdir -p -- '${parent.replace(/'/gu, `'"'"'`)}' || exit 46`,
+              'mv -- "$temporary" "$target" || exit 46',
+              "trap - EXIT",
+              'printf "%s %s\\n" "$(stat -c %s -- "$target")" "$(sha256sum -- "$target" | cut -d " " -f 1)"',
+            ].join("\n"),
+            cwd: "/workspace",
+            timeoutMs: 30_000,
+          });
+        } catch (error) {
+          await provider.runUtilityCommand(providerSandboxId, {
+            operation: "file.temp_cleanup",
+            command: `rm -f -- '${temporary.replace(/'/gu, `'"'"'`)}'`,
+            cwd: "/workspace",
+            timeoutMs: 10_000,
+          }).catch(() => undefined);
+          throw error;
+        }
+        const observed = /^(\d+) ([0-9a-f]{64})\s*$/u.exec(verified.stdout);
+        if (verified.exitCode !== 0 || !observed || Number(observed[1]) !== bytes.byteLength || observed[2] !== digest) {
+          throw new TerminalToolError(
+            "resource_import_failed",
+            "Daytona did not confirm the imported bytes. Start a fresh Terminal workspace before retrying so unverified bytes cannot be reused.",
+            { reason: "Start a fresh Terminal workspace before retrying the import." },
+          );
+        }
       } catch (error) {
-        await provider.runUtilityCommand(providerSandboxId, {
-          operation: "file.temp_cleanup",
-          command: `rm -f -- '${temporary.replace(/'/gu, `'"'"'`)}'`,
-          cwd: "/workspace",
-          timeoutMs: 10_000,
-        }).catch(() => undefined);
+        // The row stays `planned` for readiness; a read must not pass over it.
+        await terminalPort(context.workspaceId, context.workstreamId)
+          .failImportedResource({ sandboxGeneration, resourceId: row.id, destinationPath: destination, sourceSha256: digest, now: Date.now() })
+          .catch(() => undefined);
         throw error;
-      }
-      const observed = /^(\d+) ([0-9a-f]{64})\s*$/u.exec(verified.stdout);
-      if (verified.exitCode !== 0 || !observed || Number(observed[1]) !== bytes.byteLength || observed[2] !== digest) {
-        throw new TerminalToolError(
-          "resource_import_failed",
-          "Daytona did not confirm the imported bytes. Start a fresh Terminal workspace before retrying so unverified bytes cannot be reused.",
-          { reason: "Start a fresh Terminal workspace before retrying the import." },
-        );
       }
       const importedAt = Date.now();
       await terminalPort(context.workspaceId, context.workstreamId)

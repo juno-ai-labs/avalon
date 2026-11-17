@@ -865,15 +865,15 @@ personless; it is not duplicated into these product events.
   instead would read an agent's imports against its owner's attachments and
   revoke both. A Sidekick also accepts current canonical read access held by
   the execution user; the import does not need a local attachment.
-- **A read passes over an unfinished import only while its own run holds the
-  lease.** An import row records the run that made it (`import_run_id`), and a
-  read passes over a `planned` row only when that run is the live lease holder.
-  A row from before the column (`NULL`) or from any other run is left over, so a
-  read never serves a crashed import's half-copied files because some unrelated
-  run happens to hold the lease. The key is the run, not the call: a row whose
-  call already failed also passes until that run's lease ends. Its row stays
-  `planned` on purpose, so readiness rebuilds over whatever the failed call
-  left.
+- **A read passes over an unfinished import only while its own call can still
+  settle it.** An import row records the run that made it (`import_run_id`),
+  and a read passes over a `planned` row only when that run is the live lease
+  holder and the row has no `failed_at`. A call that throws after planning its
+  row stamps `failed_at`, so the same run holding the lease for a later call
+  does not make the row look in flight. A row from before the columns, from
+  any other run, or from a failed call is left over. It stays `planned` on
+  purpose, so readiness rebuilds over whatever was left; planning the path again
+  clears `failed_at`.
 - **A run's own write calls take turns, and an edit replaces only the bytes
   it read.** The lease answers a run's second claim "held", so it is the
   runtime's turn that keeps two of one run's writes apart, and the digest
@@ -1522,6 +1522,31 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-17 — A failed import call marks its row
+
+**What changed:** Conversation schema 90 adds `failed_at` to
+`terminal_imported_resources`. When an import call throws after planning its
+row, the resource bridge stamps it through `failImportedResource`, and
+`peekRunning` never passes over a stamped row. The row stays `planned`.
+
+**Why:** The change before this one keyed an unfinished import on its run, so
+a read passed over a `planned` row whenever that run held the lease. A failed
+call leaves its row `planned`, and the run can hold the lease again for
+another call: a later command, a `claimMutation`, or a parallel call in the
+same turn. Reads then served the failed import's files, including bytes that
+failed their digest check after the final `mv`.
+
+**Considered and rejected:** Keying on the tool call, which needs the lease
+row to say which call holds it; the lease belongs to the run and is re-entrant
+across its calls. Deleting or settling the row on failure, which hides a
+half-written path from readiness, the one thing that rebuilds over it. A new
+`failed` state, which the `state` CHECK constraint would make a table rebuild.
+
+**Consequences:** A call that dies before it can stamp its row (the isolate
+lost, or the stamp's own write failing) is the crash case, handled as before by
+the lease ending. Readiness is unchanged: it still counts every `planned` row
+as revoked.
 
 ### 2026-11-16 — An import row records the run that made it
 

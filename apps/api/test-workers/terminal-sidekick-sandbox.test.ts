@@ -85,8 +85,20 @@ it("shares the wizard's durable sandbox and mutation lease across Sidekick activ
   // historical run.
   expect(await wizard.importedResources(1)).toEqual([{
     resourceId: "00000000-0000-4000-8000-000000000099", destinationPath: ".rally-output/calendar",
-    state: "completed", attachedSubstreamId: second, importRunId: secondRun,
+    state: "completed", attachedSubstreamId: second, importRunId: secondRun, failedAt: null,
   }]);
+  // A failed import call marks its planned row, and planning the path again
+  // starts it clean.
+  const retried = { sandboxGeneration: 1, resourceId: "00000000-0000-4000-8000-000000000098",
+    destinationPath: "art.png", sourceSha256: "c".repeat(64), sizeBytes: 3, state: "planned" as const,
+    importedAt: null, attachedSubstreamId: second, importRunId: secondRun, now };
+  await activationB.recordImportedResource(retried);
+  await activationB.failImportedResource({ sandboxGeneration: 1, resourceId: retried.resourceId,
+    destinationPath: retried.destinationPath, sourceSha256: retried.sourceSha256, now: now + 1 });
+  const failedRow = async () => (await wizard.importedResources(1)).find((row) => row.resourceId === retried.resourceId);
+  expect(await failedRow()).toMatchObject({ state: "planned", failedAt: now + 1 });
+  await activationB.recordImportedResource({ ...retried, now: now + 2 });
+  expect(await failedRow()).toMatchObject({ state: "planned", failedAt: null });
   expect(await wizard.claimOperation({ runId: wizardRun, generation: 1,
     leaseExpiresAt: now + 60_000, now })).toBeNull();
 

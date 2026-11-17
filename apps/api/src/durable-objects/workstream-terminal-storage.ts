@@ -374,6 +374,12 @@ export interface TerminalImportedResourceRecord {
    * run holds the lease.
    */
   importRunId: string | null;
+  /**
+   * When the call that wrote a `planned` row failed; `null` while it has not.
+   * The row stays `planned` so readiness rebuilds over it, but a read never
+   * passes over it.
+   */
+  failedAt: number | null;
 }
 
 function first<T>(cursor: SqlStorageCursor<Record<string, SqlStorageValue>>): T | null {
@@ -1666,8 +1672,9 @@ export class WorkstreamTerminalStorage {
       state: string;
       attached_substream_id: string | null;
       import_run_id: string | null;
+      failed_at: number | null;
     }>(
-      `SELECT resource_id, destination_path, state, attached_substream_id, import_run_id
+      `SELECT resource_id, destination_path, state, attached_substream_id, import_run_id, failed_at
          FROM terminal_imported_resources
         WHERE sandbox_generation = ?`,
       generation,
@@ -1677,6 +1684,7 @@ export class WorkstreamTerminalStorage {
       state: row.state as "planned" | "completed",
       attachedSubstreamId: row.attached_substream_id,
       importRunId: row.import_run_id,
+      failedAt: row.failed_at,
     }));
   }
 
@@ -1705,6 +1713,7 @@ export class WorkstreamTerminalStorage {
          imported_at = excluded.imported_at,
          attached_substream_id = excluded.attached_substream_id,
          import_run_id = excluded.import_run_id,
+         failed_at = NULL,
          updated_at = excluded.updated_at`,
       input.sandboxGeneration,
       input.resourceId,
@@ -1716,6 +1725,31 @@ export class WorkstreamTerminalStorage {
       input.attachedSubstreamId ?? null,
       input.importRunId ?? null,
       input.now,
+    );
+  }
+
+  /**
+   * Mark a planned import whose own call failed, fenced on the digest that was
+   * planned. It stays `planned`: readiness still rebuilds over it.
+   */
+  failImportedResource(input: {
+    sandboxGeneration: number;
+    resourceId: string;
+    destinationPath: string;
+    sourceSha256: string;
+    now: number;
+  }): void {
+    this.sql.exec(
+      `UPDATE terminal_imported_resources
+          SET failed_at = ?, updated_at = ?
+        WHERE sandbox_generation = ? AND resource_id = ? AND destination_path = ?
+          AND source_sha256 = ? AND state = 'planned'`,
+      input.now,
+      input.now,
+      input.sandboxGeneration,
+      input.resourceId,
+      input.destinationPath,
+      input.sourceSha256,
     );
   }
 

@@ -128,10 +128,10 @@ function fixture() {
 }
 
 /** An import row as `import_resource` writes it before copying, by the run that made it. */
-function plannedImport(objectStore: DatabaseSync, resourceId: string, importRunId: string | null): void {
+function plannedImport(objectStore: DatabaseSync, resourceId: string, importRunId: string | null, failedAt: number | null = null): void {
   workstreamObjectRun(objectStore, `INSERT INTO terminal_imported_resources
-    (sandbox_generation, resource_id, destination_path, source_sha256, size_bytes, state, imported_at, import_run_id, updated_at)
-    VALUES (1, ?, 'art.png', 'digest', 1, 'planned', NULL, ?, 1)`, resourceId, importRunId);
+    (sandbox_generation, resource_id, destination_path, source_sha256, size_bytes, state, imported_at, import_run_id, failed_at, updated_at)
+    VALUES (1, ?, 'art.png', 'digest', 1, 'planned', NULL, ?, ?, 1)`, resourceId, importRunId, failedAt);
 }
 
 function context(userId = USER_ID): HarnessToolContext {
@@ -1432,6 +1432,17 @@ describe("Terminal sandbox coordinator", () => {
     await coordinator.acquire({ ...context(), harnessRunId: holder, toolCallId: "unrelated-call" });
     plannedImport(objectStore, "00000000-0000-4000-8000-0000000000c9", crashed);
     const read = { ...context(), harnessRunId: "00000000-0000-4000-8000-0000000000ca", toolCallId: "sibling-read" };
+    await expect(coordinator.peekRunning(read)).resolves.toBeNull();
+  });
+
+  it("does not let a read pass over an import whose own call failed while its run holds the lease", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    // The holder's import call failed and marked its row; the same run now
+    // holds the lease for another call.
+    await coordinator.acquire(context());
+    plannedImport(objectStore, "00000000-0000-4000-8000-0000000000cd", RUN_ID, 2);
+    const read = { ...context(), harnessRunId: "00000000-0000-4000-8000-0000000000ce", toolCallId: "sibling-read" };
     await expect(coordinator.peekRunning(read)).resolves.toBeNull();
   });
 

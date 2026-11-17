@@ -275,7 +275,7 @@ describe("the Workstream Durable Object relational schema", () => {
     } finally { database.close(); }
   });
 
-  it("keeps Terminal import rows through the importing-run column, with no run named", () => {
+  it("keeps Terminal import rows through the importing-run and failure columns, with neither set", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
     try {
@@ -291,13 +291,14 @@ describe("the Workstream Durable Object relational schema", () => {
         "00000000-0000-4000-8000-0000000000d3");
       applyWorkstreamObjectSchema(storage, "after-import-run", 2_000);
       expect(database.prepare(`SELECT resource_id, destination_path, source_sha256, size_bytes, state, imported_at,
-          attached_substream_id, import_run_id
+          attached_substream_id, import_run_id, failed_at
         FROM terminal_imported_resources ORDER BY resource_id`).all()).toEqual([
         { resource_id: "00000000-0000-4000-8000-0000000000d1", destination_path: "art.png", source_sha256: "a".repeat(64),
-          size_bytes: 7, state: "planned", imported_at: null, attached_substream_id: null, import_run_id: null },
+          size_bytes: 7, state: "planned", imported_at: null, attached_substream_id: null, import_run_id: null,
+          failed_at: null },
         { resource_id: "00000000-0000-4000-8000-0000000000d2", destination_path: "site", source_sha256: "b".repeat(64),
           size_bytes: 9, state: "completed", imported_at: 1000,
-          attached_substream_id: "00000000-0000-4000-8000-0000000000d3", import_run_id: null },
+          attached_substream_id: "00000000-0000-4000-8000-0000000000d3", import_run_id: null, failed_at: null },
       ]);
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally { database.close(); }

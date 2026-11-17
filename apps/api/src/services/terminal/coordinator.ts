@@ -470,11 +470,12 @@ export class TerminalSandboxCoordinator {
     // checkout is a read of the wrong files.
     if (repository && repository.bootstrappedSandboxGeneration !== row.generation) return null;
     // A read passes over a `planned` import while the run that wrote it holds
-    // a live lease: that run's call settles the row, and a read may see its
-    // files half copied, as it may see any file mid-write. The key is the run,
-    // not the call, so an import that run's own call already failed also
-    // passes until the run's lease ends. Any other `planned` import is left
-    // over, whoever holds the lease now, and readiness cleans it up.
+    // a live lease and its call has not failed: that call settles the row, and
+    // a read may see its files half copied, as it may see any file mid-write.
+    // A failed call marks its row, so the same run holding the lease for
+    // another call does not make the row look in flight. Any other `planned`
+    // import is left over, whoever holds the lease now, and readiness cleans
+    // it up.
     const leaseHolder = row.operationRunId !== null
       && (row.operationLeaseExpiresAt ?? 0) > this.clock.now().getTime()
       ? row.operationRunId : null;
@@ -1099,12 +1100,12 @@ export class TerminalSandboxCoordinator {
   private async hasRevokedImportedResource(
     context: HarnessToolContext,
     row: TerminalSandboxRecord,
-    /** The run holding a live lease: its own `planned` imports are in flight, not revoked. */
+    /** The run holding a live lease: its own `planned` imports whose call has not failed are in flight, not revoked. */
     leaseHolderRunId: string | null = null,
   ): Promise<boolean> {
     const all = await this.terminal(context).importedResources(row.generation);
     if (all.some((candidate) => candidate.state !== "completed"
-      && (leaseHolderRunId === null || candidate.importRunId !== leaseHolderRunId))) return true;
+      && (leaseHolderRunId === null || candidate.importRunId !== leaseHolderRunId || candidate.failedAt !== null))) return true;
     const links = all.filter((candidate) => candidate.state === "completed");
     if (links.length === 0) return false;
     // Completed imports are retained Sidekick state, like its shared history.

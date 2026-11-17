@@ -724,6 +724,44 @@ describe("Terminal resource bridge", () => {
       operation: "file.temp_cleanup",
       command: expect.stringMatching(/^rm -f -- /u),
     }));
+    // Still `planned`, so readiness rebuilds over it, and marked so no read
+    // passes over it while this run holds the lease for another call.
+    expect(workstreamObjectGet(objectStore,
+      "SELECT state, import_run_id, failed_at IS NOT NULL AS failed FROM terminal_imported_resources",
+    )).toEqual({ state: "planned", import_run_id: R, failed: 1 });
+  });
+
+  it("marks an import failed when Daytona does not confirm the bytes it moved into place", async () => {
+    const { database, objectStore, objects, provider, bridge } = fixture();
+    const bytes = new TextEncoder().encode("attached data\n");
+    const digest = "8a6c44a03adda8a5af9627533116a8ab735dac8085f998c6f41cc13aef707169";
+    objects.set("global/source", bytes);
+    database.prepare(
+      `INSERT INTO resources
+       (id, workspace_id, resource_type, provider, title, mime_type, content_ref, content_sha256,
+        metadata_json, attachment_status, created_at, updated_at)
+       VALUES (?, ?, 'uploaded_file', 'avalon_upload', 'Input data.csv', 'text/csv', 'global/source', ?, '{}', 'attached', '2026-08-13', '2026-08-13')`,
+    ).run(RESOURCE, W, digest);
+    objectStore.prepare(
+      `INSERT INTO workstream_resource_links
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+       VALUES (?, ?, 0, 'attachment', ?, ?, ?)`,
+    ).run(RESOURCE, U, JSON.stringify({ id: RESOURCE }), Date.parse("2026-08-13"), Date.parse("2026-08-13"));
+    vi.mocked(provider.runUtilityCommand)
+      .mockResolvedValueOnce({ exitCode: 44, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: `14 ${"0".repeat(64)}\n`, stderr: "" });
+
+    await expect(bridge.importResource(
+      context,
+      { resourceId: RESOURCE },
+      `.rally/resources/${RESOURCE}/resource`,
+      1,
+      "sandbox",
+      provider,
+    )).rejects.toMatchObject({ code: "resource_import_failed" });
+    expect(workstreamObjectGet(objectStore,
+      "SELECT state, import_run_id, failed_at IS NOT NULL AS failed FROM terminal_imported_resources",
+    )).toEqual({ state: "planned", import_run_id: R, failed: 1 });
   });
 
   it("fails helpfully when a resource is detached before import", async () => {
