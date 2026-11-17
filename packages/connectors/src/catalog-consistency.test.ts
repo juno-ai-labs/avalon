@@ -5,9 +5,12 @@ import type { ConnectorAdapter } from "./types";
 
 type Checked = Pick<ConnectorAdapter, "manifest" | "connectableScopes">;
 
-function adapter(type: string, supportedScopes: string[], capabilities: string[], connectableScopes?: string[]): Checked {
+function adapter(type: string, supportedScopes: string[], capabilities: string[], connectableScopes?: string[], host: string[] = []): Checked {
   return {
-    manifest: { type, supportedScopes, capabilities: capabilities.map((id) => ({ id })) },
+    manifest: { type, supportedScopes, capabilities: [
+      ...capabilities.map((id) => ({ id, kind: "tool" })),
+      ...host.map((id) => ({ id, kind: "host" })),
+    ] },
     ...(connectableScopes ? { connectableScopes } : {}),
   } as unknown as Checked;
 }
@@ -15,6 +18,8 @@ function adapter(type: string, supportedScopes: string[], capabilities: string[]
 describe("connector catalog consistency", () => {
   it("accepts an adapter that agrees with its products", () => {
     expect(connectorCatalogConsistencyIssue(adapter("google", ["personal", "workspace"], ["gmail.read", "drive.read"])))
+      .toBeNull();
+    expect(connectorCatalogConsistencyIssue(adapter("ashby", ["personal", "workspace"], ["ashby.personal.mcp"], ["personal"], ["ashby.workspace.events"])))
       .toBeNull();
     // A scope closed to new connections may stay supported for old ones.
     expect(connectorCatalogConsistencyIssue(adapter("fireflies", ["personal", "workspace"], ["fireflies.personal.read"], ["personal"])))
@@ -34,6 +39,12 @@ describe("connector catalog consistency", () => {
   it("names a card scope the adapter no longer accepts", () => {
     expect(connectorCatalogConsistencyIssue(adapter("slack", ["personal", "workspace"], [], ["personal"])))
       .toBe("product slack lets a card connect workspace, which the adapter does not accept");
+  });
+
+  it("names a host grant the catalog and the manifest disagree about", () => {
+    // Declared tool-bearing by the adapter, host-only by the catalog: the agent would undercount.
+    expect(connectorCatalogConsistencyIssue(adapter("ashby", ["personal", "workspace"], ["ashby.personal.mcp", "ashby.workspace.events"], ["personal"])))
+      .toBe("host grants ashby.workspace.events differ between the catalog's hostCapabilities and the manifest");
   });
 
   it("names a grant no product owns", () => {
