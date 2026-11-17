@@ -302,6 +302,7 @@ import { setsDelegation, sidekickDelegationTools } from "./sidekick-delegation-t
 import { sidekickSourceRequestCard, sidekickSourceTools } from "./sidekick-source-tools";
 import { isRefusingTool, refusingTool, toolRefusal, type ToolRefusal } from "./tool-refusal";
 import { postWizardCard, wizardTurnCanvasId } from "./wizard-canvas-cards";
+import { memberByAddress } from "./member-by-address";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
@@ -8927,15 +8928,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       },
       execute: async (raw, context) => {
         const card = MemberCardInputSchema.parse(raw);
-        // The address's account, by the address it signs in with, and its place here.
-        const held = await env.DB.prepare(
-          `SELECT u.id, u.name, m.status, m.access_class FROM users u
-             LEFT JOIN workspace_members m ON m.user_id = u.id AND m.workspace_id = ?
-            WHERE u.id = COALESCE((SELECT user_id FROM user_verified_emails WHERE email = ? COLLATE NOCASE),
-                                  (SELECT id FROM users WHERE email = ? COLLATE NOCASE))`,
-        ).bind(input.workspaceId, card.email, card.email)
-          .first<{ id: string; name: string; status: string | null; access_class: string | null }>();
-        if (held?.status === "active" && held.access_class === "member") {
+        const held = await memberByAddress(env.DB, input.workspaceId, card.email);
+        if (held.kind === "account" && held.status === "active" && held.accessClass === "member") {
           return {
             output: { status: "member", userId: held.id, name: held.name, email: card.email },
             summary: `${card.email} is a member`,

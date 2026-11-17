@@ -237,12 +237,12 @@ because reconnecting is not its fix.
 
 Every reader of the request sees it, the asker included, so the asker and the
 agent that asked know whose step is left. Only the request's card, in the
-conversation it was asked from, draws the connect step: for the person asked
-and only while their request waits, the conversation's own connection card
-(`ConnectorConnectionCard`, chosen by `sourceConnectionCardId`) above the
-pair, with Approve held until the account works. Decline is never held. Once
-the card sees the connection healthy it re-reads the Sidekick's sources, which
-unlocks Approve. The Sources panel holds the person's Approve too and points
+conversation it was asked from, draws the connect step: for the person asked,
+while their request waits, **Connect Gmail and approve** in Approve's place.
+One press runs the same connect or reconnect as the conversation's connection
+card (`useConnectorConnectionAction`) and sends the approval once the account
+works while the card is open; a connection made elsewhere only brings back the
+ordinary Approve. Decline is never held. The Sources panel holds the person's Approve too and points
 them at that conversation; the Activity row keeps its plain pair, and an
 Approve there before connecting is refused by name. Everyone else reads
 "Needs to connect Gmail" or "Needs to reconnect Gmail" in that person's row. A
@@ -457,12 +457,8 @@ The `rally:sidekicks` plugin (model id `rally_sidekicks`, wire prefix
   and gets the answer that receipt already got
   ([asking](#asking)).
 - **No tool answers.** There is no approve or decline tool, by design.
-- **Each request says whose step is left.** `request_source` and
-  `sources_list` return each request's `connection`. The tool's description
-  tells the model to ask whether or not the person has connected, and to tell
-  the person it works for who still has to connect or reconnect; the
-  `setting-up-a-filtered-trigger` skill says the same, and names holding back
-  an ask until someone connects as an anti-pattern.
+- **Each request says whose step is left**
+  ([connecting is part of answering](#connecting-is-part-of-answering)).
 - **Refusals** carry a code and a sentence:
   - `sidekick_source_request_requires_manager`: the acting person does not
     manage the Sidekick;
@@ -875,9 +871,9 @@ one as it is resolved; the resolution becomes a changelog entry.
 ### 2026-11-16 — Connecting is part of answering a request
 
 **What changed:** A request view carries the asked person's `connection`
-(`connected`, `reconnect_required`, `not_connected`), and the request's card in
-its conversation draws the conversation's connection card above the person's
-own Approve, which waits until the account works. The owner asked that the
+(`connected`, `reconnect_required`, `not_connected`) and `connect`, and the
+request's card in its conversation turns the person's own Approve into one
+**Connect Gmail and approve** press. The owner asked that the
 step live only there, so Activity and the Sources panel point at it. An ask for the
 asker's own account with nothing connected is no longer refused. Approval
 counts, and writes rows on, only the connections that announce the asked

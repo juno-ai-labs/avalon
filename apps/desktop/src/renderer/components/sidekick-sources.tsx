@@ -61,15 +61,9 @@ function useSourceDecision(): Decide {
 }
 
 /**
- * "Connect Gmail and approve", in Approve's place on the asked person's own
- * request while its account still has to be connected or reconnected, on the
- * card in the conversation the request was asked from and nowhere else. One
- * press is the person's consent to both: it starts the same connect or
- * reconnect the conversation's connection card does
- * (`useConnectorConnectionAction`), and once that account works, while this
- * card is open, it sends the approval. A sign-in that finishes after the card
- * closed sends nothing: the card then reads the account as connected and
- * offers the ordinary Approve. A connector no card connects points at Settings.
+ * "Connect Gmail and approve" in Approve's place: one press connects, then
+ * approves once the account works while this card is open. A connection made
+ * any other way is not consent, so it only brings back the ordinary Approve.
  */
 function SourceConnectAndApprove({ request, onApprove, approving }: {
   request: SidekickSourceRequestView;

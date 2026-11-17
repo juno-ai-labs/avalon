@@ -175,21 +175,6 @@ Onboarding no longer starts an agent run or a connector authorization.
 
 ## Changelog
 
-### 2026-11-16 — Teammates are added, not invited
-
-**What changed:** The people step and **Add new member** add each address as a
-member at once (`POST /workspace/members`), and say so: "Add your teammates",
-"Add 2 teammates". They no longer send invitations to accept.
-
-**Why:** The owner removed the invitation step. A teammate who had not yet
-accepted had no account, so nothing could be asked of them: a Sidekick set up
-to read two people's mail could not ask the second person, whose request
-should be waiting for them the first time they open Rally.
-
-**What a future change has to respect:** An address someone is added at is
-bound to the account made for it, so whoever proves that address owns the
-account, as accepting an invitation sent there did.
-
 ### 2026-11-16 — Finishing setup keeps the Canvas a link opened
 
 **What changed:** Finishing the journey leaves the person on the route under
