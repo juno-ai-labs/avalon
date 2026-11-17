@@ -230,7 +230,7 @@ to rediscover it.
 provider code and a platform name, built in the provider Worker and trusted
 across the service binding; it can also be a literal such as `provider_error`.
 
-Shipped in #1593.
+Shipped in #1658 (re-lands #1593).
 
 ### 2026-11-12 — A D1 trigger's refusal is named by its reason
 
