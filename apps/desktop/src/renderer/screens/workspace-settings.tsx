@@ -10,7 +10,7 @@ import { SupportAccessSetting } from '../components/support-access-setting';
 import { CanvasSharingDefaultsSetting } from '../components/canvas-sharing-defaults-setting';
 import { ConnectedAppsSetting } from '../components/connected-apps-setting';
 import { MemoryFactList, useMemoryFacts } from '../components/memory-review';
-import { CANVA_CONNECTION_DISCLOSURE, connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
+import { connectorProviders, PERSONAL_CONNECT_LABEL } from '../lib/connector-catalog';
 import { PersonalSetup } from './guided-onboarding';
 import { githubAvailabilityLabels, githubRemoteLabels, mcpAuthLabels } from '../settings/choices';
 import { SettingToggle } from '../settings/setting-toggle';
@@ -81,7 +81,6 @@ import { ApiError, type RallyApi } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
 import { AboutRally } from '../components/easter-eggs/about-credits';
-import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, connectorStartsHere } from '../lib/browser-connectors';
 import { disableWebPush, enableWebPush, webPushState } from '../lib/web-push';
 import { browserPushState, devicePushNotice, macPushState, type DevicePushNotice } from '../lib/device-push';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
@@ -130,7 +129,6 @@ function hasWorkspaceInstallationSurface(connectorType: string): boolean {
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'apollo',
   'ashby',
-  'canva',
   'fireflies',
   'google',
   'github',
@@ -930,7 +928,7 @@ export function WorkspaceSettingsScreen({
     staleTime: 30_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'apollo' | 'ashby' | 'canva' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'apollo' | 'ashby' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       if (input.provider === 'x') {
         await api!.createXConnection(input.capabilities);
         return { kind: 'direct' as const };
@@ -1030,10 +1028,6 @@ export function WorkspaceSettingsScreen({
   });
   const reconnectConnection = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
-      if (connection.connectorType === 'canva') {
-        const authorization = await startConnectorAuthorization(api!, 'canva', connection.scope, connection.capabilities ?? []);
-        return { authorization, provider: 'canva' as const };
-      }
       const provider = ['google', 'github', 'linear', 'notion', 'slack'].includes(connection.connectorType)
         ? connection.connectorType as 'google' | 'github' | 'linear' | 'notion' | 'slack'
         : undefined;
@@ -1431,11 +1425,11 @@ export function WorkspaceSettingsScreen({
       {(isAdmin || connection.scope === 'you') && reconnectableConnectorTypes.has(connection.connectorType)
         && !(hasInstallationFacet(connection.connectorType) && connection.scope === 'workspace') && (
         <ConnectionIconAction
-          disabled={!connectorStartsHere(session, connection.connectorType) || reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
+          disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
           icon={<RefreshCcw aria-hidden="true" size={14} />}
           label={`Refresh ${connection.displayName}`}
           onClick={() => setReconnectTarget(connection)}
-          tooltip={connectorStartsHere(session, connection.connectorType) ? 'Refresh authorization with the provider.' : MAC_APP_CONNECT_NOTE}
+          tooltip="Refresh authorization with the provider."
         />
       )}
       {isAdmin && connection.connectorType === 'generic_webhook' && (
@@ -2188,12 +2182,8 @@ export function WorkspaceSettingsScreen({
                       const personalConnectPrerequisite = provider.provider === 'ashby'
                         ? "Personal sign-in requires your organization's Ashby MCP opt-in and an eligible account."
                         : undefined;
-                      // A browser tab starts every connection but those marked desktop only.
-                      const startsHere = connectorStartsHere(session, provider.provider);
-                      const personalConnectDisabled = !startsHere || !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
-                      const personalConnectTitle = !startsHere
-                        ? MAC_APP_CONNECT_NOTE
-                        : hasActivePersonalConnection
+                      const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
+                      const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
                           ? `${provider.name} is not configured in this Rally region.`
@@ -2202,10 +2192,8 @@ export function WorkspaceSettingsScreen({
                           : personalConnectionStateUnavailable && connections.isError
                             ? 'Installed personal connections could not be loaded.'
                             : undefined;
-                      const workspaceConnectDisabled = !startsHere || !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
-                      const workspaceConnectTitle = !startsHere
-                        ? MAC_APP_CONNECT_NOTE
-                        : hasActiveWorkspaceConnection
+                      const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
+                      const workspaceConnectTitle = hasActiveWorkspaceConnection
                         ? `A ${provider.name} organization connection is already installed. Manage it above.`
                         : !providerAvailable && !connectorCatalog.isLoading
                           ? `${provider.name} is not configured in this Rally region.`
@@ -2225,9 +2213,6 @@ export function WorkspaceSettingsScreen({
                             <div><strong><SettingLabel setting={providerSetting(provider, isAdmin)} /></strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
-                          {!startsHere && (
-                            <p className="settings-oauth-status">{MAC_APP_DOWNLOADABLE ? <a href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a> : MAC_APP_CONNECT_NOTE}</p>
-                          )}
                           {searchTarget?.definition.entryPoint === 'provider:' + provider.id && (
                             <p className="settings-search-guidance" role="status">
                               {searchTarget.definition.label} is part of setup. Choose the appropriate connection scope below.
@@ -2254,7 +2239,7 @@ export function WorkspaceSettingsScreen({
                                     }
                                     connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') });
                                   }}
-                                  tooltip={`Only you can use this connection; it acts with your provider identity.${provider.provider === 'canva' ? ` ${CANVA_CONNECTION_DISCLOSURE}` : ''}${personalConnectPrerequisite ? ` ${personalConnectPrerequisite}` : ''}${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
+                                  tooltip={`Only you can use this connection; it acts with your provider identity.${personalConnectPrerequisite ? ` ${personalConnectPrerequisite}` : ''}${personalConnectTitle ? ` ${personalConnectTitle}` : ''}`}
                                 >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : PERSONAL_CONNECT_LABEL}</ConnectorButton>
                               )}
                             {provider.scopes.includes('workspace' as never) && isAdmin && (

@@ -1134,6 +1134,32 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
 
+### 2026-11-17 — WorkspaceDO 152 purges the retired Canva connector
+
+**What changed:** Migration 152 (`canva-retirement.ts`) disables every Canva
+connection and nulls its credentials, disables its poll schedules, marks its
+event registrations removed, deletes its resource watches, nulls each Canva
+design's `protected_access_json`, and filters Canva evaluators, triggers,
+recommended plugins and bindings out of `automation_directory` and every
+`sidekick_revisions` row, by the connections' `model_plugin_id`. Triggers then
+abort a Canva `connector_connections` insert, a Canva connection's move off
+`disabled`, and a Canva event registration.
+
+**Why:** the connector's code is gone; leaving live-looking rows would show
+Sidekicks with triggers that can never fire and keep credentials Rally can no
+longer use. A revision's `definition_hash` is written and never verified, so the
+rewrite leaves it as it was.
+
+**Alternatives rejected:** deleting Canva `resources` rows, because
+`artifact_registry` cascades from `resources`; and narrowing the `canva` CHECK
+constraints, which would rebuild `connector_connections` and its dependents for
+a value the triggers already refuse.
+
+**Consequences:** `canva` stays in the stored CHECK vocabularies and the
+disabled rows stay; code no longer accepts the value anywhere. A populated
+version-151 workerd test covers the purge, the untouched Linear control, and the
+triggers.
+
 ### 2026-11-13 — A Google address another account holds is refused by name
 
 **What changed:** `persistVerifiedGoogleIdentity` answers 409

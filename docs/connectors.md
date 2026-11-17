@@ -86,8 +86,7 @@ the shell hands the link to its web view, which claims it. A build that predates
 this cannot claim and has to update: offering the old one-request path to it
 would offer it to anyone. So a start must carry `claim=1`, and one without it
 is refused with `connector_client_update_required` before the provider's
-consent, rather than failing after it. The desktop's Canva loopback is exempt:
-it already completes in its own signed-in request. A repeated hit on a callback
+consent, rather than failing after it. A repeated hit on a callback
 that already holds its state answers 409 and leaves the attempt to the claim.
 
 Connector start advertises `desktopHandoffVersion=2` as an additive query
@@ -186,10 +185,10 @@ Each product entry says, once: its name and one-sentence description, its
 **families**, its provider, the scopes it is offered in (`scopes`), the subset a
 card in a conversation can connect (`cardScopes`; the rest are made in
 Settings), whether its connections are told apart by account or by a name a
-person typed (`instance`), its mark, and whether it needs the Mac app. Families
+person typed (`instance`), and its mark. Families
 (`ConnectorFamilyCatalog`) name a job, not a provider: email and calendar, file
 storage, documents and wikis, team chat, issue tracking, code, meeting notes,
-sales, recruiting, design, social media, and custom tools and events. A product
+sales, recruiting, social media, and custom tools and events. A product
 lists its families most fitting first and may have several (GitHub is code and
 issue tracking).
 
@@ -1718,6 +1717,28 @@ creates without a recorded provider key cannot use this recovery path.
 Removed from `docs/`; the last text and changelog are recoverable as
 [`architecture.md`](architecture.md#retired-documents) describes.
 
+**`canva-integration.md`: the Canva connector (shipped 2026-09-19; removed
+2026-11-17).** Canva was a personal hosted-MCP connector whose OAuth returned
+to a loopback listener in the Mac app's main process while Canva's approval of
+Rally's server callback was pending, so it was the one connector a browser tab
+could not start (`desktopOnly`). It polled one chosen design per watch or
+Sidekick trigger, kept each design's share link in an encrypted
+`resources.protected_access_json` envelope, and cancelled a run's open editing
+transactions from durable tool receipts when the run ended. It was removed with
+its adapter, routes, loopback, polling, transaction cleanup and the
+`desktopOnly` mark. WorkspaceDO migration 152 (`canva-retirement.ts`) disabled
+every Canva connection and cleared its credentials, disabled its poll
+schedules, removed its event registrations and resource watches, cleared each
+design's access envelope, and removed Canva evaluators, triggers and plugin
+bindings from every Sidekick's projection and stored revisions; triggers refuse
+a new Canva connection or registration. What survives in storage: the disabled
+connection rows, design `resources` rows (conversations may name them, and
+`artifact_registry` cascades from `resources`), `canva` in the
+`connector_type` and `provider` CHECK constraints (narrowing them would rebuild
+`connector_connections` and its dependents), and `canva_cleanup_*` checkpoint
+phases on old tool receipts. Grants at Canva were not revoked, because no code
+remains to reach its revocation endpoint; they lapse on Canva's side.
+
 **`contextual-routing.md`: Suggested context (retired 2026-08-30; document
 removed 2026-11-08).** Suggested context classified unclaimed connector
 activity against an Organization's recent work streams and offered a card in
@@ -1763,7 +1784,7 @@ surface that tells somebody about connector activity reads
 
 ## Changelog
 
-### 2026-11-17 — One product catalog, with families, instead of five copies
+### 2026-11-17 — One product catalog, with families, instead of five copies; Canva retired
 
 **What changed:** `ConnectorProductCatalog` in `@rally/contracts` replaced the
 connection card's catalog, and Settings' list, the transcript presentation,
@@ -1798,6 +1819,17 @@ connection keeps the product name alone. The grants the desktop requests stay on
 Google presets in contracts. A connection name not built by
 `connectorConnectionName` will read back as no account, so a new producer must
 use it.
+
+**Canva retired in the same change.** The Canva connector was removed: adapter,
+OAuth routes, the Mac app's loopback listener, design polling, the post-run
+editing-transaction cleanup, the help page, and the `desktopOnly` mark it was the
+only user of. Existing data was purged rather than left inert, by the
+Organization's choice: WorkspaceDO migration 152 disables every Canva
+connection and clears its credentials, and removes Canva triggers, evaluators
+and plugin bindings from every Sidekick, including stored revisions. Rejected:
+keeping `canva` parseable so old definitions load with dead triggers, which
+leaves Sidekicks that look configured and never fire. What remains in storage,
+and why, is under [Retired documents](#retired-documents).
 
 ### 2026-11-16 — Only the session that started a connector authorization can complete it
 

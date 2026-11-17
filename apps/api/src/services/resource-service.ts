@@ -4,7 +4,6 @@ import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { resolveShareableResources } from './resource-share-rules';
 import { annotationAllowedForResource, type Annotation, ArtifactManifestSchema, manifestAssetKey } from "@rally/contracts";
 import { resolveAssetPath } from "../artifacts/serving-policy";
-import { protectCanvaReference, readCanvaReference } from "./canva-resource-access";
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
 import {
   classifyAttachmentKind,
@@ -49,8 +48,8 @@ import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
 function resourceTelemetryConnector(value: unknown):
-  'canva' | 'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' | 'avalon' {
-  if (value === 'canva' || value === 'google' || value === 'generic_webhook' || value === 'github' || value === 'granola'
+  'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' | 'avalon' {
+  if (value === 'google' || value === 'generic_webhook' || value === 'github' || value === 'granola'
     || value === 'linear' || value === 'notion' || value === 'slack' || value === 'x') return value;
   return 'avalon';
 }
@@ -307,15 +306,6 @@ export class ResourceService {
     if (connection.connector_type !== input.provider && !(connection.connector_type === "google" && input.provider.startsWith("google"))) {
       throw new ApiError(422, "provider_mismatch", "The resource does not belong to the selected connection");
     }
-    if (input.provider === "canva" && input.resourceType !== "canva_design") {
-      throw new ApiError(422, "resource_type_mismatch", "Canva resources must be designs");
-    }
-    const canvaReference = input.provider === "canva"
-      ? await protectCanvaReference(this.env, this.auth.workspaceId, input.connectionId, input.canonicalUrl ?? input.providerResourceId)
-      : null;
-    if (canvaReference && canvaReference.designId !== input.providerResourceId) {
-      throw new ApiError(422, "provider_resource_mismatch", "The Canva link does not match the design ID");
-    }
     // One critical section in the object: the read, the conditional insert
     // and the canonical answer used to be three round trips through the
     // runtime facade, held together by `ON CONFLICT DO NOTHING` and a re-read.
@@ -327,8 +317,7 @@ export class ResourceService {
       providerResourceId: input.providerResourceId,
       resourceType: input.resourceType,
       title: input.title,
-      canonicalUrl: canvaReference?.canonicalUrl ?? input.canonicalUrl ?? null,
-      ...(canvaReference ? { protectedAccessJson: canvaReference.protectedAccessJson } : {}),
+      canonicalUrl: input.canonicalUrl ?? null,
       connectionAuthority: expectedConnection ?? {
         connectorType: String(connection.connector_type),
         scope: connection.scope === "workspace" ? "workspace" : "personal",
@@ -650,10 +639,6 @@ export class ResourceService {
     const context = await this.connectionContext(connection);
     const adapter = this.registry().get(String(connection.connector_type));
     if (!adapter.hydrateResource) throw new ApiError(422, "hydration_not_supported", "This connector cannot hydrate resources");
-    if (connection.connector_type === "canva") {
-      resource.canvaAccessReference = await readCanvaReference(this.env, this.auth.workspaceId,
-        String(connection.id), String(resource.provider_resource_id), resource.protected_access_json);
-    }
     const before = JSON.stringify(context.credentials);
     let hydrated: unknown;
     try {

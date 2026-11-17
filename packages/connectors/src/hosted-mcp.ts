@@ -118,8 +118,6 @@ export interface HostedMcpOAuthConfig {
   providerName: string;
   serverUrl: string;
   redirectUri: string;
-  /** Explicit native-app exception; ordinary callbacks remain HTTPS-only. */
-  allowLoopbackRedirect?: boolean;
   /** Provider-declared resource identifier when it differs from the MCP endpoint. */
   resourceUrl?: string;
   clientName?: string;
@@ -523,7 +521,7 @@ export async function beginHostedMcpAuthorization(
       body: JSON.stringify({
         client_name: config.clientName ?? HOSTED_MCP_CLIENT_NAME,
         ...(config.clientUri ? { client_uri: config.clientUri } : {}),
-        redirect_uris: [normalizeHostedMcpRedirect(config.redirectUri, config.allowLoopbackRedirect)],
+        redirect_uris: [normalizeHttpsUrl(config.redirectUri)],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
         token_endpoint_auth_method: requestedAuthMethod,
@@ -550,7 +548,7 @@ export async function beginHostedMcpAuthorization(
   const url = new URL(authorizationState.authorizationEndpoint);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", authorizationState.clientId);
-  url.searchParams.set("redirect_uri", normalizeHostedMcpRedirect(config.redirectUri, config.allowLoopbackRedirect));
+  url.searchParams.set("redirect_uri", normalizeHttpsUrl(config.redirectUri));
   url.searchParams.set("state", input.state);
   url.searchParams.set("code_challenge", input.codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
@@ -561,7 +559,7 @@ export async function beginHostedMcpAuthorization(
 }
 
 export async function exchangeHostedMcpAuthorizationCode(
-  config: Pick<HostedMcpOAuthConfig, "providerName" | "redirectUri" | "allowLoopbackRedirect" | "fetch" | "maxResponseBytes">,
+  config: Pick<HostedMcpOAuthConfig, "providerName" | "redirectUri" | "fetch" | "maxResponseBytes">,
   state: HostedMcpOAuthState,
   input: { code: string; codeVerifier: string },
 ): Promise<HostedMcpTokenResponse> {
@@ -569,7 +567,7 @@ export async function exchangeHostedMcpAuthorizationCode(
     grant_type: "authorization_code",
     code: input.code,
     code_verifier: input.codeVerifier,
-    redirect_uri: normalizeHostedMcpRedirect(config.redirectUri, config.allowLoopbackRedirect),
+    redirect_uri: normalizeHttpsUrl(config.redirectUri),
     resource: state.resource,
   });
 }
@@ -1017,15 +1015,6 @@ async function discoverOAuthMetadata(
     }
   }
   throw missing ?? new ConnectorError("provider_error", "OAuth metadata is unavailable");
-}
-
-/** Only the fixed IPv4 loopback callback used by Rally's native listener. */
-export function normalizeHostedMcpRedirect(value: string, allowLoopback = false): string {
-  const url = new URL(value);
-  if (allowLoopback && url.protocol === "http:" && url.hostname === "127.0.0.1"
-    && url.port && url.pathname === "/callback" && !url.username && !url.password
-    && !url.search && !url.hash) return url.toString();
-  return normalizeHttpsUrl(value);
 }
 
 function normalizeHttpsUrl(value: string): string {

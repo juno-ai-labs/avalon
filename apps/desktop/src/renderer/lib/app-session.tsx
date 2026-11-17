@@ -57,7 +57,6 @@ const connectorProviderNames = {
   github: 'GitHub',
   apollo: 'Apollo.io',
   ashby: 'Ashby',
-  canva: 'Canva',
   fireflies: 'Fireflies',
   granola: 'Granola',
   linear: 'Linear',

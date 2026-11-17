@@ -2727,39 +2727,6 @@ describe('Organization settings', () => {
     expect(await screen.findByText('Using dark automatically with the system appearance.')).toBeVisible();
   });
 
-  it('starts every connection in a browser but the desktop-only ones, and points at the Mac app for those', async () => {
-    sessionHost.current = 'browser';
-    renderSettings();
-    openSettingsSection('Connections');
-
-    const linear = (await screen.findByText('Linear')).closest('.provider-card') as HTMLElement;
-    await waitFor(() => expect(within(linear).getByRole('button', { name: 'Connect for me' })).toBeEnabled());
-    expect(within(linear).queryByText('Download the Mac app to connect this.')).toBeNull();
-    const canva = screen.getByText('Canva').closest('.provider-card') as HTMLElement;
-    expect(within(canva).getByRole('link', { name: 'Download the Mac app to connect this.' })).toBeVisible();
-    for (const button of within(canva).getAllByRole('button')) expect(button).toHaveAttribute('aria-disabled', 'true');
-  });
-
-  it('keeps an installed desktop-only connection from refreshing in a browser', async () => {
-    sessionHost.current = 'browser';
-    api.getConnections.mockResolvedValue([{
-      id: '00000000-0000-7000-8000-000000000011',
-      connectorType: 'canva',
-      scope: 'you',
-      displayName: 'Canva · adam@example.com',
-      capabilities: ['canva.personal.mcp'],
-      status: 'reconnect_required',
-    }]);
-    renderSettings();
-    openSettingsSection('Connections');
-
-    await openConnection('Canva · adam@example.com');
-    const refresh = await screen.findByRole('button', { name: 'Refresh Canva · adam@example.com' });
-    expect(refresh).toHaveAttribute('aria-disabled', 'true');
-    fireEvent.click(refresh);
-    expect(screen.queryByRole('dialog', { name: 'Refresh Canva · adam@example.com?' })).toBeNull();
-  });
-
   it('leaves appearance, start page, device notifications and sign-out to a native shell', async () => {
     sessionHost.current = 'browser';
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));

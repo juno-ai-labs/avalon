@@ -257,7 +257,6 @@ const bridge: RallyDesktopBridge = {
     return () => ipcRenderer.removeListener('organizations:refresh-requested', handler);
   },
   exportMessage: (request) => ipcRenderer.invoke('message-export:save', request) as Promise<MessageExportResult>,
-  connectCanva: (operationId) => ipcRenderer.invoke('canva:connect', operationId) as Promise<{ url: string; attemptId: string }>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
   presentArtifactPreview: (request) =>
     ipcRenderer.invoke('artifact:present-preview', request) as Promise<boolean>,

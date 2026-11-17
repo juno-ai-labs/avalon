@@ -50,7 +50,6 @@ import { RESOURCE_READ_PROJECTION_SQL } from '../services/resource-read-projecti
 import { WorkspaceConversationView, WORKSPACE_CONVERSATION_VIEW_MIGRATION } from "./workspace-conversation-view";
 import { ConversationViewProjectionSchema } from "./conversation-view-projection";
 import { CONNECTOR_EVENT_PEOPLE_MIGRATION, writeConnectorEventPeople, readConnectorEventPeople, copyConnectorEventPeople } from "./connector-event-people";
-import { CANVA_POLL_SECONDS } from "@rally/connectors";
 import { SCOPE_GRANT_DIRECTORY_SCHEMA, applyScopeGrantDirectory, scopeGrantCandidates, ScopeGrantCandidatesRequestSchema } from "./scope-grant-directory";
 
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
@@ -113,6 +112,7 @@ import {
 } from './connector-installation-protocol';
 import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
 import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
+import { CANVA_RETIREMENT_MIGRATION } from "./canva-retirement";
 import { AgentIdSchema, type AgentId, type RetirementParentKind } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
@@ -4507,7 +4507,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // backfill: a list is built from the Canvases themselves whenever a socket
   // subscribes, so nothing here has to catch up.
   statements: CANVAS_SHARE_FEDERATION_STATEMENTS,
-}];
+}, CANVA_RETIREMENT_MIGRATION];
 
 function conversationToolEntry(conversation: {
   conversationId: string; parentId: string; substreamId: string; kind: ConversationToolEntry["kind"];
@@ -8442,19 +8442,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       preserveActive ? 1 : 0,
       JSON.stringify(request.evaluators.map((evaluator) => evaluator.evaluatorId)),
     );
-    this.state.storage.sql.exec(
-      `UPDATE schedules SET enabled = 0, updated_at = ? WHERE id IN (
-        SELECT registration_id FROM workspace_external_event_registrations
-        WHERE destination_key = ? AND connector_type = 'canva' AND (? = 0 OR state='removed'))`,
-      new Date(now).toISOString(), destinationKey, preserveActive ? 1 : 0,
-    );
-    const changed = [];
     for (const evaluator of request.evaluators) {
       if (preserveActive && this.state.storage.sql.exec(
         `SELECT 1 FROM workspace_external_event_registrations WHERE registration_id=? AND destination_key=?
           AND state='active' AND evaluator_json=?`, evaluator.evaluatorId, destinationKey, JSON.stringify(evaluator),
       ).toArray().length > 0) continue;
-      changed.push(evaluator);
       this.state.storage.sql.exec(
         `INSERT INTO workspace_external_event_registrations
            (registration_id, destination_key, workspace_id, effective_after_event_sequence,
@@ -8483,24 +8475,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         null,
         now,
         now,
-      );
-    }
-    for (const evaluator of changed) {
-      if (evaluator.source.connectorType !== "canva") continue;
-      if (!evaluator.source.resourceId) throw new Error("canva_trigger_requires_design");
-      const resource = this.state.storage.sql.exec<{ id: string }>(
-        "SELECT id FROM resources WHERE id = ? AND connection_id = ? AND provider = 'canva' AND resource_type = 'canva_design'",
-        evaluator.source.resourceId, evaluator.source.connectionId,
-      ).toArray()[0];
-      if (!resource) throw new Error("canva_trigger_design_unavailable");
-      const at = new Date(now).toISOString();
-      this.state.storage.sql.exec(
-        `INSERT INTO schedules (id, workspace_id, connector_connection_id, schedule_type,
-           interval_seconds, timezone, next_run_at, enabled, version, created_at, updated_at)
-         VALUES (?, ?, ?, 'interval', ?, 'UTC', ?, 1, 1, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET enabled = 1, connector_connection_id = excluded.connector_connection_id, next_run_at = excluded.next_run_at, updated_at = excluded.updated_at`,
-        evaluator.evaluatorId, request.workspaceId, evaluator.source.connectionId,
-        CANVA_POLL_SECONDS, new Date(now + CANVA_POLL_SECONDS * 1_000).toISOString(), at, at,
       );
     }
     // Rows removed long ago are noise in every candidate scan; keep the
