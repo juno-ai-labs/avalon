@@ -194,6 +194,8 @@ const markers: Record<string, () => string> = {
   'casa-badge': renderCasaBadge,
   'market-header': renderMarketHeader,
   'github-link': () => githubLink(),
+  // For hand-written headers whose links are styled as `.header-link`, such as the Trust Center's.
+  'github-header-link': () => githubLink('header-link github-link'),
   'marketplace-filters': renderMarketplaceFilters,
   'marketplace-cards': renderMarketplaceCards,
 };
