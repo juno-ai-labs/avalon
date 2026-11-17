@@ -6,6 +6,7 @@
 export function renderCorePluginSystemMessage(holds: {
   currentTime: boolean;
   elicitation: boolean;
+  addMember: boolean;
   connectorConnection: boolean;
   resourceAccess: boolean;
 }): string {
@@ -16,8 +17,11 @@ export function renderCorePluginSystemMessage(holds: {
     ...(holds.elicitation
       ? ["Use request_elicitation for one structured blocking question that must pause the run for human input."]
       : []),
+    ...(holds.addMember
+      ? ["When the work needs someone named by email to be a member of this Organization, such as to ask them for a Sidekick source, call offer_to_add_member with their address: it returns a member's userId, and offers to add anyone who is not one. Never call it for people the work only emails or reads mail from, such as customers, leads or vendors."]
+      : []),
     ...(holds.connectorConnection
-      ? ["For a connector, call get_connector_connection_state first; it reports every scope. A connected personal connection is enough: do not ask for the workspace one when the person's own can do the task. If no connected scope can and reconnect_required or not_connected blocks the task, explain why and call show_connector_connection with the same connectorId and the scope the task needs. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. A state check is not a refusal: when a connected plugin can do the work, try it. Never tell a person to complete a connection prompt unless show_connector_connection ran in that same reply, and never tell another agent that a connection blocks it unless a tool refused for that reason. Do not invent an authorization URL or claim the connection succeeded."]
+      ? ["For a connector, call get_connector_connection_state first; it reports every scope. A connected personal connection is enough: do not ask for the workspace one when the person's own can do the task. If no connected scope can and reconnect_required or not_connected blocks the task, explain why and call show_connector_connection with the same connectorId and the scope the task needs. If it returns unavailable, explain that the connector is not configured in this Rally region and do not show a card. A state check is not a refusal: when a connected plugin can do the work, try it. Never tell a person to complete a connection prompt unless show_connector_connection ran in that same reply or a tool result in it says its own card connects the account, and never tell another agent that a connection blocks it unless a tool refused for that reason. Do not invent an authorization URL or claim the connection succeeded."]
       : []),
     ...(holds.resourceAccess
       ? ["Before reading or editing a linked file, or after a call on it was refused, call check_resource_access to learn which connection can open it, then use that plugin."]

@@ -110,6 +110,8 @@ const RECORDED_DEBT: Record<string, number> = {
   terminal: 0,
   time: 0,
   web: 0,
+  // offer_to_add_member (`workspace.members.offer`): describes its parameters from the start.
+  workspace: 0,
   workstream: 0,
   x: 0,
 };

@@ -1586,4 +1586,51 @@ describe("A Sidekick run a missing connection blocks", () => {
       .items.find((candidate) => candidate.id === AUTOMATION_ID);
     expect({ runState: item?.runState, needsInput: item?.needsInput }).toEqual({ runState: null, needsInput: false });
   });
+
+  it("offers to add someone who is not a member, waits, and reads them back by id once they are added", async () => {
+    const NANCY_ID = "00000000-0000-7000-8000-00000000a0a1";
+    const offer = { callTool: { name: "offer_to_add_member", arguments: { email: "Nancy@Example.com", name: "Nancy" } } };
+    // This suite's D1 declares what it reads: the address an account signs in with.
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS user_verified_emails (email TEXT PRIMARY KEY COLLATE NOCASE, user_id TEXT NOT NULL, verified_at TEXT NOT NULL)`).run();
+    script = [offer];
+    await activeSidekick();
+    const { runId, status } = await startedRun();
+    expect(status).toBe("needs_input");
+    const question = await runInDurableObject(childStub(runId), (_instance, state) => {
+      const row = state.storage.sql.exec<{ elicitation_id: string; prompt: string }>(
+        `SELECT elicitation_id, prompt FROM elicitation_requests WHERE status = 'pending'`,
+      ).one();
+      const block = state.storage.sql.exec<{ structured_content_json: string }>(
+        `SELECT structured_content_json FROM canonical_conversation_turn_details
+          WHERE structured_content_json LIKE '%"kind":"elicitation"%' ORDER BY sequence_number LIMIT 1`,
+      ).one();
+      const { elicitation } = JSON.parse(block.structured_content_json) as { elicitation: Record<string, unknown> };
+      return { ...row, member: elicitation.member, options: elicitation.options, allowOther: elicitation.allowOther };
+    });
+    // The question carries the card that adds Nancy, and is answered by its two options alone.
+    expect(question).toMatchObject({ prompt: "Add nancy@example.com as a member?",
+      member: { email: "nancy@example.com", name: "Nancy" }, allowOther: false });
+    expect((question.options as Array<{ label: string }>).map((option) => option.label)).toEqual(["Added", "Not now"]);
+
+    // An administrator's press makes Nancy a member, as POST /workspace/members writes her.
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at) VALUES (?, 'nancy@example.com', 'Nancy', NULL, 'UTC', ?)`)
+        .bind(NANCY_ID, NOW),
+      env.DB.prepare(`INSERT INTO user_verified_emails (email, user_id, verified_at) VALUES ('nancy@example.com', ?, ?)`).bind(NANCY_ID, NOW),
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at) VALUES (?, ?, 'active', 'member', ?)`)
+        .bind(WORKSPACE_ID, NANCY_ID, NOW),
+    ]);
+    const callsBefore = provider.calls.length;
+    script = [offer, { say: "Nancy is in; asked her for her Gmail." }];
+    await answer(runId, elicitationId(question), "added");
+    // The resumed run read the answer, asked again, and got Nancy back by id with no second card.
+    expect(toolResults(provider.calls[callsBefore])).toContain("added");
+    expect(toolResults(provider.calls[callsBefore + 1])).toContain(`"status":"member","userId":"${NANCY_ID}"`);
+    await deliverChildEffects(TEST_ENV, childStub(runId));
+    expect(await runState(runId)).toBe("completed");
+  });
 });
+
+function elicitationId(question: { elicitation_id: string }): string {
+  return question.elicitation_id;
+}

@@ -9,7 +9,6 @@ import {
 
 const baseUrl = process.env.AVALON_SMOKE_BASE_URL ?? "http://127.0.0.1:8787";
 const otherBaseUrl = process.env.AVALON_SMOKE_OTHER_BASE_URL;
-const expectedWebOrigin = process.env.AVALON_SMOKE_PUBLIC_WEB_ORIGIN ?? "http://127.0.0.1:5174";
 const seedProduct = JSON.parse(readFileSync(new URL("../packages/db/seed-product.json", import.meta.url), "utf8"));
 const seedChat = seedProduct.canvases.find((canvas) => canvas.title === "Q4 revenue review");
 const seedChatCanvasId = seedChat.id;
@@ -69,52 +68,23 @@ const wrongRegionRequest = await jsonRequest("/health", {
 assert(wrongRegionRequest.response.status === 409, "The API accepted an explicit request for the wrong region");
 assert(wrongRegionRequest.body?.error?.code === "region_mismatch", "Wrong-region access did not report a region mismatch");
 
-const inviteEmail = `regional-smoke-${expectedRegion}@example.test`;
-const firstInvitation = await jsonRequest("/workspace/invitations", {
+// Adding someone by address makes them a member at once; a re-run finds them already one.
+const memberEmail = `regional-smoke-${expectedRegion}@example.test`;
+const added = await jsonRequest("/workspace/members", {
   method: "POST",
   headers: authHeaders,
-  body: JSON.stringify({ email: inviteEmail, role: "member" }),
+  body: JSON.stringify({ email: memberEmail, role: "member" }),
 });
-assert(firstInvitation.response.status === 201, "Invitation creation failed");
-const firstInviteUrl = new URL(firstInvitation.body?.inviteUrl);
-assert(firstInviteUrl.origin === expectedWebOrigin, "Invitation uses the wrong public origin");
-assert(firstInviteUrl.pathname === "/invite/", "Invitation uses the wrong landing page");
-assert(firstInviteUrl.search === "", "Invitation token leaked into the URL query string");
-const firstInviteParameters = new URLSearchParams(firstInviteUrl.hash.slice(1));
-const firstToken = firstInviteParameters.get("token");
-assert(firstInviteParameters.get("region") === expectedRegion && firstToken, "Invitation fragment is incomplete");
-
-const preview = await jsonRequest(`/auth/invitations/preview?token=${encodeURIComponent(firstToken)}`);
-assert(preview.response.ok, "Invitation preview failed");
-assert(preview.body?.region === expectedRegion, "Invitation preview returned the wrong region");
-assert(preview.body?.email === inviteEmail, "Invitation preview returned the wrong email");
-
-const rotatedInvitation = await jsonRequest("/workspace/invitations", {
-  method: "POST",
-  headers: authHeaders,
-  body: JSON.stringify({ email: inviteEmail, role: "member" }),
-});
-assert(rotatedInvitation.response.status === 201, "Invitation rotation failed");
-const rotatedInviteUrl = new URL(rotatedInvitation.body?.inviteUrl);
-const rotatedToken = new URLSearchParams(rotatedInviteUrl.hash.slice(1)).get("token");
-assert(rotatedToken && rotatedToken !== firstToken, "Invitation rotation reused the old token");
-const oldPreview = await jsonRequest(`/auth/invitations/preview?token=${encodeURIComponent(firstToken)}`);
-assert(oldPreview.response.status === 404, "Rotating an invitation did not invalidate its prior token");
-
-const invitationList = await jsonRequest("/workspace/invitations", { headers: authHeaders });
-assert(invitationList.response.ok, "Invitation history failed to load");
 assert(
-  invitationList.body?.items?.some((item) => item.id === rotatedInvitation.body?.invitation?.id && item.status === "pending"),
-  "The pending invitation is missing from organization settings",
+  added.response.status === 201 || added.body?.error?.code === "already_workspace_member",
+  "Adding a member by address failed",
 );
-
-const revoked = await jsonRequest(`/workspace/invitations/${rotatedInvitation.body?.invitation?.id}`, {
-  method: "DELETE",
-  headers: authHeaders,
-});
-assert(revoked.response.status === 204, "Invitation revocation failed");
-const revokedPreview = await jsonRequest(`/auth/invitations/preview?token=${encodeURIComponent(rotatedToken)}`);
-assert(revokedPreview.response.status === 404, "A revoked invitation remained usable");
+const members = await jsonRequest("/workspace/members", { headers: authHeaders });
+assert(members.response.ok, "The member roster failed to load");
+assert(
+  members.body?.items?.some((member) => member.user?.email === memberEmail && member.status === "active"),
+  "The added member is missing from the roster",
+);
 
 // The seeded Canvases (`packages/db/seed-product.json`, imported by
 // `pnpm db:open-authority`): Launch plan holds the fixture artifact, and Q4
@@ -255,7 +225,7 @@ console.log(JSON.stringify({
   health: "ok",
   protectedEndpoints: protectedPaths.length,
   organizationRegion: expectedRegion,
-  invitationLifecycle: "ok",
+  memberAdded: "ok",
   crossRegionSession: otherBaseUrl ? "rejected" : "not checked",
   seededCanvases: "ok",
   canvasCreateRetry: "same Canvas",

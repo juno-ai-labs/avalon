@@ -57,6 +57,8 @@ const identity: PlatformIdentity = {
   accountOnboarding: { eligible: false, introduced: true, presentation: null, revision: 0 },
   platformUserId,
   loginIdentities: [{ provider: "google", subject: "google-subject-1" }],
+  // The seeded Global user has proved no address.
+  verifiedEmails: [],
   email: "member@example.com",
   name: "Member",
   avatarUrl: null,

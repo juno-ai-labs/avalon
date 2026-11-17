@@ -256,8 +256,9 @@ export function createTerminalResourceBridge(
   // tool/link rows to AgentLoopDO. Keep every statement single-authority;
   // no query may join across those object-local databases.
   const workspace = env.DB;
-  const attachResource = inObjectResourceAttacher
-    ?? ((input) => attachWorkstreamRuntimeResource(env, input));
+  const producingSubstreamId = importingSubstreamId ?? publicationSubstreamId;
+  const attachProducer: (input: Omit<Parameters<WorkstreamRuntimeResourceAttacher>[0], "substreamId">) => Promise<void> =
+    inObjectResourceAttacher ?? ((input) => attachWorkstreamRuntimeResource(env, { ...input, substreamId: producingSubstreamId }));
   /**
    * Where a publication belongs.
    *
@@ -281,9 +282,8 @@ export function createTerminalResourceBridge(
       throw new TerminalToolError("canvas_argument_unsupported", "Only a Sidekick run names a Canvas to publish into; omit canvas.", { field: "canvas" });
     }
     // Internal captures stay local and require no access to the home.
-    if (internalProviderResourceId !== undefined || !publicationHome) {
-      return { parentId: context.workstreamId, substreamId: publicationSubstreamId };
-    }
+    if (internalProviderResourceId !== undefined) return { parentId: context.workstreamId, substreamId: producingSubstreamId };
+    if (!publicationHome) return { parentId: context.workstreamId, substreamId: publicationSubstreamId };
     const key = input.canvas ?? "";
     let home = homes.get(key);
     if (!home) {
@@ -322,27 +322,16 @@ export function createTerminalResourceBridge(
       const legacy = await publicationRow(context.workspaceId, await publishedResourceIdentity(context.workstreamId, filePath));
       if (legacy) {
         await assertExistingPublicationVisible(context, { parentId: context.workstreamId,
-          substreamId: importingSubstreamId ?? publicationSubstreamId }, legacy);
+          substreamId: producingSubstreamId }, legacy);
         return legacy;
       }
     }
     return null;
   };
   /**
-   * Link a published document to the work stream that owns it, and to the one
-   * that produced it when those differ.
-   *
-   * Both, not either. The owning room is where the document belongs and where a
-   * reader looks for it. But visibility is resolved from the links held by the
-   * object a run executes in (`loadVisibleRows` starts at `attachedLinks`), so
-   * a redirected document linked only to the room is one its own run cannot
-   * read back: `publish_resource` then `import_resource` on the id just
-   * returned would answer `resource_not_found`, which is the natural shape of
-   * "refresh the document" and worked before the redirect existed.
-   *
-   * The in-object attacher writes through the object this run executes in,
-   * which is the right door for the producing half only. The owning room is a
-   * different object and takes the ordinary cross-object path.
+   * The producer needs its link for resource tools to read the result. A
+   * distinct Canvas Chat also needs a link to publish the realtime update.
+   * A Sidekick without a Canvas destination keeps its producer-only link.
    */
   const attachPublication = async (
     context: { workspaceId: string; workstreamId: string },
@@ -352,22 +341,52 @@ export function createTerminalResourceBridge(
       eventType?: "resource_attached" | "resource_updated";
     },
     target: { parentId: string; substreamId: string },
+    onlyMissing = false,
   ) => {
-    const workstreamId = target.parentId;
-    await (workstreamId === context.workstreamId
-      ? attachResource({ workspaceId: context.workspaceId, workstreamId, ...input })
-      : attachWorkstreamRuntimeResource(env, {
-        workspaceId: context.workspaceId,
-        workstreamId,
+    const { workspaceId, workstreamId } = context;
+    // A Sidekick's publication resolver only returns a different parent for
+    // a Canvas. Its own parent here means the publish has no Canvas home.
+    const separateDestination = target.parentId !== workstreamId
+      || (!publicationHome && target.substreamId !== producingSubstreamId);
+    const isAttached = (parentId: string, substreamId: string) =>
+      createResourceObjectPort(env, workspaceId, parentId, undefined, substreamId)
+        .isAttached({ resourceId: input.resourceId });
+    const [producerHasLink, destinationHasLink] = onlyMissing
+      ? await Promise.all([
+        isAttached(workstreamId, producingSubstreamId),
+        separateDestination ? isAttached(target.parentId, target.substreamId) : false,
+      ])
+      : [false, false];
+
+    if (!producerHasLink) await attachProducer({ workspaceId, workstreamId, ...input });
+    if (separateDestination && !destinationHasLink) {
+      await attachWorkstreamRuntimeResource(env, {
+        workspaceId,
+        workstreamId: target.parentId,
         substreamId: target.substreamId,
         ...input,
-      }));
-    if (workstreamId === context.workstreamId) return;
-    await attachResource({
-      workspaceId: context.workspaceId,
-      workstreamId: context.workstreamId,
-      ...input,
-    });
+      });
+    }
+  };
+
+  const relinkPublication = async (
+    context: HarnessToolContext,
+    resource: Pick<PublishedRow, "id" | "metadata_json">,
+    effectIntentId: string,
+    target: { parentId: string; substreamId: string },
+  ) => {
+    let metadata: Record<string, unknown> = {};
+    try { metadata = JSON.parse(resource.metadata_json) as Record<string, unknown>; } catch { /* legacy metadata */ }
+    const replayEvent = metadata.publicationEffectIntentId === effectIntentId
+      && (metadata.publicationEventType === "resource_attached" || metadata.publicationEventType === "resource_updated")
+      ? metadata.publicationEventType : undefined;
+    // A replay of the writing receipt also reissues its realtime update.
+    // An identical publish by another producer adds only its missing links.
+    await attachPublication(context, {
+      resourceId: resource.id,
+      attachedByUserId: context.executionPrincipal.type === "user" ? context.executionPrincipal.userId : null,
+      ...(replayEvent ? { eventType: replayEvent } : {}),
+    }, target, replayEvent === undefined);
   };
   /**
    * Materialize a published site's own source back into the sandbox.
@@ -931,21 +950,6 @@ export function createTerminalResourceBridge(
       const digest = await sha256Hex(bytes);
 
       if (settled) {
-        const relink = async (eventType?: "resource_attached" | "resource_updated") => {
-          const linked = await createResourceObjectPort(
-            env,
-            context.workspaceId,
-            target.parentId, undefined, target.substreamId,
-          ).isAttached({ resourceId: settled.id });
-          if (linked && eventType === undefined) return;
-          await attachPublication(context, {
-            resourceId: settled.id,
-            attachedByUserId: context.executionPrincipal.type === "user"
-              ? context.executionPrincipal.userId
-              : null,
-            ...(eventType ? { eventType } : {}),
-          }, target);
-        };
         // Equal content covers both a crash-replay of a settled call and a
         // republish that changed nothing: the stored bytes are already these
         // bytes, so there is nothing to write. A row found only under the
@@ -953,14 +957,7 @@ export function createTerminalResourceBridge(
         // it keeps the identity it was published with.
         const perCallReplay = existing === null;
         if (perCallReplay || settled.content_sha256 === digest) {
-          let metadata: Record<string, unknown> = {};
-          try { metadata = JSON.parse(settled.metadata_json) as Record<string, unknown>; } catch { /* legacy metadata */ }
-          const replayEvent = metadata.publicationEffectIntentId === effectIntentId
-            && (metadata.publicationEventType === "resource_attached"
-              || metadata.publicationEventType === "resource_updated")
-            ? metadata.publicationEventType
-            : undefined;
-          await relink(replayEvent);
+          await relinkPublication(context, settled, effectIntentId, target);
           return publishedOutput(settled, bytes.byteLength);
         }
         const updated = await swapTerminalContent({
@@ -1163,19 +1160,7 @@ export function createTerminalResourceBridge(
               WHERE workspace_id = ? AND artifact_id = ? AND hostname_stub IS NULL`,
           ).bind(hostnameStub, context.workspaceId, previous.artifactId).run();
         }
-        let settledMetadata: Record<string, unknown> = {};
-        try { settledMetadata = JSON.parse(settled.metadata_json) as Record<string, unknown>; } catch { /* legacy metadata */ }
-        if (settledMetadata.publicationEffectIntentId === effectIntentId
-          && (settledMetadata.publicationEventType === "resource_attached"
-            || settledMetadata.publicationEventType === "resource_updated")) {
-          await attachPublication(context, {
-            resourceId: settled.id,
-            attachedByUserId: context.executionPrincipal.type === "user"
-              ? context.executionPrincipal.userId
-              : null,
-            eventType: settledMetadata.publicationEventType,
-          }, target);
-        }
+        await relinkPublication(context, settled, effectIntentId, target);
         return siteOutput(env, settled, {
           artifactId: previous.artifactId,
           version: previous.version,

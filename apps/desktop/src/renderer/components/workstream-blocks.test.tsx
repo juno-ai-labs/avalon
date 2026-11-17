@@ -68,6 +68,10 @@ vi.mock('../lib/platform', () => ({
   desktopRuntimeConfig: getRuntimeConfig,
   desktopServicesAvailable,
 }));
+// The card owns its add and is tested with it; here it stands for itself and answers as its press would.
+vi.mock('./member-add-card', () => ({
+  MemberAddCard: ({ onAdded }: { onAdded: () => void }) => <button onClick={onAdded} type="button">Add card</button>,
+}));
 vi.mock('../lib/favicon-api', () => ({ useFaviconApi: () => optionalAppSession()?.api ?? null }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
@@ -353,6 +357,21 @@ describe('ElicitationPanel', () => {
     rerender(<Feed visible />);
     expect(screen.getByText(singleSelectElicitation.prompt)).not.toBeVisible();
   });
+  it('answers a question adding someone only from its card: Added is not a choice, Not now is', async () => {
+    const answer = vi.fn().mockResolvedValue(undefined);
+    render(<ElicitationPanel
+      elicitation={{ id: 'add-nancy', prompt: 'Add Nancy as a member?', responseType: 'radio', status: 'open',
+        options: [{ value: 'added', label: 'Added' }, { value: 'declined', label: 'Not now' }],
+        minimumSelections: 1, maximumSelections: 1, allowOther: false, allowSkip: false,
+        member: { email: 'nancy@example.com', name: 'Nancy' } }}
+      onAnswer={answer}
+    />);
+    expect(screen.queryByRole('radio', { name: /Added/u })).toBeNull();
+    expect(screen.getByRole('radio', { name: /Not now/u })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add card' }));
+    await waitFor(() => expect(answer).toHaveBeenCalledWith('added'));
+  });
+
   it('keeps answer and skip diagnostics out of the response control', async () => {
     const answerDiagnostic = 'provider answer failure: request=private';
     const answer = vi.fn().mockRejectedValueOnce(new Error(answerDiagnostic));
@@ -1322,6 +1341,46 @@ describe('MessageBlock markdown', () => {
     const { container } = render(<MarkdownBody preserveLineBreaks streaming>{'First\nSecond[^pending] and more'}</MarkdownBody>);
     expect(container.querySelectorAll('br')).toHaveLength(1);
     expect(container.querySelector('.citation-pill-pending')).toBeInTheDocument();
+  });
+
+  it('draws the streaming caret after the last character, inside its paragraph', () => {
+    const { container } = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text: 'Looking now.\n\nI' }} />);
+    const carets = container.querySelectorAll('.streaming-caret');
+    expect(carets).toHaveLength(1);
+    expect(carets[0]!.parentElement?.tagName).toBe('P');
+    expect(carets[0]!.parentElement?.textContent).toBe('I');
+  });
+
+  it('draws the streaming caret in the last list item, after a link rather than inside it', () => {
+    const { container } = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text: '- one\n- see [docs](https://example.com)' }} />);
+    const caret = container.querySelector('.streaming-caret');
+    expect(caret?.parentElement?.tagName).toBe('LI');
+    expect(caret?.previousElementSibling?.tagName).toBe('A');
+  });
+
+  it('keeps the streaming caret out of an open code block, whose text is its source', () => {
+    const { container } = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text: '```\nconst a = 1;\n' }} />);
+    expect(container.querySelector('pre')?.textContent).toContain('const a = 1;');
+    expect(container.querySelector('pre')?.textContent).not.toContain('[object Object]');
+    expect(container.querySelector('pre .streaming-caret')).toBeNull();
+    expect(container.querySelectorAll('.streaming-caret')).toHaveLength(1);
+  });
+
+  it.each([
+    ['labelled', '```ts\nconst a = 1;\n'],
+    ['unlabelled', 'Intro\n\n```\nconst a = 1;\n```\n\n'],
+  ])('keeps a streaming %s fence a code block', (_kind, text) => {
+    const { container } = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text }} />);
+    expect(container.querySelector('.markdown-code-block')).not.toBeNull();
+    expect(container.querySelector('.markdown-inline-code')).toBeNull();
+    expect(container.textContent).not.toContain('[object Object]');
+  });
+
+  it('draws the caret alone before any text arrives, and none once the message settles', () => {
+    const view = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text: '' }} />);
+    expect(view.container.querySelectorAll('.streaming-caret')).toHaveLength(1);
+    view.rerender(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: false, text: 'Done.' }} />);
+    expect(view.container.querySelector('.streaming-caret')).toBeNull();
   });
 
   it('keeps document soft wrapping separate from human chat line breaks', () => {

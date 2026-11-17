@@ -27,7 +27,7 @@ vi.mock('../lib/platform', () => ({
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   session: state.signedIn ? { user: { id: 'user-1', email: 'person@example.com', name: 'Person' }, workspace: state.hasWorkspace ? { id: 'workspace-1' } : null } : null,
-  api: { getWorkspaceInvitees: state.invitations, createWorkspaceInvitation: state.invite, getWorkspaceMembers: state.members, getOnboardingJourney: state.journey,
+  api: { getWorkspaceInvitees: state.invitations, addWorkspaceMember: state.invite, getWorkspaceMembers: state.members, getOnboardingJourney: state.journey,
     updateOnboardingJourney: state.updateJourney, getConnections: state.connections, getAvailableConnectorTypes: state.connectors,
     startProviderConnection: state.startProviderConnection },
   signOut: vi.fn(), setPendingConnectorOAuth: vi.fn(),
@@ -150,7 +150,7 @@ describe('new-account learning paths', () => {
     state.updateJourney.mockResolvedValue({ path: 'creator', stage: 'people', revision: 1, connectorIds: [] });
     show(); await screen.findByRole('heading', { name: 'This is you in Rally' });
     fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
-    await screen.findByRole('heading', { name: 'Invite your teammates' });
+    await screen.findByRole('heading', { name: 'Add your teammates' });
     expect(state.updateJourney).toHaveBeenCalledWith({ expectedRevision: 0, stage: 'people' });
     expect(state.connectors).not.toHaveBeenCalled();
   });
@@ -308,7 +308,7 @@ describe('new-account learning paths', () => {
     fireEvent.keyDown(field, { key: 'Enter' });
     fireEvent.change(field, { target: { value: 'x' } });
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    const invite = screen.getByRole('button', { name: 'Invite 2 teammates' });
+    const invite = screen.getByRole('button', { name: 'Add 2 teammates' });
     expect(invite).toBeEnabled();
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -329,7 +329,7 @@ describe('new-account learning paths', () => {
     show();
     await screen.findByLabelText('Email addresses');
     state.members.mockClear();
-    const invite = screen.getByRole('button', { name: 'Invite teammates' });
+    const invite = screen.getByRole('button', { name: 'Add teammates' });
     expect(invite).toBeEnabled();
     fireEvent.click(invite);
     expect(await screen.findByRole('alertdialog')).toHaveTextContent('Enter at least one email address.');
@@ -346,8 +346,8 @@ describe('new-account learning paths', () => {
     fireEvent.keyDown(field, { key: 'Enter' });
     expect(screen.getByText(email).closest('.invite-email-chip')).toHaveAttribute('aria-invalid', 'true');
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Invite 1 teammate' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
+    expect(screen.getByRole('button', { name: 'Add 1 teammate' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 teammate' }));
     expect(await screen.findByRole('alertdialog')).toHaveTextContent('One or more of the addresses are not a valid email address.');
     expect(state.invite).not.toHaveBeenCalled();
   });
@@ -361,24 +361,25 @@ describe('new-account learning paths', () => {
     fireEvent.change(field, { target: { value: 'x@y' } });
     fireEvent.keyDown(field, { key: 'Enter' });
     expect(screen.getByText('x@y').closest('.invite-email-chip')).not.toHaveAttribute('aria-invalid');
-    fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 teammate' }));
     await screen.findByText('Ordinary organization');
     expect(state.invite).toHaveBeenCalledWith('x@y', 'member');
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
-  it('reconciles invitations after a lost response and retries only undelivered addresses', async () => {
+  it('reconciles adds after a lost response and retries only addresses not yet members', async () => {
     state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
     state.invite.mockRejectedValueOnce(new Error('Response lost'));
     state.updateJourney.mockResolvedValue({ path: 'creator', stage: 'complete', revision: 3, connectorIds: [] });
     show();
     const field = await screen.findByLabelText('Email addresses');
     fireEvent.change(field, { target: { value: 'aspen@example.com' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
-    await screen.findByText(/Could not invite:/u);
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 teammate' }));
+    await screen.findByText(/Could not add:/u);
     fireEvent.click(screen.getByRole('button', { name: 'OK' }));
-    state.invitations.mockResolvedValue([{ email: 'aspen@example.com', invitedAt: '2026-10-24T00:00:00.000Z' }]);
-    fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
+    // The add landed though its answer was lost: Aspen is a member now, so the retry sends nothing.
+    state.members.mockResolvedValue([{ email: 'aspen@example.com', status: 'active', accessClass: 'member' }]);
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 teammate' }));
     await screen.findByText('Ordinary organization');
     expect(state.invite).toHaveBeenCalledTimes(1);
   });
