@@ -2,6 +2,7 @@
   "name": "@rally/skills",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only OR LicenseRef-Rally-Commercial",
   "type": "module",
   "exports": {
     ".": "./index.ts"

@@ -105,6 +105,16 @@ they do not.
   produce, and "none — documentation-only" is a complete answer where it is the
   true one. Call out pre-existing failures as pre-existing.
 
+## Contributor License Agreement
+
+Rally is dual licensed under the AGPL and a commercial license (see
+[`licensing.md`](licensing.md)), so Juno AI Labs Inc must hold the right to
+relicense every contribution. A pull request from anyone outside the company
+keeps the CLA checkbox the template puts above **Summary**, checked, and a
+reviewer does not merge it until it is. Employees and contractors whose work is
+already assigned to the company delete the line. The agreement itself is
+[`CLA.md`](../CLA.md).
+
 ## Never open a draft pull request
 
 Every pull request is opened **ready for review** — never as a draft. Do not

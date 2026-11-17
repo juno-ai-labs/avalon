@@ -9,7 +9,13 @@ genuinely nothing to say, write `N/A — <reason>` rather than deleting it.
 
 Optional sections are collected at the bottom. Uncomment the ones that apply and
 delete the rest — do not leave empty headings behind.
+
+Contributors outside Juno AI Labs Inc must check the box below before merge.
+Employees and contractors whose work is already assigned to the company delete
+the line. See docs/pull-requests.md#contributor-license-agreement.
 -->
+
+- [ ] I agree to the [Contributor License Agreement](https://github.com/juno-ai-labs/avalon/blob/main/CLA.md) for this and all my contributions.
 
 ## Summary
 
