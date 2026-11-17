@@ -208,8 +208,11 @@ These, by contrast, are **not** brittle literals and are fine to name:
   whose `ownerPlugin` is the plugin that defines the tool is only offered where
   that tool is, and its tool names are as fixed as the plugin's. So
   `building-live-sites`, owned by `rally:terminal`, names `run_command`,
-  `view_image` and `publish_resource`. A tool from any other plugin is still a
-  behavior to describe.
+  `view_image` and `publish_resource`.
+- **An always-active `rally_core` tool** — every run holds it, so its name is
+  as fixed as a built-in's. `setting-up-a-filtered-trigger` names
+  `offer_to_add_member`. A tool from any other plugin is still a behavior to
+  describe.
 
 Error-code literals the model branches on are a softer smell: prefer describing
 the condition ("if the tool reports the connection is no longer authorized")

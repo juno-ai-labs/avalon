@@ -192,6 +192,7 @@ describe("plugin wire names", () => {
       "list_resources",
       "list_resources_next",
       "list_wakeups",
+      "offer_to_add_member",
       "publish_branch_and_pr",
       "publish_resource",
       "query_artifact_data",

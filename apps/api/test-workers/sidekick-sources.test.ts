@@ -456,7 +456,7 @@ describe("trying a draft filter", () => {
       .toEqual({ judged: false, reason: "The filter's classifier is not configured here.", events: [] });
     // With one, an event type the person has none of is said to be that, not a filter that kept everything out.
     expect(await trying({ ...env, TYPESAFE_API_KEY: "typesafe-test-key" }, creator)("email.updated")).toEqual({ judged: false, events: [],
-      reason: "Your own google account has no recent email.updated events to try the filter on. Check the event type against the connector's declared events; if it is right, rely on the filter's wording." });
+      reason: "Your own google account has no recent email.updated events to try the filter on, or you have not connected it yet. Check the event type against the connector's declared events; if it is right, rely on the filter's wording." });
     // Jane's one email is not the creator's to judge: the outsider, who has no mailbox, is told the same.
     expect(await trying({ ...env, TYPESAFE_API_KEY: "typesafe-test-key" }, outsider)(eventType)).toMatchObject({ judged: false, events: [] });
   });

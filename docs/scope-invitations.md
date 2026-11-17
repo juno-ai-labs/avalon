@@ -252,6 +252,11 @@ grant row that brought them stays.
 
 ### Invitees in the people pickers
 
+Since 2026-11-16 adding someone to the Organization makes them a member at once
+([`workspace-member-roles.md`](workspace-member-roles.md#how-it-works)), with a
+user id, so they appear among the members and this section applies only to
+invitations sent before then that are still waiting.
+
 Somebody invited to the Organization has no user until they sign in, so they
 cannot be a participant or a person mention. They can be shared a conversation
 by address, which is this module, and that is how the pickers bring them in.

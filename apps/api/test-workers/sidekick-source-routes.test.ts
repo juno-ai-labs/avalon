@@ -103,17 +103,26 @@ const storedSources = () => runInDurableObject(workspace(), (_instance, state) =
 }>(`SELECT user_id, connection_id, condition, request_id IS NOT NULL AS requested
       FROM sidekick_sources WHERE sidekick_id = ? ORDER BY user_id`, SIDEKICK_ID).toArray());
 
-/** A person's own Google connection, held by the Organization object as production holds it. */
-async function connectGoogle(userId: string, displayName: string): Promise<string> {
+/** The grants a Mail and Calendar connection holds, and a Drive one: one connector type, two connections. */
+const MAIL_GRANTS = ["gmail.read", "gmail.draft", "gmail.send", "calendar.read", "calendar.write"];
+const DRIVE_GRANTS = ["drive.read", "docs.read", "docs.write", "sheets.read", "sheets.write"];
+
+/** A person's own Google connection, held by the Organization object as production holds it. Mail unless told otherwise. */
+async function connectGoogle(userId: string, displayName: string,
+  { grants = MAIL_GRANTS, status = "healthy" }: { grants?: string[]; status?: "healthy" | "needs_reconnect" | "error" } = {}): Promise<string> {
   const connectionId = crypto.randomUUID();
   await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
     `INSERT INTO connector_connections
        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name, granted_scopes_json, status,
         cursor_json, config_json, created_at, updated_at, model_plugin_id)
-     VALUES (?, ?, 'google', 'personal', ?, ?, ?, '[]', 'healthy', '{}', '{}', ?, ?, ?)`,
-    connectionId, WORKSPACE_ID, userId, `account-${userId}`, displayName, NOW, NOW, `plugin_google_${connectionId}`));
+     VALUES (?, ?, 'google', 'personal', ?, ?, ?, ?, ?, '{}', '{}', ?, ?, ?)`,
+    connectionId, WORKSPACE_ID, userId, `account-${userId}`, displayName, JSON.stringify(grants), status, NOW, NOW, `plugin_google_${connectionId}`));
   return connectionId;
 }
+
+/** What a person reconnecting a lapsed connection leaves: the same row, working again. */
+const reconnected = (connectionId: string) => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+  `UPDATE connector_connections SET status = 'healthy' WHERE id = ?`, connectionId));
 
 let PERSON_MAIL = "";
 
@@ -173,7 +182,7 @@ describe("the Sidekick source routes, for a signed-in person", () => {
       person: { userId: PERSON, displayName: "Robin", avatarUrl: null, presentation: null },
       connectorType: "google", eventTypes: ["email.received"], condition: CONDITION, state: "pending",
       // The asker and their name are the session's, read by the route: the body names neither.
-      requestedByName: "Avery", yours: false, createdAt: expect.any(Number), decidedAt: null,
+      requestedByName: "Avery", yours: false, connection: "connected", connect: { scope: "personal", card: "google-mail-calendar" }, createdAt: expect.any(Number), decidedAt: null,
     }] });
     expect(await storedRequests()).toEqual([{ user_id: PERSON, state: "pending", requested_by_user_id: MANAGER }]);
     expect(await storedSources()).toEqual([]);
@@ -284,7 +293,7 @@ describe("the Sidekick source routes, for a signed-in person", () => {
     expect(asker.body).toEqual({ requests: [{
       requestId, sidekickId: SIDEKICK_ID, sidekickName: "Deals", person: { userId: PERSON, displayName: "Robin", avatarUrl: null, presentation: null },
       connectorType: "google", eventTypes: ["email.received"], condition: CONDITION, state: "pending", requestedByName: "Avery",
-      yours: false, createdAt: expect.any(Number), decidedAt: null }] });
+      yours: false, connection: "connected", connect: { scope: "personal", card: "google-mail-calendar" }, createdAt: expect.any(Number), decidedAt: null }] });
 
     const person = await read(PERSON);
     expect(person.status, JSON.stringify(person.body)).toBe(200);
@@ -339,9 +348,6 @@ describe("the Sidekick source routes' refusals, by name", () => {
       ask: async () => mail([PERSON], { eventTypes: ["email.received", "email.exploded"] }) },
     { what: "somebody who is not in the Organization, beside somebody who is", status: 409, code: "sidekick_source_person_unavailable",
       ask: async () => mail([PERSON, UNKNOWN_ID]) },
-    // Robin could be asked; the asker is here to be told now that they have no account to approve.
-    { what: "the asker's own account with none connected, beside somebody who could be asked", status: 409, code: "sidekick_source_connection_missing",
-      ask: async () => mail([PERSON, MANAGER]) },
     { what: "a card in a Canvas the asker cannot open", status: 403, code: "sidekick_source_place_denied",
       ask: async () => mail([PERSON], { place: { parentKind: "canvas", parentId: await canvasClosedToTheManager() } }) },
   ])("refuses an ask for $what with $status $code, and asks nobody", async ({ status, code, ask }) => {
@@ -358,7 +364,11 @@ describe("the Sidekick source routes' refusals, by name", () => {
   });
 
   it("refuses with 409 an approval by a person with no such account connected, and keeps the request waiting for when they have", async () => {
+    // Pat's Drive is the same connector type and carries none of the mail, so it is not the account asked for.
+    await connectGoogle(OTHER, "pat@example.com", { grants: DRIVE_GRANTS });
     const requestId = await asked(OTHER);
+    const card = async () => ((await as(OTHER, "POST", READ, { requestIds: [requestId] })).body as { requests: Array<{ connection: string }> }).requests[0]!.connection;
+    expect(await card()).toBe("not_connected");
     const unconnected = await as(OTHER, "POST", decision(requestId), { decision: "approve" });
     expect([unconnected.status, unconnected.body]).toEqual([409, { error: expect.objectContaining({ code: "sidekick_source_connection_missing" }) }]);
     expect(await storedRequests()).toEqual([{ user_id: OTHER, state: "pending", requested_by_user_id: MANAGER }]);
@@ -367,8 +377,95 @@ describe("the Sidekick source routes' refusals, by name", () => {
     expect((await as(OTHER, "GET", sources())).status).toBe(403);
 
     const patsMail = await connectGoogle(OTHER, "pat@example.com");
+    expect(await card()).toBe("connected");
     expect((await as(OTHER, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
+    // The mail lands on the mail connection alone.
     expect(await storedSources()).toEqual([{ user_id: OTHER, connection_id: patsMail, condition: CONDITION, requested: 1 }]);
+  });
+
+  it("refuses with 409 an approval whose only such account needs reconnecting, says so on the card, and approves once it is reconnected", async () => {
+    // Pat changed their password: the mail connection's sign-in lapsed, and their Drive still works.
+    await connectGoogle(OTHER, "pat-drive@example.com", { grants: DRIVE_GRANTS });
+    const lapsed = await connectGoogle(OTHER, "pat@example.com", { status: "needs_reconnect" });
+    const requestId = await asked(OTHER);
+    const read = async (userId: string) => ((await as(userId, "POST", READ, { requestIds: [requestId] })).body as {
+      requests: Array<{ connection: string }> }).requests[0]!.connection;
+    // The person asked and whoever asked both read which step is left.
+    expect([await read(OTHER), await read(MANAGER)]).toEqual(["reconnect_required", "reconnect_required"]);
+
+    const refused = await as(OTHER, "POST", decision(requestId), { decision: "approve" });
+    expect([refused.status, refused.body]).toEqual([409, { error: expect.objectContaining({ code: "sidekick_source_connection_reconnect" }) }]);
+    expect(await storedRequests()).toEqual([{ user_id: OTHER, state: "pending", requested_by_user_id: MANAGER }]);
+    expect(await storedSources()).toEqual([]);
+
+    await reconnected(lapsed);
+    expect(await read(OTHER)).toBe("connected");
+    expect((await as(OTHER, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
+    expect(await storedSources()).toEqual([{ user_id: OTHER, connection_id: lapsed, condition: CONDITION, requested: 1 }]);
+  });
+
+  it("approves beside a lapsed account and writes it rows too, and counts an account in error as working", async () => {
+    const working = await connectGoogle(OTHER, "pat@example.com");
+    const lapsed = await connectGoogle(OTHER, "pat-old@example.com", { status: "needs_reconnect" });
+    const requestId = await asked(OTHER);
+    expect((await as(OTHER, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
+    // The lapsed account's rows let its mail in again once it is reconnected.
+    expect((await storedSources()).map((row) => row.connection_id).sort()).toEqual([working, lapsed].sort());
+
+    // Robin's only mail account is in error: a provider fault, which reconnecting does not fix.
+    await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `UPDATE connector_connections SET status = 'error' WHERE id = ?`, PERSON_MAIL));
+    const robins = await asked(PERSON);
+    expect((await as(PERSON, "POST", decision(robins), { decision: "approve" })).status).toBe(200);
+    expect((await storedSources()).filter((row) => row.user_id === PERSON).map((row) => row.connection_id)).toEqual([PERSON_MAIL]);
+  });
+
+  it("refuses an ask for mail and Drive until both arrive, then writes each event type on the account that carries it", async () => {
+    const pats = await connectGoogle(OTHER, "pat@example.com");
+    const requestId = await asked(OTHER, { eventTypes: ["email.received", "drive.file_changed"] });
+    const card = async () => ((await as(OTHER, "POST", READ, { requestIds: [requestId] })).body as {
+      requests: Array<{ connection: string }> }).requests[0]!.connection;
+    // Mail alone would let half of what was asked in, and nobody would be told.
+    expect(await card()).toBe("not_connected");
+    const refused = await as(OTHER, "POST", decision(requestId), { decision: "approve" });
+    expect([refused.status, refused.body]).toEqual([409, { error: expect.objectContaining({ code: "sidekick_source_connection_missing" }) }]);
+
+    const drive = await connectGoogle(OTHER, "pat-drive@example.com", { grants: DRIVE_GRANTS });
+    expect(await card()).toBe("connected");
+    expect((await as(OTHER, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
+    const pairs = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+      connection_id: string; event_type: string }>(`SELECT connection_id, event_type FROM sidekick_sources WHERE sidekick_id = ?
+        ORDER BY event_type`, SIDEKICK_ID).toArray().map((row) => ({ ...row })));
+    expect(pairs).toEqual([{ connection_id: drive, event_type: "drive.file_changed" }, { connection_id: pats, event_type: "email.received" }]);
+  });
+
+  it("still lists a request whose connector this deployment no longer serves", async () => {
+    // Asked when the connector was served; it has since been removed from this deployment.
+    await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `INSERT INTO sidekick_source_requests (request_id, sidekick_id, user_id, connector_type, event_types_json, condition, state,
+         requested_by_user_id, requested_by_name, person_name, place_parent_kind, place_parent_id, created_at, decided_at)
+       VALUES (?, ?, ?, 'retired-crm', '["deal.created"]', NULL, 'pending', ?, 'Avery', NULL, NULL, NULL, 1, NULL)`,
+      UNKNOWN_ID, SIDEKICK_ID, PERSON, MANAGER));
+    const listed = await as(MANAGER, "GET", sources());
+    expect(listed.status, JSON.stringify(listed.body)).toBe(200);
+    expect((listed.body as { requests: unknown[] }).requests).toEqual([expect.objectContaining({
+      requestId: UNKNOWN_ID, connection: "not_connected", connect: { scope: "personal", card: null } })]);
+  });
+
+  it("says a connector whose events arrive only on the Organization's connection is the Organization's to connect", async () => {
+    const answer = await as(MANAGER, "POST", requests(), { userIds: [PERSON], connectorType: "granola", eventTypes: ["note.generated"] });
+    expect(answer.status, JSON.stringify(answer.body)).toBe(201);
+    // Robin's own Granola could never carry these events, so no card of theirs is offered.
+    expect((answer.body as { requests: Array<{ connection: string; connect: unknown }> }).requests[0])
+      .toMatchObject({ connection: "not_connected", connect: { scope: "workspace", card: null } });
+  });
+
+  it("asks the asker for their own account with none connected, so connecting it is part of answering", async () => {
+    const own = await as(MANAGER, "POST", requests(), mail([MANAGER, PERSON]));
+    expect(own.status, JSON.stringify(own.body)).toBe(201);
+    expect((own.body as { requests: Array<{ person: { userId: string }; connection: string; state: string }> }).requests
+      .map((entry) => [entry.person.userId, entry.state, entry.connection]))
+      .toEqual([[MANAGER, "pending", "not_connected"], [PERSON, "pending", "connected"]]);
   });
 
   it.each([

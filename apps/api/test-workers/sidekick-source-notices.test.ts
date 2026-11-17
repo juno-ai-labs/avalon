@@ -107,14 +107,14 @@ async function requestStates(): Promise<Array<{ user_id: string; state: string; 
     `SELECT user_id, state, condition FROM sidekick_source_requests ORDER BY created_at, request_id`).toArray());
 }
 
-/** A person's own Google connection, held by the Organization object as production holds it. */
+/** A person's own Mail and Calendar connection, held by the Organization object as production holds it, its grants included. */
 async function connectGoogle(userId: string): Promise<string> {
   const connectionId = crypto.randomUUID();
   await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
     `INSERT INTO connector_connections
        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name, granted_scopes_json, status,
         cursor_json, config_json, created_at, updated_at, model_plugin_id)
-     VALUES (?, ?, 'google', 'personal', ?, ?, ?, '[]', 'healthy', '{}', '{}', ?, ?, ?)`,
+     VALUES (?, ?, 'google', 'personal', ?, ?, ?, '["gmail.read","calendar.read"]', 'healthy', '{}', '{}', ?, ?, ?)`,
     connectionId, WORKSPACE_ID, userId, `account-${userId}`, `${userId}@example.com`, NOW, NOW, `plugin_google_${connectionId}`));
   return connectionId;
 }

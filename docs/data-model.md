@@ -163,6 +163,9 @@ deletes the row. `sessions.impersonator_user_id` marks a support session, an
 ordinary session of the represented person that names the Rally staff member
 acting, and `sessions.impersonator_incarnation` the staff membership that
 admitted them. NULL means a login session, which every row written before 0122 is.
+`hasSignedIn` reads `sessions` as "has ever signed in", counting only login
+sessions (`impersonator_user_id IS NULL`), which holds because sessions are
+never deleted ([email delivery](email-delivery.md#who-gets-email)).
 See [impersonation](impersonation.md#support-access).
 
 ## MCP client grants
@@ -311,7 +314,10 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   subject. Migration 0120 checks the provider's shape rather than listing
   `google` and `email`, so a new identity provider needs no schema change. It is
   also how a deployment links a person to their regional user; see
-  [multiple workspaces](multiple-workspaces.md#authority-and-data-flow).
+  [multiple workspaces](multiple-workspaces.md#authority-and-data-flow). An
+  administrator's `addMember` can also seed an `email` row, with its
+  `user_verified_emails` row, for a `users` row that has never signed in, so
+  that proving the address reaches that account.
 
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable
   sessions, PKCE, and single-use Electron deep-link completion. `oauth_states.provider`
@@ -336,9 +342,11 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   shared active-workspace field or separate browser user ledger. See
   [browser sessions](browser-sessions.md).
 
-- `workspace_invitations` supports explicit membership growth. Acceptance adds
-  one row to the already-many-to-many `workspace_members` authority; it does not
-  replace another membership.
+- Membership grows through `addMember`, which writes the `workspace_members`
+  row at once. `workspace_invitations` is legacy: invitations sent before
+  2026-11-16 can still be accepted, which adds one row to the
+  already-many-to-many `workspace_members` authority without replacing another
+  membership.
 
 - `workspaces` is the regional identity and deterministic WorkspaceDO route.
   `workstream_authority_control` carries the region-wide generation and serving
