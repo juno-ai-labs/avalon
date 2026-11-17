@@ -138,3 +138,4 @@ em { font-family: var(--display-font); }
 /* The CASA link in the footer's legal row. */
 .footer-casa { color: inherit; text-decoration: none; }
 .footer-casa:hover { color: var(--green); }
+.github-link { display: inline-flex; align-items: center; gap: 6px; }
