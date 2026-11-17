@@ -519,6 +519,7 @@ export function createTerminalResourceBridge(
         state: "planned",
         importedAt: null,
         attachedSubstreamId: importingSubstreamId ?? null,
+        importRunId: context.harnessRunId,
         now: plannedAt,
       });
     try {
@@ -752,6 +753,7 @@ export function createTerminalResourceBridge(
               state: "completed",
               importedAt: timestamp,
               attachedSubstreamId: importingSubstreamId ?? null,
+              importRunId: context.harnessRunId,
               now: timestamp,
             });
           return {
@@ -789,6 +791,7 @@ export function createTerminalResourceBridge(
           state: "planned",
           importedAt: null,
           attachedSubstreamId: importingSubstreamId ?? null,
+          importRunId: context.harnessRunId,
           now: plannedAt,
         });
       const parent = absolute.slice(0, Math.max(absolute.lastIndexOf("/"), 1));

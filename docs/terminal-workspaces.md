@@ -143,11 +143,9 @@ joins this run's own readiness before it looks at the row, because the row is
 marked running before the checkout is prepared, and it takes the sandbox from
 the row only when the checks readiness makes also hold, the authority
 fingerprint, no revoked import, and a selected repository bootstrapped into
-this generation; otherwise it goes through readiness like a write. An import
-still `planned` while a run holds a live lease is that run's import in flight,
-not a revoked one, and a read passes over it; once the lease has lapsed, a
-`planned` import is left over and the read goes through readiness, which
-cleans it up.
+this generation; otherwise it goes through readiness like a write. A `planned`
+import does not count as revoked while its own run holds the lease (see the
+rules below).
 
 Rally creates sandboxes from its own `rally-terminal-1` snapshot: Daytona's
 managed `daytonaio/sandbox:0.10.0` base with SQLite, `gh`, pnpm, and `tsx`
@@ -867,6 +865,15 @@ personless; it is not duplicated into these product events.
   instead would read an agent's imports against its owner's attachments and
   revoke both. A Sidekick also accepts current canonical read access held by
   the execution user; the import does not need a local attachment.
+- **A read passes over an unfinished import only while its own run holds the
+  lease.** An import row records the run that made it (`import_run_id`), and a
+  read passes over a `planned` row only when that run is the live lease holder.
+  A row from before the column (`NULL`) or from any other run is left over, so a
+  read never serves a crashed import's half-copied files because some unrelated
+  run happens to hold the lease. The key is the run, not the call: a row whose
+  call already failed also passes until that run's lease ends. Its row stays
+  `planned` on purpose, so readiness rebuilds over whatever the failed call
+  left.
 - **A run's own write calls take turns, and an edit replaces only the bytes
   it read.** The lease answers a run's second claim "held", so it is the
   runtime's turn that keeps two of one run's writes apart, and the digest
@@ -1515,6 +1522,32 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-16 — An import row records the run that made it
+
+**What changed:** Conversation schema 89 adds `import_run_id` to
+`terminal_imported_resources`. The resource bridge writes the calling run on
+every import row, and `peekRunning` passes over a `planned` import only when
+that run holds the live lease.
+
+**Why:** The change before this one let a read pass over any `planned` import
+while any run held a live lease. Review found the gap: an import whose run
+crashed leaves a `planned` row behind, and when an unrelated run later holds
+the lease without readiness running first (through `claimMutation`, or a
+background agent that may not rebuild), reads passed over it and could serve
+its half-copied files. The row named no run, so nothing could tell the two
+apart.
+
+**Considered and rejected:** Comparing the row's `updated_at` with when the
+lease was taken, which needs a lease start time the workspace row does not
+keep and still guesses at whose import it is. Going back to treating every
+`planned` import as revoked, which brings back the refused reads that change
+fixed.
+
+**Consequences:** A row written before schema 89 has no run, so a `planned`
+one is always left over; a read waits for readiness to clean it up, as it did
+before either change. Re-importing the same path replaces the recorded run
+along with the authorizing conversation.
 
 ### 2026-11-16 — Route publication links by conversation address
 

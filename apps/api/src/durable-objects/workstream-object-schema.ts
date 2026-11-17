@@ -60,7 +60,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 88;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 89;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3882,6 +3882,16 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     // whose root substream is the same `"0"` (docs/agent-loop-types.md). NULL
     // is an agent started before this version; nothing is backfilled.
     statements: [`ALTER TABLE background_agent ADD COLUMN root_reason TEXT`],
+  },
+  {
+    version: 89,
+    description: "record which run made a Terminal import",
+    // The harness run whose `import_resource` call wrote the row, so a read
+    // can tell a `planned` import that the lease holder is still copying from
+    // one a crashed run left behind while some other run holds the lease. NULL
+    // is a row written before this version; a `planned` one counts as left
+    // over. Nothing is backfilled.
+    statements: [`ALTER TABLE terminal_imported_resources ADD COLUMN import_run_id TEXT`],
   },
 ];
 
