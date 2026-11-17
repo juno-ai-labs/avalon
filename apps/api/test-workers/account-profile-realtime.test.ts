@@ -23,6 +23,7 @@ it('streams committed profile changes to another member even when enterprise dis
     env.DB.prepare(`CREATE TABLE users (id TEXT PRIMARY KEY, google_subject TEXT, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT, updated_at TEXT, platform_user_id TEXT, onboarding_eligible INTEGER, onboarding_introduced INTEGER, onboarding_revision INTEGER, presentation_json TEXT)`),
     env.DB.prepare(`INSERT INTO users VALUES (?, 'subject', 'alex@example.com', 'Alex Morgan', NULL, 'UTC', '2026-09-08T00:00:00.000Z', '2026-09-08T00:00:00.000Z', ?, 0, 1, 0, NULL)`).bind(userId, userId),
     env.DB.prepare(`CREATE TABLE user_login_identities (provider TEXT NOT NULL, subject TEXT NOT NULL, user_id TEXT NOT NULL, verified_at TEXT NOT NULL, PRIMARY KEY (provider, subject))`),
+    env.DB.prepare(`CREATE TABLE user_verified_emails (email TEXT PRIMARY KEY COLLATE NOCASE, user_id TEXT NOT NULL, verified_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, region TEXT, placement_affinity TEXT, analytics_workspace_id TEXT, abandoned_at TEXT)`),
     env.DB.prepare(`INSERT INTO workspaces VALUES (?, 'global', 'wnam', NULL, NULL)`).bind(workspaceId),
     env.DB.prepare(`CREATE TABLE workspace_members (access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member', workspace_id TEXT, user_id TEXT, role TEXT, status TEXT, last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1)`),
