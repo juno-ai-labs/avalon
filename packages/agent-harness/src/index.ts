@@ -6,7 +6,6 @@ import type { ToolPaginationResult } from "@rally/contracts/tool-pagination";
 export { runRallyEvaluation, parseRallyCheckpoint, type RallyCheckpoint, type RallyCheckpointPort } from "./evaluation";
 import type {
   AddressingClassification,
-  AutomationPluginActivity,
   AutomationPluginIcon,
   ConnectorActivityTriggerDescriptor,
   ExecutionPrincipal,
@@ -2882,95 +2881,6 @@ export class AutomationCompilerError extends Error {
     this.name = "AutomationCompilerError";
   }
 }
-
-export interface TextDeltaBatcher {
-  push(delta: string): Promise<void>;
-  flush(): Promise<void>;
-  /** Drop pending text without publishing it. See the retraction rule below. */
-  discard(): void;
-}
-
-/**
- * Coalesce provider text fragments before they become frames on a wire.
- *
- * A model emits a token at a time, and every fragment that reaches a client
- * unbatched costs a frame, a schema parse, a state update, and — where the
- * receiver follows the transcript — a layout pass. The defaults match the
- * sequenced batcher on the work-stream socket path
- * (`createSequencedStreamDeltaBatcher` in `apps/api/src/services/integrations.ts`),
- * so both surfaces coalesce identically; that one stays separate because it
- * also has to keep turn and epoch sequencing, which this one has no concept of.
- *
- * **A retraction is never batched.** A caller with reset semantics settles
- * whatever is pending — `flush` when the retraction only clears part of the
- * receiver's buffer, `discard` when the retracting frame carries the whole
- * replacement — and publishes that frame on its own, so text can never arrive
- * coalesced behind the frame that was meant to replace it. Which of the two
- * applies depends on what the retraction means, so it lives with each caller
- * rather than in here.
- */
-export function createTextDeltaBatcher(
-  publish: (delta: string) => Promise<void>,
-  options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
-): TextDeltaBatcher {
-  const maxCharacters = options.maxCharacters ?? 2_048;
-  const maxDelayMs = options.maxDelayMs ?? 100;
-  const now = options.now ?? Date.now;
-  let pending = "";
-  let lastFlushAt = now();
-
-  const flush = async (): Promise<void> => {
-    if (!pending) return;
-    const delta = pending;
-    pending = "";
-    lastFlushAt = now();
-    await publish(delta);
-  };
-
-  return {
-    async push(delta: string): Promise<void> {
-      pending += delta;
-      if (pending.length >= maxCharacters || now() - lastFlushAt >= maxDelayMs) {
-        await flush();
-      }
-    },
-    flush,
-    discard(): void {
-      pending = "";
-      lastFlushAt = now();
-    },
-  };
-}
-
-export type AutomationCompilerStreamEvent =
-  | { type: "started" }
-  | {
-      /**
-       * A fragment of the architect's narration. `reset: true` replaces the
-       * composer's whole narration buffer with `delta` rather than appending.
-       */
-      type: "delta";
-      delta: string;
-      reset: boolean;
-    }
-  | {
-      type: "thinking";
-      inferenceRequestId: string;
-      status: "started" | "completed";
-      /** Cumulative model-inference time for this compiler turn. */
-      durationMs: number;
-    }
-  | {
-      type: "tool";
-      toolCallId: string;
-      name: string;
-      summary: string;
-      status: "started" | "completed" | "failed";
-      /** The single plugin that owns this tool, or null for Avalon-owned tools. */
-      plugin: AutomationPluginActivity | null;
-      durationMs?: number;
-    }
-  | { type: "completed" };
 
 const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
   started: string;

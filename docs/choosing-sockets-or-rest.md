@@ -833,9 +833,11 @@ Both raise the room's wake rate for every token, and neither sends text that is
 already held when the model goes quiet.
 
 **What a future change has to respect:** The window bounds how long text may
-wait, not only how often frames go out. The automation compiler's
-`createTextDeltaBatcher` still lacks the timer and has the same stall on its
-own surface.
+wait, not only how often frames go out. Canvas Chats and Sidekick
+conversations, the Sidekick builder included, all stream through this one
+batcher. The harness's `createTextDeltaBatcher`, written for the retired
+automation compiler, had no production caller and was deleted in the same
+change rather than given the timer.
 
 ### 2026-09-11 — Connector recovery follows the existing workspace socket
 
