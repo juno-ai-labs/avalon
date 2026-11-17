@@ -1,0 +1,84 @@
+name: Deploy release retention
+
+# Deploys the private `avalon-release-retention` Worker on merge, so a merged
+# retention change is a live one rather than waiting on a manual deploy.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/release-retention/**"
+      # The Worker's tsconfig extends the root config, and the workspace and
+      # lockfile decide what is installed and built.
+      - "tsconfig.base.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/deploy-release-retention.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per ref, so a skipped dispatch from another branch can't replace a queued
+  # main deploy in the single pending slot.
+  group: deploy-release-retention-${{ github.ref }}
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  deploy:
+    # A dispatch from a feature branch must not deploy that branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Same budget as deploy-site.yml.
+    timeout-minutes: 20
+    # The environment that already holds the Worker deployment token.
+    environment: api-production
+    # The token is scoped to the two steps that need it, never to dependency
+    # install or tests, as in deploy-browser.yml.
+
+    steps:
+      - name: Check out the revision being deployed
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Require Cloudflare deployment credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ci.yml runs only on pull requests, never on the merge commit or a
+      # dispatch, so the deploy verifies the Worker itself.
+      - name: Typecheck the retention Worker
+        run: pnpm --filter @rally/release-retention --fail-if-no-match typecheck
+
+      - name: Test the retention Worker
+        run: pnpm --filter @rally/release-retention --fail-if-no-match test
+
+      - name: Deploy the retention Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm --filter @rally/release-retention --fail-if-no-match run deploy

@@ -55,6 +55,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { consumeGitHubDeliveryMessage, isGitHubDeliveryQueueMessage } from "../services/github-routing-service";
 
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
+import { queueRetryDelaySeconds } from "./retry-backoff";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { CANVAS_SEEDS } from "../canvas-seeds";
 import { CanvasSeedQueueSchema, runCanvasSeed } from "../services/canvas-seed-service";
@@ -179,9 +180,10 @@ export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: En
             message.ack();
             continue;
           }
+          // Back off: a still-streaming turn or a pending link capture outlasts an immediate redelivery.
           logWarn(env, 'search_indexing_retry', { region: env.AVALON_REGION, queue_attempts: message.attempts,
             error_code: diagnosticErrorCode(error, 'search_indexing_failed') });
-          message.retry();
+          message.retry({ delaySeconds: queueRetryDelaySeconds(message.attempts) });
         }
       }
     })(),
@@ -262,8 +264,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
       if (isRetirementRefusal(error)) { message.ack(); return; }
       logWarn(env, "conversation_view_delivery_failed", { workspace_id: job.workspaceId,
         reason: diagnosticErrorCode(error, "conversation_view_delivery_failed") });
-      const attempts = Math.max(1, message.attempts);
-      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+      message.retry({ delaySeconds: queueRetryDelaySeconds(message.attempts) });
     }
     return;
   }
@@ -746,8 +747,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
           error: reason,
           errorCode,
         });
-        const attempts = Math.max(1, message.attempts);
-        const retryDelaySeconds = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
+        const retryDelaySeconds = queueRetryDelaySeconds(message.attempts);
         logWarn(env, "connector_event_process_failed", {
           workspace_id: input.workspaceId,
           connector_type: claim.event.connectorType,
@@ -801,8 +801,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
         message.ack();
         return;
       }
-      const attempts = Math.max(1, message.attempts);
-      const retryDelaySeconds = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
+      const retryDelaySeconds = queueRetryDelaySeconds(message.attempts);
       logWarn(env, "connector_event_process_delivery_failed", {
         workspace_id: input.workspaceId,
         connector_event_id: input.eventId,
@@ -894,8 +893,7 @@ async function consumeOne(message: Message<unknown>, env: Env,
         message.ack();
         return;
       }
-      const attempts = Math.max(1, message.attempts);
-      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+      message.retry({ delaySeconds: queueRetryDelaySeconds(message.attempts) });
     }
     return;
   }
@@ -1067,8 +1065,7 @@ async function consumeEffect(
       ...fields,
       reason: error instanceof Error ? error.message : "unknown",
     });
-    const attempts = Math.max(1, message.attempts);
-    message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+    message.retry({ delaySeconds: queueRetryDelaySeconds(message.attempts) });
   }
 }
 

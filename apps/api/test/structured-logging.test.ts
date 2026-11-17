@@ -12,6 +12,7 @@ import {
 import { ApiError } from "../src/lib/api-error";
 import { ObjectPortError } from "../src/runtime/object-port-error";
 import { TerminalObjectPortError } from "../src/services/terminal/object-port";
+import { TerminalProviderError, terminalProviderErrorCode } from "../src/services/terminal/provider-contract";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 const env = createTestEnv({
@@ -67,6 +68,28 @@ describe("structured logging", () => {
       }),
       "terminal_provider_observation_failed",
     )).toBe("workstream_terminal_identity_mismatch");
+  });
+
+  it("names a Terminal provider failure by the code built across the hop, not the provider's sentence", () => {
+    const sentence = "Sandbox 4f1c-customer is unavailable for org acme: upstream returned 503";
+    expect(diagnosticErrorCode(
+      new TerminalProviderError(sentence, "DaytonaServiceUnavailableError:503"),
+      "terminal_provider_observation_failed",
+    )).toBe("terminal_provider_observation_failed:DaytonaServiceUnavailableError:503");
+    // A code that is not code-shaped is not trusted as one.
+    expect(diagnosticErrorCode(
+      new TerminalProviderError(sentence, "failed for customer@example.com"),
+      "terminal_provider_observation_failed",
+    )).toBe("terminal_provider_observation_failed");
+    // Nor is the provider's sentence read for a code when the code is rejected.
+    expect(diagnosticErrorCode(
+      new TerminalProviderError("Sandbox lookup failed (customer.tenant_42)", "failed for customer@example.com"),
+      "terminal_provider_observation_failed",
+    )).toBe("terminal_provider_observation_failed");
+  });
+
+  it("keeps a Workers runtime failure's name in the code built for a Terminal provider failure", () => {
+    expect(terminalProviderErrorCode(new Error("Network connection lost."))).toBe("Error:network_connection_lost");
   });
 
   it("names a Workers runtime failure behind the caller's own code without copying its sentence", () => {
