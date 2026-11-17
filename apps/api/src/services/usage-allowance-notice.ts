@@ -5,6 +5,7 @@ import { logStructuredEvent, diagnosticErrorCode } from "../observability/logger
 import { ApiError } from "../lib/api-error";
 import { escapeHtml, sendEmail, singleLine } from "./email";
 import { publishOrganizationUsage } from "./usage-metering";
+import { hasSignedIn } from "./signed-in";
 
 const EMAIL_ERRORS = {
   unavailable: { code: "usage_allowance_email_unavailable", message: "Usage allowance email is temporarily unavailable" },
@@ -36,7 +37,8 @@ export async function noticeUsageAllowanceExhausted(
            ON receipt.delivery_key = ? || person.id AND receipt.state <> 'pending'
         WHERE member.workspace_id = ? AND member.status = 'active'
           AND member.access_class = 'member' AND member.role IN ('owner', 'admin')
-          AND receipt.delivery_key IS NULL`,
+          AND receipt.delivery_key IS NULL
+          AND ${hasSignedIn("person.id")}`,
     ).bind(deliveryKeyPrefix(input), input.workspaceId)
       .all<{ user_id: string; email: string; name: string | null; workspace_name: string }>();
     // Recipients left means this is the week's first refusal: tell open

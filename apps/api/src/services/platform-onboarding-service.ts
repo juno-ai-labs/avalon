@@ -64,6 +64,8 @@ export const platformIdentitySchema = z.object({
   accountOnboarding: AccountOnboardingSchema.optional(),
   platformUserId: z.string().uuid(),
   loginIdentities: z.array(loginIdentitySchema),
+  /** Addresses Global has seen this person prove. Optional so a region reads an older Global's identity. */
+  verifiedEmails: z.array(z.string().email().max(254)).max(50).optional(),
   email: z.string().email().max(254),
   name: z.string().min(1).max(255),
   avatarUrl: HttpUrlSchema.nullable(),
@@ -671,7 +673,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     if (owners.length > 1) {
       throw new ApiError(409, "regional_identity_conflict", "This account's sign-in methods belong to different regional identities");
     }
-    const user: RegionalUserRow | null = owners[0] ?? null;
+    const user: RegionalUserRow | null = owners[0] ?? await this.unlinkedHolderOfVerifiedEmail(identity);
     if (user) {
       if (user.platform_user_id && user.platform_user_id !== identity.platformUserId) {
         throw new ApiError(409, "regional_identity_conflict", "The regional identity is already linked to another account");
@@ -756,6 +758,22 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     return rows.results ?? [];
   }
 
+  /**
+   * A regional account an administrator made by address (`addMember`) before
+   * this person ever reached this deployment. It has no platform id and holds
+   * only an email sign-in method, which a Google or Apple sign-in on Global
+   * does not send, so it is found by an address Global has seen them prove:
+   * the same trust the account was made on.
+   */
+  private async unlinkedHolderOfVerifiedEmail(identity: PlatformIdentity): Promise<RegionalUserRow | null> {
+    if (!identity.verifiedEmails?.length) return null;
+    return await this.env.DB.prepare(
+      `SELECT u.id, u.platform_user_id, u.google_subject, u.email FROM user_verified_emails v
+         JOIN users u ON u.id = v.user_id
+        WHERE u.platform_user_id IS NULL AND v.email IN (SELECT value FROM json_each(?)) LIMIT 1`,
+    ).bind(JSON.stringify(identity.verifiedEmails)).first<RegionalUserRow>();
+  }
+
   private async requireLoginIdentitiesFree(userId: string, identity: PlatformIdentity): Promise<void> {
     if ((await this.loginIdentityOwners(identity)).some((owner) => owner.id !== userId)) {
       throw new ApiError(409, "regional_identity_conflict", "The regional identity link does not match this account");
@@ -784,6 +802,15 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
         `INSERT INTO user_login_identities (provider, subject, user_id, verified_at) VALUES (?, ?, ?, ?)
          ON CONFLICT(provider, subject) DO NOTHING`,
       ).bind(entry.provider, entry.subject, userId, at)),
+      // Mirrored so this deployment names the account by a verified address, as `memberByAddress` asks.
+      ...(identity.verifiedEmails ? [
+        this.env.DB.prepare(
+          `DELETE FROM user_verified_emails WHERE user_id = ? AND email NOT IN (SELECT value FROM json_each(?))`,
+        ).bind(userId, JSON.stringify(identity.verifiedEmails)),
+        ...identity.verifiedEmails.map((email) => this.env.DB.prepare(
+          `INSERT INTO user_verified_emails (email, user_id, verified_at) VALUES (?, ?, ?) ON CONFLICT(email) DO NOTHING`,
+        ).bind(email, userId, at)),
+      ] : []),
     ];
   }
 
@@ -1534,7 +1561,7 @@ export class PlatformOnboardingService {
 
   private async loadPlatformIdentity(): Promise<PlatformIdentity> {
     // The session names the user, so the sign-in methods are read beside the row.
-    const [row, identities] = await Promise.all([this.env.DB.prepare(
+    const [row, identities, verified] = await Promise.all([this.env.DB.prepare(
       `SELECT id, google_subject, email, name, avatar_url, timezone, created_at, platform_user_id, onboarding_eligible, onboarding_introduced, onboarding_revision, presentation_json
        FROM users WHERE id = ?`,
     ).bind(this.auth.userId).first<{
@@ -1552,7 +1579,9 @@ export class PlatformOnboardingService {
       presentation_json: string | null;
     }>(), this.env.DB.prepare(
       "SELECT provider, subject FROM user_login_identities WHERE user_id = ? ORDER BY provider, subject",
-    ).bind(this.auth.userId).all<LoginIdentity>()]);
+    ).bind(this.auth.userId).all<LoginIdentity>(), this.env.DB.prepare(
+      "SELECT email FROM user_verified_emails WHERE user_id = ? ORDER BY email",
+    ).bind(this.auth.userId).all<{ email: string }>()]);
     if (!row) throw new ApiError(401, "identity_not_found", "The signed-in user no longer exists");
     if (row.platform_user_id && row.platform_user_id !== row.id) {
       throw new ApiError(409, "platform_identity_conflict", "The Global identity record is not canonical");
@@ -1579,6 +1608,7 @@ export class PlatformOnboardingService {
       accountOnboarding: { eligible: row.onboarding_eligible === 1, introduced: row.onboarding_introduced === 1, revision: row.onboarding_revision, presentation: row.presentation_json ? PersonalPresentationSchema.parse(JSON.parse(row.presentation_json)) : null },
       platformUserId: row.id,
       loginIdentities,
+      verifiedEmails: (verified.results ?? []).map((entry) => entry.email),
       email: row.email,
       name: row.name,
       avatarUrl: row.avatar_url,

@@ -32,9 +32,9 @@ import {
 import { canvasReaderAllows, sidekickManages, sidekickReaderAllows, sidekickSharedWith } from "./canvas-sidekick-admission";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import {
-  SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourcesResultSchema,
+  SidekickSourceRequestResultSchema, SidekickSourceRequestViewSchema, SidekickSourcesResultSchema, sourceConnectionCardId,
   type SidekickSource, type SidekickSourceRequest, type SidekickSourceRequestResult,
-  type SidekickSourceRequestView, type SidekickSourcesResult,
+  type SidekickSourceConnectionState, type SidekickSourceRequestView, type SidekickSourcesResult,
 } from "@rally/contracts";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -86,6 +86,7 @@ import type { Env } from "../env";
 import { ApiError, asApiError } from "../lib/api-error";
 import { connectorPluginBindingViews } from "../lib/connector-plugin-views";
 import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../lib/connector-activity-triggers";
+import { connectorActivitySupportsScope } from "@rally/connectors";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { sha256 } from "../lib/crypto";
 import { conversationMessageOpening } from "@rally/prompts/api/conversation-message-opening";
@@ -1029,6 +1030,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       requestId: request.requestId, sidekickId: this.sidekickId, sidekickName: row.title || "Sidekick",
       person, connectorType: request.connectorType, eventTypes: request.eventTypes, condition: request.condition,
       state: request.state, requestedByName: request.requestedByName, yours: request.userId === viewerUserId,
+      connection: this.sourceConnectionState(row.workspace_id, request.userId, request.connectorType, request.eventTypes),
+      connect: this.sourceConnect(request.connectorType, request.eventTypes),
       createdAt: request.createdAt, decidedAt: request.decidedAt,
     });
   }
@@ -1171,17 +1174,56 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   /**
-   * The connections of one connector a person's source covers: their own,
+   * The connections a person's source for these events covers: their own,
    * and the Organization's, where a source lets in the events limited to an
-   * audience they are in. What approving a request lets in.
+   * audience they are in. Each with the asked event types it announces, so a
+   * Gmail request never lands on the same person's Drive connection, which is
+   * the same connector type and carries none of the mail. What approving a
+   * request lets in.
    */
-  private sourceConnections(workspaceId: string, userId: string, connectorType: string): { id: string }[] {
-    return this.sql.exec<{ id: string }>(
-      `SELECT id FROM connector_connections
+  private sourceConnections(workspaceId: string, userId: string, connectorType: string, eventTypes: readonly string[]):
+    { id: string; status: string; eventTypes: string[] }[] {
+    const adapter = this.sourceAdapter(connectorType);
+    // A connector this deployment no longer serves carries nothing; the request stays readable.
+    if (!adapter) return [];
+    return this.sql.exec<{ id: string; status: string; scope: string; granted_scopes_json: string; config_json: string | null }>(
+      `SELECT id, status, scope, granted_scopes_json, config_json FROM connector_connections
         WHERE workspace_id = ?1 AND connector_type = ?3 AND status <> 'disabled'
           AND ((scope = 'personal' AND owner_user_id = ?2) OR scope = 'workspace')
         ORDER BY id`, workspaceId, userId, connectorType,
-    ).toArray();
+    ).toArray().flatMap((connection) => {
+      const announced = new Set(connectorActivityTriggerDescriptors(adapter, connection.config_json,
+        storedConnectionScope(connection.scope), grantedScopes(connection.granted_scopes_json))
+        .map((descriptor) => descriptor.eventType));
+      const carried = eventTypes.filter((eventType) => announced.has(eventType));
+      return carried.length > 0 ? [{ id: connection.id, status: connection.status, eventTypes: carried }] : [];
+    });
+  }
+
+  /** The connector's adapter, or null where this deployment does not serve it (the registry throws). */
+  private sourceAdapter(connectorType: string): ReturnType<ReturnType<typeof connectorRegistryForEnv>["get"]> | null {
+    const registry = connectorRegistryForEnv(this.env);
+    return registry.list().some((manifest) => manifest.type === connectorType) ? registry.get(connectorType) : null;
+  }
+
+  /**
+   * Which connection carries a request's events, and the card that makes it.
+   * A connector whose events arrive only on its Organization connection is
+   * made by an administrator in Settings, so no person's card can answer it.
+   */
+  private sourceConnect(connectorType: string, eventTypes: readonly string[]): SidekickSourceRequestView["connect"] {
+    const adapter = this.sourceAdapter(connectorType);
+    if (!adapter) return { scope: "personal", card: null };
+    if (!connectorActivitySupportsScope(adapter, "personal")) return { scope: "workspace", card: null };
+    return { scope: "personal", card: sourceConnectionCardId(connectorType, eventTypes) };
+  }
+
+  /**
+   * Whether the person asked can let every asked event in now (`sourceCoverage`).
+   */
+  private sourceConnectionState(workspaceId: string, userId: string, connectorType: string, eventTypes: readonly string[]):
+    SidekickSourceConnectionState {
+    return sourceCoverage(this.sourceConnections(workspaceId, userId, connectorType, eventTypes), eventTypes);
   }
 
   /** The event types a connector's connections in this Organization announce, a webhook's configured ones among them. */
@@ -1283,10 +1325,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
           continue;
         }
         const own = userId === request.actor.userId;
-        // The asker is here to be told now that they have nothing to approve; anybody else finds out when they answer.
-        if (own && this.sourceConnections(row.workspace_id, userId, request.ask.connectorType).length === 0) {
-          throw sidekickSourceError("sidekick_source_connection_missing");
-        }
+        // A person with no such account yet is asked all the same, the asker included:
+        // the request's card connects it before Approve, so connecting is part of answering.
         const { request: created, replaced } = this.sources().ask({
           requestId: requestIds[index]!, sidekickId: this.sidekickId, userId, connectorType: request.ask.connectorType,
           eventTypes, condition, requestedByUserId: request.actor.userId, requestedByName: request.actorName,
@@ -1344,10 +1384,15 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       if (state === "approved") {
         if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
         if (relationship?.status !== "active") throw sidekickSourceError("sidekick_source_membership_unavailable");
-        const connections = this.sourceConnections(row.workspace_id, current.userId, current.connectorType);
-        if (connections.length === 0) throw sidekickSourceError("sidekick_source_connection_missing");
+        const connections = this.sourceConnections(row.workspace_id, current.userId, current.connectorType, current.eventTypes);
+        // An approval some asked event could not arrive through is refused, so it is noticed now
+        // rather than read later as a Sidekick missing half of what it asked for. A lapsed connection
+        // beside a working one still gets its rows: they let events in again once it is reconnected.
+        const coverage = sourceCoverage(connections, current.eventTypes);
+        if (coverage === "not_connected") throw sidekickSourceError("sidekick_source_connection_missing");
+        if (coverage === "reconnect_required") throw sidekickSourceError("sidekick_source_connection_reconnect");
         for (const connection of connections) {
-          for (const eventType of current.eventTypes) {
+          for (const eventType of connection.eventTypes) {
             this.sources().put({ sidekickId: this.sidekickId, userId: current.userId, connectionId: connection.id,
               connectorType: current.connectorType, eventType, condition: current.condition,
               membershipIncarnation: relationship.incarnation, requestId: current.requestId }, now);
@@ -3873,3 +3918,29 @@ export function hostedSidekickAlarmTarget(alarm: ScheduledAlarm): { sidekickId: 
   return parseSidekickAlarmKey(alarm.key);
 }
 
+/**
+ * Whether every asked event type can arrive: each needs a connection that
+ * carries it, and one that works. One with no carrier reads `not_connected`;
+ * one carried only by lapsed sign-ins reads `reconnect_required`. A
+ * connection in `error` counts as working: reconnecting is not its fix.
+ */
+function sourceCoverage(connections: readonly { status: string; eventTypes: readonly string[] }[],
+  eventTypes: readonly string[]): SidekickSourceConnectionState {
+  let lapsed = false;
+  for (const eventType of eventTypes) {
+    const carriers = connections.filter((connection) => connection.eventTypes.includes(eventType));
+    if (carriers.length === 0) return "not_connected";
+    if (carriers.every((connection) => connection.status === "needs_reconnect")) lapsed = true;
+  }
+  return lapsed ? "reconnect_required" : "connected";
+}
+
+/** A connection's stored grants; a row that does not parse grants nothing, rather than failing every request view. */
+function grantedScopes(json: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed.filter((scope): scope is string => typeof scope === "string") : [];
+  } catch {
+    return [];
+  }
+}
