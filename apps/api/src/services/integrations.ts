@@ -2734,9 +2734,7 @@ interface SequencedStreamDeltaBatcher {
 /**
  * Coalesce model text into one socket frame per `maxDelayMs`. Held text always
  * leaves within `maxDelayMs`: a trailing timer sends it when no later delta
- * arrives to carry it. Without that timer, the text after a reply's first
- * token waited for the next event, often a tool call whose input the model was
- * still streaming, and the reader saw one word for a second or more.
+ * arrives to carry it.
  */
 export function createSequencedStreamDeltaBatcher(
   publish: (event: Extract<HarnessEvent, { type: "stream_delta" }>) => Promise<void>,
@@ -2794,7 +2792,7 @@ export function createSequencedStreamDeltaBatcher(
           await sendPending();
         } else if (!timer) {
           // `publish` is best-effort and reports its own drops.
-          timer = setTimeout(() => { void flush().catch(() => undefined); }, maxDelayMs - waited);
+          timer = setTimeout(() => { flush().catch(() => undefined); }, maxDelayMs - waited);
         }
       });
     },
