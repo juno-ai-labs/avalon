@@ -1472,7 +1472,15 @@ does not hold:
 A run its triggers start, or that a delegate asks for, acts as a delegate when
 there is one: its coordinator, re-picked from the eligible delegates when that
 person becomes unavailable, and its connector operations may use any
-delegate's personal account and the Organization's connections. A run someone who is not a
+delegate's personal account and the Organization's connections.
+A run an event that belongs to somebody started (a person's mail, a private
+place) is re-picked only among the people that event belongs to, as its
+admission chose (`runPrincipal` reads the stored event through
+`restrictedActivityUserIds`). With none of them eligible it acts as the
+Sidekick itself, and once the event's body is past retention it keeps the
+person it had while they are eligible and otherwise acts as itself.
+
+A run someone who is not a
 delegate asks for in the shared conversation, a member or a guest on its list,
 acts as that person alone, the PRD's "a shared Sidekick uses delegate access
 only for its own runs":
@@ -2424,6 +2432,32 @@ conversation-object SQLite; the vocabulary, `StatusDot`, the
 survive as described above.
 
 ## Changelog
+
+### 2026-11-17 — Starting a run keeps to whose event started it
+
+**What changed:** `runPrincipal`, which picks who a run acts as when it starts
+and on every continuation, now re-picks a run an event started only among the
+people that event belongs to, read from the stored event the way admission
+reads it. Once the event body has aged out, the run keeps the person it had while
+they are eligible, and otherwise acts as the Sidekick itself.
+
+**Why:** Admission already chose among the event's audience, so Jane's mail,
+with Jane not a delegate, was admitted acting as the Sidekick itself. But
+`startRun` called `coordinator()` with no audience, and that fell back to the
+author, so the run then acted on Jane's mail with the creator's mailbox. The
+`sidekick-sources` test caught it only when the run-start alarm fired before
+the test read the row, which made it look like a flake on the deploy of #1658.
+
+**Considered and rejected:** Recording the audience on the run row: that needs a
+WorkspaceDO migration, and rows written before it would still not know their
+audience. Keeping a null coordinator null: it would stop a run picking up a
+delegate who agreed mid-run through `request_elicitation`.
+
+**Consequences:** A run that outlives its event's 90-day body retention can no
+longer move to another delegate. Any new caller that decides a run's principal
+must go through `runPrincipal`, not `coordinator()`.
+
+PR: [#1660](https://github.com/juno-ai-labs/avalon/pull/1660).
 
 ### 2026-11-16 — The wizard saves when a run sends a notice
 

@@ -1878,13 +1878,45 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    * Who a run acts as now: its requester while they are still a member, for a
    * run a non-delegate started; otherwise an eligible delegate, preferring the
    * one it had. Null when nobody is left to act.
+   *
+   * A run an event that belongs to somebody started picks only among the
+   * people it belongs to, as its admission did (`admitExternalEvent`): a
+   * re-pick that widened to any delegate would act on Jane's mail with a
+   * third person's mailbox.
    */
-  private async runPrincipal(run: { coordinator_user_id: string | null; requester_user_id: string | null }): Promise<string | null> {
+  private async runPrincipal(run: {
+    coordinator_user_id: string | null; requester_user_id: string | null; trigger_json: string;
+  }): Promise<string | null> {
     if (run.requester_user_id !== null) {
       const row = this.row();
       return row && await this.requesterActive(row.workspace_id, run.requester_user_id) ? run.requester_user_id : null;
     }
-    return this.coordinator(run.coordinator_user_id);
+    const audience = this.runAudience(run.trigger_json);
+    if (audience === "unknown") {
+      // Its event has aged out, so whose it was can no longer be read: the run
+      // keeps the person it had while they are eligible, and otherwise acts as
+      // the Sidekick itself rather than as somebody it may not belong to.
+      const kept = run.coordinator_user_id;
+      return this.coordinator(kept, kept === null ? [] : [kept], false);
+    }
+    return audience === null ? this.coordinator(run.coordinator_user_id)
+      : this.coordinator(run.coordinator_user_id, audience, false);
+  }
+
+  /**
+   * Whose a run's starting event is, read the way `eventSource` reads it: the
+   * people it is limited to, null for a run no event started or an event the
+   * whole Organization can see, and `unknown` once the event's stored body is
+   * past retention.
+   */
+  private runAudience(triggerJson: string): string[] | null | "unknown" {
+    const trigger = storedRunTrigger(triggerJson);
+    if (trigger.kind !== "external_event") return null;
+    const stored = this.sql.exec<{
+      connection_scope: string; connection_owner_user_id: string | null; target_user_ids_json: string; visibility_json: string;
+    }>(`SELECT connection_scope,connection_owner_user_id,target_user_ids_json,visibility_json
+          FROM workspace_connector_events WHERE event_id=?`, trigger.workspaceEventId).toArray()[0];
+    return stored ? restrictedActivityUserIds(stored) : "unknown";
   }
 
   /**
@@ -2189,8 +2221,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (!this.row()) return { outcome: "refused", code: "run_not_found" };
     const before = this.runView(request.runId)?.run;
     // A requester's run keeps its requester; any other run keeps or re-picks a delegate.
-    const coordinator = await this.runPrincipal({ coordinator_user_id: before?.coordinator_user_id ?? null,
-      requester_user_id: before?.requester_user_id ?? null });
+    const coordinator = before ? await this.runPrincipal(before) : null;
     // Asked before the reads below, as the principal is.
     const senderRefusal = before ? await this.senderRefusal(before, request.sender, coordinator) : null;
     const view = this.runView(request.runId);
