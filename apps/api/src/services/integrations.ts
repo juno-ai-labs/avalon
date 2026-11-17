@@ -2736,7 +2736,7 @@ interface SequencedStreamDeltaBatcher {
  * leaves within `maxDelayMs`: a trailing timer sends it when no later delta
  * arrives to carry it.
  */
-export function createSequencedStreamDeltaBatcher(
+function createSequencedStreamDeltaBatcher(
   publish: (event: Extract<HarnessEvent, { type: "stream_delta" }>) => Promise<void>,
   options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
 ): SequencedStreamDeltaBatcher {
@@ -9665,6 +9665,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  createSequencedStreamDeltaBatcher,
   turnIsSelfReview,
   builtInSkillsFor,
   principalSystemSectionFor,

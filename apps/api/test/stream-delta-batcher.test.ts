@@ -1,6 +1,8 @@
 import type { HarnessEvent } from "@rally/agent-harness";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createSequencedStreamDeltaBatcher } from "../src/services/integrations";
+import { __integrationTesting } from "../src/services/integrations";
+
+const { createSequencedStreamDeltaBatcher } = __integrationTesting;
 
 type StreamDelta = Extract<HarnessEvent, { type: "stream_delta" }>;
 
@@ -48,8 +50,7 @@ describe("createSequencedStreamDeltaBatcher", () => {
     vi.setSystemTime(1_150);
     await batcher.push(delta("c", 3));
     await vi.advanceTimersByTimeAsync(100);
-    await batcher.flush();
-
+    // The timer re-armed after its first window and sent "c" on its own.
     expect(published).toEqual(["a", "b", "c"]);
   });
 
@@ -77,7 +78,7 @@ describe("createSequencedStreamDeltaBatcher", () => {
     expect(landed).toEqual(["a", "b", "tool_started"]);
   });
 
-  it("sends nothing more after an explicit flush empties the batch", async () => {
+  it("re-arms after an explicit flush and sends nothing it already sent", async () => {
     const published: string[] = [];
     vi.setSystemTime(0);
     const batcher = createSequencedStreamDeltaBatcher(async (event) => {
@@ -89,7 +90,52 @@ describe("createSequencedStreamDeltaBatcher", () => {
     await batcher.push(delta("b", 2));
     await batcher.flush();
     await vi.advanceTimersByTimeAsync(500);
-
     expect(published).toEqual(["a", "b"]);
+
+    vi.setSystemTime(2_000);
+    await batcher.push(delta("c", 3));
+    vi.setSystemTime(2_010);
+    await batcher.push(delta("d", 4));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(published).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("sends held text before a reset frame while the timer is armed, and nothing after", async () => {
+    const published: StreamDelta[] = [];
+    vi.setSystemTime(0);
+    const batcher = createSequencedStreamDeltaBatcher(async (event) => {
+      published.push(event);
+    });
+
+    vi.setSystemTime(1_000);
+    await batcher.push(delta("a", 1));
+    await batcher.push(delta("held", 2));
+    await batcher.push(delta("", 3, { epoch: 1, reset: true }));
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(published.map((event) => [event.delta, event.epoch, event.reset])).toEqual([
+      ["a", 0, false],
+      ["held", 0, false],
+      ["", 1, true],
+    ]);
+  });
+
+  it("keeps sending after a publish rejects", async () => {
+    const published: string[] = [];
+    vi.setSystemTime(0);
+    const batcher = createSequencedStreamDeltaBatcher(async (event) => {
+      if (event.delta === "b") throw new Error("room unavailable");
+      published.push(event.delta);
+    });
+
+    vi.setSystemTime(1_000);
+    await batcher.push(delta("a", 1));
+    await batcher.push(delta("b", 2));
+    // The timer's publish of "b" rejects; the chain must still run.
+    await vi.advanceTimersByTimeAsync(100);
+    vi.setSystemTime(1_200);
+    await batcher.push(delta("c", 3));
+
+    expect(published).toEqual(["a", "c"]);
   });
 });

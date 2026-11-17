@@ -5,7 +5,7 @@
 //
 // A synthetic turn is played into the live renderer by dispatching
 // stream_started/stream_delta MessageEvents onto the substream socket, with
-// the wire cadence produced by an exact emulation of the production batcher
+// the wire cadence produced by a close emulation of the production batcher
 // on the work-stream socket path (createSequencedStreamDeltaBatcher in
 // apps/api/src/services/integrations.ts, the only batcher), so injected frames have the
 // burst shape a real turn has — and a cadence experiment is a driver option
