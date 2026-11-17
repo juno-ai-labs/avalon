@@ -154,6 +154,7 @@ Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md
 | `apps/api/src/durable-objects/connector-event-people.ts` | Ordered event-owned person rows, legacy readback, and schema-only v122. |
 | `apps/api/src/services/connector-queue-payload.ts` | Canonical-event references for oversized connector delivery context. |
 | `apps/api/src/durable-objects/workspace-event-resources.ts` | Exact workspace/connection/provider identity resolution for incoming event relationships. |
+| `packages/contracts/src/connector-catalog.ts` | The connector product catalog and its families, the connection-name formatter and parser, and the pure fold from saved connections to each product's state. See [Connector products and families](#connector-products-and-families). |
 | `packages/connectors/src/index.ts` | The registry, and the cross-validation that runs at its construction. |
 | `packages/connectors/src/types.ts` | The manifest and descriptor types, and the unexported symbol that brands `AuthorizedConnectorConnection`. |
 | `packages/connectors/src/provider-utils.ts` | `withProviderReauthorization` — the shared mid-call recovery every adapter routes through. |
@@ -171,6 +172,59 @@ Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
 | `packages/contracts/src/connector-api-keys.ts` | Per provider: the page that issues its API key, and the key format the provider documents — the one declaration the API's request schema, the adapter's own check and the desktop field all read. |
 | `apps/desktop/src/renderer/components/connector-api-key-field.tsx` | The paste step as one control: the issuing link, the field, and the message shown when a paste cannot be that provider's key. Every surface that takes a key uses it — Granola's and Ashby's setup modals, and **Replace workspace API key**, which appears only for an installation whose provider still takes one. |
+
+### Connector products and families
+
+A **provider** is what authorizes: one `connector_type`, one adapter, one
+manifest in `packages/connectors`. A **product** is what a person connects and
+reads about: `ConnectorProductCatalog` in `@rally/contracts`. Most providers are
+one product; Google is two, Gmail with Calendar and Drive with Docs and Sheets,
+told apart by the grants a connection holds (`capabilityPrefixes`). A product
+with no prefixes owns every grant of its provider.
+
+Each product entry says, once: its name and one-sentence description, its
+**families**, its provider, the scopes it is offered in (`scopes`), the subset a
+card in a conversation can connect (`cardScopes`; the rest are made in
+Settings), whether its connections are told apart by account or by a name a
+person typed (`instance`), its mark, and whether it needs the Mac app. Families
+(`ConnectorFamilyCatalog`) name a job, not a provider: email and calendar, file
+storage, documents and wikis, team chat, issue tracking, code, meeting notes,
+sales, recruiting, design, social media, and custom tools and events. A product
+lists its families most fitting first and may have several (GitHub is code and
+issue tracking).
+
+Everything else is a view of that catalog, never a copy of it:
+
+| View | Reads |
+| --- | --- |
+| The connection card's ids, enum and scope check (`connector-connection-card.ts`) | Products with a card scope, and those scopes. |
+| `get_connector_connection_state` and `list_connectors` | `foldConnectorProductStates` over the caller's rows; see [`agent-tools.md`](agent-tools.md). |
+| Settings' Connections list (`apps/desktop/src/renderer/lib/connector-catalog.ts`) | Name, description, mark, scopes, desktop-only. It keeps only the grants it asks a provider for. |
+| The transcript's connector presentation (`connector-presentation.ts`) | Name and description, with two deliberate mention blurbs. |
+| Google's per-product plugins (`connector-plugin-views.ts`) | The two products' prefixes. |
+| A connection's stored name (`connection-service.ts`) | `connectorConnectionName(product, account)`. |
+
+A connection's stored name is `<product> · <account>`, built only by
+`connectorConnectionName` and read back only by `connectorConnectionAccount`,
+so the account an agent reads is the one Settings shows. A Google connection is
+named after the product its grants serve, or Google Workspace when they serve
+both. Names written before a product's name changed keep the old first half;
+the account half is all that is read back. A product whose connections a person
+names (a custom MCP server, an inbound webhook) reads the whole name.
+
+`foldConnectorProductStates` is pure: given product ids, the rows a caller may
+see and the providers this deployment registers, it returns each product's
+state, a row per offered scope with `connectIn` (`conversation` when a card can
+connect it, `settings` otherwise), and an account per saved connection.
+Disabled connections are not connections, a connection in a scope its product
+no longer offers (a Fireflies workspace key) is ignored, and a product whose
+provider is not registered is `unavailable` in every scope. The desktop keeps
+its own fold (`connectorScopeStates`) because Settings shows **Disabled**, which
+the agent's states do not; it reads the same prefixes.
+
+Adding a product is one catalog entry: its card, Settings row, transcript
+presentation and place in the agent's list follow. A new family is added with
+its first product; none is listed empty.
 
 ### Pasting an API key
 
@@ -1694,6 +1748,39 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-17 — One product catalog, with families, instead of five copies
+
+**What changed:** `ConnectorProductCatalog` in `@rally/contracts` replaced the
+connection card's catalog, and Settings' list, the transcript presentation,
+Google's plugin bundles, the Google connection name and the agent's connection
+check now read from it. It covers all fourteen products, including the three
+only Settings connects, and gives each its families. The connection name has
+one formatter and one parser, and the agent's state comes from one pure fold.
+
+**Why:** letting the agent recommend a connector the person has not connected
+needed, for each product, what it is for, whether a card can connect it, and
+which account each connection is. Those facts lived in five places: the card
+catalog (ids, prefixes, card scopes), Settings' list (names, sentences, offered
+scopes), the transcript presentation (names and prefixes again, and a comment
+recording that two copies of the sentences had already drifted), the Google
+naming helper (product names and prefixes a third time) and the new reader. A
+sixth consumer would have been a sixth copy.
+
+**Alternative rejected:** putting families and descriptions on the card catalog
+alone. It holds only the eleven products a card can connect, so X, custom MCP
+servers and webhooks would have stayed invisible to the agent, and Settings
+would still have held the only copy of each product's sentence. Also rejected:
+moving the server manifests' `displayName` into the catalog, because a manifest
+names a provider (Google, X), which is a different thing from a product.
+
+**Consequences:** a product's name, sentence, scopes and families change in one
+entry and every surface follows; the card's ids and description are unchanged.
+One product name did change: a run's connection question now says **Google
+Mail + Calendar**, the name Settings already used, rather than "Gmail and
+Google Calendar". The grants the desktop requests stay on the desktop. A
+connection name not built by `connectorConnectionName` will read back as no
+account, so a new producer must use it.
 
 ### 2026-11-16 — Only the session that started a connector authorization can complete it
 

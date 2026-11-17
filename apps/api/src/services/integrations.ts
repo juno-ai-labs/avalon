@@ -1,7 +1,6 @@
 import { requireUsageAllowance, isUsageAllowanceExhausted } from "./usage-admission";
 import { agentModelTraceFeature } from "@rally/contracts/runtime-config";
 import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
-import { connectorAuthorizationStatus } from "@rally/contracts";
 import { readConnectorResourceAttachment } from "./connector-resource-attachments";
 import { readCanvaReference } from "./canva-resource-access";
 
@@ -147,24 +146,20 @@ import {
   MEMBER_QUESTION_OPTIONS,
   MemberCardInputSchema,
   type MemberCardInput,
-  ConnectorConnectionCardCatalog,
   ConnectorConnectionCardInputSchema,
   type ConnectorConnectionCardInput,
   ConnectorConnectionStateInputSchema,
-  ConnectorConnectionStateResultSchema,
-  type ConnectorConnectionStateResult,
-  ConnectorConnectionCardIds,
-  type ConnectorConnectionCardId,
   ConnectorListInputSchema,
-  ConnectorListResultSchema,
+  ConnectorProductCatalog,
+  ConnectorProductIds,
+  type ConnectorProductId,
+  type ConnectorProductState,
   CONNECTOR_LIST_TOOL_NAME,
-  bestConnectorConnectionState,
-  connectorConnectionAccountLabel,
   connectorConnectionCardSummary,
   connectorConnectionStateSummary,
   connectorListSummary,
-  groupConnectorsByFamily,
-  type ConnectorConnectionCardScope,
+  foldConnectorProductStates,
+  groupConnectorProductsByFamily,
   type AutomationRunDefinitionV1,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
@@ -8563,7 +8558,7 @@ async function readConnectorConnectionState(
   raw: unknown,
 ) {
   const request = ConnectorConnectionStateInputSchema.parse(raw);
-  const [state] = await readConnectorConnectionStates(env, input, [request.connectorId]);
+  const [state] = await readConnectorProductStates(env, input, [request.connectorId]);
   return state!;
 }
 
@@ -8573,28 +8568,24 @@ async function listConnectors(
   raw: unknown,
 ) {
   ConnectorListInputSchema.parse(raw);
-  return ConnectorListResultSchema.parse(
-    groupConnectorsByFamily(await readConnectorConnectionStates(env, input, ConnectorConnectionCardIds)),
-  );
+  return groupConnectorProductsByFamily(await readConnectorProductStates(env, input, ConnectorProductIds));
 }
 
 /**
- * The caller's saved state for each catalog connector, in one read.
- *
- * Every scope is reported, whatever a caller asked about: a model that names
- * `workspace` while the person's own connection works must still be told that
- * it works. Each saved connection is also returned as an account, because a
- * person can hold two Google accounts and the task may need a particular one.
+ * The caller's saved state for each product, in one read. What a state is,
+ * which grants belong to which product, and how an account is named are the
+ * catalog's (`foldConnectorProductStates`); this reads only the rows the
+ * caller may see: the Organization's, and the caller's own.
  */
-async function readConnectorConnectionStates(
+async function readConnectorProductStates(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
-  connectorIds: readonly ConnectorConnectionCardId[],
-): Promise<ConnectorConnectionStateResult[]> {
+  productIds: readonly ConnectorProductId[],
+): Promise<ConnectorProductState[]> {
   if (input.executionPrincipal.type !== "user") throw new Error("connector_connection_state_requires_user");
   const registered = new Set(connectorRegistryForEnv(env).list().map((manifest) => manifest.type));
-  const providerTypes = [...new Set(connectorIds
-    .map((connectorId) => ConnectorConnectionCardCatalog[connectorId].providerType as string)
+  const providerTypes = [...new Set(productIds
+    .map((id) => ConnectorProductCatalog[id].providerType as string)
     .filter((providerType) => registered.has(providerType)))];
   const rows = providerTypes.length === 0 ? [] : (await env.DB.prepare(
     `SELECT connector_type, scope, display_name, granted_scopes_json, status FROM connector_connections
@@ -8607,45 +8598,13 @@ async function readConnectorConnectionStates(
     ...providerTypes,
     input.executionPrincipal.userId,
   ).all<{ connector_type: string; scope: string; display_name: string; granted_scopes_json: string; status: string }>()).results ?? [];
-  return connectorIds.map((connectorId) => {
-    const catalog = ConnectorConnectionCardCatalog[connectorId];
-    const scopes: readonly ConnectorConnectionCardScope[] = catalog.scopes;
-    if (!registered.has(catalog.providerType)) {
-      return ConnectorConnectionStateResultSchema.parse({
-        connectorId,
-        state: "unavailable",
-        connections: scopes.map((scope) => ({ scope, state: "unavailable" })),
-        accounts: [],
-      });
-    }
-    const capabilityPrefixes: readonly string[] = catalog.capabilityPrefixes;
-    const accounts = rows.flatMap((row) => {
-      if (row.connector_type !== catalog.providerType) return [];
-      const scope = row.scope === "workspace" ? "workspace" as const : "personal" as const;
-      if (!scopes.includes(scope)) return [];
-      if (capabilityPrefixes.length > 0) {
-        const capabilities = parseJson<string[]>(row.granted_scopes_json, []);
-        if (!capabilities.some((capability) => capabilityPrefixes.some((prefix) => capability.startsWith(prefix)))) return [];
-      }
-      return [{
-        scope,
-        state: connectorAuthorizationStatus(row.status) === "reconnect_required"
-          ? "reconnect_required" as const
-          : "connected" as const,
-        account: connectorConnectionAccountLabel(row.display_name),
-      }];
-    });
-    const connections = scopes.map((scope) => {
-      const states = accounts.filter((account) => account.scope === scope).map((account) => account.state);
-      return { scope, state: bestConnectorConnectionState(states.length === 0 ? ["not_connected"] : states) };
-    });
-    return ConnectorConnectionStateResultSchema.parse({
-      connectorId,
-      state: bestConnectorConnectionState(connections.map(({ state }) => state)),
-      connections,
-      accounts,
-    });
-  });
+  return foldConnectorProductStates(productIds, rows.map((row) => ({
+    connectorType: row.connector_type,
+    scope: row.scope === "workspace" ? "workspace" : "personal",
+    status: row.status,
+    capabilities: parseJson<string[]>(row.granted_scopes_json, []),
+    displayName: row.display_name,
+  })), registered);
 }
 
 /** What the access check needs from the run that holds it. */
@@ -8737,7 +8696,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         },
         execute: async (raw: unknown, context: HarnessToolContext) => {
           const card = ConnectorConnectionCardInputSchema.parse(raw);
-          const label = ConnectorConnectionCardCatalog[card.connectorId].label;
+          const label = ConnectorProductCatalog[card.connectorId].name;
           return openToolQuestion(env, input, context, "show_connector_connection", {
             prompt: card.scope === "workspace"
               ? `Connect ${label} for the Organization so this run can continue.`

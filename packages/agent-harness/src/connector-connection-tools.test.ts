@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConnectorConnectionCardCatalog } from "@rally/contracts";
+import { ConnectorConnectionCardIds } from "@rally/contracts";
 
 import {
   AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
@@ -31,8 +31,9 @@ describe("connector connection tool guidance", () => {
     expect(list.inputSchema).toMatchObject({ type: "object", additionalProperties: false, properties: {} });
     expect(list.description).toContain("grouped by family");
     expect(list.description).toContain("A person can have more than one account for a connector.");
-    expect(list.description).toContain("call show_connector_connection with its connectorId");
+    expect(list.description).toContain("call show_connector_connection with its connectorId when connectIn is conversation");
     expect(list.description).toContain("never offer one that is unavailable");
+    expect(list.description).toContain("settings means the person adds it in Settings");
   });
 
   it("describes both card parameters in direct product language", () => {
@@ -61,7 +62,7 @@ describe("connector connection tool guidance", () => {
     // The second is that the sentence keeps naming every id the catalog holds,
     // so a connector added there cannot be quietly missing from what the model
     // is told it may ask for.
-    for (const id of Object.keys(ConnectorConnectionCardCatalog)) {
+    for (const id of ConnectorConnectionCardIds) {
       expect(connectorIds, id).toContain(id);
     }
     expect(schema.properties?.scope?.description)

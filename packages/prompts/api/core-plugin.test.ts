@@ -9,6 +9,7 @@ describe("core plugin system message", () => {
     const message = renderCorePluginSystemMessage({ ...none, connectorConnection: true, connectorList: true });
     expect(message).toContain("call list_connectors to see which connectors and accounts the person has");
     expect(message).toContain("Offer a missing one only when it would clearly help");
+    expect(message).toContain("otherwise by saying where in Settings to add it");
   });
 
   it("tells a loop whose card refuses only to read the list", () => {

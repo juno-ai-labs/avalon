@@ -290,8 +290,13 @@ describe("Avalon connector connection tools", () => {
       .resolves.toEqual({
         output: {
           connectorId: "google-drive",
+          name: "Google Drive + Docs + Sheets",
+          description: "Drive files, Google Docs, and Sheets content.",
           state: "connected",
-          connections: [{ scope: "personal", state: "connected" }, { scope: "workspace", state: "not_connected" }],
+          connections: [
+            { scope: "personal", state: "connected", connectIn: "conversation" },
+            { scope: "workspace", state: "not_connected", connectIn: "conversation" },
+          ],
           // The display name carries no account, so none is reported.
           accounts: [{ scope: "personal", state: "connected", account: null }],
         },
@@ -363,9 +368,10 @@ describe("Avalon connector connection tools", () => {
       label: "Email and calendar",
       connectors: [{
         connectorId: "google-mail-calendar",
-        label: "Gmail and Google Calendar",
+        name: "Google Mail + Calendar",
+        description: "Gmail messages, drafts, sent mail, and calendar events.",
         state: "connected",
-        connections: [{ scope: "personal", state: "connected" }],
+        connections: [{ scope: "personal", state: "connected", connectIn: "conversation" }],
         accounts: [
           { scope: "personal", state: "connected", account: "ada@example.com" },
           { scope: "personal", state: "reconnect_required", account: "ada@other.example" },
@@ -379,7 +385,12 @@ describe("Avalon connector connection tools", () => {
     // Not connected but offered, and offered but not configured here.
     expect(family("team_chat")?.connectors).toEqual([expect.objectContaining({ connectorId: "slack", state: "not_connected", accounts: [] })]);
     expect(family("code")?.connectors).toEqual([expect.objectContaining({ connectorId: "github", state: "unavailable" })]);
-    expect(summary).toBe("Listed connectors in 10 families; connected: google-mail-calendar, google-drive");
+    // A product only Settings connects is listed, and says so.
+    expect(family("social_media")?.connectors).toEqual([expect.objectContaining({
+      connectorId: "x",
+      connections: [{ scope: "workspace", state: expect.any(String), connectIn: "settings" }],
+    })]);
+    expect(summary).toBe("Listed connectors in 12 families; connected: google-mail-calendar, google-drive");
   });
 
   it("checks every scope a connector offers, whatever scope is named", async () => {
@@ -405,10 +416,12 @@ describe("Avalon connector connection tools", () => {
       .resolves.toEqual({
         output: {
           connectorId: "google-drive",
+          name: "Google Drive + Docs + Sheets",
+          description: "Drive files, Google Docs, and Sheets content.",
           state: "connected",
           connections: [
-            { scope: "personal", state: "connected" },
-            { scope: "workspace", state: "not_connected" },
+            { scope: "personal", state: "connected", connectIn: "conversation" },
+            { scope: "workspace", state: "not_connected", connectIn: "conversation" },
           ],
           accounts: [{ scope: "personal", state: "connected", account: null }],
         },
