@@ -398,11 +398,9 @@ Nothing was backfilled: a Canvas a run wrote before migration 137 reads as
 written by no run until its next publish. The resource versioning layer
 records every version with its run, as it does everywhere; `canvas_artifacts`
 records which resources the Canvas holds. The artifact menu and panel use
-that list. If the Chat's live detail lacks a listed resource, or carries an
-older version, the panel reads it through the authorized resource endpoint.
-A conversation attachment is never a prerequisite for viewing a listed
-artifact. A version somebody else made since a viewer last read the Chat
-makes the Canvas's row unread to them, by
+that list. If the Chat's live detail lacks a listed resource, the panel reads
+it through the authorized resource endpoint. A version somebody else made
+since a viewer last read the Chat makes the Canvas's row unread to them, by
 the rule a pinned artifact's news uses (a republish or replacement, not their
 own or one made on their behalf).
 
@@ -1110,14 +1108,20 @@ why the refresh lease shares the owning object's transaction.
 
 ### 2026-11-16 — Open published artifacts from their Canvas
 
-A background agent and its Canvas Chat share a parent ID. The Terminal
-bridge was using that ID to choose the local resource writer, so it wrote
-the Chat link in the producer's child conversation. The Canvas listed the
-published site, but the panel closed when the Chat snapshot omitted it.
-The panel now recognizes Canvas membership and uses the authorized resource
-read when its Chat copy is missing or old. Terminal routing compares the
-parent and substream IDs so current clients receive the normal Chat update
-and the producer can still use the published resource.
+**What changed.** The panel opens a listed Canvas artifact through the
+authorized resource endpoint when its Chat link is absent. Its menu omits
+the Chat-only Archive action for Canvas artifacts.
+
+**Why.** The Canvas listed a background agent's published newsletter reader,
+but the Chat snapshot omitted the resource and the panel closed on selection.
+
+**Considered and rejected.** Relying on a fleet backfill would leave the
+panel dependent on a second object's link writes. The affected newsletter
+received a targeted repair for installed clients.
+
+**Consequences.** Other already-published artifacts can open in the updated
+panel without a backfill. Terminal still writes the Chat link for realtime
+updates and installed clients. See [Terminal workspaces](terminal-workspaces.md#resources).
 
 ### 2026-11-16 — A Canvas holds one artifact
 

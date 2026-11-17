@@ -7,16 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { CanvasArtifact } from '@rally/contracts';
 import { openResourceState } from '../lib/navigation-routes';
-import type { HarnessRunMetadata, WorkstreamBoot } from '../lib/types';
+import type { HarnessRunMetadata, WorkstreamBoot, WorkstreamResource } from '../lib/types';
 import type * as UseWorkstreamSocketModule from '../lib/use-workstream-socket';
 import { applyHarnessStatus } from '../lib/use-workstream-socket';
-
-/*
- * A Canvas's Chat after a failed run, as a person retries it: the real
- * conversation surface and its failure notice, with only the conversation
- * socket and the session as doubles. The socket's `retryHarness` answers with
- * the new run's id, as the `retry_harness` command does.
- */
 
 const CANVAS = '00000000-0000-7000-8000-000000000c61';
 const FIRST_RUN = '00000000-0000-7000-8000-000000000c62';
@@ -94,14 +87,14 @@ function boot(run: HarnessRunMetadata): WorkstreamBoot {
   } as WorkstreamBoot;
 }
 
-function renderCanvas(conversation: WorkstreamBoot, artifact?: CanvasArtifact): QueryClient {
+function renderCanvas(conversation: WorkstreamBoot, artifact?: CanvasArtifact, openId = artifact?.resourceId): QueryClient {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   queryClient.setQueryData(['workstream', CANVAS], conversation);
   queryClient.setQueryData(['ordered-transcript', CANVAS], conversation.transcript);
   render(<Tooltip.Provider><ErrorNoticeProvider><QueryClientProvider client={queryClient}>
     <MemoryRouter initialEntries={[{
       pathname: `/canvases/${CANVAS}`,
-      ...(artifact ? { state: openResourceState(CANVAS, artifact.resourceId, { expanded: false }) } : {}),
+      ...(openId ? { state: openResourceState(CANVAS, openId, { expanded: false }) } : {}),
     }]}>
       <Routes><Route path="/canvases/:id" element={<ConversationSurface
         canvasArtifacts={artifact ? [artifact] : undefined}
@@ -116,6 +109,7 @@ function renderCanvas(conversation: WorkstreamBoot, artifact?: CanvasArtifact): 
 
 afterEach(() => {
   vi.clearAllMocks();
+  api.getResource.mockReset();
 });
 
 describe('retrying a failed run', () => {
@@ -147,23 +141,57 @@ describe('retrying a failed run', () => {
 });
 
 describe('opening a Canvas artifact', () => {
+  const artifact = {
+    resourceId: '00000000-0000-7000-8000-000000000c64',
+    title: 'Newsletter reader',
+    mimeType: 'text/html',
+    kind: 'site',
+    version: 2,
+    updatedAt: '2026-11-13T19:01:06.000Z',
+  } satisfies CanvasArtifact;
+  const resource = {
+    id: artifact.resourceId, slug: null, title: 'Newsletter reader', resourceType: 'generated_site',
+    provider: 'avalon_generated', mimeType: 'text/html', currentVersion: 2,
+    direction: 'artifact', relationshipType: 'generated', contentAvailable: false,
+    refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported',
+  } satisfies WorkstreamResource;
+  const conversation = () => ({ ...boot(failedRun(FIRST_RUN)), harnessStatus: 'completed' as const });
+
   it('keeps the artifact open when the live Chat has no resource link for it', async () => {
-    const artifact = {
-      resourceId: '00000000-0000-7000-8000-000000000c64',
-      title: 'Newsletter reader',
-      mimeType: 'text/html',
-      kind: 'site',
-      version: 2,
-      updatedAt: '2026-11-13T19:01:06.000Z',
-    } satisfies CanvasArtifact;
-    api.getResource.mockResolvedValueOnce({
-      id: artifact.resourceId, title: 'Newsletter reader', resourceType: 'generated_site',
-      provider: 'avalon_generated', mimeType: 'text/html', currentVersion: 2,
-      direction: 'source', relationshipType: 'attachment', contentAvailable: false,
-    });
-    renderCanvas({ ...boot(failedRun(FIRST_RUN)), harnessStatus: 'completed' }, artifact);
+    api.getResource.mockResolvedValueOnce(resource);
+    renderCanvas(conversation(), artifact);
 
     expect(await screen.findByRole('button', { name: 'Artifact menu: Newsletter reader' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close panel' })).toBeInTheDocument();
+  });
+
+  it('keeps the artifact title and lets the person retry a failed read', async () => {
+    api.getResource.mockRejectedValueOnce(new Error('Connection lost')).mockResolvedValueOnce(resource);
+    renderCanvas(conversation(), artifact);
+
+    expect(await screen.findByText('Couldn’t open the artifact')).toBeInTheDocument();
+    expect(screen.getByText('Newsletter reader')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('button', { name: 'Artifact menu: Newsletter reader' })).toBeInTheDocument();
+  });
+
+  it('omits Archive for a Canvas artifact even when it has a Chat link', async () => {
+    renderCanvas({ ...conversation(), resources: [resource] }, artifact);
+    const menu = await screen.findByRole('button', { name: 'Artifact menu: Newsletter reader' });
+    fireEvent.pointerDown(menu, { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'More' })).not.toBeInTheDocument();
+  });
+
+  it('closes an ordinary resource panel when the live Chat removes its link', async () => {
+    const chat = conversation();
+    const queryClient = renderCanvas({ ...chat, resources: [resource] }, undefined, resource.id);
+    const menu = await screen.findByRole('button', { name: 'Artifact menu: Newsletter reader' });
+    fireEvent.pointerDown(menu, { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: 'More' })).toBeInTheDocument();
+    fireEvent.keyDown(menu, { key: 'Escape' });
+
+    await act(async () => { queryClient.setQueryData(['workstream', CANVAS], chat); });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Close panel', hidden: true })).not.toBeInTheDocument());
   });
 });

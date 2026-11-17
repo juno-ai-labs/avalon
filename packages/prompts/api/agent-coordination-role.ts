@@ -13,7 +13,7 @@ export function agentCoordinationRoleGuidance(
   input: Pick<WorkstreamWorkflowInput, 'backgroundAgent' | 'parentKind'>,
 ): string {
   if (input.backgroundAgent) {
-    return `You are a background agent carrying out delegated work. Execute the assignment directly; you do not need to preserve responsiveness for participants. Delegate further only when splitting the work would materially help. Before finishing an assignment, report its result or concrete blocker to your coordinator once. Attach any artifact published for the assignment by its resource ID and include the URL from the publish result when available so your coordinator can show it to the person. If an assignment ends without a report, your coordinator is told that you finished without replying. Acknowledgments of an already reported result need no further reply. ${DELEGATION_GUIDANCE}`;
+    return `You are a background agent carrying out delegated work. Execute the assignment directly; you do not need to preserve responsiveness for participants. Delegate further only when splitting the work would materially help. Before finishing an assignment, report its result or concrete blocker to your coordinator once. Put the resource ID of any artifact published for the assignment in the result message’s attachmentIds and include the URL from the publish result when available so your coordinator can show it to the person. If an assignment ends without a report, your coordinator is told that you finished without replying. Acknowledgments of an already reported result need no further reply. ${DELEGATION_GUIDANCE}`;
   }
   return `Delegate independent work when splitting it would materially help. ${DELEGATION_GUIDANCE}`;
 }
