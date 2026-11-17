@@ -1324,6 +1324,46 @@ describe('MessageBlock markdown', () => {
     expect(container.querySelector('.citation-pill-pending')).toBeInTheDocument();
   });
 
+  it('draws the streaming caret after the last character, inside its paragraph', () => {
+    const { container } = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text: 'Looking now.\n\nI' }} />);
+    const carets = container.querySelectorAll('.streaming-caret');
+    expect(carets).toHaveLength(1);
+    expect(carets[0]!.parentElement?.tagName).toBe('P');
+    expect(carets[0]!.parentElement?.textContent).toBe('I');
+  });
+
+  it('draws the streaming caret in the last list item, after a link rather than inside it', () => {
+    const { container } = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text: '- one\n- see [docs](https://example.com)' }} />);
+    const caret = container.querySelector('.streaming-caret');
+    expect(caret?.parentElement?.tagName).toBe('LI');
+    expect(caret?.previousElementSibling?.tagName).toBe('A');
+  });
+
+  it('keeps the streaming caret out of an open code block, whose text is its source', () => {
+    const { container } = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text: '```\nconst a = 1;\n' }} />);
+    expect(container.querySelector('pre')?.textContent).toContain('const a = 1;');
+    expect(container.querySelector('pre')?.textContent).not.toContain('[object Object]');
+    expect(container.querySelector('pre .streaming-caret')).toBeNull();
+    expect(container.querySelectorAll('.streaming-caret')).toHaveLength(1);
+  });
+
+  it.each([
+    ['labelled', '```ts\nconst a = 1;\n'],
+    ['unlabelled', 'Intro\n\n```\nconst a = 1;\n```\n\n'],
+  ])('keeps a streaming %s fence a code block', (_kind, text) => {
+    const { container } = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text }} />);
+    expect(container.querySelector('.markdown-code-block')).not.toBeNull();
+    expect(container.querySelector('.markdown-inline-code')).toBeNull();
+    expect(container.textContent).not.toContain('[object Object]');
+  });
+
+  it('draws the caret alone before any text arrives, and none once the message settles', () => {
+    const view = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text: '' }} />);
+    expect(view.container.querySelectorAll('.streaming-caret')).toHaveLength(1);
+    view.rerender(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: false, text: 'Done.' }} />);
+    expect(view.container.querySelector('.streaming-caret')).toBeNull();
+  });
+
   it('keeps document soft wrapping separate from human chat line breaks', () => {
     const { container } = render(<MarkdownBody verbatim>{'First line\nSecond line'}</MarkdownBody>);
     expect(container.querySelector('br')).toBeNull();
