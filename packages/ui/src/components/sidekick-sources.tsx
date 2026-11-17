@@ -45,7 +45,7 @@ function PersonAvatar({ person }: { person: SourcePerson }): React.JSX.Element {
  * outline. Only the person asked is handed `onDecide`; for everyone else, and
  * once answered, the buttons cannot be pressed.
  */
-export function SourceDecisionButtons({ state, subject, onDecide, deciding = null, waitingFor }: {
+export function SourceDecisionButtons({ state, subject, onDecide, deciding = null, waitingFor, approveBlocked, approveSlot }: {
   state: 'pending' | 'approved' | 'declined';
   /** What is being answered, for the buttons' names: "your Gmail for Deals". */
   subject: string;
@@ -55,6 +55,10 @@ export function SourceDecisionButtons({ state, subject, onDecide, deciding = nul
   deciding?: SourceDecision | null;
   /** Who alone can answer, said on hover while a reader cannot. */
   waitingFor?: string | undefined;
+  /** Why Approve cannot be pressed yet (the account is not connected); Decline still can. */
+  approveBlocked?: string | undefined;
+  /** Drawn in Approve's place: the host's "Connect Gmail and approve", one press for both. */
+  approveSlot?: ReactNode;
 }): React.JSX.Element {
   const live = state === 'pending' && onDecide !== undefined;
   // The pair is never dimmed, so a press in flight says so in words: without them nothing on
@@ -64,8 +68,9 @@ export function SourceDecisionButtons({ state, subject, onDecide, deciding = nul
     aria-label={`${label} ${subject}`}
     aria-pressed={chosen}
     className={clsx('source-decision-button', `is-${decision}`, chosen && 'is-chosen')}
-    disabled={!live || deciding !== null}
+    disabled={!live || deciding !== null || (decision === 'approve' && approveBlocked !== undefined)}
     onClick={() => onDecide?.(decision)}
+    title={decision === 'approve' && live ? approveBlocked : undefined}
   >{deciding === decision ? sending : label}</Button>;
   return <div
     className={clsx('source-decision', live && 'is-live')}
@@ -73,7 +78,7 @@ export function SourceDecisionButtons({ state, subject, onDecide, deciding = nul
     title={state === 'pending' && !live && waitingFor ? `Only ${waitingFor} can answer` : undefined}
   >
     {button('decline', 'Decline', 'Declining…', state === 'declined')}
-    {button('approve', 'Approve', 'Approving…', state === 'approved')}
+    {approveSlot ?? button('approve', 'Approve', 'Approving…', state === 'approved')}
   </div>;
 }
 
@@ -87,6 +92,36 @@ function standing(request: SidekickSourceRequestView): string {
   }
 }
 
+/** Whether the person asked must still connect or reconnect before Approve, for a request still waiting. */
+function connectionToMake(request: SidekickSourceRequestView): 'not_connected' | 'reconnect_required' | null {
+  if (request.state !== 'pending' || request.connection === undefined || request.connection === 'connected') return null;
+  return request.connection;
+}
+
+/** Whether that step is the Organization's: an administrator connects it in Settings, not the person asked. */
+function organizationsStep(request: SidekickSourceRequestView): boolean {
+  return request.connect?.scope === 'workspace';
+}
+
+/** What a reader who is not asked is told about that step: "Needs to reconnect Gmail". */
+function connectionWords(state: 'not_connected' | 'reconnect_required', connector: string, organization = false): string {
+  const verb = state === 'reconnect_required' ? 'reconnect' : 'connect';
+  return organization ? `Needs an admin to ${verb} ${connector}` : `Needs to ${verb} ${connector}`;
+}
+
+/**
+ * The host's "Connect Gmail and approve" for the asked person's own request
+ * while its account still has to be connected, drawn in Approve's place so one
+ * press does both, or the host's words for where that step is done instead.
+ * Presentation does not connect anything: the host owns the OAuth flow and
+ * sends the approval once the account works.
+ */
+export type SourceConnectStep = (request: SidekickSourceRequestView) => {
+  control: ReactNode;
+  /** The control connects here, so the card's title can name that step. */
+  connectsHere: boolean;
+};
+
 function subjectOf(request: SidekickSourceRequestView, connector: string): string {
   return `${request.yours ? 'your' : `${request.person.displayName}’s`} ${connector} for ${request.sidekickName}`;
 }
@@ -96,7 +131,7 @@ function subjectOf(request: SidekickSourceRequestView, connector: string): strin
  * can open the conversation sees what was asked, of whom, and where each
  * person stands; only the person asked can press their own row's buttons.
  */
-export function SidekickSourceRequestCardView({ requests, words, live = true, onDecide, deciding = null, details }: {
+export function SidekickSourceRequestCardView({ requests, words, live = true, onDecide, deciding = null, details, connectStep }: {
   /** The requests of one ask, as this reader may see them; `undefined` while the first read is out. */
   requests: readonly SidekickSourceRequestView[] | undefined;
   words: SourceWords;
@@ -106,6 +141,8 @@ export function SidekickSourceRequestCardView({ requests, words, live = true, on
   deciding?: { requestId: string; decision: SourceDecision } | null;
   /** The host's failure notice, which draws nothing or its Details button. */
   details?: ReactNode;
+  /** Drawn for the reader's own waiting request while its account still has to be connected. */
+  connectStep?: SourceConnectStep | undefined;
 }): React.JSX.Element {
   const ask = requests?.[0];
   if (!ask) {
@@ -116,33 +153,48 @@ export function SidekickSourceRequestCardView({ requests, words, live = true, on
   }
   const { connector, events } = words(ask);
   const mark = connectorBrandMark(ask.connectorType, connector);
+  // A reader whose own request waits on their account reads the whole card as that one step.
+  const mine = connectStep ? requests.find((request) => request.yours && connectionToMake(request) && !organizationsStep(request)) : undefined;
+  const mineStep = mine && live && connectStep ? connectStep(mine) : undefined;
+  const mineToMake = mine && mineStep?.connectsHere ? connectionToMake(mine) : null;
   return <article aria-label={`Source request for ${ask.sidekickName}`} className="connector-connection-card source-request-card">
     <div className="connector-connection-card-header">
       {mark && <span aria-hidden="true" className="provider-icon"><ConnectorMark mark={mark} /></span>}
       <div className="connector-connection-card-body">
-        <strong>Start {ask.sidekickName} from {connector}</strong>
+        <strong>{mineToMake
+          ? `${mineToMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} and approve ${ask.sidekickName}`
+          : `Start ${ask.sidekickName} from ${connector}`}</strong>
         <p>{events}{ask.condition ? `, only when ${quoted(ask.condition)}` : ''}</p>
         <small>Asked by {ask.requestedByName}. Only the person asked can answer.</small>
       </div>
     </div>
     <ul aria-label="People asked" className="source-request-people">
-      {requests.map((request) => <li key={request.requestId}>
-        <PersonAvatar person={request.person} />
-        <span className="source-request-person">
-          {request.person.displayName}
-          {request.yours && <small>You</small>}
-          <span className="sr-only">: {standing(request)}</span>
-        </span>
-        {request.state === 'cancelled'
-          ? <span className="source-request-replaced">Replaced by a newer request</span>
-          : <SourceDecisionButtons
-            deciding={deciding?.requestId === request.requestId ? deciding.decision : null}
-            onDecide={live && request.yours && onDecide ? (decision) => onDecide(request, decision) : undefined}
-            state={request.state}
-            subject={subjectOf(request, connector)}
-            waitingFor={request.yours ? undefined : request.person.displayName}
-          />}
-      </li>)}
+      {requests.map((request) => {
+        const toMake = connectionToMake(request);
+        const ownStep = toMake && request.yours && connectStep && live
+          ? (request === mine && mineStep ? mineStep : connectStep(request)).control
+          : undefined;
+        return <li key={request.requestId}>
+          <PersonAvatar person={request.person} />
+          <span className="source-request-person">
+            {request.person.displayName}
+            {request.yours && <small>You</small>}
+            {toMake && !request.yours && <small className="source-request-connection">{connectionWords(toMake, connector, organizationsStep(request))}</small>}
+            <span className="sr-only">: {standing(request)}</span>
+          </span>
+          {request.state === 'cancelled'
+            ? <span className="source-request-replaced">Replaced by a newer request</span>
+            : <SourceDecisionButtons
+              approveBlocked={toMake ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} first` : undefined}
+              approveSlot={ownStep}
+              deciding={deciding?.requestId === request.requestId ? deciding.decision : null}
+              onDecide={live && request.yours && onDecide ? (decision) => onDecide(request, decision) : undefined}
+              state={request.state}
+              subject={subjectOf(request, connector)}
+              waitingFor={request.yours ? undefined : request.person.displayName}
+            />}
+        </li>;
+      })}
     </ul>
     {details}
   </article>;
@@ -195,6 +247,7 @@ export function SidekickSourcesList({ data, loading, words, onDecide, deciding =
         {data.requests.map((request) => {
           const { connector, events } = words(request);
           const answerable = request.yours && request.state === 'pending';
+          const toMake = connectionToMake(request);
           return <li key={request.requestId}>
             <PersonAvatar person={request.person} />
             <span className="sidekick-delegate-copy">
@@ -202,7 +255,12 @@ export function SidekickSourcesList({ data, loading, words, onDecide, deciding =
               <small>Asked by {request.requestedByName} · {events} in {connector}</small>
               {request.condition && <small>Only when {quoted(request.condition)}</small>}
               {!answerable && <small>{standing(request)}</small>}
+              {toMake && <small>{request.yours && !organizationsStep(request)
+                // Connecting happens on the request's card, in the conversation it was asked from.
+                ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} from the request in its conversation first`
+                : connectionWords(toMake, connector, organizationsStep(request))}</small>}
               {answerable && <SourceDecisionButtons
+                approveBlocked={toMake ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} first` : undefined}
                 deciding={deciding?.requestId === request.requestId ? deciding.decision : null}
                 onDecide={(decision) => onDecide(request, decision)}
                 state="pending"

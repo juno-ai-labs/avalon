@@ -68,6 +68,10 @@ vi.mock('../lib/platform', () => ({
   desktopRuntimeConfig: getRuntimeConfig,
   desktopServicesAvailable,
 }));
+// The card owns its add and is tested with it; here it stands for itself and answers as its press would.
+vi.mock('./member-add-card', () => ({
+  MemberAddCard: ({ onAdded }: { onAdded: () => void }) => <button onClick={onAdded} type="button">Add card</button>,
+}));
 vi.mock('../lib/favicon-api', () => ({ useFaviconApi: () => optionalAppSession()?.api ?? null }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
@@ -353,6 +357,21 @@ describe('ElicitationPanel', () => {
     rerender(<Feed visible />);
     expect(screen.getByText(singleSelectElicitation.prompt)).not.toBeVisible();
   });
+  it('answers a question adding someone only from its card: Added is not a choice, Not now is', async () => {
+    const answer = vi.fn().mockResolvedValue(undefined);
+    render(<ElicitationPanel
+      elicitation={{ id: 'add-nancy', prompt: 'Add Nancy as a member?', responseType: 'radio', status: 'open',
+        options: [{ value: 'added', label: 'Added' }, { value: 'declined', label: 'Not now' }],
+        minimumSelections: 1, maximumSelections: 1, allowOther: false, allowSkip: false,
+        member: { email: 'nancy@example.com', name: 'Nancy' } }}
+      onAnswer={answer}
+    />);
+    expect(screen.queryByRole('radio', { name: /Added/u })).toBeNull();
+    expect(screen.getByRole('radio', { name: /Not now/u })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add card' }));
+    await waitFor(() => expect(answer).toHaveBeenCalledWith('added'));
+  });
+
   it('keeps answer and skip diagnostics out of the response control', async () => {
     const answerDiagnostic = 'provider answer failure: request=private';
     const answer = vi.fn().mockRejectedValueOnce(new Error(answerDiagnostic));

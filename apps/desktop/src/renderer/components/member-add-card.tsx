@@ -1,0 +1,63 @@
+import type { MemberCardInput } from '@rally/contracts';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { LoaderCircle, UserPlus } from 'lucide-react';
+
+import { ApiError } from '../lib/api';
+import { useOptionalCollaborationSession } from '../lib/collaboration-session';
+import { useWorkspaceQuery } from '../lib/use-workspace';
+import { Button, ErrorNotice } from './primitives';
+
+/**
+ * `offer_to_add_member`'s card: an admin's press adds them, and `onAdded`
+ * answers the question. The address leads: the name is the model's, and may
+ * come from what it read.
+ */
+export function MemberAddCard({ member, onAdded }: { member: MemberCardInput; onAdded: () => Promise<void> }): React.JSX.Element {
+  const collaboration = useOptionalCollaborationSession();
+  const api = collaboration?.api ?? null;
+  const role = useWorkspaceQuery(collaboration ?? { api: null, session: null }).data?.currentUser.role;
+  const admin = role === 'owner' || role === 'admin';
+  const queryClient = useQueryClient();
+  // Answering is its own step, so a failed answer is retried without adding them twice.
+  const answer = useMutation({ mutationFn: onAdded });
+  const add = useMutation({
+    mutationFn: async (): Promise<{ emailed: boolean }> => {
+      try { return { emailed: (await api!.addWorkspaceMember(member.email, 'member')).emailDelivery !== 'failed' }; }
+      catch (error) {
+        // Already a member is what the press was for.
+        if (!(error instanceof ApiError && error.code === 'already_workspace_member')) throw error;
+        return { emailed: true };
+      }
+    },
+    // On the mutation, not the press: it still answers if the panel collapses mid-request.
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['workspace-members'] });
+      answer.mutate();
+    },
+  });
+  const retry = add.isSuccess && answer.isError;
+  const label = retry ? 'Try again' : add.isSuccess ? 'Added' : add.isPending ? 'Adding…' : 'Add';
+  return <article aria-label={`Add ${member.email} as a member`} className="connector-connection-card member-add-card">
+    <div className="connector-connection-card-header">
+      <span aria-hidden="true" className="provider-icon"><UserPlus size={22} /></span>
+      <div className="connector-connection-card-body">
+        <strong>{member.email}</strong>
+        {member.name && <p>{member.name}</p>}
+        {role !== undefined && !admin && <small>Only admins can add members.</small>}
+        {add.data && !add.data.emailed && <small>Added, but their email could not be sent. Tell them to sign in with this address.</small>}
+      </div>
+      <div className="connector-connection-card-controls">
+        <Button
+          className="connector-connection-card-action button-primary"
+          disabled={!api || !admin || add.isPending || answer.isPending || (add.isSuccess && !retry)}
+          onClick={() => { if (retry) answer.mutate(); else add.mutate(); }}
+          title={role !== undefined && !admin ? 'Only admins can add members.' : undefined}
+        >
+          {(add.isPending || answer.isPending) && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+          {label}
+        </Button>
+      </div>
+    </div>
+    {add.error && <ErrorNotice occurrence={add.error} title={`${member.email} could not be added`}>{add.error.message}</ErrorNotice>}
+  </article>;
+}

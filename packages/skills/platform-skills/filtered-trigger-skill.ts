@@ -45,8 +45,20 @@ fall back to polling a mailbox that a source can cover.
 People can have different filters: "all of mine, only the fundraising mail of
 hers" is two asks.
 
-Resolve each person to an Organization user before going further. If a name
-matches nobody or more than one person, ask which.
+Resolve each person to an Organization member before going further. If a
+name matches more than one person, ask which. If it matches nobody, ask the
+person you work for for their email address. For anyone named by an email
+address, call \`offer_to_add_member\` with it. A member comes back at once with
+their userId. Anyone else gets a card an administrator presses to add them, and
+once it is answered \`added\`, the same call returns their userId; ask them like
+anyone else from there. If the person you work for is not an administrator,
+tell them one must press it. On \`declined\`, leave that person out of the ask
+and say so in step 4.
+
+Whether a person has connected that account yet does not decide whether to ask
+them. Someone who never connected it, or whose sign-in has lapsed, is asked
+like anyone else, so ask now, and never tell the person you work for that a
+colleague must authorize access some other way.
 
 ## 2. Write the filter as a claim about one event
 
@@ -100,9 +112,10 @@ the account of the person you are working for. Read the result as evidence:
   carry.
 - \`classifier_unavailable\`, or a result that says the filter was not judged,
   says nothing about the filter. Say so and rely on the wording.
-- A result with no events means that account has had none of that type, or the
-  type is misspelled: check it against the connector's declared events. It
-  does not mean the filter refuses everything.
+- A result with no events means that account has had none of that type, the
+  type is misspelled (check it against the connector's declared events), or
+  you have not connected that account yet (rely on the wording; your request
+  connects it). It does not mean the filter refuses everything.
 
 The events are the person's own mail. Report what you learned as counts and
 kinds. Never quote an event's subject, sender or snippet in a reply or in a
@@ -127,13 +140,16 @@ and an event that should not have been shared cannot be taken back.
 3. Settle the events of the person you are working for. Saving the trigger in
    step 1 let every one of their own events of that type in, unfiltered. When
    theirs should be filtered too, include them in the ask with the filter.
-   Theirs waits for them like anybody's: tell them to press Approve on the
-   request, which is shown where they asked (a Canvas's Chat that messaged
+   Theirs waits for them like anybody's: tell them to press Approve (or
+   Connect and approve, if they have not connected) on the request, which is shown where they asked (a Canvas's Chat that messaged
    you shows it too), and that their events stay unfiltered until they do. When theirs should not start the Sidekick at all, tell them, and
    tell them they can stop their own under Sources on the Sidekick's page.
 4. Tell the person what happens next, plainly: who was asked, that each of
    them decides in Rally, or from the email when they get one, and that a
-   person's events start arriving only after they approve.
+   person's events start arriving only after they approve. Each request's
+   \`connection\` says whether that person still has to connect
+   (\`not_connected\`) or reconnect (\`reconnect_required\`) the account; name
+   them, and say how, as the request's tool result describes.
    An ask is not an approval; never report one as the other.
 
 \`sidekick_sources_list\` shows who has approved and who has not.

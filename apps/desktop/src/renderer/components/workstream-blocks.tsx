@@ -21,7 +21,8 @@ import {
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
-import { CONNECTION_QUESTION_CONTINUE_ANSWER, personalColorKey, type AutomationPluginActivity } from '@rally/contracts';
+import { CONNECTION_QUESTION_CONTINUE_ANSWER, MEMBER_QUESTION_ADDED_ANSWER, personalColorKey, type AutomationPluginActivity } from '@rally/contracts';
+import { MemberAddCard } from './member-add-card';
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
   Check,
@@ -2710,7 +2711,9 @@ export function ElicitationPanel({
     }
   };
 
-  const options = elicitation.options ?? [];
+  // On a question adding someone, Added is the card's own answer, sent by the press that adds them:
+  // offered as a choice it would let anyone resume the run with nobody added.
+  const options = (elicitation.options ?? []).filter((option) => !(elicitation.member && option.value === MEMBER_QUESTION_ADDED_ANSWER));
   // The question is a label, not a body: it is shown as plain text, so it takes
   // the plain-text repair rather than being sent through `MarkdownBody`.
   const prompt = normalizeModelText(elicitation.prompt);
@@ -2773,6 +2776,17 @@ export function ElicitationPanel({
               setError('Your response couldn’t be saved. Try again.');
             }); } }
             : {})}
+        />
+      )}
+      {elicitation.member && (
+        // A question adding someone answers: the press adds them and answers
+        // `added` for the person, so the run resumes and can ask them things.
+        <MemberAddCard
+          member={elicitation.member}
+          onAdded={() => onAnswer(MEMBER_QUESTION_ADDED_ANSWER).catch((error: unknown) => {
+            setError('Your response couldn’t be saved. Try again.');
+            throw error;
+          })}
         />
       )}
       {isText ? (

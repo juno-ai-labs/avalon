@@ -20,9 +20,12 @@ the read-side authorization primitive that composes resource access belongs to
 | `packages/db/migrations/0001_initial.sql` | `workspace_members(workspace_id, user_id, role, status, …)` — one row per person per workspace, `role` constrained to `owner`/`admin`/`member`. Unchanged since the first migration. |
 | `packages/contracts/src/index.ts` | `MemberRoleSchema` (all three roles, as read) and `AssignableMemberRoleSchema` (`admin`/`member` — the roles an administrator may hand out). `WorkspaceInvitationRoleSchema` is the same schema, so an invitation and a promotion cannot drift. |
 | `apps/api/src/middleware/auth.ts` | Resolves `auth.role` from `workspace_members` on **every** request, and `requireWorkspaceAdmin` — the route-level gate. |
-| `apps/api/src/services/workspace-service.ts` | `setMemberRole` (the one write that changes a role), `createInvitation` (the role a future membership arrives with), `removeMember` and `leaveWorkspace` (the owner counts that keep a workspace owned), and the private `requireAdmin` every workspace-administration method starts with. |
-| `apps/api/src/routes/workspace.ts` | `PATCH /workspace/members/:userId/role`. |
-| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (promote/demote or make member, and suspend), and the invitation role selector. A guest sees the same list, without the row controls. |
+| `apps/api/src/services/workspace-service.ts` | `setMemberRole` (the one write that changes a role), `addMember` (the role someone added by address is a member with at once), `removeMember` and `leaveWorkspace` (the owner counts that keep a workspace owned), and the private `requireAdmin` every workspace-administration method starts with. |
+| `apps/api/src/routes/workspace.ts` | `PATCH /workspace/members/:userId/role`, `POST /workspace/members` (`addMember`), and the legacy `POST /workspace/invitations`, which adds a member for older builds and answers in the old invitation shape. |
+| `apps/api/src/services/member-by-address.ts` | `memberByAddress`: the account a verified address names and its place in this Organization, read by `addMember` and `offer_to_add_member`. |
+| `packages/contracts/src/member-card.ts` | `MemberCardInputSchema` and the member question's options, shared by the tool and the card. |
+| `apps/desktop/src/renderer/components/member-add-card.tsx` | `MemberAddCard`: the add button an agent's member question shows, live for owners and administrators. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (promote/demote or make member, and suspend), and the Add members role selector. A guest sees the same list, without the row controls. |
 | `apps/desktop/src/renderer/lib/session-workspace.ts` | Why the role the desktop holds is a *presentation* input and never an authorization one. |
 
 ## How it works
@@ -36,10 +39,28 @@ A membership acquires its role in one of three ways:
 
 - **Creation.** Whoever creates a workspace is inserted as `owner`
   (`auth-service.ts`, `platform-onboarding-service.ts`).
-- **Invitation.** `createInvitation` stores an `AssignableMemberRole` on the
-  invitation row, and acceptance copies it onto the new membership. Acceptance
-  never *lowers* a role that already exists: its `ON CONFLICT` clause keeps an
-  existing `owner` or `admin`.
+- **Adding.** `addMember` (`POST /workspace/members`) makes the address an
+  active member with an `AssignableMemberRole` at once. Someone who has never
+  signed in gets an account then, shaped as their first email sign-in would
+  make it: the address bound as verified and as their email login, so signing
+  in with it by email, Google or Apple reaches that account. Only a verified
+  address names an existing account (`memberByAddress`, the rule sign-in
+  keeps); an address an account holds unverified is refused
+  (`member_address_unverified`), not added. A guest becomes a member. The
+  account is made eligible for first-Organization setup under the rule
+  `makeFirstOrganizationEligible` keeps, in Global only, since Global owns the
+  setup flag and overwrites a region's copy. Someone added to their first
+  Organization outside Global is not sent through setup yet. Outside Global the
+  account's `platform_user_id` is left empty for its first sign-in to link,
+  by an address Global verified
+  ([`multiple-workspaces.md`](multiple-workspaces.md#authority-and-data-flow)). It never *lowers* a role that already exists: its `ON CONFLICT`
+  clause keeps an existing `owner` or `admin`. It revokes any older invitation
+  still waiting for the address, and emails them that they were added; a failed
+  send leaves the membership and answers `emailDelivery: "failed"`. `POST
+  /workspace/invitations`, which builds from before this still call, does the
+  same and answers in the old invitation shape. Invitations sent before this
+  can still be accepted, which copies their role onto the membership the same
+  way.
 - **Assignment.** `WorkspaceService.setMemberRole` sets the role on a membership
   that already exists. This is the only way a workspace grows a second
   administrator after the fact, and it is what `PATCH
@@ -96,20 +117,23 @@ stay on the conversation's own participants.
   feature.
 - **A workspace always has at least one active administrator.** A workspace with
   none cannot be recovered from inside the product: no administrator means no
-  invitation, no promotion, and no way back. `setMemberRole` refuses a demotion
+  adding, no promotion, and no way back. `setMemberRole` refuses a demotion
   that would empty the set, with `last_workspace_administrator`.
 - **`owner` is not assignable, and an owner is not a target.** The founding
   membership is what `leaveWorkspace` and `removeMember` count when they refuse
   to leave a workspace unowned; letting `setMemberRole` hand it around would put
   a second module in charge of an invariant those two enforce. Transferring
   ownership is a separate operation that does not exist yet.
-- **Only an active membership has a role to change.** Somebody who has not
-  accepted their invitation is not a member to promote — the invitation carries
-  their role, and reissuing one is how it changes.
+- **Only an active membership has a role to change.** Someone added by address
+  is active at once, so their role changes like anyone's. An invitation sent
+  before adding replaced invitations carries its role until accepted.
 - **A guest holds no role, and never acquires one here.** `workspace_members`
   enforces `access_class = 'guest' AND role IS NULL` with a `CHECK`. Giving a
-  guest a role means promoting their *access class* first, through
-  `promoteGuest`, which is a different operation on a different field.
+  guest a role means making them a member first: `promoteGuest`, with its
+  compare-and-swap on the guest row, or `addMember` by their verified address,
+  whose upsert sets the access class and the role in one statement. That needs
+  no compare-and-swap: it writes the whole membership from what the
+  administrator asked, rather than changing one field of a row it read.
 - **The role the desktop holds decides what is *drawn*, never what is
   *allowed*.** Every control it draws is refused server-side for a member, so a
   stale role costs a redraw and nothing else. This is also what makes a lost
@@ -136,7 +160,10 @@ assigns it. It does **not** own:
   exists, and nothing here is built as a step toward one.
 
 Callers are the authenticated desktop client through
-`PATCH /workspace/members/:userId/role`. There is no operator door and no
+`PATCH /workspace/members/:userId/role`, `POST /workspace/members` and the
+legacy `POST /workspace/invitations`, and the press on an agent's
+`MemberAddCard`, which calls `POST /workspace/members` with the presser's own
+session. There is no operator door and no
 Durable Object path: roles live in regional D1 and only the Worker writes them.
 
 ## Failure modes and limits
@@ -146,7 +173,13 @@ Durable Object path: roles live in regional D1 and only the Worker writes them.
 | `workspace_admin_required` | 403 | The caller is an ordinary member. |
 | `member_not_found` | 404 | Nobody by that id belongs to this workspace. |
 | `cannot_change_owner_role` | 403 | The target is the workspace owner. |
-| `member_not_active` | 409 | The target has not accepted their invitation. |
+| `member_not_active` | 409 | The target is not active: suspended, or holding an invitation from before adding that is still waiting. |
+| `already_workspace_member` | 409 | `addMember`: the address already names an active member here. |
+| `member_address_unverified` | 409 | `addMember`: an account holds the address without having verified it, so adding it would add whoever typed that profile address. |
+| `member_account_unavailable` | 409 | `addMember`: no account could be made or found for the address after the write. |
+| `workspace_not_found` | 404 | `addMember`: the Organization is gone or abandoned. |
+| — (logged only) | 201 | `addMember` added the member but the "you were added" email failed: `workspace_member_added_email_failed`, and the response says `emailDelivery: "failed"`. |
+| — (logged only) | 201 | `addMember` added the member but dispatching the relationship change or the directory push failed: `workspace_relationship_dispatch_failed` or `search_authorization_member_push_failed`. The scheduled retry delivers the relationship later. |
 | `last_workspace_administrator` | 409 | The demotion would leave the workspace with no administrator. |
 | `member_is_guest` | 409 | The target is a guest, who holds no role until `promoteGuest` moves their access class. |
 | `membership_changed` | 409 | The conditional write lost a race; nothing was written. |
@@ -169,7 +202,10 @@ asked for, and inventing a ceiling here would be
   and it is *asserted on*, both for the two topics a committed change publishes
   and for the silence a no-op or a refusal owes. A double nobody asserts on lets
   the call be deleted with the suite still green.
-- `apps/api/test/workspace-and-invitations.test.ts` — the invitation role gate.
+- `apps/api/test/workspace-and-invitations.test.ts` — `addMember` against the
+  checked-in migrations: the account it makes for a new address and that
+  address's first sign-in, the refusal of an address held unverified, a guest
+  made a member, and an existing role kept.
 - `apps/desktop/src/renderer/screens/workspace-settings.test.tsx` — the viewer
   that matters is an administrator who is **not** the owner: rendering the owner
   there would stay green against a renderer regressed to owner-only, which is
@@ -183,6 +219,29 @@ enforces. A test that seeds an owner can never reach the guard, and would have
 proved only that the owner was there.
 
 ## Changelog
+
+### 2026-11-16 — Adding someone makes them a member at once
+
+**What changed:** `createInvitation` is gone. `addMember` creates the account
+for an address that has none, inserts an active membership, dispatches the
+relationship change, and emails the person. The invitation route answers older
+builds by doing the same. The accept path stays for invitations already sent.
+
+**Why:** The owner removed the invitation step. Until someone accepted, they
+had no user id, so no agent could ask anything of them: a Sidekick meant to
+read Bob's and Nancy's mail could not ask Nancy, and nothing would ask her
+after she joined.
+
+**Considered and rejected:** A source request that waits on an invitation's
+address and turns into Nancy's request when she accepts: a second kind of
+pending person in every feature that names people, where membership at once
+gives every feature a user id to work with.
+
+**What a future change has to respect:** The account made for an address is
+bound to it as verified, so proving the address is what grants the account.
+An address an account holds unverified is refused, never added: it names
+whoever typed it. Adding asks nothing of the person added; any existing
+account can be made a member by an administrator.
 
 ### 2026-10-24 — Guests can see who is in the Organization
 
