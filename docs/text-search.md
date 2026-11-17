@@ -207,7 +207,8 @@ control-effect messages run concurrently. Source messages are acknowledged after
 document-job publication. Document messages are acknowledged after lexical indexing, durable embedding-batch publication,
 and canonical revalidation; embedding messages are acknowledged after their batch
 and post-write freshness checks finish; individual failures request a
-Queue retry and eventually use the existing regional dead-letter queue. Reusing the
+backed-off Queue retry (`queueRetryDelaySeconds`: 5 s doubling to a 300 s cap)
+and eventually use the existing regional dead-letter queue. Reusing the
 existing Queue avoids a second transport and rollout configuration for the same
 source references. configured deployments stay on their respective Workers and queues.
 
@@ -738,6 +739,33 @@ with `--class=WorkspaceDO`. Constructors still apply migrations on ordinary
 wakeups; the CLI provides the eager fleet pass without the retired tracker.
 
 ## Changelog
+
+### 2026-11-15 — Back off a failed search delivery before redelivering it
+
+**What changed:** A search delivery that fails is retried after
+`queueRetryDelaySeconds(attempts)` (`queues/retry-backoff.ts`: 5 s doubling to
+300 s) instead of immediately. The helper is the schedule the activity
+consumer's other lanes, the interactive queue and GitHub delivery each already
+spelled out inline; they now call it.
+
+**Why:** Undelayed retries spent all five attempts in seconds, before a
+streaming turn (`search_source_changed`) or a pending link capture
+(`search_capture_retry_required`) could settle, so those document jobs
+dead-lettered and a link's captured page was never indexed.
+
+**Considered and rejected:** Acknowledging `search_source_changed` outright on
+the ground that the newer revision publishes its own job. The same error also
+covers an equal-revision extraction change and a display change, which have no
+later job and must be rewritten by the retry. Raising `max_retries` is a
+deploy-configuration number for the team and would still spend the extra
+attempts in seconds.
+
+**Consequences:** The five retries now span about 155 s rather than seconds. A
+cause that outlasts that still dead-letters, which remains the signal. The
+delay schedule is one number for every backed-off lane; changing it changes
+them all.
+
+Shipped in #1606's re-land.
 
 ### 2026-11-10 — Count span tokens from additive cuts during chunk planning
 
