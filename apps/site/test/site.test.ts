@@ -207,15 +207,25 @@ describe('public Rally site', () => {
     expect(column('Blog')).toEqual(['/blog/', `/blog/${blogPosts[0]?.slug ?? ''}/`]);
   });
 
+  it('links the GitHub repository from every header marker', () => {
+    for (const marker of ['site-nav', 'reading-nav', 'market-header', 'github-link', 'github-header-link']) {
+      const links = [...renderSiteChrome(`<!-- rally:${marker} -->`).matchAll(/<a [^>]*href="https:\/\/github\.com\/[^"]+"[^>]*>/gu)].map(([tag]) => tag);
+      expect(links, marker).toHaveLength(1);
+      expect(links[0], marker).toContain('href="https://github.com/juno-ai-labs/avalon"');
+    }
+  });
+
   it('refuses an unknown marker', () => {
     expect(() => renderSiteChrome('<!-- rally:comparison-table -->')).toThrow('Unknown site chrome marker: comparison-table');
   });
 
-  it('lists the section links and the rolling sign-in button in the shared header, without Blog', () => {
+  it('lists the section links, GitHub and the rolling sign-in button in the shared header, without Blog', () => {
     const nav = renderSiteChrome('<!-- rally:site-nav -->');
     const links = [...nav.matchAll(/<a [^>]*href="([^"]+)"([^>]*)>(.*?)<\/a>/gu)];
-    expect(links.map(([, href, attrs, body]) => `${/aria-label="([^"]+)"/u.exec(attrs ?? '')?.[1] ?? body} ${href}`)).toEqual([
+    const text = (body: string | undefined): string => (body ?? '').replace(/<svg[\s\S]*?<\/svg>|<[^>]+>/gu, '');
+    expect(links.map(([, href, attrs, body]) => `${/aria-label="([^"]+)"/u.exec(attrs ?? '')?.[1] ?? text(body)} ${href}`)).toEqual([
       'Canvases /canvases/', 'Sidekicks /sidekicks/', 'Pricing /#pricing',
+      'GitHub https://github.com/juno-ai-labs/avalon',
       'Sign in to Rally or sign up for Rally https://app.rallywith.ai',
     ]);
     expect(nav).toContain('<span>Sign in to Rally</span><span>Sign up for Rally</span>');

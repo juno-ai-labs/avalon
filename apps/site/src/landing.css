@@ -106,6 +106,7 @@ h1,h2,h3,p{margin:0}
 .site-header nav{display:flex;align-items:center;gap:28px;font-size:14px}
 .header-link{color:var(--text-2);transition:color .15s}
 .header-link:hover,.header-link[aria-current]{color:var(--text)}
+.github-link{display:inline-flex;align-items:center;gap:6px}
 .wordmark{display:inline-flex;align-items:center;gap:8px;font-family:var(--display-font);font-size:30px;line-height:1;letter-spacing:-.02em}
 .wordmark img{width:22px;height:22px}
 

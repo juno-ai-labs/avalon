@@ -11,6 +11,8 @@ here.
 | Path | Responsibility |
 | --- | --- |
 | `apps/site/src/site-chrome.ts` | `trustPages`, `blogPosts`, the header and footer renderers, the blog sitemap, `/llms.txt`, and the marker table. |
+| `apps/site/src/site-icons.ts` | `externalArrow` and `githubLink`, the header GitHub link every header renderer and the `github-link` and `github-header-link` markers use. |
+| `apps/site/src/marketplace-catalog.ts`, `apps/site/build/help/layout.ts` | The marketplace and help center headers, rendered outside `site-chrome.ts`. |
 | `apps/site/src/html.ts` | `escapeHtml` and `longDate`, shared by every page rendered at build time. |
 | `apps/site/vite.config.ts` | `rally-site-chrome` swaps markers for markup; `rally-markdown-pages` renders the blog, described in [`site-blog.md`](site-blog.md). |
 | `apps/site/src/landing.css` | Header and footer styles, in the landing page's tokens. |
@@ -62,6 +64,31 @@ build, serve `dist` with `vite preview`, and screenshot the footer at 1440px and
 390px.
 
 ## Changelog
+
+### 2026-11-17: Every header links the GitHub repository
+
+**What changed:** Rally is open source, so every site header links
+`github.com/juno-ai-labs/avalon`. `githubLink(className?)` in `site-icons.ts`
+holds the URL and mark; `renderSiteNav`, `renderReadingNav`,
+`renderMarketHeader` and the help layout call it, and two markers carry it into
+hand-written headers: `rally:github-link` (the homepage) and
+`rally:github-header-link` (the Trust Center navs, whose links are
+`.header-link`). At 650px and below the homepage and marketplace navs show only
+the mark and keep the label for screen readers.
+
+**Why:** Visitors had no way to find the code from the site.
+
+**Considered and rejected:** Copying the SVG into the homepage and Trust Center
+HTML. Every page already runs through the marker plugin, and a copy drifts when
+the URL or mark changes. A `data-site-action` for the link was also left out:
+`SITE_ACTION_LINKS` is a closed set, and counting GitHub clicks would widen it.
+
+**Consequences:** In `landing.css` the `.github-link` rule must stay before the
+860px query, or it overrides that query's `.header-link{display:none}` and the
+link shows alone beside the sign-in button. The `.github-link` alignment rule
+is repeated in `home.css`, `landing.css`, `reading.css` and `help.css`; change
+them together. The Trust Center navs are still hand-written, but their GitHub
+link comes from the marker.
 
 ### 2026-11-16: The comparison pages are removed
 

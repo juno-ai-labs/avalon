@@ -14,6 +14,7 @@ import { TEMPLATE_CONNECTORS, TEMPLATE_PLUGINS, templateConnectorHelpPath, type 
 import { escapeHtml as escape } from './html';
 import { renderConnectorMark, renderPluginGlyph } from './connector-marks';
 import { renderReadingCard } from './reading-card';
+import { githubLink } from './site-icons';
 
 const ORIGIN = 'https://rallywith.ai';
 const APP_ORIGIN = 'https://app.rallywith.ai';
@@ -64,7 +65,7 @@ const chipList = (chips: readonly string[], className: string, label: string): s
 export function renderMarketHeader(current: 'page' | 'true' = 'page'): string {
   return '<header class="home-header"><a class="home-logo" href="/" aria-label="Rally home"><img src="/brand/rally-mark-ink.svg" width="32" height="32" alt="" />rally</a>'
     + `<nav class="home-nav" aria-label="Primary"><a href="/#canvases">Canvases</a><a href="/marketplace/" aria-current="${current}">Marketplace</a>`
-    + '<a href="/#pricing">Pricing</a><a href="/help/">The manual</a></nav>'
+    + '<a href="/#pricing">Pricing</a><a href="/help/">The manual</a>' + githubLink() + '</nav>'
     + `<a class="header-login" data-site-action="sign-in-header" href="${APP_ORIGIN}">Open Rally <span aria-hidden="true">${arrow}</span></a></header>`;
 }
 

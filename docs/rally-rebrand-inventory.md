@@ -236,6 +236,11 @@ top-level URLs remain only as permanent compatibility redirects. Internal
 noindex concept studies remain in the tree but are not a production navigation
 surface.
 
+Every site header links the public repository, `github.com/juno-ai-labs/avalon`,
+so the code name is now visible in that link's URL and on the page it opens.
+Renaming the repository is cheap later: GitHub redirects a renamed repository,
+and the URL lives in one place, `apps/site/src/site-icons.ts`.
+
 Mailboxes printed by the site use `@rallywith.ai`. Superseded invitation and
 notification addresses elsewhere remain governed by the retirement conditions
 in [`domain-migration.md`](domain-migration.md), not by this completed site pass.

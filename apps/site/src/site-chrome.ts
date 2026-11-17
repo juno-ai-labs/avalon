@@ -12,7 +12,7 @@ import { renderLiveCarousel } from './live-examples';
 import { renderHomeIllustration } from './home-illustrations';
 import { renderHomePricing } from './home-pricing';
 import { marketplaceTemplates, renderMarketHeader, renderMarketplaceCards, renderMarketplaceFilters, templatePagePath } from './marketplace-catalog';
-import { externalArrow } from './site-icons';
+import { externalArrow, githubLink } from './site-icons';
 
 /** Every blog post, read from `content/blog/YYYY-MM-DD-<title>.md`, newest first. */
 export const blogPosts: readonly BlogPost[] = loadBlogPosts(new URL('../content/blog/', import.meta.url));
@@ -34,6 +34,7 @@ const ORIGIN = 'https://rallywith.ai';
 export function renderSiteNav(): string {
   return '<nav aria-label="Primary"><a class="header-link" href="/canvases/">Canvases</a><a class="header-link" href="/sidekicks/">Sidekicks</a>'
     + '<a class="header-link" href="/#pricing">Pricing</a>'
+    + githubLink('header-link github-link')
     // The web app signs in and signs up through one door, so the label rolls between the two.
     + '<a class="button button-small header-sign-in" data-site-action="sign-in-header" href="https://app.rallywith.ai" aria-label="Sign in to Rally or sign up for Rally">'
     + '<span class="header-sign-in-wheel" aria-hidden="true"><span>Sign in to Rally</span><span>Sign up for Rally</span></span></a></nav>';
@@ -42,7 +43,7 @@ export function renderSiteNav(): string {
 /** A quiet header for the new reading pages; the earlier product pages keep their own nav. */
 function renderReadingNav(): string {
   return '<nav class="reading-nav" aria-label="Primary"><a href="/canvases/">Canvases</a><a href="/sidekicks/">Sidekicks</a>'
-    + `<a href="/#pricing">Pricing</a><a href="/help/">The manual ${externalArrow}</a>`
+    + `<a href="/#pricing">Pricing</a><a href="/help/">The manual ${externalArrow}</a>${githubLink()}`
     + `<a class="header-login" data-site-action="sign-in-header" href="https://app.rallywith.ai">Open Rally ${externalArrow}</a></nav>`;
 }
 
@@ -192,6 +193,9 @@ const markers: Record<string, () => string> = {
   'site-footer-without-casa': () => renderSiteFooter({ casaLink: false }),
   'casa-badge': renderCasaBadge,
   'market-header': renderMarketHeader,
+  'github-link': () => githubLink(),
+  // For hand-written headers whose links are styled as `.header-link`, such as the Trust Center's.
+  'github-header-link': () => githubLink('header-link github-link'),
   'marketplace-filters': renderMarketplaceFilters,
   'marketplace-cards': renderMarketplaceCards,
 };
