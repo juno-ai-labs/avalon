@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { renderCorePluginSystemMessage } from "./core-plugin";
 
-const none = { currentTime: false, elicitation: false, connectorConnection: false, connectorList: false, resourceAccess: false };
+const none = { currentTime: false, elicitation: false, addMember: false, connectorConnection: false, connectorList: false, resourceAccess: false };
 
 describe("core plugin system message", () => {
   it("tells a loop that can show a card to offer a missing connector", () => {

@@ -223,10 +223,6 @@ export function resolveWorkspaceConnectorResource(
       request.providerResourceId,
     ).toArray()[0];
     if (existing) {
-      if (request.protectedAccessJson) {
-        storage.sql.exec("UPDATE resources SET protected_access_json = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
-          request.protectedAccessJson, request.at, existing.id, request.workspaceId);
-      }
       return WorkspaceConnectorResourceResolveResultSchema.parse({
         resourceId: existing.id,
         outcome: "existing",
@@ -235,9 +231,9 @@ export function resolveWorkspaceConnectorResource(
     storage.sql.exec(
       `INSERT INTO resources
          (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
-          title, canonical_url, protected_access_json, metadata_json, created_at, updated_at,
+          title, canonical_url, metadata_json, created_at, updated_at,
           revision_author_kind, revision_author_connection_id, revision_cause)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, 'connector', ?, 'created')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, 'connector', ?, 'created')`,
       request.candidateResourceId,
       request.workspaceId,
       request.connectionId,
@@ -246,7 +242,6 @@ export function resolveWorkspaceConnectorResource(
       request.providerResourceId,
       request.title,
       request.canonicalUrl,
-      request.protectedAccessJson ?? null,
       request.at,
       request.at,
       request.connectionId,
