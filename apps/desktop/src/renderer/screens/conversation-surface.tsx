@@ -1409,8 +1409,7 @@ function ConversationSurfaceContent({
   const siteArtifacts = useSiteArtifacts(api);
   const canvasArtifact = canvasArtifacts?.find((artifact) => artifact.resourceId === resourcePanel?.resourceId);
   const conversationResource = routedDetail?.resources.find((resource) => resource.id === resourcePanel?.resourceId);
-  const readCanvasArtifact = Boolean(api && canvasArtifact
-    && (!conversationResource || conversationResource.currentVersion < canvasArtifact.version));
+  const readCanvasArtifact = Boolean(api && canvasArtifact && !conversationResource);
   const canvasArtifactResource = useQuery({
     queryKey: ['canvas-artifact-resource', id, canvasArtifact?.resourceId, canvasArtifact?.version],
     queryFn: async ({ signal }): Promise<WorkstreamResource> => ({
@@ -1420,7 +1419,7 @@ function ConversationSurfaceContent({
     }),
     enabled: readCanvasArtifact,
   });
-  const panelResource = (readCanvasArtifact ? canvasArtifactResource.data : undefined) ?? conversationResource;
+  const panelResource = conversationResource ?? (readCanvasArtifact ? canvasArtifactResource.data : undefined);
   useEffect(() => {
     if (!resourcePanel || canvasArtifact || canvasArtifacts === null || conversationResource) return;
     // A device cache can predate an attachment. Only the live conversation
@@ -2809,6 +2808,7 @@ function ConversationSurfaceContent({
       {railVariant === 'context' && resourcePanel && (railOpen || railLeaving) && <InspectorRail
         panel={{
           resourceId: resourcePanel.resourceId,
+          ...(canvasArtifact ? { title: canvasArtifact.title } : {}),
           focusOnOpen: resourcePanel.focusOnOpen,
           onClose: closeOwnRail,
           expandAction: panelExpandAction,
@@ -2824,24 +2824,37 @@ function ConversationSurfaceContent({
               ? 'refresh'
               : attachResource.error ? 'attach' : undefined}
         leaving={railLeaving}
-        {...(substreamId === '0' && (!canvasArtifact || conversationResource) ? {
+        {...(substreamId === '0' ? {
           onAddResource: () => setResourceDialogOpen(true),
-          onDetachResource: (resource: WorkstreamResource) => detachResource.mutateAsync(resource),
           onRefreshResource: (resource: WorkstreamResource) => refreshResource.mutate(resource),
           onToggleWatch: (resource: WorkstreamResource, enabled: boolean) => watchResource.mutate({ resource, enabled }),
+          // A Chat detach leaves the Canvas's published artifact listed.
+          ...(!canvasArtifact && canvasArtifacts !== null ? {
+            onDetachResource: (resource: WorkstreamResource) => detachResource.mutateAsync(resource),
+          } : {}),
         } : {})}
         onOpenResourceVersion={openResourceVersion}
         {...(api && isGeneratedArtifact(resourcePanel.resourceId) ? {
           onRenameResource: (resource: WorkstreamResource, title: string) => renameResource.mutateAsync({ resource, title }),
         } : {})}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
-        resource={panelResource ?? (readCanvasArtifact && canvasArtifactResource.isError ? null : undefined)}
-        resourcePending={canvasArtifacts === null || (readCanvasArtifact && canvasArtifactResource.isPending)}
+        resource={panelResource}
+        resourcePending={canvasArtifacts === null}
         resourceVersions={resourceVersions.data}
         resourceVersionsFailed={Boolean(resourceVersions.error)}
         {...(siteArtifacts ? { siteArtifacts } : {})}
         workstream={displayedDetail}
-      />}
+      >
+        {readCanvasArtifact && !panelResource
+          ? canvasArtifactResource.isError
+            ? <EmptyState
+              title="Couldn’t open the artifact"
+              description="Try loading it again."
+              action={<Button onClick={() => void canvasArtifactResource.refetch()}>Retry</Button>}
+            />
+            : <LoadingState label="Opening artifact…" />
+          : null}
+      </InspectorRail>}
 
       {railVariant === 'browser' && (railOpen || railLeaving) && window.rally && <EmbeddedBrowserRail
         leaving={railLeaving}
