@@ -7,9 +7,7 @@
 // stream_started/stream_delta MessageEvents onto the substream socket, with
 // the wire cadence produced by an exact emulation of the production batcher
 // on the work-stream socket path (createSequencedStreamDeltaBatcher in
-// apps/api/src/services/integrations.ts — the only batcher on that path;
-// createTextDeltaBatcher in packages/agent-harness batches the automation
-// compiler's narration on a different surface), so injected frames have the
+// apps/api/src/services/integrations.ts, the only batcher), so injected frames have the
 // burst shape a real turn has — and a cadence experiment is a driver option
 // rather than a server change.
 //
@@ -128,22 +126,25 @@ function buildTokens(totalChars, tokenChars) {
 // ------------------------------------------------------ batcher emulation ---
 
 // Behavioural copy of createSequencedStreamDeltaBatcher, the one batcher on
-// the work-stream socket path: the flush condition is evaluated only inside
-// push, against time since the last flush — there is no timer. Token i
-// arrives at i * interval on the simulated clock.
+// the work-stream socket path: a push flushes when the window has passed since
+// the last flush, and a trailing timer sends held text at the window's end when
+// no later push does. Token i arrives at i * interval on the simulated clock.
 function scheduleFrames(tokens, tokenIntervalMs, { maxCharacters, maxDelayMs }) {
   const frames = [];
   const batcher = { pending: '', last: 0 };
+  const send = (at) => {
+    frames.push({ at, delta: batcher.pending });
+    batcher.pending = '';
+    batcher.last = at;
+  };
   tokens.forEach((token, index) => {
     const at = index * tokenIntervalMs;
+    const deadline = batcher.last + maxDelayMs;
+    if (batcher.pending && deadline < at) send(deadline);
     batcher.pending += token;
-    if (batcher.pending.length >= maxCharacters || at - batcher.last >= maxDelayMs) {
-      frames.push({ at, delta: batcher.pending });
-      batcher.pending = '';
-      batcher.last = at;
-    }
+    if (batcher.pending.length >= maxCharacters || at - batcher.last >= maxDelayMs) send(at);
   });
-  if (batcher.pending) frames.push({ at: tokens.length * tokenIntervalMs, delta: batcher.pending });
+  if (batcher.pending) send(Math.min(batcher.last + maxDelayMs, tokens.length * tokenIntervalMs));
   return frames;
 }
 
