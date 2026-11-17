@@ -820,7 +820,9 @@ surface. This is event-driven revalidation, not polling and not a second socket.
 **What changed:** `createSequencedStreamDeltaBatcher` sets a trailing timer when
 it holds text, so held text is sent within `maxDelayMs` even if no later
 fragment arrives. Push, flush and the timer share one publish chain, so frames
-keep their order.
+keep their order. The harness's `createTextDeltaBatcher`, written for the
+retired automation compiler, had no production caller and was deleted rather
+than given the timer.
 
 **Why:** The batcher only sent held text when a later fragment arrived after the
 window, or when a non-text event flushed it. The first fragment of a reply
@@ -835,9 +837,7 @@ already held when the model goes quiet.
 **What a future change has to respect:** The window bounds how long text may
 wait, not only how often frames go out. Canvas Chats and Sidekick
 conversations, the Sidekick builder included, all stream through this one
-batcher. The harness's `createTextDeltaBatcher`, written for the retired
-automation compiler, had no production caller and was deleted in the same
-change rather than given the timer.
+batcher.
 
 ### 2026-09-11 — Connector recovery follows the existing workspace socket
 

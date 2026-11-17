@@ -27,11 +27,7 @@ function lastContentChild(parent: CaretParent): CaretNode | undefined {
   return undefined;
 }
 
-/**
- * Put the streaming caret after the last character of a growing message, in
- * the block that holds it. Drawn outside the markdown body, the caret fell to
- * a line of its own under the closing paragraph and read as a second letter.
- */
+/** Put the streaming caret after the last character of a growing message, in the block that holds it. */
 export function rehypeStreamingCaret() {
   return (tree: CaretParent): void => {
     let parent = tree;
