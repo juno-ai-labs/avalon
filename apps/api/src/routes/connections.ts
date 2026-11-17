@@ -209,11 +209,10 @@ async function bindConnectorTelemetry(
  * `?handoff=mobile` to its auth session; a desktop build sends its deep-link
  * version.
  */
-function desktopHandoffVersion(c: Context<HonoAppEnv>, loopback = false): ConnectorHandoff {
+function desktopHandoffVersion(c: Context<HonoAppEnv>): ConnectorHandoff {
   // A client that cannot claim would send the person through the provider's
-  // consent and then fail; refuse it here, before the redirect. The desktop's
-  // Canva loopback completes in its own signed-in request and needs no claim.
-  if (!loopback && c.req.query('claim') !== '1') {
+  // consent and then fail; refuse it here, before the redirect.
+  if (c.req.query('claim') !== '1') {
     throw new ApiError(400, "connector_client_update_required", "Update Rally to connect this account.");
   }
   if (c.req.query('handoff') === 'browser') return 'browser';
@@ -274,22 +273,6 @@ connectionRoutes.get("/:id/installation", zValidator("param", idParam), async (c
 connectionRoutes.post("/:id/installation", zValidator("param", idParam), zValidator("json", z.strictObject({
   action: z.enum(["repair", "disconnect", "forget_cleanup", "reconcile", "rotate"]), key: z.string().optional(), providerId: z.string().optional(),
 })), async (c) => c.json(ConnectorInstallationMutationResponseSchema.parse(await new ConnectionService(c.env, getAuth(c)).changeInstallation(c.req.valid("param").id, c.req.valid("json")))));
-connectionRoutes.post("/canva/start", zValidator("json", z.strictObject({
-  scope: z.literal("personal"), capabilities: z.array(z.literal("canva.personal.mcp")).length(1),
-  loopbackRedirectUri: z.string().optional(),
-})), async (c) => {
-  const service = new ConnectionService(c.env, getAuth(c));
-  return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(c, service,
-    await service.beginProvider("canva", { ...c.req.valid("json"),
-      desktopHandoffVersion: desktopHandoffVersion(c, c.req.valid("json").loopbackRedirectUri !== undefined) }))));
-});
-connectionRoutes.post("/canva/complete", zValidator("json", z.strictObject({
-  code: z.string().min(1).optional(), error: z.literal("access_denied").optional(), state: z.string().min(1),
-}).refine((value) => Boolean(value.code) !== Boolean(value.error), "Supply a code or a denial")), async (c) => {
-  const input = c.req.valid("json");
-  await new ConnectionService(c.env, getAuth(c)).completeCanvaLoopback(input.code ?? null, input.state);
-  return c.json({ ok: true });
-});
 connectionRoutes.post("/apollo/start", zValidator("json", apolloStart), async (c) => {
   const service = new ConnectionService(c.env, getAuth(c));
   return c.json(ConnectorOAuthStartSchema.parse(await bindConnectorTelemetry(
@@ -617,9 +600,6 @@ connectionCallbackRoutes.get("/custom-mcp/callback", zValidator("query", googleC
 connectionCallbackRoutes.get("/ashby/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
   return connectorCallback(c, "ashby", query);
-});
-connectionCallbackRoutes.get("/canva/callback", zValidator("query", googleCallback), async (c) => {
-  return connectorCallback(c, "canva", c.req.valid("query"));
 });
 connectionCallbackRoutes.get("/apollo/callback", zValidator("query", googleCallback), async (c) => {
   return connectorCallback(c, "apollo", c.req.valid("query"));

@@ -56,6 +56,7 @@ import {
 } from "./workstream-transcript";
 export * from "./automation-agent";
 export * from "./automation-evaluators";
+export * from "./connector-catalog";
 export * from "./connector-connection-card";
 export * from "./member-card";
 export * from "./conversation-effects";
@@ -440,6 +441,11 @@ export const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
   "gmail.read", "gmail.modify", "gmail.draft", "gmail.send", "calendar.read", "calendar.write",
 ] as const;
 
+/** The Drive + Docs + Sheets preset the connection UI requests. */
+export const GOOGLE_DRIVE_CAPABILITIES = [
+  "drive.read", "docs.read", "docs.write", "sheets.read", "sheets.write",
+] as const;
+
 /**
  * Every server-decided feature flag a client is allowed to see, resolved for
  * the signed-in person. Each field defaults to the answer an unreachable flag
@@ -773,7 +779,7 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["apollo", "ashby", "canva", "custom_mcp", "fireflies", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
+  connectorType: z.enum(["apollo", "ashby", "custom_mcp", "fireflies", "google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),

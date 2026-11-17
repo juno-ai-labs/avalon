@@ -12,7 +12,7 @@ If you went through [the guided setup](../01-getting-started/03-guided-setup.md)
 
 Click your avatar at the bottom of the rail, choose **Settings**, and click **Connections** in the list on the left. In [the desktop app](../08-rally-everywhere/04-the-desktop-app.md) on a Mac, <kbd>⌘</kbd> <kbd>,</kbd> (or **Rally → Settings…** in the menu bar) opens Settings too. You can also type "connectors" or "integrations" into the Settings search box and it will take you there.
 
-Every tool connects from the web app except Canva, which you connect from [the desktop app](../08-rally-everywhere/04-the-desktop-app.md). In the browser its card is greyed out and says **Download the Mac app to connect this.** (on a phone, **Connect this from the Mac app.**). Once Canva is connected, you can use it from the browser like anything else.
+Every tool connects from the web app and the desktop app alike.
 
 The page is headed **Your connections**. It has two halves. Each connection
 you have also gets a page of its own, listed under **Connections** in the
@@ -56,7 +56,7 @@ A card can have two buttons.
 
 **Connect for organization** makes one shared connection. Every member can ask Rally to use its tools in their Canvases and Sidekicks. It acts for the Organization, or as the one account the administrator signed in with when setting it up, never as the member who happened to ask. Only owners and administrators see this button.
 
-Not every tool offers both. A card shows only the buttons that apply to it, and each page in this chapter says which ones its tool has. For example, Google Mail + Calendar, Canva and Fireflies are personal only, and X is Organization only.
+Not every tool offers both. A card shows only the buttons that apply to it, and each page in this chapter says which ones its tool has. For example, Google Mail + Calendar and Fireflies are personal only, and X is Organization only.
 
 Most tools can have one personal connection per person and one Organization connection. Once you have one, the button turns grey and its tooltip points you to the table above. The exceptions are **Custom MCP server** and **Inbound webhook**, which you can add as many times as you like.
 
@@ -113,7 +113,7 @@ You do not always have to come to this screen. If you ask for something that nee
 
 Click the button, finish signing in in the tab that opens, and the card changes to **Connected** on its own. Then carry on where you were.
 
-The button says **Waiting…** while you finish signing in, **Admin required** if the card asks for an Organization connection and you are not an owner or administrator, and **Unavailable** if the tool is not offered in your region. A card for Canva in the browser says **Download the Mac app to connect this.** instead of offering a button.
+The button says **Waiting…** while you finish signing in, **Admin required** if the card asks for an Organization connection and you are not an owner or administrator, and **Unavailable** if the tool is not offered in your region.
 
 A card that once said **Connected** keeps saying it, even if the tool later withdraws access. Settings → Connections is where you see the current state.
 
@@ -144,7 +144,6 @@ Every connector card in Settings has its own page in this chapter:
 - [Granola](08-granola.md)
 - [Fireflies](09-fireflies.md)
 - [Ashby](10-ashby.md)
-- [Canva](11-canva.md)
 - [X](12-x.md)
 - [Inbound webhook](13-inbound-webhook.md)
 - [Custom MCP server](14-custom-mcp-server.md)

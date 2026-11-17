@@ -58,16 +58,6 @@ Apollo business events require human-configured
 with no documented subscription-management API, so this connector advertises no
 triggers. Scheduled Sidekicks can use its live tools.
 
-### Canva personal OAuth
-
-Canva uses DCR with backend-held client credentials while the server callback
-application is pending. Canva is available to every member without a feature
-flag. Electron uses its ephemeral 127.0.0.1 callback as the interim fallback;
-public arbitrary callback overrides remain forbidden. The registered server
-callback is `https://api.rallywith.ai/connections/canva/callback`.
-Provider approval and live acceptance are separate from a successful local probe.
-See [Canva integration](canva-integration.md) for the implementation and verification status.
-
 ### Ashby personal OAuth and workspace API keys
 
 Workspace event setup independently uses an administrator-provided API key with

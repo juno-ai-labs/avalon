@@ -26,7 +26,7 @@ describe('connectorBrandMark', () => {
   });
 
   it('names a real mark for every connector Rally has an adapter for', () => {
-    const adapters = ['apollo', 'ashby', 'canva', 'fireflies', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x'];
+    const adapters = ['apollo', 'ashby', 'fireflies', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x'];
     for (const connectorType of adapters) {
       const mark = connectorBrandMark(connectorType);
       expect(mark, connectorType).not.toBeNull();

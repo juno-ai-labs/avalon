@@ -2,7 +2,6 @@ import {
   createConnectorRegistry,
   type CustomMcpConnectorConfig,
   type FirefliesConnectorConfig,
-  type CanvaConnectorConfig,
   type GranolaConnectorConfig,
   type GitHubConnectorConfig,
   type LinearConnectorConfig,
@@ -42,13 +41,6 @@ export function githubConnectorConfig(env: Env): GitHubConnectorConfig | null {
 export function customMcpConnectorConfig(env: Env): CustomMcpConnectorConfig {
   return {
     redirectUri: new URL("/connections/custom-mcp/callback", env.PUBLIC_API_BASE_URL).toString(),
-  };
-}
-
-export function canvaConnectorConfig(env: Env): CanvaConnectorConfig {
-  return {
-    redirectUri: new URL("/connections/canva/callback", env.PUBLIC_API_BASE_URL).toString(),
-    allowLoopbackRedirect: true,
   };
 }
 
@@ -181,7 +173,6 @@ export function connectorSupportsResourceHydration(
 
 function buildConnectorRegistry(env: Env) {
   const customMcp = customMcpConnectorConfig(env);
-  const canva = canvaConnectorConfig(env);
   const fireflies = firefliesConnectorConfig(env);
   const granola = granolaConnectorConfig(env);
   const github = githubConnectorConfig(env);
@@ -196,7 +187,6 @@ function buildConnectorRegistry(env: Env) {
     customMcp,
     apollo: { redirectUri: new URL("/connections/apollo/callback", env.PUBLIC_API_BASE_URL).toString() },
     ashby: { redirectUri: new URL("/connections/ashby/callback", env.PUBLIC_API_BASE_URL).toString() },
-    canva,
     ...(fireflies ? { fireflies } : {}),
     granola,
     ...(google ? { google } : {}),

@@ -86,8 +86,7 @@ the shell hands the link to its web view, which claims it. A build that predates
 this cannot claim and has to update: offering the old one-request path to it
 would offer it to anyone. So a start must carry `claim=1`, and one without it
 is refused with `connector_client_update_required` before the provider's
-consent, rather than failing after it. The desktop's Canva loopback is exempt:
-it already completes in its own signed-in request. A repeated hit on a callback
+consent, rather than failing after it. A repeated hit on a callback
 that already holds its state answers 409 and leaves the attempt to the claim.
 
 Connector start advertises `desktopHandoffVersion=2` as an additive query
@@ -154,6 +153,7 @@ Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md
 | `apps/api/src/durable-objects/connector-event-people.ts` | Ordered event-owned person rows, legacy readback, and schema-only v122. |
 | `apps/api/src/services/connector-queue-payload.ts` | Canonical-event references for oversized connector delivery context. |
 | `apps/api/src/durable-objects/workspace-event-resources.ts` | Exact workspace/connection/provider identity resolution for incoming event relationships. |
+| `packages/contracts/src/connector-catalog.ts` | The connector product catalog and its families, the connection-name formatter and parser, and the pure fold from saved connections to each product's state. See [Connector products and families](#connector-products-and-families). |
 | `packages/connectors/src/index.ts` | The registry, and the cross-validation that runs at its construction. |
 | `packages/connectors/src/types.ts` | The manifest and descriptor types, and the unexported symbol that brands `AuthorizedConnectorConnection`. |
 | `packages/connectors/src/provider-utils.ts` | `withProviderReauthorization` — the shared mid-call recovery every adapter routes through. |
@@ -171,6 +171,73 @@ Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
 | `packages/contracts/src/connector-api-keys.ts` | Per provider: the page that issues its API key, and the key format the provider documents — the one declaration the API's request schema, the adapter's own check and the desktop field all read. |
 | `apps/desktop/src/renderer/components/connector-api-key-field.tsx` | The paste step as one control: the issuing link, the field, and the message shown when a paste cannot be that provider's key. Every surface that takes a key uses it — Granola's and Ashby's setup modals, and **Replace workspace API key**, which appears only for an installation whose provider still takes one. |
+
+### Connector products and families
+
+A **provider** is what authorizes: one `connector_type`, one adapter, one
+manifest in `packages/connectors`. A **product** is what a person connects and
+reads about: `ConnectorProductCatalog` in `@rally/contracts`. Most providers are
+one product; Google is two, Gmail with Calendar and Drive with Docs and Sheets,
+told apart by the grants a connection holds (`capabilityPrefixes`). A product
+with no prefixes owns every grant of its provider.
+
+Each product entry says, once: its name and one-sentence description, its
+**families**, its provider, the scopes it is offered in (`scopes`), the subset a
+card in a conversation can connect (`cardScopes`; the rest are made in
+Settings), whether its connections are told apart by account or by a name a
+person typed (`instance`), and its mark. Families
+(`ConnectorFamilyCatalog`) name a job, not a provider: email and calendar, file
+storage, documents and wikis, team chat, issue tracking, code, meeting notes,
+sales, recruiting, social media, and custom tools and events. A product
+lists its families most fitting first and may have several (GitHub is code and
+issue tracking).
+
+Everything else is a view of that catalog, never a copy of it: the connection
+card's ids and scope check, the agent's state check and connector list, Settings'
+Connections list (which keeps only the grants it requests), the transcript's
+connector presentation, Google's per-product plugins, and every connection's
+stored name.
+
+A connection's stored name is `<product> · <account>`, built only by
+`connectorConnectionName` and read back only by `connectorConnectionAccount`,
+so the account an agent reads is the one Settings shows. The product half comes
+from `connectorConnectionProductName`: the one product the connection's grants
+serve, or, for a connection serving several (a Google grant of mail and Drive
+together), the provider's name, which for Google is Google Workspace. Names
+written before a product's name changed keep the old first half;
+the account half is all that is read back. A product whose connections a person
+names (a custom MCP server, an inbound webhook) reads the whole name.
+
+`foldConnectorProductStates` is pure: given product ids, the rows a caller may
+see and the providers this deployment registers, it returns each product's
+state, a row per offered scope with `connectIn` (`conversation` when a card can
+connect it, `settings` otherwise), and an account per saved connection.
+Disabled connections are not connections, and neither is one holding only
+grants that give the agent no tools (`hostCapabilities`: Ashby's workspace events
+installation, which brings events in but no recruiting tools). Every other saved
+connection counts,
+even in a scope the product no longer offers for new ones: a Fireflies
+workspace key pasted before that scope closed still serves tools, so it reports
+connected, under a scope row only Settings can make. A product whose provider is
+not registered is `unavailable` in every scope. The desktop keeps its own fold
+(`connectorScopeStates`) because Settings shows **Disabled**, which the agent's
+states do not; it selects connections with the same
+`connectorConnectionServesProduct`.
+
+**The catalog is checked against the adapters at startup.** Building the
+connector registry runs `connectorCatalogConsistencyIssue` on each adapter,
+after its own checks: every registered provider has a product, a product
+offers only scopes its adapter supports, a card connects only scopes the
+adapter still accepts (`connectableScopes`), every grant the manifest
+declares belongs to a product, and a product's `hostCapabilities` are exactly
+its manifest's capabilities of kind `host`. A disagreement is an `invalid_configuration`
+error naming the product and scope or grant, so a catalog edit that the server
+would refuse fails the Worker's start rather than a person's connection.
+
+Adding a product is one catalog entry: its card, Settings row, transcript
+presentation and place in the agent's list follow, and the registry refuses to
+start until it agrees with its adapter. A new family is added with
+its first product; none is listed empty.
 
 ### Pasting an API key
 
@@ -1650,6 +1717,28 @@ creates without a recorded provider key cannot use this recovery path.
 Removed from `docs/`; the last text and changelog are recoverable as
 [`architecture.md`](architecture.md#retired-documents) describes.
 
+**`canva-integration.md`: the Canva connector (shipped 2026-09-19; removed
+2026-11-17).** Canva was a personal hosted-MCP connector whose OAuth returned
+to a loopback listener in the Mac app's main process while Canva's approval of
+Rally's server callback was pending, so it was the one connector a browser tab
+could not start (`desktopOnly`). It polled one chosen design per watch or
+Sidekick trigger, kept each design's share link in an encrypted
+`resources.protected_access_json` envelope, and cancelled a run's open editing
+transactions from durable tool receipts when the run ended. It was removed with
+its adapter, routes, loopback, polling, transaction cleanup and the
+`desktopOnly` mark. WorkspaceDO migration 152 (`canva-retirement.ts`) disabled
+every Canva connection and cleared its credentials, disabled its poll
+schedules, removed its event registrations and resource watches, cleared each
+design's access envelope, and removed Canva evaluators, triggers and plugin
+bindings from every Sidekick's projection and stored revisions; triggers refuse
+a new Canva connection or registration. What survives in storage: the disabled
+connection rows, design `resources` rows (conversations may name them, and
+`artifact_registry` cascades from `resources`), `canva` in the
+`connector_type` and `provider` CHECK constraints (narrowing them would rebuild
+`connector_connections` and its dependents), and `canva_cleanup_*` checkpoint
+phases on old tool receipts. Grants at Canva were not revoked, because no code
+remains to reach its revocation endpoint; they lapse on Canva's side.
+
 **`contextual-routing.md`: Suggested context (retired 2026-08-30; document
 removed 2026-11-08).** Suggested context classified unclaimed connector
 activity against an Organization's recent work streams and offered a card in
@@ -1694,6 +1783,53 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-17 — One product catalog, with families, instead of five copies; Canva retired
+
+**What changed:** `ConnectorProductCatalog` in `@rally/contracts` replaced the
+connection card's catalog, and Settings' list, the transcript presentation,
+Google's plugin bundles, the Google connection name and the agent's connection
+check now read from it. It covers all fourteen products, including the three
+only Settings connects, and gives each its families. The connection name has
+one formatter and one parser, and the agent's state comes from one pure fold.
+
+**Why:** letting the agent recommend a connector the person has not connected
+needed, for each product, what it is for, whether a card can connect it, and
+which account each connection is. Those facts lived in five places: the card
+catalog (ids, prefixes, card scopes), Settings' list (names, sentences, offered
+scopes), the transcript presentation (names and prefixes again, and a comment
+recording that two copies of the sentences had already drifted), the Google
+naming helper (product names and prefixes a third time) and the new reader. A
+sixth consumer would have been a sixth copy.
+
+**Alternative rejected:** putting families and descriptions on the card catalog
+alone. It holds only the eleven products a card can connect, so X, custom MCP
+servers and webhooks would have stayed invisible to the agent, and Settings
+would still have held the only copy of each product's sentence. Also rejected:
+moving the server manifests' `displayName` into the catalog, because a manifest
+names a provider (Google, X), which is a different thing from a product.
+
+**Consequences:** a product's name, sentence, scopes and families change in one
+entry and every surface follows; the card's ids and description are unchanged.
+One name changed: a run's connection question now says **Google Mail +
+Calendar**, the name Settings already used, rather than "Gmail and Google
+Calendar". Stored connection names do not change: every single-product
+provider's manifest name already equals its product's, and X's shared-key
+connection keeps the product name alone. The grants the desktop requests stay on the desktop, with both
+Google presets in contracts. A connection name not built by
+`connectorConnectionName` will read back as no account, so a new producer must
+use it.
+
+**Canva retired in the same change.** The Canva connector was removed: adapter,
+OAuth routes, the Mac app's loopback listener, design polling, the post-run
+editing-transaction cleanup, the help page, and the `desktopOnly` mark it was the
+only user of. Existing data was purged rather than left inert, by the
+Organization's choice: WorkspaceDO migration 152 disables every Canva
+connection and clears its credentials, and removes Canva triggers, evaluators
+and plugin bindings from every Sidekick, including stored revisions. Rejected:
+keeping `canva` parseable so old definitions load with dead triggers, which
+leaves Sidekicks that look configured and never fire. What remains in storage,
+and why, is under [Retired documents](#retired-documents).
 
 ### 2026-11-16 — Only the session that started a connector authorization can complete it
 
