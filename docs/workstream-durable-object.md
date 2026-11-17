@@ -764,8 +764,9 @@ drive recovery.
 ### Streaming and reconnect
 
 Provider token fragments are coalesced before reaching the child. The current
-batcher flushes at 2,048 characters or after approximately 100 ms of arriving
-fragments (10 frames/second under a continuous stream), matching the lowest
+batcher flushes at 2,048 characters, or 100 ms after the last flush, and a
+trailing timer sends held text within those 100 ms when no later fragment
+arrives (10 frames/second under a continuous stream), matching the lowest
 allowed 10/20/30 fps presentation choice. Tool/status boundaries flush pending
 text first, and a route reset is always a standalone frame.
 

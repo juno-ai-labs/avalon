@@ -633,12 +633,12 @@ the same failure back.
 
 The streaming caret is drawn by the open tail's render, not after the body:
 `rehypeStreamingCaret` (`apps/desktop/src/renderer/lib/streaming-caret.ts`)
-appends it to the deepest last block (a paragraph, list item, heading or
-cell), after any inline element such as a link or citation pill rather
-than inside it. It skips GFM's footnote list and never enters a `div`, whose
-citation embed rows must hold only cells, or a code block, whose children
-`MarkdownCode` reads as the source; after a code block it sits below it. A streaming message with no text yet,
-or a collapse section still typing its heading, draws the caret on its own.
+descends through the last text blocks and appends it there, after any inline
+element such as a link or citation pill rather than inside it.
+`CARET_CONTAINERS` in that file lists the blocks it may enter. It never enters
+a `div`, whose citation embed rows must hold only cells, or a code block, whose
+children `MarkdownCode` reads as the source, and it skips GFM's footnote list.
+A streaming message with no text yet draws the caret on its own.
 
 ### Styling
 

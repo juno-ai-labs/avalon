@@ -112,8 +112,7 @@ are batched at all) — does not order or de-duplicate frames
 (the follow in [`transcript-scrolling.md`](transcript-scrolling.md) reacts to
 the commits this produces), and does not render (the streaming markdown path
 in [`markdown-rendering.md`](markdown-rendering.md) is a separate mechanism
-this one makes necessary). The automation-drafts builder streams its own
-narration through a different surface and is deliberately not paced by this.
+this one makes necessary).
 
 ## Failure modes and limits
 
@@ -154,7 +153,7 @@ narration through a different surface and is deliberately not paced by this.
 ## Performance and cost
 
 The budget: a reveal tick's commit must fit a 60Hz frame at every reply
-length, because pacing multiplies the commit rate by roughly five (8Hz wire →
+length, because pacing multiplies the commit rate by roughly six (10Hz wire →
 up to 60Hz reveal). The tick itself is a string slice and one cache write. The
 screen memoizes canonical turn flattening independently from transient overlays,
 then linearly merges the already ordered canonical rows with the small sorted

@@ -2866,22 +2866,6 @@ export interface AutomationCreatorPluginCatalogEntry {
   }>;
 }
 
-export type AutomationCompilerFailureCode =
-  | HarnessFailureCode
-  | "sidekick_draft_not_submitted";
-
-export class AutomationCompilerError extends Error {
-  constructor(
-    readonly code: AutomationCompilerFailureCode,
-    readonly kind: HarnessFailure["kind"] | "completion",
-    readonly retryable: boolean,
-    message: string,
-  ) {
-    super(message);
-    this.name = "AutomationCompilerError";
-  }
-}
-
 const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
   started: string;
   completed: string;

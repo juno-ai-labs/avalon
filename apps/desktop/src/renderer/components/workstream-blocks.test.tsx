@@ -1347,6 +1347,16 @@ describe('MessageBlock markdown', () => {
     expect(container.querySelectorAll('.streaming-caret')).toHaveLength(1);
   });
 
+  it.each([
+    ['labelled', '```ts\nconst a = 1;\n'],
+    ['unlabelled', 'Intro\n\n```\nconst a = 1;\n```\n\n'],
+  ])('keeps a streaming %s fence a code block', (_kind, text) => {
+    const { container } = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text }} />);
+    expect(container.querySelector('.markdown-code-block')).not.toBeNull();
+    expect(container.querySelector('.markdown-inline-code')).toBeNull();
+    expect(container.textContent).not.toContain('[object Object]');
+  });
+
   it('draws the caret alone before any text arrives, and none once the message settles', () => {
     const view = render(<MessageBlock {...actions} message={{ ...baseMessage, authorType: 'agent', author: undefined, streaming: true, text: '' }} />);
     expect(view.container.querySelectorAll('.streaming-caret')).toHaveLength(1);

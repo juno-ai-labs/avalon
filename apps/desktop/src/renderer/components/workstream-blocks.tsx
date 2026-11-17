@@ -1660,9 +1660,7 @@ export function MarkdownBody({
               key={part.id}
             >
               {streamThis
-                ? part.body
-                  ? renderStreaming(part.body)
-                  : <span aria-hidden="true" className={STREAMING_CARET_CLASS} />
+                ? renderStreaming(part.body)
                 : part.body
                   ? renderSettled(part.body)
                   : null}
