@@ -135,10 +135,10 @@ recovery pair for a run with a user principal: a Canvas's Chat, a Sidekick's
 conversation, and a Sidekick run. A turn acting for the Organization (a
 workspace principal) is offered both, and `list_connectors`, refusing with
 `connections_need_a_person`: it has no person whose connections to read, and
-uses only the connections bound to its Sidekick. Both accept only a trusted connector catalog
-id and a `personal`/`workspace` scope. The read always checks every scope the
-connector offers in one query; a `scope` it is sent is accepted and ignored, so
-older calls still validate. It returns each scope's state, `connected`, `reconnect_required`, or `not_connected`,
+uses only the connections bound to its Sidekick. Both take a trusted connector
+catalog id; the card also takes a `personal`/`workspace` scope. The read takes no
+scope: it always checks every scope the connector offers in one query, and a
+`scope` it is sent fails as an unrecognized key. It returns each scope's state, `connected`, `reconnect_required`, or `not_connected`,
 from the caller-visible rows, plus the best of them as `state`; `connected` is
 the last durable state Rally observed, not a provider health check. The presentation tool asks the main desktop feed for a
 person-facing control rather than provider data. That feed resolves the card's
@@ -1388,7 +1388,9 @@ would help?") leaves the model to guess which it is asking.
 
 **Consequences:** the system line lists connectors only to choose an unnamed
 source, when no loaded plugin can do the work, or when asked, so an ordinary
-connector task pays no extra round trip.
+connector task pays no extra round trip. The state check no longer takes `scope`. It had accepted one and ignored it
+since 2026-10-15 so older calls would validate; an ignored argument breaks rule
+1, so a scope now fails by name.
 
 ### 2026-11-16 — An agent can check membership and offer to add someone
 
