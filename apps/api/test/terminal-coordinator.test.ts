@@ -127,6 +127,13 @@ function fixture() {
   };
 }
 
+/** An import row as `import_resource` writes it before copying, by the run that made it. */
+function plannedImport(objectStore: DatabaseSync, resourceId: string, importRunId: string | null): void {
+  workstreamObjectRun(objectStore, `INSERT INTO terminal_imported_resources
+    (sandbox_generation, resource_id, destination_path, source_sha256, size_bytes, state, imported_at, import_run_id, updated_at)
+    VALUES (1, ?, 'art.png', 'digest', 1, 'planned', NULL, ?, 1)`, resourceId, importRunId);
+}
+
 function context(userId = USER_ID): HarnessToolContext {
   return {
     workspaceId: WORKSPACE_ID,
@@ -1397,19 +1404,43 @@ describe("Terminal sandbox coordinator", () => {
       .rejects.toMatchObject({ code: "cancelled" });
   });
 
-  it("lets a read pass over a sibling's import in flight but not one left over", async () => {
+  it("lets a read pass over the lease holder's import in flight but not one left over", async () => {
     const { objectStore, env, provider, clock } = fixture();
     const sibling = "00000000-0000-4000-8000-0000000000c3";
     const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
     // The holder's import has written its row and is still copying the files.
-    workstreamObjectRun(objectStore, `INSERT INTO terminal_imported_resources
-      (sandbox_generation, resource_id, destination_path, source_sha256, size_bytes, state, imported_at, updated_at)
-      VALUES (1, '00000000-0000-4000-8000-0000000000c4', 'art.png', 'digest', 1, 'planned', NULL, 1)`);
+    plannedImport(objectStore, "00000000-0000-4000-8000-0000000000c4", RUN_ID);
     const read = { ...context(), harnessRunId: sibling, toolCallId: "sibling-read" };
     await expect(coordinator.peekRunning(read)).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
     // The holder is gone without settling it: the import is left over.
     await coordinator.release(context());
+    await expect(coordinator.peekRunning(read)).resolves.toBeNull();
+  });
+
+  it("does not let a read pass over a leftover import while another run holds the lease", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const crashed = "00000000-0000-4000-8000-0000000000c7";
+    const holder = "00000000-0000-4000-8000-0000000000c8";
+    seedWorkstreamRun(objectStore, { id: holder, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    await coordinator.release(context());
+    // An unrelated run holds the lease without readiness having seen the
+    // import, as through `claimMutation`: the crashed run's row is left over.
+    await coordinator.acquire({ ...context(), harnessRunId: holder, toolCallId: "unrelated-call" });
+    plannedImport(objectStore, "00000000-0000-4000-8000-0000000000c9", crashed);
+    const read = { ...context(), harnessRunId: "00000000-0000-4000-8000-0000000000ca", toolCallId: "sibling-read" };
+    await expect(coordinator.peekRunning(read)).resolves.toBeNull();
+  });
+
+  it("counts a planned import from before runs were recorded as left over", async () => {
+    const { objectStore, env, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    await coordinator.acquire(context());
+    plannedImport(objectStore, "00000000-0000-4000-8000-0000000000cb", null);
+    const read = { ...context(), harnessRunId: "00000000-0000-4000-8000-0000000000cc", toolCallId: "sibling-read" };
     await expect(coordinator.peekRunning(read)).resolves.toBeNull();
   });
 
