@@ -1,9 +1,7 @@
 import { requireUsageAllowance, isUsageAllowanceExhausted } from "./usage-admission";
 import { agentModelTraceFeature } from "@rally/contracts/runtime-config";
 import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
-import { connectorAuthorizationStatus } from "@rally/contracts";
 import { readConnectorResourceAttachment } from "./connector-resource-attachments";
-import { readCanvaReference } from "./canva-resource-access";
 
 import type { OutboundExternalBinding } from "../durable-objects/external-binding-outbox";
 import { runtimeDeferral } from "../lib/defer";
@@ -55,6 +53,7 @@ import {
   AVALON_CORE_PLUGIN_ID,
   AVALON_DISCOVERY_PLUGIN_ID,
   AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
+  AVALON_LIST_CONNECTORS_TOOL_DEFINITION,
   AVALON_MEMORY_PLUGIN_ID,
   AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
   AVALON_OFFER_TO_ADD_MEMBER_TOOL_DEFINITION,
@@ -146,15 +145,20 @@ import {
   MEMBER_QUESTION_OPTIONS,
   MemberCardInputSchema,
   type MemberCardInput,
-  ConnectorConnectionCardCatalog,
   ConnectorConnectionCardInputSchema,
   type ConnectorConnectionCardInput,
   ConnectorConnectionStateInputSchema,
-  ConnectorConnectionStateResultSchema,
-  bestConnectorConnectionState,
+  ConnectorListInputSchema,
+  ConnectorProductCatalog,
+  ConnectorProductIds,
+  type ConnectorProductId,
+  type ConnectorProductState,
+  CONNECTOR_LIST_TOOL_NAME,
   connectorConnectionCardSummary,
-  connectorConnectionStateSummary,
-  type ConnectorConnectionCardScope,
+  connectorProductStateSummary,
+  connectorListSummary,
+  foldConnectorProductStates,
+  groupConnectorProductsByFamily,
   type AutomationRunDefinitionV1,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
@@ -7025,15 +7029,6 @@ async function executeConnectorToolOnConnection(
     const effectivePrincipal = authorized.scope === "workspace"
       ? { type: "workspace" as const, workspaceId: input.workspaceId }
       : { type: "user" as const, userId: asUserId(frozen.ownerUserId!) };
-    if (frozen.connectorType === "canva") {
-      const transaction = z.object({ transaction_id: z.string().optional() }).parse(toolInput);
-      if (transaction.transaction_id && !await createToolReceiptObjectPort(
-        env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0",
-      ).canvaTransactionOwned({ runId: input.harnessRunId, connectionId: frozen.connectionId,
-        transactionId: transaction.transaction_id, ...(effectIntentId ? { effectIntentId } : {}) })) {
-        throw new ConnectorError("unauthorized", "This Canva editing transaction is not open for this run. Inspect the design and start a new editing transaction.");
-      }
-    }
     const result = await adapter.executeTool(
       toolName,
       toolInput,
@@ -8341,6 +8336,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
     || tool.definition.name === "request_elicitation"
     || tool.definition.name === "offer_to_add_member"
     || tool.definition.name === "get_connector_connection_state"
+    || tool.definition.name === CONNECTOR_LIST_TOOL_NAME
     || tool.definition.name === "show_connector_connection"
     || tool.definition.name === CHECK_RESOURCE_ACCESS_TOOL_NAME);
   // A refusing tool is offered but cannot do the work, so the prompt does not tell the model to use it.
@@ -8356,12 +8352,13 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           // unambiguously, so `core_` only lengthened the name the model reads
           // and repeated a plugin it can neither load nor unload.
           shortWireName: "",
-          description: "Check the current time, connector connection status and access to linked files, or pause to ask for required information or to offer to add someone the work needs as a member.",
+          description: "Check the current time, which connectors are connected or could be added, and access to linked files, or pause to ask for required information or to offer to add someone the work needs as a member.",
           systemMessage: renderCorePluginSystemMessage({
             currentTime: holds("current_time"),
             elicitation: holds("request_elicitation"),
             addMember: holds("offer_to_add_member"),
             connectorConnection: holds("get_connector_connection_state") && holds("show_connector_connection"),
+            connectorList: holds(CONNECTOR_LIST_TOOL_NAME),
             resourceAccess: holds(CHECK_RESOURCE_ACCESS_TOOL_NAME),
           }),
           tools: coreTools,
@@ -8551,52 +8548,59 @@ async function readConnectorConnectionState(
   raw: unknown,
 ) {
   const request = ConnectorConnectionStateInputSchema.parse(raw);
+  const [state] = await readConnectorProductStates(env, input, [request.connectorId]);
+  return state!;
+}
+
+async function listConnectors(
+  env: Env,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
+  raw: unknown,
+) {
+  ConnectorListInputSchema.parse(raw);
+  return groupConnectorProductsByFamily(await readConnectorProductStates(env, input, ConnectorProductIds));
+}
+
+/**
+ * The caller's saved state for each product, in one read. What a state is,
+ * which grants belong to which product, and how an account is named are the
+ * catalog's (`foldConnectorProductStates`); this reads only the rows the
+ * caller may see: the Organization's, and the caller's own. Disabled rows
+ * are left to the fold, which drops them, so it is total on its own.
+ */
+async function readConnectorProductStates(
+  env: Env,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
+  productIds: readonly ConnectorProductId[],
+): Promise<ConnectorProductState[]> {
   if (input.executionPrincipal.type !== "user") throw new Error("connector_connection_state_requires_user");
-  const catalog = ConnectorConnectionCardCatalog[request.connectorId];
-  // Every scope, whatever was asked: a model that names `workspace` while the
-  // person's own connection works must still be told that it works.
-  const scopes: readonly ConnectorConnectionCardScope[] = catalog.scopes;
-  const available = connectorRegistryForEnv(env).list()
-    .some((manifest) => manifest.type === catalog.providerType);
-  if (!available) {
-    return ConnectorConnectionStateResultSchema.parse({
-      connectorId: request.connectorId,
-      state: "unavailable",
-      connections: scopes.map((scope) => ({ scope, state: "unavailable" })),
-    });
-  }
-  // One read for every scope: a person may hold a personal connection and the
-  // Organization a workspace one, and either can be the one the task needs.
-  const result = await env.DB.prepare(
-    `SELECT scope, granted_scopes_json, status FROM connector_connections
-      WHERE workspace_id = ? AND connector_type = ?
-        AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))`,
+  const registered = new Set(connectorRegistryForEnv(env).list().map((manifest) => manifest.type));
+  const providerTypes = [...new Set(productIds
+    .map((id) => ConnectorProductCatalog[id].providerType as string)
+    .filter((providerType) => registered.has(providerType)))];
+  const rows = providerTypes.length === 0 ? [] : (await env.DB.prepare(
+    `SELECT connector_type, scope, display_name, granted_scopes_json, status FROM connector_connections
+      WHERE workspace_id = ? AND connector_type IN (${providerTypes.map(() => "?").join(",")})
+        AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))
+      ORDER BY scope, display_name COLLATE NOCASE`,
   ).bind(
     input.workspaceId,
-    catalog.providerType,
+    ...providerTypes,
     input.executionPrincipal.userId,
-  ).all<{ scope: string; granted_scopes_json: string; status: string }>();
-  const matching = (result.results ?? []).filter((row) => {
-    if (catalog.capabilityPrefixes.length === 0) return true;
-    const capabilities = parseJson<string[]>(row.granted_scopes_json, []);
-    return capabilities.some((capability) =>
-      catalog.capabilityPrefixes.some((prefix) => capability.startsWith(prefix)));
-  });
-  const connections = scopes.map((scope) => {
-    const statuses = matching.filter((row) => row.scope === scope)
-      .map((row) => connectorAuthorizationStatus(row.status));
-    const state = statuses.includes("healthy")
-      ? "connected" as const
-      : statuses.includes("reconnect_required")
-        ? "reconnect_required" as const
-        : "not_connected" as const;
-    return { scope, state };
-  });
-  return ConnectorConnectionStateResultSchema.parse({
-    connectorId: request.connectorId,
-    state: bestConnectorConnectionState(connections.map(({ state }) => state)),
-    connections,
-  });
+  ).all<{ connector_type: string; scope: string; display_name: string; granted_scopes_json: string; status: string }>()).results ?? [];
+  return foldConnectorProductStates(productIds, rows.map((row) => ({
+    connectorType: row.connector_type,
+    scope: row.scope === "workspace" ? "workspace" : "personal",
+    status: row.status,
+    capabilities: parseJson<string[]>(row.granted_scopes_json, []),
+    displayName: row.display_name,
+  })), registered);
+}
+
+/** The connector connection tools as this turn's principal may use them: as they are, or refusing by name. */
+function connectorConnectionToolsFor(input: WorkstreamWorkflowInput, tools: HarnessTool[]): HarnessTool[] {
+  if (input.executionPrincipal.type === "user") return tools;
+  return tools.map((tool) => refusingTool(tool, toolRefusal("connections_need_a_person")));
 }
 
 /** What the access check needs from the run that holds it. */
@@ -8656,8 +8660,11 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
     },
     // A Sidekick run holds these too, since 2026-11-08: a run a missing
     // connection blocks asks for it and waits (`needs_input`) rather than
-    // finishing with the work undone. Its card is the question.
-    ...(input.executionPrincipal.type === "user" ? [
+    // finishing with the work undone. Its card is the question. A turn that
+    // acts for the Organization has no person whose connections these read
+    // or ask for, so it is offered them refusing by name (rule 14 of
+    // docs/agent-tools.md) rather than not at all.
+    ...connectorConnectionToolsFor(input, [
       {
         definition: AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION,
         validateInput: (raw: unknown) => {
@@ -8666,7 +8673,18 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         },
         execute: async (raw: unknown) => {
           const state = await readConnectorConnectionState(env, input, raw);
-          return { output: state, summary: connectorConnectionStateSummary(state) };
+          return { output: state, summary: connectorProductStateSummary(state) };
+        },
+      } satisfies HarnessTool,
+      {
+        definition: AVALON_LIST_CONNECTORS_TOOL_DEFINITION,
+        validateInput: (raw: unknown) => {
+          const parsed = ConnectorListInputSchema.safeParse(raw);
+          return parsed.success ? null : parsed.error;
+        },
+        execute: async (raw: unknown) => {
+          const list = await listConnectors(env, input, raw);
+          return { output: list, summary: connectorListSummary(list) };
         },
       } satisfies HarnessTool,
       input.automationRun ? {
@@ -8677,7 +8695,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
         },
         execute: async (raw: unknown, context: HarnessToolContext) => {
           const card = ConnectorConnectionCardInputSchema.parse(raw);
-          const label = ConnectorConnectionCardCatalog[card.connectorId].label;
+          const label = ConnectorProductCatalog[card.connectorId].name;
           return openToolQuestion(env, input, context, "show_connector_connection", {
             prompt: card.scope === "workspace"
               ? `Connect ${label} for the Organization so this run can continue.`
@@ -8701,7 +8719,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
           return { output: card, summary };
         },
       } satisfies HarnessTool,
-    ] : []),
+    ]),
     {
       definition: {
         name: "schedule_wakeup",
@@ -9296,30 +9314,6 @@ export async function pollConnectorConnection(
     cursor: parseJson(row.cursor_json, {}),
     config: { ...parseJson<Record<string, unknown>>(row.config_json, {}), region: env.AVALON_REGION },
   };
-  if (row.connector_type === "canva") {
-    // Resolve only this explicitly enabled watch; no account-wide scan on connect.
-    let watch = input.pollScheduleId ? await env.DB.prepare(
-      `SELECT rw.id AS watchId, r.provider_resource_id AS designId, r.protected_access_json AS protectedAccessJson
-       FROM resource_watches rw JOIN resources r ON r.id = rw.resource_id AND r.workspace_id = rw.workspace_id
-       WHERE rw.id = ? AND rw.workspace_id = ? AND rw.connection_id = ? AND rw.enabled = 1
-         AND r.resource_type = 'canva_design'`,
-    ).bind(input.pollScheduleId, input.workspaceId, input.connectionId).first<{ watchId: string; designId: string; protectedAccessJson: string | null }>() : null;
-    if (!watch && input.pollScheduleId) {
-      watch = await env.DB.prepare(
-        `SELECT registration.registration_id AS watchId, r.provider_resource_id AS designId,
-                r.protected_access_json AS protectedAccessJson
-         FROM workspace_external_event_registrations registration
-         JOIN resources r ON r.id = registration.resource_id AND r.connection_id = registration.connection_id
-         JOIN schedules s ON s.id = registration.registration_id AND s.enabled = 1
-         WHERE registration.registration_id = ? AND registration.workspace_id = ?
-           AND registration.connection_id = ? AND registration.connector_type = 'canva'
-           AND registration.state = 'active' AND r.resource_type = 'canva_design'`,
-      ).bind(input.pollScheduleId, input.workspaceId, input.connectionId)
-        .first<{ watchId: string; designId: string; protectedAccessJson: string | null }>();
-    }
-    context.config.canvaWatch = watch ? { watchId: watch.watchId, designId: watch.designId,
-      accessReference: await readCanvaReference(env, input.workspaceId, input.connectionId, watch.designId, watch.protectedAccessJson) } : null;
-  }
   const registry = connectorRegistryForEnv(env);
   const adapter = registry.get(String(row.connector_type));
   const baseCursorJson = typeof row.cursor_json === "string" ? row.cursor_json : "{}";

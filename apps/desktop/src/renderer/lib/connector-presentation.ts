@@ -1,5 +1,10 @@
 import type { WorkstreamConnection } from './types';
-import { connectorProviders, type ConnectorProviderCatalogEntry } from './connector-catalog';
+import {
+  ConnectorProductCatalog,
+  ConnectorProductIds,
+  connectorConnectionServesProduct,
+  type ConnectorProductId,
+} from '@rally/contracts';
 import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
 
 /**
@@ -12,90 +17,39 @@ export interface ConnectorPresentation {
   readonly name: string;
   readonly description: string;
   readonly mark: PluginBrandMark | null;
-  /** Capability families a same-provider connection must carry for this label. */
-  readonly capabilityPrefixes?: readonly string[];
+  /** The product this presents, when it is one; its connections are the ones that serve it. */
+  readonly productId?: ConnectorProductId;
 }
 
 type CatalogEntry = { readonly name: string; readonly description: string };
 
 /**
- * The sentence the Connections card shows for this connector.
- *
- * These two catalogs held byte-identical copies of the same eight sentences
- * with nothing binding them, which is how Ashby came to have a card that read
- * well and a transcript blurb that said "Workspace connector.". The card is the
- * one somebody edits, so it is the source; a connector whose transcript blurb
- * is deliberately different from its card says so where it is written, below.
+ * Where a mention's blurb deliberately differs from the product's sentence in
+ * `ConnectorProductCatalog`, which Settings' card and the agent's list show.
  */
-function cardDescription(id: ConnectorProviderCatalogEntry['id']): string {
-  const card = connectorProviders.find((provider) => provider.id === id);
-  if (!card) throw new Error(`No connector card is declared for ${id}`);
-  return card.description;
-}
-
-const GOOGLE_MAIL: CatalogEntry & { readonly capabilityPrefixes: readonly string[] } = {
-  name: 'Google Mail + Calendar',
-  description: cardDescription('google-mail-calendar'),
-  capabilityPrefixes: ['gmail.', 'calendar.'],
+const MENTION_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  // The card explains how to add a server; a mention is about what the tools are.
+  custom_mcp: 'Tools served live by a Model Context Protocol server you point Rally at.',
+  // The card offers a connection to make, while a mention may be the workspace Agent itself.
+  slack: 'Messages, files, people, canvases, conversations, and the Rally workspace Agent.',
 };
 
-const GOOGLE_FILES: CatalogEntry & { readonly capabilityPrefixes: readonly string[] } = {
-  name: 'Google Drive + Docs + Sheets',
-  description: cardDescription('google-drive'),
-  capabilityPrefixes: ['drive.', 'docs.', 'sheets.'],
-};
-
-const CATALOG: Readonly<Record<string, CatalogEntry>> = {
-  custom_mcp: {
-    name: 'Custom MCP server',
-    // Deliberately not the card's sentence: the card explains how to add a
-    // server, and a transcript mention is about what the tools are.
-    description: 'Tools served live by a Model Context Protocol server you point Rally at.',
-  },
-  github: {
-    name: 'GitHub',
-    description: cardDescription('github'),
-  },
-  apollo: { name: 'Apollo.io', description: cardDescription('apollo') },
-  ashby: {
-    name: 'Ashby',
-    description: cardDescription('ashby'),
-  },
-  canva: {
-    name: 'Canva',
-    description: cardDescription('canva'),
-  },
-  fireflies: {
-    name: 'Fireflies',
-    description: cardDescription('fireflies'),
-  },
-  granola: {
-    name: 'Granola',
-    description: cardDescription('granola'),
-  },
-  linear: {
-    name: 'Linear',
-    description: cardDescription('linear'),
-  },
-  slack: {
-    name: 'Slack',
-    // Deliberately not the card's sentence: the card offers a connection to
-    // make, while a mention may be the workspace Agent itself.
-    description: 'Messages, files, people, canvases, conversations, and the Rally workspace Agent.',
-  },
-  notion: {
-    name: 'Notion',
-    description: cardDescription('notion'),
-  },
-  x: {
-    name: 'Public X via TwitterAPI.io',
-    description: cardDescription('x'),
-  },
-  generic_webhook: {
-    name: 'Inbound webhook',
-    description: cardDescription('generic-webhook'),
-  },
-};
+/**
+ * Every provider that is one product, keyed by the type stored on a mention.
+ * Google is two products under one type, so it is presented by bundle below.
+ */
+const CATALOG: Readonly<Record<string, CatalogEntry & { readonly productId: ConnectorProductId }>> = Object.fromEntries(
+  ConnectorProductIds
+    .filter((id) => ConnectorProductCatalog[id].providerType !== 'google')
+    .map((id) => {
+      const product = ConnectorProductCatalog[id];
+      return [product.providerType, {
+        productId: id,
+        name: product.name,
+        description: MENTION_DESCRIPTIONS[product.providerType] ?? product.description,
+      }];
+    }),
+);
 
 export type ConnectorScopeStatus = 'healthy' | 'reconnect_required' | 'disabled' | 'missing';
 
@@ -109,17 +63,19 @@ export interface ConnectorScopeState {
 function googlePresentation(displayName?: string): ConnectorPresentation {
   const renderedName = displayName?.replace(/^@/u, '');
   const normalizedName = renderedName?.toLowerCase() ?? '';
-  const bundle = /drive|docs|sheets/u.test(normalizedName)
-    ? GOOGLE_FILES
+  // A mention's label is free text ("@Gmail", "@Google Drive"), with no
+  // connection in hand to match grants against, so the words decide.
+  const productId = /drive|docs|sheets/u.test(normalizedName)
+    ? 'google-drive' as const
     : /gmail|mail|calendar/u.test(normalizedName)
-      ? GOOGLE_MAIL
+      ? 'google-mail-calendar' as const
       : undefined;
-  const markName = bundle?.name ?? renderedName;
+  const product = productId ? ConnectorProductCatalog[productId] : undefined;
   return {
-    name: renderedName || bundle?.name || 'Google Workspace',
-    description: bundle?.description ?? 'Mail, calendar, Drive, Docs, and Sheets through connected Google accounts.',
-    mark: connectorBrandMark('google', markName),
-    ...(bundle ? { capabilityPrefixes: bundle.capabilityPrefixes } : {}),
+    name: renderedName || product?.name || 'Google Workspace',
+    description: product?.description ?? 'Mail, calendar, Drive, Docs, and Sheets through connected Google accounts.',
+    mark: connectorBrandMark('google', product?.name ?? renderedName),
+    ...(productId ? { productId } : {}),
   };
 }
 
@@ -134,6 +90,7 @@ export function connectorPresentation(
     name: renderedName || entry?.name || connectorType,
     description: entry?.description ?? 'Organization connector.',
     mark: connectorBrandMark(connectorType, renderedName),
+    ...(entry ? { productId: entry.productId } : {}),
   };
 }
 
@@ -144,28 +101,26 @@ function bestConnectorStatus(statuses: readonly ConnectorScopeStatus[]): Connect
   return 'missing';
 }
 
-function connectionMatchesCapabilities(
-  connection: WorkstreamConnection,
-  capabilityPrefixes: readonly string[] | undefined,
-): boolean {
-  if (!capabilityPrefixes?.length) return true;
-  return connection.capabilities?.some((capability) =>
-    capabilityPrefixes.some((prefix) => capability.startsWith(prefix))) ?? false;
-}
-
 /**
  * Personal and workspace rows for one connector presentation, always both.
+ * With a product, only connections serving it count (the shared
+ * `connectorConnectionServesProduct`); without one, every connection of the
+ * type does. This fold stays the desktop's because it shows Disabled, which
+ * the agent's product states do not.
  * Every applicable credential contributes: response order cannot change status
  * and capability unions remain stable across reconnects and account additions.
  */
 export function connectorScopeStates(
   connectorType: string,
   connections: readonly WorkstreamConnection[],
-  capabilityPrefixes?: readonly string[],
+  productId?: ConnectorProductId,
 ): readonly [ConnectorScopeState, ConnectorScopeState] {
   const matching = connections.filter((connection) =>
     connection.connectorType === connectorType &&
-    connectionMatchesCapabilities(connection, capabilityPrefixes));
+    (productId === undefined || connectorConnectionServesProduct(productId, {
+      connectorType: connection.connectorType,
+      capabilities: connection.capabilities ?? [],
+    })));
   const state = (scope: 'you' | 'workspace'): ConnectorScopeState => {
     const scopeConnections = matching.filter((connection) => connection.scope === scope);
     const capabilities = [...new Set(scopeConnections.flatMap((connection) => connection.capabilities ?? []))]

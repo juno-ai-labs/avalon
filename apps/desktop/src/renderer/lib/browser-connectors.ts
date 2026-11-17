@@ -1,6 +1,3 @@
-import { isCookieSession, type ClientSession } from '@rally/contracts/client-session';
-import { isDesktopOnlyConnector } from './connector-catalog';
-
 /** The public macOS build, the same one the site and the browser's account rail link to. */
 export const MAC_APP_DOWNLOAD_URL = 'https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg';
 
@@ -15,19 +12,3 @@ export function isMobileOs(userAgent: string, platform: string, maxTouchPoints: 
 /** Whether this device can use the Mac app download. Read once: the OS does not change under a page. */
 export const MAC_APP_DOWNLOADABLE = typeof navigator === 'undefined'
   || !isMobileOs(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
-
-/** What a connector the browser cannot start says, wherever it is listed. */
-export const MAC_APP_CONNECT_NOTE = MAC_APP_DOWNLOADABLE
-  ? 'Download the Mac app to connect this.'
-  : 'Connect this from the Mac app.';
-
-/**
- * Whether this client may start or refresh a connection of `connectorType`.
- * The Mac app may do any; a browser tab any but those marked `desktopOnly` in
- * the catalog, whose authorization needs something only the Mac app has. A new
- * connector is offered in both unless it is marked. Presentation only: the
- * connection routes do not read the mark.
- */
-export function connectorStartsHere(session: ClientSession | null, connectorType: string): boolean {
-  return !isCookieSession(session) || !isDesktopOnlyConnector(connectorType);
-}

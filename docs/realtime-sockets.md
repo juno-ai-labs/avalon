@@ -271,9 +271,8 @@ wrote), or `connection` (the id in the path, or the one a creating route names
 with `noteChangedConnection`; none named is everyone). The map is the one
 publisher of a `/connections` request's own write, after its response; the
 connection service publishes only what no request carries — an OAuth
-completion, which a provider's redirect reaches without a session (and which
-the Canva loopback, `POST /connections/canva/complete`, runs, so that route
-maps to nothing), and background tool-count discovery. A connection write
+completion, which a provider's redirect reaches without a session, and
+background tool-count discovery. A connection write
 publishes `connector_connections` and `resources`, and not
 `automations`: no Sidekick read consults a connection, which a Sidekick reads
 only when one is applied or its principal is claimed, both of them Sidekick

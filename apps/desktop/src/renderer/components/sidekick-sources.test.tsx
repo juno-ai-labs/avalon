@@ -43,7 +43,7 @@ vi.mock('./connector-mentions', () => ({
     connection.request = request;
     connection.finish = () => options.onNewlyConnected?.();
     return { start: connection.start, pending: false, attemptId: null, unavailable: false, checkingAvailability: false, accountRequired: false,
-      macAppOnly: false, accountOptions: undefined, selectedAccountId: '', selectAccount: () => undefined, error: undefined };
+      accountOptions: undefined, selectedAccountId: '', selectAccount: () => undefined, error: undefined };
   },
 }));
 

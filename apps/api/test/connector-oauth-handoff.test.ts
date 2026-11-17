@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { AuthContext, Env } from "../src/env";
-import { decryptString, encryptString, openString, sealString } from "../src/lib/crypto";
+import { decryptString, encryptString, sealString } from "../src/lib/crypto";
 import { desktopHandoffUrl } from "../src/lib/desktop-handoff";
 import { __connectionServiceTesting, ConnectionService } from "../src/services/connection-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
@@ -407,65 +407,6 @@ describe("connector OAuth handoff", () => {
     const reconnect = await service.reconnect(String(row.id), 2);
     await new ConnectionService(env).completeProvider("apollo", "next-code", new URL(reconnect.url).searchParams.get("state")!);
     expect(object.prepare("SELECT id FROM connector_connections WHERE connector_type = 'apollo'").all()).toEqual([{ id: row.id }]);
-  });
-
-  it("starts Canva desktop authorization without feature flags", async () => {
-    const { auth, env } = fixture();
-    const redirectUri = "http://127.0.0.1:4321/callback";
-    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes("oauth-protected-resource")) return Response.json({ resource: "https://mcp.canva.com", authorization_servers: ["https://mcp.canva.com"] });
-      if (url.includes("oauth-authorization-server")) return Response.json({ authorization_endpoint: "https://mcp.canva.com/authorize", token_endpoint: "https://mcp.canva.com/token", registration_endpoint: "https://mcp.canva.com/register", code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["client_secret_post"] });
-      if (url.endsWith("/register")) {
-        expect(JSON.parse(String(init?.body)).redirect_uris).toEqual([redirectUri]);
-        return Response.json({ client_id: "fixture-client", client_secret: "fixture-secret", token_endpoint_auth_method: "client_secret_post" });
-      }
-      throw new Error(`Unexpected provider request: ${url}`);
-    });
-    const result = await new ConnectionService(env, auth).beginProvider("canva", {
-      scope: "personal", capabilities: ["canva.personal.mcp"], loopbackRedirectUri: redirectUri, desktopHandoffVersion: 2,
-    });
-    expect(new URL(result.url).searchParams.get("redirect_uri")).toBe(redirectUri);
-  });
-
-  it("rejects public completion of a desktop Canva authorization without consuming it", async () => {
-    const { env, regional } = fixture();
-    const sealed = await sealString(JSON.stringify({
-      provider: "canva", scope: "personal", verifier: "verifier",
-      authorizationState: { redirectUri: "http://127.0.0.1:4321/callback" },
-    }), env.OAUTH_STATE_ENCRYPTION_KEY);
-    regional.prepare(`INSERT INTO oauth_states
-      (id, region, provider, purpose, code_verifier_encrypted, user_id, workspace_id, return_uri, expires_at)
-      VALUES (?, 'global', 'canva', 'connector', ?, ?, ?, 'avalon://auth/complete', ?)`)
-      .run("canva-state", sealed, USER_ID, WORKSPACE_ID, new Date(Date.now() + 60_000).toISOString());
-    const service = new ConnectionService(env);
-    await expect(service.completeProvider("canva", "code", "canva-state"))
-      .rejects.toMatchObject({ code: "authentication_required" });
-    await expect(service.completeProviderDenial("canva", "canva-state"))
-      .rejects.toMatchObject({ code: "authentication_required" });
-    expect(regional.prepare("SELECT consumed_at FROM oauth_states WHERE id = ?").get("canva-state"))
-      .toEqual({ consumed_at: null });
-  });
-
-  it.each([
-    { grants: ["gmail.read", "gmail.draft", "gmail.send", "calendar.read", "calendar.write"], expected: ["gmail.read", "gmail.draft", "gmail.send", "calendar.read", "calendar.write", "gmail.modify"] },
-    { grants: ["gmail.read"], expected: ["gmail.read"] },
-    { grants: ["gmail.read", "gmail.draft", "gmail.send"], expected: ["gmail.read", "gmail.draft", "gmail.send"] },
-    { grants: ["drive.read", "docs.write"], expected: ["drive.read", "docs.write"] },
-  ])("refreshes the Google mail preset only on explicit reauthorization, preserving narrower grants: $grants", async ({ grants, expected }) => {
-    const { auth, env, regional, object } = fixture();
-    const connectionId = "00000000-0000-4000-8000-000000000221";
-    await insertGoogleConnection(object, env, connectionId);
-    object.prepare("UPDATE connector_connections SET granted_scopes_json = ? WHERE id = ?").run(JSON.stringify(grants), connectionId);
-    const started = await new ConnectionService(env, auth).reconnect(connectionId, "browser");
-    const row = regional.prepare("SELECT code_verifier_encrypted FROM oauth_states").get() as { code_verifier_encrypted: string };
-    const state = JSON.parse(await openString(row.code_verifier_encrypted, env.OAUTH_STATE_ENCRYPTION_KEY));
-    expect(state).toMatchObject({ connectionId, capabilities: expected });
-    expect(new URL(started.url).hostname).toBe("accounts.google.com");
-    // Starting consent is not a grant: existing tools retain the frozen list
-    // until the ordinary authorized callback persists the replacement.
-    expect(object.prepare("SELECT granted_scopes_json FROM connector_connections WHERE id = ?").get(connectionId))
-      .toEqual({ granted_scopes_json: JSON.stringify(grants) });
   });
 
   it("persists a versioned addressed return for a capable desktop start", async () => {

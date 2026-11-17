@@ -4,7 +4,6 @@ export const ConnectorOAuthProviders = [
   "github",
   "apollo",
   "ashby",
-  "canva",
   "fireflies",
   "granola",
   "linear",

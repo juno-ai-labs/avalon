@@ -1,6 +1,6 @@
 import {
   ConnectorConnectionCardInputSchema,
-  ConnectorConnectionCardScopes,
+  ConnectorScopes,
   connectorConnectionCardInputFromToolEvent,
   isConnectorConnectionCardWireName,
 } from '@rally/contracts';
@@ -11,7 +11,7 @@ type CardToolEvent = Parameters<typeof connectorConnectionCardInputFromToolEvent
 // Display compatibility does not authorize an unknown connector.
 const connectionCardEnvelopeSchema = z.strictObject({
   connectorId: z.string().min(1),
-  scope: z.enum(ConnectorConnectionCardScopes),
+  scope: z.enum(ConnectorScopes),
 });
 
 export function connectorConnectionCardDisplayInputFromToolEvent(event: CardToolEvent): z.infer<typeof connectionCardEnvelopeSchema> | null {
