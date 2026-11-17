@@ -392,7 +392,7 @@ describe("Avalon connector connection tools", () => {
       connectorId: "x",
       connections: [{ scope: "workspace", state: expect.any(String), connectIn: "settings" }],
     })]);
-    expect(summary).toBe("Listed connectors in 12 families; connected: google-mail-calendar, google-drive");
+    expect(summary).toBe("Listed connectors in 11 families; connected: google-mail-calendar, google-drive");
   });
 
   it("checks every scope a connector offers, and takes no scope", async () => {
