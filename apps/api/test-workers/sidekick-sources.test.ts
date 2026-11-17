@@ -329,17 +329,26 @@ describe("Sidekick sources", () => {
     const asked = await ask([jane]);
     await stub().sidekickDecideSourceRequest({ ...address, requestId: asked.requests[0]!.requestId, userId: jane, decision: "approve" });
     await reconciled();
+    // Who the run acts as once it has started: starting it picks again, and must keep to whose mail it is.
     const acting = async (connectionId: string, owner: string) => {
       const delivery = (await mail(connectionId, owner, "Term sheet"))[0]!;
       expect(await admit(delivery)).toMatchObject({ admitted: true });
-      return (await runs()).at(-1)!.coordinator_user_id;
+      const { run_id: runId } = (await runs()).at(-1)!;
+      await runDurableObjectAlarm(stub());
+      const started = await stub().sidekickRunProvisioning({ ...address, runId }) as SidekickRunProvisioning | null;
+      return { runId, actsAs: started!.runAsUserId };
     };
     // Jane lends events and no account: her mail's run acts as the Sidekick itself, not as the delegate there is.
-    expect(await acting(janeMail, jane)).toBeNull();
+    const janes = await acting(janeMail, jane);
+    expect(janes.actsAs).toBeNull();
+    // Once her mail has aged out of the Organization, whose it was is unknown: continuing it still borrows nobody's account.
+    await runInDurableObject(stub(), (_instance, state) => { state.storage.sql.exec("DELETE FROM workspace_connector_events"); });
+    expect(await stub().sidekickContinueRun({ ...address, runId: janes.runId, sender: { kind: "system" } }))
+      .toMatchObject({ outcome: "continue", executionPrincipal: { type: "workspace", workspaceId } });
     // Approving made her a reader, so she can lend her accounts too. Her mail's run then acts as her.
     await setDelegation(jane, true);
-    expect(await acting(janeMail, jane)).toBe(jane);
-    expect(await acting(creatorMail, creator)).toBe(creator);
+    expect((await acting(janeMail, jane)).actsAs).toBe(jane);
+    expect((await acting(creatorMail, creator)).actsAs).toBe(creator);
   });
 
   it("decides who may ask from the stored role, whatever role the caller names", async () => {
