@@ -1696,10 +1696,11 @@ export class RallyApi {
     });
   }
 
-  async getResource(id: string): Promise<WorkstreamResource> {
+  async getResource(id: string, signal?: AbortSignal): Promise<WorkstreamResource> {
     return mapResource(await this.request(`/resources/${encodeURIComponent(id)}`, {
       method: 'GET',
       schema: WireResourceSchema,
+      ...(signal ? { signal } : {}),
     }));
   }
 

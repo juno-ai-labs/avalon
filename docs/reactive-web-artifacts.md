@@ -156,7 +156,8 @@ never overwrites an edit. A snapshot is for data fixed at one time.
 The `building-live-sites` skill directs both interactive agents and Sidekicks
 refreshing a site to load Terminal for file editing, import and publication.
 Loading the skill supplies instructions without activating those tools. Each
-refresh imports the published source because local files may be stale. Preserving
+refresh imports the published source because local files may be stale. The
+skill points background agents back to their ordinary [result handoff](agent-communication.md#boundary). Preserving
 identity requires both the original publication conversation and directory path.
 A Sidekick run publishes into the Canvas it was asked to update, or creates a
 new Canvas with the Sidekick as its writer; a Canvas's Chat publishes into its

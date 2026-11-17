@@ -481,6 +481,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
         <Button onClick={() => void canvas.refetch()}>Retry loading Canvas details</Button>
       </> : undefined}
       artifactSharing={artifactSharing}
+      canvasArtifacts={canvas.data?.artifacts ?? (canvas.isPending && !creationBlocked ? null : undefined)}
       parentId={id}
       parentKind="canvas"
       composerActivity={<ComposerAgentActivity activity={workspaceSocket?.state === 'connected' && workspaceSocket.sidebarReady
