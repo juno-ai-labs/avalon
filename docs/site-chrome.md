@@ -11,6 +11,8 @@ here.
 | Path | Responsibility |
 | --- | --- |
 | `apps/site/src/site-chrome.ts` | `trustPages`, `blogPosts`, the header and footer renderers, the blog sitemap, `/llms.txt`, and the marker table. |
+| `apps/site/src/site-icons.ts` | `externalArrow` and `githubLink`, the header GitHub link every header renderer and the `github-link` and `github-header-link` markers use. |
+| `apps/site/src/marketplace-catalog.ts`, `apps/site/build/help/layout.ts` | The marketplace and help center headers, rendered outside `site-chrome.ts`. |
 | `apps/site/src/html.ts` | `escapeHtml` and `longDate`, shared by every page rendered at build time. |
 | `apps/site/vite.config.ts` | `rally-site-chrome` swaps markers for markup; `rally-markdown-pages` renders the blog, described in [`site-blog.md`](site-blog.md). |
 | `apps/site/src/landing.css` | Header and footer styles, in the landing page's tokens. |

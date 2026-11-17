@@ -207,6 +207,14 @@ describe('public Rally site', () => {
     expect(column('Blog')).toEqual(['/blog/', `/blog/${blogPosts[0]?.slug ?? ''}/`]);
   });
 
+  it('links the GitHub repository from every header marker', () => {
+    for (const marker of ['site-nav', 'reading-nav', 'market-header', 'github-link', 'github-header-link']) {
+      const links = [...renderSiteChrome(`<!-- rally:${marker} -->`).matchAll(/<a [^>]*href="https:\/\/github\.com\/[^"]+"[^>]*>/gu)].map(([tag]) => tag);
+      expect(links, marker).toHaveLength(1);
+      expect(links[0], marker).toContain('href="https://github.com/juno-ai-labs/avalon"');
+    }
+  });
+
   it('refuses an unknown marker', () => {
     expect(() => renderSiteChrome('<!-- rally:comparison-table -->')).toThrow('Unknown site chrome marker: comparison-table');
   });
