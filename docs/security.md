@@ -1014,14 +1014,19 @@ issue messages, regexes, and complete Zod objects are never logged. Malformed
 JSON uses `(root)` / `invalid_json` and has no body shape because no parsed value
 exists.
 
-Workspace invitation tokens are random bearer secrets stored only as SHA-256
+Invitations sent before 2026-11-16 carry tokens: random bearer secrets stored only as SHA-256
 hashes in D1. The plaintext token exists transiently in the regional Worker, the
 Cloudflare email payload, the recipient's email, and the fragment-protected
 browser/deep-link handoff. It is never placed in a query string, log, audit event,
 or correlation header. Sending uses the native `EMAIL` binding rather than an
 administration credential. Its stable invitation reference is correlation data,
-not a provider dedupe guarantee; an outbound provider failure revokes the new
-invitation before the API returns an error.
+not a provider dedupe guarantee.
+
+Adding a member by address mints no token. An administrator can seed an
+account bound to an address as verified, so proving that address, by an
+emailed code or a provider that verified it, is what reaches the account. An
+address an account holds unverified is refused with `member_address_unverified`
+rather than added.
 
 Daytona lifecycle webhooks use the same shared Svix raw-body verifier, then
 check `DAYTONA_ORGANIZATION_ID`. Signed payloads are refresh hints: current

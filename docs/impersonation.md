@@ -184,7 +184,7 @@ past it, as anyone's own message does, and analytics are unchanged.
   or fails because of the audit database.
 - A support session leaves the person's read state and presence alone. A new per-person mark (seen, opened, visited) checks
   `impersonatorUserId` on the request or socket the same way.
-- A support session never outlives its grant. What it creates (an invitation,
+- A support session never outlives its grant. What it creates (an added member,
   a connection) is the Organization's and stays, as anyone's would. Renewal is capped at the grant's
   expiry, which is also what lets the ordinary expiry sweep close its sockets.
 
@@ -310,7 +310,7 @@ grant or staff check, which would let a revoke lag.
 **Consequences:** Anything that authorizes from `sessions` treats a support
 session as its person, by design; a new check that must not (like granting
 access, or minting another credential) reads `impersonatorUserId`. Durable
-things a session creates as an administrator (an invitation, a role change, a
+things a session creates as an administrator (an added member, a role change, a
 connection) outlive the grant like any administrator's. Identity-scoped account state (onboarding,
 profile, appearance) is the staff member's and is hidden on a support session.
 Each write from a support session is audited in the background, and the

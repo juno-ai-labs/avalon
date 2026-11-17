@@ -263,6 +263,35 @@ describe("assigning a workspace member's role", () => {
     expect(roleOf(MEMBER_ID)).toBe("admin");
   });
 
+  it("adds a member over HTTP, and answers a build from before adding in the invitation shape it reads", async () => {
+    // Required in every deployment (`assertEnvContract`); the shared test env leaves it out.
+    env = { ...env, PUBLIC_WEB_BASE_URL: "https://rally.example.test" };
+    const app = new Hono<HonoAppEnv>();
+    app.use("*", requireAuth);
+    app.route("/workspace", workspaceRoutes);
+    app.onError(errorHandler);
+    const post = (actor: string, path: string, body: unknown) => app.request(`/workspace/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-rally-dev-user-id": actor, "x-rally-dev-workspace-id": WORKSPACE_ID },
+      body: JSON.stringify(body),
+    }, env);
+    // An administrator may add an administrator; an ordinary member may add nobody; the body is checked.
+    const added = await post(OWNER_ID, "members", { email: "nancy@example.test", role: "admin" });
+    expect(added.status).toBe(201);
+    const { member } = await added.json() as { member: { userId: string } };
+    expect(roleOf(member.userId)).toBe("admin");
+    expect((await post(MEMBER_ID, "members", { email: "pat@example.test", role: "member" })).status).toBe(403);
+    expect((await post(OWNER_ID, "members", { email: "not an address", role: "member" })).status).toBe(400);
+
+    const legacy = await post(OWNER_ID, "invitations", { email: "robin@example.test", role: "member" });
+    expect(legacy.status).toBe(201);
+    const body = await legacy.json() as { invitation: Record<string, unknown>; inviteUrl: string; emailDelivery: string };
+    expect(body.invitation).toMatchObject({ email: "robin@example.test", role: "member", status: "accepted", invitedByName: "Rally" });
+    expect(body.inviteUrl).toBe("https://rally.example.test");
+    // Already a member, with nothing waiting to accept.
+    expect(roleOf(String(body.invitation.id))).toBe("member");
+  });
+
   it("refuses a guest as a guest, not as a membership that changed underneath the caller", async () => {
     // A guest's role is `NULL`, and the conditional write re-asserts `role = ?`
     // against it — a comparison nothing matches. Left to the write, a guest

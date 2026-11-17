@@ -1608,7 +1608,7 @@ describe("A Sidekick run a missing connection blocks", () => {
       return { ...row, member: elicitation.member, options: elicitation.options, allowOther: elicitation.allowOther };
     });
     // The question carries the card that adds Nancy, and is answered by its two options alone.
-    expect(question).toMatchObject({ prompt: "Add Nancy as a member?",
+    expect(question).toMatchObject({ prompt: "Add nancy@example.com as a member?",
       member: { email: "nancy@example.com", name: "Nancy" }, allowOther: false });
     expect((question.options as Array<{ label: string }>).map((option) => option.label)).toEqual(["Added", "Not now"]);
 

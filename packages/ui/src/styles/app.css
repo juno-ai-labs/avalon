@@ -7360,10 +7360,18 @@ button.dashboard-card-link { background: none; border: 0; cursor: pointer; font:
 .source-request-replaced, .source-request-card-status { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-subheadline); margin: 0; }
 /* "Connect Gmail and approve": one press in Approve's place, so connecting reads as part of approving. Filled, as
    the one thing on the card left for this reader to do. */
-.source-connect-and-approve { align-items: center; display: inline-flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
-.source-decision .source-connect-and-approve-button.button { background: var(--av-sys-color-success-strong); border-color: var(--av-sys-color-success-strong); color: var(--av-sys-color-success-on); }
-.source-decision .source-connect-and-approve-button.button:disabled { cursor: default; opacity: 0.7; }
+/* Its press, account picker and note join the decision row, so a note wraps under Decline and the press together
+   and never takes the person's name off the row. */
+.source-connect-and-approve { display: contents; }
+.source-decision:has(.source-connect-and-approve) { align-items: center; flex-wrap: wrap; justify-content: flex-end; max-width: 360px; }
+.source-connect-and-approve > small { flex-basis: 100%; text-align: end; }
+/* A call to act, not an answer already given: a filled green pill is what a chosen Approve looks like. */
+.source-decision .source-connect-and-approve-button.button-primary { background: var(--av-cmp-button-primary-background); border-color: transparent; color: var(--av-cmp-button-primary-color); }
+.source-decision .source-connect-and-approve-button.button-primary:hover:not([aria-disabled='true']) { background: var(--av-cmp-button-primary-hover); }
+.source-decision .source-connect-and-approve-button[aria-disabled='true'] { cursor: default; opacity: 0.7; }
 .source-connect-and-approve select { font-size: var(--av-sys-type-footnote); max-width: 180px; }
+/* Added, but not told: a standing fact about what was done, in the warning hue rather than as an error. */
+.invite-unemailed-notice { background: color-mix(in srgb, var(--av-sys-color-warning-base) 10%, var(--av-sys-color-surface-subtle)); border: 1px solid color-mix(in srgb, var(--av-sys-color-warning-base) 42%, var(--av-sys-color-border-default)); border-radius: var(--av-sys-size-radius-lg); font-size: var(--av-sys-type-footnote); margin: 8px 0 0; padding: 8px 10px; }
 .source-request-connect-settings { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-footnote); margin: 0; }
 .settings-account-profile { display: grid; gap: 12px; }
 .settings-support-note { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-type-subheadline); margin: 0; padding: 0 8px; }

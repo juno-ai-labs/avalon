@@ -719,6 +719,20 @@ describe("adding members, and the invitations still waiting from before", () => 
     } finally { database.close(); }
   });
 
+  it("escapes the names an administrator chose in the email's HTML", async () => {
+    const database = seeded();
+    database.prepare(`UPDATE workspaces SET name = ?`).run("Research <script>alert(1)</script>");
+    database.prepare(`UPDATE users SET name = ? WHERE id = ?`).run("Adam & Team", ownerAuth.userId);
+    const resend = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: "resend-email-id" }));
+    emailSend = resend;
+    try {
+      await addAs(database).addMember("nancy@example.com", "member");
+      const html = String(resend.mock.calls[0]![0].html);
+      expect(html).toContain("Adam &amp; Team added you to <strong style=\"color:#141414\">Research &lt;script&gt;alert(1)&lt;/script&gt;</strong>");
+      expect(html).not.toContain("<script>");
+    } finally { database.close(); }
+  });
+
   it("outside Global leaves the new account's platform id for its first sign-in to link", async () => {
     const database = seeded();
     emailSend = vi.fn(async () => ({ messageId: "resend-email-id" }));

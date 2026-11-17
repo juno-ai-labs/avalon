@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { X } from 'lucide-react';
-import type { RallyApi } from '../lib/api';
+import { ApiError, type RallyApi } from '../lib/api';
 
 /**
  * Inviting teammates by a list of addresses, shared by onboarding and the
@@ -50,12 +50,23 @@ export function useInviteEmails(): InviteEmails {
   };
 }
 
-/** Why the list cannot be sent yet, or null when it can. */
 /** What to tell the person adding when some were added but their email could not be sent. */
 export function unemailedNotice(unemailed: readonly string[]): string {
   return `Added, but the email to ${unemailed.join(', ')} could not be sent. Tell them to sign in to Rally with that address.`;
 }
 
+/** An address that was not added, and the refusal's own words. */
+export interface InviteFailure {
+  email: string;
+  reason: string;
+}
+
+/** What to tell the person adding about the addresses that were not added. */
+export function failuresNotice(failures: readonly InviteFailure[]): string {
+  return `Could not add: ${failures.map((failure) => `${failure.email} (${failure.reason})`).join(', ')}. Check the addresses and retry.`;
+}
+
+/** Why the list cannot be sent yet, or null when it can. */
 export function inviteEmailsProblem(invite: InviteEmails): string | null {
   if (!invite.addresses.length) return 'Enter at least one email address.';
   if (invite.invalid) return 'One or more of the addresses are not a valid email address.';
@@ -87,7 +98,8 @@ export type InviteMembersApi = Pick<RallyApi, 'addWorkspaceMember' | 'getWorkspa
 /**
  * Adds each address as a member, one at a time, and reports which failed.
  * Each is a member as soon as it is added, with nothing to accept. An address
- * already a member counts as added without a second email. A guest, or an
+ * already a member counts as added without a second email, whether the list
+ * read first or the add itself says so. A guest, or an
  * address an older invitation still waits for, is added: that makes them a
  * member and retires the invitation.
  */
@@ -95,12 +107,12 @@ export async function inviteMembers(
   api: InviteMembersApi,
   addresses: readonly string[],
   onInvited: (email: string) => void,
-): Promise<{ failures: string[]; unemailed: string[] }> {
+): Promise<{ failures: InviteFailure[]; unemailed: string[] }> {
   const currentMembers = await api.getWorkspaceMembers();
   const alreadyMembers = new Set(currentMembers
     .filter((member) => member.status === 'active' && member.accessClass !== 'guest')
     .map((member) => member.email.toLowerCase()));
-  const failures: string[] = [];
+  const failures: InviteFailure[] = [];
   // Added, but not told: the membership stands, so the person adding has to tell them.
   const unemailed: string[] = [];
   for (const email of addresses) {
@@ -110,7 +122,11 @@ export async function inviteMembers(
         if (added.emailDelivery === 'failed') unemailed.push(email);
       }
       onInvited(email);
-    } catch { failures.push(email); }
+    } catch (error) {
+      // Added meanwhile, by someone else or a list this one did not see: what the press was for.
+      if (error instanceof ApiError && error.code === 'already_workspace_member') { onInvited(email); continue; }
+      failures.push({ email, reason: error instanceof Error && error.message ? error.message : 'unknown error' });
+    }
   }
   return { failures, unemailed };
 }

@@ -16,7 +16,7 @@ import { accountOnboardingQueryKey } from '../lib/account-onboarding-query';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { useWorkspaceMembers } from '../lib/workspace-members';
 import type { Workspace } from '../lib/types';
-import { InviteEmailField, inviteEmailsProblem, inviteMembers, unemailedNotice, useInviteEmails } from '../components/invite-emails';
+import { InviteEmailField, failuresNotice, inviteEmailsProblem, inviteMembers, unemailedNotice, useInviteEmails } from '../components/invite-emails';
 
 const AccountLoadingContext = createContext(false);
 const ProfileEditorContext = createContext<AccountProfileEditor | null>(null);
@@ -212,6 +212,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   const [error, setError] = useState<Error | null>(null);
   const invite = useInviteEmails();
   const [sent, setSent] = useState<string[]>([]);
+  const [unemailed, setUnemailed] = useState<string | null>(null);
   const advance = async (stage: OnboardingJourney['stage']) => {
     if (!journey.data) return;
     const updated = await api!.updateOnboardingJourney({ expectedRevision: journey.data.revision, stage });
@@ -256,17 +257,18 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
         const addresses = inviteAddresses.filter((email) => !sent.includes(email));
         invite.replace(addresses);
         const { failures, unemailed } = await inviteMembers(api!, addresses, (email) => setSent((values) => [...values, email]));
-        invite.replace(failures);
-        if (failures.length) throw new Error(`Could not add: ${failures.join(', ')}. Check the addresses and retry.`);
+        invite.replace(failures.map((failure) => failure.email));
         // Continue moves on once they have read it: they are members, only untold.
-        if (unemailed.length) throw new Error(unemailedNotice(unemailed));
-        await finishOnboarding();
+        setUnemailed(unemailed.length ? unemailedNotice(unemailed) : null);
+        if (failures.length) throw new Error(failuresNotice(failures));
+        if (!unemailed.length) await finishOnboarding();
       });
     }}>{busy ? 'Adding…' : inviteAddresses.length ? `Add ${inviteAddresses.length} ${inviteAddresses.length === 1 ? 'teammate' : 'teammates'}` : 'Add teammates'}</Button>
     <Button disabled={busy} onClick={() => void perform(finishOnboarding)}>{sent.length ? 'Continue' : 'Add later'}</Button>
   </>}>
     <InviteEmailField invite={invite} disabled={busy} />
-    {sent.length > 0 && <p role="status">Added: {sent.join(', ')}</p>}{error && <ErrorNotice occurrence={error}>{error.message}</ErrorNotice>}
+    {sent.length > 0 && <p role="status">Added: {sent.join(', ')}</p>}
+    {unemailed && <p className="invite-unemailed-notice" role="status">{unemailed}</p>}{error && <ErrorNotice occurrence={error}>{error.message}</ErrorNotice>}
   </OnboardingPage>;
   return <>{children}</>;
 }

@@ -74,9 +74,11 @@ The [regional browser adapter](browser-sessions.md) owns authentication and
 Origin validation; the host has no signing key or identity database.
 
 Scoped invitation emails link to the shared conversation's own address under
-`BROWSER_APP_ORIGIN`. A workspace invitation's email still links to the site's
-`/invite` page, which offers **Continue in browser** beside the desktop deep
-link; the browser then lists the invitation by the signed-in address
+`BROWSER_APP_ORIGIN`. The "you were added" email links to
+`BROWSER_APP_ORIGIN/app/workspaces/<region>/<id>`, falling back to
+`PUBLIC_WEB_BASE_URL`; signing in lands the person in the Organization. An
+invitation sent before 2026-11-16 still links to the site's `/invite` page,
+and the browser lists it by the signed-in address
 ([Organization invitations](#organization-invitations)).
 
 An email request carries a client operation ID. A failed issuance can retry that
@@ -324,7 +326,7 @@ replaces the address with `/app/workspaces/<region>/<id>` (replaced, not
 pushed, since nothing in the entry answers Back), makes that the destination
 a later restore reopens, and opens it through `/workspace/select` like any
 other organization. The shell runs the creator's setup journey there: "This
-is you in Rally", then inviting teammates.
+is you in Rally", then "Add your teammates".
 Any account can create one, whatever it signed in with; see
 [multiple workspaces](multiple-workspaces.md#authority-and-data-flow) for how a
 deployment links the account.

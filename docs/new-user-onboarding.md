@@ -36,8 +36,8 @@ account gate optionally notifies its host when account-read or introduction-save
 recovery is actionable, so a native loading cover cannot hide Retry.
 Existing [workspace discovery and invitation acceptance](multiple-workspaces.md)
 choose the regional workspace. Everyone starts at personal setup. Connecting
-tools is not a journey step; it lives in Settings → Connections. The invitation
-step can be skipped.
+tools is not a journey step; it lives in Settings → Connections. The step
+that adds teammates can be skipped.
 
 WorkspaceDO migration 34 adds `onboarding_journeys`, keyed by regional user ID.
 This migration includes the persisted scoped connector selection. Deploy the identity migration
@@ -52,7 +52,7 @@ template that started a Canvas) or is a template's `/marketplace/<slug>`, which
 starts its Canvas once it mounts: the person stays there. No Canvas, conversation or
 agent run is created by onboarding. The unshipped starter columns and removed first-task stages are not part of the schema.
 
-Joining an organization, as its creator or an invited member, seats the person
+Joining an organization, as its creator or an added member, seats the person
 nowhere: General and the Personal Channel went with Channels. The journey ends
 on the Canvases home. Creating the Organization asks for one Canvas, the
 **Getting Started with Canvases** guide, which a queued job makes with the
@@ -88,13 +88,17 @@ once, with nothing to accept: someone who has never signed in gets their
 account then, and their first sign-in with that address lands in the
 Organization ([`workspace-member-roles.md`](workspace-member-roles.md#how-it-works)).
 Before adding, it reads the active members, so retrying a lost response does
-not add anyone twice. Failed addresses stay editable. Onboarding has no
+not add anyone twice. Failed addresses stay editable. When someone is added
+but their "you were added" email could not be sent, the page says "Added, but
+the email to … could not be sent. Tell them to sign in to Rally with that
+address." and stays open. Onboarding has no
 teammate discovery API.
 
 The same field, check and send back **Add new member** in the account menu.
 Every member sees it; for anyone but an administrator it is disabled with a
 tooltip saying only administrators can add members, rather than hidden. It closes once every address is
-added and otherwise stays open holding the addresses that failed.
+added and otherwise stays open holding the addresses that failed, or showing
+the same notice for anyone whose email could not be sent.
 
 ## Invariants
 
@@ -102,8 +106,9 @@ added and otherwise stays open holding the addresses that failed.
   disagree and prevent other members from seeing it.
 - Existing accounts have explicit eligibility false; absence of a journey never
   forces them through a new flow. Email sign-in also starts an account
-  ineligible, since most arrive as guests. Once an organization is created, the
-  account becomes eligible if it is a member of no other organization here and
+  ineligible, since most arrive as guests. Once an organization is created, or
+  the person is added to (or accepts an invitation to) their first
+  organization, the account becomes eligible if it is a member of no other organization here and
   holds no active binding to another deployment (a local guest relationship does
   not count), so a browser creator gets the creator journey a new Mac account
   gets. A failed create changes nothing. Eligibility is set beside the

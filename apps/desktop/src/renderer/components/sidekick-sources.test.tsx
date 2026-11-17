@@ -28,17 +28,22 @@ const ADAM = '00000000-0000-7000-8000-0000000000a2';
 const MAYA = '00000000-0000-7000-8000-0000000000a3';
 const PRIYA = '00000000-0000-7000-8000-0000000000a4';
 const SIDEKICK = '00000000-0000-7000-8000-0000000000d1';
-vi.mock('../lib/collaboration-session', () => ({ useCollaborationSession: () => ({ api, session: { user: { id: ME, name: 'Me' } } }) }));
+vi.mock('../lib/collaboration-session', () => ({
+  useCollaborationSession: () => ({ api, session: { user: { id: ME, name: 'Me' } }, connectorSetup: {} }),
+}));
 // The connection action owns its OAuth flow and is tested with the connection card; here it records
-// what it was asked to connect, and the test finishes the sign-in as an OAuth callback would.
-const connection = vi.hoisted(() => ({ start: vi.fn(), request: null as unknown, finish: () => undefined as void, attemptId: null as string | null }));
+// what it was asked to connect, starts the attempt the test names, and the test finishes the sign-in
+// as an OAuth callback would.
+const connection = vi.hoisted(() => ({
+  start: vi.fn<() => Promise<string>>(), request: null as unknown, finish: () => undefined as void,
+}));
 vi.mock('./connector-mentions', () => ({
-  ConnectorConnectionsProvider: ({ children }: { children: React.ReactNode }) => children,
-  useConnectorConnectionAction: (request: unknown, options: { onNewlyConnected?: () => void }) => {
+  connectorConnectionCardProvider: () => ({ provider: 'google' }),
+  useConnectorConnectionAction: (request: unknown, _provider: unknown, options: { onNewlyConnected?: () => void }) => {
     connection.request = request;
     connection.finish = () => options.onNewlyConnected?.();
-    return { start: connection.start, pending: connection.attemptId !== null, attemptId: connection.attemptId, unavailable: false, accountRequired: false, macAppOnly: false,
-      accountOptions: undefined, selectedAccountId: '', selectAccount: () => undefined, error: undefined };
+    return { start: connection.start, pending: false, attemptId: null, unavailable: false, checkingAvailability: false, accountRequired: false,
+      macAppOnly: false, accountOptions: undefined, selectedAccountId: '', selectAccount: () => undefined, error: undefined };
   },
 }));
 
@@ -64,8 +69,9 @@ const pair = (name: string): Array<{ label: string | null; pressed: string | nul
 
 beforeEach(() => {
   for (const mock of Object.values(api)) mock.mockReset();
-  connection.start.mockReset();
-  connection.attemptId = null;
+  connection.start.mockReset().mockResolvedValue('attempt-1');
+  connection.request = null;
+  connection.finish = () => undefined;
 });
 
 describe('the source request card in a conversation', () => {
@@ -187,10 +193,12 @@ describe('the source request card in a conversation', () => {
     fireEvent.click(both);
     expect(connection.start).toHaveBeenCalledTimes(1);
     expect(api.decideSidekickSourceRequest).not.toHaveBeenCalled();
-    // The sign-in finishes: the re-read says the account works, and the press's consent sends the approval.
+    // The sign-in finishes: the press's own attempt succeeded and the re-read says the account works.
+    api.getConnectorOAuthAttempt.mockResolvedValue({ status: 'succeeded' });
     api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'connected' }), request('r-maya', MAYA, 'Maya', { connection: 'not_connected' })]);
     await act(async () => connection.finish());
     await waitFor(() => expect(api.decideSidekickSourceRequest).toHaveBeenCalledWith(SIDEKICK, 'r-me', 'approve'));
+    expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('attempt-1');
   });
 
   it('approves after a press even when the request reads connected before the sign-in\'s own callback', async () => {
@@ -198,34 +206,72 @@ describe('the source request card in a conversation', () => {
     api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'not_connected' })]);
     api.decideSidekickSourceRequest.mockResolvedValue(request('r-me', ME, 'Me', { state: 'approved', decidedAt: 5, connection: 'connected' }));
     mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
+    api.getConnectorOAuthAttempt.mockResolvedValue({ status: 'succeeded' });
     fireEvent.click(await screen.findByRole('button', { name: 'Connect Gmail and approve your Gmail for Deals' }));
+    await waitFor(() => expect(connection.start).toHaveBeenCalledTimes(1));
     // A socket push re-reads the request first; the button leaves before any callback of its own.
     api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'connected' })]);
     await act(async () => client.invalidateQueries({ queryKey: sidekickSourcesQueryKey(SIDEKICK) }));
     await waitFor(() => expect(api.decideSidekickSourceRequest).toHaveBeenCalledWith(SIDEKICK, 'r-me', 'approve'));
   });
 
-  it('takes the press back when its sign-in is denied: connecting later elsewhere approves nothing', async () => {
+  it('takes the press back when its sign-in is denied, says so, and connecting later elsewhere approves nothing', async () => {
     api.getConnections.mockResolvedValue([]);
     api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'not_connected' })]);
     api.getConnectorOAuthAttempt.mockResolvedValue({ status: 'denied' });
-    const view = mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
-    connection.start.mockImplementation(() => { connection.attemptId = 'attempt-1'; });
+    mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Connect Gmail and approve your Gmail for Deals' }));
-    // The attempt runs, then ends: the person cancelled at Google's consent screen. Each re-read
-    // differs, so the card draws again and the button sees the attempt's state.
-    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'not_connected', createdAt: 2 })]);
-    await act(async () => client.invalidateQueries({ queryKey: sidekickSourcesQueryKey(SIDEKICK) }));
-    connection.attemptId = null;
-    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'not_connected', createdAt: 3 })]);
-    await act(async () => client.invalidateQueries({ queryKey: sidekickSourcesQueryKey(SIDEKICK) }));
-    await waitFor(() => expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('attempt-1'));
+    await waitFor(() => expect(connection.start).toHaveBeenCalledTimes(1));
+    // The person cancelled at Google's consent screen; the attempt ends and the card re-reads.
+    await act(async () => connection.finish());
+    expect(await screen.findByText('Gmail wasn’t connected, so nothing was approved. Try again when you’re ready.')).toBeInTheDocument();
+    expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('attempt-1');
     // Later they connect Gmail in Settings while this card is still open.
     api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'connected' })]);
     await act(async () => client.invalidateQueries({ queryKey: sidekickSourcesQueryKey(SIDEKICK) }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Approve your Gmail for Deals' })).toBeEnabled());
     expect(api.decideSidekickSourceRequest).not.toHaveBeenCalled();
-    view.unmount();
+  });
+
+  it('records no consent when the sign-in could not start: connecting later elsewhere approves nothing', async () => {
+    api.getConnections.mockResolvedValue([]);
+    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'not_connected' })]);
+    api.getConnectorOAuthAttempt.mockResolvedValue({ status: 'succeeded' });
+    connection.start.mockRejectedValue(new Error('Rally could not reach Google.'));
+    mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect Gmail and approve your Gmail for Deals' }));
+    await waitFor(() => expect(connection.start).toHaveBeenCalledTimes(1));
+    // They give up and connect from the conversation's own connection card instead.
+    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'connected' })]);
+    await act(async () => connection.finish());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve your Gmail for Deals' })).toBeEnabled());
+    expect(api.decideSidekickSourceRequest).not.toHaveBeenCalled();
+  });
+
+  it('spends the press when its sign-in succeeds but the account still does not carry the events', async () => {
+    api.getConnections.mockResolvedValue([]);
+    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'not_connected' })]);
+    api.getConnectorOAuthAttempt.mockResolvedValue({ status: 'succeeded' });
+    mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect Gmail and approve your Gmail for Deals' }));
+    await waitFor(() => expect(connection.start).toHaveBeenCalledTimes(1));
+    // Signed in, but without the mail grant (unticked at Google): the re-read still says not connected.
+    const reads = api.readSidekickSourceRequests.mock.calls.length;
+    await act(async () => connection.finish());
+    await waitFor(() => expect(api.readSidekickSourceRequests.mock.calls.length).toBeGreaterThan(reads + 1));
+    // Days later the grant is added in Settings while the card is open: that is not this press.
+    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'connected' })]);
+    await act(async () => client.invalidateQueries({ queryKey: sidekickSourcesQueryKey(SIDEKICK) }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve your Gmail for Deals' })).toBeEnabled());
+    expect(api.decideSidekickSourceRequest).not.toHaveBeenCalled();
+  });
+
+  it('names the step in the title only where a button does it: a connector no card connects points at Settings', async () => {
+    api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'not_connected', connect: { scope: 'personal', card: null } })]);
+    mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
+    expect(await screen.findByText('Connect Gmail in Settings, then approve here')).toBeInTheDocument();
+    expect(screen.getByText('Start Deals from Gmail')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /and approve/ })).toBeNull();
   });
 
   it('takes the press back on Decline: a sign-in finishing afterwards approves nothing', async () => {
@@ -233,7 +279,9 @@ describe('the source request card in a conversation', () => {
     api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'not_connected' })]);
     api.decideSidekickSourceRequest.mockResolvedValue(request('r-me', ME, 'Me', { state: 'pending', connection: 'not_connected' }));
     mount(<SidekickSourceRequestCard card={{ sidekickId: SIDEKICK, requestIds: ['r-me'], asked: null }} />);
+    api.getConnectorOAuthAttempt.mockResolvedValue({ status: 'succeeded' });
     fireEvent.click(await screen.findByRole('button', { name: 'Connect Gmail and approve your Gmail for Deals' }));
+    await waitFor(() => expect(connection.start).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: 'Decline your Gmail for Deals' }));
     await waitFor(() => expect(api.decideSidekickSourceRequest).toHaveBeenCalledWith(SIDEKICK, 'r-me', 'decline'));
     api.readSidekickSourceRequests.mockResolvedValue([request('r-me', ME, 'Me', { connection: 'connected' })]);
@@ -263,6 +311,7 @@ describe('the source request card in a conversation', () => {
     // The ordinary Approve comes back, unpressed: connecting was not consent on its own.
     await waitFor(() => expect(screen.getByRole('button', { name: 'Approve your Gmail for Deals' })).toBeEnabled());
     expect(api.decideSidekickSourceRequest).not.toHaveBeenCalled();
+    expect(api.getConnectorOAuthAttempt).not.toHaveBeenCalled();
   });
 
   it('re-reads when the Sidekick\'s sources are invalidated, which is what the socket\'s pushes do', async () => {
@@ -328,6 +377,15 @@ describe('the Sidekick panel\'s Sources section', () => {
     expect(screen.queryByRole('button', { name: /^Connect card/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Approve your Gmail for Deals' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Decline your Gmail for Deals' })).toBeEnabled();
+  });
+
+  it('tells me an admin connects an Organization-only connector, rather than sending me to the conversation', async () => {
+    api.getSidekickSources.mockResolvedValue(sources({ requests: [request('r-me', ME, 'Me', {
+      connectorType: 'granola', eventTypes: ['note.generated'], connection: 'not_connected', connect: { scope: 'workspace', card: null } })] }));
+    mount(<SidekickSources id={SIDEKICK} />);
+    await screen.findByRole('list', { name: 'Asked' });
+    expect(item('Asked', 'Me')).toHaveTextContent('Needs an admin to connect Granola');
+    expect(item('Asked', 'Me')).not.toHaveTextContent('from the request in its conversation');
   });
 
   it('says so when nothing lets events in', async () => {
