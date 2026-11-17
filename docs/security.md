@@ -1,19 +1,58 @@
 # Security model
 
+Rally lets people build and share artifacts in **Canvases** and keep them
+current with **Sidekicks**. This document describes the trust boundaries that
+govern access to conversations, published outputs, connected accounts, and
+model-authored code. Read it before changing those boundaries, adding a
+surface that receives outside input, or extending the desktop preload,
+`application-settings.json`, or the `VITE_` allowlist.
+
+## Reporting a vulnerability
+
+Email [help@rallywith.ai](mailto:help@rallywith.ai) with **Security report** in
+the subject. Include the affected surface, impact, steps to reproduce, and a
+safe proof of concept. Omit credentials and customer content. The
+[Rally Trust Center](https://rallywith.ai/trust/security/) is the public
+reference for security reporting and data handling.
+
+## Current security boundaries
+
+| Surface | What controls access |
+| --- | --- |
+| Canvas Chat | The Canvas decides who can read its conversation and work on its artifact. The editor audience starts from the Organization's configured default. Organization-wide access admits full members, and guests need an explicit grant. Owners and administrators can open and manage any unarchived Canvas. |
+| Published artifacts | The Canvas controls a separate audience for opening and using its published outputs. Editors are included. Published sites run on per-artifact origins outside the application origin. Stateful sites have their own storage, and active site code receives scoped host capabilities. |
+| Sidekicks and connected tools | Sidekick readers, managers, event sources, and delegates have distinct permissions. The host chooses and authorizes each run's execution principal. Connector capability and resource checks govern what that run can read or write. |
+| Browser, desktop, and mobile | Production browser sessions use opaque, host-only, Secure, HttpOnly cookies. Electron isolates the renderer and validates privileged calls through its preload bridge. The mobile shell uses the first-party browser client with a separate WebView for published artifacts. |
+| Model and code execution | The regional server authorizes the model's context and each tool call. Code Mode can use the run's eligible tools through the host. Terminal uses a separate sandbox, and participants' runs in the same Canvas share its files. |
+
 ## Published artifact boundary
 
-Canvas artifact users can use published outputs without reading or conversing in the Canvas. All published content requests are admitted from the serving host’s local access snapshot, including static files and assets. Missing projections fail closed. Identity sessions do not preserve superseded access; membership incarnations bind them to projected readers. Source updates propagate through the existing access Queue with eventual consistency. See [Canvas artifact access](canvas-artifact-access.md).
+A Canvas's artifact audience can include its editors, specific people,
+Organization members, or anyone with the link. An artifact-only grant covers
+the published output. Canvas Chat, its attachments, and editing operations
+require their own admission. The built-in editor default is **Everyone in the
+Organization**. An administrator can set the default to **Creator** in
+Organization preferences. The artifact audience starts from that editor
+audience. A publishing agent authorized to manage sharing can apply a publishing
+default, including public access for a site, until an audience has been chosen.
 
-This document owns Rally's trust boundaries: what is treated as untrusted, what
-each trusted component is trusted *for*, and the mechanisms that keep the two
-apart — renderer isolation, OAuth and session handling, connector credential
-encryption, webhook verification, the model boundary, audit logging, and secret
-handling.
+Every published-content request, including static assets and file downloads,
+uses the serving host's local access snapshot. A missing initial snapshot
+fails closed. Identity sessions identify the viewer, and admission checks the
+projected membership incarnation. Audience changes and revocations propagate
+asynchronously through a Queue. See [Canvas artifact access](canvas-artifact-access.md)
+and [access revocation](access-revocation.md).
 
-Read it before changing any of those, before adding a surface that receives
-outside input, and before adding anything to `application-settings.json`, the
-preload bridge, or the `VITE_` allowlist. Everything here is a boundary someone
-outside this document can break without their own tests failing.
+Active site code runs in an isolated runtime for that artifact. The host
+supplies scoped asset, data, and accepted Sidekick invocation capabilities as
+applicable. The runtime has outbound network access disabled. The serving host
+strips credentials and caller-supplied viewer headers, then supplies viewer
+identity only for eligible authenticated requests. An app request can start a
+Sidekick through a live, accepted binding. The run keeps the Sidekick's existing
+principal, delegation, and tool permissions. See
+[reactive web artifacts](reactive-web-artifacts.md).
+
+## Search and cached content
 
 Ordinary member search and resource reads use the [authorization primitive](authorization.md):
 five-minute freshness is a design goal, not a permission lease or request timeout.
@@ -54,9 +93,14 @@ their normal lifecycle. Audit records contain the operator and target, no secret
 
 ## Sidekick authoring and loading
 
-Sidekick delegation is separate from human reader/manager access. WorkspaceDO
-stores per-user grants with membership incarnations, ordered mutation receipts
-and withdrawal tombstones. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
+Sidekick reader access governs the shared conversation and runs. Manager access
+governs configuration. A [source](sidekick-sources.md) determines which events
+from a connection can start the Sidekick. Delegation determines whose personal
+connections it may use when it runs. A source grant supplies event admission
+and leaves tool authority with delegation and the connector policy.
+
+WorkspaceDO stores per-user delegation grants with membership incarnations,
+ordered mutation receipts and withdrawal tombstones. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
 owns mutation ordering and rollout. Creation immediately enrolls the creator,
 including autonomous creation. Agent tools may target any current Organization
 user; the execution actor remains host-owned and needs Sidekick access to change
@@ -67,8 +111,8 @@ restriction is applied. Own withdrawal and safe stored-label recovery remain
 available after access loss. Receipt replay never prepares a fresh grant and a
 newer withdrawal invalidates older allow acknowledgements.
 
-Conversational publication resolves the current workspace membership role and
-owning-workstream participation through the same actor path as management routes.
+When a Canvas Chat publishes a Sidekick, it resolves the current Organization
+role and Canvas admission through the same actor path as management routes.
 A ready model submission publishes under that actor, while automation run contexts
 do not receive the authoring plugin. Loading uses owner authorization for the
 execution principal and the entire conversation audience. Catalog metadata is
@@ -492,14 +536,11 @@ preserved. Each new request verifies
 its token and reads current regional session/membership state again. This is not
 a cross-request cache and does not change revocation or regional isolation.
 
-Guest Sidekick rails use exact conversation admission and source-owned summaries
-rather than authoring details. A recommended or locally loaded ID still has to
-pass the source's personal-audience or owning-workstream rule. New guest agent
-runs discover only recommendations, workstream-owned Sidekicks and local loads;
-existing execution snapshots keep ordinary source revalidation. Removing a local
-load rechecks participation and archival state in that `AgentLoopDO`, without
-changing Main, siblings or workstream recommendations. Source history and parent
-management remain separate authorization paths.
+Guests need explicit audience admission to read a Sidekick's conversation and
+runs. Admission to a Canvas with an attached Sidekick can give a person Sidekick
+management rights. Opening the Sidekick still requires its own reader admission.
+The access rules read current Canvas and Sidekick memberships from
+`WorkspaceDO`. See [Sidekick lifecycle](automation-lifecycle.md#a-sidekick-made-in-a-canvas).
 
 Workspace sessions carry `workspace_incarnation`, bound to the exact membership
 that admitted them. Migration 0110 backfills existing sessions; insert and
@@ -519,8 +560,9 @@ ignoring the target. Connector OAuth records whether its initiating desktop
 advertised this version and returns the stored legacy or addressed URI unchanged;
 deployment timing cannot silently reinterpret a callback.
 
-Every API resource query includes `workspace_id`. Mutations additionally resolve
-membership role. A connector ingress may assert a member's own authority by
+API resource operations bind to the Organization in the authenticated context
+and check access to the target. Mutations also check the actor's authority to
+make the change. A connector ingress may assert a member's own authority by
 marking its auth `principal: "connector"` — set only after verifying the account
 link on the delivered message, re-checked against current membership by the
 conversation object, and refused by every socket-ticket issuer (see
@@ -779,13 +821,17 @@ and implementation checklist live in
 
 ### Model boundary
 
-OpenRouter credentials and model context are server-only. The harness receives
-only context authorized for the execution principal. Tool calls are proposals:
-Rally validates the name, schema, principal, capability, limits, and idempotency
-state before execution. Reasoning fields are ignored; private chain-of-thought is
-neither persisted nor broadcast. Google plugin-view identity changes can replay
-an earlier receipt only when its reconstructed surface hash and the same
-connection, operation, capability, mode, retry policy and input hash match;
+The regional server assembles inference requests and holds the credentials for
+the configured inference providers. It sends context authorized for the run's
+execution principal. Rally validates the tool name, schema, principal,
+capability, limits, and idempotency state before executing a model's tool call.
+Hosted MCP follows the same tool authorization and execution policy. See
+[hosted MCP connectors](hosted-mcp-connectors.md).
+
+Rally drops private reasoning fields before persistence and broadcast. Google
+plugin-view identity changes can replay an earlier receipt only when its
+reconstructed surface hash, connection, operation, capability, mode, retry
+policy, and input hash match;
 [the harness](agent-harness.md#durable-receipts-and-terminal-state) owns that
 compatibility mechanism.
 

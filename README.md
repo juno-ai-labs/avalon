@@ -1,29 +1,48 @@
 # Rally
 
-Rally is a desktop and browser workspace in which people and an agent work in
-the same durable context. It has two sections: **Canvases**, each a
-conversation (its Chat) and the artifacts it generates, and **Sidekicks**,
-natural-language automations triggered on a calendar or interval schedule, by
-connector or semantic activity, by a watched resource, a webhook or an inbound
-email, or by hand. Avalon is the internal code name and still
-appears throughout the tree.
+Rally is an AI workspace for building shared dashboards, internal tools,
+websites, and reports that can stay current as work changes in your connected
+tools.
 
-The clients are a macOS Electron app and a browser SPA. The backend is a
-Global and regional Hono API on Cloudflare Workers, with D1, R2, Durable Objects, Queues
-and Workflows; agent inference goes through OpenRouter from the server only.
+- **Canvases** pair a shared Chat with the artifact Rally builds. Start with a
+  prompt or a template, attach files or point Rally at a connected source,
+  and ask for what you need. Teammates can follow the conversation, leave
+  comments, and ask Rally to publish a new version. The Canvas and the
+  published artifact have separate sharing settings, so people can use the
+  result without joining the Chat.
+- **Sidekicks** are shared agents you configure in plain language. They can
+  run on a schedule, on events from connected tools, by email or webhook, or
+  on request. A run can update an artifact's data, publish a new version,
+  send a result through a connected tool, or report back in its conversation.
+  Instruction-only Sidekicks give Rally reusable guidance in Canvases.
+
+Interactive artifacts can store their own data and ask a Sidekick to run.
+For example, a feedback board can collect votes from teammates while a
+Sidekick adds requests from new interview notes. The team can discuss
+priorities in the Canvas Chat.
+
+[Open Rally](https://app.rallywith.ai/) · [Read the product manual](https://rallywith.ai/help/)
+
+Rally runs in the browser and on macOS and Linux. This repository also
+includes the iOS and Android Canvas client. Cloudflare Workers host the API
+and published artifacts, backed by D1, R2, Durable Objects, Queues, and
+Workflows. The server routes model requests through the configured inference
+providers. The prototype name Avalon remains in some internal identifiers.
 
 ## Repository
 
 ```text
 apps/desktop            Electron main/preload and the React renderer both clients share
 apps/browser            Browser host for the shared renderer
+apps/mobile             Expo iOS and Android Canvas client
+apps/mcp                User-facing MCP server for Canvases and publishing
 apps/api                Global and regional Hono Worker, its Durable Objects and runtime components
 apps/site               Public site: landing page, help centre, blog, compare and trust pages
 apps/engineering-mcp    Internal engineering MCP server
 apps/release-retention  Scheduled R2 desktop-release archival Worker
 packages/contracts      Shared Zod contracts
 packages/db             D1 migrations, repositories, and the explicit local seed
-packages/agent-harness  OpenRouter adapter, prompts, classifiers, and tool execution
+packages/agent-harness  Agent loop, model routing, classifiers, and tool execution
 packages/connectors     Connector adapters (Google, GitHub, Linear, Notion, Slack, and others)
 packages/electron-network  Chromium upload transport for the Electron main process
 packages/ui             Shared desktop/browser components and themes
@@ -32,17 +51,31 @@ docs                    Product, architecture, security, and operations
 
 ## Local setup
 
-Prerequisites are Node.js 22 or newer and pnpm 11.
+Use Node.js 22 or newer and the pnpm version pinned in `package.json`.
+Run these commands from a fresh checkout.
 
-1. Keep local keys in `.env.local`. The file is ignored by Git and must never contain `VITE_`-prefixed secrets. Use [.env.example](.env.example) as the complete variable reference.
-2. Install dependencies with `pnpm install`.
-3. Create the local database with `pnpm db:migrate`.
-4. Add the explicit development records with `pnpm db:seed`.
-5. Start the API and desktop together with `pnpm dev` (`pnpm dev:browser` serves the browser client).
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+cp .env.example .env.local
+pnpm env:sync
+pnpm db:migrate
+pnpm db:seed
+pnpm dev
+```
 
-`pnpm env:sync` copies only the server allowlist from `.env.local` into an ignored, owner-readable Worker file. Missing development signing and encryption values are generated once and then retained across restarts. The full procedure, including the sandbox and headless Electron, is in the development-environment document in the index below.
+Once the Workers are ready, run `pnpm db:open-authority` in another terminal
+to load the seeded Canvases and Sidekicks. Use **Use local development
+account** to sign in. For browser development, start the API and follow
+the browser-origin setup in the development-environment guide before
+running `pnpm dev:browser`.
 
-The models are the four `OPENROUTER_*_MODEL` values (primary, fallback, classifier, structured output) in the Worker configuration; override them in `.env.local` to test others. The OpenRouter key is server-only.
+Use [.env.example](.env.example) as the template for local configuration.
+Keep server keys in the ignored `.env.local` and reserve `VITE_` for client
+configuration. `pnpm env:sync` generates development signing and encryption
+material and writes the allowed settings into ignored Worker environment
+files. Set `OPENROUTER_API_KEY` and sync the environment again to try model
+calls locally.
 
 ## Quality commands
 
@@ -86,7 +119,11 @@ not cover, and the Contributor License Agreement.
 
 ## Hosted deployment
 
-Cloudflare deployment credentials remain local-only in `.env.local`; they are never uploaded as Worker variables. Provider credentials are stored only as encrypted Worker secrets. The operations runbook covers regional secret management, migrations, health verification, and deployment.
+Put Cloudflare deployment credentials in your local deployment environment or
+the applicable GitHub environment. Use Worker secrets for runtime provider
+keys. Rally encrypts account and Organization connector credentials before
+storing them. The operations runbook in the documentation index covers
+regional secret management, migrations, health verification, and deployment.
 
 ## Manual setup for a new hosted deployment
 
