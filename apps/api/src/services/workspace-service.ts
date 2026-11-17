@@ -33,6 +33,7 @@ import {
   sendWorkspaceMemberAddedEmail,
 } from "./invitation-email-service";
 import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-delivery";
+import { memberByAddress } from "./member-by-address";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { workspaceDOName } from "../durable-objects/names";
@@ -973,36 +974,26 @@ export class WorkspaceService {
   }
 
   /**
-   * Add someone to this Organization by address, as a member at once. Someone
-   * with no account yet gets one now, shaped as their first email sign-in would
-   * make it (`resolveVerifiedEmailIdentity`): the address bound as verified and
-   * as their email login, so signing in with it by email, Google or Apple
-   * reaches this account. Proving the address is what binds it, as accepting an
-   * invitation sent to it did. A guest becomes a member; an owner or
-   * administrator keeps their role. Any invitation still waiting for the
-   * address is revoked: there is nothing left for it to do. The email tells
-   * them; a failed send leaves the membership in place and says so.
+   * Add someone by address as a member at once. An address with no account gets
+   * one shaped as its first email sign-in would make it, so that sign-in lands
+   * here. `docs/workspace-member-roles.md#how-it-works`.
    */
   async addMember(email: string, role: WorkspaceInvitationRole): Promise<AddWorkspaceMemberResponse> {
     this.requireAdmin();
     const normalizedEmail = email.trim().toLowerCase();
     const workspace = await this.env.DB.prepare(
-      `SELECT w.name, w.region, inviter.name AS inviter_name FROM workspaces w, users inviter
-        WHERE w.id = ? AND w.abandoned_at IS NULL AND inviter.id = ?`,
+      `SELECT w.name, w.region, inviter.name AS inviter_name FROM workspaces w, users inviter WHERE w.id = ? AND inviter.id = ?`,
     ).bind(this.auth.workspaceId, this.auth.userId).first<{ name: string; region: Region; inviter_name: string }>();
     if (!workspace) throw new ApiError(404, "workspace_not_found", "This Organization no longer exists");
-    const held = () => this.env.DB.prepare(
-      `SELECT u.id, m.status, m.access_class FROM users u
-         LEFT JOIN workspace_members m ON m.user_id = u.id AND m.workspace_id = ?
-        WHERE u.id = COALESCE((SELECT user_id FROM user_verified_emails WHERE email = ? COLLATE NOCASE),
-                              (SELECT id FROM users WHERE email = ? COLLATE NOCASE))`,
-    ).bind(this.auth.workspaceId, normalizedEmail, normalizedEmail)
-      .first<{ id: string; status: string | null; access_class: string | null }>();
-    let person = await held();
-    if (person?.status === "active" && person.access_class === "member") {
+    let person = await memberByAddress(this.env.DB, this.auth.workspaceId, normalizedEmail);
+    if (person.kind === "account" && person.status === "active" && person.accessClass === "member") {
       throw new ApiError(409, "already_workspace_member", "That person is already a member of this workspace");
     }
-    if (!person) {
+    if (person.kind === "held_unverified") {
+      throw new ApiError(409, "member_address_unverified",
+        "An account holds that address without having verified it, so it cannot be added by address. Ask them to sign in with it first.");
+    }
+    if (person.kind === "none") {
       const id = newId();
       const at = nowIso();
       // Converges with a sign-in racing it through the unique email, as two first sign-ins do.
@@ -1015,9 +1006,9 @@ export class WorkspaceService {
         this.env.DB.prepare(`INSERT OR IGNORE INTO user_login_identities (provider, subject, user_id, verified_at)
           SELECT 'email', email, user_id, ? FROM user_verified_emails WHERE user_id = ?`).bind(at, id),
       ]);
-      person = await held();
-      if (!person) throw new ApiError(409, "member_account_unavailable", "Could not make an account for that address");
+      person = await memberByAddress(this.env.DB, this.auth.workspaceId, normalizedEmail);
     }
+    if (person.kind !== "account") throw new ApiError(409, "member_account_unavailable", "Could not make an account for that address");
     const at = nowIso();
     const [added] = await this.env.DB.batch([
       this.env.DB.prepare(
@@ -1059,7 +1050,7 @@ export class WorkspaceService {
     let emailDelivery: AddWorkspaceMemberResponse["emailDelivery"];
     try {
       emailDelivery = await sendWorkspaceMemberAddedEmail(this.env, {
-        workspaceId: this.auth.workspaceId, userId, recipientEmail: normalizedEmail, workspaceName: workspace.name,
+        workspaceId: this.auth.workspaceId, userId, addedAt: at, recipientEmail: normalizedEmail, workspaceName: workspace.name,
         inviterName: workspace.inviter_name, role, region: workspace.region, openUrl,
       });
     } catch (error) {

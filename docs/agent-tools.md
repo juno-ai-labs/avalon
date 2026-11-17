@@ -157,7 +157,8 @@ account (by its verified sign-in address, else its profile address) and its
 membership here, and a member comes back at once as `status: "member"` with
 their `userId`, with nothing shown. For anyone else, guests included, it opens
 a question (`Elicitation.member`, options Added and Not now, no typed answer,
-no Skip) and pauses the loop in `needs_input`. The question's panel draws
+no Skip; the panel offers only Not now as a choice, since Added is the card's
+press) and pauses the loop in `needs_input`. The question's panel draws
 `MemberAddCard`: an Organization owner's or administrator's press adds the
 address as a member at once (`POST /workspace/members`,
 [`workspace-member-roles.md`](workspace-member-roles.md#how-it-works)) and

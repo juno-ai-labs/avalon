@@ -26,6 +26,8 @@ export type InvitationEmailDelivery = "sent" | "skipped";
 export interface WorkspaceMemberAddedEmail {
   workspaceId: string;
   userId: string;
+  /** When this adding happened: someone removed and added again is told again. */
+  addedAt: string;
   recipientEmail: string;
   workspaceName: string;
   inviterName: string;
@@ -78,7 +80,7 @@ export async function sendWorkspaceMemberAddedEmail(
     subject,
     html,
     text,
-    idempotencyKey: `avalon-workspace-member-added/${added.workspaceId}/${added.userId}`,
+    idempotencyKey: `avalon-workspace-member-added/${added.workspaceId}/${added.userId}/${added.addedAt}`,
     category: "workspace_invitation",
     region: added.region,
     sender: "transactional",

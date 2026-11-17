@@ -125,13 +125,16 @@ lapsed sign-in, names the account to connect or reconnect.
 
 A request whose person still has to connect (`connection` is not
 `connected`) takes a `connectStep` from the host on the conversation's card
-only: the card view draws it above that person's own pair. There and in the
+only: the card view draws it in that person's Approve's place
+(`approveSlot`), and the card's title becomes "Connect Gmail and approve
+Deals". There and in the
 Sources list, `SourceDecisionButtons` holds Approve with `approveBlocked` (its
 reason on hover) while Decline stays live; the Sources list says to connect
 from the request in its conversation. Every other reader's row says "Needs to
 connect" or "Needs to reconnect". The desktop's step is
-`ConnectorConnectionCard` under its own read of `['connections']`, the key
-the conversation uses; its `onConnected` re-reads the Sidekick's sources. The
+one button driven by `useConnectorConnectionAction` under its own read of
+`['connections']`; it sends the approval once the account works after its
+press, and otherwise re-reads the Sidekick's sources. The
 Activity row is unchanged. A card's failed read is not a popup: it is a stored row,
 so it offers Details.
 
