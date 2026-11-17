@@ -18,7 +18,7 @@ pnpm smoke:local
 ```
 
 The smoke check signs in through development-only authentication, verifies
-protected workspace routes and the invitation lifecycle, and reads the seeded
+protected workspace routes and adding a member by address, and reads the seeded
 fixtures from `packages/db/seed-product.json`: the Launch plan Canvas's
 artifact, the Q4 revenue review Chat's turns and reply, and the Weekly
 changelog Sidekick's shared conversation. It then makes a Canvas under an id
@@ -29,7 +29,10 @@ Canvas and that a message resent to its Chat
 a model its summary line says the reply was not checked. Last, it replays the
 seeded opening message over the Chat's conversation socket without duplicating
 it, receives its private command receipt, and rejects reuse of the single-use
-socket ticket. It does not create provider data or send email.
+socket ticket. It does not create provider data or send email. Adding a member
+leaves `regional-smoke-<region>@example.test` as a permanent account and
+active member of the smoke Organization; on a hosted run that member counts
+toward the team trial and shows in the roster.
 
 Set `AVALON_SMOKE_BASE_URL` to exercise another Worker. Local Workers use the development session endpoint; hosted production smoke tests must also set a short-lived `AVALON_SMOKE_ACCESS_TOKEN` because development authentication remains disabled in production. A hosted Worker serves the model its `agent-model-workstream` flag names, which can differ from the checked-in default; set `AVALON_SMOKE_EXPECTED_MODEL` to that model.
 
@@ -138,9 +141,9 @@ of backend authorization; [settings search](settings-search.md) owns the contrac
 
 2. During Google sign-in, confirm the system browser visits `/auth/desktop/`, its address bar is stripped of the fragment, and the **Open Rally** fallback returns the app to the correct regional session. Confirm the renderer never receives a Google code, token, or native PKCE verifier; relaunching the app before ticket redemption must require starting sign-in again.
 
-3. Open an invitation while signed out and confirm its workspace, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
+3. Legacy only, for an invitation sent before 2026-11-16: open it while signed out and confirm its workspace, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
 
-5. Open **Rally → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, the app version under **About**, immutable region, members, and role-appropriate invitation controls. Confirm **Security** sits at the top level between **Organization** and **Connections** and carries the Terminal outbound-access policy, and that **About** lists the version alone — no build, platform, API base URL, or realtime line.
+5. Open **Rally → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, the app version under **About**, immutable region, members, and role-appropriate Add members controls. Confirm **Security** sits at the top level between **Organization** and **Connections** and carries the Terminal outbound-access policy, and that **About** lists the version alone — no build, platform, API base URL, or realtime line.
 
 6. The Developer section is served by the `developer-settings` flag, whose
 targeting rule matches on the account's **email domain**. Start signed in as a
@@ -175,9 +178,9 @@ continue. Right-click a Canvas row, a Sidekick row and a note in the sidebar and
 Use two disposable accounts with pre-provisioned configured deployments memberships. Enable
 `multiple-workspaces-enabled` except where a step says otherwise.
 
-1. Have account A invite B. While B is already signed in to another workspace,
-   open the emailed link, confirm the modal names the workspace, inviter, and
-   role, choose **Join**, and confirm B lands in it with both workspaces retained.
+1. Have account A add B by address. While B is already signed in to another
+   workspace, confirm B sees the new workspace after discovery, with no
+   invitation to accept, and that B keeps both workspaces.
 
 3. Leave unsent text and attachments in composers in two workspaces, switch both
    directions, and confirm each restores only its own draft. Leave one workspace
@@ -237,7 +240,8 @@ Use two disposable accounts with pre-provisioned configured deployments membersh
     remains usable. Open the account with an older desktop build and confirm the
     singular compatibility workspace opens instead of onboarding failing.
 
-15. Open an invitation addressed to another email while signed in. Confirm the
+15. Legacy only, for an invitation sent before 2026-11-16: open one addressed
+    to another email while signed in. Confirm the
     modal names the exact required address, signing in with the current account
     cannot consume it, and changing to the matching account can accept it.
 

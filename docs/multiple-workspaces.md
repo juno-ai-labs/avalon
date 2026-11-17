@@ -77,6 +77,13 @@ verified, as `loginIdentities` of provider and subject (`google` and its
 subject, `email` and its address). The deployment finds its user by platform ID,
 or else by any of those methods (and, for a user this bridge made before it
 recorded them, by `users.google_subject`), and records the methods it was sent.
+Global also sends `verifiedEmails`, the addresses it has seen the person
+prove, and the deployment mirrors them into its own `user_verified_emails`, so
+it can name the account by a verified address as `memberByAddress` asks. When
+no method matches, an unlinked regional user (no platform ID) holding one of
+those addresses is linked: that is the account an administrator there made by
+address (`addMember`) before the person ever reached the deployment, and it
+holds only an `email` method, which a Google or Apple sign-in does not send.
 A method already held by a different regional user is a 409
 `regional_identity_conflict`, and an account with no method at all is refused a
 new regional user with `login_identity_required`. A new provider, such as Apple
@@ -488,6 +495,29 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-11-17 — A deployment links an account made by address to any sign-in
+
+**What changed:** The platform identity carries `verifiedEmails`. A deployment
+mirrors them into `user_verified_emails`, and links an unlinked regional user
+holding one of them when no sign-in method matches.
+
+**Why:** Outside Global, `addMember` makes a regional user with no platform ID
+and only an `email` sign-in method. Global sends only `('google', sub)` for a
+Google sign-in, so the person's first discovery found no owner, tried to insert
+a second user with the same address, and failed with
+`regional_identity_conflict` on every sign-in, which failed Global's own
+onboarding state too. The bridge also never wrote verified addresses, so a
+deployment reported every existing user as holding their address unverified.
+
+**Considered and rejected:** Linking by `users.email`: Global still has
+unverified profile addresses, and the row would go to whoever typed one.
+Refusing to add a new address outside Global: it would make adding by address
+a Global-only feature.
+
+**What a future change has to respect:** The link is by an address Global
+verified, the same trust the account was made on. Only an unlinked row is
+adopted.
 
 ### 2026-11-16 — Accepting an invitation makes a guest a member, and starts setup
 

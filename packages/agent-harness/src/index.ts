@@ -3628,11 +3628,11 @@ const memberCardInputJsonSchema = memoizedValue(
 export const AVALON_OFFER_TO_ADD_MEMBER_TOOL_DEFINITION = {
   name: "offer_to_add_member",
   description: [
-    "Check whether someone is a member of this Organization by email address, and if they are not, show a card that adds them.",
+    "Find someone the work needs as a member of this Organization by email address, and if they are not one, show a card that adds them.",
     "A member comes back at once as status member with their userId, and nothing is shown: carry on and use that userId (for example, to ask them for a Sidekick source).",
     "Anyone else, guests included, gets a card in this conversation that an Organization owner or administrator presses to add them as a member at once; they need not have signed in to Rally, and there is nothing for them to accept.",
-    "That pauses this run until someone answers. On the answer added, call this tool again with the same email: it returns their userId. On declined, carry on without them.",
-    "Use it only when the work needs that person to be a user of this Organization, such as a teammate to ask for a Sidekick source. Never use it for people the work only emails or reads mail from (customers, leads, vendors): adding them would open the Organization to them. Do not tell the person to invite a teammate some other way.",
+    "That pauses this run until someone answers; if the person you work for is not an owner or administrator, tell them one must press it. On the answer added, call this tool again with the same email: it returns their userId. On declined, carry on without them.",
+    "Use it only when the work needs that person to be a member of this Organization, such as a teammate to ask for a Sidekick source. Never use it for people the work only emails or reads mail from (customers, leads, vendors): adding them would open the Organization to them. Do not tell the person to invite a teammate some other way.",
   ].join(" "),
   capability: "workspace.members.offer",
   mode: "write",

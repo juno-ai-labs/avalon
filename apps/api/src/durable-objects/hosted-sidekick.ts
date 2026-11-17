@@ -1193,7 +1193,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         ORDER BY id`, workspaceId, userId, connectorType,
     ).toArray().flatMap((connection) => {
       const announced = new Set(connectorActivityTriggerDescriptors(adapter, connection.config_json,
-        storedConnectionScope(connection.scope), JSON.parse(connection.granted_scopes_json) as string[])
+        storedConnectionScope(connection.scope), grantedScopes(connection.granted_scopes_json))
         .map((descriptor) => descriptor.eventType));
       const carried = eventTypes.filter((eventType) => announced.has(eventType));
       return carried.length > 0 ? [{ id: connection.id, status: connection.status, eventTypes: carried }] : [];
@@ -1219,15 +1219,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   }
 
   /**
-   * Whether the person asked can let these events in now: a connection that
-   * carries them and works, only ones whose sign-in lapsed, or none. A
-   * connection in `error` counts as working: reconnecting is not its fix.
+   * Whether the person asked can let every asked event in now (`sourceCoverage`).
    */
   private sourceConnectionState(workspaceId: string, userId: string, connectorType: string, eventTypes: readonly string[]):
     SidekickSourceConnectionState {
-    const connections = this.sourceConnections(workspaceId, userId, connectorType, eventTypes);
-    if (connections.some((connection) => connection.status !== "needs_reconnect")) return "connected";
-    return connections.length > 0 ? "reconnect_required" : "not_connected";
+    return sourceCoverage(this.sourceConnections(workspaceId, userId, connectorType, eventTypes), eventTypes);
   }
 
   /** The event types a connector's connections in this Organization announce, a webhook's configured ones among them. */
@@ -1389,13 +1385,12 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
         if (relationship?.status !== "active") throw sidekickSourceError("sidekick_source_membership_unavailable");
         const connections = this.sourceConnections(row.workspace_id, current.userId, current.connectorType, current.eventTypes);
-        if (connections.length === 0) throw sidekickSourceError("sidekick_source_connection_missing");
-        // An approval nothing could arrive through is refused, so it is noticed now rather
-        // than read later as a Sidekick with nothing to do. A lapsed connection beside a working
-        // one still gets its rows: they let events in again once it is reconnected.
-        if (connections.every((connection) => connection.status === "needs_reconnect")) {
-          throw sidekickSourceError("sidekick_source_connection_reconnect");
-        }
+        // An approval some asked event could not arrive through is refused, so it is noticed now
+        // rather than read later as a Sidekick missing half of what it asked for. A lapsed connection
+        // beside a working one still gets its rows: they let events in again once it is reconnected.
+        const coverage = sourceCoverage(connections, current.eventTypes);
+        if (coverage === "not_connected") throw sidekickSourceError("sidekick_source_connection_missing");
+        if (coverage === "reconnect_required") throw sidekickSourceError("sidekick_source_connection_reconnect");
         for (const connection of connections) {
           for (const eventType of connection.eventTypes) {
             this.sources().put({ sidekickId: this.sidekickId, userId: current.userId, connectionId: connection.id,
@@ -3923,3 +3918,29 @@ export function hostedSidekickAlarmTarget(alarm: ScheduledAlarm): { sidekickId: 
   return parseSidekickAlarmKey(alarm.key);
 }
 
+/**
+ * Whether every asked event type can arrive: each needs a connection that
+ * carries it, and one that works. One with no carrier reads `not_connected`;
+ * one carried only by lapsed sign-ins reads `reconnect_required`. A
+ * connection in `error` counts as working: reconnecting is not its fix.
+ */
+function sourceCoverage(connections: readonly { status: string; eventTypes: readonly string[] }[],
+  eventTypes: readonly string[]): SidekickSourceConnectionState {
+  let lapsed = false;
+  for (const eventType of eventTypes) {
+    const carriers = connections.filter((connection) => connection.eventTypes.includes(eventType));
+    if (carriers.length === 0) return "not_connected";
+    if (carriers.every((connection) => connection.status === "needs_reconnect")) lapsed = true;
+  }
+  return lapsed ? "reconnect_required" : "connected";
+}
+
+/** A connection's stored grants; a row that does not parse grants nothing, rather than failing every request view. */
+function grantedScopes(json: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed.filter((scope): scope is string => typeof scope === "string") : [];
+  } catch {
+    return [];
+  }
+}

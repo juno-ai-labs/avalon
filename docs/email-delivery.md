@@ -1,7 +1,7 @@
 # Email delivery
 
-Rally sends production login codes, scoped invitations, access acknowledgements
-and notification mail through Cloudflare Email Service. Personal connector mail
+Rally sends production login codes, scoped invitations, "you were added"
+emails, access acknowledgements and notification mail through Cloudflare Email Service. Personal connector mail
 is owned by the connector. Sidekick runs deliver their own results with tools.
 
 ## Code and configuration
@@ -34,8 +34,10 @@ acknowledgements keep their own generation-fenced reconciliation flow.
 ## Who gets email
 
 Email that is about what happened in Rally goes only to people who have signed
-in at least once: a session was ever issued to them (`hasSignedIn`,
-`apps/api/src/services/signed-in.ts`). Someone an administrator added by
+in at least once: a login session was ever issued to them (`hasSignedIn`,
+`apps/api/src/services/signed-in.ts`). A support session opened as them does
+not count. The table is per deployment, so outside Global someone counts once
+they have opened that deployment. Someone an administrator added by
 address before they ever signed in gets none of it. Their notices are dropped,
 not queued, and their Activity rows are kept, so they find what happened when
 they first open Rally. Two senders read the rule: the notice sink
@@ -75,7 +77,7 @@ which Activity already shows them in the app.
 
 **What a future change has to respect:** A new sender of email about activity
 in Rally reads `hasSignedIn`. Sessions are never deleted, so it means "ever
-signed in", not "signed in now".
+signed in", not "signed in now", and a support session is not a sign-in.
 
 ### 2026-11-09 — Keep outbound delivery independent
 

@@ -1,4 +1,4 @@
-import { sourceConnectionCardId, type SidekickSourceRequestView, type SidekickSourcesResult } from '@rally/contracts';
+import { sourceConnectionCardId, type ConnectorConnectionCardId, type SidekickSourceRequestView, type SidekickSourcesResult } from '@rally/contracts';
 import {
   SidekickSourceRequestCardView,
   SidekickSourcesList,
@@ -7,11 +7,12 @@ import {
   type SourceDecision,
 } from '@rally/ui/components/sidekick-sources';
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { MAC_APP_CONNECT_NOTE } from '../lib/browser-connectors';
-import { ConnectorConnectionsProvider, useConnectorConnectionAction } from './connector-mentions';
-import { useCollaborationSession } from '../lib/collaboration-session';
+import { MAC_APP_CONNECT_NOTE, connectorStartsHere } from '../lib/browser-connectors';
+import type { OAuthConnectorProviderCatalogEntry } from '../lib/connector-catalog';
+import { connectorConnectionCardProvider, useConnectorConnectionAction } from './connector-mentions';
+import { useCollaborationSession, type CollaborationSessionValue } from '../lib/collaboration-session';
 import {
   applyDecidedSourceRequest,
   sidekickSourceRequestsQueryKey,
@@ -60,87 +61,95 @@ function useSourceDecision(): Decide {
   });
 }
 
+/** What the reader's own waiting request offers in Approve's place. */
+type ConnectPlan =
+  | { kind: 'button'; connectorId: ConnectorConnectionCardId; provider: OAuthConnectorProviderCatalogEntry; verb: string; connector: string }
+  | { kind: 'note'; text: string };
+
 /**
- * "Connect Gmail and approve" in Approve's place: one press connects, then
- * approves once the account works while this card is open. A connection made
- * any other way is not consent, so it only brings back the ordinary Approve.
+ * Whether this client can connect the request's account here, decided before
+ * anything mounts: the connection hook only runs for a provider it can start.
  */
-function SourceConnectAndApprove({ request, onPressed, onAbandoned, approving }: {
-  request: SidekickSourceRequestView;
-  onPressed: () => void;
-  onAbandoned: () => void;
-  approving: boolean;
-}): React.JSX.Element {
-  const { api } = useCollaborationSession();
-  const connections = useQuery({
-    queryKey: ['connections'],
-    queryFn: ({ signal }) => api!.getConnections(signal),
-    enabled: Boolean(api),
-    staleTime: 60_000,
-  });
+function connectPlan(request: SidekickSourceRequestView, collaboration: CollaborationSessionValue): ConnectPlan {
   // The server says which connection carries these events; an older view falls back to working it out here.
   const connect = request.connect ?? { scope: 'personal' as const, card: sourceConnectionCardId(request.connectorType, request.eventTypes) };
   const verb = request.connection === 'reconnect_required' ? 'Reconnect' : 'Connect';
   const { connector } = sourceWords(request);
   // Events that arrive only on the Organization's connection wait on an administrator, not on this press.
-  if (connect.scope === 'workspace') return <span className="source-request-connect-settings">Needs an admin to {verb.toLowerCase()} {connector} for the Organization in Settings</span>;
-  const connectorId = connect.card;
-  if (!connectorId) return <span className="source-request-connect-settings">{verb} {connector} in Settings, then approve here</span>;
-  return <ConnectorConnectionsProvider connections={connections.data}>
-    <ConnectAndApproveButton approving={approving} connector={connector} connectorId={connectorId} onAbandoned={onAbandoned} onPressed={onPressed} request={request} verb={verb} />
-  </ConnectorConnectionsProvider>;
+  if (connect.scope === 'workspace') return { kind: 'note', text: `Needs an admin to ${verb.toLowerCase()} ${connector} for the Organization in Settings` };
+  const inSettings = { kind: 'note', text: `${verb} ${connector} in Settings, then approve here` } as const;
+  if (!connect.card || !collaboration.connectorSetup) return inSettings;
+  const provider = connectorConnectionCardProvider({ connectorId: connect.card, scope: 'personal' });
+  if (!provider) return inSettings;
+  if (!connectorStartsHere(collaboration.session, provider.provider)) return { kind: 'note', text: MAC_APP_CONNECT_NOTE };
+  return { kind: 'button', connectorId: connect.card, provider, verb, connector };
 }
 
-function ConnectAndApproveButton({ request, connectorId, connector, verb, onPressed, onAbandoned, approving }: {
+/**
+ * "Connect Gmail and approve" in Approve's place. The press starts a sign-in
+ * and hands the card that attempt's id; the card approves only once that
+ * attempt succeeds and the request reads connected. A connection made any
+ * other way is not consent, so it only brings back the ordinary Approve.
+ */
+function ConnectAndApproveButton({ plan, request, deciding, cancelled, onStarted, onStartFailed, onAttemptEnded }: {
+  plan: Extract<ConnectPlan, { kind: 'button' }>;
   request: SidekickSourceRequestView;
-  connectorId: NonNullable<ReturnType<typeof sourceConnectionCardId>>;
-  connector: string;
-  verb: string;
-  onPressed: () => void;
-  /** The sign-in this press started ended without a connection: the consent goes with it. */
-  onAbandoned: () => void;
-  approving: boolean;
+  /** An answer to this request is in flight. */
+  deciding: boolean;
+  /** The last sign-in this card started ended without a connection. */
+  cancelled: boolean;
+  onStarted: (attemptId: string) => void;
+  onStartFailed: () => void;
+  /** The sign-in this button waited on is no longer the one waited on: the card reads how it ended. */
+  onAttemptEnded: () => void;
 }): React.JSX.Element {
-  const { api } = useCollaborationSession();
-  const queryClient = useQueryClient();
-  // Only re-reads: the card sends the approval once that read says the account works.
-  const connected = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: sidekickSourcesQueryKey(request.sidekickId) });
-  }, [queryClient, request.sidekickId]);
-  const action = useConnectorConnectionAction({ connectorId, scope: 'personal' }, { onNewlyConnected: connected });
-  // When the attempt this card waited on ends, read how: a denied or failed sign-in withdraws the
-  // press, so connecting later in Settings is not taken as this card's consent.
+  const { connector, verb } = plan;
+  const action = useConnectorConnectionAction({ connectorId: plan.connectorId, scope: 'personal' }, plan.provider, { onNewlyConnected: onAttemptEnded });
   const waitedOn = useRef<string | null>(null);
-  const attemptId = action?.attemptId ?? null;
+  const attemptId = action.attemptId;
   useEffect(() => {
     if (attemptId) { waitedOn.current = attemptId; return; }
-    const ended = waitedOn.current;
+    if (!waitedOn.current) return;
     waitedOn.current = null;
-    if (!ended || !api) return;
-    void api.getConnectorOAuthAttempt(ended).then((attempt) => { if (attempt.status !== 'succeeded') onAbandoned(); }, onAbandoned);
-  }, [attemptId, api, onAbandoned]);
-  if (!action) return <span className="source-request-connect-settings">{verb} {connector} in Settings, then approve here</span>;
-  if (action.macAppOnly) return <span className="source-request-connect-settings">{MAC_APP_CONNECT_NOTE}</span>;
-  const label = approving ? 'Approving…' : action.pending ? `Waiting for ${connector}…` : `${verb} ${connector} and approve`;
+    onAttemptEnded();
+  }, [attemptId, onAttemptEnded]);
+  const label = deciding ? 'Approving…' : action.pending ? `Waiting for ${connector}…` : `${verb} ${connector} and approve`;
+  const blocked = action.pending || deciding || action.unavailable || action.accountRequired;
   return <span className="source-connect-and-approve">
     {action.accountOptions && <select
       aria-label={`${connector} account to reconnect`}
-      disabled={action.pending || approving}
+      disabled={action.pending || deciding}
       onChange={(event) => action.selectAccount(event.currentTarget.value)}
       value={action.selectedAccountId}
     >
       <option value="">Choose an account</option>
       {action.accountOptions.map((connection) => <option key={connection.id} value={connection.id}>{connection.displayName}</option>)}
     </select>}
+    {/* aria-disabled, not disabled: a press must not drop keyboard focus, and the label is the state. */}
     <Button
-      aria-busy={action.pending || approving || undefined}
-      aria-label={`${verb} ${connector} and approve your ${connector} for ${request.sidekickName}`}
-      className="source-decision-button is-approve source-connect-and-approve-button"
-      disabled={action.pending || approving || action.unavailable || action.accountRequired}
-      onClick={() => { onPressed(); action.start(); }}
-    >{label}</Button>
+      aria-busy={action.pending || deciding || undefined}
+      aria-disabled={blocked || undefined}
+      className="source-decision-button source-connect-and-approve-button button-primary"
+      onClick={() => {
+        if (blocked) return;
+        action.start().then(onStarted, onStartFailed);
+      }}
+    >{label}{' '}<span className="sr-only">your {connector} for {request.sidekickName}</span></Button>
+    {action.unavailable && !action.checkingAvailability && <small className="source-request-connect-settings">{connector} can’t be connected right now.</small>}
+    {cancelled && !action.pending && <small className="source-request-connect-settings" role="status">{connector} wasn’t connected, so nothing was approved. Try again when you’re ready.</small>}
     {action.error && <ErrorNotice title={`${connector} could not be connected`}>{action.error}</ErrorNotice>}
   </span>;
+}
+
+/**
+ * A press's consent: the sign-in it started, and once that sign-in has been
+ * read as succeeded, when. Held by the card, which stays mounted, because the
+ * button leaves the moment the request reads connected.
+ */
+interface Consent {
+  attemptId: string;
+  succeededAt: number | null;
+  reading: boolean;
 }
 
 function decidingOf(decide: Decide): { requestId: string; decision: SourceDecision } | null {
@@ -166,7 +175,8 @@ function DecisionRefusal({ decide }: { decide: Decide }): React.JSX.Element | nu
  * Sidekick's sources), and when the window regains focus or reconnects.
  */
 export function SidekickSourceRequestCard({ card }: { card: SidekickSourceRequestCardInput }): React.JSX.Element {
-  const { api, session } = useCollaborationSession();
+  const collaboration = useCollaborationSession();
+  const { api, session } = collaboration;
   const viewerId = session?.user.id;
   // `yours` in the tool's output is the asker's; the viewer's is by who they are.
   const asked = useMemo(
@@ -182,37 +192,79 @@ export function SidekickSourceRequestCard({ card }: { card: SidekickSourceReques
     ...(asked ? { placeholderData: asked } : {}),
   });
   const decide = useSourceDecision();
-  // Requests whose "Connect and approve" was pressed: consent to approve once the account works. Held
-  // here, not in the button, because the button leaves the moment the request reads connected, which
-  // can be before its own OAuth callback; a Decline takes the consent back.
-  const consented = useRef(new Set<string>());
+  const decideMutate = decide.mutate;
+  const queryClient = useQueryClient();
+  const consents = useRef(new Map<string, Consent>());
+  const [cancelled, setCancelled] = useState<ReadonlySet<string>>(() => new Set());
+  const forget = useCallback((requestId: string, sawCancel = false) => {
+    consents.current.delete(requestId);
+    setCancelled((current) => {
+      if (current.has(requestId) === sawCancel) return current;
+      const next = new Set(current);
+      if (sawCancel) next.add(requestId); else next.delete(requestId);
+      return next;
+    });
+  }, []);
+  const reread = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: sidekickSourcesQueryKey(card.sidekickId) });
+  }, [queryClient, card.sidekickId]);
   const live = query.data !== undefined && !query.isPlaceholderData ? query.data : undefined;
+  const readAt = query.dataUpdatedAt;
+  // Each consent is spent once: approved when its own sign-in succeeded and the request reads
+  // connected; dropped when that sign-in failed, or succeeded and a later read still is not connected.
   useEffect(() => {
-    for (const request of live ?? []) {
-      if (!consented.current.has(request.requestId)) continue;
-      if (request.state !== 'pending') { consented.current.delete(request.requestId); continue; }
-      if (request.connection !== 'connected') continue;
-      consented.current.delete(request.requestId);
-      decide.mutate({ request, decision: 'approve' });
+    if (!live || !api) return;
+    for (const request of live) {
+      const consent = consents.current.get(request.requestId);
+      if (!consent || consent.reading) continue;
+      if (request.state !== 'pending') { forget(request.requestId); continue; }
+      if (consent.succeededAt !== null) {
+        if (request.connection === 'connected') { forget(request.requestId); decideMutate({ request, decision: 'approve' }); }
+        else if (readAt >= consent.succeededAt) forget(request.requestId);
+        continue;
+      }
+      consent.reading = true;
+      api.getConnectorOAuthAttempt(consent.attemptId).then((attempt) => {
+        consent.reading = false;
+        if (consents.current.get(request.requestId) !== consent || attempt.status === 'pending') return;
+        if (attempt.status !== 'succeeded') { forget(request.requestId, true); return; }
+        consent.succeededAt = Date.now();
+        if (request.connection === 'connected') { forget(request.requestId); decideMutate({ request, decision: 'approve' }); }
+        else reread();
+      }, () => {
+        // Kept: the next read of the request (focus, reconnect, a push) asks again.
+        consent.reading = false;
+      });
     }
-  }, [live, decide]);
+  }, [live, readAt, api, decideMutate, forget, reread]);
+  const deciding = decidingOf(decide);
   return <>
     <SidekickSourceRequestCardView
-      connectStep={(request) => <SourceConnectAndApprove
-        approving={decide.isPending && decide.variables.request.requestId === request.requestId}
-        onAbandoned={() => consented.current.delete(request.requestId)}
-        onPressed={() => consented.current.add(request.requestId)}
-        request={request}
-      />}
-      deciding={decidingOf(decide)}
+      connectStep={(request) => {
+        const plan = connectPlan(request, collaboration);
+        if (plan.kind === 'note') return { connectsHere: false, control: <span className="source-request-connect-settings">{plan.text}</span> };
+        return { connectsHere: true, control: <ConnectAndApproveButton
+          cancelled={cancelled.has(request.requestId)}
+          deciding={deciding?.requestId === request.requestId}
+          onAttemptEnded={reread}
+          onStartFailed={() => forget(request.requestId)}
+          onStarted={(attemptId) => {
+            forget(request.requestId);
+            consents.current.set(request.requestId, { attemptId, succeededAt: null, reading: false });
+          }}
+          plan={plan}
+          request={request}
+        /> };
+      }}
+      deciding={deciding}
       // A stored row's read failure waits to be asked for; it never interrupts a scroll.
       details={query.error && <ErrorNotice automatic={false} detailsLabel="Details" occurrence={query.error} title="The request could not be loaded">
         {query.error.message}
       </ErrorNotice>}
       live={query.data !== undefined && !query.isPlaceholderData}
       onDecide={(request, decision) => {
-        if (decision === 'decline') consented.current.delete(request.requestId);
-        decide.mutate({ request, decision });
+        if (decision === 'decline') forget(request.requestId);
+        decideMutate({ request, decision });
       }}
       // A failed read leaves what the tool answered on screen, unpressable,
       // or says the request is unavailable; it never reads as still loading.

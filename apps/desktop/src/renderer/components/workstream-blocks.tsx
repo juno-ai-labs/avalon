@@ -2779,9 +2779,10 @@ export function ElicitationPanel({
         // `added` for the person, so the run resumes and can ask them things.
         <MemberAddCard
           member={elicitation.member}
-          onAdded={() => { void onAnswer(MEMBER_QUESTION_ADDED_ANSWER).catch(() => {
+          onAdded={() => onAnswer(MEMBER_QUESTION_ADDED_ANSWER).catch((error: unknown) => {
             setError('Your response couldn’t be saved. Try again.');
-          }); }}
+            throw error;
+          })}
         />
       )}
       {isText ? (

@@ -19,6 +19,6 @@ export type MemberCardInput = z.infer<typeof MemberCardInputSchema>;
 /** The answer the card sends once the person is a member. The values are what the model reads. */
 export const MEMBER_QUESTION_ADDED_ANSWER = "added";
 export const MEMBER_QUESTION_OPTIONS = [
-  { value: MEMBER_QUESTION_ADDED_ANSWER, label: "Added", description: "They are a member now; carry on." },
-  { value: "declined", label: "Not now", description: "Do not add them; carry on without them." },
+  { value: MEMBER_QUESTION_ADDED_ANSWER, label: "Added", description: "They are a member now." },
+  { value: "declined", label: "Not now", description: "Do not add them." },
 ] as const;

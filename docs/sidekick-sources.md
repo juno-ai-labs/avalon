@@ -240,8 +240,9 @@ agent that asked know whose step is left. Only the request's card, in the
 conversation it was asked from, draws the connect step: for the person asked,
 while their request waits, **Connect Gmail and approve** in Approve's place.
 One press runs the same connect or reconnect as the conversation's connection
-card (`useConnectorConnectionAction`) and sends the approval once the account
-works while the card is open; a connection made elsewhere only brings back the
+card (`useConnectorConnectionAction`) and sends the approval only when the
+sign-in that press started succeeds and the request then reads `connected`;
+any other end drops it, and a connection made elsewhere only brings back the
 ordinary Approve. Decline is never held. The Sources panel holds the person's Approve too and points
 them at that conversation; the Activity row keeps its plain pair, and an
 Approve there before connecting is refused by name. Everyone else reads
@@ -254,11 +255,15 @@ declare `activityConnectionScopes: ["workspace"]`) answers `scope: "workspace"`
 with no card, so its card says an administrator connects it in Settings and
 offers no personal "Connect and approve", which could never let its events in.
 
-`decideSourceRequest` refuses an approval with no such connection
-(`sidekick_source_connection_missing`), and one where every such connection
-needs reconnecting (`sidekick_source_connection_reconnect`): such an
-approval would let nothing in, and would read later as a Sidekick with
-nothing to do. A lapsed connection beside a working one still gets its rows,
+Coverage is per asked event type (`sourceCoverage`): the request reads
+`connected` only when every asked type has a connection that carries it and
+works, `not_connected` when some type has no carrier, and
+`reconnect_required` when some type is carried only by lapsed sign-ins. A
+connection in `error` counts as working, since reconnecting is not its fix.
+`decideSourceRequest` refuses an approval with a type nothing carries
+(`sidekick_source_connection_missing`), and one with a type only lapsed
+connections carry (`sidekick_source_connection_reconnect`): such an approval
+would let in part or none of what was asked, and nobody would be told. A lapsed connection beside a working one still gets its rows,
 which let events in again once it is reconnected. The emailed link that meets
 either refusal sends the person to the request in its conversation, where the
 connect step is.
@@ -625,8 +630,8 @@ source's condition.
 | Somebody who is not the person asked answers | Refused `sidekick_source_request_not_yours` (403). The request keeps waiting. |
 | The person answers a request that was already settled the other way, or that a newer ask cancelled | Refused `sidekick_source_request_settled` (409) on the session route. The same answer given twice reads back as it stands. |
 | The person's membership is not active when their approval is recorded | Refused `sidekick_source_membership_unavailable` (409); the request keeps waiting. |
-| The person approves with no connection that carries the asked events | Refused `sidekick_source_connection_missing` (409); the request keeps waiting, and its card offers the connection. |
-| The person approves and every such connection needs reconnecting | Refused `sidekick_source_connection_reconnect` (409); the request keeps waiting, and its card offers the reconnect. |
+| The person approves with no connection that carries one of the asked event types | Refused `sidekick_source_connection_missing` (409); the request keeps waiting, and its card offers the connection. |
+| The person approves and one of the asked event types is carried only by connections that need reconnecting | Refused `sidekick_source_connection_reconnect` (409); the request keeps waiting, and its card offers the reconnect. |
 | A link's token does not match its fields | Refused `sidekick_source_link_invalid` (401), before anything is read. |
 | A link is opened for a request that is gone with its Sidekick, or by a person who has left the Organization | `sidekick_source_request_not_found` (404). Nothing is decided. |
 | A link is opened after the request was answered the other way, or replaced by a newer ask | Nothing changes. The page says how the request stands. |
@@ -877,8 +882,10 @@ request's card in its conversation turns the person's own Approve into one
 step live only there, so Activity and the Sources panel point at it. An ask for the
 asker's own account with nothing connected is no longer refused. Approval
 counts, and writes rows on, only the connections that announce the asked
-event types, and is refused `sidekick_source_connection_reconnect` when every
-such connection's sign-in has lapsed. `request_source`'s description and the
+event types, each event type on the connections that carry it. It is refused
+`sidekick_source_connection_missing` while any asked type has no carrier, and
+`sidekick_source_connection_reconnect` while any is carried only by lapsed
+sign-ins. `request_source`'s description and the
 `setting-up-a-filtered-trigger` skill tell the model to ask regardless and to
 say who still has to connect.
 
@@ -895,7 +902,10 @@ never connected be served the same way: one visit, a few presses.
 **Considered and rejected:** A separate "reconnect your account" notice
 beside the request: two things to answer for one decision. Letting an
 approval through on a lapsed connection and fixing it later: the person
-would believe they had shared and nothing would arrive.
+would believe they had shared and nothing would arrive. Counting a request as
+covered when any one asked type arrived (the first version here): a Mail and
+Drive ask from someone with only Mail would approve and lose the Drive events
+silently.
 
 **What a future change has to respect:** Which connection carries an event
 is the connection's own announcement, not its connector type. The connect

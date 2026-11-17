@@ -321,7 +321,8 @@ workspace lifecycle and policy events preserve only bounded result,
 repository-present, connector-class, local-file-retention, policy-mode, and
 active-sandbox dimensions. Connector telemetry covers setup, user actions,
 health transitions, and admitted activity;
-invitations cover creation through terminal response. Provider payloads,
+invitations sent before 2026-11-16 cover their terminal response; adding a
+member by address emits no product event. Provider payloads,
 connection/account IDs, invite email addresses, and Terminal
 commands or paths remain prohibited. OAuth connector attempts persist their
 closed telemetry shape and the renderer's explicit event-contract version. A

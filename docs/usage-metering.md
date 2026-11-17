@@ -76,7 +76,8 @@ An agent run refused here ends as `usage_allowance_exhausted`
 (`requireRunUsageAllowance`). `readUsageAllowance` is the one copy of the rule:
 admission throws on it, and the usage read reports it as `allowanceExhausted`
 and `stopsAtAllowance` for the desktop's rail warning. Each refusal also defers
-a once-per-week email to owners and administrators, keyed
+a once-per-week email to owners and administrators who have signed in
+([email-delivery.md](email-delivery.md#who-gets-email)), keyed
 `usage_allowance_exhausted/<org>/<week start>/<user>` in the shared email
 receipts; the week's first refusal also pushes the meter to open windows, and a
 billing change already does (`reconcileSubscription`).

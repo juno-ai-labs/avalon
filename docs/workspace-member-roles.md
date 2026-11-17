@@ -21,8 +21,11 @@ the read-side authorization primitive that composes resource access belongs to
 | `packages/contracts/src/index.ts` | `MemberRoleSchema` (all three roles, as read) and `AssignableMemberRoleSchema` (`admin`/`member` — the roles an administrator may hand out). `WorkspaceInvitationRoleSchema` is the same schema, so an invitation and a promotion cannot drift. |
 | `apps/api/src/middleware/auth.ts` | Resolves `auth.role` from `workspace_members` on **every** request, and `requireWorkspaceAdmin` — the route-level gate. |
 | `apps/api/src/services/workspace-service.ts` | `setMemberRole` (the one write that changes a role), `addMember` (the role someone added by address is a member with at once), `removeMember` and `leaveWorkspace` (the owner counts that keep a workspace owned), and the private `requireAdmin` every workspace-administration method starts with. |
-| `apps/api/src/routes/workspace.ts` | `PATCH /workspace/members/:userId/role`. |
-| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (promote/demote or make member, and suspend), and the invitation role selector. A guest sees the same list, without the row controls. |
+| `apps/api/src/routes/workspace.ts` | `PATCH /workspace/members/:userId/role`, `POST /workspace/members` (`addMember`), and the legacy `POST /workspace/invitations`, which adds a member for older builds and answers in the old invitation shape. |
+| `apps/api/src/services/member-by-address.ts` | `memberByAddress`: the account a verified address names and its place in this Organization, read by `addMember` and `offer_to_add_member`. |
+| `packages/contracts/src/member-card.ts` | `MemberCardInputSchema` and the member question's options, shared by the tool and the card. |
+| `apps/desktop/src/renderer/components/member-add-card.tsx` | `MemberAddCard`: the add button an agent's member question shows, live for owners and administrators. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (promote/demote or make member, and suspend), and the Add members role selector. A guest sees the same list, without the row controls. |
 | `apps/desktop/src/renderer/lib/session-workspace.ts` | Why the role the desktop holds is a *presentation* input and never an authorization one. |
 
 ## How it works
@@ -44,9 +47,13 @@ A membership acquires its role in one of three ways:
   address names an existing account (`memberByAddress`, the rule sign-in
   keeps); an address an account holds unverified is refused
   (`member_address_unverified`), not added. A guest becomes a member. The
-  account is eligible for first-Organization setup under the rule
-  `makeFirstOrganizationEligible` keeps, and outside Global its
-  `platform_user_id` is left empty for its first sign-in to link. It never *lowers* a role that already exists: its `ON CONFLICT`
+  account is made eligible for first-Organization setup under the rule
+  `makeFirstOrganizationEligible` keeps, in Global only, since Global owns the
+  setup flag and overwrites a region's copy. Someone added to their first
+  Organization outside Global is not sent through setup yet. Outside Global the
+  account's `platform_user_id` is left empty for its first sign-in to link,
+  by an address Global verified
+  ([`multiple-workspaces.md`](multiple-workspaces.md#authority-and-data-flow)). It never *lowers* a role that already exists: its `ON CONFLICT`
   clause keeps an existing `owner` or `admin`. It revokes any older invitation
   still waiting for the address, and emails them that they were added; a failed
   send leaves the membership and answers `emailDelivery: "failed"`. `POST
@@ -153,7 +160,10 @@ assigns it. It does **not** own:
   exists, and nothing here is built as a step toward one.
 
 Callers are the authenticated desktop client through
-`PATCH /workspace/members/:userId/role`. There is no operator door and no
+`PATCH /workspace/members/:userId/role`, `POST /workspace/members` and the
+legacy `POST /workspace/invitations`, and the press on an agent's
+`MemberAddCard`, which calls `POST /workspace/members` with the presser's own
+session. There is no operator door and no
 Durable Object path: roles live in regional D1 and only the Worker writes them.
 
 ## Failure modes and limits
@@ -163,7 +173,13 @@ Durable Object path: roles live in regional D1 and only the Worker writes them.
 | `workspace_admin_required` | 403 | The caller is an ordinary member. |
 | `member_not_found` | 404 | Nobody by that id belongs to this workspace. |
 | `cannot_change_owner_role` | 403 | The target is the workspace owner. |
-| `member_not_active` | 409 | The target has not accepted their invitation. |
+| `member_not_active` | 409 | The target is not active: suspended, or holding an invitation from before adding that is still waiting. |
+| `already_workspace_member` | 409 | `addMember`: the address already names an active member here. |
+| `member_address_unverified` | 409 | `addMember`: an account holds the address without having verified it, so adding it would add whoever typed that profile address. |
+| `member_account_unavailable` | 409 | `addMember`: no account could be made or found for the address after the write. |
+| `workspace_not_found` | 404 | `addMember`: the Organization is gone or abandoned. |
+| — (logged only) | 201 | `addMember` added the member but the "you were added" email failed: `workspace_member_added_email_failed`, and the response says `emailDelivery: "failed"`. |
+| — (logged only) | 201 | `addMember` added the member but dispatching the relationship change or the directory push failed: `workspace_relationship_dispatch_failed` or `search_authorization_member_push_failed`. The scheduled retry delivers the relationship later. |
 | `last_workspace_administrator` | 409 | The demotion would leave the workspace with no administrator. |
 | `member_is_guest` | 409 | The target is a guest, who holds no role until `promoteGuest` moves their access class. |
 | `membership_changed` | 409 | The conditional write lost a race; nothing was written. |
@@ -186,7 +202,10 @@ asked for, and inventing a ceiling here would be
   and it is *asserted on*, both for the two topics a committed change publishes
   and for the silence a no-op or a refusal owes. A double nobody asserts on lets
   the call be deleted with the suite still green.
-- `apps/api/test/workspace-and-invitations.test.ts` — the invitation role gate.
+- `apps/api/test/workspace-and-invitations.test.ts` — `addMember` against the
+  checked-in migrations: the account it makes for a new address and that
+  address's first sign-in, the refusal of an address held unverified, a guest
+  made a member, and an existing role kept.
 - `apps/desktop/src/renderer/screens/workspace-settings.test.tsx` — the viewer
   that matters is an administrator who is **not** the owner: rendering the owner
   there would stay green against a renderer regressed to owner-only, which is

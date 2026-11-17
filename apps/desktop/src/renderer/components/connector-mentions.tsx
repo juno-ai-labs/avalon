@@ -12,7 +12,7 @@ import {
 import { Check, AlertTriangle, LoaderCircle, Minus, Plug } from 'lucide-react';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useUpdateRally } from './update-rally-action';
-import { useOptionalCollaborationSession, type CollaborationSessionValue, type ConnectorSetupCapability } from '../lib/collaboration-session';
+import { useOptionalCollaborationSession, type ConnectorSetupCapability } from '../lib/collaboration-session';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
 import {
@@ -259,19 +259,18 @@ export function ConnectorConnectionCard({ latchedConnected = false, onConnected,
 }): React.JSX.Element | null {
   // A host that cannot connect accounts (the lite browser) draws nothing and asks the server nothing.
   const collaboration = useOptionalCollaborationSession();
-  if (!connectorConnectionCardProvider(request) || !collaboration?.connectorSetup) return null;
+  const provider = connectorConnectionCardProvider(request);
+  if (!provider || !collaboration?.connectorSetup) return null;
   return (
     <ResolvedConnectorConnectionCard
       latchedConnected={latchedConnected}
       onConnected={onConnected}
       onNewlyConnected={onNewlyConnected}
+      provider={provider}
       request={request}
     />
   );
 }
-
-/** Any OAuth provider, for the hooks that run while a card cannot connect; never drawn. */
-const FALLBACK_PROVIDER = connectorProviders.find(isOAuthConnectorProvider)!;
 
 /**
  * One connection's state and its connect or reconnect action, for whoever
@@ -292,7 +291,8 @@ export interface ConnectorConnectionAction {
   accountRequired: boolean;
   error: string | undefined;
   macAppOnly: boolean;
-  start: () => void;
+  /** Starts the sign-in; resolves with its attempt id once the browser is opened, rejects if it could not start. */
+  start: () => Promise<string>;
   pending: boolean;
   /** The OAuth attempt this card is waiting on, while it waits: its outcome can be read back by id. */
   attemptId: string | null;
@@ -301,33 +301,21 @@ export interface ConnectorConnectionAction {
 }
 
 /**
- * The connection action for a card's request, or null where this client
- * cannot make that connection (no setup capability, or no OAuth provider for
- * it). Hooks run in a fixed order, so the null case still runs them.
+ * The connection action for a card's request. Mount it only where this
+ * client can make that connection: the caller resolves the provider
+ * (`connectorConnectionCardProvider`) and checks `connectorSetup` first, as
+ * `ConnectorConnectionCard` does.
  */
-export function useConnectorConnectionAction(request: ConnectorConnectionCardInput, options: {
-  latchedConnected?: boolean;
-  onConnected?: ((selectionKey: string) => void) | undefined;
-  onNewlyConnected?: (() => void) | undefined;
-} = {}): ConnectorConnectionAction | null {
-  const collaboration = useOptionalCollaborationSession();
-  const provider = connectorConnectionCardProvider(request);
-  const action = useResolvedConnectorConnectionAction(request, provider, collaboration, options);
-  return provider && collaboration?.connectorSetup ? action : null;
-}
-
-function useResolvedConnectorConnectionAction(
+export function useConnectorConnectionAction(
   request: ConnectorConnectionCardInput,
-  maybeProvider: OAuthConnectorProviderCatalogEntry | null,
-  collaboration: CollaborationSessionValue | null,
+  provider: OAuthConnectorProviderCatalogEntry,
   { latchedConnected = false, onConnected, onNewlyConnected }: {
     latchedConnected?: boolean;
     onConnected?: ((selectionKey: string) => void) | undefined;
     onNewlyConnected?: (() => void) | undefined;
-  },
+  } = {},
 ): ConnectorConnectionAction {
-  // Stand-ins while the client cannot connect: every hook still runs, and the caller discards the result.
-  const provider = maybeProvider ?? FALLBACK_PROVIDER;
+  const collaboration = useOptionalCollaborationSession();
   const api = collaboration?.api;
   const session = collaboration?.session ?? null;
   const setup: Partial<ConnectorSetupCapability> = collaboration?.connectorSetup ?? {};
@@ -356,8 +344,7 @@ function useResolvedConnectorConnectionAction(
   const availability = useQuery({
     queryKey: ['connector-catalog'],
     queryFn: ({ signal }) => api!.getAvailableConnectorTypes(signal),
-    // No catalog read where this client cannot connect: the result is discarded there.
-    enabled: Boolean(api && maybeProvider && collaboration?.connectorSetup),
+    enabled: Boolean(api),
     staleTime: 30_000,
   });
   const selectionKey = connectorConnectionCardSelectionKey(request);
@@ -459,7 +446,7 @@ function useResolvedConnectorConnectionAction(
     accountRequired,
     error: connect.error?.message,
     macAppOnly: !connectorStartsHere(session, provider.provider),
-    start: () => connect.mutate(),
+    start: async () => (await connect.mutateAsync()).authorization.attemptId,
     pending,
     attemptId: awaiting && pendingConnectorOAuth ? pendingConnectorOAuth.attemptId : null,
     reconnect: matchingConnections.length > 0,
@@ -467,14 +454,14 @@ function useResolvedConnectorConnectionAction(
   };
 }
 
-function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewlyConnected, request }: {
+function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewlyConnected, provider, request }: {
   latchedConnected: boolean;
   onConnected?: ((selectionKey: string) => void) | undefined;
   onNewlyConnected?: (() => void) | undefined;
+  provider: OAuthConnectorProviderCatalogEntry;
   request: ConnectorConnectionCardInput;
-}): React.JSX.Element | null {
-  const action = useConnectorConnectionAction(request, { latchedConnected, onConnected, onNewlyConnected });
-  if (!action) return null;
+}): React.JSX.Element {
+  const action = useConnectorConnectionAction(request, provider, { latchedConnected, onConnected, onNewlyConnected });
   return (
     <ConnectorConnectionCardView
       adminRequired={action.adminRequired}
@@ -487,7 +474,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewl
       accountRequired={action.accountRequired}
       error={action.error}
       macAppOnly={action.macAppOnly}
-      onConnect={action.start}
+      onConnect={() => { void action.start().catch(() => undefined); }}
       pending={action.pending}
       provider={action.provider}
       request={request}

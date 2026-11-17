@@ -112,10 +112,15 @@ function connectionWords(state: 'not_connected' | 'reconnect_required', connecto
 /**
  * The host's "Connect Gmail and approve" for the asked person's own request
  * while its account still has to be connected, drawn in Approve's place so one
- * press does both. Presentation does not connect anything: the host owns the
- * OAuth flow and sends the approval once the account works.
+ * press does both, or the host's words for where that step is done instead.
+ * Presentation does not connect anything: the host owns the OAuth flow and
+ * sends the approval once the account works.
  */
-export type SourceConnectStep = (request: SidekickSourceRequestView) => ReactNode;
+export type SourceConnectStep = (request: SidekickSourceRequestView) => {
+  control: ReactNode;
+  /** The control connects here, so the card's title can name that step. */
+  connectsHere: boolean;
+};
 
 function subjectOf(request: SidekickSourceRequestView, connector: string): string {
   return `${request.yours ? 'your' : `${request.person.displayName}’s`} ${connector} for ${request.sidekickName}`;
@@ -150,7 +155,8 @@ export function SidekickSourceRequestCardView({ requests, words, live = true, on
   const mark = connectorBrandMark(ask.connectorType, connector);
   // A reader whose own request waits on their account reads the whole card as that one step.
   const mine = connectStep ? requests.find((request) => request.yours && connectionToMake(request) && !organizationsStep(request)) : undefined;
-  const mineToMake = mine ? connectionToMake(mine) : null;
+  const mineStep = mine && live && connectStep ? connectStep(mine) : undefined;
+  const mineToMake = mine && mineStep?.connectsHere ? connectionToMake(mine) : null;
   return <article aria-label={`Source request for ${ask.sidekickName}`} className="connector-connection-card source-request-card">
     <div className="connector-connection-card-header">
       {mark && <span aria-hidden="true" className="provider-icon"><ConnectorMark mark={mark} /></span>}
@@ -165,7 +171,9 @@ export function SidekickSourceRequestCardView({ requests, words, live = true, on
     <ul aria-label="People asked" className="source-request-people">
       {requests.map((request) => {
         const toMake = connectionToMake(request);
-        const ownStep = toMake && request.yours && connectStep && live ? connectStep(request) : undefined;
+        const ownStep = toMake && request.yours && connectStep && live
+          ? (request === mine && mineStep ? mineStep : connectStep(request)).control
+          : undefined;
         return <li key={request.requestId}>
           <PersonAvatar person={request.person} />
           <span className="source-request-person">
@@ -247,7 +255,7 @@ export function SidekickSourcesList({ data, loading, words, onDecide, deciding =
               <small>Asked by {request.requestedByName} · {events} in {connector}</small>
               {request.condition && <small>Only when {quoted(request.condition)}</small>}
               {!answerable && <small>{standing(request)}</small>}
-              {toMake && <small>{request.yours
+              {toMake && <small>{request.yours && !organizationsStep(request)
                 // Connecting happens on the request's card, in the conversation it was asked from.
                 ? `${toMake === 'reconnect_required' ? 'Reconnect' : 'Connect'} ${connector} from the request in its conversation first`
                 : connectionWords(toMake, connector, organizationsStep(request))}</small>}
