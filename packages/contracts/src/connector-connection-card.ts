@@ -97,22 +97,19 @@ const StoredConnectorConnectionCardInputSchema = z.union([
 ]);
 
 /**
- * What the state check accepts: the card's selection with the scope optional.
+ * What the state check accepts: a connector, and nothing else.
  *
- * The check always covers every scope the connector offers, so `scope` is
- * accepted only so calls written before that still validate. Models asked to
- * pick one picked the workspace scope for people whose personal Drive was
- * connected, read `not_connected`, and asked them to connect what they had;
- * honoring an explicit scope let that happen again whenever a model named one.
+ * The check always covers every scope the connector offers, so it takes no
+ * scope. It once accepted one and ignored it: models asked to pick a scope
+ * picked the workspace one for people whose personal Drive was connected, read
+ * `not_connected`, and asked them to connect what they had. A scope it is sent
+ * now fails as an unrecognized key, rather than being silently dropped.
  */
 export const ConnectorConnectionStateInputSchema = z.strictObject({
   // Every product, not only those with a card: `list_connectors` returns all
   // of them, and a model checking one it listed must not be refused.
   connectorId: z.enum(ConnectorProductIds).describe(
-    "Connector to check: any connectorId list_connectors returns. google-drive is Google Drive, Docs and Sheets.",
-  ),
-  scope: z.enum(ConnectorScopes).optional().describe(
-    "Leave out. Every scope this connector offers is checked whatever is sent.",
+    "Connector to check: any connectorId list_connectors returns. google-drive is Google Drive, Docs and Sheets. Every scope it offers is checked.",
   ),
 });
 export type ConnectorConnectionStateInput = z.infer<typeof ConnectorConnectionStateInputSchema>;
