@@ -189,17 +189,21 @@ describe("Avalon connector connection tools", () => {
     await expect(userTool!.execute({ connectorId: "granola", scope: "workspace" }, context()))
       .rejects.toThrow("does not support a workspace connection card");
 
+    // A turn acting for the Organization is offered all three, and each
+    // refuses by name: there is no person whose connections they read.
     const workspaceInput = workflowInput();
     workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
-    expect(__integrationTesting.createAvalonTools(env, workspaceInput)
-      .some((candidate) => candidate.definition.name === "show_connector_connection"))
-      .toBe(false);
-    expect(__integrationTesting.createAvalonTools(env, workspaceInput)
-      .some((candidate) => candidate.definition.name === "get_connector_connection_state"))
-      .toBe(false);
-    expect(__integrationTesting.createAvalonTools(env, workspaceInput)
-      .some((candidate) => candidate.definition.name === "list_connectors"))
-      .toBe(false);
+    const workspaceTools = __integrationTesting.createAvalonTools(env, workspaceInput)
+      .filter((candidate) => candidate.definition.capability.startsWith("connector.connection."));
+    expect(workspaceTools.map((candidate) => candidate.definition.name))
+      .toEqual(["get_connector_connection_state", "list_connectors", "show_connector_connection"]);
+    for (const [tool, args] of [
+      [workspaceTools[0]!, { connectorId: "slack" }],
+      [workspaceTools[1]!, {}],
+      [workspaceTools[2]!, { connectorId: "slack", scope: "personal" }],
+    ] as const) {
+      await expect(tool.execute(args, context())).rejects.toMatchObject({ code: "connections_need_a_person" });
+    }
 
     const automationInput = workflowInput();
     automationInput.automationRun = {
