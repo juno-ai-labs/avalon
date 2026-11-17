@@ -246,11 +246,6 @@ export const ConnectorProductCatalog = {
 export type ConnectorProductId = keyof typeof ConnectorProductCatalog;
 export const ConnectorProductIds = Object.keys(ConnectorProductCatalog) as [ConnectorProductId, ...ConnectorProductId[]];
 
-/** The catalog entry for an id, widened so callers can read optional fields. */
-export function connectorProduct(id: ConnectorProductId): ConnectorProduct {
-  return ConnectorProductCatalog[id];
-}
-
 /**
  * Which products one provider connection serves: every product of its
  * provider whose prefixes match one of its grants. A Google connection granted
@@ -267,7 +262,7 @@ export function connectorConnectionServesProduct(
   id: ConnectorProductId,
   connection: { connectorType: string; capabilities: readonly string[] },
 ): boolean {
-  const product = connectorProduct(id);
+  const product: ConnectorProduct = ConnectorProductCatalog[id];
   if (product.providerType !== connection.connectorType) return false;
   if (product.capabilityPrefixes.length === 0) return true;
   return connection.capabilities.some((capability) =>
@@ -387,7 +382,7 @@ export function foldConnectorProductStates(
   registeredProviderTypes: ReadonlySet<string>,
 ): ConnectorProductState[] {
   return productIds.map((connectorId) => {
-    const product = connectorProduct(connectorId);
+    const product: ConnectorProduct = ConnectorProductCatalog[connectorId];
     const connectIn = (scope: ConnectorScope) =>
       product.cardScopes.includes(scope) ? "conversation" as const : "settings" as const;
     if (!registeredProviderTypes.has(product.providerType)) {
@@ -455,7 +450,7 @@ export function groupConnectorProductsByFamily(states: readonly ConnectorProduct
   return {
     families: ConnectorFamilies.flatMap((family) => {
       const connectors = states.filter((state) =>
-        (connectorProduct(state.connectorId).families as readonly ConnectorFamily[]).includes(family));
+        (ConnectorProductCatalog[state.connectorId].families as readonly ConnectorFamily[]).includes(family));
       return connectors.length === 0 ? [] : [{ family, label: ConnectorFamilyCatalog[family].label, connectors }];
     }),
   };

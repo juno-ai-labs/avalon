@@ -26,15 +26,15 @@ describe("connector connection tool guidance", () => {
     expect(show.description).toContain("do not claim the connector is connected");
   });
 
-  it("tells the model what the connector list returns and when to offer a missing one", () => {
+  it("tells the model what the connector list returns and where a missing one is made", () => {
     const list = AVALON_LIST_CONNECTORS_TOOL_DEFINITION;
     expect(list.name).toBe("list_connectors");
     expect(list.inputSchema).toMatchObject({ type: "object", additionalProperties: false, properties: {} });
     expect(list.description).toContain("grouped by family");
     expect(list.description).toContain("A person can have more than one account for a connector.");
-    expect(list.description).toContain("call show_connector_connection with its connectorId when connectIn is conversation");
-    expect(list.description).toContain("never offer one that is unavailable");
-    expect(list.description).toContain("settings means the person adds it in Settings");
+    expect(list.description).toContain("conversation, with show_connector_connection; settings, by the person in Settings");
+    // When to list and when to offer live in the core plugin's system line, once.
+    expect(list.description).not.toContain("Sidekick run");
   });
 
   it("describes both card parameters in direct product language", () => {

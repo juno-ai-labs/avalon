@@ -183,22 +183,12 @@ such as to ask them for a Sidekick source, and never for people the work only
 emails or reads mail from (customers, leads, vendors), since adding opens the
 Organization to them.
 
-`list_connectors` is the same read over every product, for choosing rather
-than recovering: an agent asked to build something calls it to learn which
-connector would serve the work, connected or not. It takes no arguments and
-returns the products grouped by family, a product under each of its families.
-Each row is the same product state the state check returns: id, name, one-line
-description, the best state, a row per offered scope with `connectIn`, and an
-account per saved connection (a person with two Google accounts sees both;
-another member's personal connection is never listed). `connectIn` is
-`conversation` when `show_connector_connection` can offer that scope, and
-`settings` when only Settings can (an administrator's key, a configured server,
-X). To offer a product that would help but is not required, the agent says in
-one sentence what it adds, then shows the card or names where in Settings to add
-it; in a Sidekick run the card pauses the run, so a run offers only what it
-cannot finish without. A loop whose card refuses is told only to read the list.
-What a product, a family, a state and an account are is the catalog's:
-[`connectors.md`](connectors.md#connector-products-and-families).
+`list_connectors` is the same read over every product, grouped by family, for
+choosing a connector rather than recovering one; its rows are the state check's.
+What a product, family, state and account are is the catalog's
+([`connectors.md`](connectors.md#connector-products-and-families)); when to
+list and when to offer a missing connector is said once, in the core plugin's
+system line.
 
 `check_resource_access` takes a connector and a resource link or id and asks
 every connection of that connector in the run how far it reaches the resource,
@@ -1383,32 +1373,22 @@ future agent tool or plugin, not just this family.
 
 ### 2026-11-17 — An agent can list connectors by family, and see each account
 
-**What changed:** `list_connectors` joins the core plugin, held wherever
-`get_connector_connection_state` is (any loop with a user principal). A turn
-acting for the Organization, which had neither connector tool, is now offered
-all three refusing by name, per rule 14. Both
-return the same product state, now with name, description, `connectIn` per
-scope, and `accounts`. `show_connector_connection` may be called for a
-connection that would clearly improve the asked-for work, not only one that
-blocks it.
+**What changed:** `list_connectors` joins the core plugin beside the state
+check, and a turn acting for the Organization is offered all three connector
+tools refusing by name. The catalog behind it is recorded in
+[`connectors.md`](connectors.md#changelog).
 
-**Why:** an agent asked for an artifact could check a connector it already
-thought of, but could not learn which connectors exist for the job, so it could
-not suggest one the person had not connected, and it could not tell which of a
-person's two Google accounts was connected.
+**Why:** an agent asked for an artifact could check a connector it already had
+in mind, but could not learn which connectors exist for the job, so it could
+not suggest one the person had not connected.
 
 **Alternative rejected:** making `connectorId` optional on the state check to
 list everything: one name for two questions ("is this connected?" and "what
-would help?") leaves the model to guess which it is asking. Also rejected: a
-`family` filter argument, since the whole catalog is fourteen rows.
+would help?") leaves the model to guess which it is asking.
 
-**Consequences:** the list covers every product, including those only Settings
-connects, so the model must read `connectIn` before offering a card; the card's
-enum is unchanged and still refuses those. The state check accepts every
-product id the list returns, so its `connectorId` enum is now wider than the
-card's, and its description says what to do when a scope's `connectIn` is
-`settings`. The catalog change behind this is
-recorded in [`connectors.md`](connectors.md#changelog).
+**Consequences:** the system line lists connectors only to choose an unnamed
+source, when no loaded plugin can do the work, or when asked, so an ordinary
+connector task pays no extra round trip.
 
 ### 2026-11-16 — An agent can check membership and offer to add someone
 

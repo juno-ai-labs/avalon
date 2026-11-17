@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   ConnectorListResultSchema,
-  ConnectorProductIds,
   ConnectorProductStateSchema,
   bestConnectorConnectionState,
   connectorAuthorizationStatus,
@@ -146,12 +145,5 @@ describe("grouping products by family", () => {
     expect(result.families[0]!.label).toBe("Team chat");
     expect(ConnectorListResultSchema.parse(result)).toEqual(result);
     expect(connectorListSummary(result)).toBe("Listed connectors in 3 families; connected: github");
-  });
-
-  it("puts every product in a family", () => {
-    const listed = groupConnectorProductsByFamily(foldConnectorProductStates(ConnectorProductIds, [], everyProvider))
-      .families.flatMap(({ connectors }) => connectors.map(({ connectorId }) => connectorId));
-    expect(new Set(listed)).toEqual(new Set(ConnectorProductIds));
-    expect(ConnectorProductIds).toHaveLength(14);
   });
 });

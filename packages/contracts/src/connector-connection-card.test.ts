@@ -4,7 +4,6 @@ import {
   CONNECTOR_CONNECTION_STATE_WIRE_NAME,
   ConnectorConnectionCardIds,
   ConnectorConnectionCardInputSchema,
-  ConnectorConnectionCardScopes,
   ConnectorConnectionStateInputSchema,
   sourceConnectionCardId,
   connectorConnectionCardSummary,
@@ -12,6 +11,7 @@ import {
   isConnectorConnectionCardWireName,
   LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME,
 } from "./connector-connection-card";
+import { ConnectorScopes } from "./connector-catalog";
 
 describe("connector connection card contract", () => {
   it("accepts google-drive in either scope and retires the old id for new requests", () => {
@@ -116,7 +116,7 @@ describe("connector connection card contract", () => {
     }
     expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "ashby", scope: "personal" }).success).toBe(true);
     expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "ashby", scope: "workspace" }).success).toBe(false);
-    for (const scope of ConnectorConnectionCardScopes) {
+    for (const scope of ConnectorScopes) {
       expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "linear", scope }).success).toBe(true);
     }
   });
