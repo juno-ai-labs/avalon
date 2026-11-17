@@ -1,4 +1,4 @@
-import { ConnectorProductCatalog, GOOGLE_MAIL_CALENDAR_CAPABILITIES } from '@rally/contracts';
+import { ConnectorProductCatalog, GOOGLE_DRIVE_CAPABILITIES, GOOGLE_MAIL_CALENDAR_CAPABILITIES } from '@rally/contracts';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
 import { Webhook } from 'lucide-react';
@@ -23,35 +23,32 @@ function fromCatalog<Id extends ProductId>(id: Id) {
     provider: product.providerType as Product<Id>['providerType'],
     name: product.name as Product<Id>['name'],
     description: product.description as Product<Id>['description'],
-    mark: product.iconName as Exclude<Product<Id>['iconName'], null>,
     scopes: product.scopes.map((scope): DesktopScope => (scope === 'personal' ? 'you' : 'workspace')) as readonly DesktopScope[],
     ...('desktopOnly' in product ? { desktopOnly: true as const } : {}),
   };
 }
 
-function withoutMark<Entry extends { mark: unknown }>(entry: Entry): Omit<Entry, 'mark'> {
-  const copy: Partial<Entry> = { ...entry };
-  delete copy.mark;
-  return copy as Omit<Entry, 'mark'>;
+/** The same card with the product's mark; only a product that has one. */
+function withMark<Id extends ProductId>(id: Id) {
+  const mark = ConnectorProductCatalog[id].iconName;
+  if (mark === null) throw new Error(`${id} has no mark in the connector catalog`);
+  return { ...fromCatalog(id), mark: mark as Exclude<Product<Id>['iconName'], null> };
 }
 
 export const connectorProviders = [
-  { ...fromCatalog('google-mail-calendar'), capabilities: [...GOOGLE_MAIL_CALENDAR_CAPABILITIES] },
+  { ...withMark('google-mail-calendar'), capabilities: [...GOOGLE_MAIL_CALENDAR_CAPABILITIES] },
+  { ...withMark('google-drive'), capabilities: [...GOOGLE_DRIVE_CAPABILITIES] },
   {
-    ...fromCatalog('google-drive'),
-    capabilities: ['drive.read', 'docs.read', 'docs.write', 'sheets.read', 'sheets.write'],
-  },
-  {
-    ...fromCatalog('github'),
+    ...withMark('github'),
     capabilities: ['github.metadata.read', 'github.contents.read', 'github.issues.read', 'github.issues.write', 'github.pull_requests.read', 'github.pull_requests.write', 'github.actions.read', 'github.checks.read'],
   },
-  { ...fromCatalog('apollo'), capabilities: ['apollo.personal.mcp'] },
-  { ...fromCatalog('ashby'), personalCapabilities: ['ashby.personal.mcp'], capabilities: ['ashby.workspace.events'] },
-  { ...fromCatalog('canva'), capabilities: ['canva.personal.mcp'] },
-  { ...fromCatalog('fireflies'), capabilities: ['fireflies.personal.read'] },
-  { ...fromCatalog('granola'), personalCapabilities: ['granola.personal.read'], capabilities: ['granola.workspace.read'] },
+  { ...withMark('apollo'), capabilities: ['apollo.personal.mcp'] },
+  { ...withMark('ashby'), personalCapabilities: ['ashby.personal.mcp'], capabilities: ['ashby.workspace.events'] },
+  { ...withMark('canva'), capabilities: ['canva.personal.mcp'] },
+  { ...withMark('fireflies'), capabilities: ['fireflies.personal.read'] },
+  { ...withMark('granola'), personalCapabilities: ['granola.personal.read'], capabilities: ['granola.workspace.read'] },
   {
-    ...fromCatalog('linear'),
+    ...withMark('linear'),
     personalCapabilities: [
       'linear.read',
       'linear.issue.create',
@@ -66,16 +63,16 @@ export const connectorProviders = [
       ...(linearNativeAgentEnabled ? ['linear.agent'] : []),
     ],
   },
-  { ...fromCatalog('slack'), personalCapabilities: SLACK_PERSONAL_CAPABILITIES, capabilities: ['slack.agent', 'slack.notifications.write'] },
+  { ...withMark('slack'), personalCapabilities: SLACK_PERSONAL_CAPABILITIES, capabilities: ['slack.agent', 'slack.notifications.write'] },
   {
-    ...fromCatalog('notion'),
+    ...withMark('notion'),
     personalCapabilities: ['notion.personal.mcp'],
     capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
   },
-  { ...fromCatalog('custom-mcp'), capabilities: [] },
+  { ...withMark('custom-mcp'), capabilities: [] },
   // The catalog gives a webhook no mark; Settings draws a generic glyph.
-  withoutMark({ ...fromCatalog('generic-webhook'), icon: Webhook, capabilities: [] }),
-  { ...fromCatalog('x'), capabilities: ['x.read'] },
+  { ...fromCatalog('generic-webhook'), icon: Webhook, capabilities: [] },
+  { ...withMark('x'), capabilities: ['x.read'] },
 ] as const;
 
 export type ConnectorProviderCatalogEntry = (typeof connectorProviders)[number];

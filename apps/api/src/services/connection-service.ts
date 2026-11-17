@@ -2,7 +2,7 @@ import { runtimeDeferral } from "../lib/defer";
 import type { Region } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
-import { ConnectorProductCatalog, connectorConnectionAccount, connectorConnectionName, connectorProductsForConnection, GOOGLE_MAIL_CALENDAR_CAPABILITIES, ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
+import { ConnectorProductCatalog, connectorConnectionName, connectorConnectionProductName, GOOGLE_MAIL_CALENDAR_CAPABILITIES, ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/contracts/telemetry";
 import { AshbyEventSelectionSchema, slackInstallationId } from "@rally/connectors";
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
@@ -320,15 +320,15 @@ type ConnectorInstallationProvider = z.infer<typeof ConnectorInstallationProvide
  * whole question. A provider whose validation reports no account keeps the
  * plain events label the first two shipped with.
  */
-function workspaceInstallationDisplayName(providerName: string, credentials: Record<string, unknown>): string {
+function workspaceInstallationDisplayName(productName: string, credentials: Record<string, unknown>): string {
   const account = stringField(credentials, "providerAccountName");
   // Bounded and flattened like every other provider-derived label: the account
   // half is whatever the provider returned, the reservation refuses anything
   // over 180 characters, and this string is rendered into the model's plugin
   // catalogue a line at a time.
   return account
-    ? connectorConnectionName(providerName, account)
-    : `${providerName} workspace events`.replace(/\s+/gu, " ").trim().slice(0, 180);
+    ? connectorConnectionName(productName, account)
+    : `${productName} workspace events`.replace(/\s+/gu, " ").trim().slice(0, 180);
 }
 
 const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, readonly string[]>> = {
@@ -1226,7 +1226,7 @@ export class ConnectionService {
       existingCredentials = (await this.context(existing)).credentials;
     }
     const account = reconcileGoogleAccount(existing, existingCredentials, incomingCredentials);
-    const displayName = googleConnectionDisplayName(stateData.capabilities, account.displayName);
+    const displayName = googleConnectionDisplayName(stateData.capabilities, account.accountLabel);
     const encrypted = await encryptString(
       JSON.stringify(account.credentials),
       this.env.CONNECTOR_CREDENTIALS_KEY,
@@ -1834,7 +1834,13 @@ export class ConnectionService {
       : null;
     const displayName = customMcp
       ? customMcp.displayName.slice(0, 180)
-      : provider === "canva" ? ConnectorProductCatalog.canva.name : connectorConnectionName(adapter.manifest.displayName, label);
+      : provider === "canva"
+        // Canva returns no account a person would recognize, so the name carries none.
+        ? ConnectorProductCatalog.canva.name
+        : connectorConnectionName(
+          connectorConnectionProductName({ connectorType: provider, capabilities: grantedCapabilities }, adapter.manifest.displayName),
+          label,
+        );
     if (customMcp && providerAccountId !== customMcp.serverUrl) {
       throw new ApiError(
         409,
@@ -2858,12 +2864,14 @@ export class ConnectionService {
        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
         encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
         model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
-       VALUES (?, ?, 'x', ?, ?, 'Public X via TwitterAPI.io', ?, ?, ?, ?, ?, 'healthy', '{}', '{}', ?, ?)`,
+       VALUES (?, ?, 'x', ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', '{}', ?, ?)`,
     ).bind(
       id,
       auth.workspaceId,
       input.scope,
       null,
+      // One shared key with no account of its own, so the name is the product's alone.
+      ConnectorProductCatalog.x.name,
       encrypted.ciphertext,
       encrypted.iv,
       Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
@@ -2949,7 +2957,10 @@ export class ConnectionService {
     try {
       installation = await (await this.workspaceObject(auth.workspaceId)).createConnectorInstallation({ installation: proposed,
         userId: auth.userId, inputHash: fingerprint, capability: management.capability,
-        displayName: workspaceInstallationDisplayName(adapter.manifest.displayName, credentials),
+        displayName: workspaceInstallationDisplayName(
+          connectorConnectionProductName({ connectorType: input.provider, capabilities: [] }, adapter.manifest.displayName),
+          credentials,
+        ),
         credentials: { ...encrypted, keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1) } });
     } catch (error) {
       if (error instanceof Error && /idempotency_conflict|installation_exists/u.test(error.message)) throw new ApiError(409, "connector_setup_conflict", "This setup key has different inputs, or workspace events are already configured. Reopen the existing installation.");
@@ -4641,7 +4652,8 @@ function reconcileGoogleAccount(
 ): {
   credentials: Record<string, unknown>;
   providerAccountId: string;
-  displayName: string;
+  /** Which Google account, as a person reads it; the product half of the name is added from the grants. */
+  accountLabel: string;
 } {
   const providerAccountId = stringField(incomingCredentials, "providerAccountId");
   if (!providerAccountId) {
@@ -4672,19 +4684,16 @@ function reconcileGoogleAccount(
   return {
     credentials,
     providerAccountId,
-    displayName: connectorConnectionName("Google", label),
+    accountLabel: label.slice(0, 180),
   };
 }
 
-/**
- * A Google connection is named after the product its grants serve, or Google
- * Workspace when they serve both (`connectorProductsForConnection`).
- */
-function googleConnectionDisplayName(capabilities: string[], accountDisplayName: string): string {
-  const account = connectorConnectionAccount("account", accountDisplayName) ?? accountDisplayName;
-  const products = connectorProductsForConnection({ connectorType: "google", capabilities });
-  const product = products.length === 1 ? ConnectorProductCatalog[products[0]!].name : "Google Workspace";
-  return connectorConnectionName(product, account);
+/** A Google connection serving both products is named for the suite. */
+function googleConnectionDisplayName(capabilities: string[], accountLabel: string): string {
+  return connectorConnectionName(
+    connectorConnectionProductName({ connectorType: "google", capabilities }, "Google Workspace"),
+    accountLabel,
+  );
 }
 
 function googleProviderScopesForCapabilities(capabilities: string[]): string[] {

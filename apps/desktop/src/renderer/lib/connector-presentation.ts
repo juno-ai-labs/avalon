@@ -1,5 +1,10 @@
 import type { WorkstreamConnection } from './types';
-import { ConnectorProductCatalog, ConnectorProductIds } from '@rally/contracts';
+import {
+  ConnectorProductCatalog,
+  ConnectorProductIds,
+  connectorConnectionServesProduct,
+  type ConnectorProductId,
+} from '@rally/contracts';
 import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
 
 /**
@@ -12,20 +17,11 @@ export interface ConnectorPresentation {
   readonly name: string;
   readonly description: string;
   readonly mark: PluginBrandMark | null;
-  /** Capability families a same-provider connection must carry for this label. */
-  readonly capabilityPrefixes?: readonly string[];
+  /** The product this presents, when it is one; its connections are the ones that serve it. */
+  readonly productId?: ConnectorProductId;
 }
 
 type CatalogEntry = { readonly name: string; readonly description: string };
-type GoogleBundle = CatalogEntry & { readonly capabilityPrefixes: readonly string[] };
-
-function googleBundle(id: 'google-mail-calendar' | 'google-drive'): GoogleBundle {
-  const { name, description, capabilityPrefixes } = ConnectorProductCatalog[id];
-  return { name, description, capabilityPrefixes };
-}
-
-const GOOGLE_MAIL = googleBundle('google-mail-calendar');
-const GOOGLE_FILES = googleBundle('google-drive');
 
 /**
  * Where a mention's blurb deliberately differs from the product's sentence in
@@ -42,13 +38,18 @@ const MENTION_DESCRIPTIONS: Readonly<Record<string, string>> = {
  * Every provider that is one product, keyed by the type stored on a mention.
  * Google is two products under one type, so it is presented by bundle below.
  */
-const CATALOG: Readonly<Record<string, CatalogEntry>> = Object.fromEntries(ConnectorProductIds
-  .map((id) => ConnectorProductCatalog[id])
-  .filter((product) => product.providerType !== 'google')
-  .map((product) => [product.providerType, {
-    name: product.name,
-    description: MENTION_DESCRIPTIONS[product.providerType] ?? product.description,
-  }]));
+const CATALOG: Readonly<Record<string, CatalogEntry & { readonly productId: ConnectorProductId }>> = Object.fromEntries(
+  ConnectorProductIds
+    .filter((id) => ConnectorProductCatalog[id].providerType !== 'google')
+    .map((id) => {
+      const product = ConnectorProductCatalog[id];
+      return [product.providerType, {
+        productId: id,
+        name: product.name,
+        description: MENTION_DESCRIPTIONS[product.providerType] ?? product.description,
+      }];
+    }),
+);
 
 export type ConnectorScopeStatus = 'healthy' | 'reconnect_required' | 'disabled' | 'missing';
 
@@ -62,17 +63,19 @@ export interface ConnectorScopeState {
 function googlePresentation(displayName?: string): ConnectorPresentation {
   const renderedName = displayName?.replace(/^@/u, '');
   const normalizedName = renderedName?.toLowerCase() ?? '';
-  const bundle = /drive|docs|sheets/u.test(normalizedName)
-    ? GOOGLE_FILES
+  // A mention's label is free text ("@Gmail", "@Google Drive"), with no
+  // connection in hand to match grants against, so the words decide.
+  const productId = /drive|docs|sheets/u.test(normalizedName)
+    ? 'google-drive' as const
     : /gmail|mail|calendar/u.test(normalizedName)
-      ? GOOGLE_MAIL
+      ? 'google-mail-calendar' as const
       : undefined;
-  const markName = bundle?.name ?? renderedName;
+  const product = productId ? ConnectorProductCatalog[productId] : undefined;
   return {
-    name: renderedName || bundle?.name || 'Google Workspace',
-    description: bundle?.description ?? 'Mail, calendar, Drive, Docs, and Sheets through connected Google accounts.',
-    mark: connectorBrandMark('google', markName),
-    ...(bundle ? { capabilityPrefixes: bundle.capabilityPrefixes } : {}),
+    name: renderedName || product?.name || 'Google Workspace',
+    description: product?.description ?? 'Mail, calendar, Drive, Docs, and Sheets through connected Google accounts.',
+    mark: connectorBrandMark('google', product?.name ?? renderedName),
+    ...(productId ? { productId } : {}),
   };
 }
 
@@ -87,6 +90,7 @@ export function connectorPresentation(
     name: renderedName || entry?.name || connectorType,
     description: entry?.description ?? 'Organization connector.',
     mark: connectorBrandMark(connectorType, renderedName),
+    ...(entry ? { productId: entry.productId } : {}),
   };
 }
 
@@ -97,28 +101,26 @@ function bestConnectorStatus(statuses: readonly ConnectorScopeStatus[]): Connect
   return 'missing';
 }
 
-function connectionMatchesCapabilities(
-  connection: WorkstreamConnection,
-  capabilityPrefixes: readonly string[] | undefined,
-): boolean {
-  if (!capabilityPrefixes?.length) return true;
-  return connection.capabilities?.some((capability) =>
-    capabilityPrefixes.some((prefix) => capability.startsWith(prefix))) ?? false;
-}
-
 /**
  * Personal and workspace rows for one connector presentation, always both.
+ * With a product, only connections serving it count (the shared
+ * `connectorConnectionServesProduct`); without one, every connection of the
+ * type does. This fold stays the desktop's because it shows Disabled, which
+ * the agent's product states do not.
  * Every applicable credential contributes: response order cannot change status
  * and capability unions remain stable across reconnects and account additions.
  */
 export function connectorScopeStates(
   connectorType: string,
   connections: readonly WorkstreamConnection[],
-  capabilityPrefixes?: readonly string[],
+  productId?: ConnectorProductId,
 ): readonly [ConnectorScopeState, ConnectorScopeState] {
   const matching = connections.filter((connection) =>
     connection.connectorType === connectorType &&
-    connectionMatchesCapabilities(connection, capabilityPrefixes));
+    (productId === undefined || connectorConnectionServesProduct(productId, {
+      connectorType: connection.connectorType,
+      capabilities: connection.capabilities ?? [],
+    })));
   const state = (scope: 'you' | 'workspace'): ConnectorScopeState => {
     const scopeConnections = matching.filter((connection) => connection.scope === scope);
     const capabilities = [...new Set(scopeConnections.flatMap((connection) => connection.capabilities ?? []))]

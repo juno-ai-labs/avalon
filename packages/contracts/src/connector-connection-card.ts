@@ -113,7 +113,11 @@ const StoredConnectorConnectionCardInputSchema = z.union([
  * honoring an explicit scope let that happen again whenever a model named one.
  */
 export const ConnectorConnectionStateInputSchema = z.strictObject({
-  connectorId: ConnectorConnectionCardShape.shape.connectorId,
+  // Every product, not only those with a card: `list_connectors` returns all
+  // of them, and a model checking one it listed must not be refused.
+  connectorId: z.enum(ConnectorProductIds).describe(
+    "Connector to check: any connectorId list_connectors returns. google-drive is Google Drive, Docs and Sheets.",
+  ),
   scope: z.enum(ConnectorConnectionCardScopes).optional().describe(
     "Leave out. Every scope this connector offers is checked whatever is sent.",
   ),

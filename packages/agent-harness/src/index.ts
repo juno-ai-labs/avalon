@@ -3556,6 +3556,7 @@ export const AVALON_GET_CONNECTOR_CONNECTION_STATE_TOOL_DEFINITION = {
     "Each state is connected, reconnect_required, not_connected, or unavailable.",
     "If a connected scope can do the task, continue with it and do not show a card. A connected personal connection is enough on its own.",
     "If no connected scope can and reconnect_required or not_connected blocks the task, briefly explain why, then call show_connector_connection with the same connectorId and the scope the task needs.",
+    "When that scope's connectIn is settings, no card can connect it: say the person adds it in Settings, under Connections, and for the Organization scope only an administrator can.",
     "If unavailable, explain that this connector is not configured in this Rally region and do not show a card.",
     "This checks Rally's saved state, not the provider directly.",
   ].join(" "),

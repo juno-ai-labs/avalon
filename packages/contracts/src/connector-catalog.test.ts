@@ -8,6 +8,7 @@ import {
   connectorAuthorizationStatus,
   connectorConnectionAccount,
   connectorConnectionName,
+  connectorConnectionProductName,
   connectorListSummary,
   connectorProductStateSummary,
   connectorProductsForConnection,
@@ -33,6 +34,14 @@ describe("connector product catalog", () => {
       .toEqual(["google-drive"]);
     expect(connectorProductsForConnection({ connectorType: "google", capabilities: [] })).toEqual([]);
     expect(connectorProductsForConnection({ connectorType: "linear", capabilities: [] })).toEqual(["linear"]);
+  });
+
+  it("names a connection after the one product its grants serve, or else its provider", () => {
+    expect(connectorConnectionProductName({ connectorType: "google", capabilities: ["drive.read"] }, "Google Workspace"))
+      .toBe("Google Drive + Docs + Sheets");
+    expect(connectorConnectionProductName({ connectorType: "google", capabilities: ["gmail.read", "drive.read"] }, "Google Workspace"))
+      .toBe("Google Workspace");
+    expect(connectorConnectionProductName({ connectorType: "x", capabilities: [] }, "X")).toBe("Public X via TwitterAPI.io");
   });
 
   it("names a connection after its product and account, and reads the account back", () => {
@@ -93,12 +102,19 @@ describe("folding saved connections into product states", () => {
     expect(x!.connections).toEqual([{ scope: "workspace", state: "not_connected", connectIn: "settings" }]);
   });
 
-  it("ignores a connection in a scope its product is not offered in", () => {
-    // Fireflies withdrew its workspace connection; old rows still exist.
+  it("counts a connection in a scope closed to new ones, and says only Settings makes it", () => {
+    // Fireflies stopped taking workspace keys; ones pasted before still serve tools.
     const [fireflies] = foldConnectorProductStates(["fireflies"], [
       record({ connectorType: "fireflies", scope: "workspace", displayName: "Fireflies · Acme" }),
     ], everyProvider);
-    expect(fireflies).toMatchObject({ state: "not_connected", accounts: [] });
+    expect(fireflies).toMatchObject({
+      state: "connected",
+      connections: [
+        { scope: "personal", state: "not_connected", connectIn: "conversation" },
+        { scope: "workspace", state: "connected", connectIn: "settings" },
+      ],
+      accounts: [{ scope: "workspace", state: "connected", account: "Acme" }],
+    });
   });
 
   it("calls a product whose provider this deployment lacks unavailable in every scope", () => {
