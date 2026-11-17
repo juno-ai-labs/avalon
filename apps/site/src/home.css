@@ -1718,6 +1718,11 @@ h2 {
     border-bottom: 1px solid var(--line); gap: 12px; font-size: 13px; border: 0;
   }
 
+  /* No room for the word beside the four section links: the mark stands alone, and the label stays for screen readers. */
+  .home-nav .github-label {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+
   .home-hero {
     flex-direction: column; align-items: stretch; grid-template-columns: 0.93fr 1.2fr; display: flex;
     min-height: 0; padding-top: 83px; padding-bottom: 36px; gap: 13px;
@@ -1912,3 +1917,7 @@ h2 {
 /* The CASA link in the footer's legal row. */
 .footer-casa { color: inherit; text-decoration: none; }
 .footer-casa:hover { color: var(--green); }
+
+.github-link {
+  display: inline-flex; align-items: center; gap: 6px;
+}
