@@ -2,6 +2,7 @@ import { useReportMessageIssue } from './message-issue-dialog';
 import { primaryShortcutLabel } from '../lib/shortcut-label';
 import { MessageAnnotations } from './artifact-annotations';
 import { rehypeAnnotationSource } from '../lib/annotation-source';
+import { rehypeStreamingCaret, STREAMING_CARET_CLASS } from '../lib/streaming-caret';
 import clsx from 'clsx';
 import { personalColor, personalColorInk } from './personal-avatar';
 import { MemberPresentationContext } from '../lib/member-presentation';
@@ -1568,12 +1569,14 @@ export function MarkdownBody({
       source: string,
       extra: MarkdownComponents = components,
       plugins: MarkdownRemarkPlugins = remarkPlugins,
+      caret = false,
     ): React.JSX.Element => {
       const { resolved, used } = componentsFor(source, extra);
+      const rehype = sourcePositions ? [...rehypePlugins, rehypeAnnotationSource] : rehypePlugins;
       return (
         <ReactMarkdown
           components={used}
-          rehypePlugins={sourcePositions ? [...rehypePlugins, rehypeAnnotationSource] : rehypePlugins}
+          rehypePlugins={caret ? [...rehype, rehypeStreamingCaret] : rehype}
           remarkPlugins={plugins}
           remarkRehypeOptions={rehypeOptions}
           urlTransform={urlTransform}
@@ -1603,7 +1606,7 @@ export function MarkdownBody({
           {/* Only here is the source still arriving, so only here can a
               link's hostname be a prefix of the one being typed. */}
           <HostFaviconHold.Provider value={true}>
-            {renderMarkdown(tail, extra, tailRemarkPlugins)}
+            {renderMarkdown(tail, extra, tailRemarkPlugins, true)}
           </HostFaviconHold.Provider>
         </>
       );
@@ -1657,7 +1660,9 @@ export function MarkdownBody({
               key={part.id}
             >
               {streamThis
-                ? renderStreaming(part.body)
+                ? part.body
+                  ? renderStreaming(part.body)
+                  : <span aria-hidden="true" className={STREAMING_CARET_CLASS} />
                 : part.body
                   ? renderSettled(part.body)
                   : null}
@@ -1975,7 +1980,8 @@ export function AssistantMessageContent({
           text={text}
         />
       )}
-      {streaming && <span className="streaming-caret" aria-hidden="true" />}
+      {/* With text, the markdown body draws the caret after its last character. */}
+      {streaming && !text && <span className={STREAMING_CARET_CLASS} aria-hidden="true" />}
     </>
   );
 }
