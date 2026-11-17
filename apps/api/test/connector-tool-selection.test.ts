@@ -150,6 +150,10 @@ class ToolSelectionDatabase {
   readonly automationDetails = new Map<string, AutomationDetail>();
   readonly replayOutputs = new Map<string, unknown>();
   memberStatus = "active";
+  /** The turn's person's access class, as `offer_to_add_member` reads it. */
+  principalAccessClass = "member";
+  /** Who holds each address: an account and its place here, or an unverified holder. */
+  readonly addressHolders = new Map<string, { id: string; name: string; status: string | null; access_class: string | null } | "unverified">();
 
   constructor(
     connections: ConnectionRow[],
@@ -309,6 +313,14 @@ class ToolSelectionStatement {
   async first<T>(): Promise<T | null> {
     const sql = this.sql.replace(/\s+/gu, " ").trim();
     if (sql.includes("SELECT role FROM workspace_members")) return { role: "member" } as T;
+    if (sql.includes("SELECT access_class FROM workspace_members")) return { access_class: this.database.principalAccessClass } as T;
+    if (sql.includes("FROM user_verified_emails v")) {
+      const holder = this.database.addressHolders.get(String(this.values[1]));
+      return (holder && holder !== "unverified" ? holder : null) as T | null;
+    }
+    if (sql.includes("SELECT 1 AS held FROM users")) {
+      return (this.database.addressHolders.get(String(this.values[0])) === "unverified" ? { held: 1 } : null) as T | null;
+    }
     if (sql.includes("FROM workspace_members wm")) {
       expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
       return { status: this.database.memberStatus } as T;
@@ -764,6 +776,31 @@ describe("connector tools selected for harness runs", () => {
     expect(await question({ ...automationConversationInput(), agentExchange: { teamId: sender, senderAgentId: sender,
       messageId: "00000000-0000-7000-8000-00000000e001" } })).toMatchObject({ code: "question_from_agent_message",
       routes: expect.stringContaining("Reply to that agent") });
+  });
+
+  it("answers who is a member anywhere, and refuses by name a card nobody could press, or one asked for a guest", async () => {
+    const database = new ToolSelectionDatabase([]);
+    const runtimeEnv = env(database);
+    database.addressHolders.set("nancy@example.com", { id: "00000000-0000-7000-8000-00000000a0a1", name: "Nancy",
+      status: "active", access_class: "member" });
+    database.addressHolders.set("held@example.com", "unverified");
+    database.addressHolders.set("guest@example.com", { id: "00000000-0000-7000-8000-00000000a0a2", name: "Gus",
+      status: "active", access_class: "guest" });
+    const offer = async (input: WorkstreamWorkflowInput, email: string) => {
+      const tool = (await __integrationTesting.loadHarnessTools(runtimeEnv, input)).tools
+        .find((candidate) => candidate.definition.name === "offer_to_add_member")!;
+      return tool.execute({ email }, {} as never).then((result) => (result as { output: unknown }).output,
+        (error: { code?: string }) => ({ code: error.code }));
+    };
+    // Where answers go to an agent, a member still comes back by id; anyone else is refused, not asked about.
+    expect(await offer(childWorkflowInput(), "nancy@example.com")).toEqual({ status: "member",
+      userId: "00000000-0000-7000-8000-00000000a0a1", name: "Nancy", email: "nancy@example.com" });
+    expect(await offer(childWorkflowInput(), "guest@example.com")).toEqual({ code: "question_from_background_agent" });
+    // An address held unverified: addMember refuses it, so no card is opened for it.
+    expect(await offer(workflowInput(), "held@example.com")).toEqual({ code: "member_address_unverified" });
+    // A guest's turn cannot read the member list, here as over HTTP.
+    database.principalAccessClass = "guest";
+    expect(await offer(workflowInput(), "nancy@example.com")).toEqual({ code: "member_offer_from_guest" });
   });
 
   it("offers Sidekick management to a turn acting for the Organization, every tool refusing with who can act instead", async () => {

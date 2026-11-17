@@ -8330,7 +8330,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           // unambiguously, so `core_` only lengthened the name the model reads
           // and repeated a plugin it can neither load nor unload.
           shortWireName: "",
-          description: "Check the current time, connector connection status, access to linked files, and whether someone is a member, or pause to ask for required information or to add someone.",
+          description: "Check the current time, connector connection status and access to linked files, or pause to ask for required information or to offer to add someone the work needs as a member.",
           systemMessage: renderCorePluginSystemMessage({
             currentTime: holds("current_time"),
             elicitation: holds("request_elicitation"),
@@ -8928,6 +8928,14 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       },
       execute: async (raw, context) => {
         const card = MemberCardInputSchema.parse(raw);
+        // A guest cannot read the member list over HTTP, so its turn cannot read it here either.
+        const principal = input.executionPrincipal.type === "user"
+          ? await env.DB.prepare(`SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
+            .bind(input.workspaceId, input.executionPrincipal.userId).first<{ access_class: string }>() : null;
+        if (principal?.access_class === "guest") {
+          const refusal = toolRefusal("member_offer_from_guest");
+          throw new ApiError(403, refusal.code, refusal.message);
+        }
         const held = await memberByAddress(env.DB, input.workspaceId, card.email);
         if (held.kind === "account" && held.status === "active" && held.accessClass === "member") {
           return {
@@ -8935,13 +8943,19 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
             summary: `${card.email} is a member`,
           };
         }
+        // No press could add this one (`addMember` refuses it), so no card waits on it.
+        if (held.kind === "held_unverified") {
+          throw new ApiError(409, "member_address_unverified",
+            "An account holds that address without having verified it, so nobody can add it by address. Tell the person you work for to ask them to sign in to Rally with it once, then call this again.");
+        }
         // The check is anyone's; the card is a question, which only a loop a person reads may ask.
         if (questionAnswersGoToAnAgent(input)) {
           const refusal = questionRefusal(input);
-          throw new ApiError(403, refusal.code, `${card.email} is not a member of this Organization. ${refusal.message}`);
+          throw new ApiError(403, refusal.code, `That address is not a member of this Organization. ${refusal.message}`);
         }
         return openToolQuestion(env, input, context, "offer_to_add_member", {
-          prompt: `Add ${card.name ?? card.email} as a member?`,
+          // The address leads: the name is the model's, and may come from what it read.
+          prompt: `Add ${card.email} as a member?`,
           responseType: "radio",
           options: [...MEMBER_QUESTION_OPTIONS],
           minimumSelections: 1,

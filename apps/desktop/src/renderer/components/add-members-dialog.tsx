@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button, ErrorNotice, Modal } from './primitives';
-import { InviteEmailField, inviteEmailsProblem, inviteMembers, unemailedNotice, useInviteEmails, type InviteMembersApi } from './invite-emails';
+import { InviteEmailField, failuresNotice, inviteEmailsProblem, inviteMembers, unemailedNotice, useInviteEmails, type InviteMembersApi } from './invite-emails';
 
 /**
  * The account menu's **Add new member**: the onboarding invite list in a
@@ -22,21 +22,23 @@ function AddMembersForm({ api, onClose }: { api: InviteMembersApi | null; onClos
   const invite = useInviteEmails();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  // Added but not told: a status, not a failure, and the dialog stays open so it is read.
+  const [notice, setNotice] = useState<string | null>(null);
   const count = invite.addresses.length;
   const send = async (): Promise<void> => {
     const problem = inviteEmailsProblem(invite);
     if (problem) { setError(new Error(problem)); return; }
     if (!api || busy) return;
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setNotice(null);
     const addresses = invite.addresses;
     invite.replace(addresses);
     try {
       const { failures, unemailed } = await inviteMembers(api, addresses, () => undefined);
-      invite.replace(failures);
-      if (failures.length) throw new Error(`Could not add: ${failures.join(', ')}. Check the addresses and retry.`);
+      invite.replace(failures.map((failure) => failure.email));
       // Stays open on the notice: closing would hide that these people were never told.
-      if (unemailed.length) throw new Error(unemailedNotice(unemailed));
-      onClose();
+      if (unemailed.length) setNotice(unemailedNotice(unemailed));
+      if (failures.length) throw new Error(failuresNotice(failures));
+      if (!unemailed.length) onClose();
     } catch (caught) {
       setError(caught instanceof Error ? caught : new Error('Something went wrong. Try again.'));
     } finally {
@@ -48,12 +50,13 @@ function AddMembersForm({ api, onClose }: { api: InviteMembersApi | null; onClos
   return <Modal open onOpenChange={(next) => { if (!next && !busy) onClose(); }} title="Add new members"
     description="Add teammates by email. They're members right away, and get an email to sign in."
     footer={<>
-      <Button disabled={busy} onClick={onClose}>Cancel</Button>
+      <Button disabled={busy} onClick={onClose}>{notice ? 'Done' : 'Cancel'}</Button>
       <Button className="button-primary" disabled={busy || !api} onClick={() => void send()}>
         {busy ? 'Adding…' : count ? `Add ${count} ${count === 1 ? 'teammate' : 'teammates'}` : 'Add teammates'}
       </Button>
     </>}>
     <InviteEmailField invite={invite} disabled={busy} />
+    {notice && <p className="invite-unemailed-notice" role="status">{notice}</p>}
     {error && <ErrorNotice occurrence={error}>{error.message}</ErrorNotice>}
   </Modal>;
 }

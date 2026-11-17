@@ -2,7 +2,7 @@ import { requireUsageAllowance } from "./usage-admission";
 import { z } from "zod";
 import { judgeSemanticTriggerCondition, type HarnessTool } from "@rally/agent-harness";
 import {
-  IdSchema, UserIdSchema, asWorkspaceId, type UserId, type WorkstreamWorkflowInput,
+  IdSchema, UserIdSchema, asWorkspaceId, type SidekickSourceRequestView, type UserId, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import type { Env } from "../env";
 import { runtimeDeferral } from "../lib/defer";
@@ -137,8 +137,9 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   }, {
     definition: {
       name: name("request_source"),
-      description: "Ask Organization users to let events from one of their accounts start a Sidekick, optionally only events meeting a written filter. Each person gets a request only they can approve or decline, in Rally and by email; this returns each request's state and never waits for an answer. Nobody is approved by asking, the person you work for included. To change a filter, ask again with the new one. "
-        + "Ask even when a person has not connected that account, or its sign-in has lapsed: their request connects or reconnects it before they approve, so do not tell anyone to connect it first. Each request's connection says which (connected, reconnect_required, not_connected); tell the person you work for who still has to connect or reconnect, and that the request walks them through it.",
+      description: "Ask Organization members to let events from one of their accounts start a Sidekick, optionally only events meeting a written filter. Each person gets a request only they can approve or decline, in Rally (and by email once they have signed in); this returns each request's state and never waits for an answer. Nobody is approved by asking, the person you work for included. To change a filter, ask again with the new one. "
+        + "Ask even when a person has not connected that account, or its sign-in has lapsed; do not hold the ask back for anyone to connect first. Each request's connection says where they stand (connected, reconnect_required, not_connected). Tell the person you work for who still has to connect or reconnect, and how: when the request's connect.card is set, their request in this conversation connects it as they approve; when it is null, the account is connected in Settings, by an administrator when connect.scope is workspace. "
+        + "For the person you work for too, a request with connect.card set is the connection prompt: do not also call show_connector_connection for that account.",
       capability: "rally.sidekick.sources.request", mode: "write" as const, idempotency: "record_before_execute" as const,
       inputSchema: z.toJSONSchema(RequestSourceInputSchema),
     },
@@ -188,7 +189,7 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
       // Nothing to judge is not a filter that refuses everything: say which it is.
       if (events.length === 0) {
         return { output: { judged: false, events: [],
-          reason: `Your own ${args.connectorType} account has no recent ${args.eventType} events to try the filter on. Check the event type against the connector's declared events; if it is right, rely on the filter's wording.` },
+          reason: `Your own ${args.connectorType} account has no recent ${args.eventType} events to try the filter on, or you have not connected it yet. Check the event type against the connector's declared events; if it is right, rely on the filter's wording.` },
         summary: "No recent events to test the filter on" };
       }
       const traceId = crypto.randomUUID();
@@ -233,9 +234,9 @@ export function sidekickSourceTools(env: Env, input: WorkstreamWorkflowInput, us
   });
 }
 
-function requestOutput(request: { requestId: string; person: { userId: string; displayName: string }; connectorType: string;
-  eventTypes: string[]; condition: string | null; state: string; requestedByName: string; connection?: string | undefined }) {
+function requestOutput(request: Pick<SidekickSourceRequestView, "requestId" | "person" | "connectorType" | "eventTypes"
+  | "condition" | "state" | "requestedByName" | "connection" | "connect">) {
   return { requestId: request.requestId, userId: request.person.userId, name: request.person.displayName,
     connectorType: request.connectorType, eventTypes: request.eventTypes, condition: request.condition,
-    state: request.state, requestedByName: request.requestedByName, connection: request.connection };
+    state: request.state, requestedByName: request.requestedByName, connection: request.connection, connect: request.connect };
 }

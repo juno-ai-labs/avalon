@@ -109,7 +109,7 @@ const DRIVE_GRANTS = ["drive.read", "docs.read", "docs.write", "sheets.read", "s
 
 /** A person's own Google connection, held by the Organization object as production holds it. Mail unless told otherwise. */
 async function connectGoogle(userId: string, displayName: string,
-  { grants = MAIL_GRANTS, status = "healthy" }: { grants?: string[]; status?: "healthy" | "needs_reconnect" } = {}): Promise<string> {
+  { grants = MAIL_GRANTS, status = "healthy" }: { grants?: string[]; status?: "healthy" | "needs_reconnect" | "error" } = {}): Promise<string> {
   const connectionId = crypto.randomUUID();
   await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
     `INSERT INTO connector_connections
@@ -402,6 +402,41 @@ describe("the Sidekick source routes' refusals, by name", () => {
     expect(await read(OTHER)).toBe("connected");
     expect((await as(OTHER, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
     expect(await storedSources()).toEqual([{ user_id: OTHER, connection_id: lapsed, condition: CONDITION, requested: 1 }]);
+  });
+
+  it("approves beside a lapsed account and writes it rows too, and counts an account in error as working", async () => {
+    const working = await connectGoogle(OTHER, "pat@example.com");
+    const lapsed = await connectGoogle(OTHER, "pat-old@example.com", { status: "needs_reconnect" });
+    const requestId = await asked(OTHER);
+    expect((await as(OTHER, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
+    // The lapsed account's rows let its mail in again once it is reconnected.
+    expect((await storedSources()).map((row) => row.connection_id).sort()).toEqual([working, lapsed].sort());
+
+    // Robin's only mail account is in error: a provider fault, which reconnecting does not fix.
+    await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `UPDATE connector_connections SET status = 'error' WHERE id = ?`, PERSON_MAIL));
+    const robins = await asked(PERSON);
+    expect((await as(PERSON, "POST", decision(robins), { decision: "approve" })).status).toBe(200);
+    expect((await storedSources()).filter((row) => row.user_id === PERSON).map((row) => row.connection_id)).toEqual([PERSON_MAIL]);
+  });
+
+  it("refuses an ask for mail and Drive until both arrive, then writes each event type on the account that carries it", async () => {
+    const pats = await connectGoogle(OTHER, "pat@example.com");
+    const requestId = await asked(OTHER, { eventTypes: ["email.received", "drive.file_changed"] });
+    const card = async () => ((await as(OTHER, "POST", READ, { requestIds: [requestId] })).body as {
+      requests: Array<{ connection: string }> }).requests[0]!.connection;
+    // Mail alone would let half of what was asked in, and nobody would be told.
+    expect(await card()).toBe("not_connected");
+    const refused = await as(OTHER, "POST", decision(requestId), { decision: "approve" });
+    expect([refused.status, refused.body]).toEqual([409, { error: expect.objectContaining({ code: "sidekick_source_connection_missing" }) }]);
+
+    const drive = await connectGoogle(OTHER, "pat-drive@example.com", { grants: DRIVE_GRANTS });
+    expect(await card()).toBe("connected");
+    expect((await as(OTHER, "POST", decision(requestId), { decision: "approve" })).status).toBe(200);
+    const pairs = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+      connection_id: string; event_type: string }>(`SELECT connection_id, event_type FROM sidekick_sources WHERE sidekick_id = ?
+        ORDER BY event_type`, SIDEKICK_ID).toArray().map((row) => ({ ...row })));
+    expect(pairs).toEqual([{ connection_id: drive, event_type: "drive.file_changed" }, { connection_id: pats, event_type: "email.received" }]);
   });
 
   it("still lists a request whose connector this deployment no longer serves", async () => {

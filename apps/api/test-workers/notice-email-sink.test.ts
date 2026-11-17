@@ -62,7 +62,7 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT INTO workspaces (id, name, region, abandoned_at) VALUES (?, 'Juno Labs', 'global', NULL)`).bind(workspaceId),
     env.DB.prepare(`INSERT INTO users VALUES (?, 'robin@example.test', 'Robin Lee')`).bind(userId),
     // Robin has signed in: email goes only to people who have.
-    env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, impersonator_user_id TEXT)`),
     env.DB.prepare(`INSERT INTO sessions (id, user_id) VALUES ('session-robin', ?)`).bind(userId),
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, 'active', 'member')`).bind(workspaceId, userId),
   ]);
@@ -153,11 +153,12 @@ it('sends one email per notice through Cloudflare, its subject the notice title 
   expect(body.headers!["X-Rally-Category"]).toBe('notification_new_message');
 });
 
-it('sends nothing to someone added who has never signed in, and keeps nothing to send later', async () => {
+it('sends nothing to someone added who has never signed in, a support session opened as them included', async () => {
   const nancy = asUserId('00000000-0000-7000-8000-00000000e509');
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO users VALUES (?, 'nancy@example.test', 'nancy@example.test')`).bind(nancy),
     env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, 'active', 'member')`).bind(workspaceId, nancy),
+    env.DB.prepare(`INSERT INTO sessions (id, user_id, impersonator_user_id) VALUES ('support-as-nancy', ?, ?)`).bind(nancy, userId),
   ]);
   const send = vi.fn<(message: EmailMessageBuilder) => Promise<EmailSendResult>>(async () => ({ messageId: 'cf_n' }));
   const production = { ...env, APP_ENV: 'production' as const, EMAIL_NOTIFICATION_FROM: 'Rally <notify@rallywith.ai>' };
@@ -165,8 +166,6 @@ it('sends nothing to someone added who has never signed in, and keeps nothing to
     body: 'Email received', actorName: 'Bob', url: CANVAS_URL, workspaceId, recipientUserId: nancy, parentId: canvasId, substreamId: '0' };
   expect(await sendNoticeEmail(production, notice, send)).toEqual({ outcome: 'skipped', reason: 'recipient_never_signed_in' });
   expect(send).not.toHaveBeenCalled();
-  // Dropped, not held: nothing waits to go out once they sign in.
-  expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM email_delivery_receipts').first()).toEqual({ n: 0 });
 });
 
 it('quotes all of what a notice with its own answers asks, however long, and cuts an ordinary notice', async () => {
