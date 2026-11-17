@@ -1271,19 +1271,23 @@ describe("Canvas artifact access propagated to local serving", () => {
       }),
     );
     expect(pending).toBe(1);
-    await runDurableObjectAlarm(workspace());
-    // Bootstrap itself can schedule one newer revision; a second alarm drains it.
-    await runDurableObjectAlarm(workspace());
-    const remaining = await runInDurableObject(
-      workspace(),
-      (_instance, state) =>
-        state.storage.sql
-          .exec<{
-            n: number;
-          }>("SELECT COUNT(*) AS n FROM _internal_durable_alarms WHERE kind='canvas_artifact_access'")
-          .one().n,
-    );
-    expect(remaining).toBe(0);
+    // The alarm `canvasCreate` armed is live and can be mid-run here, when
+    // `runDurableObjectAlarm` finds nothing armed and does nothing; bootstrap
+    // can also re-arm one newer revision. Drive wakes until the intent drains
+    // rather than counting them.
+    await vi.waitFor(async () => {
+      await runDurableObjectAlarm(workspace());
+      const remaining = await runInDurableObject(
+        workspace(),
+        (_instance, state) =>
+          state.storage.sql
+            .exec<{
+              n: number;
+            }>("SELECT COUNT(*) AS n FROM _internal_durable_alarms WHERE kind='canvas_artifact_access'")
+            .one().n,
+      );
+      expect(remaining).toBe(0);
+    });
     const probe = env.QUEUE_PROBE_TEST;
     if (!probe) throw new Error("queue_probe_missing");
     const root = await vi.waitFor(
