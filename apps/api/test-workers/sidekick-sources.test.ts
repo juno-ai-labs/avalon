@@ -347,8 +347,17 @@ describe("Sidekick sources", () => {
       .toMatchObject({ outcome: "continue", executionPrincipal: { type: "workspace", workspaceId } });
     // Approving made her a reader, so she can lend her accounts too. Her mail's run then acts as her.
     await setDelegation(jane, true);
-    expect((await acting(janeMail, jane)).actsAs).toBe(jane);
+    const janeLent = await acting(janeMail, jane);
+    expect(janeLent.actsAs).toBe(jane);
     expect((await acting(creatorMail, creator)).actsAs).toBe(creator);
+    // Aged out, her run keeps her while she lends it her accounts, and once she stops it acts as
+    // the Sidekick itself, never as the creator who is still a delegate.
+    await runInDurableObject(stub(), (_instance, state) => { state.storage.sql.exec("DELETE FROM workspace_connector_events"); });
+    const continued = () => stub().sidekickContinueRun({ ...address, runId: janeLent.runId, sender: { kind: "system" } });
+    expect(await continued()).toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: jane } });
+    await withdrawDelegation(jane);
+    expect(await delegates()).toEqual([creator]);
+    expect(await continued()).toMatchObject({ outcome: "continue", executionPrincipal: { type: "workspace", workspaceId } });
   });
 
   it("decides who may ask from the stored role, whatever role the caller names", async () => {
