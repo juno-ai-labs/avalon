@@ -110,20 +110,23 @@ stay on the conversation's own participants.
   feature.
 - **A workspace always has at least one active administrator.** A workspace with
   none cannot be recovered from inside the product: no administrator means no
-  invitation, no promotion, and no way back. `setMemberRole` refuses a demotion
+  adding, no promotion, and no way back. `setMemberRole` refuses a demotion
   that would empty the set, with `last_workspace_administrator`.
 - **`owner` is not assignable, and an owner is not a target.** The founding
   membership is what `leaveWorkspace` and `removeMember` count when they refuse
   to leave a workspace unowned; letting `setMemberRole` hand it around would put
   a second module in charge of an invariant those two enforce. Transferring
   ownership is a separate operation that does not exist yet.
-- **Only an active membership has a role to change.** Somebody who has not
-  accepted their invitation is not a member to promote — the invitation carries
-  their role, and reissuing one is how it changes.
+- **Only an active membership has a role to change.** Someone added by address
+  is active at once, so their role changes like anyone's. An invitation sent
+  before adding replaced invitations carries its role until accepted.
 - **A guest holds no role, and never acquires one here.** `workspace_members`
   enforces `access_class = 'guest' AND role IS NULL` with a `CHECK`. Giving a
-  guest a role means promoting their *access class* first, through
-  `promoteGuest`, which is a different operation on a different field.
+  guest a role means making them a member first: `promoteGuest`, with its
+  compare-and-swap on the guest row, or `addMember` by their verified address,
+  whose upsert sets the access class and the role in one statement. That needs
+  no compare-and-swap: it writes the whole membership from what the
+  administrator asked, rather than changing one field of a row it read.
 - **The role the desktop holds decides what is *drawn*, never what is
   *allowed*.** Every control it draws is refused server-side for a member, so a
   stale role costs a redraw and nothing else. This is also what makes a lost
