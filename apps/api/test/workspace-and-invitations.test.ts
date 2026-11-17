@@ -706,6 +706,16 @@ describe("adding members, and the invitations still waiting from before", () => 
     } finally { database.close(); }
   });
 
+  it("refuses an address an account holds unverified, and adds nobody", async () => {
+    const database = seeded();
+    try {
+      // The seeded guest's profile says guest@example.com, but they never proved it.
+      await expect(addAs(database).addMember("guest@example.com", "member"))
+        .rejects.toMatchObject({ status: 409, code: "member_address_unverified" });
+      expect(membership(database, "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79e1")).toEqual({ role: null, access_class: "guest", status: "active" });
+    } finally { database.close(); }
+  });
+
   it("refuses an ordinary member, and adds nobody", async () => {
     const database = seeded();
     try {

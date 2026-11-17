@@ -2707,7 +2707,9 @@ export function ElicitationPanel({
     }
   };
 
-  const options = elicitation.options ?? [];
+  // On a question adding someone, Added is the card's own answer, sent by the press that adds them:
+  // offered as a choice it would let anyone resume the run with nobody added.
+  const options = (elicitation.options ?? []).filter((option) => !(elicitation.member && option.value === MEMBER_QUESTION_ADDED_ANSWER));
   // The question is a label, not a body: it is shown as plain text, so it takes
   // the plain-text repair rather than being sent through `MarkdownBody`.
   const prompt = normalizeModelText(elicitation.prompt);

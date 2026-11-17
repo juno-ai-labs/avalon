@@ -8,13 +8,7 @@ import { useOptionalCollaborationSession } from '../lib/collaboration-session';
 import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
 import { Button, ErrorNotice } from './primitives';
 
-/**
- * The card an agent's `offer_to_add_member` question shows: one press by an
- * Organization owner or administrator adds the address as a member at once
- * (`POST /workspace/members`), and `onAdded` answers the question for them so
- * the agent carries on. Someone already a member counts as added. Anyone else
- * sees the card and who can press it. `docs/workspace-member-roles.md`.
- */
+/** `offer_to_add_member`'s card: an admin's press adds them, and `onAdded` answers the question. */
 export function MemberAddCard({ member, onAdded }: { member: MemberCardInput; onAdded: () => void }): React.JSX.Element {
   const collaboration = useOptionalCollaborationSession();
   const api = collaboration?.api ?? null;

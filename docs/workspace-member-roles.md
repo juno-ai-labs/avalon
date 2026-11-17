@@ -40,8 +40,10 @@ A membership acquires its role in one of three ways:
   active member with an `AssignableMemberRole` at once. Someone who has never
   signed in gets an account then, shaped as their first email sign-in would
   make it: the address bound as verified and as their email login, so signing
-  in with it by email, Google or Apple reaches that account. A guest becomes a
-  member. It never *lowers* a role that already exists: its `ON CONFLICT`
+  in with it by email, Google or Apple reaches that account. Only a verified
+  address names an existing account (`memberByAddress`, the rule sign-in
+  keeps); an address an account holds unverified is refused
+  (`member_address_unverified`), not added. A guest becomes a member. It never *lowers* a role that already exists: its `ON CONFLICT`
   clause keeps an existing `owner` or `admin`. It revokes any older invitation
   still waiting for the address, and emails them that they were added; a failed
   send leaves the membership and answers `emailDelivery: "failed"`. `POST
@@ -212,7 +214,9 @@ gives every feature a user id to work with.
 
 **What a future change has to respect:** The account made for an address is
 bound to it as verified, so proving the address is what grants the account.
-Adding an address an existing account holds unverified adds that account.
+An address an account holds unverified is refused, never added: it names
+whoever typed it. Adding asks nothing of the person added; any existing
+account can be made a member by an administrator.
 
 ### 2026-10-24 — Guests can see who is in the Organization
 
