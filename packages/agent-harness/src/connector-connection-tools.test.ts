@@ -20,6 +20,7 @@ describe("connector connection tool guidance", () => {
     expect(check.description).toContain("A connected personal connection is enough on its own.");
     expect(show.description).toContain("Never tell a person to complete a connection prompt unless this tool ran in that same reply.");
     expect(check.description).toContain("show_connector_connection with the same connectorId and the scope the task needs");
+    expect(check.description).toContain("When that scope's connectIn is settings, no card can connect it");
     expect(show.description).toContain("Call only after get_connector_connection_state or list_connectors returns");
     expect(show.description).toContain("Use the same connectorId, and the scope the task needs.");
     expect(show.description).toContain("do not claim the connector is connected");

@@ -1397,7 +1397,10 @@ would help?") leaves the model to guess which it is asking. Also rejected: a
 
 **Consequences:** the list covers every product, including those only Settings
 connects, so the model must read `connectIn` before offering a card; the card's
-enum is unchanged and still refuses those. The catalog change behind this is
+enum is unchanged and still refuses those. The state check accepts every
+product id the list returns, so its `connectorId` enum is now wider than the
+card's, and its description says what to do when a scope's `connectIn` is
+`settings`. The catalog change behind this is
 recorded in [`connectors.md`](connectors.md#changelog).
 
 ### 2026-11-16 — An agent can check membership and offer to add someone

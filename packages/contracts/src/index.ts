@@ -441,6 +441,11 @@ export const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
   "gmail.read", "gmail.modify", "gmail.draft", "gmail.send", "calendar.read", "calendar.write",
 ] as const;
 
+/** The Drive + Docs + Sheets preset the connection UI requests. */
+export const GOOGLE_DRIVE_CAPABILITIES = [
+  "drive.read", "docs.read", "docs.write", "sheets.read", "sheets.write",
+] as const;
+
 /**
  * Every server-decided feature flag a client is allowed to see, resolved for
  * the signed-in person. Each field defaults to the answer an unreachable flag
