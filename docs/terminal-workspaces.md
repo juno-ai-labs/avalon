@@ -303,6 +303,15 @@ name is a plain file name; the host's root serves the same file. It serves
 under the Canvas's artifact audience once that delivery lands, normally within
 seconds.
 
+A publication into a Canvas is linked to the producing conversation and the
+destination Chat. These can share a parent ID, so the bridge compares both
+parent and substream before choosing the resident writer or a cross-object
+attach. The producer link supports import and handoff. The Chat link feeds its
+inventory and realtime update. A Sidekick wizard's publication without a
+Canvas destination and internal captures such as command logs stay with
+the producer. A publish of identical bytes repairs missing links for its
+current producer and destination without advancing the publication version.
+
 A directory publish lists every file with its digest. The sandbox keeps one
 digest cache per published directory, at
 `/workspace/.rally/publish-digests/<sha256 of the path>`, one line per file keyed
@@ -1506,6 +1515,26 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-16 — Route publication links by conversation address
+
+**What changed.** The terminal bridge compares both parts of the conversation
+address, links the producing agent before a distinct destination Chat, and
+checks both links when files or a site are republished with identical bytes.
+
+**Why.** A background agent and its Canvas Chat share a parent ID. Matching
+only that ID sent the Chat's link to the agent. Checking only the Chat on
+republish also left a second producer without a link needed to import the
+artifact it had just published.
+
+**Considered and rejected.** Rewriting the destination link on every identical
+publish would send an unnecessary realtime event. The bridge repairs only
+missing links for an unchanged publish and reissues the event when replaying
+the writing receipt.
+
+**Consequences.** Background Canvas publications reach installed clients
+through the normal Chat update. Internal captures and publications with no
+Canvas destination remain with the producer.
 
 ### 2026-11-16 — A busy lease is waited out inside the tool call, and reads pass over an import in flight
 

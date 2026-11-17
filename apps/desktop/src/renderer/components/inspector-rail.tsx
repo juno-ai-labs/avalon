@@ -41,6 +41,7 @@ interface InspectorRailProps {
     focusOnOpen?: boolean;
     commentDisabledReason?: string;
     resourceId: string;
+    title?: string;
     onClose: () => void;
     /** Expand the panel over its conversation, or put it back: the stack's own control. */
     expandAction?: readonly IconGroupAction[] | undefined;
@@ -73,6 +74,7 @@ interface InspectorRailProps {
     surface: SiteResourceDetailProps['surface'];
   };
   workstream?: WorkstreamDetail;
+  resourcePending?: boolean;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -719,7 +721,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   };
   const resource = props.resource === undefined ? inspectedResource(inspector, props.workstream) : props.resource ?? undefined;
   // Whether a missing resource is gone, rather than still on its way.
-  const settled = props.resource === null || (props.resource === undefined && props.workstream !== undefined);
+  const settled = !props.resourcePending
+    && (props.resource === null || (props.resource === undefined && props.workstream !== undefined));
   const [archiveTarget, setArchiveTarget] = useState<WorkstreamResource | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [archiveFailed, setArchiveFailed] = useState(false);
@@ -851,7 +854,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   // Keep a closed rail on screen for exactly as long as its fade lasts.
   if (!props.panel && !railOpen && !props.leaving) return null;
 
-  const headerTitle = resource?.title ?? (inspector ? 'Details' : railTitle[railVariant]);
+  const headerTitle = resource?.title ?? props.panel?.title ?? (inspector ? 'Details' : railTitle[railVariant]);
 
   const refreshable = Boolean(resource && resource.direction === 'source' && resource.refreshSupported && props.onRefreshResource);
   const reactiveSite = Boolean(resource && isSiteResource(resource) && (props.siteArtifacts || props.panel?.detached));
