@@ -4,6 +4,7 @@ import type { Env } from "../env";
 import { escapeHtml, sendEmail, singleLine, type EmailDelivery } from "./email";
 import type { Notice } from "./notification-notice";
 import { workspaceRegionalDatabase } from "./workspace-runtime-database";
+import { hasSignedIn } from "./signed-in";
 
 /**
  * The quoted excerpt's length, carried from the mention and participant
@@ -43,14 +44,18 @@ const SETTING_LABEL: Partial<Record<PushNotificationData["kind"], string>> = {
 /** Who the email goes to, read now: an inactive member is sent nothing. */
 interface Recipient { email: string; name: string; workspaceName: string }
 
-async function recipient(env: Env, notice: Notice): Promise<Recipient | null> {
+async function recipient(env: Env, notice: Notice): Promise<Recipient | "not_signed_in" | null> {
   const row = await workspaceRegionalDatabase(env).prepare(
-    `SELECT person.email AS email, person.name AS name, workspace.name AS workspace_name
+    `SELECT person.email AS email, person.name AS name, workspace.name AS workspace_name, ${hasSignedIn("person.id")} AS signed_in
        FROM users person JOIN workspace_members member ON member.user_id = person.id AND member.workspace_id = ? AND member.status = 'active'
        JOIN workspaces workspace ON workspace.id = member.workspace_id
       WHERE person.id = ?`,
-  ).bind(notice.workspaceId, notice.recipientUserId).first<{ email: string; name: string | null; workspace_name: string }>();
-  return row ? { email: row.email, name: row.name ?? "", workspaceName: row.workspace_name } : null;
+  ).bind(notice.workspaceId, notice.recipientUserId)
+    .first<{ email: string; name: string | null; workspace_name: string; signed_in: number }>();
+  if (!row) return null;
+  // Dropped, not held: their Activity rows are what they find when they first sign in.
+  if (!row.signed_in) return "not_signed_in";
+  return { email: row.email, name: row.name ?? "", workspaceName: row.workspace_name };
 }
 
 export type NoticeEmailOutcome = { outcome: EmailDelivery } | { outcome: "skipped"; reason: string };
@@ -66,6 +71,7 @@ export type NoticeEmailOutcome = { outcome: EmailDelivery } | { outcome: "skippe
 export async function sendNoticeEmail(env: Env, notice: Notice, send?: (message: EmailMessageBuilder) => Promise<EmailSendResult>): Promise<NoticeEmailOutcome> {
   const to = await recipient(env, notice);
   if (!to) return { outcome: "skipped", reason: "recipient_inactive_or_identity_missing" };
+  if (to === "not_signed_in") return { outcome: "skipped", reason: "recipient_never_signed_in" };
   const title = singleLine(notice.title);
   // What a notice's own actions answer is quoted whole: a person agrees to all of a source's
   // condition, and a cut would have them approve a clause they never saw.
