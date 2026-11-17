@@ -13,7 +13,7 @@ your pull request description.
   behalf of an employer or other organization, that organization.
 - **"Contribution"** means any work of authorship, including code, documentation,
   designs and their changes, that you submit to Juno for inclusion in Rally by
-  pull request, patch, issue, comment or any other means.
+  pull request or patch.
 
 ## 2. Copyright license
 
@@ -33,10 +33,11 @@ You grant Juno, and anyone who receives software from Juno, a perpetual,
 worldwide, non-exclusive, no-charge, royalty-free, irrevocable patent license to
 make, have made, use, offer to sell, sell, import and otherwise transfer your
 contributions, alone or combined with Rally, where your patent claims would be
-infringed by the contribution alone or by its combination with Rally. If anyone
-sues you claiming that Rally or a contribution infringes a patent, the patent
-licenses that person received from you under this agreement end on the date the
-suit is filed.
+infringed by the contribution alone or by its combination with Rally. If any
+entity sues you or anyone else, including by a cross-claim or counterclaim,
+claiming that Rally or a contribution infringes a patent, the patent licenses
+that entity received from you under this agreement end on the date the suit is
+filed.
 
 ## 4. What you promise
 

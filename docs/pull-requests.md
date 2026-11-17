@@ -108,7 +108,7 @@ they do not.
 ## Contributor License Agreement
 
 Rally is dual licensed under the AGPL and a commercial license (see
-[`licensing.md`](licensing.md)), so Juno AI Labs Inc must hold the right to
+[`LICENSING.md`](../LICENSING.md)), so Juno AI Labs Inc must hold the right to
 relicense every contribution. A pull request from anyone outside the company
 keeps the CLA checkbox the template puts above **Summary**, checked, and a
 reviewer does not merge it until it is. Employees and contractors whose work is
