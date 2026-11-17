@@ -27,6 +27,8 @@ concurrency:
 
 jobs:
   deploy:
+    # A dispatch from a feature branch must not deploy that branch.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Same install/check/deploy scope and budget as deploy-site.yml.
     timeout-minutes: 20
@@ -65,8 +67,8 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      # ci.yml runs on the same push but cannot gate this workflow, so the
-      # deployment verifies the Worker itself rather than racing it.
+      # ci.yml runs only on pull requests, never on the merge commit or a
+      # dispatch, so the deploy verifies the Worker itself.
       - name: Typecheck the retention Worker
         run: pnpm --filter @rally/release-retention typecheck
 

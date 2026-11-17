@@ -543,8 +543,9 @@ Worker in `apps/release-retention`. It has no route, `workers.dev` URL, preview
 URL, or application secret. Its only capabilities are bindings to the active and
 archive release buckets. `.github/workflows/deploy-release-retention.yml`
 deploys it on a merge to `main` matching that workflow's `paths:` filter, and on
-manual dispatch. A local deploy remains available
-from the repository root:
+manual dispatch; to redeploy, dispatch that workflow. A local deploy is for
+emergencies only, from an up-to-date `main`, followed by a dispatch so the live
+Worker matches `main` again. From the repository root:
 
 ```text
 pnpm deploy:release-retention
