@@ -615,6 +615,52 @@ h2 {
   font-size: 20px; margin-left: auto; color: #939e80;
 }
 
+.reactive-section {
+  padding-block: 70px 40px;
+}
+
+.reactive-list {
+  list-style: none; margin: 48px 0 0; padding: 0; display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px;
+}
+
+.reactive-list li {
+  border-top: 1px solid var(--line); padding-top: 22px;
+}
+
+.reactive-number {
+  display: block; font-family: "Instrument Serif"; font-style: italic; font-size: 17px; color: #a1a88e;
+}
+
+.reactive-list h3 {
+  font-family: "Instrument Serif", Georgia, serif; font-weight: 400; letter-spacing: -0.02em;
+  font-size: 30px; line-height: 1.1; margin: 12px 0 14px;
+}
+
+.reactive-list p {
+  color: var(--muted); font-size: 14px; line-height: 1.9; margin: 0; max-width: 360px;
+}
+
+@media (max-width: 900px) {
+  .reactive-list {
+    grid-template-columns: 1fr; gap: 28px; margin-top: 36px;
+  }
+}
+
+@media (max-width: 650px) {
+  .reactive-section {
+    padding-block: 50px 20px;
+  }
+
+  .reactive-list h3 {
+    font-size: 26px;
+  }
+
+  .reactive-list p {
+    font-size: 13px;
+  }
+}
+
 .pricing-section {
   padding-block: 50px 85px;
 }
