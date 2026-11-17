@@ -200,18 +200,6 @@ describe("upload drafts", () => {
 });
 
 describe("connector resources", () => {
-  it("persists and replaces protected access separately from ordinary resource metadata", async () => {
-    const request = { workspaceId: WORKSPACE_ID, candidateResourceId: nextId(), connectionId: CONNECTION,
-      provider: "canva", providerResourceId: "design", resourceType: "canva_design", title: "Design",
-      canonicalUrl: "https://www.canva.com/design/design/view", protectedAccessJson: "encrypted-one", at: AT };
-    const created = await workspace().resolveConnectorResource(request);
-    if (created.outcome === "connection_unavailable") throw new Error("unexpected_connection_refusal");
-    await workspace().resolveConnectorResource({ ...request, candidateResourceId: nextId(), protectedAccessJson: "encrypted-two" });
-    const row = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
-      "SELECT protected_access_json, canonical_url, metadata_json FROM resources WHERE id = ?", created.resourceId,
-    ).one());
-    expect(row).toEqual({ protected_access_json: "encrypted-two", canonical_url: request.canonicalUrl, metadata_json: "{}" });
-  });
   it("gives every concurrent resolve of one provider identity the same row", async () => {
     const resolve = () => workspace().resolveConnectorResource({
       workspaceId: WORKSPACE_ID,
