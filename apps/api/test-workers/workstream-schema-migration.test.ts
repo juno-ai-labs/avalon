@@ -992,8 +992,11 @@ describe("workspace schema migration in workerd", () => {
       state.storage.sql.exec(`INSERT INTO connector_oauth_attempts
         (id, region, provider, user_id, workspace_id, status, connection_id, expires_at, created_at, updated_at)
         VALUES ('attempt-existing', 'global', 'ashby', 'user-1', 'workspace-1', 'succeeded', 'existing', 'later', 'now', 'now')`);
+      // Up to 151, the last version that admits a new Canva connection: 152
+      // retires Canva (canva-retirement-migration.test.ts covers that step).
       applyDurableObjectSqliteMigrations({ storage: state.storage,
-        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, component: "workspace_do", workerVersionId: "current", now: 2_000 });
+        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 151),
+        component: "workspace_do", workerVersionId: "v151", now: 2_000 });
       expect(state.storage.sql.exec(`SELECT connection_id, generation, document_json FROM connector_installations`).one())
         .toEqual({ connection_id: "existing", generation: 3, document_json: '{"state":"current"}' });
       expect(state.storage.sql.exec(`SELECT connection_id FROM connector_oauth_attempts WHERE id = 'attempt-existing'`).one())
