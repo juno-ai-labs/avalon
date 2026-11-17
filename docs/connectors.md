@@ -1810,6 +1810,8 @@ error, so a transient Linear 403 now marks the connection `error` until the next
 poll. The code survives the step boundary because the Worker's compatibility
 date is after `workflows_preserve_non_retryable_error_message` became the default.
 
+Shipped in #1655 (re-lands #1599).
+
 ### 2026-11-17 — One product catalog, with families, instead of five copies; Canva retired
 
 **What changed:** `ConnectorProductCatalog` in `@rally/contracts` replaced the
