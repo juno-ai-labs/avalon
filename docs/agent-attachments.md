@@ -329,9 +329,12 @@ inventory revision, derivative, replay-dependency, and cleanup rules. Command
 logs and expiry diffs use the same generated-resource shape. The sandbox bridge
 itself is documented in [`terminal-workspaces.md`](terminal-workspaces.md).
 Generated Terminal publications attach with relationship `generated`, so the
-conversation contract exposes them as `direction: artifact`. A subsequent
-semantic update to an existing resource advances its WorkspaceDO version rather
-than replacing the only readable state, attributed to the run that published it.
+conversation contract exposes them as `direction: artifact`. A background
+agent's Canvas publication reaches the Chat's inventory and realtime feed,
+and the producer keeps access through its resource tools. Canvas membership
+and artifact access come from WorkspaceDO ([Canvases](canvases.md#artifacts-and-versions)).
+A semantic update adds a WorkspaceDO version attributed to the run that
+published it, keeping the previous version readable.
 
 ### Regional lifecycle
 

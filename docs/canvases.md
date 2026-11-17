@@ -397,7 +397,9 @@ Canvas: a Sidekick writing one Canvas across runs moves this and not that.
 Nothing was backfilled: a Canvas a run wrote before migration 137 reads as
 written by no run until its next publish. The resource versioning layer
 records every version with its run, as it does everywhere; `canvas_artifacts`
-records only which resources the Canvas holds. A version somebody else made
+records which resources the Canvas holds. The artifact menu and panel use
+that list. If the Chat's live detail lacks a listed resource, the panel reads
+it through the authorized resource endpoint. A version somebody else made
 since a viewer last read the Chat makes the Canvas's row unread to them, by
 the rule a pinned artifact's news uses (a republish or replacement, not their
 own or one made on their behalf).
@@ -1103,6 +1105,23 @@ changelog is the record of why a proposal is repaired before it is judged and
 why the refresh lease shares the owning object's transaction.
 
 ## Changelog
+
+### 2026-11-16 — Open published artifacts from their Canvas
+
+**What changed.** The panel opens a listed Canvas artifact through the
+authorized resource endpoint when its Chat link is absent. Its menu omits
+the Chat-only Archive action for Canvas artifacts.
+
+**Why.** The Canvas listed a background agent's published newsletter reader,
+but the Chat snapshot omitted the resource and the panel closed on selection.
+
+**Considered and rejected.** Relying on a fleet backfill would leave the
+panel dependent on a second object's link writes. The affected newsletter
+received a targeted repair for installed clients.
+
+**Consequences.** Other already-published artifacts can open in the updated
+panel without a backfill. Terminal still writes the Chat link for realtime
+updates and installed clients. See [Terminal workspaces](terminal-workspaces.md#resources).
 
 ### 2026-11-16 — A Canvas holds one artifact
 
