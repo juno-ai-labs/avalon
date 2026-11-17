@@ -29,7 +29,7 @@ export function renderCorePluginSystemMessage(holds: {
           "When the work or artifact asked for would draw on email, calendar, files, chat, issues, code, meeting notes or another outside system, call list_connectors to see which connectors and accounts the person has and which they could add.",
           // Offering is the card's job; a loop whose card refuses is told only to read.
           ...(holds.connectorConnection
-            ? ["Offer a missing one only when it would clearly help, in one sentence, with show_connector_connection; never block on it when the work can be done without it. In a Sidekick run that call pauses the run, so there offer only a connection the run cannot finish without."]
+            ? ["Offer a missing one only when it would clearly help, in one sentence: with show_connector_connection when its connectIn is conversation, otherwise by saying where in Settings to add it. Never block on it when the work can be done without it. In a Sidekick run that call pauses the run, so there offer only a connection the run cannot finish without."]
             : []),
         ].join(" ")]
       : []),

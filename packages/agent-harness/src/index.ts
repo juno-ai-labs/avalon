@@ -3581,9 +3581,10 @@ export const AVALON_LIST_CONNECTORS_TOOL_DEFINITION = {
   name: CONNECTOR_LIST_TOOL_NAME,
   description: [
     "List every connector Rally offers, grouped by family such as email and calendar, file storage, team chat or issue tracking.",
-    "Each connector has its connectorId, name, state (connected, reconnect_required, not_connected or unavailable), each scope's state, and accounts: every saved connection with its scope, state and account, such as an email address. A person can have more than one account for a connector.",
+    "Each connector has its connectorId, name, a one-line description, state (connected, reconnect_required, not_connected or unavailable), and accounts: every saved connection with its scope, state and account, such as an email address. A person can have more than one account for a connector.",
+    "Each scope in connections also says where a missing connection is made: conversation means show_connector_connection can offer it here; settings means the person adds it in Settings, under Connections, and for the Organization scope only an administrator can.",
     "Use it to choose which connected account to work with, or to find a connector the person has not connected that the requested work or artifact needs or would clearly be better with.",
-    "To offer one that is not_connected or reconnect_required, say in one sentence what it would add, then call show_connector_connection with its connectorId. In a Sidekick run that call pauses the run, so there offer only a connection the run cannot finish without.",
+    "To offer one, say in one sentence what it would add, then call show_connector_connection with its connectorId when connectIn is conversation, or say where in Settings to add it when it is settings. In a Sidekick run that call pauses the run, so there offer only a connection the run cannot finish without.",
     "Do not offer a connector the work does not need, and never offer one that is unavailable.",
     "This reads Rally's saved state, not the provider.",
   ].join(" "),

@@ -56,6 +56,7 @@ import {
 } from "./workstream-transcript";
 export * from "./automation-agent";
 export * from "./automation-evaluators";
+export * from "./connector-catalog";
 export * from "./connector-connection-card";
 export * from "./member-card";
 export * from "./conversation-effects";
