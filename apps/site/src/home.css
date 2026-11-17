@@ -94,6 +94,11 @@ h2 {
   font-size: 12px; margin-left: 3px;
 }
 
+/* The rule above is for the manual link's arrow; the GitHub label matches its neighbours. */
+.home-nav .github-label {
+  font-size: inherit; margin-left: 0;
+}
+
 .hero-copy {
   position: relative; z-index: 1;
 }
@@ -1719,6 +1724,10 @@ h2 {
   }
 
   /* No room for the word beside the four section links: the mark stands alone, and the label stays for screen readers. */
+  .home-nav .github-link {
+    min-width: 24px; min-height: 24px; justify-content: center;
+  }
+
   .home-nav .github-label {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
   }
@@ -1918,6 +1927,3 @@ h2 {
 .footer-casa { color: inherit; text-decoration: none; }
 .footer-casa:hover { color: var(--green); }
 
-.github-link {
-  display: inline-flex; align-items: center; gap: 6px;
-}

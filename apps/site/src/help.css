@@ -71,7 +71,6 @@ html { scroll-padding-top: calc(var(--help-header) + 24px); -webkit-text-size-ad
 .top .links { display: flex; align-items: center; gap: 20px; font-size: var(--help-small); }
 .top .links a { color: var(--help-muted); text-decoration: none; }
 .top .links a:hover { color: var(--help-ink); }
-.top .links .github-link { display: inline-flex; align-items: center; gap: 6px; }
 .top .links .cta { padding: 7px 14px; border-radius: 6px; background: var(--help-accent); color: var(--help-bg); }
 .top .links .cta:hover { color: var(--help-bg); opacity: .85; }
 .menu { display: none; width: 36px; height: 36px; margin-left: -8px; padding: 0; border: 0; background: none; }
