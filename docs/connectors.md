@@ -1575,6 +1575,12 @@ now guards it.
   raise that for policy and configuration failures that never reached the provider,
   and spending a single-use refresh token on one buys a retry that fails
   identically.
+- **A poll attempt on a grant declared dead is not retried.** `poll-and-persist-provider-page`
+  throws any adapter's failure carrying `reconnectRequired: true`
+  (`isReconnectRequiredConnectorError`) as a `NonRetryableError`: the grant will
+  still be dead seconds later, and the next scheduled poll tries once more. A
+  bare `unauthorized` keeps its retries, because `providerJson` maps every 403
+  to `unauthorized` and a 403 can be a rate limit.
 - **A token-endpoint failure has three answers, not two.** A code naming a dead
   grant marks; a code naming Rally's own fault does not, whatever the status; an
   unfamiliar code or none at all defers to the status. An unfamiliar word is not
@@ -1783,6 +1789,28 @@ surface that tells somebody about connector activity reads
 [Declaring what a digest may read](#declaring-what-a-digest-may-read).
 
 ## Changelog
+
+### 2026-11-17 — A poll refused on its grant fails once, not four times
+
+**What changed:** The connector poll Workflow throws a failure any adapter
+marked `reconnectRequired` from its poll step as a `NonRetryableError`, skipping
+the step's three retries.
+
+**Why:** A log review on 2026-11-17 found six Google connections with revoked
+grants making four `credentials_refresh` calls on every poll, 9,552 in 33 hours;
+Google's `invalid_grant` cannot change within the step's retry window.
+
+**Rejected:** ending retries on every `unauthorized`, since a 403 can be a rate
+limit; and skipping polls of `needs_reconnect` connections, since stored status
+is a belief, not a gate.
+
+**Consequences:** The rule covers every adapter's flag, not only Google's:
+Slack sets it for missing scopes, and Linear on any 401 or 403 without a GraphQL
+error, so a transient Linear 403 now marks the connection `error` until the next
+poll. The code survives the step boundary because the Worker's compatibility
+date is after `workflows_preserve_non_retryable_error_message` became the default.
+
+Shipped in #1655 (re-lands #1599).
 
 ### 2026-11-17 — One product catalog, with families, instead of five copies; Canva retired
 

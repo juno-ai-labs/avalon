@@ -3,6 +3,7 @@ import {
   type ConnectorPollWorkflowInput
 } from "@rally/contracts";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 
 import type { Env } from "../env";
 import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
@@ -12,6 +13,7 @@ import {
   pollConnectorConnection,
   type ConnectorCursorCommit,
 } from "../services/integrations";
+import { isReconnectRequiredConnectorError } from "../services/connector-connection-access";
 import { recordConnectorPollFailure } from "../services/connector-poll-failure";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "../services/workstream-wakeup-service";
@@ -103,7 +105,12 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
               error_name: error instanceof Error ? error.name : typeof error,
               error_code: errorCode,
             });
-            throw pollAttemptFailure(error, errorCode);
+            const failure = pollAttemptFailure(error, errorCode);
+            // A grant the adapter declared dead is not retried; see docs/connectors.md.
+            if (isReconnectRequiredConnectorError(error) && failure instanceof Error) {
+              throw new NonRetryableError(failure.message);
+            }
+            throw failure;
           }
           logStructuredEvent(this.env, "info", "connector_poll_attempt_completed", {
             workspace_id: input.workspaceId,
