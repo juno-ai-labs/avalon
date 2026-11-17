@@ -1,3 +1,4 @@
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { parse as parseDomain } from "tldts";
 import { FirecrawlError, type FirecrawlClient } from "../lib/firecrawl";
 import { createDeadline } from "../lib/deadline";
@@ -84,14 +85,17 @@ function transientFailure(hostname: string, phase: "branding" | "image", cause?:
 /**
  * Why a favicon could not be resolved, as the `favicon_unavailable:<reason>`
  * code a caller and the log both read, or `null` for a failure this module did
- * not anticipate: a fetch that did not complete names its phase, and a
- * Firecrawl failure its kind and HTTP status (`firecrawl_http_400`). Neither
+ * not anticipate: a fetch that did not complete names its phase, a response
+ * the schema refused its path and issue (`firecrawl_branding_invalid:…`), and
+ * any other Firecrawl failure its kind and HTTP status (`firecrawl_http_400`). None
  * carries the provider's message, which may quote the request.
  */
 export function faviconFailureReason(error: unknown): string | null {
   if (error instanceof FaviconFetchError) return `${error.phase}_fetch_failed`;
-  if (error instanceof FirecrawlError) return error.kind === "network" ? "firecrawl_network" : `firecrawl_${error.kind}_${error.status}`;
-  return null;
+  if (!(error instanceof FirecrawlError)) return null;
+  if (error.kind === "network") return "firecrawl_network";
+  // A schema refusal names the field it refused.
+  return zodDiagnosticCode(error.cause, "firecrawl_branding") ?? `firecrawl_${error.kind}_${error.status}`;
 }
 
 async function fetchImage(
