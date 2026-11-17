@@ -142,6 +142,7 @@ its own is a boundary that drifts.
 | `apps/api/src/services/integrations.ts` | `dynamic_connector_tools_unavailable` carries `error_code` beside the class name, so a tool catalog that drifted out of `ToolDefinitionSchema` names its path on both the creator-catalog and initial-activation surfaces; `connector_plugin_reauthorization_failed` carries a schema rejection's paths as `code`, the way it already carried a connector's own |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |
 | `apps/api/src/observability/logger.ts` | `diagnosticErrorCode` names a `ZodError` behind the caller's own code (`external_event_delivery_failed:event.eventSequence:invalid_type`), and carries a `parseRpcInput` message across the hop through `isDiagnosticCode`; every other thrown message is admitted only in the bare constant class it always was, so an identifier interpolated after a colon still reduces to the fallback; a Workers runtime failure, which arrives as a sentence, is named behind the caller's code by matching the sentence or the runtime's `overloaded` flag (`parent_export_failed:durable_object_code_updated`), never by copying it; an `ObjectPortError` is named by the conversation object's refusal code (`workstream_runtime_authority_fenced`) when that code is a bare constant, and a `TerminalObjectPortError` by the Terminal authority's (`workstream_terminal_identity_mismatch`) |
+| `apps/api/src/observability/logger.ts` (Terminal provider) | `diagnosticErrorCode` names a `TerminalProviderError` behind the caller's code by the code `terminalProviderErrorCode` built across the hop (`terminal_provider_observation_failed:DaytonaServiceUnavailableError:503`), never by the provider's sentence |
 | `apps/api/src/middleware/errors.ts` | `request_failed` carries what `diagnosticErrorCode` admits of a plain `Error`'s message, as `error_code` and in the row's summary, where the row said `internal_error` and `Error` |
 | `apps/api/src/services/workspace-schedule-execution.ts` | the `schedule.failed`, `resource_watch.failed` and `workspace_schedule_target_failed` records name a stored row's rejection behind each record's own constant; the schedule and watch rows are the two whose targets parse a stored row |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | every RPC entry point, through `parseRpcInput`, labelled by method (`admit_external_event_invalid:…`) |
@@ -205,6 +206,31 @@ published, so the product asserts health while the tail never landed. Naming the
 error made that diagnosable in minutes; it did not make it visible.
 
 ## Changelog
+
+### 2026-11-13 — A Terminal provider failure is named by its code
+
+**What changed:** `diagnosticErrorCode` answers a `TerminalProviderError` with
+`<fallback>:<code>`, and with the bare fallback when the code is not
+code-shaped, never reading the provider's message. `terminalProviderErrorCode`
+also appends `platformErrorCode`, so a Workers runtime failure in the provider
+Worker keeps its name (`Error:network_connection_lost`).
+
+**Why:** On 2026-11-13 production logged 300 `terminal_provider_observation_failed`
+warnings, every one with the bare fallback. The alarm's provider client rebuilds
+a failure as a `TerminalProviderError` whose message is Daytona's sentence, so
+the helper dropped the code beside it. "A Terminal authority's refusal is named
+by its code" (#1568) closed a different gap for this warning; this is the path
+the alarm takes.
+
+**Considered and rejected:** Calling `terminalProviderErrorCode` at the alarm's
+catch, which would fix one call site and leave the rest of the client's callers
+to rediscover it.
+
+**Consequences:** The code is a class name, a numeric status, a regex-bound
+provider code and a platform name, built in the provider Worker and trusted
+across the service binding; it can also be a literal such as `provider_error`.
+
+Shipped in #1593.
 
 ### 2026-11-12 — A D1 trigger's refusal is named by its reason
 

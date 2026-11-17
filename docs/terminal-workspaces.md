@@ -702,7 +702,8 @@ entry. When the entry runs, `observeDueTerminalSandbox` asks Daytona through
 `refreshTerminalProviderObservation`, whose reservation moves `next_observe_at`
 before the provider call, and the entry is re-armed there, so a failing
 provider waits a full interval rather than looping. A failed check is logged as
-`terminal_provider_observation_failed` with its code and recorded on the row as
+`terminal_provider_observation_failed` with its code (for example
+`terminal_provider_observation_failed:DaytonaServiceUnavailableError:503`) and recorded on the row as
 `provider_unavailable`. Acquisition and Daytona's signed webhooks below read the
 provider state back as well.
 
