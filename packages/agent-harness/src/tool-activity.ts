@@ -1,6 +1,7 @@
 import {
   CONNECTOR_CONNECTION_CARD_WIRE_NAME,
   CONNECTOR_CONNECTION_STATE_WIRE_NAME,
+  CONNECTOR_LIST_TOOL_NAME,
   LEGACY_CONNECTOR_CONNECTION_CARD_WIRE_NAME,
   LEGACY_CONNECTOR_CONNECTION_STATE_WIRE_NAME,
 } from "@rally/contracts";
@@ -35,6 +36,11 @@ const CONNECTOR_CONNECTION_STATE_PROSE: ToolProse = {
   started: "Checking a connector's connection",
   settled: "Checked a connector's connection",
   failed: "Could not check a connector's connection",
+};
+const CONNECTOR_LIST_PROSE: ToolProse = {
+  started: "Checking which connectors could help",
+  settled: "Checked which connectors could help",
+  failed: "Could not check which connectors could help",
 };
 const CONNECTOR_CONNECTION_CARD_PROSE: ToolProse = {
   started: "Preparing a connector",
@@ -313,6 +319,7 @@ const AVALON_TOOL_PROSE: Record<string, ToolProse> = {
   request_elicitation: REQUEST_ELICITATION_PROSE,
   offer_to_add_member: OFFER_TO_ADD_MEMBER_PROSE,
   [CONNECTOR_CONNECTION_STATE_WIRE_NAME]: CONNECTOR_CONNECTION_STATE_PROSE,
+  [CONNECTOR_LIST_TOOL_NAME]: CONNECTOR_LIST_PROSE,
   [CONNECTOR_CONNECTION_CARD_WIRE_NAME]: CONNECTOR_CONNECTION_CARD_PROSE,
   // Rally's browser and the conversation import: the import window lists
   // these as its steps, so they read as what happened to the page.

@@ -189,6 +189,7 @@ describe("plugin wire names", () => {
       "get_connector_connection_state",
       "import_resource",
       "list_agents",
+      "list_connectors",
       "list_resources",
       "list_resources_next",
       "list_wakeups",
