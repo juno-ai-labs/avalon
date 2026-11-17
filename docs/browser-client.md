@@ -221,16 +221,11 @@ Organization."; a link need not have been emailed to anyone.
 
 ### Connectors
 
-A member can start every connection except those whose catalog entry in
-`connector-catalog.ts` is marked `desktopOnly`, which today is Canva alone: its
-OAuth returns to a loopback listener in the Mac app's main process. A new
-connector is offered in both clients unless it is marked. A marked connector, in
-Settings and a conversation's connection card, is shown with its buttons
-disabled and "Download the Mac app to connect this." linking to the Mac build.
-An installed marked connection's Refresh is disabled too, with the same note as
-its tooltip, since reconnecting takes the same path. On a phone or tablet (`MAC_APP_DOWNLOADABLE` false) it
-reads "Connect this from the Mac app." with no link, since the build cannot run
-there. The mark is presentation only; the connection routes do not read it.
+A member can start every connection from the browser, as from the Mac app:
+every connector's OAuth returns to the API's own callback. Canva, whose OAuth
+returned to a loopback listener in the Mac app, was the one exception, and the
+`desktopOnly` mark that kept it out of the browser was removed with it
+([retired](connectors.md#retired-documents)).
 
 A cookie session's `RallyApi` starts with `?handoff=browser`. The API stores
 `<browser origin>/connections/complete` as the return, accepts exactly that
@@ -754,6 +749,20 @@ must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
+
+### 2026-11-17 — The desktop-only connector mark is removed
+
+**What changed:** `desktopOnly`, `connectorStartsHere` and the "Download the Mac
+app to connect this." note on connector cards and Refresh are gone; every
+connector starts from the browser.
+
+**Why:** Canva, the one connector carrying the mark, was retired
+([connectors.md](connectors.md#retired-documents)), leaving a branch no
+connector reaches and nothing to test it against.
+
+**Consequences:** a future connector whose OAuth needs the Mac app has to bring
+the mark back; the Mac download link in the browser's account rail is separate
+and stays.
 
 ### 2026-11-16 — Join or create an organization from the browser and Expo
 

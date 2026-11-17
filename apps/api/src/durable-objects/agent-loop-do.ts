@@ -3,7 +3,6 @@ import { seatReadAtOwnTurn } from "./member-attention";
 import { projectConversationView } from "@rally/contracts/conversation-view";
 import { ConversationViewDeliverySchema, ConversationViewJobSchema, ConversationViewProjectionSchema, completeConversationViewDelivery, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
 import { zodDiagnosticCode, describeZodIssues } from "@rally/contracts/zod-diagnostics";
-import { cleanupCanvaTransactions } from "../services/canva-transaction-cleanup";
 import { sidekickSourceRequestCard } from "../services/sidekick-source-tools";
 import { parseRpcInput } from "../lib/rpc-input";
 import { ToolPageError } from "./tool-page-storage";
@@ -5706,7 +5705,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       });
     }
     emitCorrelatedRunOutcome(executionEnv, input);
-    const canvaCleanupDiagnostic = await cleanupCanvaTransactions(executionEnv, input);
 
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
       ? await this.deliverAgentRunResult(input, outcome)
@@ -5730,7 +5728,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         substreamId: input.substreamId ?? "0",
       }, digestReaderFor(input));
     }
-    return canvaCleanupDiagnostic ?? settlementDiagnosticCode;
+    return settlementDiagnosticCode;
   }
 
   /** Whether a run completed at least one send to another agent. A refused send is not a reply. */

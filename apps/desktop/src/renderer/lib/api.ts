@@ -2079,7 +2079,7 @@ export class RallyApi {
   }
 
   async startProviderConnection(
-    provider: 'apollo' | 'ashby' | 'canva' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack',
+    provider: 'apollo' | 'ashby' | 'fireflies' | 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace',
     capabilities: string[],
   ): Promise<ConnectorOAuthStart> {
@@ -2278,7 +2278,7 @@ export class RallyApi {
 
   async reconnectConnection(
     id: string,
-    provider?: 'apollo' | 'ashby' | 'canva' | 'fireflies' | 'google' | 'github' | 'linear' | 'notion' | 'slack',
+    provider?: 'apollo' | 'ashby' | 'fireflies' | 'google' | 'github' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace' = 'you',
     capabilityCount = 0,
   ): Promise<ConnectorOAuthStart> {

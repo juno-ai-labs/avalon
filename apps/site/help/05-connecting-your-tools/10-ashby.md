@@ -76,4 +76,4 @@ The two halves have separate status. For the personal connection, click **Refres
 
 If you contact support, send the connection ID, your region, the error and roughly when it happened. Never send API keys, sign-in codes or candidate information.
 
-Next, [Canva](11-canva.md).
+Next, [X](12-x.md).

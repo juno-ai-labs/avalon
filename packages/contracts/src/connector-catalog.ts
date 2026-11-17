@@ -37,7 +37,6 @@ export const ConnectorFamilyCatalog = {
   meeting_notes: { label: "Meeting notes" },
   sales: { label: "Sales and prospecting" },
   recruiting: { label: "Recruiting" },
-  design: { label: "Design" },
   social_media: { label: "Social media" },
   other: { label: "Custom tools and events" },
 } as const satisfies Record<string, { label: string }>;
@@ -80,8 +79,6 @@ type ConnectorProduct = {
   instance: "account" | "name";
   /** A stable mark name for clients; null when the client draws its own. */
   iconName: string | null;
-  /** Connecting needs the Mac app; a browser tab cannot start or refresh it. */
-  desktopOnly?: true;
 };
 
 export const ConnectorProductCatalog = {
@@ -143,20 +140,7 @@ export const ConnectorProductCatalog = {
     instance: "account",
     iconName: "ashby",
   },
-  canva: {
-    name: "Canva",
-    description: "Designs, presentations, graphics, comments, and exports.",
-    families: ["design"],
-    providerType: "canva",
-    capabilityPrefixes: [],
-    scopes: ["personal"],
-    cardScopes: ["personal"],
-    instance: "account",
-    iconName: "canva",
-    // Canva's OAuth returns to a loopback listener in the Mac app's main
-    // process (`canva-loopback.ts`), which a browser tab cannot open.
-    desktopOnly: true,
-  },
+
   fireflies: {
     name: "Fireflies",
     description: "Meeting transcripts, summaries, and the action items they name.",
@@ -310,7 +294,7 @@ export function connectorConnectionName(product: string, account: string): strin
 /**
  * Which instance a connection is, read from its stored name: the account after
  * the separator, or for a product whose connections a person names, the whole
- * name. Null when the name carries none (`Canva`, `Ashby workspace events`).
+ * name. Null when the name carries none (`Ashby workspace events`).
  */
 export function connectorConnectionAccount(
   instance: ConnectorProduct["instance"],
