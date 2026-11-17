@@ -2457,7 +2457,7 @@ delegate who agreed mid-run through `request_elicitation`.
 longer move to another delegate. Any new caller that decides a run's principal
 must go through `runPrincipal`, not `coordinator()`.
 
-PR: pending.
+PR: [#1660](https://github.com/juno-ai-labs/avalon/pull/1660).
 
 ### 2026-11-16 — The wizard saves when a run sends a notice
 
