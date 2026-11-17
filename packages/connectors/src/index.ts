@@ -5599,6 +5599,13 @@ export function connectorCatalogConsistencyIssue(
     const closed = product.cardScopes.filter((scope) => !connectable.includes(scope));
     if (closed.length) return `product ${id} lets a card connect ${closed.join(", ")}, which the adapter does not accept`;
   }
+  const declaredHost = new Set(products.flatMap((id) =>
+    (ConnectorProductCatalog[id] as { hostCapabilities?: readonly string[] }).hostCapabilities ?? []));
+  const manifestHost = new Set((manifest.capabilities ?? [])
+    .filter((capability) => capability.kind === "host").map(({ id }) => id));
+  const hostDrift = [...new Set([...declaredHost, ...manifestHost])]
+    .filter((id) => declaredHost.has(id) !== manifestHost.has(id)).sort();
+  if (hostDrift.length) return `host grants ${hostDrift.join(", ")} differ between the catalog's hostCapabilities and the manifest`;
   const unowned = (manifest.capabilities ?? []).filter((capability) =>
     !products.some((id) => connectorConnectionServesProduct(id, { connectorType: manifest.type, capabilities: [capability.id] })));
   if (unowned.length) return `grants ${unowned.map(({ id }) => id).join(", ")} belong to no catalog product`;
