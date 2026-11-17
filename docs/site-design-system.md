@@ -45,11 +45,20 @@ on paper, sunken surfaces and sage. The homepage owns its composition in
   native Node site builds consume the catalog without traversing the runtime
   schemas' extensionless imports. Trial terms are Organization-specific; the
   static FAQ directs readers to Usage settings rather than promising defaults.
-- **One preview renderer:** Blog and help previews share `reading-card.ts` and
-  local static TTF derivatives, avoiding network/system font dependencies.
+- **One preview renderer:** Every link preview on the site is drawn at build
+  time by `reading-card.ts` from local static TTF derivatives, avoiding
+  network/system font dependencies. Help, blog posts and marketplace templates
+  draw theirs from their own front matter. Every hand-written page (home,
+  Canvases, Sidekicks, `/start-fast/`, the marketplace and blog indexes, and the
+  Trust Center) has an entry in `page-cards.ts`, which the `rally-page-cards`
+  plugin draws to `<page>/social.png` and tags into the page's head. The build
+  fails if a card's title is not its page's `<h1>`, or if a page names its own
+  image, so a new headline needs a new card in the same change. A `\n` in a
+  card title breaks the line where the page does. The description is the
+  pitch: what the reader gets from opening the link, in the page's words.
   Titles and descriptions fit their columns before rasterization. Bump the help
-  card design version when its rendering changes, since its URLs are immutable.
-  Unversioned public pencil artwork and the homepage preview cache for one day.
+  card design version when the renderer changes, since its URLs are immutable.
+  Unversioned public pencil artwork and every `social.png` cache for one day.
 
 The following decisions apply to the earlier pages using `landing.css`.
 
@@ -79,7 +88,8 @@ the page live in the pages and in `access-copy.ts`, not here.
 | --- | --- |
 | `apps/site/src/site-theme.css` | Shared pencil-site fonts and paper, ink, sage tokens |
 | `apps/site/src/reading.css` | Blog layouts and reading-page header, footer and typography |
-| `apps/site/src/reading-card.ts` | Matching blog and manual social cards from local fonts and shared artwork |
+| `apps/site/src/reading-card.ts` | Every link preview on the site, drawn from local fonts and shared artwork |
+| `apps/site/src/page-cards.ts` | Card words for each hand-written page, the headline check, and the image tags the build adds |
 | `apps/site/src/landing.css` | The earlier product and start-fast system: tokens, chrome, demos, pricing and page layouts |
 | `apps/site/src/trust.css` | Trust Center and policy layouts on top of `reading.css` |
 | `apps/site/index.html` | The independently designed root homepage; see the pencil-site boundaries above |
@@ -294,6 +304,32 @@ automated test: it is checked in a real browser at desktop and phone widths,
 in light and dark, before a change ships, as the repository's rule on visible changes requires.
 
 ## Changelog
+
+### 2026-11-17 — Every page's link preview is drawn from the page
+
+**What changed:** The home, Canvases, Sidekicks, `/start-fast/`, marketplace and
+blog index cards were two hand-made images, and the eight Trust Center pages
+had none. Each now has its own card from `page-cards.ts`, drawn by the same
+renderer as the help, blog and template cards, and the four old image files
+are deleted. Cards end on "Reactive artifacts, shared with your team." in place
+of the old hero's "A little help. A lot more possible."
+
+**Why:** The images had drifted from the pages. Canvases, Sidekicks and
+`/start-fast/` still showed the pre-pivot pitch ("Start a channel"), and the
+home card showed a hero the page had replaced. Static images give no signal
+when a headline moves, so drift was certain to recur.
+
+**Considered and rejected:** Reading the card's words from each page's markup
+at build time. The pages split headlines across `<br>` and inline styling, and
+the card's description is a shorter pitch than any one paragraph on the page.
+A table with a build-time headline check keeps the words chosen and the
+headline exact.
+
+**Consequences:** Changing a hand-written page's `<h1>` fails the build until
+its card in `page-cards.ts` matches. A new marketing page gets its preview by
+adding an entry there, not an `og:image` tag. The design version bump gave
+every help card a new URL and the old ones are no longer built, as with any
+help card change; the deleted images likewise stop being served.
 
 ### 2026-11-16 — A page per marketplace template, and recommended connectors
 
