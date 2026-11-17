@@ -23,24 +23,34 @@ The SPDX expression for first-party code is
   [`assets/brand/`](assets/brand/). A fork or hosted copy must use its own name
   and mark.
 - **Third-party code and assets.** Files that carry their own license stay under
-  that license. These include
-  [`apps/mobile/modules/rally-crash-reporter/`](apps/mobile/modules/rally-crash-reporter/LICENSE)
-  (MIT, derived from Expo), the bundled fonts in `apps/site/src/fonts/` and
-  `.agents/skills/rally-motion/kit/fonts/` (each under its publisher's license),
-  the changes to upstream packages in `patches/` (under the license of the
-  package each one patches), and all dependencies installed by the package
-  manager.
+  that license:
+  - [`apps/mobile/modules/rally-crash-reporter/`](apps/mobile/modules/rally-crash-reporter/LICENSE):
+    MIT, derived from Expo.
+  - `packages/ui/src/fonts/`: Geist Mono, under the SIL Open Font License in
+    [`OFL.txt`](packages/ui/src/fonts/OFL.txt) beside it.
+  - `apps/site/src/fonts/`: Geist, Geist Mono and Instrument Serif, under the
+    SIL Open Font License texts in [`apps/site/public/fonts/`](apps/site/public/fonts/).
+  - `.agents/skills/rally-motion/kit/fonts/`: Geist Mono, Inter and Inter Tight,
+    under the SIL Open Font License texts beside them.
+  - `patches/`: changes to upstream packages, each under the license of the
+    package it patches.
+  - All dependencies installed by the package manager.
 
-## Earlier releases
+## Keeping the tree consistent
 
-Code that Juno AI Labs Inc published earlier under another license (such as the
-MIT license once carried by `packages/bind`) stays available under that license
-for the copies already received. This change applies to the code from this point
-on.
+- Every first-party `package.json` sets
+  `"license": "AGPL-3.0-only OR LicenseRef-Rally-Commercial"`. A new package
+  copies that line and adds no `LICENSE` file of its own.
+- Code, fonts or other assets copied in from elsewhere need a license that is
+  compatible with the AGPL and that does not stop Juno from offering the
+  commercial license, so GPL or AGPL code Juno does not own cannot come in. Keep
+  the license file beside what you copied, and add the path to the list above in
+  the same change.
 
 ## Contributing
 
 Juno AI Labs Inc can only offer the commercial license if it holds the rights to
-every contribution. Before your first pull request is merged, you must agree to
-the [Contributor License Agreement](CLA.md). Employees and contractors of Juno AI
-Labs Inc whose work is already assigned to the company do not need to.
+every contribution, so outside contributors agree to the
+[Contributor License Agreement](CLA.md) before a pull request is merged.
+[`docs/pull-requests.md`](docs/pull-requests.md#contributor-license-agreement)
+says who needs to and how.
